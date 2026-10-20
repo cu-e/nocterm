@@ -274,3 +274,240 @@ async fn a_host_listed_twice_is_asked_about_once_when_remembered() {
     session.close();
     closed(&session, no_prompts).await;
 }
+
+/// Lets the passphrase-protected key of `keys_of` sign in to `sshd` too.
+fn authorize_encrypted(sshd: &Sshd, keys_of: &Sshd) {
+    let key = fs::read_to_string(keys_of.root().join("encrypted/id_ed25519.pub")).unwrap();
+    let path = sshd.root().join("authorized_keys");
+    let mut keys = fs::read_to_string(&path).unwrap();
+    keys.push_str(&key);
+    fs::write(path, keys).unwrap();
+}
+
+fn hop_at(index: usize, sshd: &Sshd) -> Option<PromptHop> {
+    Some(PromptHop {
+        index,
+        target: target_of(sshd),
+    })
+}
+
+#[tokio::test]
+async fn a_chain_of_two_jump_hosts_labels_each_hop_and_reaches_the_destination() {
+    let (Some(first), Some(second), Some(destination)) =
+        (Sshd::start(), Sshd::start(), Sshd::start())
+    else {
+        return;
+    };
+    second.authorize(&first);
+    destination.authorize(&first);
+    let (listener, proxy) = proxy_listener().await;
+    let relay = relay_to(first.port, listener);
+    let mut request = destination.request();
+    request.jumps = vec![jump_to(&first), jump_to(&second)];
+    request.proxy = proxy;
+
+    let transport = first.transport("plain");
+    let session = transport.open(request);
+    let mut asked = Vec::new();
+    connect(&session, remember_all(&mut asked)).await;
+    assert_eq!(
+        asked,
+        [
+            (hop_at(0, &first), first.host_label()),
+            (hop_at(1, &second), second.host_label()),
+            (None, destination.host_label()),
+        ]
+    );
+
+    session.input("printf 'conn=%s\\n' \"$SSH_CONNECTION\"\r");
+    output_containing(&session, &format!("127.0.0.1 {}", destination.port)).await;
+    session.close();
+    assert_eq!(
+        closed(&session, no_prompts).await,
+        CloseReason::ClosedByUser
+    );
+    let connect_line = timeout(Duration::from_secs(2), relay)
+        .await
+        .expect("the connection to the first jump host was left open")
+        .unwrap();
+    assert_eq!(
+        connect_line,
+        format!("CONNECT 127.0.0.1:{} HTTP/1.1", first.port)
+    );
+}
+
+#[tokio::test]
+async fn forwarding_disabled_on_a_later_jump_host_is_reported_against_that_hop() {
+    let (Some(first), Some(second), Some(destination)) = (
+        Sshd::start(),
+        Sshd::start_with("AllowTcpForwarding no\n"),
+        Sshd::start(),
+    ) else {
+        return;
+    };
+    second.authorize(&first);
+    destination.authorize(&first);
+    let (listener, proxy) = proxy_listener().await;
+    let relay = relay_to(first.port, listener);
+    let mut request = destination.request();
+    request.jumps = vec![jump_to(&first), jump_to(&second)];
+    request.proxy = proxy;
+    let transport = first.transport("plain");
+    let session = transport.open(request);
+    let reason = closed(&session, accept).await;
+    timeout(Duration::from_secs(2), relay)
+        .await
+        .expect("the first jump host was left connected after the route failed")
+        .unwrap();
+    let CloseReason::Failed(SessionError::JumpHost { hop, host, source }) = reason else {
+        panic!("expected a jump host failure, got {reason:?}");
+    };
+    assert_eq!(
+        hop, 1,
+        "the second jump host refused to reach the destination"
+    );
+    assert_eq!(host, target_of(&second).to_string());
+    assert!(matches!(*source, SessionError::Unreachable { .. }));
+}
+
+#[tokio::test]
+async fn a_changed_jump_host_key_is_put_to_the_user_for_that_hop() {
+    let Some((jump, destination, request)) = chain("") else {
+        return;
+    };
+    keygen(&jump.root().join("impostor"), "");
+    let stale = fs::read_to_string(jump.root().join("impostor.pub")).unwrap();
+    fs::write(
+        jump.root().join("known_hosts"),
+        format!("{} {stale}", jump.host_label()),
+    )
+    .unwrap();
+    let transport = jump.transport("plain");
+    let session = transport.open(request);
+    let mut changed_for = None;
+    let reason = closed(&session, |prompt| match prompt {
+        Prompt::ChangedHostKey { hop, reply, .. } => {
+            changed_for = Some(hop);
+            reply.send(HostKeyDecision::Reject);
+        }
+        other => panic!("unexpected prompt: {other:?}"),
+    })
+    .await;
+    assert_eq!(changed_for, Some(hop_at(0, &jump)));
+    assert!(matches!(
+        reason,
+        CloseReason::Failed(SessionError::JumpHost { hop: 0, source, .. })
+            if matches!(*source, SessionError::HostKeyRejected { .. })
+    ));
+    assert!(!destination.root().join("known_hosts").exists());
+}
+
+#[tokio::test]
+async fn rejecting_the_destination_key_after_the_jump_host_is_not_blamed_on_a_hop() {
+    let Some((jump, destination, request)) = chain("") else {
+        return;
+    };
+    let transport = jump.transport("plain");
+    let session = transport.open(request);
+    let reason = closed(&session, |prompt| match prompt {
+        Prompt::UnknownHostKey {
+            hop: Some(_),
+            reply,
+            ..
+        } => reply.send(HostKeyDecision::AcceptOnce),
+        Prompt::UnknownHostKey {
+            hop: None, reply, ..
+        } => reply.send(HostKeyDecision::Reject),
+        other => panic!("unexpected prompt: {other:?}"),
+    })
+    .await;
+    assert_eq!(
+        reason,
+        CloseReason::Failed(SessionError::HostKeyRejected {
+            host: destination.request().target.host
+        })
+    );
+}
+
+#[tokio::test]
+async fn key_passphrases_are_asked_for_each_host_and_labelled_with_its_hop() {
+    let Some((jump, destination, request)) = chain("") else {
+        return;
+    };
+    authorize_encrypted(&destination, &jump);
+    let transport = jump.transport("encrypted");
+    let session = transport.open(request);
+    let mut passphrases = Vec::new();
+    connect(&session, |prompt| match prompt {
+        Prompt::UnknownHostKey { reply, .. } => reply.send(HostKeyDecision::AcceptAndRemember),
+        Prompt::Secret {
+            request: SecretRequest::KeyPassphrase { .. },
+            hop,
+            reply,
+        } => {
+            passphrases.push(hop);
+            reply.send(Some(Secret::new(PASSPHRASE)));
+        }
+        other => panic!("unexpected prompt: {other:?}"),
+    })
+    .await;
+    assert_eq!(passphrases, [hop_at(0, &jump), None]);
+    session.close();
+    closed(&session, no_prompts).await;
+}
+
+#[tokio::test]
+async fn losing_the_connection_to_the_first_jump_host_ends_the_session() {
+    let Some((jump, _destination, mut request)) = chain("") else {
+        return;
+    };
+    let (listener, proxy) = proxy_listener().await;
+    request.proxy = proxy;
+    let relay = relay_to(jump.port, listener);
+    let transport = jump.transport("plain");
+    let session = transport.open(request);
+    connect(&session, accept).await;
+
+    relay.abort();
+    let reason = closed(&session, no_prompts).await;
+    assert!(
+        matches!(
+            reason,
+            CloseReason::Failed(SessionError::JumpHost { hop: 0, .. })
+        ),
+        "the first jump host must be blamed, got {reason:?}"
+    );
+}
+
+#[tokio::test]
+async fn cancelling_at_the_first_jump_host_prompt_disconnects_from_it() {
+    let Some((jump, _destination, mut request)) = chain("") else {
+        return;
+    };
+    let (listener, proxy) = proxy_listener().await;
+    let relay = relay_to(jump.port, listener);
+    request.proxy = proxy;
+    let transport = jump.transport("plain");
+    let session = transport.open(request);
+    let pending = loop {
+        match next_event(&session).await {
+            Event::Prompt(Prompt::UnknownHostKey {
+                hop: Some(_),
+                reply,
+                ..
+            }) => break reply,
+            Event::Closed(reason) => panic!("closed early: {reason:?}"),
+            _ => {}
+        }
+    };
+    session.close();
+    assert_eq!(
+        closed(&session, no_prompts).await,
+        CloseReason::ClosedByUser
+    );
+    drop(pending);
+    timeout(Duration::from_secs(2), relay)
+        .await
+        .expect("the connection to the jump host was left open")
+        .unwrap();
+}
