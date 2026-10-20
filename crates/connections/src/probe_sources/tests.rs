@@ -48,6 +48,7 @@ impl Scene {
             icon: None,
             icon_color: None,
             country: None,
+            jump_hosts: Vec::new(),
         };
         let mut profiles = Profiles::default();
         profiles.upsert(profile.clone());

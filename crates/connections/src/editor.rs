@@ -235,6 +235,11 @@ impl ConnectionEditor {
             options: Default::default(),
             launch: self.launch.snapshot(cx),
             appearance: self.appearance.snapshot(cx),
+            jump_hosts: self
+                .edit
+                .original()
+                .map(|profile| profile.jump_hosts.clone())
+                .unwrap_or_default(),
         }
     }
 

@@ -35,6 +35,7 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     };
     let a = profile("a", "Work");
     let b = profile("b", "Personal");
@@ -205,6 +206,7 @@ fn gp(name: &str, group: Option<&str>) -> Profile {
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     }
 }
 

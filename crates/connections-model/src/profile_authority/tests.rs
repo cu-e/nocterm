@@ -14,6 +14,7 @@ fn profile() -> Profile {
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     }
 }
 fn documents(profile: &Profile) -> Profiles {
@@ -89,6 +90,24 @@ fn endpoint_includes_user_and_port_and_each_override_is_independent() {
     epochs.transition(&before, &after, 1);
     let stamp = epochs.publication(1, &after).get(p.id).unwrap().stamp;
     assert_eq!(stamp.endpoint, 1);
+    assert_eq!(stamp.icon_override, 0);
+    assert_eq!(stamp.country_override, 0);
+}
+#[test]
+fn changing_only_the_jump_hosts_starts_a_new_endpoint() {
+    let mut p = profile();
+    let before = documents(&p);
+    let mut epochs = ObservationEpochs::imported(&before);
+    p.jump_hosts = vec![crate::jump_route::JumpHostEntry::Address(Target::new(
+        "ops", "bastion", 22,
+    ))];
+    let after = documents(&p);
+    epochs.transition(&before, &after, 1);
+    let stamp = epochs.publication(1, &after).get(p.id).unwrap().stamp;
+    assert_eq!(
+        stamp.endpoint, 1,
+        "facts found through the old route are dropped"
+    );
     assert_eq!(stamp.icon_override, 0);
     assert_eq!(stamp.country_override, 0);
 }

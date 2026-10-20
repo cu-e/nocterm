@@ -24,6 +24,7 @@ fn saved_profile_keeps_description_and_session_overrides_when_opened() {
             }),
             logging: Some(nocterm_session::LoggingOptions::default()),
         },
+        jump_hosts: Vec::new(),
     };
     let serialized = toml::to_string(&profile).unwrap();
     let restored: Profile = toml::from_str(&serialized).unwrap();

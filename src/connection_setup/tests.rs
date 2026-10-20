@@ -58,6 +58,7 @@ fn profile(name: &str) -> Profile {
         icon_color: None,
         country: None,
         group: None,
+        jump_hosts: Vec::new(),
     }
 }
 fn documents(items: &[Profile]) -> Profiles {
@@ -98,8 +99,10 @@ async fn associating_unmatched_credentials_preserves_malformed_profile_bytes(
     let result = connections
         .update(cx, |c, cx| {
             c.associate_credential(
-                &Target::new("unmatched", "host.test", 22),
-                &Auth::Password,
+                nocterm_connections_model::credential_scope::CredentialScope::direct(
+                    Target::new("unmatched", "host.test", 22),
+                    Auth::Password,
+                ),
                 CredentialId::from_bytes([8; 16]),
                 cx,
             )
@@ -129,8 +132,10 @@ async fn stale_readonly_load_cannot_overwrite_profiles_repaired_by_another_write
     let result = connections
         .update(cx, |c, cx| {
             c.associate_credential(
-                &repaired.target,
-                &repaired.auth,
+                nocterm_connections_model::credential_scope::CredentialScope::direct(
+                    repaired.target.clone(),
+                    repaired.auth.clone(),
+                ),
                 CredentialId::from_bytes([9; 16]),
                 cx,
             )
@@ -172,8 +177,10 @@ async fn capturing_readonly_credential_association_preserves_profiles_and_recent
         let recents_before = fs::read(paths.recents_file()).unwrap();
         let receipt = connections.update(cx, |c, cx| {
             c.associate_credential(
-                &original.target,
-                &original.auth,
+                nocterm_connections_model::credential_scope::CredentialScope::direct(
+                    original.target.clone(),
+                    original.auth.clone(),
+                ),
                 CredentialId::from_bytes([5; 16]),
                 cx,
             )

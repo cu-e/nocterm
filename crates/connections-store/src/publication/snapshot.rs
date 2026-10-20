@@ -14,9 +14,10 @@ struct StampedEffect {
 #[derive(Clone, PartialEq)]
 enum Effect {
     Unlink(Vec<ProfileId>),
+    /// Removed profiles that reached their host through jump hosts.
+    Forget(Vec<ProfileId>),
     Credential {
-        target: Target,
-        auth: Auth,
+        scope: CredentialScope,
         id: CredentialId,
     },
 }
@@ -40,23 +41,30 @@ impl ProfileSnapshot {
     ) -> Result<(), ConnectionsError> {
         let mut candidate = self.profiles.clone();
         mutation.apply(&mut candidate)?;
-        let effect = match mutation {
-            ProfileMutation::Credential { target, auth, id } => Some(Effect::Credential {
-                target: target.clone(),
-                auth: auth.clone(),
+        let effects = match mutation {
+            ProfileMutation::Credential { scope, id } => vec![Effect::Credential {
+                scope: scope.clone(),
                 id: *id,
-            }),
+            }],
             _ => {
-                let removed = self
+                let (routed, direct): (Vec<_>, Vec<_>) = self
                     .profiles
                     .iter()
-                    .map(|profile| profile.id)
-                    .filter(|id| candidate.get(*id).is_none())
-                    .collect::<Vec<_>>();
-                (!removed.is_empty()).then_some(Effect::Unlink(removed))
+                    .filter(|profile| candidate.get(profile.id).is_none())
+                    .partition(|profile| !profile.jump_hosts.is_empty());
+                let ids = |profiles: Vec<&nocterm_connections_model::profiles::Profile>| -> Vec<ProfileId> {
+                    profiles.into_iter().map(|profile| profile.id).collect()
+                };
+                [
+                    (!direct.is_empty()).then(|| Effect::Unlink(ids(direct))),
+                    (!routed.is_empty()).then(|| Effect::Forget(ids(routed))),
+                ]
+                .into_iter()
+                .flatten()
+                .collect()
             }
         };
-        if candidate == self.profiles && effect.is_none() {
+        if candidate == self.profiles && effects.is_empty() {
             return Ok(());
         }
         if let Some(error) = load_error {
@@ -71,7 +79,7 @@ impl ProfileSnapshot {
         self.profiles = candidate;
         self.generation = generation;
         self.effects.retain(|effect| effect.generation > consumed);
-        if let Some(effect) = effect {
+        for effect in effects {
             self.effects.push(StampedEffect {
                 generation: self.generation,
                 effect,
@@ -110,8 +118,13 @@ impl ProfileSnapshot {
                         recents.unlink(*id);
                     }
                 }
-                Effect::Credential { target, auth, id } => {
-                    recents.associate_credential(target, auth, *id);
+                Effect::Forget(ids) => {
+                    for id in ids {
+                        recents.forget(*id);
+                    }
+                }
+                Effect::Credential { scope, id } => {
+                    recents.associate_credential(scope, *id, &self.profiles);
                 }
             }
         }

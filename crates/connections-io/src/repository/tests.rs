@@ -26,6 +26,7 @@ fn profile() -> Profile {
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     }
 }
 #[test]

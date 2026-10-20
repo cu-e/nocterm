@@ -164,3 +164,16 @@ fn disabled_launch_ignores_hidden_json_but_preserves_starting_directory() {
     assert!(launch.program.is_none() && launch.args.is_empty() && launch.env.is_empty());
     assert!(launch.integration);
 }
+
+#[test]
+fn jump_hosts_flow_from_the_draft_into_the_saved_profile() {
+    let mut draft = draft();
+    draft.jump_hosts = vec![
+        crate::jump_route::JumpHostEntry::Address(Target::new("ops", "gw", 22)),
+        crate::jump_route::JumpHostEntry::Profile(crate::test_support::profile_id_for("bastion")),
+    ];
+    let validated = draft.validate(&defaults()).unwrap();
+    assert_eq!(validated.jump_hosts, draft.jump_hosts);
+    let profile = validated.into_profile(crate::test_support::profile_id_for("db"));
+    assert_eq!(profile.jump_hosts, draft.jump_hosts);
+}

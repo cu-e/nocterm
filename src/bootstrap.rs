@@ -355,8 +355,22 @@ fn open_vault(
                     nocterm_terminal::CredentialAssociationError::Unavailable,
                 ));
             };
+            // A secret remembered for a machine behind jump hosts binds only to
+            // the connection it was typed for, never to one that merely shares its address.
+            let Some(scope) =
+                nocterm_connections_model::credential_scope::CredentialScope::of_session(
+                    spec.target.clone(),
+                    spec.auth.clone(),
+                    spec.profile
+                        .as_deref()
+                        .and_then(|profile| profile.parse().ok()),
+                    !spec.jumps.is_empty(),
+                )
+            else {
+                return gpui_kit::Task::ready(Ok(()));
+            };
             let association = connections.update(cx, |connections, cx| {
-                connections.associate_credential(&spec.target, &spec.auth, id, cx)
+                connections.associate_credential(scope, id, cx)
             });
             cx.spawn(async move |_| {
                 association
@@ -511,6 +525,7 @@ mod credential_tests {
             icon_color: None,
             country: None,
             group: None,
+            jump_hosts: Vec::new(),
         }
     }
     fn association_fixture(

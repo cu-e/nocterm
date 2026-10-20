@@ -18,6 +18,7 @@ fn profile(name: &str) -> Profile {
         icon: None,
         icon_color: None,
         country: None,
+        jump_hosts: Vec::new(),
     }
 }
 
@@ -235,8 +236,10 @@ async fn distinct_installations_keep_profiles_facts_and_credential_association_i
     credential_owner
         .update(cx, |connections, cx| {
             connections.associate_credential(
-                &first_profile.target,
-                &first_profile.auth,
+                nocterm_connections_model::credential_scope::CredentialScope::direct(
+                    first_profile.target.clone(),
+                    first_profile.auth.clone(),
+                ),
                 credential,
                 cx,
             )
