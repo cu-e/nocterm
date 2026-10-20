@@ -12,9 +12,11 @@ async fn a_new_host_is_confirmed_once_and_remembered() {
             host,
             algorithm,
             fingerprint,
+            hop,
             reply,
         } => {
             asked += 1;
+            assert_eq!(hop, None, "the destination is not a jump host");
             assert_eq!(host, sshd.host_label());
             assert_eq!(algorithm, "ssh-ed25519");
             assert_eq!(fingerprint, sshd.host_fingerprint());
@@ -131,11 +133,13 @@ async fn changed_host_can_connect_once_before_authentication_without_writing() {
             known_hosts,
             line,
             replacement_error,
+            hop,
             reply,
         } = changed_prompt(&session).await
         else {
             unreachable!()
         };
+        assert_eq!(hop, None, "the destination is not a jump host");
         assert_eq!(host, "127.0.0.1");
         assert_eq!(port, sshd.port);
         assert_eq!(algorithm, "ssh-ed25519");
@@ -151,6 +155,7 @@ async fn changed_host_can_connect_once_before_authentication_without_writing() {
             Prompt::Secret {
                 reply,
                 request: SecretRequest::KeyPassphrase { .. },
+                ..
             } => {
                 authenticated = true;
                 reply.send(Some(Secret::new(PASSPHRASE)));

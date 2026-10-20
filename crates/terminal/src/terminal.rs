@@ -320,6 +320,7 @@ impl Terminal {
             launch,
             target: self.lifecycle.spec().target.clone(),
             auth: self.lifecycle.spec().auth.clone(),
+            jumps: Vec::new(),
             term: self
                 .lifecycle
                 .spec()

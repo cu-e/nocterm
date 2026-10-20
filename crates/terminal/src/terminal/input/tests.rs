@@ -137,8 +137,8 @@ fn user_paste_rejects_unavailable_authentication_alt_screen_and_invalid_text(
             host: "host".into(),
             algorithm: "ssh-ed25519".into(),
             fingerprint: "test".into(),
-            reply,
-        }), cx);
+            reply, hop: None,
+}), cx);
         assert!(terminal.paste_snippet("echo", true, cx).is_err());
         terminal.answer_host_key(nocterm_session::HostKeyDecision::Reject, cx);
         terminal.handle_event(Event::Output(b"\x1b[?1049h".to_vec()), cx);

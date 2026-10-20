@@ -154,6 +154,7 @@ impl Sshd {
             size: PtySize::default(),
             connect_timeout: Duration::from_secs(10),
             keepalive_interval: None,
+            jumps: Vec::new(),
         }
     }
 
@@ -336,6 +337,7 @@ async fn an_encrypted_key_is_unlocked_with_its_passphrase() {
         Prompt::Secret {
             request: SecretRequest::KeyPassphrase { retry, .. },
             reply,
+            ..
         } => {
             retries.push(retry);
             let guess = if retry { PASSPHRASE } else { "wrong" };

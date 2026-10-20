@@ -377,7 +377,11 @@ impl<'a> Authenticator<'a> {
 
     async fn ask(&self, request: SecretRequest) -> Option<Secret> {
         self.driver
-            .ask(|reply| Prompt::Secret { request, reply })
+            .ask(|reply| Prompt::Secret {
+                request,
+                hop: None,
+                reply,
+            })
             .await
             .flatten()
     }

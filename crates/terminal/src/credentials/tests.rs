@@ -79,7 +79,14 @@ fn ask_password(
     };
     cx.update(|cx| {
         setup.terminal.update(cx, |terminal, cx| {
-            terminal.handle_event(Event::Prompt(Prompt::Secret { request, reply }), cx)
+            terminal.handle_event(
+                Event::Prompt(Prompt::Secret {
+                    request,
+                    reply,
+                    hop: None,
+                }),
+                cx,
+            )
         })
     });
     drain(setup, cx);

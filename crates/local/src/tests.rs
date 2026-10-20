@@ -12,6 +12,7 @@ fn request(launch: ShellLaunch) -> ConnectRequest {
         connect_timeout: std::time::Duration::from_secs(5),
         keepalive_interval: None,
         proxy: Default::default(),
+        jumps: Vec::new(),
     }
 }
 fn events(session: &Session) -> std::sync::mpsc::Receiver<Event> {

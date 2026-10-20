@@ -16,6 +16,7 @@ fn request() -> ConnectRequest {
         size: Default::default(),
         connect_timeout: Duration::from_secs(10),
         keepalive_interval: None,
+        jumps: Vec::new(),
     }
 }
 

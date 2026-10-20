@@ -279,6 +279,7 @@ fn live_reconnect_uses_new_options_and_disconnect_cancels_prompts(cx: &mut TestA
                 echo: false,
             },
             reply,
+            hop: None,
         }),
     );
     cx.update_window(handle, |_, window, cx| {

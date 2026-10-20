@@ -25,7 +25,11 @@ fn emit(
     cx.background_executor
         .spawn(async move {
             driver
-                .emit(Event::Prompt(Prompt::Secret { request, reply }))
+                .emit(Event::Prompt(Prompt::Secret {
+                    request,
+                    reply,
+                    hop: None,
+                }))
                 .await;
         })
         .detach();
@@ -206,6 +210,7 @@ fn emit_changed(
                     replacement_error: unavailable
                         .then(|| "A conflicting key is in a read-only SSH trust file.".into()),
                     reply,
+                    hop: None,
                 }))
                 .await;
         })
@@ -272,6 +277,7 @@ fn operational_notices_are_event_driven_deduplicated_and_clear_credential_state(
                             retry: false,
                         },
                         reply,
+                        hop: None,
                     }),
                     cx,
                 );

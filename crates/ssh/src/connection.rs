@@ -286,12 +286,14 @@ async fn verify_host(
                 known_hosts,
                 line,
                 replacement_error: host_keys.replacement_error(host, target.port, &key),
+                hop: None,
                 reply,
             },
             _ => Prompt::UnknownHostKey {
                 host: host_label(target),
                 algorithm: key.algorithm().as_str().to_owned(),
                 fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
+                hop: None,
                 reply,
             },
         })

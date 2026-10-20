@@ -1,5 +1,5 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
-//! Owns: targets, authentication, launch/override validation, opaque IDs, text errors and execution/FS contracts.
+//! Owns: targets, authentication, jump-host route values, launch/override validation, opaque IDs, text errors and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
 //! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener,
 //! and recording::{OutputLogFactory, OutputLog}.
@@ -31,6 +31,7 @@ pub mod testing;
 mod credentials;
 pub mod exec;
 pub mod fs;
+mod jump;
 mod launch;
 pub mod local_fs;
 mod options;
@@ -49,6 +50,7 @@ pub use exec::{
     HostExec,
 };
 pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
+pub use jump::{JumpHost, MAX_JUMP_HOSTS, PromptHop, ResolvedJump};
 pub use secret::Secret;
 pub use session::{
     CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,

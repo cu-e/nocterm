@@ -606,7 +606,8 @@ mod credential_tests {
         let (reply, answer) = Reply::channel();
         assert!(block_on(driver.emit(Event::Prompt(Prompt::Secret {
             request: request.clone(),
-            reply
+            reply,
+            hop: None
         }))));
         cx.run_until_parked();
         cx.update(|cx| {

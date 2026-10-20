@@ -7,7 +7,11 @@ use std::sync::Mutex;
 
 fn prompt(request: SecretRequest) -> Prompt {
     let (reply, _answer) = Reply::channel();
-    Prompt::Secret { request, reply }
+    Prompt::Secret {
+        request,
+        reply,
+        hop: None,
+    }
 }
 #[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
@@ -68,6 +72,7 @@ fn retrieves_only_matching_non_retry_credentials_and_ignores_stale_requests(
                         retry: false,
                     },
                     reply,
+                    hop: None,
                 }),
                 cx,
             )
@@ -302,9 +307,11 @@ fn deliver_association_prompt(
     cx: &mut TestAppContext,
 ) -> futures::channel::oneshot::Receiver<Option<Secret>> {
     let (reply, answer) = Reply::channel();
-    assert!(block_on(
-        driver.emit(Event::Prompt(Prompt::Secret { request, reply }))
-    ));
+    assert!(block_on(driver.emit(Event::Prompt(Prompt::Secret {
+        request,
+        reply,
+        hop: None
+    }))));
     cx.run_until_parked();
     answer
 }

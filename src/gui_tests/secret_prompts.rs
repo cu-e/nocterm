@@ -15,6 +15,7 @@ fn secret_prompt_keeps_tab_navigation(cx: &mut TestAppContext) {
                 retry: false,
             },
             reply,
+            hop: None,
         }),
     );
     let driver = transport.drivers.lock().unwrap()[0].clone();
@@ -68,6 +69,7 @@ fn delayed_secret_prompt_preserves_other_tab_focus_and_restores_input_on_activat
                 echo: true,
             },
             reply,
+            hop: None,
         }),
     );
     cx.update_window(handle, |_, window, cx| {
@@ -113,6 +115,7 @@ fn delayed_secret_prompt_preserves_other_tab_focus_and_restores_input_on_activat
                 echo: true,
             },
             reply,
+            hop: None,
         }),
     );
     emit(
@@ -146,6 +149,7 @@ fn active_secret_prompt_accepts_text_and_releases_focus_after_submit(cx: &mut Te
                 echo: true,
             },
             reply,
+            hop: None,
         }),
     );
     cx.update_window(handle, |_, window, cx| {

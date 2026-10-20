@@ -150,6 +150,7 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
                         retry: false,
                     },
                     reply,
+                    hop: None,
                 }),
                 cx,
             );

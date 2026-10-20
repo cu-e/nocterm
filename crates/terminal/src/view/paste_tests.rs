@@ -303,6 +303,7 @@ fn native_container_wrapper_uses_explicit_receiving_syntax_and_keeps_state_guard
                         echo: false,
                     },
                     reply,
+                    hop: None,
                 }),
                 cx,
             );
