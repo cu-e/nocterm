@@ -1,25 +1,18 @@
 //! Owns hydration generations, queued intentions, draft overlays and delivery permits.
 pub(in crate::thread) mod load_operation;
-use crate::panel::AgentPanel;
-use gpui_kit::{AnyWindowHandle, EntityId, WeakEntity};
+use gpui_kit::App;
 use nocterm_ai::{
     history::{ChatSummary, HistoryPermit, SavedChat},
     session::Ticket,
     storage::AgentStorageError,
 };
 
+/// Runs once the saved chat is hydrated, outside the thread's update.
+pub(crate) type AfterHydration = Box<dyn FnOnce(&mut App)>;
+
 pub(crate) enum ArchiveIntent {
-    Open {
-        panel: WeakEntity<AgentPanel>,
-        source: EntityId,
-        revision: u64,
-    },
-    Fork {
-        panel: WeakEntity<AgentPanel>,
-        source: EntityId,
-        window: AnyWindowHandle,
-        last: Option<usize>,
-    },
+    /// Hands the hydrated chat back to whoever asked for it (open or fork).
+    Deliver(AfterHydration),
     Rename {
         name: Option<String>,
     },

@@ -380,25 +380,7 @@ impl AgentThread {
         match intent {
             archive::ArchiveIntent::Rename { name } => self.rename(name, cx),
             archive::ArchiveIntent::Pin { pinned } => self.set_pinned(pinned, cx),
-            archive::ArchiveIntent::Open {
-                panel,
-                source,
-                revision,
-            } => cx.defer(move |cx| {
-                let _ = panel.update(cx, |panel, cx| panel.archive_opened(source, revision, cx));
-            }),
-            archive::ArchiveIntent::Fork {
-                panel,
-                source,
-                window,
-                last,
-            } => cx.defer(move |cx| {
-                let _ = window.update(cx, |_, window, cx| {
-                    let _ = panel.update(cx, |panel, cx| {
-                        panel.fork_loaded_archive(source, last, window, cx)
-                    });
-                });
-            }),
+            archive::ArchiveIntent::Deliver(then) => cx.defer(then),
         }
     }
 

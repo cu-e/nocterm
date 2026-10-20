@@ -138,16 +138,15 @@ impl AgentPanel {
         if source.read(cx).is_archived() {
             let panel = cx.weak_entity();
             let handle = window.window_handle();
+            let then = Box::new(move |cx: &mut gpui_kit::App| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = panel.update(cx, |panel, cx| {
+                        panel.fork_loaded_archive(id, last, window, cx)
+                    });
+                });
+            });
             source.update(cx, |thread, cx| {
-                thread.load_archive(
-                    crate::thread::archive::ArchiveIntent::Fork {
-                        panel,
-                        source: id,
-                        window: handle,
-                        last,
-                    },
-                    cx,
-                )
+                thread.load_archive(crate::thread::archive::ArchiveIntent::Deliver(then), cx)
             });
             return;
         }
@@ -266,15 +265,11 @@ impl AgentPanel {
         {
             let panel = cx.weak_entity();
             let revision = self.composer.revision();
+            let then = Box::new(move |cx: &mut gpui_kit::App| {
+                let _ = panel.update(cx, |panel, cx| panel.archive_opened(id, revision, cx));
+            });
             thread.update(cx, |thread, cx| {
-                thread.load_archive(
-                    crate::thread::archive::ArchiveIntent::Open {
-                        panel,
-                        source: id,
-                        revision,
-                    },
-                    cx,
-                )
+                thread.load_archive(crate::thread::archive::ArchiveIntent::Deliver(then), cx)
             });
         }
         self.load_composer(cx);
