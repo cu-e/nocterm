@@ -173,7 +173,9 @@ pub(super) fn reopen(
         crate::thread::AgentThread::restored(
             saved,
             f._directory
-                .host(f.workspace.downgrade(), f.installation.installed.clone()),
+                .host(f.workspace.downgrade(), f.installation.installed.clone())
+                .deps()
+                .clone(),
             cx,
         )
     });

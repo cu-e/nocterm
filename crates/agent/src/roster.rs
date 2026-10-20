@@ -7,7 +7,7 @@
 pub(crate) mod chat_list;
 
 use crate::{
-    chat_host::ChatHost,
+    chat_deps::ChatDeps,
     thread::{AgentThread, Attachment, RestartData},
 };
 use chat_list::{ChatList, ChatSlot};
@@ -49,11 +49,11 @@ impl Retained {
 }
 
 pub(crate) struct ChatRoster {
-    host: ChatHost,
+    host: ChatDeps,
     chats: ChatList,
 }
 impl ChatRoster {
-    pub(crate) fn new(host: ChatHost) -> Self {
+    pub(crate) fn new(host: ChatDeps) -> Self {
         Self {
             host,
             chats: ChatList::default(),

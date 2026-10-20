@@ -87,7 +87,7 @@ impl AgentThread {
     ) -> Result<Option<serde_json::Value>, ToolFailure> {
         if !self.session.session_current(operation.ticket())
             || !self.session.accepts_updates()
-            || !self.host.enabled(cx)
+            || !self.deps.enabled(cx)
         {
             return Err(ToolFailure::from("Chat is unavailable."));
         }
@@ -95,7 +95,7 @@ impl AgentThread {
         let state = self
             .tools
             .command_snapshot(operation.id(), operation.terminal())?;
-        operation.frame(state, self.host.ai(cx).approval.redact_secrets)
+        operation.frame(state, self.deps.ai(cx).approval.redact_secrets)
     }
 
     fn wait_command(
@@ -203,7 +203,7 @@ impl AgentThread {
             .ok_or(ConnectionWaitError::WorkspaceClosed)?;
         let receipt = self.tools.prepare_reconnect(entry, expected, cx)?;
         Ok(WaitTarget::new(
-            self.host.seat().clone(),
+            self.deps.seat().clone(),
             window,
             receipt,
             self.session.ticket(),
@@ -259,7 +259,7 @@ impl AgentThread {
 
     fn open_terminal(&mut self, server: String, call: BridgeCall, cx: &mut Context<Self>) {
         use super::tool_runtime::resolution::{OpenSelection, Resolution};
-        let input = Resolution::observe(self.host.seat(), cx);
+        let input = Resolution::observe(self.deps.seat(), cx);
         let summary =
             match self
                 .tools
@@ -293,13 +293,13 @@ impl AgentThread {
         let Some(window) = self
             .bindings
             .window()
-            .filter(|_| self.host.seat().opens_connections(cx))
+            .filter(|_| self.deps.seat().opens_connections(cx))
         else {
             self.finish_unreachable(call, "The workspace is unavailable.");
             return;
         };
         let opening = BackgroundOpen::new(
-            self.host.seat().clone(),
+            self.deps.seat().clone(),
             window,
             summary.id.to_string(),
             self.session.ticket(),
@@ -358,7 +358,7 @@ impl AgentThread {
         expected: ExpectedSession,
         cx: &mut Context<Self>,
     ) {
-        let redact = self.host.ai(cx).approval.redact_secrets;
+        let redact = self.deps.ai(cx).approval.redact_secrets;
         let action = self.tools.dispatch(call, entry, expected, redact, cx);
         self.apply_dispatch_action(action, cx);
     }
@@ -366,7 +366,7 @@ impl AgentThread {
     fn execute_tool_with(&mut self, bound: BoundToolCall, reconnect: bool, cx: &mut Context<Self>) {
         use super::tool_runtime::dispatch::{AdmissionRoute, ExecutionAdmission};
         let admission = ExecutionAdmission::new(
-            self.host.enabled(cx) && self.session.accepts_updates(),
+            self.deps.enabled(cx) && self.session.accepts_updates(),
             self.registration().as_ref().map(|value| value.id),
         );
         let bound = match admission.route(bound) {
@@ -401,11 +401,11 @@ impl AgentThread {
         ),
         ConnectionWaitError,
     > {
-        if self.host.seat().id() != target.seat().id()
+        if self.deps.seat().id() != target.seat().id()
             || self.registration().as_ref().map(|value| value.id) != target.registration()
             || !self.session.session_current(target.ticket())
             || !self.session.accepts_updates()
-            || !self.host.enabled(cx)
+            || !self.deps.enabled(cx)
         {
             return Err(ConnectionWaitError::Stopped);
         }
@@ -447,11 +447,11 @@ impl AgentThread {
         profile: &str,
         cx: &App,
     ) -> Result<(), ConnectionWaitError> {
-        if self.host.seat().id() != seat.id()
+        if self.deps.seat().id() != seat.id()
             || self.registration().as_ref().map(|value| value.id) != registration
             || !self.session.session_current(ticket)
             || !self.session.accepts_updates()
-            || !self.host.enabled(cx)
+            || !self.deps.enabled(cx)
         {
             return Err(ConnectionWaitError::Stopped);
         }
@@ -473,9 +473,9 @@ impl AgentThread {
         while let Some(effect) = self.tools.take_ready_reconnect(scope) {
             let (accepted, call, result, guard) = effect.into_parts();
             let current = self.session.accepts_updates()
-                && self.host.enabled(cx)
+                && self.deps.enabled(cx)
                 && accepted.is_current(
-                    self.host.seat(),
+                    self.deps.seat(),
                     self.bindings.window(),
                     self.session.session_current(accepted.ticket()),
                     self.registration().as_ref().map(|value| value.id),
@@ -519,13 +519,13 @@ impl AgentThread {
         operation: &mut super::live::LiveCommandOperation,
         cx: &mut Context<Self>,
     ) -> Result<Option<serde_json::Value>, super::live::TerminalOperationError> {
-        operation.check_active(self.session.accepts_updates() && self.host.enabled(cx))?;
+        operation.check_active(self.session.accepts_updates() && self.deps.enabled(cx))?;
         let entry = self
             .resolved(cx)
             .into_iter()
             .find(|(id, _, _)| id == operation.id())
             .map(|(_, entry, _)| entry);
-        let result = operation.poll(entry, self.host.ai(cx).approval.redact_secrets, cx)?;
+        let result = operation.poll(entry, self.deps.ai(cx).approval.redact_secrets, cx)?;
         Ok(result.map(|(payload, bytes)| {
             self.tools.account_outcome(bytes);
             payload
@@ -588,7 +588,7 @@ impl AgentThread {
             super::document::Resume::new(Some(session.to_string()), self.session_workdir().clone());
         let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
         self.state
-            .append_user(prepared.visible().to_vec(), self.host.timestamp(), &input);
+            .append_user(prepared.visible().to_vec(), self.deps.timestamp(), &input);
         self.mark_dirty(self.state.entries().len() - 1);
         self.persist(cx);
         self.notice.present("Thinking…".into());
@@ -639,7 +639,7 @@ impl AgentThread {
         values: &[Attachment],
         cx: &App,
     ) -> Vec<SavedAttachment> {
-        let terminals = self.host.seat().terminals(cx).unwrap_or_default();
+        let terminals = self.deps.seat().terminals(cx).unwrap_or_default();
         let mut saved = Vec::new();
         for attachment in values {
             let value = match attachment {
@@ -675,7 +675,7 @@ impl AgentThread {
         if self.is_archived() {
             return Err(SubmitError::Loading);
         }
-        if !self.host.enabled(cx) || self.session.sign_in_required() {
+        if !self.deps.enabled(cx) || self.session.sign_in_required() {
             return Ok(false);
         }
         if text.trim().is_empty() && self.composer.images().is_empty() {

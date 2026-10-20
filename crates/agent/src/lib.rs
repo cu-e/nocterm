@@ -44,6 +44,7 @@
 //! their existing admission path and long-running commands remain independent.
 
 mod agent_icon;
+mod chat_deps;
 mod chat_host;
 mod image_deps;
 mod installation;

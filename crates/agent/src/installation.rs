@@ -39,12 +39,8 @@ impl Installed {
     pub(crate) fn auth(&self) -> Option<TerminalAuthOpener> {
         self.inner.auth.clone()
     }
-    pub(crate) fn timestamp(&self) -> u64 {
-        self.inner.metadata.timestamp()
-    }
-    pub(crate) fn new_chat(&self, agent: String) -> nocterm_ai::history::SavedChat {
-        let identity = self.inner.metadata.new_identity();
-        nocterm_ai::history::SavedChat::for_identity(agent, identity.id, identity.created)
+    pub(crate) fn metadata(&self) -> Arc<dyn nocterm_ai::metadata::ChatMetadataSource> {
+        self.inner.metadata.clone()
     }
 }
 pub(crate) fn install(

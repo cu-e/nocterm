@@ -83,7 +83,7 @@ pub(crate) struct AgentThread {
     config: config::ChatConfig,
     state: document::ChatDocument,
     notice: notice::ThreadNotice,
-    host: crate::chat_host::ChatHost,
+    deps: crate::chat_deps::ChatDeps,
     bindings: bindings::ThreadBindings,
 }
 
@@ -114,7 +114,7 @@ impl AgentThread {
             .collect();
         let close = self.tools.prune_background(&resolved);
         if let Some(window) = self.bindings.window() {
-            let seat = self.host.seat().clone();
+            let seat = self.deps.seat().clone();
             cx.defer(move |cx| {
                 for item in close {
                     let _ = cx.update_window(window, |_, window, cx| {
@@ -134,7 +134,7 @@ impl AgentThread {
         };
         ToolGate::from_context(
             call,
-            self.host.enabled(cx) && self.session.accepts_updates(),
+            self.deps.enabled(cx) && self.session.accepts_updates(),
             self.registration().as_ref().map(|value| value.id),
             &resolved,
             &offline,
@@ -170,13 +170,13 @@ impl AgentThread {
     }
 
     pub(crate) fn describe_target(&mut self, call: &TerminalCall, cx: &App) -> String {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
         self.tools
             .describe_target(call, &input, self.composer.default_attachments(), cx)
     }
 
     pub(crate) fn context(&mut self, cx: &App) -> String {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
         self.tools
             .context(&input, self.composer.default_attachments(), cx)
     }
@@ -185,7 +185,7 @@ impl AgentThread {
         &mut self,
         cx: &App,
     ) -> Vec<(ServerDescriptor, ConnectionSummary)> {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
         self.tools
             .offline_servers(&input, self.composer.default_attachments(), cx)
     }
@@ -194,13 +194,13 @@ impl AgentThread {
         &mut self,
         cx: &App,
     ) -> Vec<(String, TerminalEntry, TerminalDescriptor)> {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
         self.tools
             .resolved(&input, self.composer.default_attachments(), cx)
     }
 
     pub(super) fn server_is_attached(&self, profile: &str, cx: &App) -> bool {
-        let input = self::tool_runtime::resolution::Resolution::observe(self.host.seat(), cx);
+        let input = self::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
         input.summaries().iter().any(|summary| {
             summary.id.as_ref() == profile
                 && self
@@ -251,8 +251,8 @@ impl AgentThread {
         if self.session.shown()
             && !self.is_archived()
             && self.state.persistence_error().is_none()
-            && self.host.enabled(cx)
-            && self.host.ai(cx).sessions.warm_start
+            && self.deps.enabled(cx)
+            && self.deps.ai(cx).sessions.warm_start
             && self.session.phase() == SessionPhase::Detached
         {
             self.request_activation(cx);
@@ -279,7 +279,7 @@ impl AgentThread {
         self.notice.clear_error();
         self.notice.present("Waiting for an agent slot…".into());
         let owner = self::client(&cx.entity());
-        let runtime = self.host.runtime().clone();
+        let runtime = self.deps.runtime().clone();
         cx.defer(move |cx| {
             runtime.request_activation(owner, cx);
         });
@@ -318,14 +318,14 @@ impl AgentThread {
         self.cancel_pending();
         self.finalize_tool_displays();
         let snapshot = self
-            .host
+            .deps
             .enabled(cx)
             .then(|| self.capture_pending(cx))
             .flatten();
         self.cancel_execution();
         // The lease releases its connection when it is dropped.
         self.session.release_lease();
-        let runtime = self.host.runtime().clone();
+        let runtime = self.deps.runtime().clone();
         cx.defer(move |cx| {
             if let Some((chat, revision)) = snapshot
                 && let Err(error) = runtime.save_chat(chat, id, revision, cx)
@@ -335,7 +335,7 @@ impl AgentThread {
             runtime.unregister_document(id, cx);
         });
         if let Some(window) = self.bindings.window() {
-            let seat = self.host.seat().clone();
+            let seat = self.deps.seat().clone();
             let background = self.tools.take_close_effects();
             cx.defer(move |cx| {
                 for item in background {
@@ -352,11 +352,11 @@ impl AgentThread {
 
     fn from_document(
         state: document::ChatDocument,
-        host: crate::chat_host::ChatHost,
+        deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
         let this = cx.weak_entity();
-        let authority = host.seat().observe(
+        let authority = deps.seat().observe(
             Box::new(move |cx| {
                 let _ = this.update(cx, |this, cx| this.on_workspace_authority_changed(cx));
             }),
@@ -372,25 +372,25 @@ impl AgentThread {
             state,
             config: Default::default(),
             notice: Default::default(),
-            host,
+            deps,
             bindings: bindings::ThreadBindings::new(release, authority),
         }
     }
     pub(crate) fn new(
         agent_id: String,
-        host: crate::chat_host::ChatHost,
+        deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
-        let chat = host.new_chat(agent_id);
+        let chat = deps.new_chat(agent_id);
         Self::from_document(
             document::ChatDocument::new(chat.agent_id, chat.id, chat.updated),
-            host,
+            deps,
             cx,
         )
     }
     pub(crate) fn archived(
         summary: nocterm_ai::history::ChatSummary,
-        host: crate::chat_host::ChatHost,
+        deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut state = document::ChatDocument::new(
@@ -399,7 +399,7 @@ impl AgentThread {
             summary.updated,
         );
         state.archived_clean(&summary);
-        let mut thread = Self::from_document(state, host, cx);
+        let mut thread = Self::from_document(state, deps, cx);
         thread.config.saved_model(summary.model.clone());
         thread.notice.present("Saved chat".into());
         thread.archive = archive::Archive::archived(summary);
@@ -580,7 +580,7 @@ impl AgentThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.host.enabled(cx) || self.session_phase() != SessionPhase::SignInRequired {
+        if !self.deps.enabled(cx) || self.session_phase() != SessionPhase::SignInRequired {
             return;
         }
         let Some(commands) = self.commands().clone() else {
@@ -601,8 +601,8 @@ impl AgentThread {
         let auth = match &method.flow {
             AuthFlow::AgentManaged => commands.authenticate(method.id.clone()),
             AuthFlow::TerminalSetup(_) => {
-                let runtime = self.host.runtime();
-                let Some(sign_in) = self.host.sign_in().cloned() else {
+                let runtime = self.deps.runtime();
+                let Some(sign_in) = self.deps.sign_in().cloned() else {
                     return;
                 };
                 let Some(request) = self
@@ -647,7 +647,7 @@ impl AgentThread {
         result: Result<(), nocterm_ai::AgentError>,
         cx: &mut Context<Self>,
     ) {
-        if !self.session.accepts_authority(&authority) || !self.host.enabled(cx) {
+        if !self.session.accepts_authority(&authority) || !self.deps.enabled(cx) {
             return;
         }
         let has_session = self.session().is_some();
@@ -682,7 +682,7 @@ impl AgentThread {
     }
     fn finish_pending_tools(&mut self) {
         self.finalize_tool_displays();
-        self.state.finish_pending_tools(self.host.timestamp());
+        self.state.finish_pending_tools(self.deps.timestamp());
     }
     fn cancel_pending(&mut self) {
         // Dropped responders answer `Cancelled`.

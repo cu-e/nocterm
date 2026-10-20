@@ -130,7 +130,7 @@ impl AgentThread {
             self.state.agent_id().to_owned(),
             self.config.options().to_vec(),
         );
-        let runtime = self.host.runtime().clone();
+        let runtime = self.deps.runtime().clone();
         cx.defer(move |cx| {
             runtime.remember_options(&agent, &options, cx);
         });
@@ -144,7 +144,7 @@ impl AgentThread {
     }
 
     pub(crate) fn set_mode(&mut self, id: ModeId, cx: &mut Context<Self>) {
-        if self.session.generating() || !self.host.enabled(cx) {
+        if self.session.generating() || !self.deps.enabled(cx) {
             return;
         }
         if self.config.choose_mode(id.clone()) {
@@ -177,7 +177,7 @@ impl AgentThread {
         value: ConfigSetting,
         cx: &mut Context<Self>,
     ) {
-        if self.session.generating() || !self.host.enabled(cx) {
+        if self.session.generating() || !self.deps.enabled(cx) {
             return;
         }
         let choice = self.config.choose_option(&id, &value);
@@ -190,7 +190,7 @@ impl AgentThread {
         }
         if let Some((option, choice)) = choice.remember() {
             let agent = self.state.agent_id().to_owned();
-            let runtime = self.host.runtime().clone();
+            let runtime = self.deps.runtime().clone();
             cx.defer(move |cx| {
                 runtime.remember_choice(&agent, &option, &choice, cx);
             });
@@ -216,7 +216,7 @@ impl AgentThread {
     }
 
     pub(crate) fn preview_config(&mut self, cx: &mut Context<Self>) {
-        let state = self.host.runtime().favorites(cx);
+        let state = self.deps.runtime().favorites(cx);
         self.config.preview(
             state.choices(self.state.agent_id()),
             state
@@ -233,12 +233,12 @@ impl AgentThread {
 
     pub(crate) fn restarted(
         data: RestartData,
-        host: crate::chat_host::ChatHost,
+        deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
         let (document, config, composer, restore) = data.into_parts();
         let state = super::document::ChatDocument::restarted(document);
-        let mut thread = Self::from_document(state, host, cx);
+        let mut thread = Self::from_document(state, deps, cx);
         thread.config.hydrate_restart(config);
         thread.composer = composer;
         thread.session.import_restore(restore);
@@ -316,7 +316,7 @@ impl AgentThread {
 
     pub(crate) fn set_draft(&mut self, text: String, cx: &mut Context<Self>) {
         if self.is_archived() {
-            let now = self.host.timestamp();
+            let now = self.deps.timestamp();
             if self.archive.edit_draft(text, now) {
                 self.state.edited_archived_draft(now);
                 cx.notify();
@@ -392,9 +392,9 @@ impl AgentThread {
         let (load_id, ticket, result, permit) = completion.into_parts();
 
         let current = self.session.session_current(ticket)
-            && self.host.enabled(cx)
+            && self.deps.enabled(cx)
             && self
-                .host
+                .deps
                 .runtime()
                 .document_is_current(self.state.chat_id(), cx.entity_id(), cx);
         match self.archive.accept(load_id, current, result, permit) {
@@ -437,7 +437,7 @@ impl AgentThread {
             return;
         };
         self.notice.present("Loading saved chat…".into());
-        let reader = self.host.runtime().history_reader(cx);
+        let reader = self.deps.runtime().history_reader(cx);
         let operation =
             archive::load_operation::LoadOperation::new(load_id, ticket, chat_id, reader);
         let loading = cx.background_executor().spawn(operation.run());
@@ -456,7 +456,7 @@ impl AgentThread {
     /// A restored document connects when shown with warm start enabled.
     pub(crate) fn restored(
         chat: nocterm_ai::history::SavedChat,
-        host: crate::chat_host::ChatHost,
+        deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut thread = Self::from_document(
@@ -465,7 +465,7 @@ impl AgentThread {
                 chat.id.clone(),
                 chat.updated,
             ),
-            host,
+            deps,
             cx,
         );
         thread.restore_content(chat);
@@ -534,7 +534,7 @@ impl AgentThread {
     /// starts a new session, since the agent cannot forget the rest.
     pub(crate) fn fork_at(&self, len: usize) -> Fork {
         let whole = len >= self.state.entries().len();
-        let mut chat = self.host.new_chat(self.state.agent_id().to_owned());
+        let mut chat = self.deps.new_chat(self.state.agent_id().to_owned());
         let mut state = self.state.transcript().clone();
         state.truncate(len);
         chat.entries = state.entries;
@@ -567,15 +567,15 @@ impl AgentThread {
     /// The chat `fork` made, connected only when work is submitted.
     pub(crate) fn forked(
         fork: Fork,
-        host: crate::chat_host::ChatHost,
+        deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
         let pending_history =
             fork.chat.pending_history || (fork.restore.is_none() && !fork.chat.entries.is_empty());
-        let mut thread = Self::restored(fork.chat, host, cx);
+        let mut thread = Self::restored(fork.chat, deps, cx);
         thread
             .state
-            .set_pending_history(pending_history, thread.host.timestamp());
+            .set_pending_history(pending_history, thread.deps.timestamp());
         thread.session.import_restore(fork.restore);
         thread.composer.replace_context(fork.attachments);
         thread.establish_clean_document_inputs(cx);
@@ -600,7 +600,7 @@ impl AgentThread {
             self.load_archive(super::archive::ArchiveIntent::Rename { name }, cx);
             return;
         }
-        if self.state.rename(name, self.host.timestamp()) {
+        if self.state.rename(name, self.deps.timestamp()) {
             self.save(cx);
         }
         cx.notify();
@@ -610,7 +610,7 @@ impl AgentThread {
             self.load_archive(super::archive::ArchiveIntent::Pin { pinned }, cx);
             return;
         }
-        if self.state.pin(pinned, self.host.timestamp()) {
+        if self.state.pin(pinned, self.deps.timestamp()) {
             self.save(cx);
         }
         cx.notify();
@@ -660,7 +660,7 @@ impl AgentThread {
         let resume = self.persistent_resume();
         let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
         self.state
-            .accept_inputs(&input, self.host.timestamp(), draft)
+            .accept_inputs(&input, self.deps.timestamp(), draft)
     }
     pub(super) fn establish_clean_document_inputs(&mut self, cx: &gpui_kit::App) {
         let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
@@ -691,7 +691,7 @@ impl AgentThread {
         }
         let owner = cx.entity_id();
         let thread = cx.weak_entity();
-        let runtime = self.host.runtime().clone();
+        let runtime = self.deps.runtime().clone();
         cx.defer(move |cx| {
             let result = runtime.save_chat(chat, owner, revision, cx);
             match result {

@@ -95,7 +95,7 @@ impl AgentPanel {
         });
         Self {
             focus: cx.focus_handle(),
-            chats: crate::roster::ChatRoster::new(host.clone()),
+            chats: crate::roster::ChatRoster::new(host.deps().clone()),
             host,
             notices: notices::PanelNotices::default(),
             _bindings: bindings::PanelBindings::new(subscriptions),
