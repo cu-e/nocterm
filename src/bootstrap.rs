@@ -134,13 +134,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         cx,
     );
     let terminal_deps = terminal_dependencies(transport, local, stored, &shutdown);
-    let connections = match nocterm_connections::install(connections, &ui, &shutdown, cx) {
-        Ok(connections) => Some(connections),
-        Err(error) => {
-            report_store_registration("connections", Err(error));
-            None
-        }
-    };
+    let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     if let Some(factory) = terminal_auth_factory {
         agent.terminal_auth = Some(factory(terminal.clone()));
@@ -186,6 +180,22 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
     Ok(booted)
+}
+
+/// Saved connections, or none when their store could not register for shutdown.
+fn install_connections(
+    deps: nocterm_connections::PreparedConnections,
+    ui: &nocterm_ui::UiReady,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Option<nocterm_connections::Installed> {
+    match nocterm_connections::install(deps, ui, shutdown, cx) {
+        Ok(connections) => Some(connections),
+        Err(error) => {
+            report_store_registration("connections", Err(error));
+            None
+        }
+    }
 }
 
 /// Bind credentials before installing the retained terminal capability.
