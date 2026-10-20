@@ -44,6 +44,18 @@ through foundation `SharedError`; clones share each original allocation. Domain
 constructors preserve semantic NotFound/PermissionDenied/AlreadyExists conversion
 and its deliberate lack of a native source. Publication warnings retain their native
 kind while the already committed file remains a successful outcome.
+Jump hosts cross this boundary only as resolved values: `JumpHost` carries target and
+authentication and `ResolvedJump` adds an optional saved credential, `ConnectRequest.jumps`
+lists them in order up to `MAX_JUMP_HOSTS`, `Prompt.hop` (`PromptHop`) names the
+hop a prompt belongs to, and `ConnectStage` names the hop being reached. `HostAddress`
+(destination plus jump-host targets) identifies a machine as reached: the workspace
+matches sessions, transfer jobs and program hosts by it, not by target alone, and
+`nocterm-connections-model::credential_scope` limits a remembered credential to the
+connection (and its recents) it was typed for when that connection has jump hosts.
+`nocterm-connections-model::jump_route` stores a profile's
+ordered jump entries (saved connections or literal addresses) and resolves them
+purely at open time, with typed errors for deleted connections, cycles and routes over
+the limit ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
 `nocterm-vt` turns a byte stream into a terminal grid using
 alacritty_terminal and encodes keyboard, mouse and paste input. These domain
 crates do not know the workspace or GPUI.

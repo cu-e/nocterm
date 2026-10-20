@@ -71,7 +71,10 @@ in external SSH trust files, shared aliases and wildcard records require manual
 repair; the prompt explains why saving is unavailable. Replacement revalidates
 all loaded trust files after the prompt, serializes application mutations and
 atomically publishes the new key while preserving unrelated bytes and file modes.
-Revoked keys and malformed trust stores still fail closed. Publication is the
+Revoked keys and malformed trust stores still fail closed.
+With jump hosts, each hop's key is confirmed and its credentials accepted before any
+forward is opened through it; the proxy carries only the first connection, and a saved
+credential is offered only to the hop it belongs to. Publication is the
 save success boundary; directory synchronization afterwards is best effort.
 Authentication errors use the server's initial advertised methods to explain
 when passwords are unavailable and an SSH private key is needed. Rejected keys

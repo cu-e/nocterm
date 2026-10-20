@@ -30,6 +30,15 @@ is surfaced in the terminal instead of silently discarding text.
 HTTP CONNECT/SOCKS5 tunnel creation belongs to the SSH adapter, inside the same
 connection timeout and target host-key policy as a direct connection.
 
+The adapter also establishes jump-host routes ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
+`ConnectRequest.jumps` lists resolved hops; each is reached through a `direct-tcpip`
+forward opened on the previous connection, and the configured proxy carries only the
+first connection. Every hop verifies its own host key and completes authentication
+before a forward is requested through it, with prompts tagged by their hop. The
+connection timeout applies per hop, a failure is attributed to its hop, routes over
+the limit are refused before any I/O, and closing the session closes the chain from the
+destination outward.
+
 Structured local commands through `HostExec::exec` start on a worker when their
 future is polled. The worker owns cleanup independently of output delivery or
 the shell's lifetime. Unix exit observation leaves the leader unreaped until

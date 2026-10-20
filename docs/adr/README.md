@@ -58,3 +58,4 @@ acceptance; a later record supersedes an earlier one.
 | [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition |
 | [0058](0058-neutral-agent-protocol-boundary.md) | Agent protocol types stop at the ACP adapter |
 | [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards |
+| [0060](0060-ssh-jump-host-routes.md) | SSH jump-host routes are resolved from saved profiles before opening and established by the SSH adapter |

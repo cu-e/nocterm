@@ -108,10 +108,18 @@ projects its six most recent saved profiles through
 `ConnectionDirectory`, using current names and the same icon and country policy as
 the sidebar. Quick destinations and deleted profiles are excluded. Selecting a
 recent server defers opening through the normal authentication path until the
-workspace borrow ends. Editor sections own their address/metadata, authentication, launch and appearance
+workspace borrow ends. Editor sections own their address/metadata, authentication, jump hosts, launch and appearance
 controls and subscriptions. They project one pure domain draft, with a scrollable
 active form, multiline description and fixed footer;
-typed validation selects the section containing the invalid field. Folder membership
+typed validation selects the section containing the invalid field. The Jump Hosts
+section edits the ordered route from saved connections or `user@host[:port]`
+addresses and reports an unresolvable route when saving. Opening a connection
+resolves its route from the current profiles in the connections feature, posts a
+notice when it cannot, and hands only resolved hops to the session spec. The
+terminal labels hop prompts with the hop's address, selects a saved credential only
+for the hop it belongs to and never remembers answers to hop prompts
+([ADR 0060](../adr/0060-ssh-jump-host-routes.md)). Deleting a connection that has jump
+hosts removes its recents rather than leaving plain destinations that skip the route. Folder membership
 changes persist a complete profile before publishing new state; explicit folder
 names keep empty groups available as drop targets. Group rename, ungroup and
 delete are single queued mutations; removed profiles unlink their recents and
