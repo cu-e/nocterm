@@ -267,7 +267,7 @@ impl AgentPanel {
         if let Some(approvals) = self.render_approvals(&thread, window, cx) {
             body = body.child(approvals);
         }
-        let labels = attachments::AttachmentLabels::new(self.host.workspace(), cx);
+        let labels = attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx);
         let composer = self.render_composer(&thread, usage.as_ref(), &labels, cx);
         let status = self.chat_status(&thread, cx);
         body = body

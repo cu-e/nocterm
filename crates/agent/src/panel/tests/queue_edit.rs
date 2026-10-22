@@ -190,7 +190,8 @@ fn mixed_unavailable_local_and_remote_queue_survives_save_and_edit(cx: &mut Test
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        let labels = super::super::attachments::AttachmentLabels::new(&f.workspace.downgrade(), cx);
+        let labels =
+            super::super::attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx);
         assert!(
             labels
                 .label(&thread.read(cx).composer().queue()[0].attachments()[0])

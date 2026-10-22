@@ -10,11 +10,13 @@ publish = false
 layer = "ui"
 
 [dependencies]
+nocterm-core.workspace = true
 nocterm-store.workspace = true
 nocterm-session.workspace = true
 nocterm-workspace-ports.workspace = true
 nocterm-ui.workspace = true
 nocterm-keymap.workspace = true
+nocterm-project-model.workspace = true
 
 gpui-kit.workspace = true
 tracing.workspace = true
@@ -27,5 +29,6 @@ test-support = []
 workspace = true
 
 [dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
 gpui-kit = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true

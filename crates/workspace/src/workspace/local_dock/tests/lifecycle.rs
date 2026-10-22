@@ -173,7 +173,7 @@ fn all_local_access_handles_remain_selectable_after_move_and_unfocusable_when_hi
             assert_eq!(workspace.active_terminal(cx), Some(item.entity_id()));
             assert_eq!(workspace.local_terminal_cwd(cx), Some(path.into()));
             assert_eq!(
-                workspace.active_item().unwrap().item_id(),
+                workspace.active_item(cx).unwrap().item_id(),
                 central.entity_id()
             );
             assert_eq!(

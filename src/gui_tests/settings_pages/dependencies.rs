@@ -234,7 +234,7 @@ async fn closing_the_actual_settings_item_admits_latest_text_before_capture(
     let weak = cx.update(|cx| {
         f.workspace
             .read(cx)
-            .find_item::<SettingsView>()
+            .find_item::<SettingsView>(cx)
             .unwrap()
             .downgrade()
     });
@@ -245,7 +245,7 @@ async fn closing_the_actual_settings_item_admits_latest_text_before_capture(
     cx.run_until_parked();
     cx.update_window(f.window, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(f.workspace.read(cx).items().count(), 0);
+        assert_eq!(f.workspace.read(cx).items(cx).count(), 0);
     })
     .unwrap();
     cx.run_until_parked();

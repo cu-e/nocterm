@@ -12,12 +12,16 @@
 
 use std::{
     fs,
-    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    thread,
-    time::{Duration, Instant},
+    process::Command,
+    time::Duration,
 };
+#[path = "support/sshd.rs"]
+mod fixture;
+use fixture::*;
+#[path = "support/keys.rs"]
+mod fixture_keys;
+use fixture_keys::SshdKeys as _;
 
 #[cfg(unix)]
 #[path = "cases/file_operations.rs"]
@@ -39,218 +43,11 @@ mod host_keys;
 mod jump;
 
 use nocterm_session::{
-    Auth, CloseReason, ConnectRequest, EntryKind, Event, HostKeyDecision, Prompt, PtySize, Secret,
+    Auth, CloseReason, ConnectRequest, EntryKind, Event, HostKeyDecision, Prompt, Secret,
     SecretRequest, Session, SessionError, Target, Transport,
 };
 use nocterm_ssh::{SshConfig, SshTransport};
-use tempfile::TempDir;
 use tokio::time::timeout;
-
-const PASSPHRASE: &str = "correct horse";
-const EVENT_TIMEOUT: Duration = Duration::from_secs(20);
-// Choosing a free port releases its socket before sshd binds it. Serialize
-// that interval so concurrent fixtures cannot accidentally choose the same one.
-static SERVER_START: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// A throwaway OpenSSH server.
-struct Sshd {
-    dir: TempDir,
-    port: u16,
-    process: Child,
-}
-
-impl Sshd {
-    /// Starts a server, or returns `None` when the machine has none.
-    fn start() -> Option<Self> {
-        Self::start_with("")
-    }
-
-    /// Like [`Sshd::start`], with `extra_config` appended to `sshd_config`.
-    fn start_with(extra_config: &str) -> Option<Self> {
-        let Some(binary) = find_sshd() else {
-            assert!(
-                std::env::var_os("NOCTERM_REQUIRE_SSHD").is_none(),
-                "NOCTERM_REQUIRE_SSHD is set but no sshd was found"
-            );
-            return None;
-        };
-        let _starting = SERVER_START.lock().unwrap();
-
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        keygen(&root.join("host_key"), "");
-        keygen(&root.join("plain/id_ed25519"), "");
-        keygen(&root.join("encrypted/id_ed25519"), PASSPHRASE);
-        fs::create_dir(root.join("empty")).unwrap();
-        let authorized = [
-            fs::read_to_string(root.join("plain/id_ed25519.pub")).unwrap(),
-            fs::read_to_string(root.join("encrypted/id_ed25519.pub")).unwrap(),
-        ]
-        .concat();
-        fs::write(root.join("authorized_keys"), authorized).unwrap();
-
-        let port = free_port();
-        fs::write(
-            root.join("sshd_config"),
-            format!(
-                "Port {port}\n\
-                 ListenAddress 127.0.0.1\n\
-                 HostKey {root}/host_key\n\
-                 PidFile none\n\
-                 AuthorizedKeysFile {root}/authorized_keys\n\
-                 StrictModes no\n\
-                 UsePAM no\n\
-                 PubkeyAuthentication yes\n\
-                 PasswordAuthentication no\n\
-                 KbdInteractiveAuthentication no\n\
-                 Subsystem sftp internal-sftp\n\
-                 LogLevel ERROR\n\
-                 {extra_config}",
-                root = root.display(),
-            ),
-        )
-        .unwrap();
-
-        let process = Command::new(binary)
-            .arg("-D")
-            .arg("-e")
-            .arg("-f")
-            .arg(root.join("sshd_config"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .spawn()
-            .expect("sshd starts");
-        let sshd = Self { dir, port, process };
-        sshd.wait_until_listening();
-        Some(sshd)
-    }
-
-    fn root(&self) -> &Path {
-        self.dir.path()
-    }
-
-    /// Lets the plain key of `keys_of` sign in to this server too.
-    fn authorize(&self, keys_of: &Sshd) {
-        let key = fs::read_to_string(keys_of.root().join("plain/id_ed25519.pub")).unwrap();
-        let path = self.root().join("authorized_keys");
-        let mut keys = fs::read_to_string(&path).unwrap();
-        keys.push_str(&key);
-        fs::write(path, keys).unwrap();
-    }
-
-    fn wait_until_listening(&self) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while TcpStream::connect(("127.0.0.1", self.port)).is_err() {
-            assert!(Instant::now() < deadline, "sshd did not start listening");
-            thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    /// A transport that trusts nothing yet and offers the keys in `keys`.
-    fn transport(&self, keys: &str) -> SshTransport {
-        SshTransport::new(SshConfig {
-            known_hosts: self.root().join("known_hosts"),
-            read_only_known_hosts: Vec::new(),
-            identity_dir: Some(self.root().join(keys)),
-            // The developer's own agent must not influence the outcome.
-            use_agent: false,
-        })
-        .unwrap()
-    }
-
-    fn request(&self) -> ConnectRequest {
-        ConnectRequest {
-            proxy: Default::default(),
-            launch: Default::default(),
-            target: Target {
-                host: "127.0.0.1".into(),
-                port: self.port,
-                user: current_user(),
-            },
-            auth: Auth::Auto,
-            term: "xterm-256color".into(),
-            size: PtySize::default(),
-            connect_timeout: Duration::from_secs(10),
-            keepalive_interval: None,
-            jumps: Vec::new(),
-        }
-    }
-
-    fn host_label(&self) -> String {
-        format!("[127.0.0.1]:{}", self.port)
-    }
-
-    fn host_fingerprint(&self) -> String {
-        let output = Command::new("ssh-keygen")
-            .args(["-l", "-E", "sha256", "-f"])
-            .arg(self.root().join("host_key.pub"))
-            .output()
-            .unwrap();
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .split_whitespace()
-            .nth(1)
-            .unwrap()
-            .to_owned()
-    }
-}
-
-impl Drop for Sshd {
-    fn drop(&mut self) {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-    }
-}
-
-fn find_sshd() -> Option<PathBuf> {
-    // sshd refuses to start unless invoked by absolute path.
-    ["/usr/sbin/sshd", "/usr/bin/sshd", "/usr/local/sbin/sshd"]
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|path| path.exists())
-}
-
-fn keygen(path: &Path, passphrase: &str) {
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let status = Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-C", "", "-N", passphrase, "-f"])
-        .arg(path)
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn current_user() -> String {
-    let output = Command::new("id").arg("-un").output().unwrap();
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
-async fn next_event(session: &Session) -> Event {
-    timeout(EVENT_TIMEOUT, session.next_event())
-        .await
-        .expect("the session went quiet")
-        .expect("the session ended without saying why")
-}
-
-/// Drives a session until the shell runs, answering prompts with `answer`.
-async fn connect(session: &Session, mut answer: impl FnMut(Prompt)) {
-    loop {
-        match next_event(session).await {
-            Event::Connected => return,
-            Event::Prompt(prompt) => answer(prompt),
-            Event::Closed(reason) => panic!("closed while connecting: {reason:?}"),
-            Event::Connecting(_) | Event::Output(_) => {}
-        }
-    }
-}
 
 /// Drives a session to its end, answering prompts with `answer`.
 async fn closed(session: &Session, mut answer: impl FnMut(Prompt)) -> CloseReason {
@@ -260,14 +57,6 @@ async fn closed(session: &Session, mut answer: impl FnMut(Prompt)) -> CloseReaso
             Event::Prompt(prompt) => answer(prompt),
             _ => {}
         }
-    }
-}
-
-fn accept(prompt: Prompt) {
-    match prompt {
-        Prompt::UnknownHostKey { reply, .. } => reply.send(HostKeyDecision::AcceptOnce),
-        Prompt::ChangedHostKey { .. } => panic!("unexpected changed host key"),
-        Prompt::Secret { request, .. } => panic!("unexpected question: {request:?}"),
     }
 }
 

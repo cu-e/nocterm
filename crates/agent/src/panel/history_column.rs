@@ -132,6 +132,12 @@ impl HistoryColumn {
             _bindings: vec![subscription],
         }
     }
+    pub(super) fn switch_context(&mut self, window: &mut Window, cx: &mut Context<AgentPanel>) {
+        self.rename = None;
+        self.search = SearchState::default();
+        self.input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+    }
     pub(super) fn search_requested(&self, cx: &App) -> bool {
         !self.query(cx).is_empty() || !self.search.query.is_empty()
     }

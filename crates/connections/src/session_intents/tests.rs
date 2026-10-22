@@ -103,3 +103,117 @@ fn a_typed_address_hop_signs_in_automatically_without_a_credential() {
     assert_eq!(spec.jumps[0].host.auth, nocterm_session::Auth::Auto);
     assert_eq!(spec.jumps[0].credential, None);
 }
+
+fn workspace_parent(
+    profile: &Profile,
+    via: Vec<nocterm_session::Target>,
+) -> nocterm_project_model::HostLocator {
+    nocterm_project_model::HostLocator::Ssh {
+        profile: profile.id.to_string(),
+        target: profile.target.clone(),
+        via,
+    }
+}
+
+#[test]
+fn workspace_reconnect_keeps_the_saved_authentication_and_exact_ordered_jump_route() {
+    let first = saved("first-workspace-hop", "first.example");
+    let mut second = saved("second-workspace-hop", "second.example");
+    second.jump_hosts = vec![JumpHostEntry::Profile(first.id)];
+    let mut destination = saved("workspace-destination", "destination.example");
+    destination.jump_hosts = vec![JumpHostEntry::Profile(second.id)];
+    let mut profiles = Profiles::default();
+    for profile in [&first, &second, &destination] {
+        profiles.upsert(profile.clone());
+    }
+    let expected = workspace_parent(
+        &destination,
+        vec![first.target.clone(), second.target.clone()],
+    );
+    let spec = resolve_parent_spec(&expected, &profiles).unwrap();
+    assert_eq!(spec.address().via, vec![first.target, second.target]);
+    assert_eq!(spec.auth, destination.auth);
+    assert_eq!(spec.credential, destination.credential);
+    assert_eq!(spec.jumps[0].credential, first.credential);
+    assert_eq!(spec.jumps[1].credential, second.credential);
+}
+
+#[test]
+fn workspace_reconnect_refuses_changed_destinations_and_routes_before_opening() {
+    use nocterm_workspace::ProjectConnectionError;
+    let mut destination = saved("checked-workspace-destination", "original.example");
+    let hop = nocterm_session::Target::new("ops", "hop.example", 22);
+    destination.jump_hosts = vec![JumpHostEntry::Address(hop.clone())];
+    let expected = workspace_parent(&destination, vec![hop.clone()]);
+    let mut profiles = Profiles::default();
+    let mut changed = destination.clone();
+    changed.target.host = "different.example".into();
+    profiles.upsert(changed);
+    assert!(matches!(
+        resolve_parent_spec(&expected, &profiles),
+        Err(ProjectConnectionError::ChangedTargetOrRoute)
+    ));
+    destination.jump_hosts.clear();
+    profiles.upsert(destination.clone());
+    assert!(matches!(
+        resolve_parent_spec(&expected, &profiles),
+        Err(ProjectConnectionError::ChangedTargetOrRoute)
+    ));
+    destination.jump_hosts = vec![
+        JumpHostEntry::Address(hop.clone()),
+        JumpHostEntry::Address(nocterm_session::Target::new("ops", "second.example", 22)),
+    ];
+    profiles.upsert(destination.clone());
+    let reversed = workspace_parent(
+        &destination,
+        vec![
+            nocterm_session::Target::new("ops", "second.example", 22),
+            hop,
+        ],
+    );
+    assert!(matches!(
+        resolve_parent_spec(&reversed, &profiles),
+        Err(ProjectConnectionError::ChangedTargetOrRoute)
+    ));
+}
+
+#[test]
+fn workspace_reconnect_distinguishes_removed_profiles_from_invalid_routes() {
+    use nocterm_workspace::ProjectConnectionError;
+    use std::error::Error as _;
+    let hop = saved("deleted-workspace-hop", "hop.example");
+    let mut destination = saved("deleted-workspace-destination", "destination.example");
+    destination.jump_hosts = vec![JumpHostEntry::Profile(hop.id)];
+    let expected = workspace_parent(&destination, vec![hop.target]);
+    let mut profiles = Profiles::default();
+    assert!(matches!(
+        resolve_parent_spec(&expected, &profiles),
+        Err(ProjectConnectionError::MissingProfile)
+    ));
+    profiles.upsert(destination);
+    let error = resolve_parent_spec(&expected, &profiles).err().unwrap();
+    assert!(matches!(error, ProjectConnectionError::InvalidRoute(_)));
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<JumpRouteError>()
+            .is_some()
+    );
+}
+
+#[test]
+fn saved_workspace_profile_resolution_requires_a_saved_profile() {
+    use nocterm_project_model::HostLocator;
+    use nocterm_workspace::ProjectConnectionError;
+    let direct = HostLocator::SshDirect {
+        target: nocterm_session::Target::new("ops", "manual.example", 22),
+        via: vec![],
+    };
+    assert!(matches!(
+        resolve_parent_spec(&direct, &Profiles::default()),
+        Err(ProjectConnectionError::UnsupportedHost)
+    ));
+}

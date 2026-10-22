@@ -16,13 +16,23 @@ mod background;
 mod bindings;
 mod chrome;
 mod composition;
+mod contexts;
+pub use contexts::{ContextSelectionReceipt, ContextWindowReceipt, ProjectSurfaceReceipt};
 mod docking;
+mod general_target;
 mod groups;
+pub use general_target::GeneralTerminalTarget;
 mod interaction;
 mod layout;
 mod local_dock;
 mod openers;
+mod project_surface;
 mod queries;
+pub use project_surface::{
+    ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectTerminalTarget,
+};
+pub(crate) mod surface;
+mod surfaces;
 mod tabs;
 pub use openers::SessionFactory;
 mod actions;
@@ -75,6 +85,10 @@ impl SessionSpec {
 pub enum WorkspaceEvent {
     /// Terminal membership or metadata changed.
     ItemsChanged,
+    /// One retained surface became visible; active projections now belong to it.
+    ContextChanged,
+    /// A retained surface changed while hidden; active projections stay unchanged.
+    SurfaceItemsChanged(ProjectSurfaceReceipt),
     /// Another tab became active, or the last one closed.
     ActiveItemChanged,
     /// The session behind the active tab is a different one, or changed
@@ -170,9 +184,8 @@ impl Deps {
 
 pub struct Workspace {
     focus_handle: FocusHandle,
-    tabs: tabs::Tabs,
+    surfaces: surfaces::WindowSurfaces,
     chrome: chrome::Chrome,
-    background: background::BackgroundSessions,
     sidebar: panels::Sidebar,
     right_panel: right_panel::RightPanelSlot,
     body: layout::Body,
@@ -186,9 +199,8 @@ impl Workspace {
     pub fn new(deps: Deps, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             focus_handle: cx.focus_handle(),
-            tabs: tabs::Tabs::new(window, cx),
+            surfaces: surfaces::WindowSurfaces::new(window, cx),
             chrome: chrome::Chrome::new(cx.focus_handle()),
-            background: background::BackgroundSessions::default(),
             sidebar: panels::Sidebar::default(),
             right_panel: right_panel::RightPanelSlot::default(),
             body: layout::Body::new(deps.layout),
@@ -246,18 +258,19 @@ impl Workspace {
     }
 
     fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.context_selection_receipt(cx);
         let workspace = cx.weak_entity();
         window.defer(cx, move |_, cx| {
             let _ = workspace.update(cx, |this, cx| {
-                this.show_new_tab_menu(!this.chrome.new_tab_open(), cx);
+                if this.accepts_context_selection(selection, cx) {
+                    this.show_new_tab_menu(!this.chrome.new_tab_open(), cx);
+                }
             });
         });
     }
 
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.command_item(window, cx).map(|item| item.item_id()) {
-            self.close_item_by_id(id, window, cx);
-        }
+        self.close_active_tabs(TabCloseScope::Current, window, cx);
     }
 
     fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -296,7 +309,8 @@ impl Render for Workspace {
         let root = self.actions.bind(&self.focus_handle, cx);
 
         let regions = chrome::Regions::new(
-            &self.tabs,
+            self.surfaces.frame(cx),
+            self.context_selection_receipt(cx),
             &self.sidebar,
             &self.right_panel,
             self.ports.directory(),
@@ -304,9 +318,12 @@ impl Render for Workspace {
         let body = self
             .chrome
             .render_body(&mut self.body, &regions, window, cx);
-        root.child(self.chrome.render_title_bar(cx))
-            .child(div().flex_1().min_h_0().child(body))
-            .child(self.chrome.render_footer(&regions, cx))
+        root.child(
+            self.chrome
+                .render_title_bar(self.context_selection_receipt(cx), cx),
+        )
+        .child(div().flex_1().min_h_0().child(body))
+        .child(self.chrome.render_footer(&regions, cx))
     }
 }
 

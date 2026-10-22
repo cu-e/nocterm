@@ -26,11 +26,18 @@
 //! transitions, credential candidates, output recording and per-view paint/input owners.
 //! Does not own: native transport, filesystem, vault or persistence execution.
 //! Ports: session transport and credential contracts; narrow workspace terminal capabilities.
+//! Original parent capture and ProjectTerminalOpen are narrow folder-creation
+//! ports. Folder terminals clone the original ordinary session configuration and
+//! override the initial directory; they retain normal prompts and reconnect.
 //! Settings: TerminalSettings plus SSH, local launch and recording defaults.
 //! Globals: none. Installed capabilities and the UiReady settings handle are explicit.
 //! Invariants: captured connection/prompt authority precedes effects; input is admitted
 //! exactly once before integration/lease changes; paint snapshots track presentation revisions;
 //! a jump host's prompt is answered only from that hop's own saved credential and never remembered.
+//! Every public General opener captures its original surface/window before native
+//! creation. Folder launches validate their original inner surface destination.
+//! Ordinary local opening returns the exact registered ItemId for human workspace
+//! recovery; the unchanged General factory maps it to its existing unit result.
 
 //! Settings pages: terminal, local-shell and SSH controls retain the original Installed settings.
 mod access;
@@ -52,7 +59,10 @@ mod terminal;
 mod view;
 
 use gpui_kit::{Action as _, App, Context, KeyBinding, NoAction, Unbind, Window, prelude::*};
+use nocterm_workspace::ContextSelectionError;
 use nocterm_workspace::{ProgramSpec, SessionSpec, Workspace};
+mod project;
+pub use project::{local_project_session, project_session, project_terminal_opener};
 
 pub use terminal::{FindState, Status, Terminal, TerminalEvent};
 pub use view::TerminalView;
@@ -85,16 +95,24 @@ pub const KEY_CONTEXT: &str = "Terminal";
 /// The screen itself; authentication inputs keep normal form navigation.
 pub(crate) const SCREEN_KEY_CONTEXT: &str = "TerminalScreen";
 
-/// Opens a shell in the requested live workspace pane.
+/// Opens a General shell in the requested original outer pane or local dock.
 pub fn open_local(
     installed: &Installed,
     workspace: &mut Workspace,
     target: nocterm_workspace::LocalTerminalTarget,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Result<gpui_kit::EntityId, ContextSelectionError> {
+    let origin = workspace.general_terminal_target(window, cx)?;
+    if let nocterm_workspace::LocalTerminalTarget::Beside(anchor) = target
+        && workspace.tab_location(anchor, cx).is_none()
+    {
+        return Err(ContextSelectionError::StaleSurface);
+    }
     let view = cx.new(|cx| TerminalView::new_local(installed.clone(), window, cx));
-    workspace.add_local_terminal_at(view, target, window, cx);
+    let item = view.entity_id();
+    workspace.add_general_local_terminal_from(origin.selection(), view, target, window, cx)?;
+    Ok(item)
 }
 
 /// Opens `spec` without a tab.
@@ -104,9 +122,10 @@ pub fn open_background_session(
     spec: SessionSpec,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> gpui_kit::EntityId {
+) -> Result<gpui_kit::EntityId, ContextSelectionError> {
+    let origin = workspace.general_terminal_target(window, cx)?;
     let view = cx.new(|cx| TerminalView::new(installed.clone(), spec, window, cx));
-    workspace.add_background_item(view, window, cx)
+    workspace.add_general_background_from(origin.selection(), view, window, cx)
 }
 
 /// Opens a dedicated command tab without replacing the workspace's bottom shell.
@@ -116,7 +135,8 @@ pub fn open_local_command(
     command: LocalCommand,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Result<(), ContextSelectionError> {
+    let origin = workspace.general_terminal_target(window, cx)?;
     let (launch, title, transport, completion) = command.into_parts();
     let view = cx.new(|cx| {
         TerminalView::new_local_command(
@@ -129,7 +149,8 @@ pub fn open_local_command(
             cx,
         )
     });
-    workspace.add_item(view, window, cx);
+    workspace.add_general_item_from(origin.selection(), view, window, cx)?;
+    Ok(())
 }
 
 /// Opens `spec`'s program in a new tab.
@@ -139,12 +160,14 @@ pub fn open_program(
     spec: ProgramSpec,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Result<(), ContextSelectionError> {
+    let origin = workspace.general_terminal_target(window, cx)?;
     let view = cx.new(|cx| {
         let terminal = cx.new(|cx| Terminal::new_program(installed.clone(), spec, cx));
         TerminalView::with_terminal(terminal, window, cx)
     });
-    workspace.add_item(view, window, cx);
+    workspace.add_general_item_from(origin.selection(), view, window, cx)?;
+    Ok(())
 }
 
 /// Installs the transport terminals open their sessions with.
@@ -195,7 +218,7 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        open_session(&self.installed, workspace, spec, window, cx);
+        report(open_session(&self.installed, workspace, spec, window, cx));
     }
     fn open_background(
         &self,
@@ -204,13 +227,13 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<gpui_kit::EntityId> {
-        Some(open_background_session(
-            &self.installed,
-            workspace,
-            spec,
-            window,
-            cx,
-        ))
+        match open_background_session(&self.installed, workspace, spec, window, cx) {
+            Ok(id) => Some(id),
+            Err(error) => {
+                report(Err(error));
+                None
+            }
+        }
     }
     fn open_local(
         &self,
@@ -219,7 +242,7 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        open_local(&self.installed, workspace, target, window, cx);
+        report(open_local(&self.installed, workspace, target, window, cx).map(|_| ()));
     }
     fn open_program(
         &self,
@@ -228,7 +251,7 @@ impl nocterm_workspace::SessionFactory for Factory {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        open_program(&self.installed, workspace, spec, window, cx);
+        report(open_program(&self.installed, workspace, spec, window, cx));
     }
 }
 
@@ -239,10 +262,20 @@ pub fn open_session(
     spec: SessionSpec,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Result<(), ContextSelectionError> {
+    let origin = workspace.general_terminal_target(window, cx)?;
     let view = cx.new(|cx| TerminalView::new(installed.clone(), spec, window, cx));
-    workspace.add_item(view, window, cx);
+    workspace.add_general_item_from(origin.selection(), view, window, cx)?;
+    Ok(())
+}
+fn report(result: Result<(), ContextSelectionError>) {
+    if let Err(error) = result {
+        tracing::warn!(?error, "terminal opening refused");
+    }
 }
 
 mod settings_page;
 pub use settings_page::settings_pages;
+
+#[cfg(test)]
+mod opening_tests;

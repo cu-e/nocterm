@@ -81,6 +81,16 @@ pub(super) fn target_is_directory(parent: &DirectoryCapability, name: &OsStr) ->
     fs::statat(parent.file(), name, AtFlags::empty())
         .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode).is_dir())
 }
+pub(super) fn remove_file(parent: &DirectoryCapability, name: &OsStr) -> LocalResult<()> {
+    let path = parent.path.join(name);
+    if metadata(parent, name)?.is_some_and(|metadata| {
+        metadata.kind == nocterm_session::EntryKind::Directory && !metadata.is_symlink
+    }) {
+        return Err(LocalFsError::NotRegular(path));
+    }
+    fs::unlinkat(parent.file(), name, AtFlags::empty())
+        .map_err(|error| LocalFsError::from_io(path, error.into()))
+}
 // libc typedef widths vary across supported Unix platforms.
 #[allow(clippy::unnecessary_cast)]
 fn from_stat(stat: fs::Stat) -> FileMetadata {

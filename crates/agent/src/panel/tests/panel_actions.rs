@@ -25,10 +25,6 @@ pub(super) fn new_chat(fixture: &Fixture, cx: &mut TestAppContext) {
         window.click("new-agent-codex", cx);
         window.render_frame(cx);
         let thread = fixture.panel.read(cx).current().unwrap();
-        {
-            let runtime = fixture.installation.installed.runtime();
-            runtime.register_document(crate::thread::client(&thread), cx)
-        };
         thread.update(cx, |thread, cx| thread.request_activation(cx));
     })
     .unwrap();

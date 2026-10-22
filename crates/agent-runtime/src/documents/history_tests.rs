@@ -10,7 +10,11 @@ use std::{
     rc::Rc,
 };
 mod closing;
+mod contexts;
+mod local_launch;
+mod ownership;
 mod preferences;
+mod residency;
 mod usage;
 mod workspace;
 struct UnusedBridge;
@@ -39,11 +43,18 @@ struct ProbeClient {
     marker: Entity<()>,
     chat: RefCell<Arc<SharedChat>>,
     revision: Cell<u64>,
+    closed: Cell<bool>,
     events: RefCell<Vec<SessionEvent>>,
     on_saved: Option<SavedCallback>,
     on_admitted: RefCell<Option<SavedCallback>>,
+    history: Cell<Option<crate::HistoryUsage>>,
+    history_reads: Cell<usize>,
+    allow_history_eviction: Cell<bool>,
 }
 impl ProbeClient {
+    fn close(&self) {
+        self.closed.set(true);
+    }
     fn new(cx: &mut TestAppContext, chat: Arc<SharedChat>) -> Rc<Self> {
         Self::create(cx, chat, None)
     }
@@ -56,9 +67,13 @@ impl ProbeClient {
             marker: cx.new(|_| ()),
             chat: RefCell::new(chat),
             revision: Cell::new(1),
+            closed: Cell::new(false),
             events: RefCell::new(Vec::new()),
             on_saved,
             on_admitted: RefCell::new(None),
+            history: Cell::new(None),
+            history_reads: Cell::new(0),
+            allow_history_eviction: Cell::new(false),
         })
     }
 }
@@ -67,7 +82,7 @@ impl SessionClient for ProbeClient {
         self.marker.entity_id()
     }
     fn alive(&self) -> bool {
-        true
+        !self.closed.get()
     }
     fn emit(&self, event: SessionEvent, cx: &mut App) {
         let saved = matches!(&event, SessionEvent::Saved { .. });
@@ -81,17 +96,35 @@ impl SessionClient for ProbeClient {
         }
     }
     fn state(&self, _: &App) -> Option<ClientState> {
-        Some(ClientState {
-            chat_id: self.chat.borrow().id.clone(),
-            workdir: None,
-            agent_id: "codex".into(),
-            session: None,
-            busy: false,
-            leased: false,
-            activation_pending: false,
-            closing: false,
-            shown: false,
-        })
+        if self.closed.get() {
+            return None;
+        }
+        let chat = self.chat.borrow();
+        let origin = nocterm_ai::execution_origin::ExecutionOrigin::new(
+            nocterm_ai::execution_origin::ChatKey::new(chat.header.scope, chat.header.id.clone()),
+            None,
+        );
+        Some(ClientState::new(
+            origin,
+            "codex".into(),
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ))
+    }
+    fn history_usage(&self, _: &App) -> Option<crate::HistoryUsage> {
+        self.history_reads.set(self.history_reads.get() + 1);
+        self.history.get()
+    }
+    fn evict_history(&self, _: &mut App) -> bool {
+        if !self.allow_history_eviction.get() {
+            return false;
+        }
+        self.history.set(None);
+        true
     }
     fn snapshot(&self, _: &App) -> Option<Arc<SharedChat>> {
         Some(self.chat.borrow().clone())
@@ -151,31 +184,44 @@ fn runtime_with_usage_source(
     workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
 ) -> Entity<Runtime> {
     cx.update(|cx| {
-        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        let agents = nocterm_agent_directory::AgentsHandle::new(
-            nocterm_agent_providers::catalog(),
-            settings.clone(),
+        let services = runtime_services(
+            connector,
+            storage,
+            directory,
+            usage_source,
+            workdir_resolver,
             cx,
         );
-        cx.new(|cx| {
-            Runtime::new(
-                RuntimeServices {
-                    settings,
-                    agents,
-                    connector,
-                    bridge: Arc::new(UnusedBridge),
-                    storage,
-                    usage_source,
-                    workdir_resolver,
-                    workdir: directory.join("work"),
-                    terminal_auth: false,
-                    private_dirs: Vec::new(),
-                    shared_dirs: Vec::new(),
-                },
-                cx,
-            )
-        })
+        cx.new(|cx| Runtime::new(services, cx))
     })
+}
+fn runtime_services(
+    connector: Arc<ScriptedConnector>,
+    storage: AgentStorage,
+    directory: &std::path::Path,
+    usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
+    workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
+    cx: &mut App,
+) -> RuntimeServices {
+    let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+    let agents = nocterm_agent_directory::AgentsHandle::new(
+        nocterm_agent_providers::catalog(),
+        settings.clone(),
+        cx,
+    );
+    RuntimeServices {
+        settings,
+        agents,
+        connector,
+        bridge: Arc::new(UnusedBridge),
+        storage,
+        usage_source,
+        workdir_resolver,
+        workdir: directory.join("work"),
+        terminal_auth: false,
+        private_dirs: Vec::new(),
+        shared_dirs: Vec::new(),
+    }
 }
 
 fn snapshot() -> Arc<SharedChat> {
@@ -187,7 +233,7 @@ fn snapshot() -> Arc<SharedChat> {
 }
 fn admit(runtime: &Entity<Runtime>, client: Rc<ProbeClient>, cx: &mut TestAppContext) {
     runtime.update(cx, |runtime, cx| {
-        runtime.register_document(client.clone(), cx);
+        ownership::register(runtime, client.clone(), cx).unwrap();
         runtime
             .save_chat(
                 client.chat.borrow().clone(),
@@ -203,7 +249,7 @@ async fn shutdown_persists_a_dequeued_snapshot_after_its_thread_has_gone(cx: &mu
     let (runtime, _directory, repository) = fixture(cx);
     let chat = snapshot();
     let client = ProbeClient::new(cx, chat.clone());
-    let release = repository.block_next(StorageOperation::Save(chat.id.clone()));
+    let release = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
     admit(&runtime, client.clone(), cx);
     cx.run_until_parked();
     runtime.update(cx, |runtime, cx| {
@@ -215,7 +261,7 @@ async fn shutdown_persists_a_dequeued_snapshot_after_its_thread_has_gone(cx: &mu
     final_work.await;
     let saved = repository.chats();
     assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].id, chat.id);
+    assert_eq!(saved[0].header.id, chat.header.id);
     assert_eq!(saved[0].draft, chat.draft);
 }
 #[gpui::test]
@@ -225,7 +271,7 @@ async fn the_latest_queued_snapshot_wins_over_an_unacknowledged_disk_write(
     let (runtime, _directory, repository) = fixture(cx);
     let old = snapshot();
     let client = ProbeClient::new(cx, old.clone());
-    let release = repository.block_next(StorageOperation::Save(old.id.clone()));
+    let release = repository.block_next(StorageOperation::Save(old.header.id.clone()));
     admit(&runtime, client.clone(), cx);
     cx.run_until_parked();
     let mut metadata = old.metadata.clone();
@@ -251,10 +297,12 @@ async fn deleting_a_chat_overrides_its_unacknowledged_disk_write_at_shutdown(
     let (runtime, _directory, repository) = fixture(cx);
     let chat = snapshot();
     let client = ProbeClient::new(cx, chat.clone());
-    let release = repository.block_next(StorageOperation::Save(chat.id.clone()));
+    let release = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
     admit(&runtime, client, cx);
     cx.run_until_parked();
-    runtime.update(cx, |runtime, cx| runtime.delete_chat(chat.id.clone(), cx));
+    runtime.update(cx, |runtime, cx| {
+        runtime.delete_chat(chat.header.id.clone(), cx)
+    });
     let final_work = runtime.update(cx, |runtime, cx| runtime.shutdown(cx));
     release.send(Ok(())).unwrap();
     final_work.await;
@@ -267,17 +315,19 @@ async fn final_tombstone_waits_for_active_disk_write_and_prevents_resurrection(
     let (runtime, _directory, repository) = fixture(cx);
     let chat = snapshot();
     let client = ProbeClient::new(cx, chat.clone());
-    let release = repository.block_next(StorageOperation::Save(chat.id.clone()));
+    let release = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
     admit(&runtime, client, cx);
     cx.run_until_parked();
-    runtime.update(cx, |runtime, cx| runtime.delete_chat(chat.id.clone(), cx));
+    runtime.update(cx, |runtime, cx| {
+        runtime.delete_chat(chat.header.id.clone(), cx)
+    });
     let final_work = runtime.update(cx, |runtime, cx| runtime.shutdown(cx));
     cx.run_until_parked();
     assert!(repository.chats().is_empty());
     assert!(
         !repository
             .operations()
-            .contains(&StorageOperation::Delete(chat.id.clone()))
+            .contains(&StorageOperation::Delete(chat.header.id.clone()))
     );
     release.send(Ok(())).unwrap();
     final_work.await;
@@ -314,7 +364,7 @@ fn one_chat_failure_does_not_block_another_owner_and_new_intent_retries(cx: &mut
     let (runtime, _directory, repository) = fixture(cx);
     let first = snapshot();
     let mut second = first.metadata.clone();
-    second.id = "00000000-0000-0000-0000-000000000002".into();
+    second.header.id = "00000000-0000-0000-0000-000000000002".into();
     second.draft = Some("independent successful document".into());
     let second = Arc::new(SharedChat {
         metadata: second,
@@ -323,15 +373,15 @@ fn one_chat_failure_does_not_block_another_owner_and_new_intent_retries(cx: &mut
     let first_client = ProbeClient::new(cx, first.clone());
     let second_client = ProbeClient::new(cx, second.clone());
     repository.fail_next(
-        StorageOperation::Save(first.id.clone()),
+        StorageOperation::Save(first.header.id.clone()),
         AgentStorageError::Interrupted,
     );
     admit(&runtime, first_client.clone(), cx);
     admit(&runtime, second_client.clone(), cx);
     cx.run_until_parked();
-    assert!(repository.transcript(&first.id).is_err());
+    assert!(repository.transcript(&first.header.id).is_err());
     assert_eq!(
-        repository.transcript(&second.id).unwrap().draft,
+        repository.transcript(&second.header.id).unwrap().draft,
         second.draft
     );
     assert!(
@@ -358,7 +408,11 @@ fn one_chat_failure_does_not_block_another_owner_and_new_intent_retries(cx: &mut
     admit(&runtime, first_client.clone(), cx);
     cx.run_until_parked();
     assert_eq!(
-        repository.transcript(&first.id).unwrap().draft.as_deref(),
+        repository
+            .transcript(&first.header.id)
+            .unwrap()
+            .draft
+            .as_deref(),
         Some("new accepted intent")
     );
     assert!(
@@ -375,7 +429,7 @@ fn an_old_owner_failure_cannot_poison_its_replacement(cx: &mut TestAppContext) {
     let (runtime, _directory, repository) = fixture(cx);
     let chat = snapshot();
     let old = ProbeClient::new(cx, chat.clone());
-    let release = repository.block_next(StorageOperation::Save(chat.id.clone()));
+    let release = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
     admit(&runtime, old.clone(), cx);
     cx.run_until_parked();
     let mut latest = chat.metadata.clone();
@@ -386,6 +440,7 @@ fn an_old_owner_failure_cannot_poison_its_replacement(cx: &mut TestAppContext) {
     });
     let replacement = ProbeClient::new(cx, latest);
     replacement.revision.set(2);
+    ownership::replace(&runtime, old.id(), replacement.clone(), cx);
     admit(&runtime, replacement.clone(), cx);
     release.send(Err(AgentStorageError::Interrupted)).unwrap();
     cx.run_until_parked();
@@ -410,7 +465,11 @@ fn an_old_owner_failure_cannot_poison_its_replacement(cx: &mut TestAppContext) {
             .any(|event| matches!(event, SessionEvent::Saved { revision: 2 }))
     );
     assert_eq!(
-        repository.transcript(&chat.id).unwrap().draft.as_deref(),
+        repository
+            .transcript(&chat.header.id)
+            .unwrap()
+            .draft
+            .as_deref(),
         Some("replacement text")
     );
 }
@@ -437,12 +496,12 @@ fn publication_client_can_synchronously_retire_itself_without_reentering_worker_
             .iter()
             .any(|event| matches!(event, SessionEvent::Saved { revision: 1 }))
     );
-    assert!(repository.transcript(&snapshot().id).is_ok());
+    assert!(repository.transcript(&snapshot().header.id).is_ok());
     cx.update(|cx| {
         assert!(
             !runtime
                 .read(cx)
-                .document_is_current(&snapshot().id, client.id())
+                .document_is_current(&snapshot().header.id, client.id())
         )
     });
 }
@@ -452,7 +511,7 @@ fn an_older_failed_revision_cannot_pause_a_newer_accepted_document(cx: &mut Test
     let (runtime, _directory, repository) = fixture(cx);
     let chat = snapshot();
     let client = ProbeClient::new(cx, chat.clone());
-    let release = repository.block_next(StorageOperation::Save(chat.id.clone()));
+    let release = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
     admit(&runtime, client.clone(), cx);
     cx.run_until_parked();
     let mut metadata = chat.metadata.clone();
@@ -480,7 +539,11 @@ fn an_older_failed_revision_cannot_pause_a_newer_accepted_document(cx: &mut Test
             .any(|event| matches!(event, SessionEvent::Saved { revision: 2 }))
     );
     assert_eq!(
-        repository.transcript(&chat.id).unwrap().draft.as_deref(),
+        repository
+            .transcript(&chat.header.id)
+            .unwrap()
+            .draft
+            .as_deref(),
         Some("newer accepted text")
     );
 }
@@ -492,8 +555,8 @@ fn an_active_success_acknowledges_only_its_revision_while_the_newer_write_waits(
     let (runtime, _directory, repository) = fixture(cx);
     let chat = snapshot();
     let client = ProbeClient::new(cx, chat.clone());
-    let first = repository.block_next(StorageOperation::Save(chat.id.clone()));
-    let second = repository.block_next(StorageOperation::Save(chat.id.clone()));
+    let first = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
+    let second = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
     admit(&runtime, client.clone(), cx);
     cx.run_until_parked();
     let mut metadata = chat.metadata.clone();
@@ -506,7 +569,10 @@ fn an_active_success_acknowledges_only_its_revision_while_the_newer_write_waits(
     admit(&runtime, client.clone(), cx);
     first.send(Ok(())).unwrap();
     cx.run_until_parked();
-    assert_eq!(repository.transcript(&chat.id).unwrap().draft, chat.draft);
+    assert_eq!(
+        repository.transcript(&chat.header.id).unwrap().draft,
+        chat.draft
+    );
     assert_eq!(
         client
             .events
@@ -523,7 +589,11 @@ fn an_active_success_acknowledges_only_its_revision_while_the_newer_write_waits(
     second.send(Ok(())).unwrap();
     cx.run_until_parked();
     assert_eq!(
-        repository.transcript(&chat.id).unwrap().draft.as_deref(),
+        repository
+            .transcript(&chat.header.id)
+            .unwrap()
+            .draft
+            .as_deref(),
         Some("newer desired document"),
     );
     assert_eq!(
@@ -547,8 +617,8 @@ fn an_old_owner_success_cannot_acknowledge_its_replacements_blocked_document(
     let (runtime, _directory, repository) = fixture(cx);
     let chat = snapshot();
     let old = ProbeClient::new(cx, chat.clone());
-    let first = repository.block_next(StorageOperation::Save(chat.id.clone()));
-    let second = repository.block_next(StorageOperation::Save(chat.id.clone()));
+    let first = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
+    let second = repository.block_next(StorageOperation::Save(chat.header.id.clone()));
     admit(&runtime, old.clone(), cx);
     cx.run_until_parked();
     let mut metadata = chat.metadata.clone();
@@ -561,10 +631,14 @@ fn an_old_owner_success_cannot_acknowledge_its_replacements_blocked_document(
         }),
     );
     replacement.revision.set(2);
+    ownership::replace(&runtime, old.id(), replacement.clone(), cx);
     admit(&runtime, replacement.clone(), cx);
     first.send(Ok(())).unwrap();
     cx.run_until_parked();
-    assert_eq!(repository.transcript(&chat.id).unwrap().draft, chat.draft);
+    assert_eq!(
+        repository.transcript(&chat.header.id).unwrap().draft,
+        chat.draft
+    );
     assert!(
         old.events
             .borrow()
@@ -599,7 +673,11 @@ fn an_old_owner_success_cannot_acknowledge_its_replacements_blocked_document(
         [2],
     );
     assert_eq!(
-        repository.transcript(&chat.id).unwrap().draft.as_deref(),
+        repository
+            .transcript(&chat.header.id)
+            .unwrap()
+            .draft
+            .as_deref(),
         Some("replacement desired document"),
     );
 }
@@ -626,7 +704,10 @@ fn a_delayed_offer_cannot_replace_an_already_admitted_newer_revision(cx: &mut Te
         "revision one cannot revoke an already admitted revision two"
     );
     cx.run_until_parked();
-    assert_eq!(repository.transcript(&old.id).unwrap().draft, latest.draft);
+    assert_eq!(
+        repository.transcript(&old.header.id).unwrap().draft,
+        latest.draft
+    );
     assert!(!client.events.borrow().iter().any(|event| matches!(
         event,
         SessionEvent::SaveAdmitted { revision: 1 } | SessionEvent::Saved { revision: 1 }
@@ -645,7 +726,7 @@ async fn stale_closing_capture_preserves_the_newer_writer_owned_candidate(cx: &m
         queue: Vec::new(),
     });
     runtime.update(cx, |runtime, cx| {
-        runtime.register_document(client.clone(), cx);
+        ownership::register(runtime, client.clone(), cx).unwrap();
         assert!(
             runtime
                 .save_chat(latest.clone(), client.id(), 2, cx)
@@ -654,7 +735,10 @@ async fn stale_closing_capture_preserves_the_newer_writer_owned_candidate(cx: &m
     });
     let final_work = runtime.update(cx, |runtime, cx| runtime.capture_shutdown(cx));
     final_work.await.unwrap();
-    assert_eq!(repository.transcript(&old.id).unwrap().draft, latest.draft);
+    assert_eq!(
+        repository.transcript(&old.header.id).unwrap().draft,
+        latest.draft
+    );
 }
 
 #[gpui::test]
@@ -671,7 +755,7 @@ fn a_detached_capture_acknowledges_its_original_client_outside_the_runtime_borro
         observed.set(true);
     }));
     runtime.update(cx, |runtime, cx| {
-        runtime.register_document(client.clone(), cx);
+        ownership::register(runtime, client.clone(), cx).unwrap();
         assert!(
             runtime
                 .capture_and_detach_document(client.id(), cx)
@@ -692,7 +776,7 @@ fn a_detached_capture_acknowledges_its_original_client_outside_the_runtime_borro
             .any(|event| matches!(event, SessionEvent::SaveAdmitted { revision: 1 }))
     );
     assert_eq!(
-        repository.transcript(&snapshot().id).unwrap().draft,
+        repository.transcript(&snapshot().header.id).unwrap().draft,
         snapshot().draft
     );
 }

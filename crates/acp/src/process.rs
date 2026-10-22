@@ -22,7 +22,6 @@ pub(crate) struct Spawned {
     pub secrets: Arc<Vec<String>>,
 }
 
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(crate) fn spawn(
     request: &ConnectRequest,
     helper: Option<&Path>,
@@ -32,20 +31,7 @@ pub(crate) fn spawn(
         std::env::vars_os()
             .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))),
     );
-    let mut secret_values: Vec<String> = env
-        .iter()
-        .filter(|(name, _)| {
-            ["KEY", "TOKEN", "PASSWORD", "SECRET", "PROXY"]
-                .iter()
-                .any(|term| name.to_uppercase().contains(term))
-        })
-        .map(|(_, value)| value.clone())
-        .chain(request.launch.env.values().cloned())
-        .filter(|value| value.len() >= 4)
-        .collect();
-    secret_values.sort_by_key(|value| std::cmp::Reverse(value.len()));
-    secret_values.dedup();
-    let secrets = Arc::new(secret_values);
+    let secrets = secret_values(request, &env);
     let executable = resolve(&request.launch.command, &env, &request.working_directory)
         .ok_or_else(|| {
             AgentError::Io(nocterm_ai::redact::redact(&format!(
@@ -84,6 +70,24 @@ pub(crate) fn spawn(
     }
     #[cfg(not(target_os = "linux"))]
     command.args(&process_args);
+    let child = spawn_child(command, request, env)?;
+    let group = Arc::new(ProcessGroup::new(
+        child.id(),
+        #[cfg(target_os = "linux")]
+        managed,
+    ));
+    Ok(Spawned {
+        child,
+        group,
+        secrets,
+    })
+}
+
+fn spawn_child(
+    mut command: std::process::Command,
+    request: &ConnectRequest,
+    env: BTreeMap<String, String>,
+) -> Result<async_process::Child, AgentError> {
     command
         .env_clear()
         .envs(env)
@@ -96,7 +100,7 @@ pub(crate) fn spawn(
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
-    let child = async_process::Command::from(command)
+    async_process::Command::from(command)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -105,17 +109,24 @@ pub(crate) fn spawn(
         .map_err(|source| match &request.sandbox {
             Some(_) => AgentError::Sandbox(nocterm_ai::sandbox::SandboxLaunchError::spawn(source)),
             None => AgentError::Io(format!("Cannot start agent: {source}")),
-        })?;
-    let group = Arc::new(ProcessGroup::new(
-        child.id(),
-        #[cfg(target_os = "linux")]
-        managed,
-    ));
-    Ok(Spawned {
-        child,
-        group,
-        secrets,
-    })
+        })
+}
+
+fn secret_values(request: &ConnectRequest, env: &BTreeMap<String, String>) -> Arc<Vec<String>> {
+    let mut values: Vec<_> = env
+        .iter()
+        .filter(|(name, _)| {
+            ["KEY", "TOKEN", "PASSWORD", "SECRET", "PROXY"]
+                .iter()
+                .any(|term| name.to_uppercase().contains(term))
+        })
+        .map(|(_, value)| value.clone())
+        .chain(request.launch.env.values().cloned())
+        .filter(|value| value.len() >= 4)
+        .collect();
+    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    values.dedup();
+    Arc::new(values)
 }
 
 fn resolve(

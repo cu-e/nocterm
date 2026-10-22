@@ -6,7 +6,8 @@ use crate::{
     TerminalInfo, TerminalState, TerminalStatus, Workspace,
 };
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, Window, div, prelude::*,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
+    Window, div, prelude::*,
 };
 use nocterm_session::RemoteFs;
 use std::{rc::Rc, sync::Arc};
@@ -17,6 +18,7 @@ pub struct SessionProbe {
     connected: bool,
     fs: Option<Arc<dyn RemoteFs>>,
     generation: u64,
+    parent: Option<Rc<dyn nocterm_workspace_ports::ProjectParentCapture>>,
 }
 #[derive(Debug, thiserror::Error)]
 #[error("test session generation is exhausted")]
@@ -31,13 +33,31 @@ impl SessionProbe {
         fs: Option<Arc<dyn RemoteFs>>,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        Self::from_app(spec, connected, fs, cx)
+    }
+    /// Compose the same Item from a narrow opening port, without a Workspace borrow.
+    pub fn from_app(
+        spec: SessionSpec,
+        connected: bool,
+        fs: Option<Arc<dyn RemoteFs>>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         cx.new(|cx| Self {
             focus: cx.focus_handle(),
             spec,
             connected,
             fs,
             generation: 0,
+            parent: None,
         })
+    }
+    pub fn set_project_parent(
+        &mut self,
+        parent: Rc<dyn nocterm_workspace_ports::ProjectParentCapture>,
+        cx: &mut Context<Self>,
+    ) {
+        self.parent = Some(parent);
+        cx.emit(ItemEvent::Changed);
     }
     pub fn set_connected(
         &mut self,
@@ -109,11 +129,43 @@ impl Item for SessionProbe {
     }
     fn terminal_capabilities(&self, owner: WeakEntity<Self>) -> Option<TerminalCapabilities> {
         let state = Rc::new(ProbeState { owner });
-        Some(TerminalCapabilities::new(state.clone()).with_fact_session(state))
+        Some(
+            TerminalCapabilities::new(state.clone())
+                .with_fact_session(state.clone())
+                .with_project_parent(state),
+        )
     }
 }
 struct ProbeState {
     owner: WeakEntity<SessionProbe>,
+}
+impl nocterm_workspace_ports::ProjectParentCapture for ProbeState {
+    fn capture(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<
+        nocterm_workspace_ports::ProjectCreationSource,
+        nocterm_workspace_ports::ProjectParentError,
+    > {
+        use nocterm_workspace_ports::ProjectParentError;
+        let owner = self
+            .owner
+            .upgrade()
+            .ok_or(ProjectParentError::Disconnected)?;
+        let probe = owner.read(cx);
+        if expected != ExpectedSession::new(owner.entity_id(), probe.generation) {
+            return Err(ProjectParentError::StaleSession);
+        }
+        if !probe.connected {
+            return Err(ProjectParentError::Disconnected);
+        }
+        probe
+            .parent
+            .as_ref()
+            .ok_or(ProjectParentError::Disconnected)?
+            .capture(expected, cx)
+    }
 }
 impl crate::ConnectionFactSession for ProbeState {
     fn current(&self, cx: &App) -> Option<crate::FactSessionSnapshot> {
@@ -155,3 +207,9 @@ impl TerminalState for ProbeState {
         })
     }
 }
+
+mod project_terminal;
+pub use project_terminal::ProjectTerminalProbe;
+
+mod project_surface;
+pub use project_surface::ProjectSurfaceProbe;

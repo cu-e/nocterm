@@ -34,14 +34,7 @@ use std::{
     },
 };
 
-fn activate_thread(
-    thread: &Entity<crate::thread::AgentThread>,
-    installed: &crate::Installed,
-    cx: &mut App,
-) {
-    installed
-        .runtime()
-        .register_document(crate::thread::client(thread), cx);
+fn activate_thread(thread: &Entity<crate::thread::AgentThread>, cx: &mut App) {
     thread.update(cx, |thread, cx| thread.request_activation(cx));
 }
 
@@ -307,16 +300,23 @@ impl HostEnvironment {
         &self,
         workspace: gpui_kit::WeakEntity<Workspace>,
         installed: crate::Installed,
+        source: nocterm_workspace::ProjectSurfaceReceipt,
     ) -> crate::chat_host::ChatHost {
-        crate::chat_host::ChatHost::new(workspace, installed)
+        crate::chat_host::ChatHost::new(workspace, installed, source).unwrap()
     }
     /// What chats hosted by `workspace` receive.
     fn deps(
         &self,
         workspace: gpui_kit::WeakEntity<Workspace>,
         installed: crate::Installed,
+        cx: &App,
     ) -> crate::chat_deps::ChatDeps {
-        self.host(workspace, installed).deps().clone()
+        let source = workspace
+            .upgrade()
+            .unwrap()
+            .read(cx)
+            .general_surface_source(cx);
+        self.host(workspace, installed, source).deps().clone()
     }
 }
 
@@ -455,8 +455,13 @@ fn fixture_with_width(
                         terminal = Some(item.entity_id());
                         workspace.add_item(item, window, cx);
                         let owner = cx.entity().downgrade();
+                        let source = workspace.general_surface_source(cx);
                         let view = cx.new(|cx| {
-                            AgentPanel::new(directory.host(owner, installed.clone()), window, cx)
+                            AgentPanel::new(
+                                directory.host(owner, installed.clone(), source),
+                                window,
+                                cx,
+                            )
                         });
                         workspace.set_right_panel(view.clone(), window, cx);
                         workspace.set_right_panel_available(true, window, cx);
@@ -546,8 +551,11 @@ fn install_fixture(
         .update_window(f.handle, |_, window, cx| {
             let panel = cx.new(|cx| {
                 AgentPanel::new(
-                    f._directory
-                        .host(f.workspace.downgrade(), f.installation.installed.clone()),
+                    f._directory.host(
+                        f.workspace.downgrade(),
+                        f.installation.installed.clone(),
+                        f.workspace.read(cx).context_source(cx),
+                    ),
                     window,
                     cx,
                 )
@@ -655,6 +663,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 mod approvals;
 mod bridge_outcomes;
 mod composer;
+mod context_rosters;
 mod durable_config;
 mod hermes;
 mod history;
@@ -670,6 +679,7 @@ mod reconnect;
 mod resources;
 mod restoration;
 mod routing;
+mod seat_binding;
 mod servers;
 mod tool_corpus;
 mod tool_input;
@@ -735,7 +745,7 @@ fn restore_entries(
     chat.entries = entries;
     chat.times.clear();
     f.repository.seed_chat(&chat).unwrap();
-    thread.restore_content(chat);
+    thread.restore_content(chat, cx).unwrap();
     thread.preview_config(cx);
     for row in 0..thread.history_entries().len() {
         thread.mark_dirty(row);
@@ -750,7 +760,7 @@ fn restore_pending_history(
     let mut chat = restored_projection(thread, cx);
     chat.pending_history = true;
     f.repository.seed_chat(&chat).unwrap();
-    thread.restore_content(chat);
+    thread.restore_content(chat, cx).unwrap();
     thread.preview_config(cx);
     cx.notify();
 }

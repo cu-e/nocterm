@@ -19,6 +19,7 @@ mod chat_history;
 mod keymap;
 mod menu_tabs;
 mod program_opening;
+mod project_workspaces;
 mod secret_prompts;
 mod shortcuts;
 mod snippets;
@@ -198,7 +199,7 @@ fn fixture_with_settings(
                 workspace.update(cx, |workspace, cx| {
                     workspace.open_session(spec("first.test"), window, cx)
                 });
-                workspace.read(cx).find_item::<TerminalView>().unwrap()
+                workspace.read(cx).find_item::<TerminalView>(cx).unwrap()
             })
             .unwrap();
         (
@@ -316,9 +317,12 @@ fn boot_with_ports_and_probe(
             settings,
             persist: false,
             connections: crate::connection_setup::memory(),
-            transport,
-            local,
-            local_host,
+            projects: crate::project_setup::PreparedProjectSetup::memory(),
+            hosts: crate::bootstrap::HostServices {
+                transport,
+                local,
+                local_host,
+            },
             terminal_auth_factory: None,
             files,
             themes,
@@ -340,6 +344,7 @@ fn boot_with_ports_and_probe(
                     )),
                     Arc::new(nocterm_agent_storage::FileChatRepository::new(
                         paths.state_dir().join("agent-chats"),
+                        Arc::new(nocterm_localfs::LocalFilesystem::new().unwrap()),
                     )),
                 )),
                 workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
@@ -447,7 +452,7 @@ fn transfers_action_uses_installed_queue_before_explorer_opens(cx: &mut TestAppC
         assert_eq!(
             workspace
                 .read(cx)
-                .active_item()
+                .active_item(cx)
                 .unwrap()
                 .tab_title(cx)
                 .as_ref(),
@@ -460,7 +465,7 @@ fn transfers_action_uses_installed_queue_before_explorer_opens(cx: &mut TestAppC
     workspace.read_with(cx, |workspace, cx| {
         assert_eq!(
             workspace
-                .items()
+                .items(cx)
                 .filter(|item| item.tab_title(cx).as_ref() == "Transfers")
                 .count(),
             1
@@ -521,7 +526,7 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     cx.update_window(window, |_, window, cx| {
         let settings = workspace
             .read(cx)
-            .find_item::<nocterm_settings_ui::SettingsView>()
+            .find_item::<nocterm_settings_ui::SettingsView>(cx)
             .unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "ai");
         policy

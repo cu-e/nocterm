@@ -87,7 +87,7 @@ fn shutdown_saves_a_dormant_chat_without_an_agent_connection(cx: &mut TestAppCon
         "00000000-0000-4000-8000-00000000006b".into(),
         1,
     );
-    let id = saved.id.clone();
+    let id = saved.header.id.clone();
     saved.draft = Some("saved text".into());
     adopt(&mut f, saved, cx);
     let shutdown = cx.update(|cx| {
@@ -115,7 +115,7 @@ fn shutdown_saves_edits_after_the_saved_provider_is_no_longer_configured(cx: &mu
         "00000000-0000-4000-8000-00000000006c".into(),
         1,
     );
-    let id = saved.id.clone();
+    let id = saved.header.id.clone();
     saved.draft = Some("previous text".into());
     adopt(&mut f, saved, cx);
     let thread = cx.update(|cx| f.panel.read(cx).chat_documents().next().unwrap().clone());
@@ -147,7 +147,7 @@ fn unsent_history_survives_reopen_and_slash_only_then_clears_on_disk(cx: &mut Te
         let thread = f.panel.read(cx).current().unwrap();
         thread.read(cx).snapshot(cx).unwrap()
     });
-    let id = saved.id.clone();
+    let id = saved.header.id.clone();
     f.commands
         .restore_errors
         .lock()

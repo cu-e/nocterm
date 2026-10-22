@@ -3,14 +3,13 @@
 //! Hop `A` is the jump host and `B` the destination, both real `sshd`s. Every
 //! hop is signed in with `A`'s plain key, so `B` authorizes it.
 use super::*;
-use nocterm_session::{ExecRequest, JumpHost, PromptHop, ProxyConfig};
-use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
-    net::{TcpListener as AsyncListener, TcpStream as AsyncStream},
-};
+use nocterm_session::{ExecRequest, JumpHost, PromptHop};
+#[path = "../support/relay.rs"]
+mod relay;
+use relay::{proxy_listener, relay_to};
 
 fn target_of(sshd: &Sshd) -> Target {
-    Target::new(current_user(), "127.0.0.1", sshd.port)
+    Target::new(current_user(), "127.0.0.1", sshd.port())
 }
 
 fn jump_to(sshd: &Sshd) -> JumpHost {
@@ -30,40 +29,6 @@ fn chain(jump_config: &str) -> Option<(Sshd, Sshd, ConnectRequest)> {
     Some((jump, destination, request))
 }
 
-/// An HTTP CONNECT proxy for one connection to `port`. It resolves with the
-/// CONNECT line once that connection has ended.
-fn relay_to(port: u16, listener: AsyncListener) -> tokio::task::JoinHandle<String> {
-    tokio::spawn(async move {
-        let (mut incoming, _) = listener.accept().await.unwrap();
-        let mut header = Vec::new();
-        while !header.ends_with(b"\r\n\r\n") {
-            header.push(incoming.read_u8().await.unwrap());
-        }
-        incoming
-            .write_all(b"HTTP/1.1 200 OK\r\n\r\n")
-            .await
-            .unwrap();
-        let mut outgoing = AsyncStream::connect(("127.0.0.1", port)).await.unwrap();
-        let _ = tokio::io::copy_bidirectional(&mut incoming, &mut outgoing).await;
-        String::from_utf8(header)
-            .unwrap()
-            .lines()
-            .next()
-            .unwrap()
-            .to_owned()
-    })
-}
-
-async fn proxy_listener() -> (AsyncListener, ProxyConfig) {
-    let listener = AsyncListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let proxy = ProxyConfig::HttpConnect {
-        host: "127.0.0.1".into(),
-        port,
-    };
-    (listener, proxy)
-}
-
 /// Remembers every host key asked about, with the hop it was asked for.
 fn remember_all(asked: &mut Vec<(Option<PromptHop>, String)>) -> impl FnMut(Prompt) + '_ {
     |prompt| match prompt {
@@ -78,13 +43,121 @@ fn remember_all(asked: &mut Vec<(Option<PromptHop>, String)>) -> impl FnMut(Prom
 }
 
 #[tokio::test]
+async fn an_ordinary_direct_session_starts_in_a_literal_folder_with_spaces_and_an_apostrophe() {
+    ordinary_folder(0).await;
+}
+
+#[tokio::test]
+async fn an_ordinary_one_jump_session_starts_in_its_destination_folder() {
+    ordinary_folder(1).await;
+}
+
+#[tokio::test]
+async fn an_ordinary_two_jump_session_preserves_route_order_and_its_destination_folder() {
+    ordinary_folder(2).await;
+}
+
+async fn ordinary_folder(hops: usize) {
+    let mut servers = Vec::new();
+    for _ in 0..=hops {
+        let Some(server) = Sshd::start() else { return };
+        servers.push(server);
+    }
+    let first = &servers[0];
+    for server in &servers[1..] {
+        server.authorize(first);
+    }
+    let destination = servers.last().unwrap();
+    let folder = destination.root().join("ordinary folder's code");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("inside.txt"), b"inside").unwrap();
+    fs::write(destination.root().join("outside.txt"), b"outside").unwrap();
+    let mut request = destination.request();
+    request.jumps = servers[..hops].iter().map(jump_to).collect();
+    request.launch = nocterm_session::ShellLaunch {
+        program: Some("/bin/sh".into()),
+        args: vec!["-c".into(), "printf 'cwd=%s\\n' \"$(pwd -P)\"; printf 'destination=%s\\n' \"$SSH_CONNECTION\"; printf ordinary-folder-ready; exec /bin/sh".into()],
+        cwd: Some(folder.to_str().unwrap().into()),
+        integration: false,
+        ..Default::default()
+    };
+    let relay = if hops > 0 {
+        let (listener, proxy) = proxy_listener().await;
+        request.proxy = proxy;
+        Some(relay_to(first.port(), listener))
+    } else {
+        None
+    };
+    let transport = first.transport("plain");
+    let session = transport.open(request);
+    let mut asked = Vec::new();
+    connect(&session, remember_all(&mut asked)).await;
+    let expected: Vec<_> = servers
+        .iter()
+        .enumerate()
+        .map(|(index, server)| {
+            (
+                (index < hops).then(|| PromptHop {
+                    index,
+                    target: target_of(server),
+                }),
+                server.host_label(),
+            )
+        })
+        .collect();
+    assert_eq!(asked, expected);
+    assert_ordinary_folder(&session, destination, &folder).await;
+    if let Some(relay) = relay {
+        assert_eq!(
+            timeout(Duration::from_secs(2), relay)
+                .await
+                .unwrap()
+                .unwrap(),
+            format!("CONNECT 127.0.0.1:{} HTTP/1.1", first.port())
+        );
+    }
+}
+
+async fn assert_ordinary_folder(session: &Session, destination: &Sshd, folder: &Path) {
+    let output = output_containing(session, "ordinary-folder-ready").await;
+    let physical = fs::canonicalize(folder).unwrap();
+    assert!(
+        output.contains(&format!("cwd={}", physical.display())),
+        "{output:?}"
+    );
+    assert!(
+        output.contains(&format!("127.0.0.1 {}", destination.port())),
+        "{output:?}"
+    );
+    let files = session.fs().unwrap();
+    assert!(
+        files
+            .read_dir(folder.to_str().unwrap())
+            .await
+            .unwrap()
+            .iter()
+            .any(|entry| entry.name == "inside.txt")
+    );
+    assert!(
+        files
+            .read_dir(destination.root().to_str().unwrap())
+            .await
+            .unwrap()
+            .iter()
+            .any(|entry| entry.name == "outside.txt")
+    );
+    session.close();
+    assert_eq!(closed(session, no_prompts).await, CloseReason::ClosedByUser);
+}
+
+#[tokio::test]
 async fn chain_reaches_the_destination_for_terminal_files_and_programs() {
     let Some((jump, destination, mut request)) = chain("") else {
         return;
     };
     let (listener, proxy) = proxy_listener().await;
     request.proxy = proxy;
-    let relay = relay_to(jump.port, listener);
+    let relay = relay_to(jump.port(), listener);
 
     let transport = jump.transport("plain");
     let session = transport.open(request);
@@ -105,7 +178,7 @@ async fn chain_reaches_the_destination_for_terminal_files_and_programs() {
     );
 
     session.input("printf 'conn=%s\\n' \"$SSH_CONNECTION\"\r");
-    output_containing(&session, &format!("127.0.0.1 {}", destination.port)).await;
+    output_containing(&session, &format!("127.0.0.1 {}", destination.port())).await;
     assert!(session.fs().unwrap().home().await.unwrap().starts_with('/'));
     let program = ExecRequest::new("sh")
         .arg("-c")
@@ -121,7 +194,7 @@ async fn chain_reaches_the_destination_for_terminal_files_and_programs() {
     assert!(
         collected
             .text()
-            .contains(&format!("127.0.0.1 {}", destination.port))
+            .contains(&format!("127.0.0.1 {}", destination.port()))
     );
 
     let recorded = fs::read_to_string(jump.root().join("known_hosts")).unwrap();
@@ -136,7 +209,7 @@ async fn chain_reaches_the_destination_for_terminal_files_and_programs() {
         .unwrap();
     assert_eq!(
         connect_line,
-        format!("CONNECT 127.0.0.1:{} HTTP/1.1", jump.port)
+        format!("CONNECT 127.0.0.1:{} HTTP/1.1", jump.port())
     );
 }
 
@@ -163,7 +236,7 @@ async fn closing_the_session_closes_every_hop() {
     };
     let (listener, proxy) = proxy_listener().await;
     request.proxy = proxy;
-    let relay = relay_to(jump.port, listener);
+    let relay = relay_to(jump.port(), listener);
     let transport = jump.transport("plain");
     let session = transport.open(request);
     connect(&session, accept).await;
@@ -225,7 +298,7 @@ async fn cancelling_at_a_later_hop_prompt_closes_earlier_hops() {
     };
     second.authorize(&first);
     let (listener, proxy) = proxy_listener().await;
-    let relay = relay_to(first.port, listener);
+    let relay = relay_to(first.port(), listener);
     // The route is first, second, first: the second hop's key is the open question.
     let mut request = first.request();
     request.jumps = vec![jump_to(&first), jump_to(&second)];
@@ -301,7 +374,7 @@ async fn a_chain_of_two_jump_hosts_labels_each_hop_and_reaches_the_destination()
     second.authorize(&first);
     destination.authorize(&first);
     let (listener, proxy) = proxy_listener().await;
-    let relay = relay_to(first.port, listener);
+    let relay = relay_to(first.port(), listener);
     let mut request = destination.request();
     request.jumps = vec![jump_to(&first), jump_to(&second)];
     request.proxy = proxy;
@@ -320,7 +393,7 @@ async fn a_chain_of_two_jump_hosts_labels_each_hop_and_reaches_the_destination()
     );
 
     session.input("printf 'conn=%s\\n' \"$SSH_CONNECTION\"\r");
-    output_containing(&session, &format!("127.0.0.1 {}", destination.port)).await;
+    output_containing(&session, &format!("127.0.0.1 {}", destination.port())).await;
     session.close();
     assert_eq!(
         closed(&session, no_prompts).await,
@@ -332,7 +405,7 @@ async fn a_chain_of_two_jump_hosts_labels_each_hop_and_reaches_the_destination()
         .unwrap();
     assert_eq!(
         connect_line,
-        format!("CONNECT 127.0.0.1:{} HTTP/1.1", first.port)
+        format!("CONNECT 127.0.0.1:{} HTTP/1.1", first.port())
     );
 }
 
@@ -348,7 +421,7 @@ async fn forwarding_disabled_on_a_later_jump_host_is_reported_against_that_hop()
     second.authorize(&first);
     destination.authorize(&first);
     let (listener, proxy) = proxy_listener().await;
-    let relay = relay_to(first.port, listener);
+    let relay = relay_to(first.port(), listener);
     let mut request = destination.request();
     request.jumps = vec![jump_to(&first), jump_to(&second)];
     request.proxy = proxy;
@@ -463,7 +536,7 @@ async fn losing_the_connection_to_the_first_jump_host_ends_the_session() {
     };
     let (listener, proxy) = proxy_listener().await;
     request.proxy = proxy;
-    let relay = relay_to(jump.port, listener);
+    let relay = relay_to(jump.port(), listener);
     let transport = jump.transport("plain");
     let session = transport.open(request);
     connect(&session, accept).await;
@@ -485,7 +558,7 @@ async fn cancelling_at_the_first_jump_host_prompt_disconnects_from_it() {
         return;
     };
     let (listener, proxy) = proxy_listener().await;
-    let relay = relay_to(jump.port, listener);
+    let relay = relay_to(jump.port(), listener);
     request.proxy = proxy;
     let transport = jump.transport("plain");
     let session = transport.open(request);

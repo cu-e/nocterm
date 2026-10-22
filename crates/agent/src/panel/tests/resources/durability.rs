@@ -48,10 +48,13 @@ fn shutdown_is_durable_even_if_its_task_is_dropped_and_old_writes_are_pending(
     shutdown_runtime(&f.installation.installed, cx);
     let read = || f.repository.chats();
     assert_eq!(read().len(), 1);
-    assert_eq!(read()[0].name.as_deref(), Some("latest unsaved document"));
+    assert_eq!(
+        read()[0].header.name.as_deref(),
+        Some("latest unsaved document")
+    );
     cx.run_until_parked();
     assert_eq!(
-        read()[0].name.as_deref(),
+        read()[0].header.name.as_deref(),
         Some("latest unsaved document"),
         "a stale background snapshot overwrote synchronous quit persistence"
     );

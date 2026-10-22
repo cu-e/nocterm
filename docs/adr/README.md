@@ -62,3 +62,8 @@ acceptance; a later record supersedes an earlier one.
 | [0061](0061-agent-profiles-and-directory.md) | Agent profiles, an injected catalog and one directory of available agents |
 | [0062](0062-terminal-contracts-below-the-workspace.md) | Terminal and connection contracts live below the window shell |
 | [0063](0063-agent-chats-below-the-panel.md) | Agent chats live in a service crate below the panel |
+| [0065](0065-retained-context-surfaces.md) | Context surfaces retain their native dock and original callback authority (whole-window selection superseded by0067) |
+| [0066](0066-scoped-chat-storage.md) | Scoped chat authority precedes payload discovery in versioned storage |
+| [0067](0067-project-tabs-with-inner-surfaces.md) | Workspaces are outer connection tabs with independent inner terminal surfaces |
+| [0069](0069-workspace-chat-launch-boundary.md) | Workspace chat scope preserves the existing local agent launch lifecycle |
+| [0070](0070-original-workspace-connection-recovery.md) | Workspace authentication belongs to its inner terminal |

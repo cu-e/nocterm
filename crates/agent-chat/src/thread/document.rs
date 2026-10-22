@@ -4,6 +4,7 @@ use nocterm_ai::model::content::Content;
 use nocterm_ai::model::session::SessionUpdate;
 use nocterm_ai::model::usage::TokenTotals;
 use nocterm_ai::{
+    execution_origin::ChatKey,
     history::{HistoryCodecError, SavedChat, SharedChat},
     thread::{Entry, ThreadChange, ThreadState},
 };
@@ -35,14 +36,21 @@ pub(super) struct DocumentRestart {
     persistence: PersistenceState,
 }
 impl DocumentRestart {
+    pub(super) fn key(&self) -> &ChatKey {
+        self.identity.key()
+    }
     pub(super) fn agent_id(&self) -> &str {
         self.identity.agent()
     }
 }
 impl ChatDocument {
-    pub(super) fn new(agent: String, id: String, updated: u64) -> Self {
+    pub(super) fn new(agent: String, key: ChatKey, updated: u64) -> Self {
         Self {
-            identity: Identity::new(agent, id),
+            identity: Identity::new(
+                agent,
+                key,
+                nocterm_ai::history::TranscriptVersion::SCOPED.wire(),
+            ),
             metadata: Metadata::new(updated),
             transcript: Transcript::default(),
             persistence: PersistenceState::default(),
@@ -54,7 +62,7 @@ impl ChatDocument {
     pub(super) fn restarted(data: DocumentRestart) -> Self {
         let mut document = Self::new(
             data.identity.agent().into(),
-            data.identity.id().into(),
+            data.identity.key().clone(),
             data.metadata.updated(),
         );
         document.hydrate_restart(data);
@@ -65,6 +73,9 @@ impl ChatDocument {
     }
     pub fn agent_id(&self) -> &str {
         self.identity.agent()
+    }
+    pub fn key(&self) -> &ChatKey {
+        self.identity.key()
     }
     pub fn chat_id(&self) -> &str {
         self.identity.id()
@@ -110,13 +121,22 @@ impl ChatDocument {
         self.metadata.timestamp(now);
     }
     pub(super) fn imported_clean(&mut self, chat: &mut SavedChat, pending: bool) {
-        self.identity = Identity::new(chat.agent_id.clone(), chat.id.clone());
-        self.metadata = Metadata::restored(chat.name.take(), chat.pinned, chat.updated, pending);
+        self.identity = Identity::new(
+            chat.header.agent_id.clone(),
+            ChatKey::new(chat.header.scope, chat.header.id.clone()),
+            chat.version,
+        );
+        self.metadata = Metadata::restored(
+            chat.header.name.take(),
+            chat.header.pinned,
+            chat.header.updated,
+            pending,
+        );
         self.budget = BudgetState::restored(chat.prepared_budget());
         self.transcript = Transcript::restored(
             std::mem::take(&mut chat.entries),
             std::mem::take(&mut chat.times),
-            chat.title.take(),
+            chat.header.title.take(),
         );
         self.persistence.imported_clean();
         self.persistence.begin_hydration();
@@ -136,7 +156,11 @@ impl ChatDocument {
         self.metadata.timestamp(updated);
     }
     pub(super) fn archived_clean(&mut self, summary: &nocterm_ai::history::ChatSummary) {
-        self.identity = Identity::new(summary.agent_id.clone(), summary.id.clone());
+        self.identity = Identity::new(
+            summary.agent_id.clone(),
+            ChatKey::new(summary.scope, summary.id.clone()),
+            summary.transcript_version().wire(),
+        );
         self.metadata =
             Metadata::restored(summary.name.clone(), summary.pinned, summary.updated, false);
         self.persistence.imported_clean();
@@ -250,14 +274,16 @@ impl ChatDocument {
         self.budget.validate(metadata, encoded, memory)
     }
     pub(super) fn metadata(&self, input: &Inputs<'_>) -> SavedChat {
-        let mut chat = SavedChat::for_identity(
+        let mut chat = SavedChat::for_scope(
             self.agent_id().into(),
             self.chat_id().into(),
             self.updated(),
+            self.key().scope(),
         );
-        chat.name = self.name().map(str::to_owned);
-        chat.pinned = self.pinned();
-        chat.title = self.transcript().title.clone();
+        chat.version = self.identity.wire_version();
+        chat.header.name = self.name().map(str::to_owned);
+        chat.header.pinned = self.pinned();
+        chat.header.title = self.transcript().title.clone();
         chat.pending_history = self.pending_history();
         chat.times = SavedChat::bounded_times(self.entries().len(), &self.transcript().times);
         input.metadata(&mut chat);

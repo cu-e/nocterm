@@ -19,6 +19,8 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
 | `monitor::OpenMonitorSettings` | Open the host monitor's settings. |  |
+| `projects::NewProject` | Create a workspace on the current ordinary connection. |  |
+| `projects::ToggleProjects` | Show saved workspaces for the current connection. |  |
 | `snippets::NewSnippet` | Create a snippet in a focused editor. |  |
 | `snippets::ToggleSnippets` | Show the snippet library in the sidebar, or hide it. |  |
 | `terminal::Copy` | Copy the selected text. | `ctrl-shift-c` (linux, windows; Terminal); `cmd-c` (macos; Terminal) |

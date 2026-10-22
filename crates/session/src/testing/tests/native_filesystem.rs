@@ -362,3 +362,26 @@ fn bounded_shared_local_removal_preserves_partial_cause_and_unvisited_bytes() {
         source.close().unwrap();
     }
 }
+
+#[test]
+fn held_leaf_removal_rejects_directories_and_keeps_renamed_parent_identity() {
+    use crate::local_fs::{LocalFs as _, LocalMutations as _};
+    use std::{ffi::OsStr, path::Path};
+    let fs = crate::testing::InMemoryFs::default();
+    fs.seed_native_directory(Path::new("/held")).unwrap();
+    fs.seed_native_directory(Path::new("/held/child")).unwrap();
+    fs.seed_native_file(Path::new("/held/leaf"), b"private".to_vec())
+        .unwrap();
+    let directory = fs.open_directory(Path::new("/held")).unwrap();
+    assert!(directory.remove_file(OsStr::new("child")).is_err());
+    for name in ["", ".", "..", "a/b"] {
+        assert!(directory.remove_file(OsStr::new(name)).is_err());
+    }
+    fs.rename(Path::new("/held"), OsStr::new("moved")).unwrap();
+    fs.seed_native_directory(Path::new("/held")).unwrap();
+    fs.seed_native_file(Path::new("/held/leaf"), b"replacement".to_vec())
+        .unwrap();
+    directory.remove_file(OsStr::new("leaf")).unwrap();
+    assert!(directory.metadata(OsStr::new("leaf")).unwrap().is_none());
+    assert!(fs.open_source(Path::new("/held/leaf")).is_ok());
+}

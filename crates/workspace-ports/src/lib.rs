@@ -6,23 +6,36 @@
 //! `TerminalCapabilities` bundle a provider advertises, `ExpectedSession` and
 //! `UserPromptToken` authority, `LiveCommandLease`, connection facts,
 //! `SessionContext`, `ConnectionSummary` and the typed `TerminalError` and
-//! `TerminalCapability` refusals.
+//! `TerminalCapability` refusals, inert original folder-source metadata and
+//! ordinary Explorer session projections.
 //! Does not own: the workspace, its tabs or items, `ConnectionDirectory`
 //! (which opens connections into a workspace), or any implementation.
 //! Ports provided: the contracts above, implemented by the terminal feature
-//! and consumed by agents and snippets. Ports used: `nocterm-session`.
+//! and consumed by agents, snippets and projects. Ports used: `nocterm-session`
+//! and checked folder identity/path values.
 //! Settings section: none. Globals: none.
 //! Invariants: observation grants no session authority; every operation names
 //! its `ExpectedSession` and is refused once that connection changed; a
 //! sign-in answer is bound to its prompt; no authentication or launch data
 //! reaches consumers.
+//! Folder source capture is a human creation seam. ExplorerSource supplies
+//! ordinary session filesystems and an initial directory for navigation.
 mod connections;
 mod errors;
+mod explorer;
+mod project_parent;
 mod session;
 mod terminal;
 
+#[cfg(feature = "test-support")]
+pub mod testing;
+
 pub use connections::ConnectionSummary;
 pub use errors::{TerminalCapability, TerminalError};
+pub use explorer::ExplorerSource;
+pub use project_parent::{
+    ProjectCreationSource, ProjectParentCapture, ProjectParentDescriptor, ProjectParentError,
+};
 pub use session::SessionContext;
 pub use terminal::{
     ConnectionFactSession, ExpectedSession, FactSessionSnapshot, LiveCommandLease, LiveCommands,

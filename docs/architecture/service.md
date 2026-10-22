@@ -16,9 +16,16 @@ checked snippet publication over the shared persistence driver.
 `ConnectionDirectory`, which opens connections into a workspace
 ([ADR 0062](../adr/0062-terminal-contracts-below-the-workspace.md)).
 `nocterm-agent-chat` owns agent chats without views: `AgentThread`, the
-`ChatRoster` of a window's chats and their lifecycle, and the `ChatWorkspace` and
+`ChatRoster` of a window's selected and retained context chats and their lifecycle,
+and the `ChatWorkspace` and
 `SignInTerminal` ports the window shell implements
 ([ADR 0063](../adr/0063-agent-chats-below-the-panel.md)).
+
+`nocterm-project-service` owns the durable workspace folder catalog and the
+open-window registry used to focus an already opened workspace. It uses
+`Persisted` and the shared shutdown coordinator. Catalog bindings identify the
+original committed definition so an old callback cannot open a changed folder
+([ADR 0067](../adr/0067-project-tabs-with-inner-surfaces.md)).
 
 ## Agents
 
@@ -44,6 +51,12 @@ bounds hydration and archive search, including payloads awaiting GUI delivery;
 inactive, clean documents can be evicted under a conservative 64 MiB resident
 budget. Collection limits and a structural preflight also bound allocation from
 small JSON elements, independently of the 32 MiB file limit.
+
+Workspace chat scope selects document ownership, history and the original tool
+seat. All scopes use the existing local ACP connector, workdir preparation,
+terminal sign-in and configured sandbox settings. A workspace scope does not
+install another agent process or change provider authentication
+([ADR 0069](../adr/0069-workspace-chat-launch-boundary.md)).
 
 The client supplies a saved session's directory before connection startup.
 Background startup schedules the injected `WorkdirResolver`; its adapter prepares
@@ -180,15 +193,49 @@ through foundation `SharedError`; standard sources reach the concrete storage
 error and its native cause. Publication rejects edits without replacing diagnostic
 identity, profile authority or the malformed source file.
 
-Agent runtime installation exposes `RuntimeHandle`, retaining one private Runtime
-entity behind named typed commands, immutable projections and actual observation.
-Taking saved chats and catalog is one atomic drain. Runtime registers AiSettings on
-its supplied settings handle before its first registry read. Settings observation
-uses a weak runtime; the feature installation owns that subscription. Shutdown
-capture retains only the runtime handle and returns the existing App-free work.
-No runtime global selects the recipient of a deferred operation. Service signatures use only neutral
-records, and physical history stays version one. See
-[ADR0052](../adr/0052-retained-agent-installation.md).
+Agent runtime installation exposes immutable scope-bound `RuntimeHandle` views
+of one private Runtime entity. History readers capture the original context before
+async work, while favorites, settings and usage remain installation services.
+Catalog snapshots retain their scope and load generation; stale results cannot
+replace newer ones. The catalog owner reserves at most32 live metadata payloads,
+including pending requests and caller-retained old snapshot generations. Unretained
+completed entries can be evicted, and capacity refusal leaves the current snapshot
+untouched before I/O. The one shared HistoryGate is independent of that metadata
+budget ([ADR0066](../adr/0066-scoped-chat-storage.md)).
+
+Archive rows retain an index into their original accounted CatalogSnapshot instead
+of copying a complete summary per roster. Prepared General records transfer one
+at a time through the original document claim. A single installation history
+admission counts live histories across contexts/windows, remaining prepared bodies
+and distinct immutable active/latest writer snapshots. Shared subparts may be
+conservatively counted more than once. Shown chats remain protected and each chat
+owns its durability/lease/error eviction gates. Capacity refuses before hydration
+mutates its requester. New live output retains existing per-chat limits; the
+admission budget does not claim a hard total-heap limit. Store's borrowed
+retained-values observer supplies ownership facts without a second writer map.
+
+ChatRoster retains original context collections, releases quiet hidden archive
+entities and drops empty inactive collections. A committed outer surface selects
+one projection; retained threads keep immutable original dependencies. Accepted
+archived forks complete in their original collection while another context is
+visible. Global AI disable captures and releases all retained collections.
+
+Chat factories reserve `(ContextId, chat UUID)` before constructing an entity.
+Noncloneable claims bind the original registry, window and incarnation; dropping a
+pending claim rolls back only that reservation. Duplicate opens return the original
+window, deletes seal only their scoped key, and restart requires the exact previous
+owner. Immutable ChatDocument identity, writer keys and completion checks retain the
+same scope. Imported General documents retain their original transcript format
+through edits and restart; new chats and forks use v2. Catalog rows declare a
+typed transcript version separately from the rebuildable cache schema. Activation
+and bridge registration check the original scoped chat owner. Every scope then
+uses the same existing local connector and preparation; terminal tools stay attached to their original workspace membership.
+Runtime registers AiSettings on its supplied settings handle before its first
+registry read. Settings observation uses a weak runtime; the feature installation
+owns that subscription. Shutdown capture returns existing App-free work, and no
+runtime global selects a deferred operation's recipient. Service signatures use
+only neutral records ([ADR0052](../adr/0052-retained-agent-installation.md),
+[ADR0066](../adr/0066-scoped-chat-storage.md)).
 
 SettingsHandle supplies additive edit_checked and update_checked operations over the
 same Persisted worker. Checked callbacks run at the actual ordered document base;

@@ -11,6 +11,7 @@ layer = "feature"
 
 [dependencies]
 nocterm-ai.workspace = true
+nocterm-project-model.workspace = true
 nocterm-agent-chat.workspace = true
 nocterm-agent-runtime.workspace = true
 nocterm-agent-directory.workspace = true
@@ -43,8 +44,11 @@ serde_json.workspace = true
 base64.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+nocterm-workspace = { workspace = true, features = ["test-support"] }
+nocterm-project-model = { workspace = true, features = ["test-support"] }
 nocterm-agent-chat = { workspace = true, features = ["test-support"] }
 nocterm-agent-providers.workspace = true
 nocterm-session = { workspace = true, features = ["test-support"] }

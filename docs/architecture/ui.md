@@ -93,25 +93,67 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 
 ## Workspace
 
-`Workspace` coordinates nine private owners: focus, `Tabs`, `Chrome`, background
-sessions, sidebar, independent side panel, body, installed ports and registered
-actions. `Chrome` owns window menus, the new-tab popover and status views; the
+`Workspace` coordinates eight private owners: focus, `WindowSurfaces`, `Chrome`,
+sidebar, independent side panel, body, installed ports and registered actions.
+`Chrome` owns window menus, the new-tab popover and status views; the
 sidebar and side-panel owners control their own visibility and subscriptions.
 Immutable observations expose tab identities and native pane order without giving
 callers mutable native entities. Transitions commit membership and subscriptions
 before the shell emits events or changes focus (ADR 0026).
 
-`nocterm-workspace` owns window
-layout, tabs and sidebar switches through a native DockArea/DockSkin. The
-toolkit owns the single pane tree and drag previews; an adapter exposes Items as
-dock Panels. Presentation aliases are separate from Item/session titles. Shared
+`WindowSurfaces` retains the outer connection dock. Each workspace is an outer
+`ProjectView` Item containing its own `ProjectSurface` with ordinary terminal tabs,
+splits and background sessions. Both docks use the existing tab engine. Window
+settings, sidebar and right-panel visibility keep their window owners
+([ADR 0067](../adr/0067-project-tabs-with-inner-surfaces.md)).
+
+The active outer Item supplies the visible chat ContextId; switching inner tabs
+keeps the same workspace history. Source receipts identify the original native
+window, outer Item and inner surface. Selection generations prevent a delayed menu
+or focus callback from acting after switching tabs. Hidden sessions keep running
+and their events update their original surface.
+
+`ProjectTerminalOpen` captures the connected parent once. Its private terminal
+provider retains the original SessionSpec and installation. Opening an inner tab
+uses the normal local/SSH terminal lifecycle with only the initial folder changed.
+Shell options, credentials, proxy and ordered jump hosts stay on that source.
+New tabs and reconnect work independently of the original parent tab.
+
+`ExplorerSource` exposes ordinary session file access and the workspace's initial
+folder. Local folders use the existing local pane; SSH folders use the remote
+pane. Navigation and file operations follow normal host permissions.
+
+Saved workspace lookup includes ordinary central, local and background terminals.
+When no matching connected parent exists, `ProjectTerminalResolve` supplies an
+ordinary terminal provider from saved server metadata. Profile destination and
+ordered jump route must still match. Authentication happens inside the workspace's
+first terminal; no separate server tab or parent-connection waiter is created.
+Opening callbacks check the current definition and surface membership. Hidden
+workspaces do not steal focus. The header and sidebar identify the server using
+its configured name and icon, while the outer tab identifies the workspace
+([ADR 0070](../adr/0070-original-workspace-connection-recovery.md)).
+
+Chat attachment menus and tool resolution use the same original terminal seat.
+Saved-server metadata is available in both General and workspace chats; active
+terminals remain limited to that seat's surface. `ChatConnectionOpen` opens an
+explicitly selected server in the original surface through the app's ordinary
+terminal composition. It checks the live source before creating a terminal,
+retains the saved credentials and ordered jump route, and does not select a hidden
+workspace. Closed surfaces and foreign windows refuse the operation.
+
+`nocterm-workspace` owns window layout, tabs and sidebar switches through native
+DockArea/DockSkin instances. The toolkit owns one pane tree per retained surface
+and drag previews; an adapter exposes Items as dock Panels. Presentation aliases
+are separate from Item/session titles. Shared
 actions operate the same dock for keyboard split/reorder/focus. Tab context-menu
-closures snapshot the clicked Item and resolve its current pane order at execution;
+closures capture the original surface/selection and clicked Item, reject stale
+selections and resolve that surface's current pane order at execution;
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
 footer owns section switches and status views. Removing the last bottom Item also
 removes its Dock instead of merely emptying the tab list. Hiding the local dock
 uses native dock visibility, preserving its pane tree, sizes, tab order,
-selections, groups and running processes. Every user tab shares one Item registry
+selections, groups and running processes. Within a surface every tab shares one
+Item registry
 and the same close, split, grouping, rename and keyboard operations. Close scopes
 resolve the clicked tab's current native pane; Close All affects its dock placement.
 `LocalTerminal` directory synchronization returns `LocalDirectoryError`, distinguishing
@@ -132,7 +174,7 @@ placement tree.
 Zoom permits tab reordering and grouping: same-group reorders retain zoom, while
 accepted topology changes clear it to reveal their result. Hiding Bottom leaves
 local tabs moved to Center visible. A region's last tab can be dragged to another
-open visible region; the final visible workspace tab and explicit locks remain
+open visible region; the final visible tab of a surface and explicit locks remain
 protected. Empty noncentral regions disappear after moves without closing Items. An `Item` supplies tab content, focus and an
 optional `SessionContext`; a `Panel` supplies sidebar content. Features register
 actions rather than making the shell depend on them. `SessionSpec` and a session

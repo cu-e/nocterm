@@ -68,8 +68,8 @@ fn stale_delivery_does_not_take_latest_empty_draft_or_its_timestamp() {
         archive.accept(load, false, Ok(chat.clone()), permit(&gate)),
         LoadOutcome::Stale
     ));
-    let patch = archive.draft_patch(&chat.id, &chat.agent_id).unwrap();
-    assert_eq!(patch.updated, 21);
+    let patch = archive.draft_patch().unwrap();
+    assert_eq!(patch.header.updated, 21);
     assert!(
         patch.draft.is_none(),
         "the empty overlay is a real clearing edit"
@@ -135,7 +135,7 @@ fn intentions_wait_for_one_generation_and_keep_accepted_order() {
 fn archived_without_edits_has_no_patch_and_failed_load_retains_literal_overlay() {
     let chat = saved();
     let mut archive = Archive::archived(ChatSummary::from_chat(&chat));
-    assert!(archive.draft_patch(&chat.id, &chat.agent_id).is_none());
+    assert!(archive.draft_patch().is_none());
     let load = begin(&mut archive, ArchiveIntent::Pin { pinned: true });
     archive.edit_draft("literal".into(), 30);
     assert!(matches!(
@@ -147,9 +147,9 @@ fn archived_without_edits_has_no_patch_and_failed_load_retains_literal_overlay()
         ),
         LoadOutcome::Failed(_)
     ));
-    let patch = archive.draft_patch(&chat.id, &chat.agent_id).unwrap();
+    let patch = archive.draft_patch().unwrap();
     assert_eq!(patch.draft.as_deref(), Some("literal"));
-    assert_eq!(patch.updated, 30);
+    assert_eq!(patch.header.updated, 30);
 }
 #[test]
 fn eviction_requires_every_durable_residency_gate() {

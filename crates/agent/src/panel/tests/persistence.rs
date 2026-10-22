@@ -56,10 +56,13 @@ fn shutdown_preserves_a_snapshot_extracted_by_the_writer_after_document_release(
         1,
         "quit lost the writer-owned snapshot after its document was released"
     );
-    assert_eq!(chats[0].name.as_deref(), Some("pending extracted snapshot"));
+    assert_eq!(
+        chats[0].header.name.as_deref(),
+        Some("pending extracted snapshot")
+    );
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].header.name.as_deref(),
         Some("pending extracted snapshot")
     );
 }
@@ -121,7 +124,7 @@ fn shutdown_saves_the_replacement_when_the_old_document_is_retained_elsewhere(
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
     assert_eq!(
-        chats[0].name.as_deref(),
+        chats[0].header.name.as_deref(),
         Some("replacement wins"),
         "an externally retained old document overwrote its replacement"
     );
@@ -156,7 +159,7 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
     });
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].header.name.as_deref(),
         Some("replacement owner")
     );
     // An outstanding callback can retain the old Entity and eventually attempt to save it.
@@ -166,13 +169,13 @@ fn a_late_save_from_a_retained_old_document_cannot_overwrite_the_replacement(
     });
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].header.name.as_deref(),
         Some("replacement owner"),
         "a stale owner saved over the replacement outside shutdown"
     );
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].header.name.as_deref(),
         Some("replacement owner")
     );
 }
@@ -198,10 +201,13 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
     shutdown_runtime(&f.installation.installed, cx);
     let chats = f.repository.chats();
     assert_eq!(chats.len(), 1);
-    assert_eq!(chats[0].name.as_deref(), Some("latest queued snapshot"));
+    assert_eq!(
+        chats[0].header.name.as_deref(),
+        Some("latest queued snapshot")
+    );
     cx.run_until_parked();
     assert_eq!(
-        f.repository.chats()[0].name.as_deref(),
+        f.repository.chats()[0].header.name.as_deref(),
         Some("latest queued snapshot")
     );
 }
@@ -224,7 +230,7 @@ fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
     saved.times = vec![39];
     saved.pending_history = true;
     let thread = super::archive::archived(&f, &saved, cx);
-    let bytes = f.repository.encoded(&saved.id).unwrap();
+    let bytes = f.repository.encoded(&saved.header.id).unwrap();
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -238,8 +244,8 @@ fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
     });
     cx.run_until_parked();
     shutdown_runtime(&f.installation.installed, cx);
-    assert_eq!(save_count(&f, &saved.id), 0);
-    assert_eq!(f.repository.encoded(&saved.id).unwrap(), bytes);
+    assert_eq!(save_count(&f, &saved.header.id), 0);
+    assert_eq!(f.repository.encoded(&saved.header.id).unwrap(), bytes);
     cx.update(|cx| assert_eq!(thread.read(cx).updated_at(), 40));
 }
 #[gpui_kit::test]
@@ -254,7 +260,7 @@ fn equal_warm_resume_does_not_rewrite_imported_session_metadata(cx: &mut TestApp
     saved.session_id = Some("resumed".into());
     saved.workdir = Some("/tmp".into());
     let thread = super::archive::archived(&f, &saved, cx);
-    let bytes = f.repository.encoded(&saved.id).unwrap();
+    let bytes = f.repository.encoded(&saved.header.id).unwrap();
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
     cx.run_until_parked();
@@ -267,8 +273,8 @@ fn equal_warm_resume_does_not_rewrite_imported_session_metadata(cx: &mut TestApp
     thread.update(cx, |thread, cx| thread.release_resources(cx));
     cx.run_until_parked();
     shutdown_runtime(&f.installation.installed, cx);
-    assert_eq!(save_count(&f, &saved.id), 0);
-    assert_eq!(f.repository.encoded(&saved.id).unwrap(), bytes);
+    assert_eq!(save_count(&f, &saved.header.id), 0);
+    assert_eq!(f.repository.encoded(&saved.header.id).unwrap(), bytes);
 }
 #[gpui_kit::test]
 fn an_old_disk_failure_before_new_draft_admission_does_not_pause_the_new_desire(
@@ -321,7 +327,7 @@ fn captures_before_the_draft_timer_keep_one_revision_and_one_immutable_intent(
     shutdown_runtime(&f.installation.installed, cx);
     assert_eq!(
         f.repository
-            .transcript(&first.0.id)
+            .transcript(&first.0.header.id)
             .unwrap()
             .draft
             .as_deref(),

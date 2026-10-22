@@ -9,17 +9,20 @@
 //! typed results to named completions bound to their original view/session authority.
 //!
 //! Owns: panel views and presentation state, the panel's ChatRoster, WorkspaceSeat (the
-//! ChatWorkspace over the panel's workspace) and WorkspaceSignIn (the SignInTerminal over the
+//! ChatWorkspace over an original surface and exact ChatKey) and WorkspaceSignIn (the SignInTerminal over the
 //! host's TerminalAuthOpener).
 //! Does not own: chats, sessions and tools (nocterm-agent-chat), ACP transport, connection
 //! admission, filesystem storage or image decoding.
-//! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory,
+//! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,
 //! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
 //! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: none.
 //! Invariants: preview cache generations reject stale same-key delivery after clear or chat
-//! changes; archive delivery reaches the panel only while the chat it opened is current.
+//! changes. Committed outer-surface changes select one scoped roster; async delivery keeps
+//! its original owner. Accepted hidden forks finish in that original collection without
+//! changing the visible chat. Ordinary terminal operations retain the original surface;
+//! explicitly attached saved servers open into that same terminal collection.
 
 mod agent_icon;
 mod chat_host;
@@ -108,7 +111,14 @@ pub fn register(
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
 ) {
     let owner = cx.entity().downgrade();
-    let host = chat_host::ChatHost::new(owner, installed);
+    let source = workspace.context_source(cx);
+    let host = match chat_host::ChatHost::new(owner, installed, source) {
+        Ok(host) => host,
+        Err(error) => {
+            tracing::warn!(%error, "could not bind agent panel context");
+            return;
+        }
+    };
     let enabled = host
         .settings()
         .setting::<nocterm_ai::AiSettings>(cx)

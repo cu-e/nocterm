@@ -6,8 +6,16 @@ Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault`, `nocterm-project-model` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
+
+## Workspace folders
+
+`nocterm-project-model` owns stable workspace/context identities, checked names,
+server descriptors with ordered jump hosts, literal folder paths and the catalog
+format. These are metadata used by the UI and storage. Local and SSH sessions
+continue to use the existing session contracts and normal host permissions.
+Workspace identity also selects chat history independently of visible tabs.
 
 ## Connection formats and rules
 
@@ -206,12 +214,20 @@ agent and `catalog()`, which the application injects.
 
 ## Agent history
 
-`nocterm-ai` owns pure version-one transcript codecs, structural/collection
-validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository`
-contracts. Filesystem history/preferences implementation belongs to
+`nocterm-ai` owns pure transcript codecs, structural/collection validation,
+catalog summary rules and the `ChatRepository`/`AgentStateRepository` contracts.
+Version one remains byte-stable and belongs to General. Version two requires an
+explicit `ContextId` and a canonical envelope whose authoritative catalog header
+fits within a 16 KiB prefix. Its bounded display metadata and content/title
+projection precede the payload; full hydration validates their agreement.
+Prefix-only discovery can offer that declared header even when a damaged or
+disagreeing payload cannot hydrate. Repository catalog, load and delete calls
+capture their expected scope; saving derives it from the document. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
 SavedChat and SharedChat hold neutral `nocterm_ai::model` records whose serialization
-is the version-one transcript JSON; no agent protocol SDK type appears in the domain
+preserves the version-one transcript JSON. SharedChat also supplies a conservative
+structural ownership cost for full retained media and its separate shared queue
+without allocating an encoded transcript buffer; no agent protocol SDK type appears in the domain
 ([ADR0058](../adr/0058-neutral-agent-protocol-boundary.md)).
 Chat identity allocation and wall-clock observations are supplied through the
 ChatMetadataSource contract; the transcript reducer accepts supplied timestamps

@@ -3,13 +3,12 @@ use super::*;
 impl Tabs {
     pub(in crate::workspace) fn register(
         &mut self,
-        prepared: PreparedTab,
+        entry: TabEntry,
         placement: DockPlacement,
         target: Option<NodeId>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EntityId> {
-        let entry = prepared.into_entry();
         let id = entry.id();
         if self.contains(id) {
             return None;
@@ -114,6 +113,15 @@ impl Tabs {
             true,
         ))
     }
+    pub(in crate::workspace) fn admit_without_focus(&mut self, id: EntityId) {
+        if self.local_entry(id).is_some() {
+            if self.local.selected().is_none() {
+                self.local.select(Some(id));
+            }
+        } else if self.active_central_id.is_none() {
+            self.mark_active(id);
+        }
+    }
     pub(in crate::workspace) fn mark_active(&mut self, id: EntityId) -> Vec<WorkspaceEvent> {
         if !self.entry(id).is_some_and(|entry| entry.local.is_none())
             || self.active_central_id == Some(id)
@@ -181,11 +189,17 @@ impl Tabs {
                         .is_some_and(|(placement, _)| placement == DockPlacement::Bottom)
             })
     }
-    pub(in crate::workspace) fn rename(&self, id: EntityId, window: &mut Window, cx: &mut App) {
+    pub(in crate::workspace) fn rename(
+        &self,
+        id: EntityId,
+        selection: ContextSelectionReceipt,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         if let Some(entry) = self.entry(id) {
             entry
                 .dock_item
-                .update(cx, |item, cx| item.start_alias(window, cx));
+                .update(cx, |item, cx| item.start_alias(selection, window, cx));
         }
     }
 }

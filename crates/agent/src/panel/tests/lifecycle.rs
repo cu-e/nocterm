@@ -185,9 +185,11 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
                         cx,
                     );
                     let owner = cx.entity().downgrade();
+                    let source = workspace.general_surface_source(cx);
                     let view = cx.new(|cx| {
                         AgentPanel::new(
-                            f._directory.host(owner, f.installation.installed.clone()),
+                            f._directory
+                                .host(owner, f.installation.installed.clone(), source),
                             window,
                             cx,
                         )

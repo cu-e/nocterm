@@ -5,9 +5,15 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
+
+## Workspace catalog
+
+`nocterm-project-storage` reads and publishes workspace folder definitions through
+the existing private atomic-file primitive and supplies identity/time metadata.
+The app injects it into the catalog service; it owns no background writer.
 
 ## SSH and local sessions
 
@@ -125,8 +131,28 @@ common shutdown coordinator; the adapter introduces no quit hook or separate bud
 `AgentStateRepository`. It owns bounded transcript reads, private atomic JSON/TOML
 publication, catalog scanning and rebuildable metadata sidecars. The transcript
 is authoritative: a sidecar failure cannot revoke a successful publication.
-An archived-draft update merges only its draft and timestamp into the original
-transcript under the service's shared serial gate.
+Version-two documents and their rebuildable sidecars live under
+`scoped-v2/general/<chat-id>` or `scoped-v2/projects/<project-id>/<chat-id>`;
+legacy flat discovery cannot enter Project history. The captured scope and UUID
+select one bucket, so identical chat IDs in different scopes are independent.
+Discovery verifies the transcript's bounded authoritative v2 header before using
+any sidecar metadata, then applies the 200-row limit within that scope. Ordinary
+v2 catalog reads and overwrite checks read at most the 16 KiB prefix rather than
+the full transcript. Arbitrarily ordered valid General v1 files keep their
+bounded full scan, including late metadata and first-user fallback titles; no
+sidecar is trusted to avoid that compatibility cost and no migration rewrites
+v1 bytes. A scoped General document takes precedence over a legacy duplicate,
+including when damaged; deletion validates both and removes legacy first so a
+failed removal cannot resurrect its stale fallback.
+
+The app supplies `LocalFs`; generated descendants, reads, private staging,
+publication and removal use retained `LocalDirectory` capabilities. The configured
+private storage root has trusted ancestry and alone may be canonicalized. Project
+buckets require supplied held identity, with typed refusal on a portable path
+implementation. General retains that adapter's documented active-ancestor race
+limitation. Generated links and final source links are refused. An archived-draft
+update merges only its draft and timestamp into the original scoped transcript
+under the service's shared serial gate.
 
 The app injects these repositories; service and feature crates have no adapter
 dependency. Repository futures run filesystem work when polled on the background

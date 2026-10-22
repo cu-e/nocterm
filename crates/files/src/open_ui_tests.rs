@@ -86,7 +86,7 @@ fn remote_fixture(
                     focus: cx.focus_handle(),
                 });
                 workspace.update(cx, |workspace, cx| workspace.add_item(item, window, cx));
-                let session = workspace.read(cx).active_session(cx);
+                let session = workspace.read(cx).explorer_source(cx);
                 let panel = cx.new(|cx| {
                     FilesPanel::new(installed.clone(), workspace.clone(), session, window, cx)
                 });

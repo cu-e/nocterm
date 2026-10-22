@@ -16,18 +16,21 @@
 //! persistence worker lifecycle.
 //! Ports used: SettingsHandle, RemoteFs, SnapshotWriter, ShutdownCoordinator,
 //! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
-//! Ports provided: ConnectionDirectory. Settings section: none.
+//! Ports provided: ConnectionDirectory and checked original-workspace parent
+//! SessionSpec resolution for app composition. Settings section: none.
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
 //! Connections aliases the actual service entity; windows/actions use supplied installation.
 //! Raw facts/jobs belong to the supplied actual service entity. Original Item
 //! capability receipts retain session authority independently of window projection.
+//! Workspace recovery compares original profile, destination and ordered resolved
+//! route before opening; it never supplies authentication from project metadata.
 
 mod installed;
 mod session_intents;
 pub use installed::{Installed, install};
-pub use session_intents::{connect, spec_for_profile};
+pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;
 mod directory;
 mod editor;
@@ -84,7 +87,7 @@ pub fn register(
     // Facts feed cached panels and the recent servers on the empty screen.
     cx.observe(installed.facts(), |workspace, _, cx| {
         cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
-        if workspace.items().next().is_none() && !workspace.local_terminal_is_visible(cx) {
+        if workspace.items(cx).next().is_none() && !workspace.local_terminal_is_visible(cx) {
             cx.notify();
         }
     })

@@ -42,10 +42,10 @@ fn settings_shortcut_from_connected_terminal_opens_settings(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(workspace.read(cx).items().count(), 2);
+        assert_eq!(workspace.read(cx).items(cx).count(), 2);
         let settings = workspace
             .read(cx)
-            .find_item::<nocterm_settings_ui::SettingsView>()
+            .find_item::<nocterm_settings_ui::SettingsView>(cx)
             .unwrap();
         assert!(settings.read(cx).focus_handle(cx).is_focused(window));
     })
@@ -90,7 +90,7 @@ fn command_palette_takes_typing_and_runs_the_command_from_the_terminal(cx: &mut 
         assert!(
             workspace
                 .read(cx)
-                .find_item::<nocterm_settings_ui::SettingsView>()
+                .find_item::<nocterm_settings_ui::SettingsView>(cx)
                 .is_some(),
             "the command ran"
         );
@@ -114,7 +114,7 @@ fn close_shortcut_from_connected_terminal_closes_tab(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     assert_eq!(
-        workspace.read_with(cx, |workspace, _| workspace.items().count()),
+        workspace.read_with(cx, |workspace, cx| workspace.items(cx).count()),
         0
     );
 }

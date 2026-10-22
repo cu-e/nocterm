@@ -1,13 +1,14 @@
 //! Adapts feature Items to the toolkit's single authoritative pane tree.
 use std::rc::Rc;
 
-use crate::{ItemHandle, TabState, Workspace};
+use crate::workspace::surface::TabSurface;
+use crate::{ContextSelectionReceipt, ItemHandle, ProjectSurfaceReceipt, TabState};
 use gpui_kit::{
     App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Hsla, Subscription,
     WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Icon, Sizable as _, Theme,
+        ActiveTheme as _, Disableable as _, Icon, Sizable as _, Theme,
         button::{Button, ButtonVariants as _},
         dock::{BasePanel, Panel, PanelControl, PanelEvent},
         h_flex,
@@ -35,9 +36,11 @@ pub(crate) const GROUP_PALETTE: usize = GROUP_COLORS.len();
 
 pub(crate) struct DockItem {
     pub(crate) item: Rc<dyn ItemHandle>,
-    workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<TabSurface>,
+    source: ProjectSurfaceReceipt,
     pub(crate) alias: Option<gpui_kit::SharedString>,
     editing: Option<Entity<InputState>>,
+    alias_selection: Option<ContextSelectionReceipt>,
     editing_subscription: Option<Subscription>,
     editing_blur: Option<Subscription>,
     focus: FocusHandle,
@@ -46,6 +49,7 @@ pub(crate) struct DockItem {
     /// The color of the group of tabs this one is in, an index into
     /// [`GROUP_COLORS`].
     group_color: Option<usize>,
+    project: Option<crate::ProjectSurface>,
 }
 impl EventEmitter<PanelEvent> for DockItem {}
 impl DockItem {
@@ -59,23 +63,28 @@ impl DockItem {
     }
     pub(crate) fn new(
         item: Rc<dyn ItemHandle>,
-        workspace: WeakEntity<Workspace>,
+        workspace: WeakEntity<TabSurface>,
+        source: ProjectSurfaceReceipt,
         local: bool,
         header_click_origin: Rc<std::cell::Cell<Option<gpui_kit::EntityId>>>,
+        project: Option<crate::ProjectSurface>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
         Self {
             item,
             workspace,
+            source,
             alias: None,
             editing: None,
+            alias_selection: None,
             editing_subscription: None,
             editing_blur: None,
             focus,
             local,
             header_click_origin,
             group_color: None,
+            project,
         }
     }
     pub(crate) fn set_group_color(&mut self, color: Option<usize>, cx: &mut Context<Self>) {
@@ -88,7 +97,17 @@ impl DockItem {
         self.group_color
     }
 
-    pub(crate) fn start_alias(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn selection(&self, cx: &App) -> Option<ContextSelectionReceipt> {
+        let workspace = self.workspace.upgrade()?;
+        let workspace = workspace.read(cx);
+        (workspace.context_source() == self.source).then(|| workspace.context_selection_receipt())
+    }
+    pub(crate) fn start_alias(
+        &mut self,
+        selection: ContextSelectionReceipt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.editing.is_some() {
             return;
         }
@@ -109,6 +128,7 @@ impl DockItem {
         self.editing_blur = Some(cx.on_blur(&focus, window, |this, window, cx| {
             this.finish_alias(true, false, window, cx)
         }));
+        self.alias_selection = Some(selection);
         self.editing = Some(input);
         window.focus(&focus, cx);
         cx.notify();
@@ -127,8 +147,21 @@ impl DockItem {
                 let value = input.read(cx).value().trim().to_string();
                 self.alias = (!value.is_empty()).then(|| value.into());
             }
-            if restore_focus {
-                window.focus(&self.item.focus_handle(cx), cx);
+            if restore_focus && let Some(selection) = self.alias_selection.take() {
+                let workspace = self.workspace.clone();
+                let focus = self.item.focus_handle(cx);
+                window.defer(cx, move |window, cx| {
+                    if workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace.accepts_context_selection(selection, cx)
+                        })
+                        .unwrap_or(false)
+                    {
+                        window.focus(&focus, cx);
+                    }
+                });
+            } else {
+                self.alias_selection = None;
             }
             cx.emit(PanelEvent::LayoutChanged);
             cx.notify();
@@ -141,14 +174,22 @@ impl Focusable for DockItem {
     }
 }
 impl BasePanel for DockItem {
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(project) = &self.project {
+            project.set_visible(active, cx);
+        }
+    }
     fn panel_name(&self) -> &'static str {
         "nocterm.item"
     }
     fn on_removed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let id = self.item.item_id();
+        let source = self.source;
         window.defer(cx, move |window, cx| {
-            let _ = workspace.update(cx, |workspace, cx| workspace.item_removed(id, window, cx));
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.item_removed(source, id, window, cx)
+            });
         });
     }
 }
@@ -163,20 +204,35 @@ impl Panel for DockItem {
     fn menu_visible(&self, _: &App) -> bool {
         !self.local
     }
-    fn toolbar_buttons(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<Vec<Button>> {
+    fn toolbar_buttons(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Option<Vec<Button>> {
         if !self.local {
             return None;
         }
         let workspace = self.workspace.clone();
+        let selection = self.selection(cx);
         let id = self.item.item_id();
+        let enabled = workspace
+            .upgrade()
+            .is_some_and(|surface| surface.read(cx).terminal_creation_allowed());
         Some(vec![
             Button::new("local-terminal-new")
+                .disabled(!enabled)
                 .icon(nocterm_ui::IconName::Plus)
-                .tooltip("New Local Terminal")
+                .tooltip(
+                    if self.source.context() == nocterm_project_model::ContextId::General {
+                        "New Local Terminal"
+                    } else {
+                        "New Workspace Terminal"
+                    },
+                )
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     let _ = workspace.update(cx, |workspace, cx| {
-                        workspace.new_local_terminal_from(id, window, cx)
+                        if selection.is_some_and(|selection| {
+                            workspace.accepts_context_selection(selection, cx)
+                        }) {
+                            workspace.new_local_terminal_from(id, window, cx);
+                        }
                     });
                 }),
         ])
@@ -184,8 +240,9 @@ impl Panel for DockItem {
     fn free_header_content(
         &mut self,
         _: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        let selection = self.selection(cx);
         self.local.then(|| {
             let origin = self.header_click_origin.clone();
             let id = self.item.item_id();
@@ -221,7 +278,11 @@ impl Panel for DockItem {
                             origin.set(None);
                             cx.stop_propagation();
                             let _ = workspace.update(cx, |workspace, cx| {
-                                workspace.new_local_terminal_from(id, window, cx)
+                                if selection.is_some_and(|selection| {
+                                    workspace.accepts_context_selection(selection, cx)
+                                }) {
+                                    workspace.new_local_terminal_from(id, window, cx);
+                                }
                             });
                         }
                     }
@@ -245,6 +306,8 @@ impl Panel for DockItem {
         };
         let workspace = self.workspace.clone();
         let menu_workspace = workspace.clone();
+        let selection = self.selection(cx);
+        let source = self.source;
         let id = self.item.item_id();
         h_flex()
             .id(("tab-title", id.as_u64()))
@@ -283,10 +346,18 @@ impl Panel for DockItem {
                             .unwrap_or_else(|| self.item.tab_title(cx)),
                     )
                     .on_click(
-                        cx.listener(|this, event: &gpui_kit::ClickEvent, window, cx| {
-                            if event.click_count() == 2 {
+                        cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
+                            if event.click_count() == 2
+                                && selection.is_some_and(|selection| {
+                                    this.workspace.upgrade().is_some_and(|workspace| {
+                                        workspace.read(cx).accepts_context_selection(selection, cx)
+                                    })
+                                })
+                            {
                                 cx.stop_propagation();
-                                this.start_alias(window, cx);
+                                if let Some(selection) = selection {
+                                    this.start_alias(selection, window, cx);
+                                }
                             }
                         }),
                     )
@@ -301,12 +372,21 @@ impl Panel for DockItem {
                     .on_click(move |_, window, cx| {
                         cx.stop_propagation();
                         let _ = workspace.update(cx, |this, cx| {
-                            this.close_item_by_id(id, window, cx);
+                            if selection.is_some_and(|selection| {
+                                this.accepts_context_selection(selection, cx)
+                            }) {
+                                this.close_item_by_id(id, window, cx);
+                            }
                         });
                     }),
             )
             .context_menu(move |mut menu, window, cx| {
                 use crate::workspace::TabCloseScope;
+                let selection = menu_workspace.upgrade().and_then(|workspace| {
+                    let workspace = workspace.read(cx);
+                    (workspace.context_source() == source)
+                        .then(|| workspace.context_selection_receipt())
+                });
                 for (label, scope) in [
                     ("Close Tab", TabCloseScope::Current),
                     ("Close Other Tabs in Pane", TabCloseScope::Others),
@@ -315,13 +395,21 @@ impl Panel for DockItem {
                     ("Close All Tabs", TabCloseScope::All),
                 ] {
                     let disabled = menu_workspace.upgrade().is_none_or(|workspace| {
-                        workspace.read(cx).tabs_to_close(id, scope, cx).is_empty()
+                        workspace
+                            .read(cx)
+                            .content()
+                            .tabs_to_close(id, scope, cx)
+                            .is_empty()
                     });
                     let workspace = menu_workspace.clone();
                     menu = menu.item(PopupMenuItem::new(label).disabled(disabled).on_click(
                         move |_, window, cx| {
                             let _ = workspace.update(cx, |workspace, cx| {
-                                workspace.close_tabs(id, scope, window, cx)
+                                if selection.is_some_and(|selection| {
+                                    workspace.accepts_context_selection(selection, cx)
+                                }) {
+                                    workspace.close_tabs(id, scope, window, cx);
+                                }
                             });
                         },
                     ));
@@ -338,18 +426,22 @@ impl Panel for DockItem {
                     ),
                 ] {
                     let workspace = menu_workspace.clone();
-                    let disabled = workspace
-                        .upgrade()
-                        .is_none_or(|workspace| !workspace.read(cx).can_split_item(id, cx));
+                    let disabled = workspace.upgrade().is_none_or(|workspace| {
+                        !workspace.read(cx).content().can_split_item(id, cx)
+                    });
                     menu = menu.item(PopupMenuItem::new(label).disabled(disabled).on_click(
                         move |_, window, cx| {
                             let _ = workspace.update(cx, |workspace, cx| {
-                                workspace.split_item(id, placement, window, cx)
+                                if selection.is_some_and(|selection| {
+                                    workspace.accepts_context_selection(selection, cx)
+                                }) {
+                                    workspace.split_item(id, placement, window, cx);
+                                }
                             });
                         },
                     ));
                 }
-                group_menu(menu.separator(), id, &menu_workspace, window, cx)
+                group_menu(menu.separator(), id, &menu_workspace, selection, window, cx)
                     .separator()
                     .menu("Settings", Box::new(crate::OpenSettings))
             })
@@ -359,7 +451,8 @@ impl Panel for DockItem {
 fn group_menu(
     mut menu: PopupMenu,
     id: EntityId,
-    workspace: &WeakEntity<Workspace>,
+    workspace: &WeakEntity<TabSurface>,
+    selection: Option<ContextSelectionReceipt>,
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
@@ -368,17 +461,29 @@ fn group_menu(
     };
     let (grouped, groups) = {
         let this = this.read(cx);
-        (this.is_tab_grouped(id), this.tab_groups_to_join(id, cx))
+        (
+            this.content().is_tab_grouped(id),
+            this.content().tab_groups_to_join(id, cx),
+        )
     };
     let item =
         |label: &'static str,
-         action: fn(&mut Workspace, EntityId, &mut Window, &mut Context<Workspace>)| {
+         action: fn(&mut TabSurface, EntityId, &mut Window, &mut Context<TabSurface>)| {
             let workspace = workspace.clone();
             PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                let _ = workspace.update(cx, |workspace, cx| action(workspace, id, window, cx));
+                let _ = workspace.update(cx, |workspace, cx| {
+                    if selection
+                        .is_some_and(|selection| workspace.accepts_context_selection(selection, cx))
+                    {
+                        action(workspace, id, window, cx);
+                    }
+                });
             })
         };
-    menu = menu.item(item("Add to New Group", Workspace::new_tab_group));
+    menu = menu.item(item("Add to New Group", |surface, id, window, cx| {
+        surface.content_mut().new_tab_group(id, window, cx);
+        cx.notify();
+    }));
     if !groups.is_empty() {
         let workspace = workspace.clone();
         menu = menu.submenu("Add to Group", window, cx, move |mut menu, _, _| {
@@ -387,7 +492,14 @@ fn group_menu(
                 menu = menu.item(PopupMenuItem::new(name.clone()).on_click(
                     move |_, window, cx| {
                         let _ = workspace.update(cx, |workspace, cx| {
-                            workspace.group_tab_with(id, beside, window, cx)
+                            if selection.is_some_and(|selection| {
+                                workspace.accepts_context_selection(selection, cx)
+                            }) {
+                                workspace
+                                    .content_mut()
+                                    .group_tab_with(id, beside, window, cx);
+                                cx.notify();
+                            }
                         });
                     },
                 ));
@@ -397,9 +509,15 @@ fn group_menu(
     }
     if grouped {
         menu = menu
-            .item(item("Remove from Group", Workspace::ungroup_tab))
-            .item(item("Ungroup", Workspace::dissolve_tab_group))
-            .item(item("Close Group", Workspace::close_tab_group));
+            .item(item("Remove from Group", |surface, id, window, cx| {
+                surface.content_mut().ungroup_tab(id, window, cx);
+                cx.notify();
+            }))
+            .item(item("Ungroup", |surface, id, window, cx| {
+                surface.content_mut().dissolve_tab_group(id, window, cx);
+                cx.notify();
+            }))
+            .item(item("Close Group", TabSurface::close_tab_group));
     }
     menu
 }

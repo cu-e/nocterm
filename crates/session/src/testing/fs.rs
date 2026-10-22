@@ -365,6 +365,11 @@ impl InMemoryFs {
     ) {
         lock(&self.shared.native_control).fail(operation, path, error);
     }
+    /// Configure before opening capabilities to exercise consumers that require
+    /// supplied held identity. The coherent tree keeps its original behavior.
+    pub fn use_portable_directory_identity(&self, portable: bool) {
+        lock(&self.shared.native_control).use_portable_identity(portable);
+    }
     pub fn observe_local(&self, observer: std::sync::Arc<dyn LocalRequestObserver>) {
         lock(&self.shared.native_control).observe(observer);
     }

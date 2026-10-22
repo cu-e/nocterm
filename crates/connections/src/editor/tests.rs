@@ -753,7 +753,7 @@ fn unsaved_country_input_loads_flag_when_detection_is_off_and_no_session_exists(
             installed.connections().read(cx).profiles(cx).iter().count(),
             0
         );
-        assert_eq!(workspace.read(cx).items().count(), 0);
+        assert_eq!(workspace.read(cx).items(cx).count(), 0);
     })
     .unwrap();
     assert_eq!(

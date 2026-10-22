@@ -9,6 +9,106 @@ mod drag_ui;
 mod path_ui;
 
 #[gpui_kit::test]
+fn a_local_workspace_uses_the_local_filesystem_and_allows_parent_navigation(
+    cx: &mut TestAppContext,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let folder = directory.path().join("folder's code");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("inside.txt"), b"inside").unwrap();
+    std::fs::write(directory.path().join("outside.txt"), b"outside").unwrap();
+    let (handle, workspace, _, _general, installed) = panel_fixture_with_installation(
+        cx,
+        Arc::new(PendingFs::default()),
+        fixture_deps_at(directory.path()).0,
+    );
+    cx.run_until_parked();
+    let panel = cx
+        .update_window(handle, |_, window, cx| {
+            let source = ExplorerSource::local_folder(
+                nocterm_project_model::ProjectId::from_bytes([1; 16]),
+                nocterm_project_model::RootPath::parse(folder.to_str().unwrap()).unwrap(),
+            );
+            cx.new(|cx| FilesPanel::new(installed, workspace, Some(source), window, cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.remote_access(cx), RemoteAccess::NoSession);
+        assert_eq!(
+            panel.local_listing(cx).path().as_deref(),
+            Some(folder.as_path())
+        );
+        assert_eq!(panel.local_listing(cx).names(), ["inside.txt"]);
+    });
+    panel.update(cx, |panel, cx| {
+        panel.navigate_local(directory.path().into(), cx)
+    });
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.local_listing(cx).path().as_deref(),
+            Some(directory.path())
+        );
+        assert!(
+            panel
+                .local_listing(cx)
+                .names()
+                .iter()
+                .any(|name| name == "outside.txt")
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_workspace_folder_is_the_initial_location_and_does_not_block_absolute_navigation(
+    cx: &mut TestAppContext,
+) {
+    let fs = Arc::new(nocterm_session::testing::InMemoryFs::default());
+    for directory in ["/home", "/home/test", "/home/test/folder's code"] {
+        block_on(fs.create_dir(directory)).unwrap();
+    }
+    fs.set_home("/home/test").unwrap();
+    fs.seed_file("/home/test/folder's code/inside.txt", b"inside".to_vec())
+        .unwrap();
+    fs.seed_file("/outside.txt", b"outside".to_vec()).unwrap();
+    let (handle, workspace, _, _general, installed) =
+        panel_fixture_with_installation(cx, fs, fixture_deps());
+    cx.run_until_parked();
+    let panel = cx
+        .update_window(handle, |_, window, cx| {
+            let session = workspace.read(cx).active_session(cx).unwrap();
+            let source = ExplorerSource::folder(
+                nocterm_project_model::ProjectId::from_bytes([1; 16]),
+                nocterm_project_model::RootPath::parse("/home/test/folder's code").unwrap(),
+                session,
+            );
+            cx.new(|cx| FilesPanel::new(installed, workspace, Some(source), window, cx))
+        })
+        .unwrap();
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(
+            panel.remote_listing(cx).path().as_deref(),
+            Some("/home/test/folder's code")
+        );
+        assert_eq!(panel.remote_listing(cx).names(), ["inside.txt"]);
+    });
+    panel.update(cx, |panel, cx| panel.navigate_remote(Some("/".into()), cx));
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, cx| {
+        assert_eq!(panel.remote_listing(cx).path().as_deref(), Some("/"));
+        assert!(
+            panel
+                .remote_listing(cx)
+                .names()
+                .iter()
+                .any(|name| name == "outside.txt")
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn hidden_explorer_reports_partial_statistics_once_and_stale_action_cannot_navigate(
     cx: &mut TestAppContext,
 ) {
@@ -178,6 +278,8 @@ fn remote_folders_are_counted_except_the_home_folder(cx: &mut TestAppContext) {
 /// Publishes every upload at once and counts listings of each folder.
 #[gpui_kit::test]
 fn a_finished_upload_lists_the_shown_remote_folder_again(cx: &mut TestAppContext) {
+    use super::transfer_ui::{drag_row, show_local};
+    use gpui_kit::test::TestWindowExt as _;
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("report.txt");
     std::fs::write(&file, b"done").unwrap();
@@ -185,22 +287,16 @@ fn a_finished_upload_lists_the_shown_remote_folder_again(cx: &mut TestAppContext
     fs.script_listings();
     let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
     let service = deps.transfers.clone();
-    let (handle, _, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
+    let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
     cx.run_until_parked();
     let initial = fs.take_pending_listing().unwrap();
     assert_eq!(initial.path(), "/home/test");
     initial.send(Ok(Vec::new())).unwrap();
     cx.run_until_parked();
-    cx.update_window(handle, |_, _, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.intent(
-                &PaneIntent::Upload {
-                    sources: vec![file.clone()],
-                    destination: None,
-                },
-                cx,
-            )
-        });
+    show_local(cx, handle, &workspace, &panel, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        drag_row(window, "local-home", "files-home", 36., cx);
     })
     .unwrap();
     let id = service.snapshot()[0].id;

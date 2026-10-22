@@ -100,7 +100,7 @@ pub fn open_page(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let item = workspace.find_item::<SettingsView>().unwrap_or_else(|| {
+    let item = workspace.find_item::<SettingsView>(cx).unwrap_or_else(|| {
         let item = cx.new(|cx| SettingsView::with_pages(pages.clone(), installed, window, cx));
         workspace.add_item(item.clone(), window, cx);
         item

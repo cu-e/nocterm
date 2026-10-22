@@ -75,23 +75,88 @@ pub enum SessionEvent {
 
 /// What the runtime reads about a chat to schedule its connection.
 pub struct ClientState {
-    pub chat_id: String,
-    /// Restored chat directory, resolved before process and sandbox launch.
-    pub workdir: Option<PathBuf>,
-    pub agent_id: String,
-    pub session: Option<SessionId>,
-    /// Whether the session is doing work that closing it would interrupt.
-    pub busy: bool,
-    /// Whether the chat holds a connection.
-    pub leased: bool,
-    /// Whether the chat waits for a connection.
-    pub activation_pending: bool,
-    /// Whether the chat's previous session is still closing.
-    pub closing: bool,
-    /// Whether a panel shows the chat; its idle connection is kept.
-    pub shown: bool,
+    origin: nocterm_ai::execution_origin::ExecutionOrigin,
+    agent_id: String,
+    session: Option<SessionId>,
+    busy: bool,
+    leased: bool,
+    activation_pending: bool,
+    closing: bool,
+    shown: bool,
+}
+impl ClientState {
+    pub fn new(
+        origin: nocterm_ai::execution_origin::ExecutionOrigin,
+        agent_id: String,
+        session: Option<SessionId>,
+        busy: bool,
+        leased: bool,
+        activation_pending: bool,
+        closing: bool,
+        shown: bool,
+    ) -> Self {
+        Self {
+            origin,
+            agent_id,
+            session,
+            busy,
+            leased,
+            activation_pending,
+            closing,
+            shown,
+        }
+    }
+    pub fn origin(&self) -> &nocterm_ai::execution_origin::ExecutionOrigin {
+        &self.origin
+    }
+    pub fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
+    pub fn session(&self) -> &Option<SessionId> {
+        &self.session
+    }
+    pub fn busy(&self) -> bool {
+        self.busy
+    }
+    pub fn leased(&self) -> bool {
+        self.leased
+    }
+    pub fn activation_pending(&self) -> bool {
+        self.activation_pending
+    }
+    pub fn closing(&self) -> bool {
+        self.closing
+    }
+    pub fn shown(&self) -> bool {
+        self.shown
+    }
 }
 
+/// Immutable resident payload observation; eviction safety remains with the chat.
+#[derive(Clone, Copy)]
+pub struct HistoryUsage {
+    bytes: usize,
+    updated: u64,
+    shown: bool,
+}
+impl HistoryUsage {
+    pub fn new(bytes: usize, updated: u64, shown: bool) -> Self {
+        Self {
+            bytes,
+            updated,
+            shown,
+        }
+    }
+    pub(crate) fn bytes(self) -> usize {
+        self.bytes
+    }
+    pub(crate) fn updated(self) -> u64 {
+        self.updated
+    }
+    pub(crate) fn shown(self) -> bool {
+        self.shown
+    }
+}
 /// A chat as the runtime sees it. Calls on a closed chat do nothing.
 pub trait SessionClient {
     fn id(&self) -> EntityId;
@@ -99,6 +164,10 @@ pub trait SessionClient {
     fn alive(&self) -> bool;
     fn emit(&self, event: SessionEvent, cx: &mut App);
     fn state(&self, cx: &App) -> Option<ClientState>;
+    /// Resident history only; callers must exclude a currently borrowed requester.
+    fn history_usage(&self, cx: &App) -> Option<HistoryUsage>;
+    /// Evict only through the chat's durability, lease and dirty-input gates.
+    fn evict_history(&self, cx: &mut App) -> bool;
     /// The chat's unsaved changes, without changing it.
     fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>>;
     /// The chat's unsaved changes and the revision they become.

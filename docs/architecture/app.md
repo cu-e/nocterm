@@ -21,6 +21,19 @@ as a `VaultAccess` port; its installed feature handle owns settings observation
 and is retained by the app. The application window factory reuses installed service handles rather than
 initializing another vault or transfer queue.
 
+Workspace terminal resolution composes retained Connections and Terminal installations
+through `ProjectTerminalResolve`. Connections resolves a saved profile and checks
+the original destination and ordered jump route without opening a connection.
+Terminal then opens an ordinary folder session inside the workspace, where normal
+host-key, password and vault prompts appear. Resolution creates no additional
+server tab ([ADR 0070](../adr/0070-original-workspace-connection-recovery.md)).
+
+The same retained installations implement the narrow `ChatConnectionOpen` port.
+It resolves an explicitly attached saved server with its current credentials and
+jump route, checks the original live surface before creating a normal terminal,
+and registers that terminal as background membership on that surface. The
+connection directory and general session factory keep their existing contracts.
+
 ## Menus
 
 The composition root supplies Session/Edit/Search/Window/Help descriptors to

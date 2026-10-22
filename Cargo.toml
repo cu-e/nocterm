@@ -36,6 +36,10 @@ nocterm-keymap-ui.workspace = true
 nocterm-local.workspace = true
 nocterm-localfs.workspace = true
 nocterm-monitor-ui.workspace = true
+nocterm-project-model.workspace = true
+nocterm-project-service.workspace = true
+nocterm-project-storage.workspace = true
+nocterm-projects.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
 nocterm-store.workspace = true
@@ -131,6 +135,7 @@ nocterm-connections-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-project-model = { workspace = true, features = ["test-support"] }
 nocterm-transfers = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
@@ -159,6 +164,10 @@ license-file = "LICENSE"
 nocterm-terminal-model = { path = "crates/terminal-model" }
 nocterm-explorer = { path = "crates/explorer" }
 nocterm-ai = { path = "crates/ai" }
+nocterm-project-model = { path = "crates/project-model" }
+nocterm-project-storage = { path = "crates/project-storage" }
+nocterm-project-service = { path = "crates/project-service" }
+nocterm-projects = { path = "crates/projects" }
 nocterm-agent-providers = { path = "crates/agent-providers" }
 nocterm-agent-directory = { path = "crates/agent-directory" }
 nocterm-agent-settings-ui = { path = "crates/agent-settings-ui" }

@@ -109,7 +109,7 @@ fn deleting_chat_during_background_creation_closes_its_original_session(cx: &mut
     );
     cx.update(|cx| {
         let workspace = f.workspace.read(cx);
-        assert!(!workspace.is_background(opened[0]));
+        assert!(!workspace.is_background(opened[0], cx));
         assert!(
             workspace
                 .terminals(cx)
@@ -153,7 +153,7 @@ fn failed_opening_never_closes_a_session_the_user_promoted_to_a_tab(cx: &mut Tes
     let item = directory.background.borrow()[0];
     cx.update(|cx| {
         let workspace = f.workspace.read(cx);
-        assert!(!workspace.is_background(item));
+        assert!(!workspace.is_background(item, cx));
         assert!(
             workspace
                 .terminals(cx)

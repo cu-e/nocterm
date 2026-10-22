@@ -1,7 +1,7 @@
 //! Transfer UI emits pinned requests; streaming belongs to adapter integration tests.
 use super::*;
 
-fn show_local(
+pub(super) fn show_local(
     cx: &mut TestAppContext,
     handle: AnyWindowHandle,
     workspace: &Entity<Workspace>,
@@ -18,7 +18,13 @@ fn show_local(
     cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));
     cx.run_until_parked();
 }
-fn drag_row(window: &mut Window, source: &str, destination: &str, offset: f32, cx: &mut App) {
+pub(super) fn drag_row(
+    window: &mut Window,
+    source: &str,
+    destination: &str,
+    offset: f32,
+    cx: &mut App,
+) {
     use gpui_kit::test::TestWindowExt as _;
     let source = window.find(SharedString::from(source.to_owned())).bounds();
     let destination = window

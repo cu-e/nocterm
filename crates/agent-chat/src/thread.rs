@@ -87,6 +87,22 @@ pub struct Fork {
     attachments: Vec<Attachment>,
 }
 
+impl Fork {
+    pub(crate) fn prepared(mut self) -> Result<Self, nocterm_ai::history::HistoryCodecError> {
+        self.chat = nocterm_ai::history::prepare(self.chat)?;
+        Ok(self)
+    }
+    pub(crate) fn resident_bytes(&self) -> usize {
+        self.chat.resident_bytes()
+    }
+    pub(crate) fn key(&self) -> nocterm_ai::execution_origin::ChatKey {
+        nocterm_ai::execution_origin::ChatKey::new(
+            self.chat.header.scope,
+            self.chat.header.id.clone(),
+        )
+    }
+}
+
 pub struct AgentThread {
     session: session_driver::SessionDriver,
     tools: tool_runtime::ToolRuntime,
@@ -115,6 +131,11 @@ impl AgentThread {
     ) {
         self.tools.clear_wait(expected);
         cx.notify();
+    }
+
+    /// The original terminal collection captured when this document was opened.
+    pub fn workspace_seat(&self) -> &crate::seat::Seat {
+        self.deps.seat()
     }
 
     /// Ends background sessions this chat opened that it can no longer use.
@@ -287,7 +308,9 @@ impl AgentThread {
         let owner = self::client(&cx.entity());
         let runtime = self.deps.runtime().clone();
         cx.defer(move |cx| {
-            runtime.request_activation(owner, cx);
+            if let Err(error) = runtime.request_activation(owner.clone(), cx) {
+                owner.emit(crate::runtime::SessionEvent::Failed(error.to_string()), cx);
+            }
         });
         cx.notify();
     }
@@ -338,7 +361,9 @@ impl AgentThread {
             {
                 tracing::warn!(%error,"released chat admission failed");
             }
-            runtime.unregister_document(id, cx);
+            if let Err(error) = runtime.unregister_document(id, cx) {
+                tracing::warn!(%error, "could not retire released chat document");
+            }
         });
         if let Some(window) = self.bindings.window() {
             let seat = self.deps.seat().clone();
@@ -382,29 +407,37 @@ impl AgentThread {
             bindings: bindings::ThreadBindings::new(release, authority),
         }
     }
-    pub fn new(agent_id: String, deps: crate::chat_deps::ChatDeps, cx: &mut Context<Self>) -> Self {
-        let chat = deps.new_chat(agent_id);
+    pub(crate) fn new(
+        chat: nocterm_ai::history::SavedChat,
+        deps: crate::chat_deps::ChatDeps,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self::from_document(
-            document::ChatDocument::new(chat.agent_id, chat.id, chat.updated),
+            document::ChatDocument::new(
+                chat.header.agent_id,
+                nocterm_ai::execution_origin::ChatKey::new(chat.header.scope, chat.header.id),
+                chat.header.updated,
+            ),
             deps,
             cx,
         )
     }
-    pub fn archived(
-        summary: nocterm_ai::history::ChatSummary,
+    pub(crate) fn archived(
+        row: nocterm_agent_runtime::CatalogRow,
         deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
+        let summary = row.summary();
         let mut state = document::ChatDocument::new(
             summary.agent_id.clone(),
-            summary.id.clone(),
+            nocterm_ai::execution_origin::ChatKey::new(summary.scope, summary.id.clone()),
             summary.updated,
         );
-        state.archived_clean(&summary);
+        state.archived_clean(summary);
         let mut thread = Self::from_document(state, deps, cx);
         thread.config.saved_model(summary.model.clone());
         thread.notice.present("Saved chat".into());
-        thread.archive = archive::Archive::archived(summary);
+        thread.archive = archive::Archive::archived(row);
         thread
     }
     pub fn is_archived(&self) -> bool {

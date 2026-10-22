@@ -12,8 +12,15 @@ const ID: &str = "00000000-0000-4000-8000-000000000001";
 fn imported(entries: Vec<Entry>) -> ChatDocument {
     let mut saved = SavedChat::for_identity("agent".into(), ID.into(), 40);
     saved.entries = entries;
-    saved.title = Some("Recorded title".into());
-    let mut document = ChatDocument::new("agent".into(), ID.into(), 40);
+    saved.header.title = Some("Recorded title".into());
+    let mut document = ChatDocument::new(
+        "agent".into(),
+        nocterm_ai::execution_origin::ChatKey::new(
+            nocterm_ai::history::ContextId::General,
+            ID.into(),
+        ),
+        40,
+    );
     document.imported_clean(&mut saved, false);
     document
 }
@@ -194,7 +201,14 @@ fn clearing_a_saved_draft_yields_an_empty_candidate_and_a_never_saved_empty_chat
         .unwrap();
     assert!(snapshot.draft.is_none());
     assert!(snapshot.entries.is_empty());
-    let mut empty = ChatDocument::new("agent".into(), ID.into(), 40);
+    let mut empty = ChatDocument::new(
+        "agent".into(),
+        nocterm_ai::execution_origin::ChatKey::new(
+            nocterm_ai::history::ContextId::General,
+            ID.into(),
+        ),
+        40,
+    );
     empty.establish_clean_inputs(&input(&composer, &config));
     assert!(
         empty
@@ -300,8 +314,8 @@ fn disabled_release_retains_unadmitted_or_failed_input_and_an_old_ack_cannot_rel
         1,
         "the driver retains the full accepted transcript"
     );
-    assert_eq!(first.name.as_deref(), Some("first change"));
-    assert_eq!(newest.name.as_deref(), Some("newer desire"));
+    assert_eq!(first.header.name.as_deref(), Some("first change"));
+    assert_eq!(newest.header.name.as_deref(), Some("newer desire"));
     assert!(
         document.existing_offer().is_none(),
         "the writer already owns this immutable intent"

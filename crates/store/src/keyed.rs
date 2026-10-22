@@ -156,6 +156,28 @@ impl<K: Clone + Eq + Hash + Send + 'static, V: Clone + Send + 'static, Tag: Clon
         }
         Ok(())
     }
+    /// Borrow every immutable value retained for normal publication, including an
+    /// older active generation. The same admitted generation is visited once.
+    /// This observes ownership, not a byte bound; accepted dirty keys may exceed
+    /// the ready-token capacity. Capture freezes admission and transfers ownership.
+    pub fn visit_retained_values(&self, mut visit: impl FnMut(&V)) {
+        for candidate in self
+            .entries
+            .values()
+            .filter_map(|entry| entry.latest.as_ref())
+        {
+            visit(&candidate.value);
+        }
+        if let Some(active) = &self.active
+            && self
+                .entries
+                .get(&active.stamp.key)
+                .and_then(|entry| entry.latest.as_ref())
+                .is_none_or(|latest| latest.stamp.generation != active.stamp.generation)
+        {
+            visit(&active.value);
+        }
+    }
     pub fn error(&self, key: &K) -> Option<&StoreError> {
         self.entries.get(key)?.error.as_ref()
     }

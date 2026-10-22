@@ -88,7 +88,7 @@ fn local_only_application_menus_enable_common_tabs_and_disable_hidden_or_outside
         .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(workspace.read(cx).items().next().is_none());
+        assert!(workspace.read(cx).items(cx).next().is_none());
         let menus = crate::app_menus::build(workspace.read(cx), window, cx);
         assert_tab_actions(&menus, true);
         assert!(enabled(&menus, "Split View Vertically"));

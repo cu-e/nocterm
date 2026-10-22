@@ -174,7 +174,7 @@ fn native_menu_groups_and_splits_work_in_both_placements_and_zoom_states(cx: &mu
             .unwrap();
             cx.run_until_parked();
             ws.read_with(cx, |ws, cx| {
-                assert!(!ws.tab_group_items(clicked).is_empty());
+                assert!(!ws.tab_group_items(clicked, cx).is_empty());
                 assert!(
                     ws.tabs(cx)
                         .iter()
@@ -191,7 +191,7 @@ fn native_menu_groups_and_splits_work_in_both_placements_and_zoom_states(cx: &mu
                     ws.tab_location(tabs[0].entity_id(), cx)
                 );
                 assert!(ws.zoomed_pane(cx).is_none());
-                assert!(ws.tab_group_items(clicked).is_empty());
+                assert!(ws.tab_group_items(clicked, cx).is_empty());
                 assert_eq!(ws.tabs(cx).len(), 3);
             });
             for tab in tabs {
@@ -386,19 +386,19 @@ fn central_public_ordinals_survive_interleaved_local_registry_entries(cx: &mut T
     cx.run_until_parked();
     with(cx, window, &ws, |ws, window, cx| {
         assert_eq!(
-            ws.items().map(ItemHandle::item_id).collect::<Vec<_>>(),
+            ws.items(cx).map(|item| item.item_id()).collect::<Vec<_>>(),
             [first.entity_id(), second.entity_id()]
         );
         ws.activate_item(0, window, cx);
-        assert_eq!(ws.active_item().unwrap().item_id(), first.entity_id());
+        assert_eq!(ws.active_item(cx).unwrap().item_id(), first.entity_id());
         let remote = ws.active_session(cx).unwrap().target;
         ws.activate_item_by_id(local.entity_id(), window, cx);
-        assert_eq!(ws.active_item().unwrap().item_id(), first.entity_id());
+        assert_eq!(ws.active_item(cx).unwrap().item_id(), first.entity_id());
         assert_eq!(ws.active_session(cx).unwrap().target, remote);
         assert_eq!(ws.local_terminal_cwd(cx), Some("/local".into()));
         ws.close_item(1, window, cx);
         assert_eq!(
-            ws.items().map(ItemHandle::item_id).collect::<Vec<_>>(),
+            ws.items(cx).map(|item| item.item_id()).collect::<Vec<_>>(),
             [first.entity_id()]
         );
         ws.close_item(9, window, cx);

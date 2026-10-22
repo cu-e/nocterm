@@ -1,117 +1,166 @@
-//! Immutable chat publication; the service supplies serialization order.
-use crate::{catalog, loading};
+//! Immutable scoped documents; the service supplies serialization and write ordering.
+use crate::{
+    catalog,
+    input::Input,
+    namespace::{Partition, Root},
+    publication,
+};
 use nocterm_ai::{
-    history::{self, ChatSummary, SavedChat, SharedChat},
-    storage::{AgentStorageError, ChatRepository, StorageFuture},
+    history::{self, CatalogHeader, ChatSummary, ContextId, SavedChat, SharedChat},
+    storage::{AgentStorageError, ChatRepository, StorageFuture, require_chat_scope},
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use nocterm_session::local_fs::{LocalDirectory, LocalFs};
+use std::{path::PathBuf, sync::Arc};
+
 #[derive(Clone)]
 pub struct FileChatRepository {
-    dir: PathBuf,
+    root: Root,
 }
 impl FileChatRepository {
-    pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+    /// The configured root has trusted application-owned ancestry. Every generated
+    /// descendant and operation uses the supplied strict held-directory capability.
+    pub fn new(dir: PathBuf, filesystem: Arc<dyn LocalFs>) -> Self {
+        Self {
+            root: Root::new(dir, filesystem),
+        }
     }
 }
 impl ChatRepository for FileChatRepository {
-    fn catalog(&self) -> StorageFuture<Vec<ChatSummary>> {
-        let dir = self.dir.clone();
-        Box::pin(async move { Ok(catalog::load_catalog(&dir)) })
+    fn catalog(&self, scope: ContextId) -> StorageFuture<Vec<ChatSummary>> {
+        let root = self.root.clone();
+        Box::pin(async move { catalog::load(&root, scope) })
     }
-    fn load(&self, id: String) -> StorageFuture<SavedChat> {
-        let dir = self.dir.clone();
-        Box::pin(async move { load(&dir, &id) })
+    fn load(&self, scope: ContextId, id: String) -> StorageFuture<SavedChat> {
+        let root = self.root.clone();
+        Box::pin(async move { load(&root, scope, &id) })
     }
     fn save(&self, chat: Arc<SharedChat>) -> StorageFuture<()> {
-        let dir = self.dir.clone();
-        Box::pin(async move { save_shared(&dir, &chat) })
+        let root = self.root.clone();
+        Box::pin(async move { save(&root, &chat) })
     }
-    fn delete(&self, id: String) -> StorageFuture<()> {
-        let dir = self.dir.clone();
-        Box::pin(async move { delete(&dir, &id) })
+    fn delete(&self, scope: ContextId, id: String) -> StorageFuture<()> {
+        let root = self.root.clone();
+        Box::pin(async move { delete(&root, scope, &id) })
     }
 }
-pub(super) fn load(dir: &Path, id: &str) -> Result<SavedChat, AgentStorageError> {
-    let path = loading::file(dir, id)?;
-    Ok(history::decode(&loading::read(&path, id)?, id)?)
+fn requested(
+    root: &Arc<dyn LocalDirectory>,
+    scope: ContextId,
+    id: &str,
+) -> Result<Option<Partition>, AgentStorageError> {
+    if let Some(partition) = Partition::scoped(root, scope, false)?
+        && partition.exists(id)?
+    {
+        return Ok(Some(partition));
+    }
+    if scope == ContextId::General {
+        let legacy = Partition::legacy(root.clone());
+        if legacy.exists(id)? {
+            return Ok(Some(legacy));
+        }
+    }
+    Ok(None)
 }
-pub(super) fn save(dir: &Path, chat: &SavedChat) -> Result<(), AgentStorageError> {
-    publish(dir, chat, history::encode(chat)?, !chat.queue.is_empty())
+fn load(root: &Root, scope: ContextId, id: &str) -> Result<SavedChat, AgentStorageError> {
+    crate::namespace::validate_id(id)?;
+    let directory = root
+        .open(false)?
+        .ok_or_else(|| AgentStorageError::NotFound(id.into()))?;
+    let partition =
+        requested(&directory, scope, id)?.ok_or_else(|| AgentStorageError::NotFound(id.into()))?;
+    let input = Input::open(&partition, id, "json")?;
+    let bytes = if partition.is_legacy() {
+        input.all()?
+    } else {
+        input.scoped_record(id, scope)?
+    };
+    let chat = history::decode(&bytes, id)?;
+    require_chat_scope(scope, chat.header.scope)?;
+    check_version(&partition, chat.version)?;
+    Ok(chat)
 }
-pub(super) fn save_shared(dir: &Path, chat: &SharedChat) -> Result<(), AgentStorageError> {
+fn check_version(partition: &Partition, version: u32) -> Result<(), AgentStorageError> {
+    if (partition.is_legacy() && version != 1) || (!partition.is_legacy() && version != 2) {
+        return Err(history::HistoryCodecError::InvalidHeader.into());
+    }
+    Ok(())
+}
+pub(super) fn header(partition: &Partition, id: &str) -> Result<CatalogHeader, AgentStorageError> {
+    let input = Input::open(partition, id, "json")?;
+    let header = history::decode_catalog_header(&input.prefix()?, id)?;
+    require_chat_scope(partition.scope(), header.scope())?;
+    Ok(header)
+}
+fn existing(partition: &Partition, id: &str) -> Result<(), AgentStorageError> {
+    if !partition.exists(id)? {
+        return Ok(());
+    }
+    if partition.is_legacy() {
+        let chat = history::decode(&Input::open(partition, id, "json")?.all()?, id)?;
+        require_chat_scope(partition.scope(), chat.header.scope)?;
+        check_version(partition, chat.version)
+    } else {
+        header(partition, id).map(|_| ())
+    }
+}
+fn save(root: &Root, chat: &SharedChat) -> Result<(), AgentStorageError> {
     if let Some((draft, updated)) = chat.metadata.draft_patch() {
-        let mut original = load(dir, &chat.id)?;
+        let mut original = load(root, chat.header.scope, &chat.header.id)?;
         original.draft = draft;
-        original.updated = updated;
-        return save(dir, &original);
+        original.header.updated = updated;
+        return save_record(
+            root,
+            &original,
+            history::encode(&original)?,
+            !original.queue.is_empty(),
+        );
     }
-    publish(
-        dir,
+    save_record(
+        root,
         &chat.metadata,
         history::encode_shared(chat)?,
         !chat.queue.is_empty(),
     )
 }
-fn publish(
-    dir: &Path,
+fn save_record(
+    root: &Root,
     chat: &SavedChat,
     bytes: Vec<u8>,
     queued: bool,
 ) -> Result<(), AgentStorageError> {
-    let path = loading::file(dir, &chat.id)?;
-    nocterm_core::paths::ensure_private_dir(dir).map_err(|source| {
-        AgentStorageError::Directory {
-            path: dir.to_owned(),
-            source: Arc::new(source),
-        }
-    })?;
-    nocterm_core::fs::write_private_atomic(&path, &bytes).map_err(|source| {
-        AgentStorageError::Publish {
-            path,
-            source: Arc::new(source),
-        }
-    })?;
-    catalog::update_cache(dir, chat, queued);
+    let directory = root
+        .open(true)?
+        .ok_or_else(|| AgentStorageError::NotFound(chat.header.id.clone()))?;
+    let partition = if chat.version == 1 {
+        require_chat_scope(ContextId::General, chat.header.scope)?;
+        Partition::legacy(directory.clone())
+    } else {
+        Partition::scoped(&directory, chat.header.scope, true)?
+            .ok_or_else(|| AgentStorageError::NotFound(chat.header.id.clone()))?
+    };
+    existing(&partition, &chat.header.id)?;
+    publication::publish(&partition, &chat.header.id, "json", &bytes)?;
+    catalog::update_cache(&partition, chat, queued);
     Ok(())
 }
-pub(super) fn delete(dir: &Path, id: &str) -> Result<(), AgentStorageError> {
-    let path = loading::file(dir, id)?;
-    match std::fs::remove_file(&path) {
-        Err(source) if source.kind() != std::io::ErrorKind::NotFound => {
-            Err(AgentStorageError::Delete {
-                path,
-                source: Arc::new(source),
-            })
-        }
-        _ => {
-            catalog::delete_cache(dir, id);
-            Ok(())
-        }
+fn delete(root: &Root, scope: ContextId, id: &str) -> Result<(), AgentStorageError> {
+    crate::namespace::validate_id(id)?;
+    let Some(directory) = root.open(false)? else {
+        return Ok(());
+    };
+    let scoped = Partition::scoped(&directory, scope, false)?;
+    // Validate both before mutation. Legacy is removed first so an interrupted
+    // delete cannot reveal its stale fallback after removing the scoped document.
+    let legacy = (scope == ContextId::General).then(|| Partition::legacy(directory));
+    if let Some(legacy) = &legacy {
+        existing(legacy, id)?;
     }
+    if let Some(scoped) = &scoped {
+        existing(scoped, id)?;
+    }
+    for partition in legacy.into_iter().chain(scoped) {
+        partition.remove(id, "json")?;
+        let _ = partition.remove(id, "meta");
+    }
+    Ok(())
 }
-#[cfg(test)]
-fn load_all(dir: &Path) -> Vec<SavedChat> {
-    let mut bytes = 0;
-    catalog::load_catalog(dir)
-        .into_iter()
-        .filter_map(|row| {
-            if bytes + row.bytes > 64 * 1024 * 1024 {
-                return None;
-            }
-            let chat = load(dir, &row.id).ok()?;
-            let resident = chat.resident_bytes() as u64;
-            if bytes + resident > 64 * 1024 * 1024 {
-                return None;
-            }
-            bytes += resident;
-            Some(chat)
-        })
-        .collect()
-}
-#[cfg(test)]
-#[path = "history_tests.rs"]
-mod tests;

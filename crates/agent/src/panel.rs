@@ -68,6 +68,7 @@ pub(crate) struct AgentPanel {
     layout: layout::PanelLayout,
     menus: menu_view::MenuView,
     settings: nocterm_store::SettingsHandle,
+    source: nocterm_workspace::ProjectSurfaceReceipt,
 }
 impl EventEmitter<RightPanelEvent> for AgentPanel {}
 
@@ -96,6 +97,7 @@ impl AgentPanel {
         Self {
             focus: cx.focus_handle(),
             chats: crate::roster::ChatRoster::new(host.deps().clone()),
+            source: host.source(),
             host,
             notices: notices::PanelNotices::default(),
             _bindings: bindings::PanelBindings::new(subscriptions),
@@ -138,7 +140,55 @@ impl AgentPanel {
             .collect()
     }
     fn on_runtime_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.chats.release_quiet_hidden(cx);
+        if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled {
+            return;
+        }
+        if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
+            self.notices.set_error(Some(error.to_string()));
+        }
         self.adopt_saved_chats(window, cx);
+        cx.notify();
+    }
+    fn select_context(
+        &mut self,
+        source: nocterm_workspace::ProjectSurfaceReceipt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if source == self.source {
+            return;
+        }
+        let deps = match self.host.deps_for_source(source) {
+            Ok(deps) => deps,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        };
+        self.leave_composer(cx);
+        self.chats.switch_context(deps, cx);
+        self.source = source;
+        self.composer.clear();
+        self.history.switch_context(window, cx);
+        self.sign_ins.clear();
+        self.notices.set_error(None);
+        self.reset_chat_view(cx);
+        if let Some(thread) = self.current() {
+            let binding = self.composer.bind_loading(thread.entity_id(), cx);
+            let archived = thread.read(cx).is_archived();
+            let draft = thread.read(cx).draft_text().unwrap_or_default().to_owned();
+            self.composer
+                .finish_loading(&binding, draft, archived, window, cx);
+        } else {
+            self.composer.set_text("", window, cx);
+        }
+        if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
+            self.notices.set_error(Some(error.to_string()));
+        }
+        self.adopt_saved_chats(window, cx);
+        self.sync_approval_attention(window, cx);
         cx.notify();
     }
     fn on_workspace_event(
@@ -147,6 +197,14 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event == WorkspaceEvent::ContextChanged {
+            // This synchronous committed event captures the original source once.
+            // Async history/runtime callbacks never consult current UI selection.
+            if let Some(workspace) = self.host.workspace().upgrade() {
+                let source = workspace.read(cx).context_source(cx);
+                self.select_context(source, window, cx);
+            }
+        }
         if event == WorkspaceEvent::RightPanelVisibilityChanged {
             let visible = self.history_is_visible(cx);
             self.history.set_visible(visible, cx);

@@ -293,3 +293,46 @@ fn closed_clean_keys_release_payloads_but_failed_dirty_keys_survive_until_retry(
         assert!(entity.read(cx).error(&1).is_none());
     });
 }
+
+#[gpui::test]
+fn retained_value_observation_includes_active_and_coalesced_payloads_until_publication(
+    cx: &mut TestAppContext,
+) {
+    let (release, wait) = oneshot::channel();
+    let wait = Arc::new(Mutex::new(Some(wait)));
+    let writer: KeyedWriter<usize, Arc<usize>> = Arc::new(move |_, _| {
+        let wait = wait.lock().unwrap().take();
+        Box::pin(async move {
+            if let Some(wait) = wait {
+                wait.await.unwrap();
+            }
+            Ok(())
+        })
+    });
+    let entity = cx.new(|_| KeyedPersisted::new(writer, NonZeroUsize::new(1).unwrap()));
+    entity.update(cx, |state, cx| {
+        state.update_latest(1, Arc::new(10), (), cx).unwrap()
+    });
+    cx.run_until_parked();
+    entity.update(cx, |state, cx| {
+        state.update_latest(1, Arc::new(20), (), cx).unwrap();
+        state.update_latest(2, Arc::new(30), (), cx).unwrap();
+    });
+    cx.update(|cx| {
+        let mut retained = Vec::new();
+        entity
+            .read(cx)
+            .visit_retained_values(|value| retained.push(**value));
+        retained.sort_unstable();
+        assert_eq!(retained, [10, 20, 30]);
+    });
+    release.send(()).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let mut retained = Vec::new();
+        entity
+            .read(cx)
+            .visit_retained_values(|value| retained.push(**value));
+        assert!(retained.is_empty());
+    });
+}

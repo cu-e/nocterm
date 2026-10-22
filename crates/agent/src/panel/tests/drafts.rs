@@ -12,8 +12,7 @@ fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
 }
 
 fn saved_value(f: &Fixture, id: &str) -> serde_json::Value {
-    let bytes = f.repository.encoded(id).unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    disk_value(&f.repository, id)
 }
 
 pub(super) fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
@@ -28,8 +27,15 @@ pub(super) fn disk_value(
     repository: &nocterm_ai::testing::InMemoryAgentRepository,
     id: &str,
 ) -> serde_json::Value {
-    let bytes = repository.encoded(id).unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    // Assert public decoded document facts across both wire formats. The codec
+    // tests separately own byte framing and authoritative-envelope validation.
+    let chat = repository.transcript(id).unwrap();
+    let mut value = serde_json::to_value(chat).unwrap();
+    if value["version"] == 2 {
+        value["chat"].take()
+    } else {
+        value
+    }
 }
 
 mod saving;
@@ -97,14 +103,12 @@ fn shutdown_flushes_the_latest_draft_before_a_debounce_can_run(cx: &mut TestAppC
 #[gpui_kit::test]
 fn restored_history_reopens_the_unsent_text_without_inserting_a_message(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let chat = nocterm_ai::history::SavedChat::for_identity(
+    let mut chat = nocterm_ai::history::SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-00000000006a".into(),
         1,
     );
-    let mut value = serde_json::to_value(chat).unwrap();
-    value["draft"] = serde_json::json!("restored\ntext");
-    let chat = serde_json::from_value(value).unwrap();
+    chat.draft = Some("restored\ntext".into());
     reinstall_history(&mut f, vec![chat], cx);
     let panel = f.panel.clone();
     cx.run_until_parked();
@@ -163,7 +167,7 @@ fn clearing_a_draft_is_reversible_for_the_same_chat_id(cx: &mut TestAppContext) 
             assert!(chats.is_empty());
         } else {
             assert_eq!(chats.len(), 1);
-            assert_eq!(chats[0].id, id);
+            assert_eq!(chats[0].header.id, id);
             assert_eq!(saved_value(&f, &id)["draft"], text);
         }
     }

@@ -8,6 +8,12 @@ use nocterm_workspace_ports::{ConnectionSummary, ExpectedSession, TerminalEntry}
 use std::rc::Rc;
 
 pub trait ChatWorkspace: 'static {
+    /// Bind once to an exact immutable document. Providers must refuse another
+    /// scope or rebinding an already bound seat to a different chat.
+    fn for_chat(
+        &self,
+        key: &nocterm_ai::execution_origin::ChatKey,
+    ) -> Result<Seat, nocterm_ai::storage::AgentStorageError>;
     /// The identity of the window's workspace, stable while it lives.
     fn id(&self) -> EntityId;
     fn is_open(&self) -> bool;

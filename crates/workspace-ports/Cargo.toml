@@ -9,9 +9,13 @@ publish = false
 [package.metadata.nocterm]
 layer = "service"
 
+[features]
+test-support = []
+
 [dependencies]
 gpui.workspace = true
 nocterm-session.workspace = true
+nocterm-project-model.workspace = true
 thiserror.workspace = true
 
 [lints]

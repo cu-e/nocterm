@@ -68,7 +68,7 @@ pub fn register(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let active = workspace.active_session(cx);
+    let active = workspace.explorer_source(cx);
     let handle = cx.entity();
     let panel = cx.new(|cx| FilesPanel::new(installed.clone(), handle, active, window, cx));
     workspace.add_panel(panel, cx);
@@ -80,7 +80,7 @@ pub fn register(
     });
     let service = installed.deps.transfers.clone();
     workspace.register_action(move |workspace, _: &ShowTransfers, window, cx| {
-        if let Some(view) = workspace.find_item::<transfers::TransfersView>() {
+        if let Some(view) = workspace.find_item::<transfers::TransfersView>(cx) {
             workspace.activate_item_by_id(view.entity_id(), window, cx);
         } else {
             let handle = cx.entity().downgrade();

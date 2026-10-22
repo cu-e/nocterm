@@ -50,7 +50,7 @@ fn titlebar_find_and_settings_keep_their_field_focus(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let settings = workspace
             .read(cx)
-            .find_item::<nocterm_settings_ui::SettingsView>()
+            .find_item::<nocterm_settings_ui::SettingsView>(cx)
             .unwrap();
         assert!(settings.read(cx).focus_handle(cx).is_focused(window));
     })

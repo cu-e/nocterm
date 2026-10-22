@@ -6,6 +6,8 @@
 //! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `TransferService`, `ProgramOpener`,
 //! workspace `LocalTerminal` and the retained settings service handle.
 //! Ports provided: `Panel`, `SettingsPageSpec`. Settings section: explorer. Globals: none.
+//! ExplorerSource supplies ordinary session files or a local folder for the
+//! injected LocalFs. The folder is an initial location; navigation stays ordinary.
 //! Invariants: native paths keep their original names; each pane rejects stale navigation;
 //! accepted operations retain their original capability while later navigation proceeds.
 mod activity;
@@ -24,6 +26,8 @@ mod settings_page;
 mod statistics;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use nocterm_workspace::SessionContext;
 mod transfers;
 
 use gpui_kit::{
@@ -46,7 +50,7 @@ use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
 use nocterm_ui::{ActiveDesign as _, IconName};
 use nocterm_workspace::{
-    FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
+    ExplorerSource, FileDrag, Panel, RemoteFileDrag as RemotePaths, Workspace, WorkspaceEvent,
 };
 use operations::FileTarget;
 use remote::{Browser, listing};
@@ -106,6 +110,7 @@ enum PaneIntent {
     Upload {
         sources: Vec<PathBuf>,
         destination: Option<String>,
+        source: Option<ExplorerSource>,
     },
     Download {
         files: RemotePaths,
@@ -195,7 +200,7 @@ impl FilesPanel {
     fn new(
         installed: Installed,
         workspace: Entity<Workspace>,
-        session: Option<SessionContext>,
+        source: Option<ExplorerSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -205,19 +210,36 @@ impl FilesPanel {
             window: window.window_handle(),
         };
         let local = cx.new(|cx| LocalPane::new(&installed, host.clone(), window, cx));
+        if let Some(directory) = source
+            .as_ref()
+            .filter(|source| source.is_local())
+            .and_then(ExplorerSource::initial_directory)
+        {
+            local.update(cx, |local, cx| local.load_local(directory.into(), cx));
+        }
         let remote =
-            cx.new(|cx| RemotePane::new(installed.local().clone(), host, session, window, cx));
+            cx.new(|cx| RemotePane::new(installed.local().clone(), host, source, window, cx));
         let local_events = cx.subscribe(&local, |this, _, event, cx| this.intent(event, cx));
         let remote_events = cx.subscribe(&remote, |this, _, event, cx| this.intent(event, cx));
         let workspace_events = cx.subscribe(&workspace, |this, workspace, event, cx| {
-            if *event == WorkspaceEvent::ActiveSessionChanged {
+            if matches!(
+                event,
+                WorkspaceEvent::ActiveSessionChanged
+                    | WorkspaceEvent::ContextChanged
+                    | WorkspaceEvent::SurfaceItemsChanged(_)
+            ) {
                 let workspace = workspace.clone();
                 let panel = cx.entity().downgrade();
                 cx.defer(move |cx| {
-                    let session = workspace.read(cx).active_session(cx);
+                    let source = workspace.read(cx).explorer_source(cx);
                     let _ = panel.update(cx, |this, cx| {
-                        this.remote
-                            .update(cx, |remote, cx| remote.follow(session, cx))
+                        if let Some(directory) = this
+                            .remote
+                            .update(cx, |remote, cx| remote.follow(source, cx))
+                        {
+                            this.local
+                                .update(cx, |local, cx| local.load_local(directory, cx));
+                        }
                     });
                 });
             } else if *event == WorkspaceEvent::LocalDirectoryChanged {
@@ -262,11 +284,17 @@ impl FilesPanel {
             PaneIntent::Upload {
                 sources,
                 destination,
+                source,
             } => {
-                let result = self
-                    .remote
-                    .read(cx)
-                    .transfer_target(destination.clone())
+                let result = source
+                    .as_ref()
+                    .and_then(|source| {
+                        Some((
+                            source.filesystem()?,
+                            source.address()?,
+                            destination.clone()?,
+                        ))
+                    })
                     .map(|(fs, host, destination)| {
                         self.installed.transfers().enqueue(UploadRequest {
                             sources: sources.clone(),

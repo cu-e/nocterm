@@ -38,7 +38,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
         [nocterm_ai::thread::Entry::User(_), nocterm_ai::thread::Entry::Agent(answer)] if answer == "answer"
     ));
     // The terminal context sent with the prompt is not part of the chat.
-    let text = String::from_utf8(f.repository.encoded(&saved[0].id).unwrap()).unwrap();
+    let text = String::from_utf8(f.repository.encoded(&saved[0].header.id).unwrap()).unwrap();
     assert!(
         !text.contains(nocterm_ai::context::TERMINAL_RULES),
         "{text}"
@@ -71,7 +71,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
 
     // Opening it reopens the agent's session instead of starting another.
     let sessions = f.commands.sessions.load(Ordering::SeqCst);
-    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
@@ -190,15 +190,15 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     })
     .unwrap();
     let saved = f.repository.chats();
-    assert_eq!(saved[0].name.as_deref(), Some("Disks"));
-    assert!(saved[0].pinned);
+    assert_eq!(saved[0].header.name.as_deref(), Some("Disks"));
+    assert!(saved[0].header.pinned);
 
     // A fork starts with the chat's messages, in a copy of its session.
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread(nginx.entity_id(), window, cx);
             let fork = panel.current().unwrap();
-            activate_thread(&fork, &f.installation.installed, cx)
+            activate_thread(&fork, cx)
         })
     })
     .unwrap();
@@ -417,9 +417,11 @@ fn second_history_window(
                     cx,
                 );
                 let owner = cx.entity().downgrade();
+                let source = workspace.general_surface_source(cx);
                 let view = cx.new(|cx| {
                     AgentPanel::new(
-                        f._directory.host(owner, f.installation.installed.clone()),
+                        f._directory
+                            .host(owner, f.installation.installed.clone(), source),
                         window,
                         cx,
                     )

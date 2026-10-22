@@ -299,3 +299,7 @@ their folders.
 Local agents are not sandboxed and may read your user files. Nocterm excludes
 SSH/vault credential fields from context; terminal-output filtering cannot
 recognize every secret. See [AI setup, tools and privacy](docs/AI_AGENTS.md).
+
+The Workspaces button beside Containers opens saved folders for the current
+connection and other servers. Each workspace has its own terminal tabs and chat
+history, using ordinary local or SSH sessions and the server’s normal permissions.

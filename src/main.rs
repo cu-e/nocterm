@@ -14,9 +14,12 @@ mod application;
 mod bootstrap;
 mod connection_setup;
 mod keymap;
+mod project_setup;
 mod settings_pages;
 mod startup;
 
+#[cfg(test)]
+mod agent_history_tests;
 #[cfg(test)]
 mod gui_tests;
 

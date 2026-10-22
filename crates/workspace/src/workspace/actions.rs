@@ -99,10 +99,15 @@ impl ActionRegistry {
                 this.focus_pane(-1, window, cx)
             }),
         )
-        .on_action(cx.listener(|_, _: &crate::RenameTab, window, cx| {
+        .on_action(cx.listener(|this, _: &crate::RenameTab, window, cx| {
+            let selection = this.command_selection(window, cx);
             let workspace = cx.weak_entity();
             window.defer(cx, move |window, cx| {
-                let _ = workspace.update(cx, |this, cx| this.rename_active_tab(window, cx));
+                let _ = workspace.update(cx, |this, cx| {
+                    if this.accepts_context_selection(selection, cx) {
+                        this.rename_active_tab(window, cx);
+                    }
+                });
             });
         }))
         .on_action(

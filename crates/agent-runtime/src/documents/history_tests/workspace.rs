@@ -46,7 +46,14 @@ fn connect(runtime: &Entity<Runtime>, cx: &mut TestAppContext) {
         inherit_env: Vec::new(),
     };
     runtime.update(cx, |runtime, cx| {
-        runtime.connect(client.clone(), "test-chat".into(), launch, cx)
+        runtime
+            .connect(
+                client.clone(),
+                client.chat.borrow().header.id.clone(),
+                launch,
+                cx,
+            )
+            .unwrap()
     });
 }
 #[gpui::test]

@@ -75,7 +75,7 @@ fn an_unreachable_server_is_reported_and_its_tab_stays(cx: &mut TestAppContext) 
         assert!(
             f.workspace
                 .read(cx)
-                .items()
+                .items(cx)
                 .any(|item| item.item_id() == f.terminal)
         );
     });

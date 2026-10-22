@@ -1,7 +1,6 @@
 //! The empty center offers a new connection and a compact saved-server history.
 use gpui_kit::{
-    Action as _, AnyElement, Context, ObjectFit, SharedString, StyledImage as _,
-    TestSupportExt as _,
+    AnyElement, Context, ObjectFit, SharedString, StyledImage as _, TestSupportExt as _,
     component::{
         ActiveTheme as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -23,8 +22,9 @@ impl Chrome {
     pub(super) fn render_empty_state(
         &self,
         directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+        selection: crate::ContextSelectionReceipt,
         cx: &mut Context<Workspace>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let recent = directory
             .as_ref()
             .map(|directory| directory.recent_connections(cx))
@@ -50,9 +50,11 @@ impl Chrome {
                         Button::new("empty-new-tab")
                             .primary()
                             .label("New Connection")
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(NewTab.boxed_clone(), cx)
-                            }),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if this.accepts_context_selection(selection, cx) {
+                                    this.on_new_tab(&NewTab, window, cx);
+                                }
+                            })),
                     )
                     .when(!recent.is_empty(), |body| {
                         body.child(
@@ -68,6 +70,7 @@ impl Chrome {
                                         self.render_recent_connection(
                                             connection,
                                             directory.clone(),
+                                            selection,
                                             cx,
                                         )
                                     },
@@ -75,12 +78,14 @@ impl Chrome {
                         )
                     }),
             )
+            .into_any_element()
     }
 
     fn render_recent_connection(
         &self,
         connection: ConnectionSummary,
         directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+        selection: crate::ContextSelectionReceipt,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let theme = cx.theme();
@@ -133,7 +138,14 @@ impl Chrome {
                     let id = id.clone();
                     // Opening a session updates Workspace; wait for this render's borrow to end.
                     window.defer(cx, move |window, cx| {
-                        directory.open(&id, &workspace, window, cx);
+                        if workspace
+                            .read_with(cx, |workspace, _| {
+                                workspace.accepts_context_selection(selection, cx)
+                            })
+                            .unwrap_or(false)
+                        {
+                            directory.open(&id, &workspace, window, cx);
+                        }
                     });
                 }
             })

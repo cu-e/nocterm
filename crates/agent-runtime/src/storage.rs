@@ -5,7 +5,6 @@ use nocterm_ai::{
 };
 use std::sync::Arc;
 
-#[derive(Clone)]
 pub struct AgentStorage {
     state: Arc<dyn AgentStateRepository>,
     chats: Arc<dyn ChatRepository>,
@@ -64,13 +63,19 @@ impl AgentStorage {
 pub struct HistoryReader {
     repository: Arc<dyn ChatRepository>,
     gate: nocterm_ai::history::HistoryGate,
+    scope: nocterm_ai::history::ContextId,
 }
 impl HistoryReader {
     pub(super) fn new(
         repository: Arc<dyn ChatRepository>,
         gate: nocterm_ai::history::HistoryGate,
+        scope: nocterm_ai::history::ContextId,
     ) -> Self {
-        Self { repository, gate }
+        Self {
+            repository,
+            gate,
+            scope,
+        }
     }
     pub async fn load(
         &self,
@@ -80,7 +85,18 @@ impl HistoryReader {
         nocterm_ai::history::HistoryPermit,
     ) {
         let permit = self.gate.acquire().await;
-        let loaded = self.repository.load(id).await;
+        let loaded = self
+            .repository
+            .load(self.scope, id.clone())
+            .await
+            .and_then(|chat| {
+                chat.validate_identity()?;
+                if chat.header.id != id {
+                    return Err(nocterm_ai::history::HistoryCodecError::IdentityMismatch.into());
+                }
+                nocterm_ai::storage::require_chat_scope(self.scope, chat.header.scope)?;
+                Ok(chat)
+            });
         (loaded, permit)
     }
 }

@@ -115,14 +115,14 @@ fn usage_focus_leaving_the_panel_dismisses_without_stealing_focus(cx: &mut TestA
     new_chat(&f, cx);
     open_usage(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        let terminal = f.workspace.read(cx).find_item::<FakeTerminal>().unwrap();
+        let terminal = f.workspace.read(cx).find_item::<FakeTerminal>(cx).unwrap();
         let focus = terminal.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
     })
     .unwrap();
     settle(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
-        let terminal = f.workspace.read(cx).find_item::<FakeTerminal>().unwrap();
+        let terminal = f.workspace.read(cx).find_item::<FakeTerminal>(cx).unwrap();
         let focus = terminal.read(cx).focus_handle(cx);
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_none());

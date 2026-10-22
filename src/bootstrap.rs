@@ -24,11 +24,7 @@ pub(crate) struct Services {
     /// Whether connections, snippets, layout, recordings and the keymap are
     /// read from and written to `paths`; tests keep them in memory.
     pub(crate) persist: bool,
-    pub(crate) transport: Arc<dyn Transport>,
-    /// Whether local shells run on this machine.
-    pub(crate) local: nocterm_terminal::LocalSessions,
-    /// Local host execution, supplied once independently of session creation.
-    pub(crate) local_host: Option<Arc<dyn nocterm_session::HostExec>>,
+    pub(crate) hosts: HostServices,
     pub(crate) terminal_auth_factory:
         Option<fn(nocterm_terminal::Installed) -> nocterm_agent::TerminalAuthOpener>,
     pub(crate) files: nocterm_files::Deps,
@@ -39,6 +35,14 @@ pub(crate) struct Services {
     pub(crate) images: nocterm_agent::ImageDeps,
     pub(crate) vault: Option<VaultSetup>,
     pub(crate) connections: nocterm_connections::PreparedConnections,
+    pub(crate) projects: crate::project_setup::PreparedProjectSetup,
+}
+
+/// Native connection capabilities supplied once for terminal composition.
+pub(crate) struct HostServices {
+    pub(crate) transport: Arc<dyn Transport>,
+    pub(crate) local: nocterm_terminal::LocalSessions,
+    pub(crate) local_host: Option<Arc<dyn nocterm_session::HostExec>>,
 }
 
 pub(crate) struct Themes {
@@ -67,6 +71,7 @@ pub(crate) struct Booted {
     workspace: nocterm_workspace::Deps,
     connections: Option<nocterm_connections::Installed>,
     snippets: Option<nocterm_snippets_ui::Installed>,
+    projects: Option<nocterm_projects::Installed>,
     themes: nocterm_ui::ThemeUi,
     /// The vault, when it opened; credentials and its settings depend on it.
     vault: Option<Rc<nocterm_vault_ui::Installed>>,
@@ -108,9 +113,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         settings,
         paths,
         persist,
-        transport,
-        local,
-        local_host,
+        hosts,
         terminal_auth_factory,
         files,
         themes,
@@ -119,7 +122,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         images,
         vault,
         connections,
+        projects,
     } = services;
+    let local_host = hosts.local_host;
     let stored = persist.then_some(&paths);
     gpui_kit::init(cx);
     let base = tokens.clone();
@@ -133,9 +138,10 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         &shutdown,
         cx,
     );
-    let terminal_deps = terminal_dependencies(transport, local, stored, &shutdown);
+    let terminal_deps = terminal_dependencies(hosts.transport, hosts.local, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
+    let projects = install_projects(projects, &terminal, connections.as_ref(), &shutdown, cx);
     if let Some(factory) = terminal_auth_factory {
         agent.terminal_auth = Some(factory(terminal.clone()));
     }
@@ -173,6 +179,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         agent,
         connections,
         snippets,
+        projects,
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout),
@@ -180,6 +187,23 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
     Ok(booted)
+}
+
+/// Saved workspaces retain the original terminal installation and shutdown owner.
+fn install_projects(
+    projects: crate::project_setup::PreparedProjectSetup,
+    terminal: &nocterm_terminal::Installed,
+    connections: Option<&nocterm_connections::Installed>,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Option<nocterm_projects::Installed> {
+    match projects.install(terminal, connections, shutdown, cx) {
+        Ok(projects) => Some(projects),
+        Err(error) => {
+            tracing::error!(%error, "workspace installation failed");
+            None
+        }
+    }
 }
 
 /// Saved connections, or none when their store could not register for shutdown.
@@ -417,16 +441,22 @@ pub(crate) fn build_workspace(
     nocterm_terminal::register(&booted.terminal, workspace);
     if let Some(connections) = &booted.connections {
         nocterm_connections::register(connections, workspace, window, cx);
+        workspace.set_chat_connection_opener(crate::project_setup::chat_connection_opener(
+            &booted.terminal,
+            connections,
+        ));
     }
     booted
         .settings_ui
         .register(workspace, booted.themes().clone());
     nocterm_files::register(&booted.files, workspace, window, cx);
-    // The last panel's switcher sits just before the monitor.
     if let Some(snippets) = &booted.snippets {
         nocterm_snippets_ui::register(workspace, snippets, window, cx);
     }
     nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
+    if let Some(projects) = &booted.projects {
+        nocterm_projects::register(workspace, projects, window, cx);
+    }
     nocterm_monitor_ui::register(&booted.monitor, workspace, window, cx);
     nocterm_agent::register(workspace, booted.agent.clone(), window, cx);
     workspace.set_menu_builder(crate::app_menus::build, window, cx);

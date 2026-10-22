@@ -193,7 +193,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
         window.render_frame(cx);
         assert_eq!(creations.get(), 0, "guest must be lazy");
         window.within("settings-pages").click(1usize, cx);
-        let settings = workspace.read(cx).find_item::<SettingsView>().unwrap();
+        let settings = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "terminal");
         workspace.update(cx, |workspace, cx| {
             open_page(
@@ -205,7 +205,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
                 cx,
             )
         });
-        assert_eq!(workspace.read(cx).items().count(), 1);
+        assert_eq!(workspace.read(cx).items(cx).count(), 1);
         assert_eq!(creations.get(), 1);
         window.render_frame(cx);
         window.input("guest master draft", cx);
@@ -265,8 +265,8 @@ fn open_settings_reuses_one_tab(cx: &mut TestAppContext) {
     }
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(workspace.read(cx).items().count(), 1);
-        let settings = workspace.read(cx).find_item::<SettingsView>().unwrap();
+        assert_eq!(workspace.read(cx).items(cx).count(), 1);
+        let settings = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
         assert!(settings.read(cx).focus_handle(cx).is_focused(window));
     })
     .unwrap();
@@ -477,7 +477,7 @@ fn supplied_order_and_lazy_default_drive_navigation_without_creating_hidden_page
     assert_eq!(&*events.borrow(), &["last eager", "first eager", "default"]);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let view = workspace.read(cx).find_item::<SettingsView>().unwrap();
+        let view = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
         assert_eq!(view.read(cx).selected_page_id(), "default");
         window.within("settings-pages").click(3usize, cx);
         assert_eq!(view.read(cx).selected_page_id(), "first eager");
@@ -522,7 +522,7 @@ fn same_and_unknown_page_opens_preserve_selection_and_do_not_flush(cx: &mut Test
             workspace.update(cx, |workspace, cx| {
                 open_page(workspace, id, &pages, fixture.installed.clone(), window, cx)
             });
-            let view = workspace.read(cx).find_item::<SettingsView>().unwrap();
+            let view = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
             assert_eq!(view.read(cx).selected_page_id(), "guest");
         }
         assert!(events.borrow().is_empty());

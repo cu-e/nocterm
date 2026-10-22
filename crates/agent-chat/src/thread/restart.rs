@@ -31,6 +31,9 @@ impl RestartData {
         (self.document, self.config, self.composer, self.restore)
     }
 
+    pub fn key(&self) -> &nocterm_ai::execution_origin::ChatKey {
+        self.document.key()
+    }
     pub fn agent_id(&self) -> &str {
         self.document.agent_id()
     }

@@ -10,8 +10,21 @@ struct RemotePresentation {
     collisions: CollisionPolicy,
     download_enabled: bool,
 }
+impl RemotePresentation {
+    fn hint(source: Option<&ExplorerSource>) -> Option<&'static str> {
+        match source {
+            None => Some("Open a connection to browse remote files."),
+            Some(source) if source.is_local() => Some("Open a connection to browse remote files."),
+            Some(source) if !source.connected() => Some("Disconnected. Reconnect to browse files."),
+            Some(source) if source.filesystem().is_none() => {
+                Some("This host does not provide SFTP.")
+            }
+            _ => None,
+        }
+    }
+}
 pub(super) struct RemotePane {
-    session: Option<SessionContext>,
+    source: Option<nocterm_workspace::ExplorerSource>,
     browser: Browser,
     requested: Option<String>,
     selected: BTreeSet<usize>,
@@ -28,7 +41,7 @@ impl RemotePane {
     pub(super) fn new(
         local: Arc<dyn nocterm_session::local_fs::LocalFs>,
         host: PaneHost,
-        session: Option<SessionContext>,
+        source: Option<nocterm_workspace::ExplorerSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -39,7 +52,7 @@ impl RemotePane {
             }
         });
         let mut pane = Self {
-            session: None,
+            source: None,
             browser: Browser::default(),
             requested: None,
             selected: BTreeSet::new(),
@@ -56,7 +69,7 @@ impl RemotePane {
                 download_enabled: false,
             },
         };
-        pane.follow(session, cx);
+        let _ = pane.follow(source, cx);
         pane
     }
     pub(super) fn listing(&self) -> ListingState<String> {
@@ -76,22 +89,13 @@ impl RemotePane {
         }
     }
     pub(super) fn access(&self) -> RemoteAccess {
-        match &self.session {
+        match &self.source {
             None => RemoteAccess::NoSession,
-            Some(session) if !session.connected => RemoteAccess::Disconnected,
-            Some(session) if session.fs.is_none() => RemoteAccess::Unsupported,
+            Some(session) if session.is_local() => RemoteAccess::NoSession,
+            Some(session) if !session.connected() => RemoteAccess::Disconnected,
+            Some(session) if session.filesystem().is_none() => RemoteAccess::Unsupported,
             Some(_) => RemoteAccess::Available,
         }
-    }
-    pub(super) fn transfer_target(
-        &self,
-        destination: Option<String>,
-    ) -> Option<(Arc<dyn RemoteFs>, nocterm_session::HostAddress, String)> {
-        Some((
-            self.filesystem()?,
-            self.session.as_ref()?.address(),
-            destination.or_else(|| self.browser.path().map(str::to_owned))?,
-        ))
     }
     pub(super) fn transfers(
         &mut self,
@@ -101,21 +105,23 @@ impl RemotePane {
         collisions: CollisionPolicy,
         cx: &mut Context<Self>,
     ) {
-        if let Some(session) = &self.session
+        if let Some(session) = &self.source
             && let Some(shown) = self.browser.path()
-            && finished
-                .iter()
-                .any(|job| activity::changes_remote(job, &session.address(), shown))
+            && finished.iter().any(|job| {
+                session
+                    .address()
+                    .is_some_and(|address| activity::changes_remote(job, &address, shown))
+            })
         {
             self.stale = true;
         }
         let activity = self
-            .session
+            .source
             .as_ref()
             .map(|session| {
                 jobs.into_iter()
                     .filter(|job| {
-                        job.host == session.address()
+                        Some(&job.host) == session.address().as_ref()
                             && job.direction == nocterm_transfers::TransferDirection::Upload
                             && !job.state.finished()
                     })
@@ -158,12 +164,19 @@ impl RemotePane {
             });
         })
     }
-    pub(super) fn follow(&mut self, session: Option<SessionContext>, cx: &mut Context<Self>) {
-        if matches!((&self.session, &session), (Some(before), Some(after)) if before.same_as(after))
-        {
-            return;
+    pub(super) fn follow(
+        &mut self,
+        source: Option<nocterm_workspace::ExplorerSource>,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        if matches!((&self.source, &source), (Some(before), Some(after)) if before.same_as(after)) {
+            return None;
         }
-        self.session = session;
+        let initial_directory = source
+            .as_ref()
+            .and_then(ExplorerSource::initial_directory)
+            .map(str::to_owned);
+        self.source = source;
         let filesystem = self.filesystem();
         self.path
             .update(cx, |input, cx| input.reset_remote(filesystem, cx));
@@ -174,15 +187,20 @@ impl RemotePane {
         self.task = None;
         self.counter.set(Default::default());
         if self.filesystem().is_some() {
-            self.load(None, cx);
+            self.load(initial_directory, cx);
         }
         cx.notify();
+        self.source
+            .as_ref()
+            .filter(|source| source.is_local())
+            .and_then(ExplorerSource::initial_directory)
+            .map(PathBuf::from)
     }
     pub(super) fn filesystem(&self) -> Option<Arc<dyn RemoteFs>> {
-        self.session
+        self.source
             .as_ref()
-            .filter(|s| s.connected)
-            .and_then(|s| s.fs.clone())
+            .filter(|s| s.connected() && !s.is_local())
+            .and_then(|s| s.filesystem())
     }
 }
 impl RemotePane {
@@ -293,11 +311,11 @@ impl RemotePane {
 
     pub(super) fn remote_file_target(&self, index: usize) -> Option<FileTarget> {
         let entry = self.browser.entries().get(index)?;
-        let session = self.session.as_ref()?;
+        let session = self.source.as_ref()?;
         Some(FileTarget::Remote {
             path: path::join(self.browser.path()?, &entry.name),
-            host: session.address(),
-            fs: session.fs.clone()?,
+            host: session.address()?,
+            fs: session.filesystem()?,
         })
     }
 
@@ -309,7 +327,7 @@ impl RemotePane {
             .collect();
         Some(RemotePaths {
             sources,
-            host: self.session.as_ref()?.address(),
+            host: self.source.as_ref()?.address()?,
             fs: self.filesystem()?,
         })
     }
@@ -468,6 +486,8 @@ impl RemotePane {
         stop_propagation: bool,
         cx: &mut Context<Self>,
     ) -> E {
+        let upload_source = self.source.clone();
+        let drop_path = drop_path.or_else(|| self.browser.path().map(str::to_owned));
         row.can_drop(|drag, _, _| {
             matches!(drag.downcast_ref::<FileDrag>(), Some(FileDrag::Local(_)))
                 || drag.is::<ExternalPaths>()
@@ -484,12 +504,14 @@ impl RemotePane {
         })
         .on_drop(cx.listener({
             let drop_path = drop_path.clone();
+            let source = upload_source.clone();
             move |_, files: &FileDrag, _, cx| {
                 if stop_propagation {
                     cx.stop_propagation();
                 }
                 if let FileDrag::Local(paths) = files {
                     cx.emit(PaneIntent::Upload {
+                        source: source.clone(),
                         sources: paths.clone(),
                         destination: drop_path.clone(),
                     });
@@ -501,6 +523,7 @@ impl RemotePane {
                 cx.stop_propagation();
             }
             cx.emit(PaneIntent::Upload {
+                source: upload_source.clone(),
                 sources: files.paths().to_vec(),
                 destination: drop_path.clone(),
             });
@@ -594,12 +617,7 @@ impl RemotePane {
     }
     pub(super) fn render_remote(&self, cx: &mut Context<Self>) -> AnyElement {
         let enabled = self.filesystem().is_some() && !self.browser.loading();
-        let hint = match &self.session {
-            None => Some("Open a connection to browse remote files."),
-            Some(s) if !s.connected => Some("Disconnected. Reconnect to browse files."),
-            Some(s) if s.fs.is_none() => Some("This host does not provide SFTP."),
-            _ => None,
-        };
+        let hint = RemotePresentation::hint(self.source.as_ref());
         let browser = v_flex()
             .id("remote-browser")
             .overflow_hidden()

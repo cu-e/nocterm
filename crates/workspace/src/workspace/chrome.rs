@@ -6,8 +6,8 @@
 //! dock draws its own tab groups as cards, so the content column only frames
 //! what it shows when no tab is open.
 use gpui_kit::{
-    Action as _, Anchor, AnyElement, AnyView, App, Context, Entity, Hsla, MouseButton,
-    StyleRefinement, TestSupportExt as _, Window,
+    Anchor, AnyElement, AnyView, App, Context, Entity, Hsla, MouseButton, StyleRefinement,
+    TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
@@ -22,11 +22,11 @@ use gpui_kit::{
 use nocterm_ui::IconName;
 
 use super::{
-    MenuBuilder, NewTabMenu, Workspace,
+    ContextSelectionReceipt, MenuBuilder, NewTabMenu, Workspace,
     layout::{Body, Column},
     panels::Sidebar,
     right_panel::RightPanelSlot,
-    tabs::Tabs,
+    surface::SurfaceFrame,
 };
 use crate::NewTab;
 use std::rc::Rc;
@@ -41,20 +41,23 @@ struct NewTabControl {
 
 /// Ephemeral immutable regions; Chrome cannot mutate another state owner.
 pub(super) struct Regions<'a> {
-    tabs: &'a Tabs,
+    tabs: SurfaceFrame,
+    selection: ContextSelectionReceipt,
     sidebar: &'a Sidebar,
     right: &'a RightPanelSlot,
     directory: Option<Rc<dyn crate::ConnectionDirectory>>,
 }
 impl<'a> Regions<'a> {
     pub(super) fn new(
-        tabs: &'a Tabs,
+        tabs: SurfaceFrame,
+        selection: ContextSelectionReceipt,
         sidebar: &'a Sidebar,
         right: &'a RightPanelSlot,
         directory: Option<Rc<dyn crate::ConnectionDirectory>>,
     ) -> Self {
         Self {
             tabs,
+            selection,
             sidebar,
             right,
             directory,
@@ -103,6 +106,14 @@ impl Chrome {
     pub(super) fn menu_builder(&self) -> Option<MenuBuilder> {
         self.menus.builder()
     }
+    pub(super) fn stale_menu_selection(
+        &self,
+        selection: ContextSelectionReceipt,
+        window: &Window,
+        cx: &App,
+    ) -> bool {
+        self.menus.stale_selection(selection, window, cx)
+    }
     pub(super) fn command_target(
         &self,
         window: &Window,
@@ -121,9 +132,10 @@ impl Chrome {
         &mut self,
         menus: Vec<gpui_kit::OwnedMenu>,
         target: Option<gpui_kit::EntityId>,
+        selection: ContextSelectionReceipt,
         cx: &mut App,
     ) {
-        self.menus.refresh(menus, target, cx);
+        self.menus.refresh(menus, target, selection, cx);
     }
     pub(super) fn prepare_closed_menu(&mut self, cx: &App) -> bool {
         self.menus.clear_closed_target(cx)
@@ -237,20 +249,24 @@ impl Chrome {
         cards: Option<FloatingCards>,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
-        if regions.tabs.has_visible_tabs(cx) {
+        if regions.tabs.visible() {
             // The dock frames each of its tab groups itself.
             return div()
                 .size_full()
-                .child(regions.tabs.dock_view())
+                .child(regions.tabs.view())
                 .into_any_element();
         }
         tile(
             cards,
-            self.render_empty_state(regions.directory.clone(), cx),
+            self.render_empty_state(regions.directory.clone(), regions.selection, cx),
         )
     }
 
-    pub(super) fn render_title_bar(&self, cx: &mut Context<Workspace>) -> impl IntoElement {
+    pub(super) fn render_title_bar(
+        &self,
+        selection: ContextSelectionReceipt,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
         let cards = FloatingCards::get(cx);
         TitleBar::new()
             // On the canvas, the title bar is part of the backdrop.
@@ -287,7 +303,7 @@ impl Chrome {
                         )
                     })
                     .child(div().flex_1())
-                    .child(self.new_tab.render(cx)),
+                    .child(self.new_tab.render(selection, cx)),
             )
     }
 
@@ -341,6 +357,7 @@ impl Chrome {
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         let footer = Workspace::forward_commands(div(), cx);
+        let selection = regions.selection;
         let theme = cx.theme();
         let floating = FloatingCards::get(cx).is_some();
         footer
@@ -379,9 +396,11 @@ impl Chrome {
                             .small()
                             .icon(IconName::SquareTerminal)
                             .tooltip("Local Terminal")
-                            .selected(regions.tabs.local_visible(cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_local_terminal(window, cx)
+                            .selected(regions.tabs.local_visible())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if this.accepts_context_selection(selection, cx) {
+                                    this.toggle_local_terminal(window, cx);
+                                }
                             })),
                     )
                     .when(regions.right.available(), |footer| {
@@ -418,7 +437,11 @@ impl NewTabControl {
         self.open = open;
         changed
     }
-    fn render(&self, cx: &mut Context<Workspace>) -> impl IntoElement {
+    fn render(
+        &self,
+        selection: ContextSelectionReceipt,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
         let button = Button::new("new-tab")
             .ghost()
             .small()
@@ -427,7 +450,11 @@ impl NewTabControl {
 
         match &self.entry {
             None => button
-                .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if this.accepts_context_selection(selection, cx) {
+                        this.on_new_tab(&NewTab, window, cx);
+                    }
+                }))
                 .into_any_element(),
             Some(NewTabMenu { view, focus }) => {
                 let menu = view.clone();
@@ -438,7 +465,11 @@ impl NewTabControl {
                     .track_focus(focus)
                     .open(self.open)
                     .on_open_change(move |open, _, cx| {
-                        let _ = workspace.update(cx, |this, cx| this.show_new_tab_menu(*open, cx));
+                        let _ = workspace.update(cx, |this, cx| {
+                            if this.accepts_context_selection(selection, cx) {
+                                this.show_new_tab_menu(*open, cx);
+                            }
+                        });
                     })
                     .content(move |_, _, _| menu.clone())
                     .into_any_element()
