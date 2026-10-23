@@ -140,7 +140,7 @@ fn workspace_reconnect_keeps_the_saved_authentication_and_exact_ordered_jump_rou
 
 #[test]
 fn workspace_reconnect_refuses_changed_destinations_and_routes_before_opening() {
-    use nocterm_workspace::ProjectConnectionError;
+    use nocterm_workspace_ports::ProjectConnectionError;
     let mut destination = saved("checked-workspace-destination", "original.example");
     let hop = nocterm_session::Target::new("ops", "hop.example", 22);
     destination.jump_hosts = vec![JumpHostEntry::Address(hop.clone())];
@@ -179,7 +179,7 @@ fn workspace_reconnect_refuses_changed_destinations_and_routes_before_opening() 
 
 #[test]
 fn workspace_reconnect_distinguishes_removed_profiles_from_invalid_routes() {
-    use nocterm_workspace::ProjectConnectionError;
+    use nocterm_workspace_ports::ProjectConnectionError;
     use std::error::Error as _;
     let hop = saved("deleted-workspace-hop", "hop.example");
     let mut destination = saved("deleted-workspace-destination", "destination.example");
@@ -207,7 +207,7 @@ fn workspace_reconnect_distinguishes_removed_profiles_from_invalid_routes() {
 #[test]
 fn saved_workspace_profile_resolution_requires_a_saved_profile() {
     use nocterm_project_model::HostLocator;
-    use nocterm_workspace::ProjectConnectionError;
+    use nocterm_workspace_ports::ProjectConnectionError;
     let direct = HostLocator::SshDirect {
         target: nocterm_session::Target::new("ops", "manual.example", 22),
         via: vec![],

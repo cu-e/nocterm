@@ -14,9 +14,9 @@ use nocterm_workspace::{SessionSpec, Workspace};
 pub fn resolve_parent_spec(
     host: &nocterm_project_model::HostLocator,
     profiles: &Profiles,
-) -> Result<SessionSpec, nocterm_workspace::ProjectConnectionError> {
+) -> Result<SessionSpec, nocterm_workspace_ports::ProjectConnectionError> {
     use nocterm_project_model::HostLocator;
-    use nocterm_workspace::ProjectConnectionError;
+    use nocterm_workspace_ports::ProjectConnectionError;
     let HostLocator::Ssh {
         profile,
         target,
