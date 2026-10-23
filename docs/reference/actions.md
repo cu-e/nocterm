@@ -82,7 +82,7 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `workspace::SplitUp` | Move the active tab into a new pane above. | `ctrl-alt-shift-up` (linux, windows; Workspace); `cmd-alt-shift-up` (macos; Workspace) |
 | `workspace::StartRecording` | Start recording terminal output. |  |
 | `workspace::StopRecording` | Stop recording terminal output. |  |
-| `workspace::SwapSides` | Put the sidebar and the AI panel on each other's side. | `ctrl-e` (linux, windows; Workspace); `cmd-e` (macos; Workspace) |
+| `workspace::SwapSides` | Put the sidebar and the AI panel on each other's side. |  |
 | `workspace::ToggleCommandPalette` | Search and run any command. | `ctrl-shift-p` (linux, windows; Workspace); `cmd-shift-p` (macos; Workspace) |
 | `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `ctrl-j` (linux, windows; Workspace); `cmd-`` (macos; Workspace); `cmd-j` (macos; Workspace) |
 | `workspace::ToggleRightPanel` | Show or hide the AI panel. | `ctrl-alt-b` (linux, windows; Workspace); `cmd-alt-b` (macos; Workspace) |

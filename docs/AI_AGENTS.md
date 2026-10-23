@@ -2,11 +2,11 @@
 
 The AI panel sits to the right of the workspace and stays available when no
 terminal tabs are open. Open it from the footer, Window → AI Agents, or
-Ctrl+Alt+B (Cmd+Alt+B on macOS). Ctrl+E (Cmd+E) moves it to the left of the
-tabs and the sidebar to the right, and back; on the left, the history column
-opens on the panel's left too. Settings remains available from Session →
-Preferences → Settings and Ctrl+, (Cmd+, on macOS). The footer no longer has a
-Settings button.
+Ctrl+Alt+B (Cmd+Alt+B on macOS). The Swap Sides command in the command palette
+moves it to the left of the tabs and the sidebar to the right, and back; on the
+left, the history column opens on the panel's left too. Settings remains
+available from Session → Preferences → Settings and Ctrl+, (Cmd+, on macOS).
+The footer no longer has a Settings button.
 
 Create a chat with Claude, Codex, Hermes, or a custom ACP executable; the
 built-in agents show their brand marks in the menu, the panel header, chat

@@ -207,10 +207,10 @@ The window has the sidebar (Servers, Explorer) on one side of the tabs and the
 AI panel on the other; both resize by dragging their edge and keep their width.
 `Ctrl+Shift+C` shows Servers and `Ctrl+Shift+E` the Explorer; pressing it again,
 or clicking the shown panel's button in the footer, hides the sidebar.
-`Ctrl+Alt+B` shows or hides the AI panel and `Ctrl+E` swaps the two sides (`Cmd`
-instead of `Ctrl` on macOS). In a focused terminal `Ctrl+Shift+C` copies, and the
-terminal no longer receives `Ctrl+E` and `Ctrl+J`; rebind them in Settings →
-Keymap if the shell needs them.
+`Ctrl+Alt+B` shows or hides the AI panel (`Cmd` instead of `Ctrl` on macOS). The
+command palette's Swap Sides command puts the two on each other's side. In a
+focused terminal `Ctrl+Shift+C` copies, and the terminal no longer receives
+`Ctrl+J`; rebind it in Settings → Keymap if the shell needs it.
 
 Settings → Keymap lists every command with its shortcuts and description. Search
 matches words in any of them and shortcuts in any modifier order; Find by keys
