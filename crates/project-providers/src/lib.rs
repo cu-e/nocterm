@@ -1,20 +1,19 @@
 //! Typed builtin workspace locations and host-backed preparation roles.
 //!
-//! Owns: container codecs, checked language versions, captured environment authority and facts,
-//! explicit container lifecycle authority, exact-container requests and default workspace directory policy.
+//! Owns: container codecs, checked versions, captured environment facts and lifecycle authority.
+//! Owns: pure exact-container requests, command/created-install seams and default workspace directory policy.
 //! Does not own: I/O, credentials, persistence, sessions, GPUI, views or provider registration.
-//! Ports used: captured HostExec and Transport. Ports provided: ProjectPreparation,
-//! ImageSearch, WorkspaceEnvironment, WorkspaceContainerActions, WorkspaceSessionFactory
-//! ContainerSessionFactory, EnvironmentCommands/EnvironmentCommandFactory,
-//! CreatedWorkspaceEnvironment and WorkspaceCommandActivation.
+//! Ports used: captured HostExec and Transport.
+//! Ports provided: ProjectPreparation, ImageSearch, WorkspaceEnvironment, WorkspaceContainerActions.
+//! Ports provided: WorkspaceSessionFactory, ContainerSessionFactory, EnvironmentCommands, EnvironmentCommandFactory.
+//! Ports provided: CreatedWorkspaceEnvironment, WorkspaceCommandActivation.
 //! Settings section: `[workspaces]`. Globals: none.
-//! Invariants: container identity includes original host, explicit engine and full ID;
-//! resource references are bounded nonsecret locators; ephemeral owned receipts
-//! retain a fresh creation-attempt token; setup never changes catalog identity.
-//! Language selections and observations are ephemeral; explicit host/scoped execution
-//! is never interchangeable. Managed installation never grants catalog or deletion authority;
-//! container Stop/Delete requires its separate explicit captured-host contract.
-//! Created installation requires an owned receipt; scoped command contexts retain original budgets.
+//! Invariants: container identity includes original host, explicit engine and full ID.
+//! Invariants: bounded nonsecret resource locators preserve catalog identity through setup.
+//! Invariants: ephemeral owned receipts retain a fresh creation-attempt token.
+//! Invariants: host/scoped execution authority is never interchangeable.
+//! Invariants: installation grants no catalog/deletion authority; created install requires an owned receipt.
+//! Invariants: scoped command contexts retain original budgets; Stop/Delete uses separate captured-host authority.
 mod activation;
 mod created_environment;
 mod environment;
