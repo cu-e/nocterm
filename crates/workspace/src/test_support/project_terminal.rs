@@ -1,10 +1,12 @@
 //! Records ordinary folder terminal opens through the consumer port.
-use crate::{
-    ContextSelectionError, ContextSelectionReceipt, ExpectedSession, ItemHandle,
-    ProjectTerminalOpen, ProjectTerminalSession, ProjectTerminalTarget,
-};
-use gpui_kit::{App, Window};
+use crate::{ContextSelectionReceipt, ExpectedSession};
+use gpui_kit::{AnyView, App, Window};
 use nocterm_project_model::{ProjectTarget, RootPath};
+use nocterm_workspace_ports::TerminalCapabilities;
+use nocterm_workspace_ports::{
+    ContextSelectionError, ProjectConnectionError, ProjectTerminalOpen, ProjectTerminalResolve,
+    ProjectTerminalSession, ProjectTerminalTarget,
+};
 use std::{cell::RefCell, rc::Rc};
 #[derive(Clone, Default)]
 pub struct ProjectTerminalProbe {
@@ -45,16 +47,17 @@ impl ProjectTerminalProbe {
 impl ProjectTerminalOpen for ProjectTerminalProbe {
     fn capture(
         &self,
-        parent: Rc<dyn ItemHandle>,
+        parent: AnyView,
         expected: ExpectedSession,
+        capabilities: TerminalCapabilities,
         location: &ProjectTarget,
         cx: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, ContextSelectionError> {
-        let info = parent
-            .terminal_capabilities(cx)
-            .and_then(|ports| ports.state().info(cx))
+        let info = capabilities
+            .state()
+            .info(cx)
             .ok_or(ContextSelectionError::ParentUnavailable)?;
-        if info.expected != expected || parent.item_id() != expected.item() {
+        if info.expected != expected || parent.entity_id() != expected.item() {
             return Err(crate::ProjectParentError::StaleSession.into());
         }
         if info.status != crate::TerminalStatus::Connected {
@@ -75,37 +78,36 @@ impl ProjectTerminalSession for ProjectTerminalProbe {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), ContextSelectionError> {
-        target.validate(window, cx)?;
+        crate::validate_project_terminal_target(&target, window, cx)?;
         let root = self
             .root
             .as_ref()
             .ok_or(ContextSelectionError::Unavailable)?;
-        self.attempts
-            .borrow_mut()
-            .push((target.selection(), root.clone()));
+        self.attempts.borrow_mut().push((
+            crate::workspace::project_terminal_selection(&target, cx)?,
+            root.clone(),
+        ));
         if let Some(spec) = &self.session {
             let item = super::SessionProbe::from_app(spec.clone(), true, None, cx);
             if let Some(executor) = &self.executor {
                 item.update(cx, |item, cx| item.set_executor(executor.clone(), cx));
             }
-            target
-                .surface()
-                .add_item(target.selection(), item, window, cx)?;
+            crate::admit_project_terminal(&target, item, window, cx)?;
         }
         Ok(())
     }
 }
 
-impl crate::ProjectTerminalResolve for ProjectTerminalProbe {
+impl ProjectTerminalResolve for ProjectTerminalProbe {
     fn resolve(
         &self,
         location: &ProjectTarget,
         _: &App,
-    ) -> Result<Rc<dyn ProjectTerminalSession>, crate::ProjectConnectionError> {
+    ) -> Result<Rc<dyn ProjectTerminalSession>, ProjectConnectionError> {
         use nocterm_project_model::HostLocator;
         let (host, root) = location
             .host_folder()
-            .ok_or(crate::ProjectConnectionError::Unavailable)?;
+            .ok_or(ProjectConnectionError::Unavailable)?;
         self.resolutions.borrow_mut().push(host.clone());
         host.validate()?;
         let matches = match (host, self.session.as_ref()) {
@@ -118,13 +120,20 @@ impl crate::ProjectTerminalResolve for ProjectTerminalProbe {
             (HostLocator::SshDirect { .. }, Some(spec)) => {
                 !self.local && host.address().as_ref() == Some(&spec.address())
             }
-            _ => return Err(crate::ProjectConnectionError::Unavailable),
+            _ => return Err(ProjectConnectionError::Unavailable),
         };
         if !matches {
-            return Err(crate::ProjectConnectionError::ChangedTargetOrRoute);
+            return Err(ProjectConnectionError::ChangedTargetOrRoute);
         }
         let mut captured = self.clone();
         captured.root = Some(root.clone());
         Ok(Rc::new(captured))
+    }
+}
+
+// A provider-shaped foreign target exercises checked shell destination erasure.
+impl nocterm_workspace_ports::ProjectTerminalDestination for ProjectTerminalProbe {
+    fn validate(&self, _: &Window, _: &App) -> Result<(), ContextSelectionError> {
+        Ok(())
     }
 }

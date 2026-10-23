@@ -4,6 +4,7 @@ use crate::ContextSelectionError;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
 use chrome::StatusSide;
 use nocterm_session::{HostAddress, ShellLaunch};
+use surface::admission::SurfaceItemAdmission;
 impl Workspace {
     pub fn add_general_background_from<T: Item>(
         &mut self,
@@ -12,8 +13,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<EntityId, crate::ContextSelectionError> {
+        let id = item.entity_id();
         self.surfaces.outer().update(cx, |surface, cx| {
-            surface.add_general_background_from(target, item, window, cx)
+            surface
+                .admit_background(target.surface(), item, window, cx)
+                .map(|_| id)
         })
     }
     pub fn validate_context_source(
@@ -58,16 +62,9 @@ impl Workspace {
         let id = item.entity_id();
         let surface = self.surfaces.window().resolve(source, cx)?;
         surface.update(cx, |surface, cx| {
-            if source.context() == nocterm_project_model::ContextId::General {
-                surface.add_general_background_from(
-                    surface.context_selection_receipt(),
-                    item,
-                    window,
-                    cx,
-                )
-            } else {
-                surface.add_project_background(item, window, cx).map(|_| id)
-            }
+            surface
+                .admit_background(source, item, window, cx)
+                .map(|_| id)
         })
     }
     pub fn set_chat_connection_opener(&mut self, opener: Rc<dyn crate::ChatConnectionOpen>) {
@@ -112,8 +109,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Result<bool, crate::ContextSelectionError> {
         let project = project.bind(window, cx);
+        let selection = self.surfaces.outer().read(cx).selection();
+        let admission = SurfaceItemAdmission::workspace(selection, project);
         self.surfaces.outer().update(cx, |surface, cx| {
-            surface.add_workspace(item, project, window, cx)
+            surface.admit_item(admission, item, None, window, cx)
         })
     }
     pub fn set_session_factory(&mut self, factory: impl SessionFactory) {
@@ -145,8 +144,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<bool, ContextSelectionError> {
+        let admission = SurfaceItemAdmission::general(target);
         self.surfaces.outer().update(cx, |surface, cx| {
-            surface.add_general_item_from(target, item, window, cx)
+            surface.admit_item(admission, item, None, window, cx)
         })
     }
     pub fn add_general_local_terminal_from<T: crate::LocalTerminal>(
@@ -157,8 +157,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<bool, ContextSelectionError> {
+        let admission = SurfaceItemAdmission::general_local(target, destination);
+        let local =
+            Some(Box::new(item.clone()) as Box<dyn crate::local_terminal::LocalTerminalHandle>);
         self.surfaces.outer().update(cx, |surface, cx| {
-            surface.add_general_local_terminal_from(target, item, destination, window, cx)
+            surface.admit_item(admission, item, local, window, cx)
         })
     }
     pub fn open_session(&mut self, spec: SessionSpec, window: &mut Window, cx: &mut Context<Self>) {
@@ -316,11 +319,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> EntityId {
         let id = item.entity_id();
-        self.surfaces.outer().update(cx, |surface, cx| {
-            surface
-                .add_general_background_from(surface.context_selection_receipt(), item, window, cx)
-                .unwrap_or(id)
-        })
+        let selection = self.surfaces.outer().read(cx).selection();
+        self.add_general_background_from(selection, item, window, cx)
+            .unwrap_or(id)
     }
     pub fn show_background_session(
         &mut self,
@@ -339,7 +340,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.surfaces.outer().update(cx, |surface, cx| {
-            surface.close_background_at(surface.context_source(), id, window, cx)
+            surface.close_background_at(surface.source(), id, window, cx)
         })
     }
     pub fn set_local_terminal<T: crate::LocalTerminal>(
@@ -348,9 +349,24 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.surfaces.outer().update(cx, |surface, cx| {
-            surface.set_local_terminal(item, window, cx)
-        })
+        let source = self.general_surface_source(cx);
+        if self.general_item(item.entity_id(), cx).is_some()
+            || self
+                .surfaces
+                .window()
+                .foreign_item(source, item.entity_id(), cx)
+        {
+            return;
+        }
+        if self.validate_context_source(source, window, cx).is_err() {
+            ItemHandle::close(&item, window, cx);
+            return;
+        }
+        let ids = self.surfaces.outer().read(cx).tabs().local_ids();
+        for id in ids {
+            self.close_tabs(id, TabCloseScope::Current, window, cx);
+        }
+        self.add_local_terminal(item, window, cx);
     }
     pub fn add_local_terminal<T: crate::LocalTerminal>(
         &mut self,
@@ -358,9 +374,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.surfaces.outer().update(cx, |surface, cx| {
-            surface.add_local_terminal_at(item, LocalTerminalTarget::Bottom, window, cx);
-        })
+        self.add_local_terminal_at(item, LocalTerminalTarget::Bottom, window, cx);
     }
     pub fn add_local_terminal_at<T: crate::LocalTerminal>(
         &mut self,
@@ -369,9 +383,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.surfaces.outer().update(cx, |surface, cx| {
-            surface.add_local_terminal_at(item, target, window, cx)
-        })
+        let selection = self.surfaces.outer().read(cx).selection();
+        self.add_general_local_terminal_from(selection, item, target, window, cx)
+            .unwrap_or(false)
     }
     pub fn add_item<T: Item>(
         &mut self,
@@ -379,8 +393,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.surfaces
-            .outer()
-            .update(cx, |surface, cx| surface.add_item(item, window, cx))
+        let selection = self.surfaces.outer().read(cx).selection();
+        let _ = self.add_general_item_from(selection, item, window, cx);
     }
 }

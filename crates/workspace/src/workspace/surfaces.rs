@@ -29,7 +29,7 @@ impl WindowSurfaces {
                 workspace.surface_event(event, window, cx);
             },
         );
-        let source = outer.read(cx).context_source();
+        let source = outer.read(cx).source();
         Self {
             window: scope,
             outer,

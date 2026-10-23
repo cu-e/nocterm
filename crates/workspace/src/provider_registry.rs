@@ -1,7 +1,9 @@
 //! Checked immutable routing; providers are composed explicitly by the application.
-use crate::{ProjectConnectionError, ProjectTerminalResolve, ProjectTerminalSession};
 use gpui_kit::App;
 use nocterm_project_model::{ProjectTarget, ProviderId};
+use nocterm_workspace_ports::{
+    ProjectConnectionError, ProjectTerminalResolve, ProjectTerminalSession,
+};
 use std::{collections::BTreeMap, rc::Rc};
 pub struct ProjectProviderRegistry {
     direct: Rc<dyn ProjectTerminalResolve>,

@@ -1,6 +1,9 @@
 //! Retained original inner dock with source-bound UI operations.
+use super::project_terminal::ProjectTerminalPlacement;
 use super::*;
 use nocterm_project_model::{ProjectId, RootPath};
+use nocterm_workspace_ports::ProjectTerminalTarget;
+use surface::admission::SurfaceItemAdmission;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectSurfaceEvent {
@@ -9,48 +12,6 @@ pub enum ProjectSurfaceEvent {
         selection: ContextSelectionReceipt,
         destination: Option<crate::LocalTerminalTarget>,
     },
-}
-
-/// Original destination captured before an ordinary terminal is opened.
-pub struct ProjectTerminalTarget {
-    surface: ProjectSurface,
-    selection: ContextSelectionReceipt,
-    destination: Option<crate::LocalTerminalTarget>,
-    initial: bool,
-}
-impl ProjectTerminalTarget {
-    pub fn surface(&self) -> &ProjectSurface {
-        &self.surface
-    }
-    pub fn selection(&self) -> ContextSelectionReceipt {
-        self.selection
-    }
-    pub fn destination(&self) -> Option<crate::LocalTerminalTarget> {
-        self.destination
-    }
-    pub fn validate(&self, window: &Window, cx: &App) -> Result<(), crate::ContextSelectionError> {
-        self.surface.owner.check_window(window)?;
-        if self.initial {
-            self.surface.owner.resolve(self.selection.surface(), cx)?;
-            if !self.surface.owner.registered(self.selection.surface(), cx) {
-                return Err(crate::ContextSelectionError::StaleSurface);
-            }
-        } else if !self.surface.accepts_selection(self.selection, cx) {
-            return Err(crate::ContextSelectionError::StaleSelection);
-        }
-        if let Some(crate::LocalTerminalTarget::Beside(anchor)) = self.destination
-            && self
-                .surface
-                .entity
-                .read(cx)
-                .content()
-                .tab_location(anchor, cx)
-                .is_none()
-        {
-            return Err(crate::ContextSelectionError::StaleSurface);
-        }
-        Ok(())
-    }
 }
 
 pub(super) struct ProjectPresentation {
@@ -83,7 +44,6 @@ impl ProjectSurfaceFactory {
             entity,
             owner: self.owner.clone(),
             project,
-            monitor_target: Rc::new(std::cell::RefCell::new(None)),
         })
     }
 }
@@ -94,9 +54,11 @@ pub struct ProjectSurface {
     entity: Entity<surface::TabSurface>,
     owner: Rc<surface::window::SurfaceWindow>,
     project: ProjectId,
-    monitor_target: Rc<std::cell::RefCell<Option<nocterm_project_model::ProjectTarget>>>,
 }
 impl ProjectSurface {
+    pub(super) fn owner(&self) -> &surface::window::SurfaceWindow {
+        &self.owner
+    }
     pub(super) fn engine(&self) -> Entity<surface::TabSurface> {
         self.entity.clone()
     }
@@ -117,21 +79,13 @@ impl ProjectSurface {
             _events: events,
         }
     }
-    pub(super) fn monitor_target(&self) -> Option<nocterm_project_model::ProjectTarget> {
-        self.monitor_target.borrow().clone()
+    pub(super) fn monitor_target(&self, cx: &App) -> Option<nocterm_project_model::ProjectTarget> {
+        self.entity.read(cx).monitor_target()
     }
     /// Sets inert monitoring identity on this original resource surface.
     pub fn set_monitor_target(&self, target: nocterm_project_model::ProjectTarget, cx: &mut App) {
-        if self.monitor_target.borrow().as_ref() == Some(&target) {
-            return;
-        }
-        *self.monitor_target.borrow_mut() = Some(target);
-        self.entity.update(cx, |surface, cx| {
-            cx.emit(surface::SurfaceEvent::Observed(
-                surface.context_source(),
-                WorkspaceEvent::ActiveSessionChanged,
-            ))
-        });
+        self.entity
+            .update(cx, |surface, cx| surface.set_monitor_target(target, cx));
     }
     pub fn set_root(&self, root: RootPath, cx: &mut App) {
         self.entity
@@ -141,10 +95,10 @@ impl ProjectSurface {
         self.project
     }
     pub fn source(&self, cx: &App) -> ProjectSurfaceReceipt {
-        self.entity.read(cx).context_source()
+        self.entity.read(cx).source()
     }
     pub fn selection_receipt(&self, cx: &App) -> ContextSelectionReceipt {
-        self.entity.read(cx).context_selection_receipt()
+        self.entity.read(cx).selection()
     }
     pub fn accepts_selection(&self, receipt: ContextSelectionReceipt, cx: &App) -> bool {
         self.entity.read(cx).accepts_context_selection(receipt, cx)
@@ -178,14 +132,10 @@ impl ProjectSurface {
         selection: ContextSelectionReceipt,
         destination: Option<crate::LocalTerminalTarget>,
         window: &Window,
-        cx: &App,
+        cx: &mut App,
     ) -> Result<ProjectTerminalTarget, crate::ContextSelectionError> {
-        let target = ProjectTerminalTarget {
-            surface: self.clone(),
-            selection,
-            destination,
-            initial: false,
-        };
+        let target =
+            ProjectTerminalPlacement::capture(self.clone(), selection, destination, false, cx);
         target.validate(window, cx)?;
         Ok(target)
     }
@@ -198,12 +148,13 @@ impl ProjectSurface {
         let selection = self.entity.update(cx, |surface, cx| {
             surface.initial_terminal_target(window, cx)
         })?;
-        Ok(ProjectTerminalTarget {
-            surface: self.clone(),
+        Ok(ProjectTerminalPlacement::capture(
+            self.clone(),
             selection,
-            destination: None,
-            initial: true,
-        })
+            None,
+            true,
+            cx,
+        ))
     }
     pub fn observe(
         &self,
@@ -234,8 +185,9 @@ impl ProjectSurface {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<bool, crate::ContextSelectionError> {
+        let admission = SurfaceItemAdmission::central(target);
         self.entity.update(cx, |surface, cx| {
-            surface.add_project_item(target, item, window, cx)
+            surface.admit_item(admission, item, None, window, cx)
         })
     }
     pub fn add_local_terminal<T: crate::LocalTerminal>(
@@ -246,8 +198,11 @@ impl ProjectSurface {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<bool, crate::ContextSelectionError> {
+        let admission = SurfaceItemAdmission::local(target, destination);
+        let local =
+            Some(Box::new(item.clone()) as Box<dyn crate::local_terminal::LocalTerminalHandle>);
         self.entity.update(cx, |surface, cx| {
-            surface.add_project_local(target, item, destination, window, cx)
+            surface.admit_item(admission, item, local, window, cx)
         })
     }
     pub fn add_background_item<T: Item>(
@@ -256,8 +211,9 @@ impl ProjectSurface {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<bool, crate::ContextSelectionError> {
+        let source = self.source(cx);
         self.entity.update(cx, |surface, cx| {
-            surface.add_project_background(item, window, cx)
+            surface.admit_background(source, item, window, cx)
         })
     }
     pub fn activate_item(

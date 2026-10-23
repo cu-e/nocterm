@@ -34,7 +34,7 @@ impl SurfaceWindow {
         self.sources.borrow_mut().retain(|source| {
             source
                 .upgrade()
-                .is_some_and(|source| !source.read(cx).state.closed())
+                .is_some_and(|source| !source.read(cx).selection.closed())
         });
         if self.sources.borrow().len() > nocterm_project_model::MAX_PROJECTS {
             return Err(ContextSelectionError::Capacity);
@@ -145,7 +145,7 @@ impl SurfaceWindow {
             .find(|entity| entity.entity_id() == source.surface_id())
             .and_then(WeakEntity::upgrade)
             .ok_or(ContextSelectionError::StaleSurface)?;
-        if entity.read(cx).state.closed() || entity.read(cx).source() != source {
+        if entity.read(cx).selection.closed() || entity.read(cx).source() != source {
             return Err(ContextSelectionError::StaleSurface);
         }
         Ok(entity)

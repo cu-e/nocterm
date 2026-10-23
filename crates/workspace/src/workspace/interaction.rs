@@ -319,7 +319,7 @@ impl Workspace {
             return;
         };
         let surface = self.command_surface(window, cx);
-        let selection = surface.read(cx).context_selection_receipt();
+        let selection = surface.read(cx).selection();
         let surface = surface.downgrade();
         window.defer(cx, move |window, cx| {
             let target = surface.read_with(cx, |this, cx| {

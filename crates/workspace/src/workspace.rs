@@ -27,10 +27,12 @@ mod layout;
 mod local_dock;
 mod openers;
 mod project_surface;
+mod project_terminal;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use project_terminal::project_terminal_selection;
+pub use project_terminal::{admit_project_terminal, validate_project_terminal_target};
 mod queries;
-pub use project_surface::{
-    ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectTerminalTarget,
-};
+pub use project_surface::{ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory};
 pub(crate) mod surface;
 mod surfaces;
 mod tabs;

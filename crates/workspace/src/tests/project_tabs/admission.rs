@@ -17,10 +17,7 @@ fn the_original_initial_terminal_intent_survives_hiding_but_cannot_be_issued_twi
                 .is_err()
         );
         let terminal = probe(cx, Rc::default());
-        target
-            .surface()
-            .add_item(target.selection(), terminal.clone(), window, cx)
-            .unwrap();
+        crate::admit_project_terminal(&target, terminal.clone(), window, cx).unwrap();
         assert_eq!(a.tabs(cx)[0].id(), terminal.entity_id());
         assert_eq!(
             workspace.read(cx).selected_context(cx),
@@ -217,6 +214,261 @@ fn background_admission_checks_the_original_native_window_before_registration(
             ));
         });
         assert_eq!(closes.get(), 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn general_admission_keeps_central_local_and_background_members_separate(cx: &mut TestAppContext) {
+    let (window, workspace) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        let closes = Rc::new(Cell::new(0));
+        let central = probe(cx, closes.clone());
+        let local = probe(cx, closes.clone());
+        let background = probe(cx, closes.clone());
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item(central.clone(), window, cx);
+            workspace.add_local_terminal(local.clone(), window, cx);
+            workspace.add_background_item(background.clone(), window, cx);
+        });
+        assert_eq!(workspace.read(cx).tabs(cx).len(), 2);
+        assert_eq!(
+            workspace.read(cx).selected_local_terminal(cx),
+            Some(local.entity_id())
+        );
+        assert!(workspace.read(cx).is_background(background.entity_id(), cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.close_tabs(
+                central.entity_id(),
+                crate::TabCloseScope::Current,
+                window,
+                cx,
+            );
+            workspace.close_local_terminal(window, cx);
+            workspace.close_background_session(background.entity_id(), window, cx);
+        });
+        assert_eq!(closes.get(), 3);
+        assert!(workspace.read(cx).tabs(cx).is_empty());
+        assert!(!workspace.read(cx).is_background(background.entity_id(), cx));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn project_admission_closes_each_kind_once_without_closing_the_outer_item(cx: &mut TestAppContext) {
+    let (window, workspace) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        let (_, surface) = add_project(&workspace, 1, window, cx);
+        let closes = Rc::new(Cell::new(0));
+        let central = probe(cx, closes.clone());
+        let local = probe(cx, closes.clone());
+        let background = probe(cx, closes.clone());
+        surface
+            .add_item(surface.selection_receipt(cx), central.clone(), window, cx)
+            .unwrap();
+        surface
+            .add_local_terminal(
+                surface.selection_receipt(cx),
+                local.clone(),
+                crate::LocalTerminalTarget::Bottom,
+                window,
+                cx,
+            )
+            .unwrap();
+        surface
+            .add_background_item(background.clone(), window, cx)
+            .unwrap();
+        assert_eq!(surface.tabs(cx).len(), 2);
+        for item in [central.entity_id(), local.entity_id()] {
+            surface
+                .close_tabs(
+                    surface.selection_receipt(cx),
+                    item,
+                    crate::TabCloseScope::Current,
+                    window,
+                    cx,
+                )
+                .unwrap();
+        }
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .close_context_background(surface.source(cx), background.entity_id(), window, cx)
+                .unwrap();
+        });
+        assert_eq!(closes.get(), 3);
+        assert!(surface.tabs(cx).is_empty());
+        assert_eq!(workspace.read(cx).items(cx).count(), 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn duplicate_outer_project_admission_keeps_the_original_workspace(cx: &mut TestAppContext) {
+    let (window, workspace) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        let (outer, surface) = add_project(&workspace, 1, window, cx);
+        let factory = workspace.read(cx).project_surface_factory();
+        let duplicate = cx.new(|cx| {
+            super::project_fixtures::ProjectTab::new(factory, surface.project(), window, cx)
+                .unwrap()
+        });
+        let other = duplicate.read(cx).surface();
+        workspace.update(cx, |workspace, cx| {
+            assert!(
+                !workspace
+                    .add_project_workspace(duplicate, other, window, cx)
+                    .unwrap()
+            );
+            assert!(
+                !workspace
+                    .add_project_workspace(outer.clone(), surface.clone(), window, cx)
+                    .unwrap()
+            );
+        });
+        assert_eq!(workspace.read(cx).items(cx).count(), 1);
+        assert_eq!(workspace.read(cx).context_source(cx), surface.source(cx));
+        assert_eq!(
+            workspace.read(cx).active_item(cx).unwrap().item_id(),
+            outer.entity_id()
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn foreign_terminal_destinations_preserve_item_ownership_until_the_caller_cleans_up(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_workspace_ports::{ContextSelectionError, ProjectTerminalTarget};
+    let (window, workspace) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        let (_, surface) = add_project(&workspace, 1, window, cx);
+        let owned_closes = Rc::new(Cell::new(0));
+        let owned = probe(cx, owned_closes.clone());
+        surface
+            .add_item(surface.selection_receipt(cx), owned.clone(), window, cx)
+            .unwrap();
+        let foreign = ProjectTerminalTarget::new(
+            cx.new(|_| crate::test_support::ProjectTerminalProbe::default()),
+        );
+        assert!(foreign.validate(window, cx).is_ok());
+        assert!(matches!(
+            crate::validate_project_terminal_target(&foreign, window, cx),
+            Err(ContextSelectionError::StaleSurface)
+        ));
+        assert!(matches!(
+            crate::admit_project_terminal(&foreign, owned, window, cx),
+            Err(ContextSelectionError::StaleSurface)
+        ));
+        assert_eq!(owned_closes.get(), 0);
+        let closes = Rc::new(Cell::new(0));
+        let fresh = probe(cx, closes.clone());
+        assert!(matches!(
+            crate::admit_project_terminal(&foreign, fresh.clone(), window, cx),
+            Err(ContextSelectionError::StaleSurface)
+        ));
+        assert_eq!(closes.get(), 0);
+        assert_eq!(surface.tabs(cx).len(), 1);
+        crate::ItemHandle::close(&fresh, window, cx);
+        assert_eq!(closes.get(), 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn genuine_stale_terminal_destinations_close_only_new_unowned_items(cx: &mut TestAppContext) {
+    use nocterm_workspace_ports::ContextSelectionError;
+    let (window, workspace) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        let (_, a) = add_project(&workspace, 1, window, cx);
+        let owned_closes = Rc::new(Cell::new(0));
+        let owned = probe(cx, owned_closes.clone());
+        a.add_item(a.selection_receipt(cx), owned.clone(), window, cx)
+            .unwrap();
+        let target = a
+            .terminal_target(a.selection_receipt(cx), None, window, cx)
+            .unwrap();
+        let (_, b) = add_project(&workspace, 2, window, cx);
+        assert!(matches!(
+            crate::admit_project_terminal(&target, owned, window, cx),
+            Err(ContextSelectionError::StaleSelection)
+        ));
+        assert_eq!(owned_closes.get(), 0);
+        let foreign_closes = Rc::new(Cell::new(0));
+        let foreign = probe(cx, foreign_closes.clone());
+        b.add_item(b.selection_receipt(cx), foreign.clone(), window, cx)
+            .unwrap();
+        assert!(matches!(
+            crate::admit_project_terminal(&target, foreign, window, cx),
+            Err(ContextSelectionError::StaleSelection)
+        ));
+        assert_eq!(foreign_closes.get(), 0);
+        let closes = Rc::new(Cell::new(0));
+        let fresh = probe(cx, closes.clone());
+        assert!(matches!(
+            crate::admit_project_terminal(&target, fresh, window, cx),
+            Err(ContextSelectionError::StaleSelection)
+        ));
+        assert_eq!(closes.get(), 1);
+        assert_eq!(a.tabs(cx).len(), 1);
+        assert_eq!(b.tabs(cx).len(), 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn captured_local_terminal_admission_uses_its_anchor_pane_instead_of_the_active_pane(
+    cx: &mut TestAppContext,
+) {
+    let (window, workspace) = fixture(cx);
+    cx.update_window(window, |_, window, cx| {
+        let (_, surface) = add_project(&workspace, 1, window, cx);
+        let anchor = probe(cx, Rc::default());
+        let other = probe(cx, Rc::default());
+        for item in [&anchor, &other] {
+            surface
+                .add_item(surface.selection_receipt(cx), item.clone(), window, cx)
+                .unwrap();
+        }
+        surface
+            .split_item(
+                surface.selection_receipt(cx),
+                anchor.entity_id(),
+                Placement::Right,
+                window,
+                cx,
+            )
+            .unwrap();
+        surface
+            .activate_item(surface.selection_receipt(cx), other.entity_id(), window, cx)
+            .unwrap();
+        let target = surface
+            .terminal_target(
+                surface.selection_receipt(cx),
+                Some(crate::LocalTerminalTarget::Beside(anchor.entity_id())),
+                window,
+                cx,
+            )
+            .unwrap();
+        let terminal = probe(cx, Rc::default());
+        assert!(crate::admit_project_terminal(&target, terminal.clone(), window, cx).unwrap());
+        let panes = surface.panes(DockPlacement::Center, cx);
+        assert_eq!(panes.len(), 2);
+        let pane = panes
+            .iter()
+            .find(|pane| pane.items().contains(&anchor.entity_id()))
+            .unwrap();
+        assert_eq!(pane.items(), [anchor.entity_id(), terminal.entity_id()]);
+        assert!(!pane.items().contains(&other.entity_id()));
+        assert!(
+            surface
+                .tabs(cx)
+                .iter()
+                .find(|tab| tab.id() == terminal.entity_id())
+                .unwrap()
+                .is_local()
+        );
+        assert!(surface.panes(DockPlacement::Bottom, cx).is_empty());
     })
     .unwrap();
 }

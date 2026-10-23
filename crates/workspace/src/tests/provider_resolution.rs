@@ -1,3 +1,4 @@
+use nocterm_workspace_ports::{ProjectConnectionError, ProjectTerminalResolve};
 use std::rc::Rc;
 
 use gpui_kit::TestAppContext;
@@ -5,10 +6,7 @@ use nocterm_project_model::{
     HostLocator, ProjectTarget, ProviderId, ProviderResourceRef, RootPath,
 };
 
-use crate::{
-    ProjectConnectionError, ProjectProviderRegistry, ProjectTerminalResolve,
-    test_support::ProjectTerminalProbe,
-};
+use crate::{ProjectProviderRegistry, test_support::ProjectTerminalProbe};
 
 #[test]
 fn duplicate_provider_registration_is_an_installation_error() {

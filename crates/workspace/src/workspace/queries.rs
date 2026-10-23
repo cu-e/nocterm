@@ -26,7 +26,7 @@ impl Workspace {
             .read(cx)
             .tabs()
             .active_project()
-            .and_then(|project| project.monitor_target());
+            .and_then(|project| project.monitor_target(cx));
         if general {
             crate::MonitorSource::general(source.surface_id(), session, local)
         } else {
@@ -64,7 +64,7 @@ impl Workspace {
     ) -> Result<GeneralTerminalTarget, crate::ContextSelectionError> {
         GeneralTerminalTarget::new(
             self.surfaces.window(),
-            self.surfaces.outer().read(cx).context_selection_receipt(),
+            self.surfaces.outer().read(cx).selection(),
             window,
             cx,
         )
@@ -73,7 +73,7 @@ impl Workspace {
         ProjectSurfaceFactory::new(self.surfaces.window())
     }
     pub fn general_surface_source(&self, cx: &App) -> ProjectSurfaceReceipt {
-        self.surfaces.outer().read(cx).context_source()
+        self.surfaces.outer().read(cx).source()
     }
     pub fn context_terminals(
         &self,
@@ -98,13 +98,13 @@ impl Workspace {
         if let Some(project) = self.surfaces.outer().read(cx).tabs().active_project() {
             return project.source(cx);
         }
-        self.surfaces.outer().read(cx).context_source()
+        self.surfaces.outer().read(cx).source()
     }
     pub fn context_selection_receipt(&self, cx: &App) -> ContextSelectionReceipt {
         if let Some(project) = self.surfaces.outer().read(cx).tabs().active_project() {
             return project.selection_receipt(cx);
         }
-        self.surfaces.outer().read(cx).context_selection_receipt()
+        self.surfaces.outer().read(cx).selection()
     }
     pub fn accepts_context_selection(&self, receipt: ContextSelectionReceipt, cx: &App) -> bool {
         self.surfaces
@@ -248,11 +248,10 @@ impl Workspace {
     /// Focused visible Item wins; a captured menu target never falls back when stale.
     pub fn command_item(&self, window: &Window, cx: &App) -> Option<Rc<dyn ItemHandle>> {
         let surface = self.command_surface(window, cx);
-        if self.chrome.stale_menu_selection(
-            surface.read(cx).context_selection_receipt(),
-            window,
-            cx,
-        ) {
+        if self
+            .chrome
+            .stale_menu_selection(surface.read(cx).selection(), window, cx)
+        {
             return None;
         }
         if let Some(item) = surface.read(cx).tabs().focused_item(window, cx) {
@@ -280,9 +279,7 @@ impl Workspace {
             .map_or_else(|| outer.clone(), |project| project.engine())
     }
     pub(super) fn command_selection(&self, window: &Window, cx: &App) -> ContextSelectionReceipt {
-        self.command_surface(window, cx)
-            .read(cx)
-            .context_selection_receipt()
+        self.command_surface(window, cx).read(cx).selection()
     }
     pub fn command_available(&self, action: &dyn Action, window: &Window, cx: &App) -> bool {
         !self.focus_handle.is_focused(window)

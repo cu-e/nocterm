@@ -90,7 +90,8 @@ fn layout(root: Div, cx: &mut Context<TabSurface>) -> Div {
     }))
 }
 fn id(this: &TabSurface, window: &Window, cx: &App) -> Option<EntityId> {
-    this.command_item(window, cx)
+    this.content()
+        .command_item(window, cx)
         .or_else(|| this.tabs().active_handle())
         .map(|item| item.item_id())
 }

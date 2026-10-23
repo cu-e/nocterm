@@ -149,6 +149,24 @@ impl Item for SessionProbe {
         )
     }
 }
+impl crate::LocalTerminal for SessionProbe {
+    fn cwd(&self, _: &App) -> Option<std::path::PathBuf> {
+        self.spec
+            .launch
+            .as_ref()?
+            .cwd
+            .as_ref()
+            .map(std::path::PathBuf::from)
+    }
+    fn change_directory(
+        &mut self,
+        _: std::path::PathBuf,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Result<(), crate::LocalDirectoryError> {
+        Err(crate::LocalDirectoryError::UnsupportedShell)
+    }
+}
 struct ProbeState {
     owner: WeakEntity<SessionProbe>,
 }

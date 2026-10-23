@@ -9,7 +9,9 @@
 //! or external-program launch.
 //! Ports used: `SessionFactory`, `ConnectionDirectory`, `Item`, `Panel`,
 //! `RightPanel`, `LocalTerminal`, `ProjectTerminalOpen`, `ProjectTerminalResolve`,
-//! `ChatConnectionOpen`; layout arrives as an
+//! `ChatConnectionOpen`; project terminal contracts/refusals live in workspace-ports
+//! without shell reexports. Private placement and typed terminal admission remain here.
+//! Layout arrives as an
 //! explicit `LayoutHandle`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
 //! file drag contracts, immutable tab/session and selected monitor-source observations,
@@ -37,8 +39,8 @@
 //! Background promotion retains the same Item entity; close detaches subscriptions
 //! before calling the feature's close hook. Local directory synchronization reports typed
 //! capability refusals and preserves encoding causes through its LocalTerminal port.
-//! ProjectSurface retains shared inert monitor-target metadata separately from live sessions.
-//! SurfaceState owns identity, selection receipts, lifecycle and the starting folder.
+//! SurfaceSelection owns original source, expiring selection receipts and presentation lifecycle.
+//! SurfaceState owns initial opening issuance, the starting folder and monitoring metadata.
 //! SurfaceContent owns foreground and off-dock membership and returns tab effects;
 //! the surface entity applies events and focus. Background promotion transfers the
 //! original TabEntry together with its subscriptions into the native dock.
@@ -53,10 +55,7 @@ mod actions;
 pub mod command_palette;
 mod connection_directory;
 mod context_ports;
-pub use context_ports::{
-    ChatConnectionOpen, ChatConnectionOpenError, ContextSelectionError, ProjectTerminalOpen,
-    ProjectTerminalSession,
-};
+pub use context_ports::{ChatConnectionOpen, ChatConnectionOpenError};
 mod dock_item;
 mod file_drag;
 pub mod host;
@@ -64,7 +63,6 @@ mod item;
 mod local_terminal;
 mod open_on_host;
 mod panel;
-mod project_terminal_resolve;
 mod provider_registry;
 pub use provider_registry::ProjectProviderRegistry;
 mod right_panel;
@@ -78,8 +76,8 @@ pub use file_drag::{FileDrag, RemoteFileDrag};
 pub use host::{Host, HostKey, ProgramSpec, ShellSyntax};
 pub use item::{Item, ItemEvent, ItemHandle, TabState};
 pub use local_terminal::{LocalDirectoryError, LocalTerminal, LocalTerminalTarget};
+use nocterm_workspace_ports::ContextSelectionError;
 pub use panel::{Panel, PanelHandle};
-pub use project_terminal_resolve::{ProjectConnectionError, ProjectTerminalResolve};
 pub use right_panel::{RightPanel, RightPanelEvent};
 // The terminal and connection contracts live below the shell (ADR 0062).
 pub use nocterm_workspace_ports::{
@@ -92,8 +90,9 @@ pub use nocterm_workspace_ports::{
 };
 pub use workspace::{
     ContextSelectionReceipt, ContextWindowReceipt, Deps, GeneralTerminalTarget, ProjectSurface,
-    ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectSurfaceReceipt, ProjectTerminalTarget,
-    SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot, Workspace, WorkspaceEvent,
+    ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectSurfaceReceipt, SessionFactory, SessionSpec,
+    TabCloseScope, TabPane, TabSnapshot, Workspace, WorkspaceEvent, admit_project_terminal,
+    validate_project_terminal_target,
 };
 
 /// The key context of the workspace, for keymap entries.

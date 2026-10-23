@@ -100,7 +100,7 @@ impl DockItem {
     fn selection(&self, cx: &App) -> Option<ContextSelectionReceipt> {
         let workspace = self.workspace.upgrade()?;
         let workspace = workspace.read(cx);
-        (workspace.context_source() == self.source).then(|| workspace.context_selection_receipt())
+        (workspace.source() == self.source).then(|| workspace.selection())
     }
     pub(crate) fn start_alias(
         &mut self,
@@ -188,7 +188,7 @@ impl BasePanel for DockItem {
         let source = self.source;
         window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| {
-                workspace.item_removed(source, id, window, cx)
+                workspace.close_item_at(source, id, window, cx)
             });
         });
     }
@@ -384,8 +384,7 @@ impl Panel for DockItem {
                 use crate::workspace::TabCloseScope;
                 let selection = menu_workspace.upgrade().and_then(|workspace| {
                     let workspace = workspace.read(cx);
-                    (workspace.context_source() == source)
-                        .then(|| workspace.context_selection_receipt())
+                    (workspace.source() == source).then(|| workspace.selection())
                 });
                 for (label, scope) in [
                     ("Close Tab", TabCloseScope::Current),

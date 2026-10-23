@@ -21,6 +21,12 @@ impl SurfaceContent {
             local_visible: self.tabs.local_visible(cx),
         }
     }
+    pub(super) fn presentation(&self, cx: &App) -> (Option<NodeId>, bool) {
+        (
+            self.tabs.zoomed(cx),
+            self.tabs.region_open(DockPlacement::Bottom, cx),
+        )
+    }
     pub(in crate::workspace) fn tabs(&self) -> &tabs::Tabs {
         &self.tabs
     }
@@ -70,14 +76,13 @@ impl SurfaceContent {
     pub(super) fn admit(
         &mut self,
         entry: TabEntry,
-        destination: &admission::SurfaceItemAdmission,
+        (placement, node): (DockPlacement, Option<NodeId>),
         focus: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<Option<EntityId>, ContextSelectionError> {
-        let (placement, node) = destination.destination(&self.tabs, cx)?;
+    ) -> Option<EntityId> {
         self.tabs.ensure_region_open(placement, window, cx);
-        Ok(self.register(entry, placement, node, focus, window, cx))
+        self.register(entry, placement, node, focus, window, cx)
     }
     pub(in crate::workspace) fn insert_background(&mut self, entry: TabEntry) -> EntityId {
         let id = entry.id();
@@ -190,6 +195,21 @@ impl SurfaceContent {
         cx: &mut App,
     ) -> bool {
         self.tabs.split(id, placement, window, cx)
+    }
+    pub(super) fn preferred_focus(
+        &self,
+        fallback: &FocusHandle,
+        visible_only: bool,
+        cx: &App,
+    ) -> FocusHandle {
+        self.active_item()
+            .filter(|item| !visible_only || self.tabs.item_visible(item.item_id(), cx))
+            .map_or_else(|| fallback.clone(), |item| item.focus_handle(cx))
+    }
+    pub(super) fn command_item(&self, window: &Window, cx: &App) -> Option<Rc<dyn ItemHandle>> {
+        self.tabs
+            .focused_item(window, cx)
+            .or_else(|| self.tabs.command_item(self.tabs.last_command(), cx))
     }
     pub(in crate::workspace) fn active_item(&self) -> Option<&dyn ItemHandle> {
         self.tabs().active_item()
