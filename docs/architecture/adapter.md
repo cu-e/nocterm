@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-environment`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -18,20 +18,25 @@ The app injects it into the catalog service; it owns no background writer.
 `nocterm-project-runtime` executes built-in workspace preparation through a
 captured host executor. Docker and Podman inventories have independent outcomes;
 all later commands retain the chosen engine and full container ID. Preparation
-optionally installs checked selected language versions in a newly created
-container and clones Git. The same platform-aware implementation supports explicit
-existing-environment changes through `WorkspaceEnvironment`. It probes the actual
-OS, architecture, libc, account and prerequisites rather than inferring them from
-the host or image reference. Distribution defaults remain explicit; managed
-Python, Rust, Bun, official Node archives and checksum-verified Adoptium JDKs retain
-their user-owned paths in fresh workspace shells. Installer version values travel
-as positional arguments. Unsupported platform/version combinations fail explicitly;
+passes the actual owned creation receipt and original bounded command context to
+its injected creation installer, then clones Git. Command scopes and observations
+retain the original timer, cancellation and progress. Recovery alone creates its
+existing deliberate fresh uncancelled context.
+
+`nocterm-project-environment` supports fresh creation installation and explicit
+existing-environment changes through separate contracts. It probes the actual OS,
+architecture, libc, account and prerequisites rather than inferring them from the
+host or image reference. Distribution defaults remain explicit; managed Python,
+Rust, Bun, official Node archives and checksum-verified Adoptium JDKs retain their
+user-owned paths in fresh workspace shells. Installer version values travel as
+positional arguments. Unsupported platform/version combinations fail explicitly;
 existing environments are preserved after partial installation or cancellation.
-An internal fresh-owned creation policy permits initializing an empty Arch package
-database with a full synchronization/update. Existing-environment management never
-inherits that policy: it reports the missing administrator prerequisite instead.
-Workspace-only transport activation exports fixed managed paths without sourcing
-a mutable fragment. Bounded pull-output decoding emits observed transfer values
+Only the actual owned creation path permits initializing an empty Arch package
+database with a full synchronization/update. Existing-environment management reports
+the missing administrator prerequisite instead. Environment-owned workspace session
+and request activation exports fixed managed paths without sourcing a mutable fragment.
+
+Runtime's bounded pull-output decoding emits observed transfer values
 or phase-only progress when totals are unavailable.
 `NativeWorkspaceContainerActions` separately implements explicitly confirmed lifecycle
 actions. Bounded inspection validates the original full ID. Stop is idempotent for
@@ -59,7 +64,10 @@ the sealed stage for a name retry. Downloads compare the opened descriptor with
 the admitted regular file. Container filesystem commands run from `/` independently
 of the workspace directory. Unsupported images have no host fallback and install
 no helper or SSH daemon. The adapter's path-race and mutation limits are recorded
-in [ADR 0076](../adr/0076-container-filesystem-capability.md).
+in [ADR 0076](../adr/0076-container-filesystem-capability.md). The three project adapters
+have no dependencies on one another, including development dependencies; app owns
+real cross-adapter composition tests
+([ADR 0080](../adr/0080-project-adapter-ownership.md)).
 
 `nocterm-directory-io` projects supplied local and remote filesystem capabilities
 into read-only home and directory listing operations. It reuses existing traversal,

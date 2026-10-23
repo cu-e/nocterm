@@ -21,13 +21,20 @@ ordinary host folders without changing identity.
 `nocterm-project-providers` owns checked built-in container locations and the
 host-backed preparation contracts. Container identity includes the original host,
 ordered jump route, Docker/Podman engine, full container ID and folder. Actual
-command execution belongs to the runtime adapter. Checked ephemeral language/version
+command execution belongs to the runtime adapter. Pure exact-container request
+construction preserves arguments, stdin and explicit workspace-cwd choice without I/O. Checked ephemeral language/version
 selections reject incompatible version syntax and duplicate languages before I/O.
 `WorkspaceEnvironment` separately admits observed platform capabilities and explicit
 tool changes against a checked host or already scoped executor. Neutral environment
 facts and transfer progress remain ephemeral; `WorkspaceSessionFactory` activates
 managed paths independently of container routing
 ([ADR 0075](../adr/0075-observed-workspace-environment-management.md)).
+`EnvironmentCommands` and its factory preserve original bounded command authority
+across scopes and observations. The separate `CreatedWorkspaceEnvironment` requires
+an actual owned receipt; ordinary installation accepts no fresh-creation flag.
+`WorkspaceCommandActivation` supplies managed exports before container wrapping;
+all implementations are explicitly composed adapters
+([ADR 0080](../adr/0080-project-adapter-ownership.md)).
 The separate `ImageSearch` port accepts the captured host executor, engine,
 checked query and cancellation without expanding the preparation contract; registry DTOs
 and typed rate-limit cooldowns do not enter the catalog. Workspace identity selects chat

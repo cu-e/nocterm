@@ -24,12 +24,18 @@ initializing another vault or transfer queue.
 Bootstrap supplies Projects with the existing HostServices local executor and
 shared read-only directory readers. It explicitly injects NativeImageSearch alongside
 preparation; each search uses the captured original executor and selected engine.
-It also injects `NativeWorkspaceEnvironment` for observed settings and explicit
-tool changes. `NativeWorkspaceSessions` is supplied separately to Terminal for
+It constructs the runtime command factory, injects it into
+`nocterm-project-environment::NativeWorkspaceEnvironment`, then supplies that environment
+to runtime preparation through the separate creation installer port. Observed settings
+and explicit tool changes receive the same environment handle. Environment-owned
+`NativeWorkspaceSessions` is supplied separately to Terminal for
 folder workspace activation; `nocterm-project-container-fs::NativeContainerSessions`
 receives the same activation capability for its scoped resource. Ordinary connection transports retain their existing launch behavior.
 The controlled managed paths are exported before the configured workspace shell,
 without reading a mutable environment fragment or editing shell startup files.
+All three adapters depend only on domain/foundation contracts, including their test
+dependencies. Deterministic cross-adapter behavior tests live in the app project-setup
+composition owner ([ADR 0080](../adr/0080-project-adapter-ownership.md)).
 Local creation needs neither a PTY nor a
 synthetic terminal receipt; saved targets open through the existing local resolver.
 
