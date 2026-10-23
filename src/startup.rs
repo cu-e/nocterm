@@ -54,6 +54,13 @@ impl PreparedApp {
         let local_host = local
             .is_available()
             .then(|| Arc::new(nocterm_local::LocalExec) as Arc<dyn nocterm_session::HostExec>);
+        let activation = Arc::new(nocterm_project_runtime::NativeWorkspaceSessions);
+        let environment = Arc::new(nocterm_project_runtime::NativeWorkspaceEnvironment::new(
+            Arc::new(nocterm_project_runtime::NativeEnvironmentCommands),
+        ));
+        let preparation = Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
+            environment.clone(),
+        ));
         Ok(Self {
             paths,
             executable,
@@ -69,7 +76,12 @@ impl PreparedApp {
                 local,
                 local_host,
                 image_search: Arc::new(nocterm_project_runtime::NativeImageSearch),
-                environment: Arc::new(nocterm_project_runtime::NativeWorkspaceEnvironment),
+                environment,
+                preparation,
+                container_sessions: Arc::new(
+                    nocterm_project_runtime::NativeContainerSessions::new(activation.clone()),
+                ),
+                workspace_sessions: activation,
                 container_actions: Arc::new(
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),

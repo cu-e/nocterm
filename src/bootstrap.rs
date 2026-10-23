@@ -45,6 +45,9 @@ pub(crate) struct HostServices {
     pub(crate) local_host: Option<Arc<dyn nocterm_session::HostExec>>,
     pub(crate) image_search: Arc<dyn nocterm_project_providers::ImageSearch>,
     pub(crate) environment: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
+    pub(crate) preparation: Arc<dyn nocterm_project_providers::ProjectPreparation>,
+    pub(crate) container_sessions: Arc<dyn nocterm_project_providers::ContainerSessionFactory>,
+    pub(crate) workspace_sessions: Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>,
     pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
 }
 
@@ -53,7 +56,25 @@ struct ProjectResources {
     directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
     image_search: Arc<dyn nocterm_project_providers::ImageSearch>,
     environment: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
+    preparation: Arc<dyn nocterm_project_providers::ProjectPreparation>,
     container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
+}
+
+impl ProjectResources {
+    fn new(
+        hosts: &HostServices,
+        settings: nocterm_store::SettingsHandle,
+        directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
+    ) -> Self {
+        Self {
+            settings,
+            directories,
+            image_search: hosts.image_search.clone(),
+            environment: hosts.environment.clone(),
+            preparation: hosts.preparation.clone(),
+            container_actions: hosts.container_actions.clone(),
+        }
+    }
 }
 
 pub(crate) struct Themes {
@@ -135,23 +156,25 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         connections,
         projects,
     } = services;
-    let local_host = hosts.local_host;
     let stored = persist.then_some(&paths);
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
-    let terminal_deps = terminal_dependencies(hosts.transport, hosts.local, stored, &shutdown);
+    let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
+    let local_host = hosts.local_host;
+    let terminal_deps = terminal_dependencies(
+        hosts.transport,
+        hosts.local,
+        hosts.container_sessions,
+        hosts.workspace_sessions,
+        stored,
+        &shutdown,
+    );
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let projects = install_projects(
         projects,
         &terminal,
         connections.as_ref(),
-        ProjectResources {
-            settings: ui.settings().clone(),
-            directories: files.directory_readers(),
-            image_search: hosts.image_search,
-            environment: hosts.environment,
-            container_actions: hosts.container_actions,
-        },
+        resources,
         &shutdown,
         cx,
     )
@@ -237,7 +260,7 @@ fn install_projects(
         Ok(projects) => Some(
             projects
                 .with_directory_readers(resources.directories)
-                .with_preparation(Arc::new(nocterm_project_runtime::NativeProjectPreparation))
+                .with_preparation(resources.preparation)
                 .with_image_search(resources.image_search)
                 .with_environment(resources.environment)
                 .with_container_actions(resources.container_actions),
@@ -350,12 +373,14 @@ fn install_snippets(
 fn terminal_dependencies(
     transport: Arc<dyn nocterm_session::Transport>,
     local: nocterm_terminal::LocalSessions,
+    container_sessions: Arc<dyn nocterm_project_providers::ContainerSessionFactory>,
+    workspace_sessions: Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>,
     stored: Option<&nocterm_core::Paths>,
     shutdown: &nocterm_store::ShutdownCoordinator,
 ) -> nocterm_terminal::Deps {
     let deps = nocterm_terminal::Deps::new(transport, local)
-        .with_container_sessions(Arc::new(nocterm_project_runtime::NativeContainerSessions))
-        .with_workspace_sessions(Arc::new(nocterm_project_runtime::NativeWorkspaceSessions));
+        .with_container_sessions(container_sessions)
+        .with_workspace_sessions(workspace_sessions);
     let Some(paths) = stored else {
         return deps;
     };

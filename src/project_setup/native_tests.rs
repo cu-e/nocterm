@@ -92,7 +92,11 @@ fn prepare_native(
         .new_identity()
         .unwrap()
         .id;
-    let runtime = nocterm_project_runtime::NativeProjectPreparation;
+    let runtime = nocterm_project_runtime::NativeProjectPreparation::new(Arc::new(
+        nocterm_project_runtime::NativeWorkspaceEnvironment::new(Arc::new(
+            nocterm_project_runtime::NativeEnvironmentCommands,
+        )),
+    ));
     let exec = Arc::new(nocterm_local::LocalExec);
     let input = ProjectSetupRequest {
         project,
@@ -306,8 +310,10 @@ fn container_session(
     host_files.set_home("/host-only-sentinel").unwrap();
     let base = ScriptedTransport::default();
     let driver = base.queue(Some(host_files), Some(exec));
-    let transport = nocterm_project_runtime::NativeContainerSessions
-        .wrap(Arc::new(base), owned.location().clone());
+    let transport = nocterm_project_runtime::NativeContainerSessions::new(Arc::new(
+        nocterm_project_runtime::NativeWorkspaceSessions,
+    ))
+    .wrap(Arc::new(base), owned.location().clone());
     let session = transport.open(ConnectRequest {
         proxy: Default::default(),
         launch: ShellLaunch::default(),

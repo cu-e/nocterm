@@ -284,6 +284,33 @@ fn boot_with_ports(
         cx,
     )
 }
+fn fixture_hosts(
+    transport: Arc<MockTransport>,
+    local: nocterm_terminal::LocalSessions,
+    local_host: Option<Arc<dyn nocterm_session::HostExec>>,
+) -> crate::bootstrap::HostServices {
+    let activation = Arc::new(nocterm_project_runtime::NativeWorkspaceSessions);
+    let environment =
+        Arc::new(nocterm_project_providers::testing::FakeWorkspaceEnvironment::default());
+    crate::bootstrap::HostServices {
+        transport,
+        local,
+        local_host,
+        image_search: Arc::new(nocterm_project_providers::testing::FakeImageSearch::default()),
+        container_actions: Arc::new(
+            nocterm_project_providers::testing::FakeWorkspaceContainerActions::default(),
+        ),
+        environment: environment.clone(),
+        preparation: Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
+            environment,
+        )),
+        container_sessions: Arc::new(nocterm_project_runtime::NativeContainerSessions::new(
+            activation.clone(),
+        )),
+        workspace_sessions: activation,
+    }
+}
+
 fn boot_with_ports_and_probe(
     directory: tempfile::TempDir,
     settings: nocterm_store::SettingsConfig,
@@ -319,20 +346,7 @@ fn boot_with_ports_and_probe(
             persist: false,
             connections: crate::connection_setup::memory(),
             projects: crate::project_setup::PreparedProjectSetup::memory(),
-            hosts: crate::bootstrap::HostServices {
-                transport,
-                local,
-                local_host,
-                image_search: Arc::new(
-                    nocterm_project_providers::testing::FakeImageSearch::default(),
-                ),
-                container_actions: Arc::new(
-                    nocterm_project_providers::testing::FakeWorkspaceContainerActions::default(),
-                ),
-                environment: Arc::new(
-                    nocterm_project_providers::testing::FakeWorkspaceEnvironment::default(),
-                ),
-            },
+            hosts: fixture_hosts(transport, local, local_host),
             terminal_auth_factory: None,
             files,
             themes,
