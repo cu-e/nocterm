@@ -6,7 +6,8 @@ use nocterm_session::{
     ExecRequest,
     testing::{FakeExec, ScriptedTransport},
 };
-use nocterm_workspace::{ContextSelectionError, ProjectSurface, test_support::ProjectSurfaceProbe};
+use nocterm_workspace::{ProjectSurface, test_support::ProjectSurfaceProbe};
+use nocterm_workspace_ports::ContextSelectionError;
 use std::{rc::Rc, sync::Arc};
 
 struct Fixture {
@@ -155,7 +156,7 @@ fn capture_parent(
     parent: Rc<dyn nocterm_workspace::ItemHandle>,
     root: &RootPath,
     cx: &mut TestAppContext,
-) -> Rc<dyn nocterm_workspace::ProjectTerminalSession> {
+) -> Rc<dyn nocterm_workspace_ports::ProjectTerminalSession> {
     cx.update(|cx| {
         let expected = parent
             .terminal_capabilities(cx)
@@ -176,13 +177,19 @@ fn capture_parent(
             root: root.clone(),
         };
         project_terminal_opener(&f.installed)
-            .capture(parent, expected, &location, cx)
+            .capture(
+                parent.view(),
+                expected,
+                parent.terminal_capabilities(cx).unwrap(),
+                &location,
+                cx,
+            )
             .unwrap()
     })
 }
 fn open_hidden_and_close_parent(
     f: &Fixture,
-    session: &Rc<dyn nocterm_workspace::ProjectTerminalSession>,
+    session: &Rc<dyn nocterm_workspace_ports::ProjectTerminalSession>,
     parent: Rc<dyn nocterm_workspace::ItemHandle>,
     cx: &mut TestAppContext,
 ) -> ProjectSurface {
@@ -292,8 +299,9 @@ fn source_capture_refuses_a_replacement_epoch_before_opening_a_folder_terminal(
         assert!(
             project_terminal_opener(&f.installed)
                 .capture(
-                    parent.clone(),
+                    parent.view(),
                     expected,
+                    capabilities,
                     &nocterm_project_model::ProjectTarget::HostFolder {
                         host: nocterm_project_model::HostLocator::SshDirect {
                             target: spec().target,
@@ -483,4 +491,59 @@ fn an_offline_folder_configuration_authenticates_in_its_inner_terminal(cx: &mut 
             .expose(),
         "inside workspace"
     );
+}
+
+#[gpui_kit::test]
+fn project_capture_refuses_capabilities_from_another_parent_view(cx: &mut TestAppContext) {
+    use nocterm_workspace_ports::ProjectParentError;
+    let f = fixture(cx);
+    let (first, _first_driver) = connected_parent(&f, spec(), cx);
+    let (second, _second_driver) = connected_parent(&f, spec(), cx);
+    cx.update(|cx| {
+        let capabilities = first.terminal_capabilities(cx).unwrap();
+        let expected = capabilities.state().info(cx).unwrap().expected;
+        let location = nocterm_project_model::ProjectTarget::HostFolder {
+            host: nocterm_project_model::HostLocator::SshDirect {
+                target: spec().target,
+                via: vec![],
+            },
+            root: RootPath::parse("/root").unwrap(),
+        };
+        assert!(matches!(
+            project_terminal_opener(&f.installed).capture(
+                second.view(),
+                expected,
+                capabilities,
+                &location,
+                cx
+            ),
+            Err(ContextSelectionError::Parent(
+                ProjectParentError::StaleSession
+            ))
+        ));
+    });
+    assert_eq!(f.transport.requests().len(), 2);
+}
+
+#[gpui_kit::test]
+fn project_provider_refuses_foreign_destination_before_starting_a_terminal(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_workspace_ports::ProjectTerminalTarget;
+    let f = fixture(cx);
+    let (parent, _driver) = connected_parent(&f, spec(), cx);
+    let session = capture_parent(&f, parent, &RootPath::parse("/root").unwrap(), cx);
+    cx.update_window(f.window, |_, window, cx| {
+        let target = ProjectTerminalTarget::new(
+            cx.new(|_| nocterm_workspace::test_support::ProjectTerminalProbe::default()),
+        );
+        assert!(target.validate(window, cx).is_ok());
+        assert!(matches!(
+            session.open(target, window, cx),
+            Err(ContextSelectionError::StaleSurface)
+        ));
+        assert_eq!(f.workspace.read(cx).items(cx).count(), 1);
+    })
+    .unwrap();
+    assert_eq!(f.transport.requests().len(), 1);
 }

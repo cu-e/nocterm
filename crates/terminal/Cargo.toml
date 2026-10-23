@@ -22,6 +22,7 @@ nocterm-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-vt.workspace = true
 nocterm-workspace.workspace = true
+nocterm-workspace-ports.workspace = true
 
 gpui-kit.workspace = true
 tracing.workspace = true

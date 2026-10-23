@@ -1,12 +1,12 @@
 //! Bound workspace sessions keep ordinary authentication and reconnect.
 use crate::{Installed, Terminal, TerminalView};
-use gpui_kit::{App, AppContext as _, Window};
+use gpui_kit::{AnyView, App, AppContext as _, Window};
 use nocterm_project_model::{ProjectTarget, RootPath};
 use nocterm_project_providers::ContainerLocation;
-use nocterm_workspace::{
-    ContextSelectionError, ExpectedSession, ItemHandle, ProjectConnectionError,
-    ProjectTerminalOpen, ProjectTerminalSession, ProjectTerminalTarget, SessionSpec,
-    TerminalStatus,
+use nocterm_workspace::{ExpectedSession, SessionSpec, TerminalStatus};
+use nocterm_workspace_ports::{
+    ContextSelectionError, ProjectConnectionError, ProjectTerminalOpen, ProjectTerminalSession,
+    ProjectTerminalTarget,
 };
 use std::rc::Rc;
 
@@ -75,27 +75,31 @@ struct FolderSession {
 impl ProjectTerminalOpen for ProjectTerminals {
     fn capture(
         &self,
-        parent: Rc<dyn ItemHandle>,
+        parent: AnyView,
         expected: ExpectedSession,
+        capabilities: nocterm_workspace_ports::TerminalCapabilities,
         location: &ProjectTarget,
         cx: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, ContextSelectionError> {
-        let info = parent
-            .terminal_capabilities(cx)
-            .and_then(|ports| ports.state().info(cx))
+        let info = capabilities
+            .state()
+            .info(cx)
             .ok_or(ContextSelectionError::ParentUnavailable)?;
-        if info.expected != expected || parent.item_id() != expected.item() {
+        if info.expected != expected || parent.entity_id() != expected.item() {
             return Err(nocterm_workspace::ProjectParentError::StaleSession.into());
         }
         if info.status != TerminalStatus::Connected {
             return Err(ContextSelectionError::ParentUnavailable);
         }
         let view = parent
-            .view()
             .downcast::<TerminalView>()
             .map_err(|_| ContextSelectionError::ParentUnavailable)?;
         let terminal = view.read(cx).terminal().read(cx);
-        if terminal.is_command() || terminal.installed().is_container() {
+        if terminal.connection_epoch() != expected.epoch() {
+            return Err(nocterm_workspace_ports::ProjectParentError::StaleSession.into());
+        }
+        if !terminal.is_connected() || terminal.is_command() || terminal.installed().is_container()
+        {
             return Err(ContextSelectionError::ParentUnavailable);
         }
         project_session(
@@ -114,7 +118,7 @@ impl ProjectTerminalSession for FolderSession {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), ContextSelectionError> {
-        target.validate(window, cx)?;
+        nocterm_workspace::validate_project_terminal_target(&target, window, cx)?;
         let mut spec = self.spec.clone();
         let mut launch = spec.launch.clone().unwrap_or_else(|| {
             let defaults = if self.local {
@@ -139,18 +143,7 @@ impl ProjectTerminalSession for FolderSession {
             });
             TerminalView::with_terminal(terminal, window, cx)
         });
-        match target.destination() {
-            Some(destination) => target.surface().add_local_terminal(
-                target.selection(),
-                view,
-                destination,
-                window,
-                cx,
-            )?,
-            None => target
-                .surface()
-                .add_item(target.selection(), view, window, cx)?,
-        };
+        nocterm_workspace::admit_project_terminal(&target, view, window, cx)?;
         Ok(())
     }
 }

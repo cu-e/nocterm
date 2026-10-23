@@ -64,8 +64,8 @@ mod terminal;
 mod view;
 
 use gpui_kit::{Action as _, App, Context, KeyBinding, NoAction, Unbind, Window, prelude::*};
-use nocterm_workspace::ContextSelectionError;
 use nocterm_workspace::{ProgramSpec, SessionSpec, Workspace};
+use nocterm_workspace_ports::ContextSelectionError;
 mod project;
 pub use project::{local_project_session, project_session, project_terminal_opener};
 
