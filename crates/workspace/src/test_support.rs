@@ -263,3 +263,6 @@ pub use project_terminal::ProjectTerminalProbe;
 
 mod project_surface;
 pub use project_surface::ProjectSurfaceProbe;
+
+mod panel;
+pub use panel::{TestPanel, TestPanelBuilder};

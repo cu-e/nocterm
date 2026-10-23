@@ -1,37 +1,17 @@
 //! The body's columns: resizing, hiding a sidebar panel from its own
 //! button, and swapping sides.
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Render, TestAppContext,
-    TestSupportExt as _, Window, div, prelude::*, px, test::TestWindowExt as _,
+    App, AppContext as _, Entity, Focusable, TestAppContext, Window, px, test::TestWindowExt as _,
 };
+use nocterm_ui::IconName;
 
 use super::{Arrangement, Column, PanelPresentation};
-use crate::workspace::tests::{RightProbe, fixture};
+use crate::test_support::TestPanel;
+use crate::test_support::TestPanelBuilder;
+use crate::workspace::tests::fixture;
 
-struct SideProbe {
-    focus: FocusHandle,
-}
-impl Focusable for SideProbe {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for SideProbe {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("side-probe")
-            .test_support()
-            .size_full()
-            .track_focus(&self.focus)
-    }
-}
-impl crate::Panel for SideProbe {
-    fn title(&self, _: &App) -> gpui_kit::SharedString {
-        "Servers".into()
-    }
-    fn icon(&self, _: &App) -> nocterm_ui::IconName {
-        nocterm_ui::IconName::Server
-    }
+fn side_panel(element_id: &'static str, title: &'static str, icon: IconName) -> TestPanelBuilder {
+    TestPanel::builder(element_id).title(title).icon(icon)
 }
 
 #[test]
@@ -77,13 +57,10 @@ fn sidebar_resizes_with_the_side_panel_closed_and_its_button_hides_it(cx: &mut T
     let (handle, workspace) = fixture(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
-        let side = cx.new(|cx| SideProbe {
-            focus: cx.focus_handle(),
-        });
-        let right = cx.new(|cx| RightProbe {
-            focus: cx.focus_handle(),
-            maximized: false,
-        });
+        let side = side_panel("side-probe", "Servers", IconName::Server).build(cx);
+        let right = TestPanel::builder("right-probe")
+            .title("AI Agents")
+            .build(cx);
         workspace.update(cx, |workspace, cx| {
             workspace.add_panel(side, cx);
             workspace.set_right_panel(right, window, cx);
@@ -117,13 +94,10 @@ fn swapping_puts_the_side_panel_on_the_left(cx: &mut TestAppContext) {
     let (handle, workspace) = fixture(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
-        let side = cx.new(|cx| SideProbe {
-            focus: cx.focus_handle(),
-        });
-        let right = cx.new(|cx| RightProbe {
-            focus: cx.focus_handle(),
-            maximized: false,
-        });
+        let side = side_panel("side-probe", "Servers", IconName::Server).build(cx);
+        let right = TestPanel::builder("right-probe")
+            .title("AI Agents")
+            .build(cx);
         workspace.update(cx, |workspace, cx| {
             workspace.add_panel(side, cx);
             workspace.set_right_panel(right, window, cx);
@@ -154,13 +128,10 @@ fn hidden_and_reordered_columns_keep_each_owners_visible_width(cx: &mut TestAppC
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         layout.set("workspace.sidebar", px(260.), cx).unwrap();
         layout.set("workspace.right_panel", px(420.), cx).unwrap();
-        let side = cx.new(|cx| SideProbe {
-            focus: cx.focus_handle(),
-        });
-        let right = cx.new(|cx| RightProbe {
-            focus: cx.focus_handle(),
-            maximized: false,
-        });
+        let side = side_panel("side-probe", "Servers", IconName::Server).build(cx);
+        let right = TestPanel::builder("right-probe")
+            .title("AI Agents")
+            .build(cx);
         workspace.update(cx, |workspace, cx| {
             workspace.add_panel(side, cx);
             workspace.set_right_panel(right, window, cx);
@@ -232,14 +203,11 @@ fn install_columns(
     workspace: &Entity<crate::Workspace>,
     window: &mut Window,
     cx: &mut App,
-) -> (Entity<SideProbe>, Entity<RightProbe>) {
-    let side = cx.new(|cx| SideProbe {
-        focus: cx.focus_handle(),
-    });
-    let right = cx.new(|cx| RightProbe {
-        focus: cx.focus_handle(),
-        maximized: false,
-    });
+) -> (Entity<TestPanel>, Entity<TestPanel>) {
+    let side = side_panel("side-probe", "Servers", IconName::Server).build(cx);
+    let right = TestPanel::builder("right-probe")
+        .title("AI Agents")
+        .build(cx);
     workspace.update(cx, |workspace, cx| {
         workspace.add_panel(side.clone(), cx);
         workspace.set_right_panel(right.clone(), window, cx);
@@ -356,9 +324,7 @@ fn sidebar_controls_preserve_expansion_and_focus_visible_chat_when_closed(cx: &m
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         let (_, right) = install_columns(&workspace, window, cx);
-        let other = cx.new(|cx| SideProbe {
-            focus: cx.focus_handle(),
-        });
+        let other = side_panel("side-probe", "Servers", IconName::Server).build(cx);
         workspace.update(cx, |workspace, cx| {
             workspace.add_panel(other.clone(), cx);
             workspace.set_right_panel_maximized(true, cx);

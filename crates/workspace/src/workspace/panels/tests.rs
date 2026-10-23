@@ -1,43 +1,10 @@
 //! Cached panel content and its chrome have independent invalidations.
-use crate::Panel;
+use crate::test_support::TestPanel;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     App, Context, FocusHandle, Focusable, SharedString, TestAppContext, Window, div, prelude::*,
 };
-use nocterm_ui::IconName;
 use std::{cell::Cell, rc::Rc};
-
-struct Probe {
-    focus: FocusHandle,
-    renders: Rc<Cell<usize>>,
-    badge: Option<SharedString>,
-    text: SharedString,
-}
-impl Focusable for Probe {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl Render for Probe {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.renders.set(self.renders.get() + 1);
-        div()
-            .size_full()
-            .track_focus(&self.focus)
-            .child(self.text.clone())
-    }
-}
-impl Panel for Probe {
-    fn title(&self, _: &App) -> SharedString {
-        "Probe".into()
-    }
-    fn icon(&self, _: &App) -> IconName {
-        IconName::Bot
-    }
-    fn badge(&self, _: &App) -> Option<SharedString> {
-        self.badge.clone()
-    }
-}
 
 #[gpui_kit::test]
 fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mut TestAppContext) {
@@ -46,12 +13,11 @@ fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mu
     let observed = Rc::new(Cell::new(0));
     let panel = cx
         .update_window(handle, |_, window, cx| {
-            let panel = cx.new(|cx| Probe {
-                focus: cx.focus_handle(),
-                renders: renders.clone(),
-                badge: None,
-                text: "First".into(),
-            });
+            let panel = TestPanel::builder("probe")
+                .title("Probe")
+                .text("First")
+                .render_counter(renders.clone())
+                .build(cx);
             workspace.update(cx, |w, cx| {
                 w.add_panel(panel.clone(), cx);
                 w.activate_panel(0, window, cx);
@@ -84,12 +50,7 @@ fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mu
         "workspace notification should reuse the panel subtree"
     );
     let before = observed.get();
-    cx.update(|cx| {
-        panel.update(cx, |panel, cx| {
-            panel.text = "Second".into();
-            cx.notify();
-        })
-    });
+    cx.update(|cx| panel.update(cx, |panel, cx| panel.set_text("Second", cx)));
     cx.run_until_parked();
     assert_eq!(
         observed.get(),
@@ -101,12 +62,7 @@ fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mu
     })
     .unwrap();
     assert!(renders.get() > count, "changed panel content must repaint");
-    cx.update(|cx| {
-        panel.update(cx, |panel, cx| {
-            panel.badge = Some("1".into());
-            cx.notify();
-        })
-    });
+    cx.update(|cx| panel.update(cx, |panel, cx| panel.set_badge(Some("1".into()), cx)));
     cx.run_until_parked();
     assert!(
         observed.get() > before,
