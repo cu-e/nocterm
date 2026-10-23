@@ -25,8 +25,7 @@ use nocterm_ui::IconName;
 use super::{
     ContextSelectionReceipt, MenuBuilder, NewTabMenu, Workspace,
     layout::{Body, Column, PanelPresentation},
-    panels::Sidebar,
-    right_panel::RightPanelSlot,
+    panel_groups::{GroupKey, PanelGroups},
     surface::SurfaceFrame,
 };
 use crate::NewTab;
@@ -47,23 +46,20 @@ struct NewTabControl {
 pub(super) struct Regions<'a> {
     tabs: SurfaceFrame,
     selection: ContextSelectionReceipt,
-    sidebar: &'a Sidebar,
-    right: &'a RightPanelSlot,
+    groups: &'a PanelGroups,
     directory: Option<Rc<dyn crate::ConnectionDirectory>>,
 }
 impl<'a> Regions<'a> {
     pub(super) fn new(
         tabs: SurfaceFrame,
         selection: ContextSelectionReceipt,
-        sidebar: &'a Sidebar,
-        right: &'a RightPanelSlot,
+        groups: &'a PanelGroups,
         directory: Option<Rc<dyn crate::ConnectionDirectory>>,
     ) -> Self {
         Self {
             tabs,
             selection,
-            sidebar,
-            right,
+            groups,
             directory,
         }
     }
@@ -202,8 +198,15 @@ impl Chrome {
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let widths = body_state.widths(window, cx);
-        let presentation = PanelPresentation::new(regions.right.open(), regions.right.maximized());
-        let arrangement = body_state.arrangement(regions.sidebar.visible(), presentation, cx);
+        let presentation = PanelPresentation::new(
+            regions.groups.is_shown(GroupKey::Assistant),
+            regions.groups.is_expanded(GroupKey::Assistant),
+        );
+        let arrangement = body_state.arrangement(
+            regions.groups.is_shown(GroupKey::Navigation),
+            presentation,
+            cx,
+        );
         let state = body_state.state(arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {
@@ -214,7 +217,7 @@ impl Chrome {
                     .size_range(widths.sidebar_range.clone())
                     .child(tile(
                         cards,
-                        self.render_sidebar(regions.sidebar, arrangement.swapped, cx),
+                        self.render_sidebar(regions.groups, arrangement.swapped, cx),
                     )),
                 Column::Content => resizable_panel().child(self.render_content(regions, cards, cx)),
                 Column::SidePanel => resizable_panel()
@@ -224,7 +227,7 @@ impl Chrome {
                             .size_range(widths.right_panel_range.clone()),
                         _ => panel.size_range(px(0.)..gpui_kit::Pixels::MAX),
                     })
-                    .child(self.render_right_panel(regions.right, cards, cx)),
+                    .child(self.render_right_panel(regions.groups, cards, cx)),
             });
         }
         body.into_any_element()
@@ -232,7 +235,7 @@ impl Chrome {
 
     fn render_right_panel(
         &self,
-        panel: &RightPanelSlot,
+        groups: &PanelGroups,
         cards: Option<FloatingCards>,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
@@ -243,7 +246,12 @@ impl Chrome {
                 .test_support()
                 .size_full()
                 .min_w_0()
-                .when_some(panel.view(), |body, view| body.child(cached(view))),
+                .when_some(
+                    groups
+                        .selected(GroupKey::Assistant)
+                        .map(|panel| panel.view()),
+                    |body, view| body.child(cached(view)),
+                ),
         )
     }
 
@@ -316,13 +324,13 @@ impl Chrome {
 
     fn render_sidebar(
         &self,
-        panels: &Sidebar,
+        groups: &PanelGroups,
         on_right: bool,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         let sidebar = Workspace::forward_commands(v_flex(), cx);
         let theme = cx.theme();
-        let panel = panels.active();
+        let panel = groups.selected(GroupKey::Navigation);
         let floating = FloatingCards::get(cx).is_some();
 
         sidebar
@@ -369,12 +377,11 @@ impl Chrome {
         let selection = regions.selection;
         let theme = cx.theme();
         let floating = FloatingCards::get(cx).is_some();
-        let looks = FooterLooks::of(regions.sidebar, regions.right, cx);
         let FooterLooks {
             navigation,
             local_terminal,
             side_panel,
-        } = looks;
+        } = FooterLooks::of(regions.groups, cx);
         footer
             .id("workspace-footer")
             .test_support()
@@ -389,21 +396,26 @@ impl Chrome {
                     .when(!floating, |footer| {
                         footer.border_t_1().border_color(theme.sidebar_border)
                     })
-                    .children(regions.sidebar.entries().zip(navigation).enumerate().map(
-                        |(ix, (panel, look))| {
-                            Button::new(("sidebar-panel", ix))
-                                .ghost()
-                                .small()
-                                .icon(look.icon)
-                                .tooltip(look.tooltip)
-                                .when_some(panel.badge(cx), Button::label)
-                                .selected(regions.sidebar.showing(ix))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    // The shown panel's button hides the sidebar.
-                                    this.toggle_sidebar_panel(ix, window, cx);
-                                }))
-                        },
-                    ))
+                    .children(
+                        regions
+                            .groups
+                            .members(GroupKey::Navigation)
+                            .zip(navigation)
+                            .enumerate()
+                            .map(|(ix, (panel, look))| {
+                                Button::new(("sidebar-panel", ix))
+                                    .ghost()
+                                    .small()
+                                    .icon(look.icon)
+                                    .tooltip(look.tooltip)
+                                    .when_some(panel.badge(cx), Button::label)
+                                    .selected(regions.groups.is_showing(GroupKey::Navigation, ix))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        // The shown panel's button hides the sidebar.
+                                        this.toggle_sidebar_panel(ix, window, cx);
+                                    }))
+                            }),
+                    )
                     .children(self.status_views(StatusSide::Leading))
                     .child(div().flex_1())
                     .child(nocterm_ui::notice::NoticeBar::new())
@@ -428,7 +440,7 @@ impl Chrome {
                                 .small()
                                 .icon(side.icon)
                                 .tooltip(side.tooltip)
-                                .selected(regions.right.open())
+                                .selected(regions.groups.is_shown(GroupKey::Assistant))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_right_panel(window, cx)
                                 })),

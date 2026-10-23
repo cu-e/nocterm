@@ -6,8 +6,7 @@
 use gpui_kit::{App, SharedString};
 use nocterm_ui::IconName;
 
-use crate::workspace::panels::{Sidebar, SidebarEntry};
-use crate::workspace::right_panel::RightPanelSlot;
+use crate::workspace::panel_groups::{GroupKey, HostedPanel, PanelGroups};
 
 /// The icon and tooltip of one footer toggle.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,7 +16,7 @@ pub(crate) struct ToggleLook {
 }
 
 impl ToggleLook {
-    pub(super) fn navigation(entry: &SidebarEntry, cx: &App) -> Self {
+    pub(super) fn navigation(entry: &HostedPanel, cx: &App) -> Self {
         Self {
             icon: entry.icon(cx),
             tooltip: entry.title(cx),
@@ -58,16 +57,16 @@ pub(crate) struct FooterLooks {
 }
 
 impl FooterLooks {
-    pub(in crate::workspace) fn of(sidebar: &Sidebar, right: &RightPanelSlot, cx: &App) -> Self {
+    pub(in crate::workspace) fn of(groups: &PanelGroups, cx: &App) -> Self {
         Self {
-            navigation: sidebar
-                .entries()
+            navigation: groups
+                .members(GroupKey::Navigation)
                 .map(|entry| ToggleLook::navigation(entry, cx))
                 .collect(),
             local_terminal: ToggleLook::local_terminal(),
-            side_panel: right
-                .available()
-                .then(|| ToggleLook::side_panel(right.attention())),
+            side_panel: groups
+                .is_available(GroupKey::Assistant)
+                .then(|| ToggleLook::side_panel(groups.attention(GroupKey::Assistant))),
         }
     }
 }

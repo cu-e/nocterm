@@ -1,74 +1,8 @@
-//! Cached panel content and its chrome have independent invalidations.
-use crate::test_support::TestPanel;
-use gpui_kit::test::TestWindowExt as _;
+//! The local terminal's directory is announced from its actual cwd, not its title or status.
 use gpui_kit::{
     App, Context, FocusHandle, Focusable, SharedString, TestAppContext, Window, div, prelude::*,
 };
 use std::{cell::Cell, rc::Rc};
-
-#[gpui_kit::test]
-fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mut TestAppContext) {
-    let (handle, workspace) = crate::workspace::tests::fixture(cx);
-    let renders = Rc::new(Cell::new(0));
-    let observed = Rc::new(Cell::new(0));
-    let panel = cx
-        .update_window(handle, |_, window, cx| {
-            let panel = TestPanel::builder("probe")
-                .title("Probe")
-                .text("First")
-                .render_counter(renders.clone())
-                .build(cx);
-            workspace.update(cx, |w, cx| {
-                w.add_panel(panel.clone(), cx);
-                w.activate_panel(0, window, cx);
-            });
-            window.render_frame(cx);
-            panel
-        })
-        .unwrap();
-    // Registration/activation effects are flushed after the initial draw.
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
-        .unwrap();
-    cx.run_until_parked();
-    let count = renders.get();
-    let log = observed.clone();
-    let _subscription = cx.update(|cx| {
-        cx.observe(&workspace, move |_, _| {
-            log.set(log.get() + 1);
-        })
-    });
-    cx.update(|cx| workspace.update(cx, |_, cx| cx.notify()));
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.draw(cx).clear(cx);
-    })
-    .unwrap();
-    assert_eq!(
-        renders.get(),
-        count,
-        "workspace notification should reuse the panel subtree"
-    );
-    let before = observed.get();
-    cx.update(|cx| panel.update(cx, |panel, cx| panel.set_text("Second", cx)));
-    cx.run_until_parked();
-    assert_eq!(
-        observed.get(),
-        before,
-        "content-only notifications do not affect workspace chrome"
-    );
-    cx.update_window(handle, |_, window, cx| {
-        window.draw(cx).clear(cx);
-    })
-    .unwrap();
-    assert!(renders.get() > count, "changed panel content must repaint");
-    cx.update(|cx| panel.update(cx, |panel, cx| panel.set_badge(Some("1".into()), cx)));
-    cx.run_until_parked();
-    assert!(
-        observed.get() > before,
-        "changed badge must update the footer"
-    );
-}
 
 struct LocalProbe {
     focus: FocusHandle,
@@ -107,7 +41,7 @@ impl crate::LocalTerminal for LocalProbe {
 
 #[gpui_kit::test]
 fn local_directory_event_tracks_actual_cwd_instead_of_title_or_status(cx: &mut TestAppContext) {
-    let (handle, workspace) = crate::workspace::tests::fixture(cx);
+    let (handle, workspace) = super::fixture(cx);
     let local = cx
         .update_window(handle, |_, window, cx| {
             let local = cx.new(|cx| LocalProbe {

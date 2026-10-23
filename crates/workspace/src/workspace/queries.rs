@@ -197,19 +197,19 @@ impl Workspace {
             .background_contains(id)
     }
     pub fn right_panel_is_available(&self) -> bool {
-        self.right_panel.available()
+        self.panels.is_available(GroupKey::Assistant)
     }
     pub fn right_panel_is_open(&self) -> bool {
-        self.right_panel.open()
+        self.panels.is_shown(GroupKey::Assistant)
     }
     pub fn right_panel_is_maximized(&self) -> bool {
-        self.right_panel.maximized()
+        self.panels.is_expanded(GroupKey::Assistant)
     }
     pub fn new_tab_menu_is_open(&self) -> bool {
         self.chrome.new_tab_open()
     }
     pub fn sidebar_is_open(&self) -> bool {
-        self.sidebar.visible()
+        self.panels.is_shown(GroupKey::Navigation)
     }
     pub fn sides_swapped(&self, cx: &App) -> bool {
         self.body.swapped(cx)

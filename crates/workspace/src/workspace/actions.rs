@@ -1,5 +1,5 @@
 //! Typed action registrations and native command categories for the window shell.
-use super::{TabCloseScope, Workspace};
+use super::{TabCloseScope, Workspace, panel_groups::GroupKey};
 use crate::KEY_CONTEXT;
 use gpui_kit::{
     Action, Context, Div, FocusHandle, Window,
@@ -68,7 +68,10 @@ impl ActionRegistry {
             )
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanelMaximized, _, cx| {
-                    this.set_right_panel_maximized(!this.right_panel.maximized(), cx)
+                    this.set_right_panel_maximized(
+                        !this.panels.is_expanded(GroupKey::Assistant),
+                        cx,
+                    )
                 }),
             )
     }

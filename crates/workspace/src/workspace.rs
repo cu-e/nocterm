@@ -38,9 +38,9 @@ mod surfaces;
 mod tabs;
 pub use openers::SessionFactory;
 mod actions;
-mod panels;
+mod panel_groups;
+use panel_groups::GroupKey;
 mod ports;
-mod right_panel;
 mod sessions;
 
 use crate::{
@@ -188,8 +188,7 @@ pub struct Workspace {
     focus_handle: FocusHandle,
     surfaces: surfaces::WindowSurfaces,
     chrome: chrome::Chrome,
-    sidebar: panels::Sidebar,
-    right_panel: right_panel::RightPanelSlot,
+    panels: panel_groups::PanelGroups,
     body: layout::Body,
     ports: ports::WorkspacePorts,
     actions: actions::ActionRegistry,
@@ -203,8 +202,7 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             surfaces: surfaces::WindowSurfaces::new(window, cx),
             chrome: chrome::Chrome::new(cx.focus_handle()),
-            sidebar: panels::Sidebar::default(),
-            right_panel: right_panel::RightPanelSlot::default(),
+            panels: panel_groups::PanelGroups::new(),
             body: layout::Body::new(deps.layout),
             ports: ports::WorkspacePorts::default(),
             actions: actions::ActionRegistry::default(),
@@ -292,7 +290,7 @@ impl Workspace {
     }
 
     fn on_next_panel(&mut self, _: &NextPanel, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(next) = self.sidebar.next() {
+        if let Some(next) = self.panels.next(GroupKey::Navigation) {
             self.activate_panel(next, window, cx);
         }
     }
@@ -313,8 +311,7 @@ impl Render for Workspace {
         let regions = chrome::Regions::new(
             self.surfaces.frame(cx),
             self.context_selection_receipt(cx),
-            &self.sidebar,
-            &self.right_panel,
+            &self.panels,
             self.ports.directory(),
         );
         let body = self

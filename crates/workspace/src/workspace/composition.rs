@@ -4,7 +4,15 @@ use crate::ContextSelectionError;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
 use chrome::StatusSide;
 use nocterm_session::{HostAddress, ShellLaunch};
+use panel_groups::{HostedPanel, Presentation};
 use surface::admission::SurfaceItemAdmission;
+/// A panel's title, icon and badge sit in the workspace's chrome; the rest of the panel
+/// redraws itself, so only a change to them counts.
+fn presentation_of<T: Panel>(panel: &Entity<T>, cx: &App) -> Presentation {
+    let panel = panel.read(cx);
+    (panel.title(cx), panel.icon(cx), panel.badge(cx))
+}
+
 impl Workspace {
     pub fn add_general_background_from<T: Item>(
         &mut self,
@@ -240,23 +248,19 @@ impl Workspace {
         Ok(())
     }
     pub fn add_panel<T: Panel>(&mut self, panel: Entity<T>, cx: &mut Context<Self>) {
-        // A panel's title, icon and badge sit in the workspace's chrome; the
-        // rest of the panel redraws itself, so only a change to them counts.
-        let chrome = |panel: &Entity<T>, cx: &gpui_kit::App| {
-            let panel = panel.read(cx);
-            (panel.title(cx), panel.icon(cx), panel.badge(cx))
-        };
-        let metadata = chrome(&panel, cx);
+        let metadata = presentation_of(&panel, cx);
         let subscription = cx.observe(&panel, move |this, panel, cx| {
             if this
-                .sidebar
-                .metadata_changed(panel.entity_id(), chrome(&panel, cx))
+                .panels
+                .presentation_changed(panel.entity_id(), presentation_of(&panel, cx))
             {
                 cx.notify();
             }
         });
-        self.sidebar
-            .register(Box::new(panel), metadata, subscription);
+        self.panels.add(
+            GroupKey::Navigation,
+            HostedPanel::plain(Box::new(panel), metadata, subscription),
+        );
         cx.notify();
     }
     pub fn set_right_panel<T: crate::RightPanel>(
@@ -267,15 +271,15 @@ impl Workspace {
     ) {
         let subscription =
             cx.subscribe_in(&panel, window, |this, _, event, window, cx| match event {
-                crate::RightPanelEvent::ToggleMaximized => {
-                    this.set_right_panel_maximized(!this.right_panel.maximized(), cx)
-                }
+                crate::RightPanelEvent::ToggleMaximized => this
+                    .set_right_panel_maximized(!this.panels.is_expanded(GroupKey::Assistant), cx),
                 crate::RightPanelEvent::Close => this.close_right_panel(window, cx),
                 crate::RightPanelEvent::Widen(delta) => this.widen_right_panel(*delta, window, cx),
             });
-        let left = self.sides_swapped(cx);
-        self.right_panel
-            .install(Box::new(panel), subscription, left, cx);
+        let presentation = presentation_of(&panel, cx);
+        let hosted = HostedPanel::expandable(Box::new(panel), presentation, subscription);
+        self.panels.install(GroupKey::Assistant, hosted);
+        self.panels.set_docked_left(self.sides_swapped(cx), cx);
         cx.notify();
     }
     pub fn add_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {

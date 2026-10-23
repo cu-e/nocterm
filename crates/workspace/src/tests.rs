@@ -14,6 +14,8 @@ use std::{
     path::PathBuf,
     rc::Rc,
 };
+#[path = "tests/local_directory.rs"]
+mod local_directory;
 #[path = "tests/project_tabs.rs"]
 mod project_tabs;
 #[path = "tests/provider_resolution.rs"]

@@ -16,6 +16,7 @@ pub struct TestPanel {
     badge: Option<SharedString>,
     text: SharedString,
     maximized: bool,
+    docked_left: bool,
     renders: Option<Rc<Cell<usize>>>,
 }
 
@@ -49,6 +50,11 @@ impl TestPanel {
     /// Whether the workspace last asked this panel to present itself maximized.
     pub fn maximized(&self) -> bool {
         self.maximized
+    }
+
+    /// Whether the workspace last said this panel sits left of the content.
+    pub fn docked_left(&self) -> bool {
+        self.docked_left
     }
 
     pub fn set_badge(&mut self, badge: Option<SharedString>, cx: &mut Context<Self>) {
@@ -98,6 +104,7 @@ impl TestPanelBuilder {
             badge: self.badge,
             text: self.text,
             maximized: false,
+            docked_left: false,
             renders: self.renders,
         })
     }
@@ -137,5 +144,8 @@ impl RightPanel for TestPanel {
     fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
         self.maximized = maximized;
         cx.notify();
+    }
+    fn set_docked_left(&mut self, left: bool, _: &mut Context<Self>) {
+        self.docked_left = left;
     }
 }

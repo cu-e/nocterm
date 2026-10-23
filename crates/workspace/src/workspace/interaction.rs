@@ -5,7 +5,7 @@ use gpui_kit::{
     InteractiveElement,
     component::{Placement, input},
 };
-use right_panel::{PanelFocus, PanelTransition};
+use panel_groups::{PanelFocus, PanelTransition};
 impl Workspace {
     pub fn activate_item_by_id(
         &mut self,
@@ -185,7 +185,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.sidebar.showing(ix) {
+        if self.panels.is_showing(GroupKey::Navigation, ix) {
             self.toggle_sidebar(window, cx);
         } else {
             self.activate_panel(ix, window, cx);
@@ -197,16 +197,14 @@ impl Workspace {
         sizes: Vec<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        if !self.right_panel.maximized() {
+        if !self.panels.is_expanded(GroupKey::Assistant) {
             self.body.resized(arrangement, sizes, cx);
         }
     }
     pub fn activate_panel(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(focus) = self.sidebar.activate(ix, cx) else {
-            return;
-        };
-        window.focus(&focus, cx);
-        cx.notify();
+        if let Some(transition) = self.panels.activate(GroupKey::Navigation, ix, cx) {
+            self.apply_panel_transition(transition, window, cx);
+        }
     }
     pub fn activate_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.panel_index_of::<T>() {
@@ -215,26 +213,20 @@ impl Workspace {
     }
     pub fn toggle_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.panel_index_of::<T>() {
-            Some(ix) if self.sidebar.showing(ix) => self.toggle_sidebar(window, cx),
+            Some(ix) if self.panels.is_showing(GroupKey::Navigation, ix) => {
+                self.toggle_sidebar(window, cx)
+            }
             Some(ix) => self.activate_panel(ix, window, cx),
             None => {}
         }
     }
     fn panel_index_of<T: Panel>(&self) -> Option<usize> {
-        self.sidebar.index_of::<T>()
+        self.panels.index_of::<T>(GroupKey::Navigation)
     }
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.sidebar.toggle() {
-            let focus = if self.right_panel.maximized() {
-                self.right_panel.focus_handle(cx)
-            } else {
-                self.active_item(cx).map(|item| item.focus_handle(cx))
-            };
-            if let Some(focus) = focus {
-                window.focus(&focus, cx);
-            }
+        if let Some(transition) = self.panels.toggle(GroupKey::Navigation, window, cx) {
+            self.apply_panel_transition(transition, window, cx);
         }
-        cx.notify();
     }
     pub fn set_right_panel_available(
         &mut self,
@@ -242,32 +234,35 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(transition) = self.right_panel.set_available(available, window, cx) {
+        if let Some(transition) =
+            self.panels
+                .set_available(GroupKey::Assistant, available, window, cx)
+        {
             self.apply_panel_transition(transition, window, cx);
         }
     }
     pub fn set_right_panel_attention(&mut self, attention: bool, cx: &mut Context<Self>) {
-        if self.right_panel.set_attention(attention) {
+        if self.panels.set_attention(GroupKey::Assistant, attention) {
             cx.notify();
         }
     }
     /// The icons and tooltips the footer draws for its toggles.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn footer_toggle_looks(&self, cx: &App) -> super::chrome::FooterLooks {
-        super::chrome::FooterLooks::of(&self.sidebar, &self.right_panel, cx)
+        super::chrome::FooterLooks::of(&self.panels, cx)
     }
     pub fn toggle_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(transition) = self.right_panel.toggle(window, cx) {
+        if let Some(transition) = self.panels.toggle(GroupKey::Assistant, window, cx) {
             self.apply_panel_transition(transition, window, cx);
         }
     }
     pub fn set_right_panel_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        if self.right_panel.set_maximized(maximized, cx) {
+        if self.panels.set_expanded(GroupKey::Assistant, maximized, cx) {
             cx.notify();
         }
     }
     pub(super) fn close_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let transition = self.right_panel.close(window, cx);
+        let transition = self.panels.close(GroupKey::Assistant, window, cx);
         self.apply_panel_transition(transition, window, cx);
     }
     fn apply_panel_transition(
@@ -276,7 +271,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if transition.visibility_changed() {
+        if transition.visibility_changed() == Some(GroupKey::Assistant) {
             cx.emit(WorkspaceEvent::RightPanelVisibilityChanged);
         }
         match transition.into_focus() {
@@ -289,12 +284,17 @@ impl Workspace {
                     .unwrap_or_else(|| self.focus_handle.clone());
                 window.focus(&focus, cx);
             }
+            PanelFocus::ActiveItem => {
+                if let Some(item) = self.active_item(cx) {
+                    window.focus(&item.focus_handle(cx), cx);
+                }
+            }
         }
         cx.notify();
     }
     pub fn swap_sides(&mut self, cx: &mut Context<Self>) {
         let swapped = self.body.swap(cx);
-        self.right_panel.set_docked_left(swapped, cx);
+        self.panels.set_docked_left(swapped, cx);
         cx.notify();
     }
     pub(super) fn widen_right_panel(
@@ -303,11 +303,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.right_panel.maximized() || !self.right_panel.open() {
+        if self.panels.is_expanded(GroupKey::Assistant)
+            || !self.panels.is_shown(GroupKey::Assistant)
+        {
             return;
         }
         let arrangement = self.body.arrangement(
-            self.sidebar.visible(),
+            self.panels.is_shown(GroupKey::Navigation),
             layout::PanelPresentation::Docked,
             cx,
         );
