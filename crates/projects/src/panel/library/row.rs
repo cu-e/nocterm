@@ -87,7 +87,6 @@ impl ProjectRow {
                     )))
                     .test_support()
                     .aria_label(server.title().clone())
-                    .flex_1()
                     .min_w_0()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
