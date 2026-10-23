@@ -47,6 +47,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+nocterm-workspace-ports.workspace = true
 nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-project-model = { workspace = true, features = ["test-support"] }
 nocterm-agent-chat = { workspace = true, features = ["test-support"] }

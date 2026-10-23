@@ -98,7 +98,7 @@ impl nocterm_workspace::ChatConnectionOpen for OpeningDirectory {
                 let item = self.terminal(profile, cx);
                 workspace.add_context_background_from(source, item, window, cx)
             })
-            .map_err(|_| nocterm_workspace::ContextSelectionError::StaleWindow)??;
+            .map_err(|_| nocterm_workspace_ports::ContextSelectionError::StaleWindow)??;
         self.background.borrow_mut().push(item);
         let after_open = self.after_background_open.borrow_mut().take();
         if let Some(after_open) = after_open {
