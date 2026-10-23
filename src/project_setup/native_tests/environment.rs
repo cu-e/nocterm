@@ -34,7 +34,7 @@ fn distribution_languages(image: &str, family: DistributionFamily) {
     let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let source =
             EnvironmentSource::host(owned.location().to_target().unwrap(), exec.clone()).unwrap();
-        let environment = nocterm_project_runtime::NativeWorkspaceEnvironment::new(Arc::new(
+        let environment = nocterm_project_environment::NativeWorkspaceEnvironment::new(Arc::new(
             nocterm_project_runtime::NativeEnvironmentCommands,
         ));
         let before = block_on(environment.inspect(source.clone(), CancelFlag::default())).unwrap();
@@ -104,7 +104,7 @@ fn a_real_non_root_environment_updates_managed_tools_without_changing_system_pyt
             container: owned.location().container().to_owned(),
         });
         let source = EnvironmentSource::scoped(target, user.clone(), Some(exec.clone())).unwrap();
-        let environment = nocterm_project_runtime::NativeWorkspaceEnvironment::new(Arc::new(
+        let environment = nocterm_project_environment::NativeWorkspaceEnvironment::new(Arc::new(
             nocterm_project_runtime::NativeEnvironmentCommands,
         ));
         let before = block_on(environment.inspect(source.clone(), CancelFlag::default())).unwrap();

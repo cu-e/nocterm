@@ -93,7 +93,7 @@ fn prepare_native(
         .unwrap()
         .id;
     let runtime = nocterm_project_runtime::NativeProjectPreparation::new(Arc::new(
-        nocterm_project_runtime::NativeWorkspaceEnvironment::new(Arc::new(
+        nocterm_project_environment::NativeWorkspaceEnvironment::new(Arc::new(
             nocterm_project_runtime::NativeEnvironmentCommands,
         )),
     ));
@@ -311,7 +311,7 @@ fn container_session(
     let base = ScriptedTransport::default();
     let driver = base.queue(Some(host_files), Some(exec));
     let transport = nocterm_project_container_fs::NativeContainerSessions::new(Arc::new(
-        nocterm_project_runtime::NativeWorkspaceSessions,
+        nocterm_project_environment::NativeWorkspaceSessions,
     ))
     .wrap(Arc::new(base), owned.location().clone());
     let session = transport.open(ConnectRequest {

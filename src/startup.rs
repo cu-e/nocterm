@@ -54,10 +54,12 @@ impl PreparedApp {
         let local_host = local
             .is_available()
             .then(|| Arc::new(nocterm_local::LocalExec) as Arc<dyn nocterm_session::HostExec>);
-        let activation = Arc::new(nocterm_project_runtime::NativeWorkspaceSessions);
-        let environment = Arc::new(nocterm_project_runtime::NativeWorkspaceEnvironment::new(
-            Arc::new(nocterm_project_runtime::NativeEnvironmentCommands),
-        ));
+        let activation = Arc::new(nocterm_project_environment::NativeWorkspaceSessions);
+        let environment = Arc::new(
+            nocterm_project_environment::NativeWorkspaceEnvironment::new(Arc::new(
+                nocterm_project_runtime::NativeEnvironmentCommands,
+            )),
+        );
         let preparation = Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
             environment.clone(),
         ));

@@ -289,7 +289,7 @@ fn fixture_hosts(
     local: nocterm_terminal::LocalSessions,
     local_host: Option<Arc<dyn nocterm_session::HostExec>>,
 ) -> crate::bootstrap::HostServices {
-    let activation = Arc::new(nocterm_project_runtime::NativeWorkspaceSessions);
+    let activation = Arc::new(nocterm_project_environment::NativeWorkspaceSessions);
     let environment =
         Arc::new(nocterm_project_providers::testing::FakeWorkspaceEnvironment::default());
     crate::bootstrap::HostServices {
