@@ -9,6 +9,7 @@ use nocterm_workspace::{
     ProjectSurface, SessionSpec,
     test_support::{ProjectSurfaceProbe, SessionProbe},
 };
+use std::rc::Rc;
 
 fn spec() -> SessionSpec {
     SessionSpec {
@@ -89,6 +90,45 @@ fn memory(monitor: &Entity<HostMonitor>, cx: &mut TestAppContext) -> u64 {
     monitor.read_with(cx, |monitor, _| {
         monitor.sampler().unwrap().snapshot().memory.unwrap().used
     })
+}
+#[gpui_kit::test]
+fn monitor_target_changes_once_and_is_shared_by_surface_handle_clones(cx: &mut TestAppContext) {
+    let (window, workspace, _) = fixture(cx, None);
+    let surface = cx
+        .update_window(window, |_, window, cx| {
+            project(&workspace, 1, None, window, cx).1
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let changes = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let observed = changes.clone();
+    let subscription = cx.update(|cx| {
+        let workspace = workspace.clone();
+        surface.observe(cx, move |event, cx| {
+            if let nocterm_workspace::ProjectSurfaceEvent::Changed(_) = event {
+                observed
+                    .borrow_mut()
+                    .push(workspace.read(cx).monitor_source(cx).target().cloned());
+            }
+        })
+    });
+    let clone = surface.clone();
+    cx.update(|cx| clone.set_monitor_target(container(1), cx));
+    cx.run_until_parked();
+    assert_eq!(&*changes.borrow(), &[Some(container(1))]);
+    cx.update(|cx| surface.set_monitor_target(container(1), cx));
+    cx.run_until_parked();
+    assert_eq!(changes.borrow().len(), 1);
+    cx.update(|cx| surface.set_monitor_target(container(2), cx));
+    cx.run_until_parked();
+    assert_eq!(
+        &*changes.borrow(),
+        &[Some(container(1)), Some(container(2))]
+    );
+    cx.update(|cx| clone.set_monitor_target(container(2), cx));
+    cx.run_until_parked();
+    assert_eq!(changes.borrow().len(), 2);
+    drop(subscription);
 }
 #[gpui_kit::test]
 fn selected_inner_container_history_never_uses_parent_or_unrelated_local_host(
