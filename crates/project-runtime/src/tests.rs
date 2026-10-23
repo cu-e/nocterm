@@ -14,9 +14,6 @@ pub(crate) fn runtime() -> NativeProjectPreparation {
         crate::NativeEnvironmentCommands,
     ))))
 }
-pub(crate) fn container_sessions() -> crate::NativeContainerSessions {
-    crate::NativeContainerSessions::new(Arc::new(crate::NativeWorkspaceSessions))
-}
 pub(crate) fn id() -> String {
     "a".repeat(64)
 }
@@ -311,8 +308,6 @@ fn cleanup_refuses_an_unowned_container() {
 }
 
 mod creation;
-mod filesystem;
-mod session;
 
 #[test]
 fn git_preparation_reports_nonempty_and_missing_tool_as_actionable_typed_refusals() {

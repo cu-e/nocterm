@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-project-runtime"
-description = "Builtin workspace preparation and container session adaptation."
+description = "Builtin workspace preparation, environment management and activation."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -18,7 +18,6 @@ nocterm-containers.workspace = true
 nocterm-session.workspace = true
 futures.workspace = true
 async-io.workspace = true
-async-channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
