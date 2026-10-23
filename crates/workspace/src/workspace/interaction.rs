@@ -193,11 +193,11 @@ impl Workspace {
     }
     pub(super) fn body_resized(
         &mut self,
-        arrangement: layout::Arrangement,
+        arrangement: &layout::Arrangement,
         sizes: Vec<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        if !self.panels.is_expanded(GroupKey::Assistant) {
+        if self.panels.expanded().is_none() {
             self.body.resized(arrangement, sizes, cx);
         }
     }
@@ -308,12 +308,9 @@ impl Workspace {
         {
             return;
         }
-        let arrangement = self.body.arrangement(
-            self.panels.is_shown(GroupKey::Navigation),
-            layout::PanelPresentation::Docked,
-            cx,
-        );
-        self.body.widen_side_panel(arrangement, delta, window, cx);
+        let arrangement = self.body.arrangement(&self.panels, cx);
+        self.body
+            .widen_group(&arrangement, GroupKey::Assistant, delta, window, cx);
         cx.notify();
     }
     pub fn dispatch_command(

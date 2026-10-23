@@ -24,8 +24,8 @@ use nocterm_ui::IconName;
 
 use super::{
     ContextSelectionReceipt, MenuBuilder, NewTabMenu, Workspace,
-    layout::{Body, Column, PanelPresentation},
-    panel_groups::{GroupKey, PanelGroups},
+    layout::{Body, Column},
+    panel_groups::{GroupKey, HostedPanel, PanelChrome, PanelGroups, Side, WidthClass},
     surface::SurfaceFrame,
 };
 use crate::NewTab;
@@ -188,7 +188,7 @@ impl Chrome {
             .into_any_element()
     }
 
-    /// The sidebar, the tabs and the side panel, in the user's order.
+    /// One column per shown panel group and the tabs, in the user's order.
     fn render_columns(
         &self,
         body_state: &mut Body,
@@ -198,61 +198,63 @@ impl Chrome {
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let widths = body_state.widths(window, cx);
-        let presentation = PanelPresentation::new(
-            regions.groups.is_shown(GroupKey::Assistant),
-            regions.groups.is_expanded(GroupKey::Assistant),
-        );
-        let arrangement = body_state.arrangement(
-            regions.groups.is_shown(GroupKey::Navigation),
-            presentation,
-            cx,
-        );
-        let state = body_state.state(arrangement, cx);
+        let arrangement = body_state.arrangement(regions.groups, cx);
+        let state = body_state.state(&arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {
-            body = body.child(match column {
-                Column::Sidebar => resizable_panel()
-                    .flex_none()
-                    .size(widths.sidebar)
-                    .size_range(widths.sidebar_range.clone())
-                    .child(tile(
-                        cards,
-                        self.render_sidebar(regions.groups, arrangement.swapped, cx),
-                    )),
+            body = body.child(match *column {
+                Column::Group { group, class, side } => {
+                    let width = widths.of(class);
+                    resizable_panel()
+                        // Only the navigation column has always been fixed in the group.
+                        .when(class == WidthClass::Navigation, |panel| panel.flex_none())
+                        .map(|panel| {
+                            if arrangement.expanded() == Some(group) {
+                                panel.size_range(px(0.)..gpui_kit::Pixels::MAX)
+                            } else {
+                                panel.size(width.size).size_range(width.range.clone())
+                            }
+                        })
+                        .child(self.render_group(regions.groups, group, side, cards, cx))
+                }
                 Column::Content => resizable_panel().child(self.render_content(regions, cards, cx)),
-                Column::SidePanel => resizable_panel()
-                    .map(|panel| match presentation {
-                        PanelPresentation::Docked => panel
-                            .size(widths.right_panel)
-                            .size_range(widths.right_panel_range.clone()),
-                        _ => panel.size_range(px(0.)..gpui_kit::Pixels::MAX),
-                    })
-                    .child(self.render_right_panel(regions.groups, cards, cx)),
             });
         }
         body.into_any_element()
     }
 
-    fn render_right_panel(
+    fn render_group(
         &self,
         groups: &PanelGroups,
+        group: GroupKey,
+        side: Side,
         cards: Option<FloatingCards>,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
-        tile(
-            cards,
-            Workspace::forward_commands(div(), cx)
-                .id("workspace-right-panel")
-                .test_support()
-                .size_full()
-                .min_w_0()
-                .when_some(
-                    groups
-                        .selected(GroupKey::Assistant)
-                        .map(|panel| panel.view()),
-                    |body, view| body.child(cached(view)),
-                ),
-        )
+        let panel = groups.selected(group);
+        match panel.map_or(PanelChrome::Titled, HostedPanel::chrome) {
+            PanelChrome::Titled => tile(
+                cards,
+                self.render_titled_group(group, panel, side == Side::Right, cx),
+            ),
+            PanelChrome::OwnHeader => tile(cards, self.render_own_header_group(panel, cx)),
+        }
+    }
+
+    /// A column whose panel draws its own header.
+    fn render_own_header_group(
+        &self,
+        panel: Option<&HostedPanel>,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
+        Workspace::forward_commands(div(), cx)
+            .id("workspace-right-panel")
+            .test_support()
+            .size_full()
+            .min_w_0()
+            .when_some(panel.map(HostedPanel::view), |body, view| {
+                body.child(cached(view))
+            })
     }
 
     /// The open tabs, or an invitation to open one.
@@ -322,19 +324,20 @@ impl Chrome {
             )
     }
 
-    fn render_sidebar(
+    /// A column under the workspace's own upper-case title.
+    fn render_titled_group(
         &self,
-        groups: &PanelGroups,
+        group: GroupKey,
+        panel: Option<&HostedPanel>,
         on_right: bool,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         let sidebar = Workspace::forward_commands(v_flex(), cx);
         let theme = cx.theme();
-        let panel = groups.selected(GroupKey::Navigation);
         let floating = FloatingCards::get(cx).is_some();
 
         sidebar
-            .id((ElementId::from("panel-group-column"), "navigation"))
+            .id((ElementId::from("panel-group-column"), group.id()))
             .test_support()
             .size_full()
             .text_color(theme.sidebar_foreground)

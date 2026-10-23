@@ -9,6 +9,15 @@ use crate::{Panel, PanelHandle, right_panel::RightPanelHandle};
 /// What the chrome draws for a panel outside its view: title, icon and badge.
 pub(in crate::workspace) type Presentation = (SharedString, IconName, Option<SharedString>);
 
+/// How a hosted panel is framed in its column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::workspace) enum PanelChrome {
+    /// The workspace draws the upper-case title above the view.
+    Titled,
+    /// The panel draws its own header.
+    OwnHeader,
+}
+
 enum Handle {
     Plain(Box<dyn PanelHandle>),
     Expandable(Box<dyn RightPanelHandle>),
@@ -70,6 +79,12 @@ impl HostedPanel {
     }
     pub(in crate::workspace) fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.handle().focus_handle(cx)
+    }
+    pub(in crate::workspace) fn chrome(&self) -> PanelChrome {
+        match self.handle {
+            Handle::Plain(_) => PanelChrome::Titled,
+            Handle::Expandable(_) => PanelChrome::OwnHeader,
+        }
     }
     pub(in crate::workspace) fn is_expandable(&self) -> bool {
         matches!(self.handle, Handle::Expandable(_))

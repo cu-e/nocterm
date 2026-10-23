@@ -1,4 +1,4 @@
-//! The body's resizable columns: the sidebar, the tabs and the side panel,
+//! The body's resizable columns: one per shown panel group and the tabs,
 //! in the order and at the widths the user chose.
 //!
 //! Only visible columns take part in the resizable group. A hidden column
@@ -15,62 +15,72 @@ use gpui_kit::{
 };
 use nocterm_ui::{ActiveDesign as _, LayoutHandle};
 
-use super::Workspace;
+use super::{
+    Workspace,
+    panel_groups::{GroupKey, PanelGroups, Side, WidthClass},
+};
 
 const SIDEBAR: &str = "workspace.sidebar";
 const RIGHT_PANEL: &str = "workspace.right_panel";
 /// Whether the sidebar and the side panel trade places.
 const SWAPPED: &str = "workspace.swapped";
 
+/// One column of the body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Column {
-    Sidebar,
+    /// A shown panel group: its width is remembered per class, and its side tells which edge
+    /// of the column the border is on.
+    Group {
+        group: GroupKey,
+        class: WidthClass,
+        side: Side,
+    },
     Content,
-    SidePanel,
 }
 
-/// A rendering projection of the independent panel's authoritative state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum PanelPresentation {
-    Hidden,
-    Docked,
-    Expanded,
-}
-
-impl PanelPresentation {
-    pub(super) fn new(open: bool, maximized: bool) -> Self {
-        match (open, maximized) {
-            (false, _) => Self::Hidden,
-            (true, false) => Self::Docked,
-            (true, true) => Self::Expanded,
-        }
-    }
-}
-
-/// Which columns show, and on which side.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Which columns show, in order from the left. An expanded group replaces the content.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Arrangement {
-    pub sidebar: bool,
-    pub side_panel: PanelPresentation,
-    pub swapped: bool,
+    columns: Vec<Column>,
+    expanded: Option<GroupKey>,
 }
 
 impl Arrangement {
-    pub(super) fn columns(self) -> Vec<Column> {
-        let (left, right) = if self.swapped {
-            (Column::SidePanel, Column::Sidebar)
-        } else {
-            (Column::Sidebar, Column::SidePanel)
-        };
-        let shown = |column| match column {
-            Column::Sidebar => self.sidebar,
-            Column::SidePanel => self.side_panel != PanelPresentation::Hidden,
-            Column::Content => self.side_panel != PanelPresentation::Expanded,
-        };
-        [left, Column::Content, right]
-            .into_iter()
-            .filter(|column| shown(*column))
-            .collect()
+    /// `shown` lists the shown groups in bar order with their sides. Within a side the bar
+    /// runs from the window edge inward, so the right side is laid out in reverse.
+    pub(super) fn new(
+        shown: impl IntoIterator<Item = (GroupKey, Side)>,
+        expanded: Option<GroupKey>,
+    ) -> Self {
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        for (group, side) in shown {
+            let column = Column::Group {
+                group,
+                class: group.width_class(),
+                side,
+            };
+            match side {
+                Side::Left => left.push(column),
+                Side::Right => right.push(column),
+            }
+        }
+        right.reverse();
+        let content = expanded.is_none().then_some(Column::Content);
+        Self {
+            columns: left.into_iter().chain(content).chain(right).collect(),
+            expanded,
+        }
+    }
+    pub(super) fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+    pub(super) fn expanded(&self) -> Option<GroupKey> {
+        self.expanded
+    }
+    fn position_of(&self, group: GroupKey) -> Option<usize> {
+        self.columns.iter().position(
+            |column| matches!(column, Column::Group { group: shown, .. } if *shown == group),
+        )
     }
 }
 
@@ -81,17 +91,15 @@ pub(super) struct Body {
 }
 
 impl Body {
-    pub(super) fn arrangement(
-        &self,
-        sidebar: bool,
-        side_panel: PanelPresentation,
-        cx: &gpui_kit::App,
-    ) -> Arrangement {
-        Arrangement {
-            sidebar,
-            side_panel,
-            swapped: self.swapped(cx),
-        }
+    /// The columns of the groups that are shown now, on the sides the user chose.
+    pub(super) fn arrangement(&self, groups: &PanelGroups, cx: &gpui_kit::App) -> Arrangement {
+        let swapped = self.swapped(cx);
+        Arrangement::new(
+            groups
+                .shown()
+                .map(|group| (group, group.side().swapped_if(swapped))),
+            groups.expanded(),
+        )
     }
 
     pub(super) fn new(layout: LayoutHandle) -> Self {
@@ -117,36 +125,31 @@ impl Body {
 
     pub(super) fn resized(
         &self,
-        arrangement: Arrangement,
+        arrangement: &Arrangement,
         sizes: Vec<Pixels>,
         cx: &mut gpui_kit::App,
     ) {
         // An expanded arrangement can deliver its last drag after restoration.
-        if arrangement.side_panel == PanelPresentation::Expanded {
+        if arrangement.expanded().is_some() {
             return;
         }
-        for (column, size) in arrangement.columns().into_iter().zip(sizes) {
-            let result = match column {
-                Column::Sidebar => self.layout.set(SIDEBAR, size, cx),
-                Column::SidePanel => self.layout.set(RIGHT_PANEL, size, cx),
-                Column::Content => continue,
+        for (column, size) in arrangement.columns().iter().zip(sizes) {
+            let Column::Group { class, .. } = column else {
+                continue;
             };
-            report_layout(result);
+            report_layout(self.layout.set(storage_key(*class), size, cx));
         }
     }
 
-    pub(super) fn widen_side_panel(
+    pub(super) fn widen_group(
         &mut self,
-        arrangement: Arrangement,
+        arrangement: &Arrangement,
+        group: GroupKey,
         delta: Pixels,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(index) = arrangement
-            .columns()
-            .iter()
-            .position(|column| *column == Column::SidePanel)
-        else {
+        let Some(index) = arrangement.position_of(group) else {
             return;
         };
         self.state(arrangement, cx).update(cx, |state, cx| {
@@ -158,17 +161,18 @@ impl Body {
 
     pub(super) fn state(
         &mut self,
-        arrangement: Arrangement,
+        arrangement: &Arrangement,
         cx: &mut Context<Workspace>,
     ) -> Entity<ResizableState> {
         self.states
-            .entry(arrangement)
+            .entry(arrangement.clone())
             .or_insert_with(|| {
+                let arrangement = arrangement.clone();
                 let state = cx.new(|_| ResizableState::default());
                 let subscription =
                     cx.subscribe(&state, move |this, state, _: &ResizablePanelEvent, cx| {
                         let sizes = state.read(cx).sizes().clone();
-                        this.body_resized(arrangement, sizes, cx);
+                        this.body_resized(&arrangement, sizes, cx);
                     });
                 (state, subscription)
             })
@@ -177,36 +181,53 @@ impl Body {
     }
 }
 
+/// A class of column: its remembered or default width and the range it may be resized in.
+pub(super) struct ClassWidth {
+    pub size: Pixels,
+    pub range: std::ops::Range<Pixels>,
+}
+
 /// The columns' widths and ranges: remembered, or the design's defaults.
 pub(super) struct BodyWidths {
-    pub sidebar: Pixels,
-    pub sidebar_range: std::ops::Range<Pixels>,
-    pub right_panel: Pixels,
-    pub right_panel_range: std::ops::Range<Pixels>,
+    navigation: ClassWidth,
+    assistant: ClassWidth,
 }
 
 impl BodyWidths {
     pub(super) fn new(memory: &LayoutHandle, window: &Window, cx: &gpui_kit::App) -> Self {
         let layout = &cx.design().layout;
         let rem = window.rem_size();
-        let sidebar_range = rems(layout.sidebar.min_width).to_pixels(rem)
-            ..rems(layout.sidebar.max_width).to_pixels(rem);
-        let right_panel_range = rems(layout.agent_panel.min_width).to_pixels(rem)
-            ..rems(layout.agent_panel.max_width).to_pixels(rem);
-        let sidebar = memory
-            .get(SIDEBAR, cx)
-            .unwrap_or_else(|| rems(layout.sidebar.width).to_pixels(rem))
-            .clamp(sidebar_range.start, sidebar_range.end);
-        let right_panel = memory
-            .get(RIGHT_PANEL, cx)
-            .unwrap_or_else(|| rems(layout.agent_panel.width).to_pixels(rem))
-            .clamp(right_panel_range.start, right_panel_range.end);
+        let class = |key, (width, min, max): (f32, f32, f32)| {
+            let range = rems(min).to_pixels(rem)..rems(max).to_pixels(rem);
+            let size = memory
+                .get(key, cx)
+                .unwrap_or_else(|| rems(width).to_pixels(rem))
+                .clamp(range.start, range.end);
+            ClassWidth { size, range }
+        };
+        let (sidebar, agent) = (&layout.sidebar, &layout.agent_panel);
         Self {
-            sidebar,
-            sidebar_range,
-            right_panel,
-            right_panel_range,
+            navigation: class(
+                SIDEBAR,
+                (sidebar.width, sidebar.min_width, sidebar.max_width),
+            ),
+            assistant: class(RIGHT_PANEL, (agent.width, agent.min_width, agent.max_width)),
         }
+    }
+
+    pub(super) fn of(&self, class: WidthClass) -> &ClassWidth {
+        match class {
+            WidthClass::Navigation => &self.navigation,
+            WidthClass::Assistant => &self.assistant,
+        }
+    }
+}
+
+/// The key a class of column remembers its width under.
+fn storage_key(class: WidthClass) -> &'static str {
+    match class {
+        WidthClass::Navigation => SIDEBAR,
+        WidthClass::Assistant => RIGHT_PANEL,
     }
 }
 

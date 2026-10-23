@@ -6,49 +6,92 @@ use gpui_kit::{
 };
 use nocterm_ui::IconName;
 
-use super::{Arrangement, Column, PanelPresentation};
+use super::{Arrangement, Column};
+use crate::workspace::panel_groups::{GroupKey, Side};
 use crate::workspace::tests::fixture;
 
 fn side_panel(element_id: &'static str, title: &'static str, icon: IconName) -> TestPanelBuilder {
     TestPanel::builder(element_id).title(title).icon(icon)
 }
 
+fn group_column(group: GroupKey, side: Side) -> Column {
+    Column::Group {
+        group,
+        class: group.width_class(),
+        side,
+    }
+}
+
 #[test]
 fn hidden_columns_leave_the_group_and_swapping_mirrors_it() {
-    let arrangement = |sidebar, side_panel, swapped| Arrangement {
-        sidebar,
-        side_panel: PanelPresentation::new(side_panel, false),
-        swapped,
+    let arrangement = |navigation: bool, assistant: bool, swapped: bool| {
+        let side = |side: Side| side.swapped_if(swapped);
+        let shown = [
+            navigation.then_some((GroupKey::Navigation, side(Side::Left))),
+            assistant.then_some((GroupKey::Assistant, side(Side::Right))),
+        ];
+        Arrangement::new(shown.into_iter().flatten(), None)
     };
+    let navigation = |side| group_column(GroupKey::Navigation, side);
+    let assistant = |side| group_column(GroupKey::Assistant, side);
     assert_eq!(
         arrangement(true, false, false).columns(),
-        [Column::Sidebar, Column::Content]
+        [navigation(Side::Left), Column::Content]
     );
     assert_eq!(
         arrangement(true, true, true).columns(),
-        [Column::SidePanel, Column::Content, Column::Sidebar]
+        [
+            assistant(Side::Left),
+            Column::Content,
+            navigation(Side::Right)
+        ]
     );
     for swapped in [false, true] {
-        let expanded = Arrangement {
-            sidebar: true,
-            side_panel: PanelPresentation::Expanded,
-            swapped,
+        let side = |side: Side| side.swapped_if(swapped);
+        let shown = |navigation: bool| {
+            let navigation = navigation.then_some((GroupKey::Navigation, side(Side::Left)));
+            let assistant = Some((GroupKey::Assistant, side(Side::Right)));
+            Arrangement::new(
+                navigation.into_iter().chain(assistant),
+                Some(GroupKey::Assistant),
+            )
         };
         let expected = if swapped {
-            [Column::SidePanel, Column::Sidebar]
+            [assistant(Side::Left), navigation(Side::Right)]
         } else {
-            [Column::Sidebar, Column::SidePanel]
+            [navigation(Side::Left), assistant(Side::Right)]
         };
-        assert_eq!(expanded.columns(), expected);
-        assert_eq!(
-            Arrangement {
-                sidebar: false,
-                ..expanded
-            }
-            .columns(),
-            [Column::SidePanel]
-        );
+        assert_eq!(shown(true).columns(), expected);
+        assert_eq!(shown(false).columns(), [assistant(side(Side::Right))]);
     }
+}
+
+#[test]
+fn groups_on_one_side_run_from_the_window_edge_inward() {
+    let shown = [
+        (GroupKey::Navigation, Side::Right),
+        (GroupKey::Assistant, Side::Right),
+    ];
+    assert_eq!(
+        Arrangement::new(shown, None).columns(),
+        [
+            Column::Content,
+            group_column(GroupKey::Assistant, Side::Right),
+            group_column(GroupKey::Navigation, Side::Right),
+        ]
+    );
+    let shown = [
+        (GroupKey::Navigation, Side::Left),
+        (GroupKey::Assistant, Side::Left),
+    ];
+    assert_eq!(
+        Arrangement::new(shown, None).columns(),
+        [
+            group_column(GroupKey::Navigation, Side::Left),
+            group_column(GroupKey::Assistant, Side::Left),
+            Column::Content,
+        ]
+    );
 }
 
 #[gpui_kit::test]
@@ -361,14 +404,51 @@ fn expanded_resize_receipts_cannot_overwrite_remembered_docked_widths(cx: &mut T
         layout.set("workspace.right_panel", px(420.), cx).unwrap();
         let body = super::Body::new(layout.clone());
         for swapped in [false, true] {
-            let expanded = Arrangement {
-                sidebar: true,
-                side_panel: PanelPresentation::Expanded,
-                swapped,
-            };
-            body.resized(expanded, vec![px(350.), px(1050.)], cx);
+            let side = |side: Side| side.swapped_if(swapped);
+            let expanded = Arrangement::new(
+                [
+                    (GroupKey::Navigation, side(Side::Left)),
+                    (GroupKey::Assistant, side(Side::Right)),
+                ],
+                Some(GroupKey::Assistant),
+            );
+            body.resized(&expanded, vec![px(350.), px(1050.)], cx);
         }
         assert_eq!(layout.get("workspace.sidebar", cx), Some(px(260.)));
         assert_eq!(layout.get("workspace.right_panel", cx), Some(px(420.)));
     });
+}
+
+#[gpui_kit::test]
+fn a_docked_receipt_arriving_after_the_side_panel_expanded_is_dropped(cx: &mut TestAppContext) {
+    let (handle, workspace, layout) = crate::workspace::tests::fixture_with_layout(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.resize(gpui_kit::size(px(1400.), px(700.)));
+        install_columns(&workspace, window, cx);
+        layout.set("workspace.sidebar", px(260.), cx).unwrap();
+        layout.set("workspace.right_panel", px(420.), cx).unwrap();
+        let docked = Arrangement::new(
+            [
+                (GroupKey::Navigation, Side::Left),
+                (GroupKey::Assistant, Side::Right),
+            ],
+            None,
+        );
+        let receipt = |workspace: &mut crate::Workspace, cx: &mut gpui_kit::Context<_>| {
+            workspace.body_resized(&docked, vec![px(300.), px(700.), px(400.)], cx)
+        };
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_right_panel_maximized(true, cx);
+            receipt(workspace, cx);
+        });
+        assert_eq!(layout.get("workspace.sidebar", cx), Some(px(260.)));
+        assert_eq!(layout.get("workspace.right_panel", cx), Some(px(420.)));
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_right_panel_maximized(false, cx);
+            receipt(workspace, cx);
+        });
+        assert_eq!(layout.get("workspace.sidebar", cx), Some(px(300.)));
+        assert_eq!(layout.get("workspace.right_panel", cx), Some(px(400.)));
+    })
+    .unwrap();
 }

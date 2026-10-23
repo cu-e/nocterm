@@ -15,7 +15,7 @@ mod hosted;
 mod transition;
 
 use group::PanelGroup;
-pub(super) use hosted::{HostedPanel, Presentation};
+pub(super) use hosted::{HostedPanel, PanelChrome, Presentation};
 pub(super) use transition::{PanelFocus, PanelTransition};
 
 /// The groups of today's shell. Declaration order is the order of `PanelGroups::groups`.
@@ -36,10 +36,55 @@ impl GroupKey {
             Self::Assistant => 1,
         }
     }
+    /// Stable name used for the group's column.
+    pub(super) fn id(self) -> &'static str {
+        match self {
+            Self::Navigation => "navigation",
+            Self::Assistant => "assistant",
+        }
+    }
+    /// The side of the content the group opens on before the user swaps sides.
+    pub(super) fn side(self) -> Side {
+        match self {
+            Self::Navigation => Side::Left,
+            Self::Assistant => Side::Right,
+        }
+    }
+    pub(super) fn width_class(self) -> WidthClass {
+        match self {
+            Self::Navigation => WidthClass::Navigation,
+            Self::Assistant => WidthClass::Assistant,
+        }
+    }
     /// The primary group is visible from the start and never needs a member to be shown.
     pub(super) fn primary(self) -> bool {
         self == Self::Navigation
     }
+}
+
+/// Which side of the content a group's column sits on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    /// The opposite side when `swapped`.
+    pub(super) fn swapped_if(self, swapped: bool) -> Self {
+        match (self, swapped) {
+            (side, false) => side,
+            (Self::Left, true) => Self::Right,
+            (Self::Right, true) => Self::Left,
+        }
+    }
+}
+
+/// Groups whose columns share one remembered width.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum WidthClass {
+    Navigation,
+    Assistant,
 }
 
 /// A permanent index into the panel slots.
@@ -137,6 +182,13 @@ impl PanelGroups {
     }
     pub(super) fn is_expanded(&self, key: GroupKey) -> bool {
         self.group(key).is_expanded()
+    }
+    /// The shown groups in bar order.
+    pub(super) fn shown(&self) -> impl Iterator<Item = GroupKey> + '_ {
+        self.groups
+            .iter()
+            .filter(|group| group.is_shown())
+            .map(PanelGroup::key)
     }
     /// The group that fills the body, if any.
     pub(super) fn expanded(&self) -> Option<GroupKey> {
