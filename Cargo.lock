@@ -4949,6 +4949,7 @@ dependencies = [
  "nocterm-monitor",
  "nocterm-monitor-ui",
  "nocterm-project-container-fs",
+ "nocterm-project-environment",
  "nocterm-project-model",
  "nocterm-project-providers",
  "nocterm-project-runtime",
@@ -5442,6 +5443,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-project-environment"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-connections-model",
+ "nocterm-project-providers",
+ "nocterm-session",
+ "serde_json",
+]
+
+[[package]]
 name = "nocterm-project-model"
 version = "0.0.0"
 dependencies = [
@@ -5476,7 +5488,6 @@ dependencies = [
  "async-io",
  "futures",
  "getrandom 0.4.3",
- "nocterm-connections-model",
  "nocterm-containers",
  "nocterm-project-model",
  "nocterm-project-providers",
