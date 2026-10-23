@@ -140,6 +140,7 @@ fn cancelling_removal_preserves_the_definition_and_original_open_item(cx: &mut T
         .unwrap();
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-remove-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         window.click("cancel", cx);
@@ -168,6 +169,7 @@ fn removing_saved_settings_keeps_an_open_orphan_scoped_to_its_project(cx: &mut T
         .unwrap();
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-remove-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         window.click("ok", cx);
@@ -267,6 +269,7 @@ fn removing_an_imported_definition_never_mutates_the_server_files(cx: &mut TestA
     let _parent = rig.parent_with_fs(host, "Server A", Some(files.clone()), cx);
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-remove-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         window.click("ok", cx);
@@ -297,6 +300,7 @@ fn failed_definition_removal_preserves_the_open_item_and_saved_row(cx: &mut Test
         .unwrap();
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-remove-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         window.click("ok", cx);

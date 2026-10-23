@@ -168,6 +168,26 @@ impl ProjectCatalog {
         self.edit(move |state| state.remove(&expected), cx)
     }
 
+    pub(crate) fn remove_bound(
+        &mut self,
+        expected: ProjectDefinition,
+        binding: ProjectBinding,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ProjectsError>> {
+        if let Err(error) = self.check_binding(binding, cx) {
+            return Task::ready(Err(error));
+        }
+        self.edit(
+            move |state| {
+                if state.stamp(expected.id()) != Some(binding.stamp) {
+                    return Err(CatalogError::Conflict(expected.id()));
+                }
+                state.remove(&expected)
+            },
+            cx,
+        )
+    }
+
     pub(crate) fn capture(
         &mut self,
         cx: &mut Context<Self>,

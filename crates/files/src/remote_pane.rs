@@ -39,13 +39,13 @@ pub(super) struct RemotePane {
 impl EventEmitter<PaneIntent> for RemotePane {}
 impl RemotePane {
     pub(super) fn new(
-        local: Arc<dyn nocterm_session::local_fs::LocalFs>,
         host: PaneHost,
         source: Option<nocterm_workspace::ExplorerSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let path = cx.new(|cx| path_input::PathInput::new(local, window, cx));
+        let path = cx
+            .new(|cx| path_input::PathInput::new(host.installed.directories().local(), window, cx));
         let subscription = cx.subscribe(&path, |this, _, event: &path_input::Navigate, cx| {
             if let path_input::Directory::Remote(path) = &event.directory {
                 this.load_with_navigation(Some(path.clone()), event.mode, cx);
@@ -177,9 +177,15 @@ impl RemotePane {
             .and_then(ExplorerSource::initial_directory)
             .map(str::to_owned);
         self.source = source;
-        let filesystem = self.filesystem();
+        let reader = self.filesystem().map(|source| {
+            self.presentation
+                .host
+                .installed
+                .directories()
+                .remote(source)
+        });
         self.path
-            .update(cx, |input, cx| input.reset_remote(filesystem, cx));
+            .update(cx, |input, cx| input.replace_reader(reader, cx));
         self.requested = None;
         self.browser.clear();
         self.selected.clear();
@@ -551,33 +557,27 @@ impl RemotePane {
                         }
                     })),
             )
-            .child(
-                Button::new("files-home")
-                    .small()
-                    .ghost()
-                    .label("Home")
-                    .disabled(!enabled)
-                    .on_click(cx.listener(|this, _, _, cx| this.load(None, cx))),
-            )
-            .child(
-                Button::new("files-parent")
-                    .small()
-                    .ghost()
-                    .label("Up")
-                    .disabled(!enabled || self.browser.path().is_none_or(|p| p == "/"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.load(this.browser.path().map(|p| path::parent(p).to_owned()), cx)
-                    })),
-            )
-            .child(
-                Button::new("files-refresh")
-                    .small()
-                    .ghost()
-                    .icon(IconName::RefreshCw)
-                    .tooltip("Refresh remote directory")
-                    .disabled(!enabled)
-                    .on_click(cx.listener(|this, _, _, cx| this.load(this.requested.clone(), cx))),
-            )
+            .child(path_input::DirectoryNavigation::new(
+                "files",
+                enabled,
+                self.browser.path().is_some_and(|path| path != "/"),
+                {
+                    let pane = cx.entity().downgrade();
+                    move |action, _, cx| {
+                        let _ = pane.update(cx, |pane, cx| {
+                            let directory = match action {
+                                path_input::NavigationAction::Home => None,
+                                path_input::NavigationAction::Up => pane
+                                    .browser
+                                    .path()
+                                    .map(|directory| path::parent(directory).to_owned()),
+                                path_input::NavigationAction::Refresh => pane.requested.clone(),
+                            };
+                            pane.load(directory, cx);
+                        });
+                    }
+                },
+            ))
     }
     fn collision_controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()

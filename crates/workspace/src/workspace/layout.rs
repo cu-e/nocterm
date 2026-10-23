@@ -29,11 +29,29 @@ pub(super) enum Column {
     SidePanel,
 }
 
+/// A rendering projection of the independent panel's authoritative state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum PanelPresentation {
+    Hidden,
+    Docked,
+    Expanded,
+}
+
+impl PanelPresentation {
+    pub(super) fn new(open: bool, maximized: bool) -> Self {
+        match (open, maximized) {
+            (false, _) => Self::Hidden,
+            (true, false) => Self::Docked,
+            (true, true) => Self::Expanded,
+        }
+    }
+}
+
 /// Which columns show, and on which side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Arrangement {
     pub sidebar: bool,
-    pub side_panel: bool,
+    pub side_panel: PanelPresentation,
     pub swapped: bool,
 }
 
@@ -46,8 +64,8 @@ impl Arrangement {
         };
         let shown = |column| match column {
             Column::Sidebar => self.sidebar,
-            Column::SidePanel => self.side_panel,
-            Column::Content => true,
+            Column::SidePanel => self.side_panel != PanelPresentation::Hidden,
+            Column::Content => self.side_panel != PanelPresentation::Expanded,
         };
         [left, Column::Content, right]
             .into_iter()
@@ -66,7 +84,7 @@ impl Body {
     pub(super) fn arrangement(
         &self,
         sidebar: bool,
-        side_panel: bool,
+        side_panel: PanelPresentation,
         cx: &gpui_kit::App,
     ) -> Arrangement {
         Arrangement {
@@ -103,6 +121,10 @@ impl Body {
         sizes: Vec<Pixels>,
         cx: &mut gpui_kit::App,
     ) {
+        // An expanded arrangement can deliver its last drag after restoration.
+        if arrangement.side_panel == PanelPresentation::Expanded {
+            return;
+        }
         for (column, size) in arrangement.columns().into_iter().zip(sizes) {
             let result = match column {
                 Column::Sidebar => self.layout.set(SIDEBAR, size, cx),

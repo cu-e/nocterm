@@ -80,3 +80,4 @@
 | `terminal.term` | "string" | `"xterm-256color"` | Terminal type announced to the remote host (its `TERM` variable). |
 | `vault.auto_lock_minutes` | "integer"; 1–1440 | `15` | Lock after this many minutes without vault use (1–1440). |
 | `vault.prompt_on_startup` | "boolean" | `false` | Prompt for the master password when Nocterm starts. |
+| `workspaces.container_directory` | "string" | `"/home"` | Absolute POSIX project directory used when a container directory is left empty. |

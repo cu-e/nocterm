@@ -11,11 +11,17 @@ use nocterm_workspace::{ItemHandle as _, ProjectTerminalOpen, Workspace};
 
 use crate::*;
 
+mod container_selection;
 mod creation;
+mod creation_layout;
+mod environment;
+mod image_selection;
 mod library;
 mod lifecycle;
+mod settings;
 mod support;
 mod terminals;
+mod wizard;
 
 use support::{definition, fixture};
 
@@ -103,3 +109,5 @@ fn search_and_fold_hide_rows_without_removing_saved_workspaces(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+mod removal;

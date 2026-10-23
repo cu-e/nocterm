@@ -303,3 +303,81 @@ recognize every secret. See [AI setup, tools and privacy](docs/AI_AGENTS.md).
 The Workspaces button beside Containers opens saved folders for the current
 connection and other servers. Each workspace has its own terminal tabs and chat
 history, using ordinary local or SSH sessions and the server’s normal permissions.
+
+With no server selected, the sidebar shows **This computer**. You can create a
+workspace there without opening a terminal first. A selected disconnected server
+must be reconnected before creating a workspace on it.
+
+Workspace creation offers three modes on this computer or the selected server:
+
+- **Direct connection** selects a required project directory on the connected
+  computer or server. Available file access provides folder suggestions and
+  Home, Up and Refresh controls.
+- **Existing container** lists Docker and Podman containers available to the
+  current user on that host, including stopped containers. Select the
+  container and optionally choose a project directory.
+- **New container** selects Docker or Podman and an image. Compatible Linux
+  images can install Python, Rust, Bun, Node.js and Java together; Python
+  is selected initially. Each language offers its actual default or a custom numeric
+  version: Python minor/exact, Rust exact, Bun exact, Node.js major/exact, Java major.
+  Python, Node.js and Java default to distribution packages; Rust uses Stable and
+  Bun uses Latest stable. Requested versions install inside the new container,
+  according to its detected distribution, architecture and libc. Unsupported
+  combinations fail explicitly; for example, Alpine uses distribution Node.js
+  rather than the glibc archives used for pinned Node.js versions.
+
+The creation window follows **Connection → Project → Tools**. Connection chooses
+the mode and resource; Project contains the name, directory and optional Git
+repository. Tools appears only for a new container. Back keeps your entries;
+preparation starts only after **Create workspace** on the final step.
+The server stays in the shared header while you move between steps. Existing
+containers can be searched by name, ID, image or engine. Custom image results use
+separate local and registry sources with a full-width list.
+
+**Settings → Workspaces** controls the default container project directory,
+initially `/home`. Leaving the directory empty uses the default captured when
+that creation window opened. An explicit directory takes precedence. Changing
+this setting affects future creation windows and preserves saved workspaces.
+
+Workspace settings show the actual environment and installed versions when its
+connection is available. **Install / update** changes only selected languages;
+unchecked languages remain installed. Saving the workspace name or directory
+does not install tools. Managed versions use the current user's workspace tool
+directory and become available in new workspace terminals. Existing terminals
+keep their current environment. Native package installation needs existing root
+permissions; Nocterm does not invoke sudo or edit your shell startup files.
+Cancellation can leave completed package or language changes in place.
+An existing Arch environment needs an initialized, current package database;
+Nocterm asks an administrator to complete `pacman -Syu` when it is missing.
+Initial package synchronization is performed inside a newly created Arch container.
+
+Creation shows its current phase beside the action buttons. Download byte counts
+are shown when the engine reports them; progress remains indeterminate when a
+reliable total is unavailable.
+
+Custom image entry immediately filters local repositories and tags. After a brief
+pause it also searches Docker Hub with Docker, or configured registries with Podman,
+using that host's existing engine configuration. Search lists repositories, not tags;
+enter a full reference such as `debian:13` for a particular tag. Search never pulls
+an image. Local images and manual references remain available when registry search
+fails or is rate limited.
+
+A Git repository is optional. Cloning uses an empty destination and does not
+overwrite existing project files. An empty container directory uses the configured
+default described above.
+Closing a workspace or removing its saved entry leaves containers and project
+files intact. Container workspace paths are entered manually. Once connected,
+Explorer browses and transfers files inside the selected container, using its
+configured user and normal permissions. This needs Linux `/proc` and compatible
+standard shell/file utilities, available in ordinary Ubuntu, Debian and Alpine
+images; minimal images without them report unavailable file access. No SSH server
+or helper is installed in the container. Folder rename and cross-filesystem rename
+are unsupported by this adapter; ordinary file rename never overwrites an existing
+entry. Server files remain available through the server's own connection.
+
+The footer monitor follows the selected workspace's active environment. Folder
+workspaces use their own server connection; container workspaces use their own
+Linux cgroup CPU and memory accounting. Container CPU is shown relative to one
+CPU, so it can exceed 100%. Memory without an observable limit shows bytes in use
+without a percentage. Host-only metrics stay unavailable in containers. An
+unavailable workspace never redirects monitoring to this computer.

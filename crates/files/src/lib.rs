@@ -1,9 +1,10 @@
 //! Explorer navigation, file dialogs and transfer presentation.
 //! Browser generations, scan results and completion cursors remain private transition owners.
 //!
-//! Owns: independent pane views, path editors, selection and pinned operation dialogs.
+//! Owns: independent pane views, acknowledged browser navigation, selection and pinned dialogs.
+//! Shared path editors and navigation controls belong to nocterm-ui.
 //! Does not own: native filesystem traversal/mutations, transfer execution or process spawning.
-//! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `TransferService`, `ProgramOpener`,
+//! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `DirectoryReaders`, `TransferService`, `ProgramOpener`,
 //! workspace `LocalTerminal` and the retained settings service handle.
 //! Ports provided: `Panel`, `SettingsPageSpec`. Settings section: explorer. Globals: none.
 //! ExplorerSource supplies ordinary session files or a local folder for the
@@ -16,7 +17,7 @@ mod local;
 mod local_pane;
 mod open;
 mod operations;
-mod path_input;
+use nocterm_ui::directory as path_input;
 mod registration;
 mod remote;
 mod remote_pane;
@@ -72,19 +73,25 @@ pub struct Deps {
     mutations: Arc<dyn nocterm_session::local_fs::LocalMutations>,
     transfers: Arc<dyn nocterm_transfers::TransferService>,
     opener: Arc<dyn nocterm_session::ProgramOpener>,
+    directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
 }
 impl Deps {
+    pub fn directory_readers(&self) -> Arc<dyn nocterm_explorer::directory::DirectoryReaders> {
+        self.directories.clone()
+    }
     pub fn new(
         local: Arc<dyn nocterm_session::local_fs::LocalFs>,
         mutations: Arc<dyn nocterm_session::local_fs::LocalMutations>,
         transfers: Arc<dyn nocterm_transfers::TransferService>,
         opener: Arc<dyn nocterm_session::ProgramOpener>,
+        directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
     ) -> Self {
         Self {
             local,
             mutations,
             transfers,
             opener,
+            directories,
         }
     }
 }
@@ -217,8 +224,7 @@ impl FilesPanel {
         {
             local.update(cx, |local, cx| local.load_local(directory.into(), cx));
         }
-        let remote =
-            cx.new(|cx| RemotePane::new(installed.local().clone(), host, source, window, cx));
+        let remote = cx.new(|cx| RemotePane::new(host, source, window, cx));
         let local_events = cx.subscribe(&local, |this, _, event, cx| this.intent(event, cx));
         let remote_events = cx.subscribe(&remote, |this, _, event, cx| this.intent(event, cx));
         let workspace_events = cx.subscribe(&workspace, |this, workspace, event, cx| {

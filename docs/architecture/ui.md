@@ -114,14 +114,26 @@ or focus callback from acting after switching tabs. Hidden sessions keep running
 and their events update their original surface.
 
 `ProjectTerminalOpen` captures the connected parent once. Its private terminal
-provider retains the original SessionSpec and installation. Opening an inner tab
-uses the normal local/SSH terminal lifecycle with only the initial folder changed.
-Shell options, credentials, proxy and ordered jump hosts stay on that source.
-New tabs and reconnect work independently of the original parent tab.
+provider retains the complete resolved location, original SessionSpec and
+installation. Opening an inner tab uses the normal local/SSH terminal lifecycle;
+ordinary folders change the initial directory and container locations adapt the
+launch and execution capabilities. Shell options, credentials, proxy and ordered
+jump hosts stay on that source. New tabs and reconnect work independently of the
+original parent tab.
 
 `ExplorerSource` exposes ordinary session file access and the workspace's initial
 folder. Local folders use the existing local pane; SSH folders use the remote
 pane. Navigation and file operations follow normal host permissions.
+Container and unavailable provider locations do not expose a host folder through
+this projection. The neutral terminal resolver dispatches explicitly registered
+provider IDs, binds the resource before opening and refuses missing providers
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
+
+Shared directory controls in `nocterm-ui` receive read-only directory contracts
+from `nocterm-explorer`. Explorer and workspace creation share native input,
+completion and navigation controls while keeping their own listing acceptance
+and view lifetimes. Source and request generations reject stale results
+([ADR 0072](../adr/0072-shared-directory-selection.md)).
 
 Saved workspace lookup includes ordinary central, local and background terminals.
 When no matching connected parent exists, `ProjectTerminalResolve` supplies an
@@ -224,6 +236,15 @@ module: `Host::resolve` picks the session's own connection when it can run
 programs and this computer otherwise, and `follow_active_session` reports tab
 switches and reconnects.
 
+The resource monitor uses a separate consumer projection, `MonitorSource`, because
+outer connection tabs do not identify a selected workspace's inner environment.
+The original `ProjectSurface` retains inert checked target metadata; its live inner
+session supplies authority. `Workspace::monitor_source` distinguishes selected,
+unavailable and genuinely local contexts. Monitoring never resolves an unavailable
+project through another surface or the local runner. Shared `Host::resolve` and
+ordinary active-session consumers keep their existing semantics
+([ADR 0077](../adr/0077-selected-workspace-monitoring.md)).
+
 ## Command palette
 
 The command palette (`workspace::command_palette`, Ctrl+Shift+P, Cmd+Shift+P on
@@ -261,8 +282,12 @@ The workspace body lays out only its visible columns —
 sidebar, tabs, side panel, or mirrored when `SwapSides` put the side panel on
 the left — with one resize state per arrangement, and remembers widths per
 column rather than per position: a hidden column kept in the resizable group
-would hold its stale width and stop its neighbours from growing. The side panel
-learns its side through `RightPanel::set_docked_left`; the agent panel puts its
+would hold its stale width and stop its neighbours from growing. Expanded chat
+replaces central content while visible navigation retains its side and width.
+Hidden, docked and expanded panel presentations have separate resize states;
+expanded measurements never overwrite remembered docked widths. Sidebar controls
+preserve expansion, and closing navigation focuses the visible chat.
+The side panel learns its side through `RightPanel::set_docked_left`; the agent panel puts its
 history column on the outer side and remembers that column's width. A side
 panel that opens a column of its own asks the workspace to widen it with
 `RightPanelEvent::Widen`. Sidebar panels are shown and hidden by their feature's

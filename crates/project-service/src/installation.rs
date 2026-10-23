@@ -14,6 +14,9 @@ use crate::{
 struct InstalledProjects {
     catalog: Entity<ProjectCatalog>,
     claims: Entity<ProjectClaims>,
+    setups: crate::setup::SetupAdmission,
+    environments: crate::environment::EnvironmentAdmission,
+    removals: crate::removal::RemovalAdmission,
     _subscriptions: [Subscription; 2],
 }
 
@@ -34,6 +37,9 @@ impl InstalledProjects {
         Self {
             catalog,
             claims,
+            setups: Default::default(),
+            environments: Default::default(),
+            removals: Default::default(),
             _subscriptions: [catalog_subscription, claim_subscription],
         }
     }
@@ -60,9 +66,51 @@ impl ProjectsHandle {
             let catalog = retained.read(cx).catalog.clone();
             let claims = retained.read(cx).claims.clone();
             claims.update(cx, |claims, cx| claims.close(cx));
-            catalog.update(cx, |catalog, cx| catalog.capture(cx))
+            let catalog = catalog.update(cx, |catalog, cx| catalog.capture(cx));
+            let setups = retained.update(cx, |installed, _| installed.setups.capture());
+            let environments = retained.read(cx).environments.capture();
+            let removals = retained.update(cx, |installed, _| installed.removals.capture());
+            Box::pin(async move {
+                let (catalog, setups, environments, removals) =
+                    futures::join!(catalog, setups, environments, removals);
+                catalog?;
+                setups?;
+                environments?;
+                removals
+            })
         })?;
         Ok(Self(installed))
+    }
+
+    pub fn environment_operation(
+        &self,
+        port: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
+        source: nocterm_project_providers::EnvironmentSource,
+        cx: &mut App,
+    ) -> Result<crate::EnvironmentOperation, nocterm_project_providers::EnvironmentError> {
+        self.0
+            .read(cx)
+            .catalog
+            .read(cx)
+            .check_open(cx)
+            .map_err(|_| nocterm_project_providers::EnvironmentError::Unavailable)?;
+        self.0
+            .read(cx)
+            .environments
+            .admit(port, source, cx.background_executor().clone())
+    }
+
+    pub fn prepare_workspace(
+        &self,
+        preparation: Arc<dyn nocterm_project_providers::ProjectPreparation>,
+        exec: Arc<dyn nocterm_session::HostExec>,
+        request: nocterm_project_providers::ProjectSetupRequest,
+        cx: &mut App,
+    ) -> Result<crate::WorkspaceSetup, ProjectsError> {
+        self.0.read(cx).catalog.read(cx).check_open(cx)?;
+        self.0.update(cx, |installed, _| {
+            installed.setups.admit(preparation, exec, request)
+        })
     }
 
     pub fn catalog<'a>(&self, cx: &'a App) -> &'a Catalog {
@@ -110,6 +158,99 @@ impl ProjectsHandle {
     ) -> Task<Result<(), ProjectsError>> {
         let catalog = self.0.read(cx).catalog.clone();
         catalog.update(cx, |catalog, cx| catalog.remove(expected, cx))
+    }
+
+    /// Admit one exact, explicitly chosen action before removing the original definition.
+    pub fn remove_workspace(
+        &self,
+        expected: ProjectDefinition,
+        binding: ProjectBinding,
+        action: Option<crate::RemovalContainerAction>,
+        cx: &mut App,
+    ) -> Result<crate::RemovalOperation, crate::WorkspaceRemovalError> {
+        self.check_removal(&expected, binding, cx)?;
+        if let Some(action) = &action {
+            let location =
+                nocterm_project_providers::ContainerLocation::from_target(expected.target())
+                    .map_err(nocterm_project_providers::ContainerActionError::from)?;
+            if &location != action.source().location() {
+                return Err(nocterm_project_providers::ContainerActionError::StaleSource.into());
+            }
+        }
+        let operation = self.0.update(cx, |installed, _| {
+            installed.removals.admit(
+                expected,
+                binding,
+                action.as_ref().map(|action| action.source()),
+            )
+        })?;
+        let native = action.map(|action| operation.execute(action, cx.background_executor()));
+        self.publish_removal(operation.clone(), native, cx);
+        Ok(operation)
+    }
+
+    /// Retry only the catalog step. An acknowledged container action is never repeated.
+    pub fn retry_removal(
+        &self,
+        operation: &crate::RemovalOperation,
+        cx: &mut App,
+    ) -> Result<(), crate::WorkspaceRemovalError> {
+        self.check_removal(operation.expected(), operation.binding(), cx)?;
+        self.0.update(cx, |installed, _| {
+            installed.removals.retain_retry(operation)
+        })?;
+        self.publish_removal(operation.clone(), None, cx);
+        Ok(())
+    }
+
+    fn check_removal(
+        &self,
+        expected: &ProjectDefinition,
+        binding: ProjectBinding,
+        cx: &App,
+    ) -> Result<(), crate::WorkspaceRemovalError> {
+        self.0.read(cx).removals.check_open()?;
+        self.check_binding(binding, cx)?;
+        if binding.project() != expected.id()
+            || self.catalog(cx).get(expected.id()) != Some(expected)
+        {
+            return Err(ProjectsError::StaleBinding(expected.id()).into());
+        }
+        Ok(())
+    }
+
+    fn publish_removal(
+        &self,
+        operation: crate::RemovalOperation,
+        native: Option<Task<Result<(), crate::WorkspaceRemovalError>>>,
+        cx: &mut App,
+    ) {
+        let handle = self.clone();
+        cx.spawn(async move |cx| {
+            let result = async {
+                if let Some(native) = native {
+                    native.await?;
+                }
+                let publication = cx.update(|cx| {
+                    handle.check_removal(operation.expected(), operation.binding(), cx)?;
+                    Ok::<_, crate::WorkspaceRemovalError>(handle.0.read(cx).catalog.clone().update(
+                        cx,
+                        |catalog, cx| {
+                            catalog.remove_bound(
+                                operation.expected().clone(),
+                                operation.binding(),
+                                cx,
+                            )
+                        },
+                    ))
+                })?;
+                publication.await?;
+                Ok(())
+            }
+            .await;
+            operation.finish(result);
+        })
+        .detach();
     }
 
     /// Reserve one window surface, including an unavailable/offline history view.

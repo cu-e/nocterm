@@ -19,9 +19,11 @@ starts a new chat with the agent the last chat was started with (remembered in
 shortcut beside that agent. A chat the panel shows connects at once, so its
 model and options can be chosen before the first message
 (`[ai.sessions] warm_start = false` connects on the first message instead);
-the tool listener starts only when needed. The panel can occupy the
-window's working area; its maximize control keeps the footer and does not change
-the operating system's fullscreen state. Chats are saved and come back after a
+the tool listener starts only when needed. Expanding the panel replaces the
+central workspace area while keeping navigation and the footer accessible.
+Navigation can be switched, hidden or shown while chat stays expanded. Restoring
+chat keeps its previous docked width and the navigation width. The control does
+not change the operating system's fullscreen state. Chats are saved and come back after a
 restart (see [Chats and history](#chats-and-history)). Model favorites are
 stored separately in `agents.toml` under the state directory.
 

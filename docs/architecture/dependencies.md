@@ -6,7 +6,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 
 | Crate | Layer | Internal dependencies | Purpose |
 | --- | --- | --- | --- |
-| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-agent-providers`, `nocterm-agent-runtime`, `nocterm-agent-settings-ui`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-ai`, `nocterm-connections`, `nocterm-connections-io`, `nocterm-connections-model`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-files`, `nocterm-image-codec`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-localfs`, `nocterm-monitor-ui`, `nocterm-project-model`, `nocterm-project-service`, `nocterm-project-storage`, `nocterm-projects`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets`, `nocterm-snippets-io`, `nocterm-snippets-store`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-store`, `nocterm-terminal`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-themes-registry`, `nocterm-transfer-runtime`, `nocterm-transfers`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
+| `nocterm` | app | `nocterm-acp`, `nocterm-agent`, `nocterm-agent-providers`, `nocterm-agent-runtime`, `nocterm-agent-settings-ui`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-ai`, `nocterm-connections`, `nocterm-connections-io`, `nocterm-connections-model`, `nocterm-containers`, `nocterm-containers-ui`, `nocterm-core`, `nocterm-design`, `nocterm-device-unlock`, `nocterm-directory-io`, `nocterm-explorer`, `nocterm-files`, `nocterm-image-codec`, `nocterm-keymap`, `nocterm-keymap-ui`, `nocterm-local`, `nocterm-localfs`, `nocterm-monitor`, `nocterm-monitor-ui`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-project-runtime`, `nocterm-project-service`, `nocterm-project-storage`, `nocterm-projects`, `nocterm-session`, `nocterm-settings`, `nocterm-settings-ui`, `nocterm-snippets`, `nocterm-snippets-io`, `nocterm-snippets-store`, `nocterm-snippets-ui`, `nocterm-ssh`, `nocterm-store`, `nocterm-terminal`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-themes-registry`, `nocterm-transfer-runtime`, `nocterm-transfers`, `nocterm-ui`, `nocterm-vault`, `nocterm-vault-store`, `nocterm-vault-ui`, `nocterm-workspace` | A fast, extensible SSH client. |
 | `nocterm-acp` | adapter | `nocterm-agent-providers`, `nocterm-ai`, `nocterm-core`, `nocterm-settings` | ACP subprocess adapter and authenticated terminal bridge. |
 | `nocterm-agent` | feature | `nocterm-agent-chat`, `nocterm-agent-directory`, `nocterm-agent-providers`, `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-project-model`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | ACP chat panel, threads and terminal context. |
 | `nocterm-agent-chat` | service | `nocterm-agent-directory`, `nocterm-agent-runtime`, `nocterm-ai`, `nocterm-core`, `nocterm-session`, `nocterm-store`, `nocterm-workspace-ports` | Agent chats, their sessions, tools and lifecycle, without views. |
@@ -26,7 +26,8 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-core` | foundation |  | Shared kernel: standard file locations and atomic, comment-preserving TOML persistence. |
 | `nocterm-design` | foundation |  | Design tokens: the single source of truth for how nocterm looks. |
 | `nocterm-device-unlock` | adapter | `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
-| `nocterm-explorer` | domain | `nocterm-settings` | Explorer indexing policy and external program selection rules. |
+| `nocterm-directory-io` | adapter | `nocterm-explorer`, `nocterm-session` | Read-only directory readers over injected local and session filesystems. |
+| `nocterm-explorer` | domain | `nocterm-session`, `nocterm-settings` | Explorer indexing policy and external program selection rules. |
 | `nocterm-files` | feature | `nocterm-explorer`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-image-codec` | adapter | `nocterm-ai` | Bounded native image inspection and preview encoding. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
@@ -34,11 +35,13 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-local` | adapter | `nocterm-core`, `nocterm-session` | Portable local PTY session and program adapter. |
 | `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session`, `nocterm-settings` | Host resource monitoring: collection scripts, parsers, rates and history. |
-| `nocterm-monitor-ui` | feature | `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
-| `nocterm-project-model` | domain | `nocterm-core`, `nocterm-session` | Pure folder workspace definitions and stable context identity. |
-| `nocterm-project-service` | service | `nocterm-core`, `nocterm-project-model`, `nocterm-store` | Retained checked project catalog publication and window claims. |
+| `nocterm-monitor-ui` | feature | `nocterm-containers`, `nocterm-monitor`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
+| `nocterm-project-model` | domain | `nocterm-core`, `nocterm-session` | Provider-neutral workspace definitions and stable context identity. |
+| `nocterm-project-providers` | domain | `nocterm-containers`, `nocterm-core`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings` | Typed builtin workspace locations and preparation contracts. |
+| `nocterm-project-runtime` | adapter | `nocterm-connections-model`, `nocterm-containers`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session` | Builtin workspace preparation and container session adaptation. |
+| `nocterm-project-service` | service | `nocterm-containers`, `nocterm-core`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-store` | Retained checked project catalog publication and window claims. |
 | `nocterm-project-storage` | adapter | `nocterm-core`, `nocterm-project-model` | Private bounded project catalog storage and native project metadata. |
-| `nocterm-projects` | feature | `nocterm-project-model`, `nocterm-project-service`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace`, `nocterm-workspace-ports` | Connection-bound workspace library, creation and nested terminal presentation. |
+| `nocterm-projects` | feature | `nocterm-containers`, `nocterm-explorer`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-project-service`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace`, `nocterm-workspace-ports` | Connection-bound workspace library, creation and nested terminal presentation. |
 | `nocterm-session` | domain | `nocterm-core`, `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: typed sections and the file that holds them. |
 | `nocterm-settings-ui` | feature | `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
@@ -48,14 +51,14 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-snippets-ui` | feature | `nocterm-session`, `nocterm-snippets`, `nocterm-snippets-store`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
 | `nocterm-ssh` | adapter | `nocterm-core`, `nocterm-session` | SSH and SFTP transport, implemented with russh. |
 | `nocterm-store` | service | `nocterm-core`, `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model` | Ordered snapshot persistence and bounded application shutdown. |
-| `nocterm-terminal` | feature | `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-terminal-model`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
+| `nocterm-terminal` | feature | `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-terminal-model`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace` | Terminal tab: renders a session's grid and drives its prompts. |
 | `nocterm-terminal-model` | domain | `nocterm-session`, `nocterm-settings` | Terminal display settings and pure validation rules. |
 | `nocterm-theme-service` | service | `nocterm-core`, `nocterm-themes` | Shared theme mutation admission and catalog publication. |
 | `nocterm-themes` | domain | `nocterm-design` | Pure Zed theme formats, palette mapping and catalog contracts. |
 | `nocterm-themes-registry` | adapter | `nocterm-core`, `nocterm-themes` | Bounded native theme discovery, registry and archive installation. |
 | `nocterm-transfer-runtime` | adapter | `nocterm-session`, `nocterm-transfers` | Bounded streaming transfers over injected filesystem capabilities. |
 | `nocterm-transfers` | domain | `nocterm-core`, `nocterm-session` | Bounded transfer requests, limits, progress transitions and service contracts. |
-| `nocterm-ui` | ui | `nocterm-core`, `nocterm-design`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-terminal-model`, `nocterm-theme-service`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
+| `nocterm-ui` | ui | `nocterm-core`, `nocterm-design`, `nocterm-explorer`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-terminal-model`, `nocterm-theme-service`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
 | `nocterm-vault` | domain | `nocterm-session`, `nocterm-settings` | Portable encrypted credential rules and lifecycle contracts. |
 | `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
 | `nocterm-vault-store` | adapter | `nocterm-core`, `nocterm-session`, `nocterm-vault` | Durable encrypted vault adapter and bounded worker. |
@@ -63,7 +66,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-vt` | domain |  | Terminal emulation: turns a byte stream into a grid and key presses into bytes. |
 | `nocterm-workspace` | ui | `nocterm-core`, `nocterm-keymap`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace-ports` | Window shell: tab strip, sidebar and the registries features plug into. |
 | `nocterm-workspace-ports` | service | `nocterm-project-model`, `nocterm-session` | Terminal and connection contracts below the window shell. |
-| `xtask` | tooling | `nocterm-ai`, `nocterm-design`, `nocterm-explorer`, `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model`, `nocterm-ui`, `nocterm-vault` | Repository automation: generated documentation and architecture checks. |
+| `xtask` | tooling | `nocterm-ai`, `nocterm-design`, `nocterm-explorer`, `nocterm-monitor`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model`, `nocterm-ui`, `nocterm-vault` | Repository automation: generated documentation and architecture checks. |
 
 ```mermaid
 graph TD
@@ -78,18 +81,24 @@ graph TD
     nocterm --> nocterm_connections
     nocterm --> nocterm_connections_io
     nocterm --> nocterm_connections_model
+    nocterm --> nocterm_containers
     nocterm --> nocterm_containers_ui
     nocterm --> nocterm_core
     nocterm --> nocterm_design
     nocterm --> nocterm_device_unlock
+    nocterm --> nocterm_directory_io
+    nocterm --> nocterm_explorer
     nocterm --> nocterm_files
     nocterm --> nocterm_image_codec
     nocterm --> nocterm_keymap
     nocterm --> nocterm_keymap_ui
     nocterm --> nocterm_local
     nocterm --> nocterm_localfs
+    nocterm --> nocterm_monitor
     nocterm --> nocterm_monitor_ui
     nocterm --> nocterm_project_model
+    nocterm --> nocterm_project_providers
+    nocterm --> nocterm_project_runtime
     nocterm --> nocterm_project_service
     nocterm --> nocterm_project_storage
     nocterm --> nocterm_projects
@@ -181,6 +190,9 @@ graph TD
     nocterm_containers_ui --> nocterm_ui
     nocterm_containers_ui --> nocterm_workspace
     nocterm_device_unlock --> nocterm_vault
+    nocterm_directory_io --> nocterm_explorer
+    nocterm_directory_io --> nocterm_session
+    nocterm_explorer --> nocterm_session
     nocterm_explorer --> nocterm_settings
     nocterm_files --> nocterm_explorer
     nocterm_files --> nocterm_project_model
@@ -201,7 +213,10 @@ graph TD
     nocterm_localfs --> nocterm_session
     nocterm_monitor --> nocterm_session
     nocterm_monitor --> nocterm_settings
+    nocterm_monitor_ui --> nocterm_containers
     nocterm_monitor_ui --> nocterm_monitor
+    nocterm_monitor_ui --> nocterm_project_model
+    nocterm_monitor_ui --> nocterm_project_providers
     nocterm_monitor_ui --> nocterm_session
     nocterm_monitor_ui --> nocterm_settings
     nocterm_monitor_ui --> nocterm_store
@@ -209,12 +224,28 @@ graph TD
     nocterm_monitor_ui --> nocterm_workspace
     nocterm_project_model --> nocterm_core
     nocterm_project_model --> nocterm_session
+    nocterm_project_providers --> nocterm_containers
+    nocterm_project_providers --> nocterm_core
+    nocterm_project_providers --> nocterm_project_model
+    nocterm_project_providers --> nocterm_session
+    nocterm_project_providers --> nocterm_settings
+    nocterm_project_runtime --> nocterm_connections_model
+    nocterm_project_runtime --> nocterm_containers
+    nocterm_project_runtime --> nocterm_project_model
+    nocterm_project_runtime --> nocterm_project_providers
+    nocterm_project_runtime --> nocterm_session
+    nocterm_project_service --> nocterm_containers
     nocterm_project_service --> nocterm_core
     nocterm_project_service --> nocterm_project_model
+    nocterm_project_service --> nocterm_project_providers
+    nocterm_project_service --> nocterm_session
     nocterm_project_service --> nocterm_store
     nocterm_project_storage --> nocterm_core
     nocterm_project_storage --> nocterm_project_model
+    nocterm_projects --> nocterm_containers
+    nocterm_projects --> nocterm_explorer
     nocterm_projects --> nocterm_project_model
+    nocterm_projects --> nocterm_project_providers
     nocterm_projects --> nocterm_project_service
     nocterm_projects --> nocterm_session
     nocterm_projects --> nocterm_store
@@ -246,6 +277,7 @@ graph TD
     nocterm_store --> nocterm_settings
     nocterm_store --> nocterm_terminal_model
     nocterm_terminal --> nocterm_project_model
+    nocterm_terminal --> nocterm_project_providers
     nocterm_terminal --> nocterm_session
     nocterm_terminal --> nocterm_settings
     nocterm_terminal --> nocterm_store
@@ -268,6 +300,7 @@ graph TD
     nocterm_transfers --> nocterm_session
     nocterm_ui --> nocterm_core
     nocterm_ui --> nocterm_design
+    nocterm_ui --> nocterm_explorer
     nocterm_ui --> nocterm_session
     nocterm_ui --> nocterm_settings
     nocterm_ui --> nocterm_store
@@ -299,6 +332,7 @@ graph TD
     xtask --> nocterm_design
     xtask --> nocterm_explorer
     xtask --> nocterm_monitor
+    xtask --> nocterm_project_providers
     xtask --> nocterm_session
     xtask --> nocterm_settings
     xtask --> nocterm_terminal_model

@@ -15,7 +15,7 @@ use gpui_kit::{
     div, img,
     prelude::*,
 };
-use nocterm_project_model::{HostLocator, ProjectDefinition, ProjectId};
+use nocterm_project_model::{ProjectDefinition, ProjectId, ProjectTarget};
 use nocterm_project_service::{ProjectBinding, ProjectClaim};
 use nocterm_ui::IconName;
 use nocterm_workspace::{
@@ -26,13 +26,13 @@ use nocterm_workspace_ports::ProjectParentDescriptor;
 
 pub(crate) struct ProjectPresentation {
     definition: ProjectDefinition,
-    parent: ProjectParentDescriptor,
+    parent: Option<ProjectParentDescriptor>,
     parent_item: Option<EntityId>,
 }
 impl ProjectPresentation {
     pub(crate) fn new(
         definition: ProjectDefinition,
-        parent: ProjectParentDescriptor,
+        parent: Option<ProjectParentDescriptor>,
         parent_item: Option<EntityId>,
     ) -> Self {
         Self {
@@ -68,23 +68,43 @@ impl ProjectPresentation {
                 div()
                     .id("project-server")
                     .test_support()
-                    .aria_label(self.parent.title().clone())
+                    .aria_label(
+                        self.parent
+                            .as_ref()
+                            .map(|parent| parent.title().clone())
+                            .unwrap_or_else(|| match self.definition.target() {
+                                ProjectTarget::Provider { provider, .. } => {
+                                    provider.to_string().into()
+                                }
+                                ProjectTarget::HostFolder { .. } => "Workspace".into(),
+                            }),
+                    )
                     .text_xs()
                     .max_w_48()
                     .truncate()
-                    .child(self.parent.title().clone()),
+                    .child(
+                        self.parent
+                            .as_ref()
+                            .map(|parent| parent.title().clone())
+                            .unwrap_or_else(|| match self.definition.target() {
+                                ProjectTarget::Provider { provider, .. } => {
+                                    provider.to_string().into()
+                                }
+                                ProjectTarget::HostFolder { .. } => "Workspace".into(),
+                            }),
+                    ),
             )
             .child(
                 div()
                     .id("project-path")
                     .test_support()
-                    .aria_label(self.definition.root().as_str().to_owned())
+                    .aria_label(crate::location::label(self.definition.target()))
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(self.definition.root().as_str().to_owned()),
+                    .child(crate::location::label(self.definition.target())),
             )
     }
 }
@@ -107,6 +127,7 @@ impl ProjectView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        surface.set_monitor_target(presentation.definition.target().clone(), cx);
         let subscriptions = Self::subscribe(&installed, &surface, &workspace, window, cx);
         Self {
             installed,
@@ -176,14 +197,14 @@ impl ProjectView {
                 let workspace = self.workspace.upgrade()?;
                 crate::context::server(
                     workspace.read(cx),
-                    definition.host(),
-                    Some(&self.presentation.parent),
+                    &crate::location::host(definition.target())?,
+                    self.presentation.parent.as_ref(),
                     cx,
                 )
                 .ok()
             });
         if let Some(parent) = parent {
-            self.presentation.parent = parent;
+            self.presentation.parent = Some(parent);
         }
         self.refresh(window, cx);
     }
@@ -203,7 +224,7 @@ impl ProjectView {
                 let view = view.read(cx);
                 Ok((
                     view.installed.model().binding(view.project(), cx)?,
-                    view.presentation.definition.host().clone(),
+                    view.presentation.definition.target().clone(),
                     view.lifetime.session()?,
                 ))
             });
@@ -212,7 +233,7 @@ impl ProjectView {
                 let _ = owner.update(cx, |view, cx| {
                     let result = project.and_then(|(binding, host, project)| {
                         view.installed.model().check_binding(binding, cx)?;
-                        if view.presentation.definition.host() != &host {
+                        if view.presentation.definition.target() != &host {
                             return Err(
                                 nocterm_workspace_ports::ProjectParentError::WrongHost.into()
                             );
@@ -241,7 +262,7 @@ impl ProjectView {
         let request = RetryRequest {
             claim: self.lifetime.claim(),
             binding: self.installed.model().binding(self.project(), cx),
-            host: self.presentation.definition.host().clone(),
+            location: self.presentation.definition.target().clone(),
         };
         let owner = cx.weak_entity();
         cx.defer(move |cx| {
@@ -266,7 +287,7 @@ impl ProjectView {
                     &self.installed,
                     binding,
                     request.claim,
-                    &request.host,
+                    &request.location,
                     workspace.read(cx),
                     window,
                     cx,
@@ -309,12 +330,18 @@ impl ProjectView {
     pub fn project(&self) -> ProjectId {
         self.presentation.definition.id()
     }
-    pub fn parent(&self) -> &ProjectParentDescriptor {
-        &self.presentation.parent
+    pub(crate) fn surface_source(&self, cx: &App) -> nocterm_workspace::ProjectSurfaceReceipt {
+        self.surface.source(cx)
+    }
+    pub(crate) fn has_target(&self, target: &ProjectTarget) -> bool {
+        self.presentation.definition.target() == target
+    }
+    pub fn parent(&self) -> Option<&ProjectParentDescriptor> {
+        self.presentation.parent.as_ref()
     }
     pub(crate) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(definition) = self.installed.catalog(cx).get(self.project()) {
-            if definition.host() != self.presentation.definition.host() {
+            if definition.target() != self.presentation.definition.target() {
                 self.presentation.parent_item = None;
                 self.lifetime.retry(Err(
                     nocterm_workspace_ports::ProjectParentError::WrongHost.into()
@@ -323,7 +350,10 @@ impl ProjectView {
             self.presentation.definition = definition.clone();
         }
         self.surface
-            .set_root(self.presentation.definition.root().clone(), cx);
+            .set_monitor_target(self.presentation.definition.target().clone(), cx);
+        if let Some(root) = crate::location::root(self.presentation.definition.target()) {
+            self.surface.set_root(root, cx);
+        }
         if self.lifetime.start_first() {
             let result = self
                 .surface
@@ -358,11 +388,10 @@ impl ProjectView {
             .catalog(cx)
             .get(self.project())
             .ok_or(ProjectOpenError::Removed)?;
-        if definition.host() != self.presentation.definition.host() {
+        if definition.target() != self.presentation.definition.target() {
             return Err(nocterm_workspace_ports::ProjectParentError::WrongHost.into());
         }
-        let root = definition.root().clone();
-        session.open(target, &root, window, cx)?;
+        session.open(target, window, cx)?;
         Ok(())
     }
     fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -389,8 +418,12 @@ impl ProjectView {
         });
         let commands = self.lifetime.session().is_ok();
         let icon = self.workspace.upgrade().and_then(|workspace| {
-            crate::context::summary(workspace.read(cx), self.presentation.definition.host(), cx)
-                .and_then(|connection| connection.icon)
+            crate::context::summary(
+                workspace.read(cx),
+                &crate::location::host(self.presentation.definition.target())?,
+                cx,
+            )
+            .and_then(|connection| connection.icon)
         });
         h_flex()
             .px_3()
@@ -500,5 +533,5 @@ impl Render for ProjectView {
 struct RetryRequest {
     claim: ProjectClaim,
     binding: Result<ProjectBinding, nocterm_project_service::ProjectsError>,
-    host: HostLocator,
+    location: ProjectTarget,
 }

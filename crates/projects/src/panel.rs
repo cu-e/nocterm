@@ -83,12 +83,11 @@ impl ProjectsPanel {
         }
     }
     fn refresh(&mut self, window: &Window, cx: &mut Context<Self>) {
-        self.parent = self
-            .workspace
-            .upgrade()
-            .and_then(|workspace| context::current(workspace.read(cx), window, cx));
+        self.parent = self.workspace.upgrade().and_then(|workspace| {
+            context::current(workspace.read(cx), &self.installed, window, cx)
+        });
         self.can_create = self.workspace.upgrade().is_some_and(|workspace| {
-            context::capture_current(workspace.read(cx), window, cx).is_ok()
+            context::capture_current(workspace.read(cx), &self.installed, window, cx).is_ok()
         });
         cx.notify();
     }
@@ -97,7 +96,9 @@ impl ProjectsPanel {
             .workspace
             .upgrade()
             .ok_or(nocterm_workspace_ports::ProjectParentError::Disconnected)
-            .and_then(|workspace| context::capture_current(workspace.read(cx), window, cx));
+            .and_then(|workspace| {
+                context::capture_current(workspace.read(cx), &self.installed, window, cx)
+            });
         match source {
             Ok(source) => {
                 editor::open(self.installed.clone(), source, window, cx);
@@ -140,7 +141,7 @@ impl ProjectsPanel {
                     .ghost()
                     .xsmall()
                     .icon(IconName::Plus)
-                    .tooltip("New workspace on this server")
+                    .tooltip("New workspace on this host")
                     .disabled(!self.installed.model().writable(cx) || !self.can_create)
                     .on_click(cx.listener(|this, _, window, cx| this.create(window, cx))),
             )
@@ -151,7 +152,7 @@ impl Panel for ProjectsPanel {
         "Workspaces".into()
     }
     fn icon(&self, _: &App) -> IconName {
-        IconName::FolderTree
+        IconName::Layers
     }
 }
 impl Focusable for ProjectsPanel {
@@ -166,10 +167,12 @@ impl Render for ProjectsPanel {
             .as_ref()
             .and_then(|parent| parent.host().parent_key().ok());
         let query = self.search.read(cx).value();
-        let groups = self
-            .installed
-            .catalog(cx)
-            .partition(parent_key.as_ref(), &query);
+        let groups =
+            self.installed
+                .catalog(cx)
+                .partition_by(parent_key.as_ref(), &query, |target| {
+                    crate::location::host(target).and_then(|host| host.parent_key().ok())
+                });
         let library = ProjectLibrary::new(groups, self.folded, !query.trim().is_empty());
         let theme = cx.theme().clone();
         let error = self

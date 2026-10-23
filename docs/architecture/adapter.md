@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -14,6 +14,56 @@ and injects them
 `nocterm-project-storage` reads and publishes workspace folder definitions through
 the existing private atomic-file primitive and supplies identity/time metadata.
 The app injects it into the catalog service; it owns no background writer.
+
+`nocterm-project-runtime` executes built-in workspace preparation through a
+captured host executor. Docker and Podman inventories have independent outcomes;
+all later commands retain the chosen engine and full container ID. Preparation
+optionally installs checked selected language versions in a newly created
+container and clones Git. The same platform-aware implementation supports explicit
+existing-environment changes through `WorkspaceEnvironment`. It probes the actual
+OS, architecture, libc, account and prerequisites rather than inferring them from
+the host or image reference. Distribution defaults remain explicit; managed
+Python, Rust, Bun, official Node archives and checksum-verified Adoptium JDKs retain
+their user-owned paths in fresh workspace shells. Installer version values travel
+as positional arguments. Unsupported platform/version combinations fail explicitly;
+existing environments are preserved after partial installation or cancellation.
+An internal fresh-owned creation policy permits initializing an empty Arch package
+database with a full synchronization/update. Existing-environment management never
+inherits that policy: it reports the missing administrator prerequisite instead.
+Workspace-only transport activation exports fixed managed paths without sourcing
+a mutable fragment. Bounded pull-output decoding emits observed transfer values
+or phase-only progress when totals are unavailable.
+`NativeWorkspaceContainerActions` separately implements explicitly confirmed lifecycle
+actions. Bounded inspection validates the original full ID. Stop is idempotent for
+an already stopped container; Delete stops a running one before exact-ID `rm`,
+without force, volume removal, images, pruning or name fallback. Failures retain
+possible partial effects; no resource recreation attempts to roll them back
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
+The separate registry-search adapter uses Docker Hub search or Podman configured
+registries through that same captured executor, bounds results/bytes/time, cancels
+obsolete work and returns typed quota cooldowns without pulling images. Custom
+container creation uses the chosen engine’s cached image reference or ID and pulls
+only when missing; curated images retain their explicit pull. Rollback checks the
+exact resource identity, project label and a fresh creation-attempt label. A lost create response triggers bounded reconciliation on
+the original executor; unresolved outcomes retain a typed, recoverable attempt
+reference. Automatic rollback never deletes ordinary folders or attached containers. Container
+sessions wrap normal host transport with scoped execution and no host filesystem projection
+([ADR 0071](../adr/0071-provider-workspace-locations.md)). A process-backed
+`RemoteFs` adapter uses that same original executor and exact engine/resource for
+container files. It passes paths as arguments to fixed recipes, probes required
+utilities, bounds queues/commands and streams file contents. Upload publication
+retains an identity-checked private same-parent stage; Create collisions preserve
+the sealed stage for a name retry. Downloads compare the opened descriptor with
+the admitted regular file. Container filesystem commands run from `/` independently
+of the workspace directory. Unsupported images have no host fallback and install
+no helper or SSH daemon. The adapter's path-race and mutation limits are recorded
+in [ADR 0076](../adr/0076-container-filesystem-capability.md).
+
+`nocterm-directory-io` projects supplied local and remote filesystem capabilities
+into read-only home and directory listing operations. It reuses existing traversal,
+limits and typed errors, opens no connection and never substitutes local access
+for a missing remote source
+([ADR 0072](../adr/0072-shared-directory-selection.md)).
 
 ## SSH and local sessions
 

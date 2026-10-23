@@ -24,6 +24,7 @@ nocterm-connections.workspace = true
 nocterm-connections-model.workspace = true
 nocterm-connections-io.workspace = true
 nocterm-containers-ui.workspace = true
+nocterm-containers.workspace = true
 nocterm-snippets-ui.workspace = true
 nocterm-snippets.workspace = true
 nocterm-snippets-store.workspace = true
@@ -37,6 +38,10 @@ nocterm-local.workspace = true
 nocterm-localfs.workspace = true
 nocterm-monitor-ui.workspace = true
 nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
+nocterm-project-runtime.workspace = true
+nocterm-directory-io.workspace = true
+nocterm-explorer.workspace = true
 nocterm-project-service.workspace = true
 nocterm-project-storage.workspace = true
 nocterm-projects.workspace = true
@@ -128,6 +133,9 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+async-io.workspace = true
+nocterm-monitor.workspace = true
+nocterm-project-providers = { workspace = true, features = ["test-support"] }
 uuid.workspace = true
 nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-snippets = { workspace = true, features = ["test-support"] }
@@ -165,6 +173,9 @@ nocterm-terminal-model = { path = "crates/terminal-model" }
 nocterm-explorer = { path = "crates/explorer" }
 nocterm-ai = { path = "crates/ai" }
 nocterm-project-model = { path = "crates/project-model" }
+nocterm-project-providers = { path = "crates/project-providers" }
+nocterm-project-runtime = { path = "crates/project-runtime" }
+nocterm-directory-io = { path = "crates/directory-io" }
 nocterm-project-storage = { path = "crates/project-storage" }
 nocterm-project-service = { path = "crates/project-service" }
 nocterm-projects = { path = "crates/projects" }

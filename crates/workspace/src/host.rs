@@ -3,10 +3,11 @@
 //! The active tab decides. A remote session that can run programs is reached
 //! over its own connection; anything else is this computer, through the
 //! runner supplied explicitly by application composition. Features that
-//! follow the active host — the resource monitor, the containers panel —
+//! follow the active host, including the containers panel,
 //! resolve it the same way with [`Host::resolve`] and hear of changes
 //! through [`follow_active_session`], so switching tabs means the same thing
-//! to all of them and none opens a connection of its own.
+//! to those consumers and none opens a connection of its own. The resource monitor
+//! separately observes the selected surface through Workspace::monitor_source.
 
 use std::sync::Arc;
 

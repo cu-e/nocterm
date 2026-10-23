@@ -16,6 +16,7 @@ encoding_rs.workspace = true
 regex.workspace = true
 nocterm-session.workspace = true
 nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
 nocterm-settings.workspace = true
 nocterm-store.workspace = true
 nocterm-ui.workspace = true

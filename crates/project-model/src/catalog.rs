@@ -6,7 +6,7 @@ use crate::{CatalogError, ParentConnectionKey, ProjectDefinition, ProjectDraft, 
 
 pub const MAX_CATALOG_BYTES: usize = 1024 * 1024;
 pub const MAX_PROJECTS: usize = 256;
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// Bounded checked catalog; mutable transitions never publish a partial candidate.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,7 +69,7 @@ impl Catalog {
             return Err(CatalogError::TooLarge);
         }
         let version: Version = serde_json::from_slice(bytes)?;
-        if version.version != VERSION {
+        if !matches!(version.version, 1 | VERSION) {
             return Err(CatalogError::UnsupportedVersion(version.version));
         }
         let document: Document = serde_json::from_slice(bytes)?;
@@ -101,23 +101,39 @@ impl Catalog {
         parent: Option<&ParentConnectionKey>,
         query: &str,
     ) -> ProjectGroups<'_> {
+        self.partition_by(parent, query, |target| {
+            target
+                .host_folder()
+                .and_then(|(host, _)| host.parent_key().ok())
+        })
+    }
+
+    /// Group known locations using an explicit pure projection supplied by their owner.
+    pub fn partition_by(
+        &self,
+        parent: Option<&ParentConnectionKey>,
+        query: &str,
+        parent_for: impl Fn(&crate::ProjectTarget) -> Option<ParentConnectionKey>,
+    ) -> ProjectGroups<'_> {
         let query = query.trim().to_lowercase();
         let mut current = Vec::new();
         let mut other = Vec::new();
         for project in self.projects.values() {
             let matches = query.is_empty()
                 || project.name().to_lowercase().contains(&query)
-                || project.root().as_str().to_lowercase().contains(&query)
-                || project
-                    .host()
-                    .address()
-                    .is_some_and(|host| host.to_string().to_lowercase().contains(&query));
+                || matches!(project.target(), crate::ProjectTarget::Provider { provider, .. } if provider.as_str().contains(&query))
+                || project.host_folder().is_some_and(|(host, root)| {
+                    root.as_str().to_lowercase().contains(&query)
+                        || host.address().is_some_and(|address| {
+                            address.to_string().to_lowercase().contains(&query)
+                        })
+                });
             if !matches {
                 continue;
             }
-            if parent
-                .is_some_and(|parent| project.host().parent_key().is_ok_and(|key| &key == parent))
-            {
+            if parent.is_some_and(|parent| {
+                parent_for(project.target()).is_some_and(|key| &key == parent)
+            }) {
                 current.push(project);
             } else {
                 other.push(project);

@@ -16,11 +16,13 @@ fn explorer_in_new_windows_uses_the_opener_supplied_once_to_bootstrap(cx: &mut T
     settings.update::<nocterm_files::ExplorerSettings>(|section| {
         section.open.local = nocterm_files::Opener::new("injected-editor", &[]);
     });
+    let directories = Arc::new(nocterm_directory_io::DirectoryReaders::new(local.clone()));
     let deps = nocterm_files::Deps::new(
         local.clone(),
         local,
         Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
         native.clone(),
+        directories,
     );
     let first = cx.update(|cx| {
         let booted = boot_with_files(

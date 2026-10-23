@@ -13,6 +13,8 @@ const MAX_PROBE_OUTPUT: usize = 4096;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Platform {
     Linux,
+    /// Own Linux cgroup CPU/memory only; CPU percent is relative to one CPU.
+    LinuxContainer,
     Windows,
     /// Anything else, by the name the host gave.
     Unsupported(String),
@@ -23,6 +25,7 @@ impl Platform {
     pub fn watch_request(&self, metrics: MetricSet, interval: Duration) -> Option<ExecRequest> {
         match self {
             Self::Linux => Some(linux::request(metrics, interval)),
+            Self::LinuxContainer => Some(crate::container::request(metrics, interval)),
             Self::Windows => Some(windows::request(metrics, interval)),
             Self::Unsupported(_) => None,
         }
@@ -31,6 +34,7 @@ impl Platform {
     pub(crate) fn parse(&self, frame: &[String]) -> Reading {
         match self {
             Self::Linux => linux::parse(frame),
+            Self::LinuxContainer => crate::container::parse(frame),
             Self::Windows => windows::parse(frame),
             Self::Unsupported(_) => Reading::default(),
         }

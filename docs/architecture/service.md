@@ -21,11 +21,37 @@ and the `ChatWorkspace` and
 `SignInTerminal` ports the window shell implements
 ([ADR 0063](../adr/0063-agent-chats-below-the-panel.md)).
 
-`nocterm-project-service` owns the durable workspace folder catalog and the
+`nocterm-project-service` owns the durable workspace catalog and the
 open-window registry used to focus an already opened workspace. It uses
 `Persisted` and the shared shutdown coordinator. Catalog bindings identify the
 original committed definition so an old callback cannot open a changed folder
 ([ADR 0067](../adr/0067-project-tabs-with-inner-surfaces.md)).
+Preparation jobs retain their original source, operation and prepared result
+independently of the creation view. A failed catalog publication can retry saving
+without creating another resource. Process execution stays behind the supplied
+preparation contract, including checked language/version selections; registry search
+uses a separate narrow port and picker-local cache rather than preparation jobs.
+Independent environment operations retain exact source authority, serialize tool
+changes across workspace directories sharing an environment, and join the existing
+shutdown admission/drain. They never invoke owned-container cleanup or modify the
+catalog. Observed versions and progress are not persisted as catalog facts
+([ADR 0075](../adr/0075-observed-workspace-environment-management.md)).
+Explicit removal operations retain the original definition, binding and captured
+resource source. Bounded per-resource admission ignores project folders and profile
+aliases. Container acknowledgment precedes checked durable catalog removal;
+resource failure retains metadata, while publication failure retains the known
+effect and permits metadata-only retry. Both admission and queued application
+check the original binding. Jobs survive dropped view receivers, freeze on shared
+shutdown and never begin late publication after cancellation
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
+Provider terminal resolution stays in app composition rather
+than introducing a service dependency on UI
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
+
+`ProjectCreationSource` distinguishes genuine terminal receipts from explicitly
+injected terminal-free local authority. The local constructor fixes HostLocator::Local;
+remote creation always retains its original ExpectedSession. Receipt absence grants
+no terminal capture authority ([ADR 0073](../adr/0073-terminal-free-local-workspace-creation.md)).
 
 ## Agents
 
@@ -40,7 +66,8 @@ synchronously and in order, while the runtime reads only a `ClientState`. The
 host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace re-exports the narrow terminal ports
 of `nocterm-workspace-ports` and exposes `ConnectionDirectory` seams so the agent feature never imports other
 features. The right panel lives outside the tab dock and remains available with
-no tabs; maximize uses the working area while preserving the footer.
+no tabs; expansion replaces central content while preserving visible navigation
+and the footer, without changing remembered docked widths.
 `ConnectionDirectory` methods take the workspace as a weak handle and are called
 outside workspace updates, because opening a connection updates the workspace.
 

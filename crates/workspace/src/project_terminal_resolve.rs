@@ -2,13 +2,13 @@
 use crate::ProjectTerminalSession;
 use gpui_kit::App;
 use nocterm_core::SharedCause;
-use nocterm_project_model::{HostLocator, ProjectValidationError};
+use nocterm_project_model::{ProjectTarget, ProjectValidationError};
 use std::{error::Error, rc::Rc};
 
 pub trait ProjectTerminalResolve: 'static {
     fn resolve(
         &self,
-        host: &HostLocator,
+        location: &ProjectTarget,
         cx: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, ProjectConnectionError>;
 }
@@ -25,6 +25,10 @@ pub enum ProjectConnectionError {
     UnsupportedHost,
     #[error("The saved server profiles are unavailable")]
     Unavailable,
+    #[error("The workspace provider is unavailable or its resource format is unsupported")]
+    ProviderUnavailable,
+    #[error("A workspace provider is already registered: {0}")]
+    DuplicateProvider(nocterm_project_model::ProviderId),
     #[error(transparent)]
     InvalidHost(#[from] ProjectValidationError),
 }

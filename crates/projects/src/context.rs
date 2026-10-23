@@ -8,6 +8,7 @@ use nocterm_workspace_ports::{
 
 pub(crate) fn current(
     workspace: &Workspace,
+    installed: &crate::Installed,
     window: &Window,
     cx: &App,
 ) -> Option<ProjectParentDescriptor> {
@@ -15,11 +16,21 @@ pub(crate) fn current(
         .active_item(cx)
         .and_then(|item| item.view().downcast::<crate::ProjectView>().ok())
     {
-        let parent = project.read(cx).parent();
+        let parent = project.read(cx).parent()?;
         return server(workspace, parent.host(), Some(parent), cx).ok();
     }
-    let item = workspace.command_item(window, cx)?;
-    let capabilities = item.terminal_capabilities(cx)?;
+    let Some(item) = workspace.command_item(window, cx) else {
+        return installed
+            .local_source()
+            .ok()
+            .map(|source| source.parent().clone());
+    };
+    let Some(capabilities) = item.terminal_capabilities(cx) else {
+        return installed
+            .local_source()
+            .ok()
+            .map(|source| source.parent().clone());
+    };
     let parent = capture(&capabilities, cx)
         .map(|source| source.parent().clone())
         .ok()
@@ -90,13 +101,23 @@ fn describe(capabilities: &TerminalCapabilities, cx: &App) -> Option<ProjectPare
 
 pub(crate) fn capture_current(
     workspace: &Workspace,
+    installed: &crate::Installed,
     window: &Window,
     cx: &App,
 ) -> Result<ProjectCreationSource, ProjectParentError> {
-    let project_parent = workspace
+    let project_parent = match workspace
         .active_item(cx)
         .and_then(|item| item.view().downcast::<crate::ProjectView>().ok())
-        .map(|project| project.read(cx).parent().clone());
+    {
+        Some(project) => Some(
+            project
+                .read(cx)
+                .parent()
+                .cloned()
+                .ok_or(ProjectParentError::UnavailableParent)?,
+        ),
+        None => None,
+    };
     if let Some(item) = workspace.command_item(window, cx)
         && let Some(capabilities) = item.terminal_capabilities(cx)
         && capabilities.project_parent().is_some()
@@ -104,24 +125,33 @@ pub(crate) fn capture_current(
         let source = capture(&capabilities, cx)?;
         if let Some(parent) = &project_parent {
             if source.parent().host() != parent.host() {
-                return capture_host(workspace, parent.host(), window, cx);
+                return capture_host(workspace, installed, parent.host(), window, cx);
             }
-            return ProjectCreationSource::new(
+            return Ok(ProjectCreationSource::new(
                 server(workspace, parent.host(), Some(parent), cx)?,
-                source.expected(),
+                source.expected().ok_or(ProjectParentError::StaleSession)?,
                 source.cwd().map(Into::into),
-            );
+            )?
+            .with_resources(source.executor(), source.filesystem()));
         }
         return Ok(source);
     }
     if let Some(parent) = project_parent {
-        return capture_host(workspace, parent.host(), window, cx);
+        return capture_host(workspace, installed, parent.host(), window, cx);
     }
-    Err(ProjectParentError::UnavailableParent)
+    if let Some(capabilities) = workspace
+        .command_item(window, cx)
+        .and_then(|item| item.terminal_capabilities(cx))
+        && !capabilities.state().info(cx).is_some_and(|info| info.local)
+    {
+        return Err(ProjectParentError::Disconnected);
+    }
+    installed.local_source()
 }
 
 pub(crate) fn capture_host(
     workspace: &Workspace,
+    installed: &crate::Installed,
     host: &HostLocator,
     window: &Window,
     cx: &App,
@@ -155,6 +185,9 @@ pub(crate) fn capture_host(
             _ => {}
         }
     }
+    if matches!(host, HostLocator::Local) {
+        return installed.local_source();
+    }
     Err(refusal.unwrap_or(ProjectParentError::Disconnected))
 }
 
@@ -169,7 +202,17 @@ fn capture(
     if info.status != nocterm_workspace_ports::TerminalStatus::Connected {
         return Err(ProjectParentError::Disconnected);
     }
-    caps.project_parent()
+    let source = caps
+        .project_parent()
         .ok_or(ProjectParentError::UnavailableParent)?
-        .capture(info.expected, cx)
+        .capture(info.expected, cx)?;
+    let exec = caps
+        .execution()
+        .and_then(|port| port.executor(info.expected, cx).ok());
+    let fs = caps
+        .fact_session()
+        .and_then(|port| port.current(cx))
+        .filter(|snapshot| snapshot.expected == info.expected)
+        .and_then(|snapshot| snapshot.session.fs);
+    Ok(source.with_resources(exec, fs))
 }

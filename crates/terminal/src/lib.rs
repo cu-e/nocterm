@@ -27,8 +27,13 @@
 //! Does not own: native transport, filesystem, vault or persistence execution.
 //! Ports: session transport and credential contracts; narrow workspace terminal capabilities.
 //! Original parent capture and ProjectTerminalOpen are narrow folder-creation
-//! ports. Folder terminals clone the original ordinary session configuration and
-//! override the initial directory; they retain normal prompts and reconnect.
+//! ports. Workspace sessions bind their checked target before opening surfaces.
+//! ContainerSessionFactory arrives explicitly with installed dependencies and
+//! adapts the original transport; container sessions expose no host filesystem
+//! or parent-creation capture. Prompts and reconnect keep the ordinary lifecycle.
+//! WorkspaceSessionFactory separately activates managed tools for folder workspace
+//! shells and execution, retaining the host filesystem and original launch settings.
+//! Ordinary server terminals keep their supplied transports.
 //! Settings: TerminalSettings plus SSH, local launch and recording defaults.
 //! Globals: none. Installed capabilities and the UiReady settings handle are explicit.
 //! Invariants: captured connection/prompt authority precedes effects; input is admitted

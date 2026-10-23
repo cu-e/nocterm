@@ -23,6 +23,7 @@ parking_lot.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+nocterm-explorer = { workspace = true, features = ["test-support"] }
 nocterm-project-model.workspace = true
 nocterm-settings.workspace = true
 nocterm-transfers = { workspace = true, features = ["test-support"] }

@@ -67,3 +67,11 @@ acceptance; a later record supersedes an earlier one.
 | [0067](0067-project-tabs-with-inner-surfaces.md) | Workspaces are outer connection tabs with independent inner terminal surfaces |
 | [0069](0069-workspace-chat-launch-boundary.md) | Workspace chat scope preserves the existing local agent launch lifecycle |
 | [0070](0070-original-workspace-connection-recovery.md) | Workspace authentication belongs to its inner terminal |
+| [0071](0071-provider-workspace-locations.md) | Workspace locations retain provider identity and session authority |
+| [0072](0072-shared-directory-selection.md) | Directory selection shares read-only rules, adapters and controls |
+| [0073](0073-terminal-free-local-workspace-creation.md) | Terminal-free workspace creation uses explicitly injected local authority |
+| [0074](0074-captured-host-image-search-and-language-versions.md) | Image search and language versions retain captured host authority |
+| [0075](0075-observed-workspace-environment-management.md) | Workspace tool changes retain explicit environment authority |
+| [0076](0076-container-filesystem-capability.md) | Container files use a scoped session filesystem capability |
+| [0077](0077-selected-workspace-monitoring.md) | Resource monitoring follows the selected workspace environment |
+| [0078](0078-explicit-workspace-container-removal.md) | Explicit workspace container actions precede checked metadata removal |

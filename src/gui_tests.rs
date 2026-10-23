@@ -26,6 +26,7 @@ mod snippets;
 mod terminal_events;
 mod titlebar;
 mod vault;
+mod workspace_preferences;
 
 #[derive(Default)]
 struct MockTransport {
@@ -322,6 +323,15 @@ fn boot_with_ports_and_probe(
                 transport,
                 local,
                 local_host,
+                image_search: Arc::new(
+                    nocterm_project_providers::testing::FakeImageSearch::default(),
+                ),
+                container_actions: Arc::new(
+                    nocterm_project_providers::testing::FakeWorkspaceContainerActions::default(),
+                ),
+                environment: Arc::new(
+                    nocterm_project_providers::testing::FakeWorkspaceEnvironment::default(),
+                ),
             },
             terminal_auth_factory: None,
             files,
@@ -371,11 +381,13 @@ fn fixture_files(directory: &std::path::Path) -> nocterm_files::Deps {
         nocterm_transfer_runtime::TransferRuntimeDeps::new(local.clone(), Default::default()),
     )
     .unwrap();
+    let directories = Arc::new(nocterm_directory_io::DirectoryReaders::new(local.clone()));
     nocterm_files::Deps::new(
         local.clone(),
         local,
         transfers,
         Arc::new(nocterm_session::testing::FakeExec::default()),
+        directories,
     )
 }
 fn seed_native_ancestors(fs: &nocterm_session::testing::InMemoryFs, directory: &std::path::Path) {

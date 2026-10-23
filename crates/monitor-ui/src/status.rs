@@ -52,8 +52,13 @@ impl Render for MonitorStatus {
             Status::Failed(error) => error.clone(),
             Status::Running | Status::Off => "Host resources".to_owned(),
         };
-        let tooltip = match monitor.host() {
-            Some(host) => format!("{} — {tooltip}", host.label()),
+        let tooltip = if monitor.container() {
+            format!("{tooltip}. CPU: 100% is one CPU; memory uses own cgroup accounting.")
+        } else {
+            tooltip
+        };
+        let tooltip = match monitor.label() {
+            Some(label) => format!("{label} — {tooltip}"),
             None => tooltip,
         };
         let stale = !matches!(monitor.status(), Status::Running);
@@ -107,7 +112,33 @@ fn summary(
         .into_any_element()
 }
 
+fn container_item(metric: MonitorMetric, snapshot: &Snapshot, muted: Hsla) -> Option<AnyElement> {
+    let container = snapshot.container.as_ref()?;
+    let (icon, label, value) = match metric {
+        MonitorMetric::Cpu => (IconName::Cpu, "1 CPU", snapshot.cpu.map(format::percent)),
+        MonitorMetric::Memory if container.memory_limit.is_none() => (
+            IconName::MemoryStick,
+            "",
+            container.memory_current.map(format::bytes),
+        ),
+        _ => return None,
+    };
+    Some(
+        h_flex()
+            .gap_1()
+            .child(Icon::new(icon).xsmall().text_color(muted))
+            .when(!label.is_empty(), |row| {
+                row.child(div().text_color(muted).child(label))
+            })
+            .child(value.unwrap_or_else(|| "—".into()))
+            .into_any_element(),
+    )
+}
+
 fn item(metric: MonitorMetric, snapshot: &Snapshot, muted: Hsla, cx: &App) -> AnyElement {
+    if let Some(item) = container_item(metric, snapshot, muted) {
+        return item;
+    }
     let theme = cx.theme();
     let icon = |name: IconName| Icon::new(name).xsmall().text_color(muted);
     let text = |label: &'static str| div().text_color(muted).child(label);

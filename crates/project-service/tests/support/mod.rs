@@ -12,8 +12,10 @@ pub(crate) fn definition(value: u8) -> ProjectDefinition {
     ProjectDefinition::try_from(ProjectDraft {
         id: project(value),
         name: "Project".into(),
-        host: HostLocator::Local,
-        root: RootPath::parse("/srv/project").unwrap(),
+        target: ProjectTarget::HostFolder {
+            host: HostLocator::Local,
+            root: RootPath::parse("/srv/project").unwrap(),
+        },
         source: ProjectSource::Manual,
         updated: 123,
     })

@@ -176,8 +176,11 @@ presentation of navigation through a public query, rather than exposing pane sta
 Configured local program dispatch uses the injected `ProgramOpener`; the local adapter
 owns process spawning and child reaping.
 
-Explorer location editors own native input and asynchronous, bounded directory
-completion. Suggestions use a viewport-constrained popup anchored below the input,
+Explorer uses the shared `nocterm-ui` directory input and navigation controls;
+the workspace creation picker uses the same completion implementation. Read-only
+sources are supplied explicitly through the Explorer domain contracts
+([ADR 0072](../adr/0072-shared-directory-selection.md)).
+Suggestions use a viewport-constrained popup anchored below the input,
 flipping above it when needed, so minimum-height split panes retain usable rows.
 Tab and Shift+Tab complete directories from one cached listing; Up and Down
 cycle the plain-text popup without descending into a single match.
@@ -249,14 +252,95 @@ and control ownership from [ADR0050](../adr/0050-retained-snippet-installation.m
 
 ## Monitor
 
-`nocterm-monitor-ui` follows the active session (a
-session with exec is remote; anything else is this computer when allowed),
-keeps a sampler per recently seen host and runs exactly one script: the status
+`nocterm-monitor-ui` consumes the workspace's dedicated `MonitorSource` projection.
+The selected inner workspace session takes precedence; missing or unsupported
+workspace authority never falls back to the unrelated outer session or local runner.
+Ordinary local contexts retain the injected local policy. Cache identity includes
+the original surface and checked resource; watch generations reject stale detection
+and readings across switches or reconnects. It keeps bounded samplers and runs
+exactly one script: the status
 bar's metrics at the slow interval while the details are closed, and the union
 with the details' metrics at the fast interval while they are open. It adds a
 leading footer view through the workspace and supplies its Settings page as a
 `SettingsPageSpec`. Local host execution is an optional `HostExec` supplied at
-installation and retained by its model; active remote execution keeps precedence.
+installation and retained by its model. Container monitoring selects pure
+own-cgroup collection through its already scoped executor, with CPU explicitly
+relative to one CPU and memory current/optional limit. Host-only readings remain
+absent; unobservable limits never become a host memory percentage
+([ADR 0077](../adr/0077-selected-workspace-monitoring.md)).
+
+## Workspaces
+
+Workspace removal uses a compact native confirmation. Folder and unknown-provider
+locations remove metadata only. Docker/Podman locations offer mutually exclusive
+Keep (default), Stop and Delete choices with their consequences. Stop/Delete retain
+the original unscoped host and terminal epoch, require a live matching capability,
+and affect other workspaces sharing that container. Busy controls prevent duplicate
+submits and dismissal; errors stay inline. Known completed effects remain visible
+when catalog publication fails, and Retry removal publishes metadata only. Images,
+volumes, bind-mounted host folders and chat history are retained; Delete loses the
+container writable layer. The feature never closes or retargets open surfaces
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
+
+`nocterm-projects` presents the saved workspace library and a branching creation
+wizard. Its private navigation owner projects Connection, Project and conditional
+Tools steps without duplicating retained input entities or setup mode. Connection
+validates only resource selection, Project validates name/directory/repository,
+and Tools appears only for new containers. Next and Back do not prepare resources;
+final Create retains full validation and the existing preparation/publication
+lifecycle. Step changes move focus and Back preserves drafts. The body fits normal
+720p windows; only small windows use body scrolling, with actions fixed outside.
+Direct
+connection uses the shared directory picker when the captured source exposes a
+filesystem. Existing container selection combines independently acquired Docker
+and Podman results; creation selects the engine, image and supported tools.
+The form retains its original host authority while another tab is selected.
+Without a selected server, an injected local executor enables all three modes on
+This computer without opening a terminal. Active remote workspaces and selected
+disconnected or stale remote terminals refuse creation instead of falling back to
+local capabilities. Container rows preserve full engine/ID selection independently
+of truncated names, image labels and status summaries.
+An independent `ContainerPicker` owns captured inventory discovery, filtering and
+exact selection. Search matches names, full IDs, images and engine without I/O or
+changing a filtered-out selection. The fixed shared header retains the original
+server. Image sources use a single full-width bounded result viewport.
+
+Projects retains its supplied `SettingsHandle` and provides the lazy Workspaces
+settings page. Shared checked text receipts edit the domain-owned
+`WorkspacesSettings` section. A creation window snapshots the container directory
+default and resolves empty Attach/Create paths to it; saved locations and existing
+drafts are unchanged by later setting publications.
+
+Independent ImagePicker and LanguageChooser entities own image and version drafts.
+Immediate local filtering shares no failure state with debounced registry search.
+Search retains the source and engine, invalidates obsolete generations and uses a
+bounded 16-entry, 90-second cache; recognizable rate limits impose a 60-second
+cooldown without automatic retry. Complete manual references remain usable.
+Language rows preserve custom version drafts across enablement, render the Rust
+mark with theme foreground and project checked selections into preparation. The
+shared chooser also serves explicit existing-environment tool changes. Custom
+images are checked against their actual platform before installation. Image and
+inventory lists have their own bounds within the relevant step
+([ADR 0074](../adr/0074-captured-host-image-search-and-language-versions.md)).
+
+Workspace settings retains exact original surface/session authority and separately
+projects observed environment facts, installed versions and tool-change status.
+Metadata Save does not install languages. Disconnected remote targets remain
+descriptive until ordinary connection recovery; a scoped executor is never treated
+as an original host executor. Library rows show the server caption without an OS
+icon and project a compact Docker/Podman badge from the checked locator. The whole row
+uses the Containers hover treatment; settings and removal actions appear only
+while that row is hovered. Footer progress
+shows observed layer bytes or an indeterminate phase, independently of action labels
+([ADR 0075](../adr/0075-observed-workspace-environment-management.md)).
+
+Preparation is separate from durable catalog publication. The view presents
+progress and typed failures without owning process execution or a second writer.
+Saved locations resolve through an explicitly supplied provider registry; an
+unknown provider keeps its workspace and history but cannot acquire a terminal.
+Container locations expose no host filesystem fallback. Inner terminals retain
+the normal terminal lifecycle and their original workspace surface
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
 
 ## Containers
 

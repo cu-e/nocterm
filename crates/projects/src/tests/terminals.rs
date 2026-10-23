@@ -64,7 +64,10 @@ fn a_saved_folder_opens_one_ordinary_terminal_and_repeated_open_reuses_it(cx: &m
         assert_eq!(workspace.terminals(cx).len(), 1);
         assert!(window.try_find("project-unavailable").is_none());
         assert_eq!(f.terminals.attempts().len(), 1);
-        assert_eq!(f.terminals.attempts()[0].1, *definition(1).root());
+        assert_eq!(
+            f.terminals.attempts()[0].1,
+            *definition(1).host_folder().unwrap().1
+        );
         assert!(f.terminals.resolutions().is_empty());
     })
     .unwrap();
@@ -163,7 +166,11 @@ fn opening_a_saved_workspace_without_a_parent_opens_its_routed_terminal_inside_t
     );
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
-        window.click("project-open-01010101010101010101010101010101", cx);
+        window.click_at(
+            "project-row-01010101010101010101010101010101",
+            gpui_kit::point(gpui_kit::px(1.), gpui_kit::px(1.)),
+            cx,
+        );
     })
     .unwrap();
     cx.run_until_parked();
@@ -184,7 +191,10 @@ fn opening_a_saved_workspace_without_a_parent_opens_its_routed_terminal_inside_t
     .unwrap();
     assert_eq!(terminals.resolutions(), vec![host]);
     assert_eq!(terminals.attempts().len(), 1);
-    assert_eq!(terminals.attempts()[0].1, *definition(1).root());
+    assert_eq!(
+        terminals.attempts()[0].1,
+        *definition(1).host_folder().unwrap().1
+    );
 }
 
 #[gpui_kit::test]
@@ -390,7 +400,10 @@ async fn changing_the_saved_server_prevents_new_terminals_from_using_the_old_con
             .clone()
     });
     let mut changed = ProjectDraft::from(original.clone());
-    changed.host = remote(Some("server-b"), "b.example");
+    changed.target = ProjectTarget::HostFolder {
+        host: remote(Some("server-b"), "b.example"),
+        root: changed.target.host_folder().unwrap().1.clone(),
+    };
     cx.update(|cx| {
         f.rig
             .model
@@ -413,4 +426,152 @@ async fn changing_the_saved_server_prevents_new_terminals_from_using_the_old_con
         assert_eq!(terminals.len(), 1);
         assert_eq!(terminals[0].item, terminal);
     });
+}
+
+fn isolated_workspace(
+    host: HostLocator,
+    cx: &mut TestAppContext,
+) -> (
+    Fixture,
+    nocterm_project_providers::testing::FakeProjectPreparation,
+) {
+    isolated_definition(on_host(1, host), cx)
+}
+
+fn isolated_definition(
+    saved: ProjectDefinition,
+    cx: &mut TestAppContext,
+) -> (
+    Fixture,
+    nocterm_project_providers::testing::FakeProjectPreparation,
+) {
+    let preparation = nocterm_project_providers::testing::FakeProjectPreparation::default();
+    let rig = Fixture::with_installation(
+        vec![saved],
+        Arc::new(|_| Box::pin(async { Ok(()) })),
+        |installed| {
+            installed
+                .with_local_host(Some(
+                    Arc::new(nocterm_session::testing::FakeExec::default()),
+                ))
+                .with_preparation(Arc::new(preparation.clone()))
+        },
+        Rc::new(ProjectTerminalProbe::default()),
+        cx,
+    );
+    cx.update_window(rig.window, |_, window, cx| {
+        rig.workspace.update(cx, |workspace, cx| {
+            rig.installed
+                .open(definition(1).id(), workspace, window, cx)
+                .unwrap();
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (rig, preparation)
+}
+
+#[gpui_kit::test]
+fn a_remote_workspace_without_a_live_parent_cannot_redirect_creation_to_this_computer(
+    cx: &mut TestAppContext,
+) {
+    let (rig, preparation) = isolated_workspace(remote(None, "offline.example"), cx);
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("project-unavailable").is_some());
+        window.click("project-new", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("project-name").is_none());
+    })
+    .unwrap();
+    assert!(preparation.discovered().unwrap().is_empty());
+}
+
+#[gpui_kit::test]
+fn an_unknown_provider_workspace_cannot_redirect_creation_to_this_computer(
+    cx: &mut TestAppContext,
+) {
+    let mut draft = definition(1).to_draft();
+    draft.target = ProjectTarget::Provider {
+        provider: ProviderId::parse("example.vm").unwrap(),
+        resource_version: 1,
+        reference: ProviderResourceRef::new(std::iter::empty::<(String, String)>().collect())
+            .unwrap(),
+    };
+    let (rig, preparation) = isolated_definition(draft.try_into().unwrap(), cx);
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("project-unavailable").is_some());
+        window.dispatch_action(Box::new(NewProject), cx);
+        window.render_frame(cx);
+        assert!(window.try_find("project-name").is_none());
+    })
+    .unwrap();
+    assert!(preparation.discovered().unwrap().is_empty());
+    assert!(preparation.requests().unwrap().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_local_workspace_without_a_terminal_can_create_another_local_workspace(
+    cx: &mut TestAppContext,
+) {
+    let (rig, preparation) = isolated_workspace(HostLocator::Local, cx);
+    cx.update_window(rig.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("project-context").label(),
+            Some("This computer")
+        );
+        window.click("project-new", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("project-step-heading").is_some());
+        window.click("project-next", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("project-name").is_some());
+        assert!(rig.workspace.read(cx).terminals(cx).is_empty());
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(preparation.discovered().unwrap().len(), 1);
+}
+
+#[gpui_kit::test]
+fn opening_a_local_folder_without_a_general_terminal_uses_the_existing_resolver(
+    cx: &mut TestAppContext,
+) {
+    let terminals = ProjectTerminalProbe::with_local_sessions(nocterm_workspace::SessionSpec {
+        options: Default::default(),
+        title: "Local folder".into(),
+        profile: None,
+        target: nocterm_session::Target::new("alice", "localhost", 22),
+        auth: Default::default(),
+        launch: None,
+        credential: None,
+        jumps: vec![],
+    });
+    let rig = Fixture::with_installation(
+        vec![definition(1)],
+        Arc::new(|_| Box::pin(async { Ok(()) })),
+        |installed| {
+            installed
+                .with_local_host(Some(
+                    Arc::new(nocterm_session::testing::FakeExec::default()),
+                ))
+                .with_terminal_resolver(Rc::new(terminals.clone()))
+        },
+        Rc::new(terminals.clone()),
+        cx,
+    );
+    cx.update_window(rig.window, |_, window, cx| {
+        rig.workspace.update(cx, |workspace, cx| {
+            rig.installed
+                .open(definition(1).id(), workspace, window, cx)
+                .unwrap();
+            assert_eq!(workspace.items(cx).count(), 1);
+            assert_eq!(workspace.terminals(cx).len(), 1);
+        });
+    })
+    .unwrap();
+    assert_eq!(terminals.resolutions(), vec![HostLocator::Local]);
+    assert_eq!(terminals.attempts().len(), 1);
 }

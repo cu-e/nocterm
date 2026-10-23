@@ -14,6 +14,10 @@ pub enum ProjectValidationError {
     InvalidHost,
     #[error("the imported source identity is invalid")]
     InvalidSource,
+    #[error("the workspace provider identifier is invalid")]
+    InvalidProvider,
+    #[error("the workspace resource reference is invalid or exceeds its limits")]
+    InvalidResource,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]

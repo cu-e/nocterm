@@ -47,7 +47,8 @@ impl LocalPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let path = cx.new(|cx| path_input::PathInput::new(installed.local().clone(), window, cx));
+        let path =
+            cx.new(|cx| path_input::PathInput::new(installed.directories().local(), window, cx));
         let subscription = cx.subscribe(&path, |this, _, event: &path_input::Navigate, cx| {
             if let path_input::Directory::Local(path) = &event.directory {
                 this.load_local_with_navigation(path.clone(), event.mode, cx);
@@ -481,57 +482,37 @@ impl LocalPane {
         h_flex()
             .gap_1()
             .child(div().flex_1().text_sm().child("Local"))
-            .child(
-                Button::new("local-home")
-                    .small()
-                    .ghost()
-                    .label("Home")
-                    .disabled(self.browser.loading)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(home) = this.browser.home.clone() {
-                            this.load_local(home, cx);
-                        }
-                    })),
-            )
-            .child(
-                Button::new("local-parent")
-                    .small()
-                    .ghost()
-                    .label("Up")
-                    .disabled(
-                        self.browser.loading
-                            || self
-                                .browser
-                                .path
-                                .as_deref()
-                                .and_then(|p| p.parent())
-                                .is_none(),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(parent) = this
-                            .browser
-                            .path
-                            .as_deref()
-                            .and_then(|p| p.parent())
-                            .map(|p| p.to_owned())
-                        {
-                            this.load_local(parent, cx);
-                        }
-                    })),
-            )
-            .child(
-                Button::new("local-refresh")
-                    .small()
-                    .ghost()
-                    .icon(IconName::RefreshCw)
-                    .tooltip("Refresh local directory")
-                    .disabled(self.browser.loading)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(path) = this.browser.requested.clone() {
-                            this.load_local(path, cx);
-                        }
-                    })),
-            )
+            .child(path_input::DirectoryNavigation::new(
+                "local",
+                !self.browser.loading,
+                self.browser
+                    .path
+                    .as_deref()
+                    .and_then(|path| path.parent())
+                    .is_some(),
+                {
+                    let pane = cx.entity().downgrade();
+                    move |action, _, cx| {
+                        let _ = pane.update(cx, |pane, cx| {
+                            let directory = match action {
+                                path_input::NavigationAction::Home => pane.browser.home.clone(),
+                                path_input::NavigationAction::Up => pane
+                                    .browser
+                                    .path
+                                    .as_deref()
+                                    .and_then(|path| path.parent())
+                                    .map(ToOwned::to_owned),
+                                path_input::NavigationAction::Refresh => {
+                                    pane.browser.requested.clone()
+                                }
+                            };
+                            if let Some(directory) = directory {
+                                pane.load_local(directory, cx);
+                            }
+                        });
+                    }
+                },
+            ))
     }
     fn footer(&self, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> impl IntoElement {
         let information = statistics::summary(self.browser.counter.shown());

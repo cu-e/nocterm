@@ -136,8 +136,7 @@ fn sessions_that_run_programs_are_watched_remotely() {
     ));
 
     let without_exec = SessionContext::new(target("user@other"), None, true);
-    let watched = watched_host(Some(&without_exec), Some(&local), &settings).unwrap();
-    assert_eq!(watched.key, HostKey::Local);
+    assert!(watched_host(Some(&without_exec), Some(&local), &settings).is_none());
     assert_eq!(
         watched_host(None, Some(&local), &settings).unwrap().key,
         HostKey::Local
@@ -236,7 +235,14 @@ fn fixture_with_ready(
                 })
             })
             .unwrap();
-        let monitor = cx.new(|cx| HostMonitor::new(&workspace, None, &installed, cx));
+        let monitor = cx.new(|cx| {
+            HostMonitor::new(
+                &workspace,
+                workspace.read(cx).monitor_source(cx),
+                &installed,
+                cx,
+            )
+        });
         (window, workspace, monitor, installed, ready)
     })
 }
@@ -369,3 +375,5 @@ fn registered_monitors_keep_their_supplied_host_across_other_windows(cx: &mut Te
 }
 
 mod dependencies;
+
+mod sources;

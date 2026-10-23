@@ -65,7 +65,9 @@ fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mu
         let toggle = window.find("toggle-right-panel").bounds();
         assert!(toggle.left() > window.find("toggle-local-terminal").bounds().right());
         workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(true, cx)
+            // With navigation hidden, expansion fills the entire body.
+            workspace.toggle_sidebar(window, cx);
+            workspace.set_right_panel_maximized(true, cx);
         });
         window.render_frame(cx);
         assert!(window.try_find("empty-new-tab").is_none());

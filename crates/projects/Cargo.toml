@@ -11,14 +11,23 @@ layer = "feature"
 
 [dependencies]
 gpui-kit.workspace = true
+nocterm-store.workspace = true
 nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
+nocterm-containers.workspace = true
+nocterm-explorer.workspace = true
+nocterm-session.workspace = true
 nocterm-project-service.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 nocterm-workspace-ports.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+async-channel.workspace = true
 
 [dev-dependencies]
+nocterm-explorer = { workspace = true, features = ["test-support"] }
+nocterm-project-providers = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 gpui-kit = { workspace = true, features = ["test-support"] }
 nocterm-project-model = { workspace = true, features = ["test-support"] }

@@ -146,3 +146,39 @@ async fn a_full_queue_refuses_new_work_without_discarding_admitted_definitions(
         assert!(handle.catalog(cx).get(project(34)).is_none());
     });
 }
+
+#[gpui::test]
+async fn shutdown_refuses_new_workspace_preparation_without_creating_resources(
+    cx: &mut gpui::TestAppContext,
+) {
+    use nocterm_project_providers::{
+        ProjectSetupRequest, SetupMode, testing::FakeProjectPreparation,
+    };
+    let shutdown = ShutdownCoordinator::default();
+    let handle = install(
+        PreparedProjects::loaded(Ok(None), true),
+        ready_writer(),
+        &shutdown,
+        cx,
+    );
+    let preparation = FakeProjectPreparation::default();
+    let work = cx.update(|cx| shutdown.capture_all(cx));
+    let result = cx.update(|cx| {
+        handle.prepare_workspace(
+            Arc::new(preparation.clone()),
+            Arc::new(nocterm_session::testing::FakeExec::default()),
+            ProjectSetupRequest {
+                project: project(1),
+                host: nocterm_project_model::HostLocator::Local,
+                mode: SetupMode::Direct {
+                    root: nocterm_project_model::RootPath::parse("/workspace").unwrap(),
+                },
+                repository: None,
+            },
+            cx,
+        )
+    });
+    assert!(matches!(result, Err(ProjectsError::Closing)));
+    assert!(preparation.requests().unwrap().is_empty());
+    assert!(work.await.failures().is_empty());
+}

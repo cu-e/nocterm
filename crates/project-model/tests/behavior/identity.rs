@@ -7,7 +7,9 @@ fn renaming_and_changing_a_root_preserve_supplied_project_identity() {
     let original = definition(1);
     let mut draft = original.to_draft();
     draft.name = "Renamed".into();
-    draft.root = RootPath::parse("/srv/renamed").unwrap();
+    if let nocterm_project_model::ProjectTarget::HostFolder { root, .. } = &mut draft.target {
+        *root = RootPath::parse("/srv/renamed").unwrap();
+    }
     let renamed = ProjectDefinition::try_from(draft).unwrap();
     assert_eq!(original.id(), renamed.id());
     assert_eq!(
@@ -21,7 +23,10 @@ fn equal_names_hosts_and_paths_do_not_merge_supplied_ids() {
     let first = definition(1);
     let second = definition(2);
     assert_eq!(first.name(), second.name());
-    assert_eq!(first.root(), second.root());
+    assert_eq!(
+        first.host_folder().unwrap().1,
+        second.host_folder().unwrap().1
+    );
     assert_ne!(first.id(), second.id());
 }
 
@@ -106,11 +111,13 @@ fn invalid_names_host_routes_and_import_sources_keep_typed_validation_reasons() 
         Err(ProjectValidationError::InvalidName)
     );
     let mut draft = definition(1).to_draft();
-    draft.host = HostLocator::Ssh {
-        profile: "p".into(),
-        target: Target::new("user", "host", 0),
-        via: vec![],
-    };
+    if let nocterm_project_model::ProjectTarget::HostFolder { host, .. } = &mut draft.target {
+        *host = HostLocator::Ssh {
+            profile: "p".into(),
+            target: Target::new("user", "host", 0),
+            via: vec![],
+        };
+    }
     assert_eq!(
         ProjectDefinition::try_from(draft),
         Err(ProjectValidationError::InvalidHost)
@@ -134,7 +141,7 @@ fn unknown_source_and_host_fields_are_refused_even_when_other_values_are_valid()
     value["source"] = serde_json::json!({"kind":"imported", "provider":"coder", "deployment":"deployment-one", "account":"account-one", "external_id":"one", "unexpected":true});
     assert!(serde_json::from_value::<ProjectDraft>(value).is_err());
     let mut value = serde_json::to_value(definition(1).to_draft()).unwrap();
-    value["host"] = serde_json::json!({"kind":"ssh", "profile":"one", "target":{"host":"server","user":"u","port":22,"unexpected":true},"via":[]});
+    value["target"]["host"] = serde_json::json!({"kind":"ssh", "profile":"one", "target":{"host":"server","user":"u","port":22,"unexpected":true},"via":[]});
     assert!(serde_json::from_value::<ProjectDraft>(value).is_err());
 }
 

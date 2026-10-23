@@ -14,6 +14,7 @@ mod project_parent;
 pub(crate) enum AccessOrigin {
     GeneralConnection,
     GeneralCommand,
+    WorkspaceResource,
 }
 
 pub(crate) struct Access {

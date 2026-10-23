@@ -68,6 +68,11 @@ impl PreparedApp {
                 transport: Arc::new(transport),
                 local,
                 local_host,
+                image_search: Arc::new(nocterm_project_runtime::NativeImageSearch),
+                environment: Arc::new(nocterm_project_runtime::NativeWorkspaceEnvironment),
+                container_actions: Arc::new(
+                    nocterm_project_runtime::NativeWorkspaceContainerActions,
+                ),
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,
@@ -162,11 +167,15 @@ fn files_dependencies(
         ),
     )
     .context("starting transfers")?;
+    let directories = Arc::new(nocterm_directory_io::DirectoryReaders::new(
+        local_fs.clone(),
+    ));
     Ok(nocterm_files::Deps::new(
         local_fs.clone(),
         local_fs,
         transfers,
         Arc::new(nocterm_local::LocalProgramOpener::default()),
+        directories,
     ))
 }
 

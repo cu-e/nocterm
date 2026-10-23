@@ -31,7 +31,9 @@ fn rename_preserves_source_stamp_but_root_cycles_retain_intermediate_revisions()
     state.save(renamed.clone(), Some(&original)).unwrap();
     assert_eq!(state.stamp(project(1)).unwrap(), first);
     let mut draft = renamed.to_draft();
-    draft.root = RootPath::parse("/srv/other").unwrap();
+    if let nocterm_project_model::ProjectTarget::HostFolder { root, .. } = &mut draft.target {
+        *root = RootPath::parse("/srv/other").unwrap();
+    }
     let other = ProjectDefinition::try_from(draft).unwrap();
     state.save(other.clone(), Some(&renamed)).unwrap();
     state.save(original.clone(), Some(&other)).unwrap();
@@ -79,11 +81,13 @@ fn exact_ssh_route_changes_invalidate_only_the_affected_source_stamp() {
     let first = state.stamp(project(1)).unwrap();
     let retained = state.stamp(project(2)).unwrap();
     let mut draft = original.to_draft();
-    draft.host = HostLocator::Ssh {
-        profile: "profile".into(),
-        target: Target::new("user", "host", 22),
-        via: vec![Target::new("user", "bastion", 22)],
-    };
+    if let nocterm_project_model::ProjectTarget::HostFolder { host, .. } = &mut draft.target {
+        *host = HostLocator::Ssh {
+            profile: "profile".into(),
+            target: Target::new("user", "host", 22),
+            via: vec![Target::new("user", "bastion", 22)],
+        };
+    }
     state
         .save(draft.try_into().unwrap(), Some(&original))
         .unwrap();

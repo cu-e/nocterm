@@ -202,7 +202,6 @@ impl Workspace {
         }
     }
     pub fn activate_panel(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
         let Some(focus) = self.sidebar.activate(ix, cx) else {
             return;
         };
@@ -225,12 +224,15 @@ impl Workspace {
         self.sidebar.index_of::<T>()
     }
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
-        if !self.sidebar.toggle()
-            && let Some(item) = self.active_item(cx)
-        {
-            let focus = item.focus_handle(cx);
-            window.focus(&focus, cx);
+        if !self.sidebar.toggle() {
+            let focus = if self.right_panel.maximized() {
+                self.right_panel.focus_handle(cx)
+            } else {
+                self.active_item(cx).map(|item| item.focus_handle(cx))
+            };
+            if let Some(focus) = focus {
+                window.focus(&focus, cx);
+            }
         }
         cx.notify();
     }
@@ -299,9 +301,11 @@ impl Workspace {
         if self.right_panel.maximized() || !self.right_panel.open() {
             return;
         }
-        let arrangement =
-            self.body
-                .arrangement(self.sidebar.visible(), self.right_panel.open(), cx);
+        let arrangement = self.body.arrangement(
+            self.sidebar.visible(),
+            layout::PanelPresentation::Docked,
+            cx,
+        );
         self.body.widen_side_panel(arrangement, delta, window, cx);
         cx.notify();
     }

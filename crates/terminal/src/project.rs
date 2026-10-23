@@ -1,10 +1,12 @@
-//! Folder terminals use the same launch, authentication and reconnect lifecycle.
+//! Bound workspace sessions keep ordinary authentication and reconnect.
 use crate::{Installed, Terminal, TerminalView};
 use gpui_kit::{App, AppContext as _, Window};
-use nocterm_project_model::RootPath;
+use nocterm_project_model::{ProjectTarget, RootPath};
+use nocterm_project_providers::ContainerLocation;
 use nocterm_workspace::{
-    ContextSelectionError, ExpectedSession, ItemHandle, ProjectTerminalOpen,
-    ProjectTerminalSession, ProjectTerminalTarget, SessionSpec, TerminalStatus,
+    ContextSelectionError, ExpectedSession, ItemHandle, ProjectConnectionError,
+    ProjectTerminalOpen, ProjectTerminalSession, ProjectTerminalTarget, SessionSpec,
+    TerminalStatus,
 };
 use std::rc::Rc;
 
@@ -13,23 +15,54 @@ pub fn project_terminal_opener(installed: &Installed) -> Rc<dyn ProjectTerminalO
         installed: installed.clone(),
     })
 }
-/// Capture ordinary connection settings for terminals opened inside a workspace.
+/// Bind a checked resource before any surface opening can be requested.
 pub fn project_session(
     installed: &Installed,
     spec: SessionSpec,
     local: bool,
-) -> Rc<dyn ProjectTerminalSession> {
-    Rc::new(FolderSession {
-        installed: installed.clone(),
+    location: &ProjectTarget,
+) -> Result<Rc<dyn ProjectTerminalSession>, ProjectConnectionError> {
+    location.validate()?;
+    let container = ContainerLocation::from_target(location).ok();
+    let host = location
+        .host_folder()
+        .map(|(host, _)| host)
+        .or_else(|| container.as_ref().map(|location| location.host()))
+        .ok_or(ProjectConnectionError::ProviderUnavailable)?;
+    let matches = match host {
+        nocterm_project_model::HostLocator::Local => local,
+        _ => !local && host.address().as_ref() == Some(&spec.address()),
+    };
+    if !matches {
+        return Err(ProjectConnectionError::ChangedTargetOrRoute);
+    }
+    let (installed, local, root) = match location {
+        ProjectTarget::HostFolder { root, .. } => {
+            (installed.with_workspace_sessions(), local, root.clone())
+        }
+        ProjectTarget::Provider { .. } => {
+            let location = ContainerLocation::from_target(location)
+                .map_err(|_| ProjectConnectionError::ProviderUnavailable)?;
+            let root = location.root().clone();
+            let transport = installed
+                .container_transport(local, location)
+                .ok_or(ProjectConnectionError::ProviderUnavailable)?;
+            (installed.with_remote(transport), false, root)
+        }
+    };
+    Ok(Rc::new(FolderSession {
+        installed,
         spec,
         local,
-    })
+        root,
+    }))
 }
-
-pub fn local_project_session(installed: &Installed) -> Rc<dyn ProjectTerminalSession> {
-    project_session(installed, crate::terminal::local_spec(), true)
+pub fn local_project_session(
+    installed: &Installed,
+    location: &ProjectTarget,
+) -> Result<Rc<dyn ProjectTerminalSession>, ProjectConnectionError> {
+    project_session(installed, crate::terminal::local_spec(), true, location)
 }
-
 struct ProjectTerminals {
     installed: Installed,
 }
@@ -37,12 +70,14 @@ struct FolderSession {
     installed: Installed,
     spec: SessionSpec,
     local: bool,
+    root: RootPath,
 }
 impl ProjectTerminalOpen for ProjectTerminals {
     fn capture(
         &self,
         parent: Rc<dyn ItemHandle>,
         expected: ExpectedSession,
+        location: &ProjectTarget,
         cx: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, ContextSelectionError> {
         let info = parent
@@ -60,21 +95,22 @@ impl ProjectTerminalOpen for ProjectTerminals {
             .downcast::<TerminalView>()
             .map_err(|_| ContextSelectionError::ParentUnavailable)?;
         let terminal = view.read(cx).terminal().read(cx);
-        if terminal.is_command() {
+        if terminal.is_command() || terminal.installed().is_container() {
             return Err(ContextSelectionError::ParentUnavailable);
         }
-        Ok(project_session(
+        project_session(
             &self.installed,
             terminal.spec().clone(),
             terminal.is_local(),
-        ))
+            location,
+        )
+        .map_err(|_| ContextSelectionError::Unavailable)
     }
 }
 impl ProjectTerminalSession for FolderSession {
     fn open(
         &self,
         target: ProjectTerminalTarget,
-        root: &RootPath,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), ContextSelectionError> {
@@ -94,7 +130,7 @@ impl ProjectTerminalSession for FolderSession {
             };
             crate::terminal::shell_launch(defaults)
         });
-        launch.cwd = Some(root.as_str().to_owned());
+        launch.cwd = Some(self.root.as_str().to_owned());
         spec.launch = Some(launch);
         spec.title = "Terminal".into();
         let view = cx.new(|cx| {
@@ -104,21 +140,17 @@ impl ProjectTerminalSession for FolderSession {
             TerminalView::with_terminal(terminal, window, cx)
         });
         match target.destination() {
-            Some(destination) => {
-                target.surface().add_local_terminal(
-                    target.selection(),
-                    view,
-                    destination,
-                    window,
-                    cx,
-                )?;
-            }
-            None => {
-                target
-                    .surface()
-                    .add_item(target.selection(), view, window, cx)?;
-            }
-        }
+            Some(destination) => target.surface().add_local_terminal(
+                target.selection(),
+                view,
+                destination,
+                window,
+                cx,
+            )?,
+            None => target
+                .surface()
+                .add_item(target.selection(), view, window, cx)?,
+        };
         Ok(())
     }
 }

@@ -17,6 +17,7 @@ pub struct SessionProbe {
     spec: SessionSpec,
     connected: bool,
     fs: Option<Arc<dyn RemoteFs>>,
+    exec: Option<Arc<dyn nocterm_session::HostExec>>,
     generation: u64,
     parent: Option<Rc<dyn nocterm_workspace_ports::ProjectParentCapture>>,
 }
@@ -47,9 +48,19 @@ impl SessionProbe {
             spec,
             connected,
             fs,
+            exec: None,
             generation: 0,
             parent: None,
         })
+    }
+    /// Supply structured execution without a native session in feature tests.
+    pub fn set_executor(
+        &mut self,
+        exec: Arc<dyn nocterm_session::HostExec>,
+        cx: &mut Context<Self>,
+    ) {
+        self.exec = Some(exec);
+        cx.emit(ItemEvent::Changed);
     }
     pub fn set_project_parent(
         &mut self,
@@ -121,7 +132,8 @@ impl Item for SessionProbe {
     fn session(&self, _: &App) -> Option<SessionContext> {
         Some(
             SessionContext::new(self.spec.target.clone(), self.fs.clone(), self.connected)
-                .with_via(self.spec.address().via),
+                .with_via(self.spec.address().via)
+                .with_exec(self.exec.clone()),
         )
     }
     fn session_spec(&self, _: &App) -> Option<SessionSpec> {
@@ -132,7 +144,8 @@ impl Item for SessionProbe {
         Some(
             TerminalCapabilities::new(state.clone())
                 .with_fact_session(state.clone())
-                .with_project_parent(state),
+                .with_project_parent(state.clone())
+                .with_execution(state),
         )
     }
 }
@@ -165,6 +178,25 @@ impl nocterm_workspace_ports::ProjectParentCapture for ProbeState {
             .as_ref()
             .ok_or(ProjectParentError::Disconnected)?
             .capture(expected, cx)
+    }
+}
+impl crate::TerminalExecution for ProbeState {
+    fn executor(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<Arc<dyn nocterm_session::HostExec>, crate::TerminalError> {
+        let owner = self.owner.upgrade().ok_or(crate::TerminalError::Gone)?;
+        let probe = owner.read(cx);
+        if expected != ExpectedSession::new(owner.entity_id(), probe.generation) {
+            return Err(crate::TerminalError::StaleSession);
+        }
+        if !probe.connected {
+            return Err(crate::TerminalError::Unavailable);
+        }
+        probe.exec.clone().ok_or(crate::TerminalError::Unsupported(
+            crate::TerminalCapability::SessionExecution,
+        ))
     }
 }
 impl crate::ConnectionFactSession for ProbeState {

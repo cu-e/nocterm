@@ -1,5 +1,7 @@
 //! Off-thread acquisition and explicit composition of workspace installations.
 mod connect;
+#[cfg(test)]
+mod native_tests;
 
 use gpui_kit::App;
 use nocterm_core::Paths;
@@ -11,10 +13,17 @@ use std::sync::Arc;
 pub(crate) fn terminal_resolver(
     terminal: &nocterm_terminal::Installed,
     connections: Option<&nocterm_connections::Installed>,
-) -> std::rc::Rc<dyn nocterm_workspace::ProjectTerminalResolve> {
-    std::rc::Rc::new(connect::TerminalResolver::new(
-        terminal.clone(),
-        connections.cloned(),
+) -> Result<
+    std::rc::Rc<dyn nocterm_workspace::ProjectTerminalResolve>,
+    nocterm_workspace::ProjectConnectionError,
+> {
+    let builtin: std::rc::Rc<dyn nocterm_workspace::ProjectTerminalResolve> = std::rc::Rc::new(
+        connect::TerminalResolver::new(terminal.clone(), connections.cloned()),
+    );
+    let id =
+        nocterm_project_model::ProviderId::parse(nocterm_project_providers::CONTAINER_PROVIDER)?;
+    Ok(std::rc::Rc::new(
+        nocterm_workspace::ProjectProviderRegistry::new(builtin.clone(), [(id, builtin)])?,
     ))
 }
 
@@ -56,6 +65,7 @@ impl PreparedProjectSetup {
         self,
         terminal: &nocterm_terminal::Installed,
         connections: Option<&nocterm_connections::Installed>,
+        settings: nocterm_store::SettingsHandle,
         shutdown: &ShutdownCoordinator,
         cx: &mut App,
     ) -> Result<nocterm_projects::Installed, ProjectsError> {
@@ -66,9 +76,14 @@ impl PreparedProjectSetup {
             shutdown,
             cx,
         )?;
-        Ok(
-            nocterm_projects::init(model, nocterm_terminal::project_terminal_opener(terminal))
-                .with_terminal_resolver(terminal_resolver(terminal, connections)),
+        Ok(nocterm_projects::init(
+            model,
+            nocterm_terminal::project_terminal_opener(terminal),
+            settings,
+            cx,
         )
+        .with_terminal_resolver(
+            terminal_resolver(terminal, connections).map_err(ProjectsError::installation)?,
+        ))
     }
 }

@@ -3,7 +3,7 @@ use std::{error::Error as _, fs};
 use nocterm_project_model::{
     Catalog, CatalogError, HostLocator, MAX_CATALOG_BYTES, MAX_PROJECTS, ProjectDefinition,
     ProjectDraft, ProjectId, ProjectMetadataSource, ProjectRepository, ProjectSource,
-    ProjectStorageError, RootPath,
+    ProjectStorageError, ProjectTarget, RootPath,
 };
 use nocterm_project_storage::{FileProjectRepository, NativeProjectMetadata};
 
@@ -12,8 +12,10 @@ fn catalog(value: u8) -> Catalog {
         ProjectDefinition::try_from(ProjectDraft {
             id: ProjectId::from_bytes([value; 16]),
             name: "Project".into(),
-            host: HostLocator::Local,
-            root: RootPath::parse("/srv/project").unwrap(),
+            target: ProjectTarget::HostFolder {
+                host: HostLocator::Local,
+                root: RootPath::parse("/srv/project").unwrap(),
+            },
             source: ProjectSource::Manual,
             updated: 123,
         })
@@ -47,6 +49,11 @@ fn loading_a_legacy_catalog_preserves_identity_and_republishes_only_folder_metad
     let path = directory.path().join("projects.json");
     let expected = catalog(1);
     let mut old: serde_json::Value = serde_json::from_slice(&expected.encode().unwrap()).unwrap();
+    old["version"] = serde_json::json!(1);
+    let legacy = old["projects"][0].as_object_mut().unwrap();
+    legacy.remove("target");
+    legacy.insert("host".into(), serde_json::json!({"kind":"local"}));
+    legacy.insert("root".into(), serde_json::json!("/srv/project"));
     old["projects"][0]["policy"] = serde_json::json!({"version":1,"execution":false});
     fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
     let repository = FileProjectRepository::new(path.clone());
@@ -54,7 +61,10 @@ fn loading_a_legacy_catalog_preserves_identity_and_republishes_only_folder_metad
     assert_eq!(loaded, expected);
     repository.save(&loaded).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(saved["version"], 2);
     assert!(saved["projects"][0].get("policy").is_none());
+    assert!(saved["projects"][0].get("host").is_none());
+    assert!(saved["projects"][0].get("root").is_none());
     assert_eq!(saved["projects"][0]["id"], old["projects"][0]["id"]);
 }
 
@@ -96,7 +106,7 @@ fn catalog_capacity_and_invalid_names_retain_typed_validation_causes() {
     let repository = FileProjectRepository::new(path.clone());
     let project = catalog(1).iter().next().unwrap().to_draft();
     let oversized =
-        serde_json::json!({"version":1, "projects": vec![project.clone(); MAX_PROJECTS + 1]});
+        serde_json::json!({"version":2, "projects": vec![project.clone(); MAX_PROJECTS + 1]});
     fs::write(&path, serde_json::to_vec(&oversized).unwrap()).unwrap();
     assert!(matches!(
         repository.load(),
@@ -106,7 +116,7 @@ fn catalog_capacity_and_invalid_names_retain_typed_validation_causes() {
     invalid.name.clear();
     fs::write(
         &path,
-        serde_json::to_vec(&serde_json::json!({"version":1,"projects":[invalid]})).unwrap(),
+        serde_json::to_vec(&serde_json::json!({"version":2,"projects":[invalid]})).unwrap(),
     )
     .unwrap();
     assert!(matches!(

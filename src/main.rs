@@ -65,7 +65,8 @@ fn main() -> anyhow::Result<()> {
         .with_assets(nocterm_ui::Assets::with_marks(
             nocterm_agent_providers::catalog()
                 .marks()
-                .map(|mark| (mark.asset(), mark.svg())),
+                .map(|mark| (mark.asset(), mark.svg()))
+                .chain(nocterm_projects::marks()),
         ))
         .run(move |cx| prepared.install_when_ready(cx));
     Ok(())

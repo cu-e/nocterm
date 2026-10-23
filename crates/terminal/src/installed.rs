@@ -76,6 +76,8 @@ pub struct Deps {
     local: LocalSessions,
     credentials: Option<CredentialProvider>,
     recording: Option<Arc<nocterm_store::RecordingRegistry>>,
+    containers: Option<Arc<dyn nocterm_project_providers::ContainerSessionFactory>>,
+    workspace_sessions: Option<Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>>,
 }
 impl Deps {
     pub fn new(remote: Arc<dyn Transport>, local: LocalSessions) -> Self {
@@ -84,7 +86,23 @@ impl Deps {
             local,
             credentials: None,
             recording: None,
+            containers: None,
+            workspace_sessions: None,
         }
+    }
+    pub fn with_container_sessions(
+        mut self,
+        factory: Arc<dyn nocterm_project_providers::ContainerSessionFactory>,
+    ) -> Self {
+        self.containers = Some(factory);
+        self
+    }
+    pub fn with_workspace_sessions(
+        mut self,
+        factory: Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>,
+    ) -> Self {
+        self.workspace_sessions = Some(factory);
+        self
     }
     pub fn with_credentials(mut self, credentials: CredentialProvider) -> Self {
         self.credentials = Some(credentials);
@@ -100,7 +118,10 @@ impl Deps {
             local: self.local,
             credentials: self.credentials,
             recording: self.recording,
+            containers: self.containers,
+            workspace_sessions: self.workspace_sessions,
             settings,
+            container: false,
         }))
     }
 }
@@ -109,11 +130,68 @@ struct InstalledDeps {
     local: LocalSessions,
     credentials: Option<CredentialProvider>,
     recording: Option<Arc<nocterm_store::RecordingRegistry>>,
+    containers: Option<Arc<dyn nocterm_project_providers::ContainerSessionFactory>>,
+    workspace_sessions: Option<Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>>,
     settings: nocterm_store::SettingsHandle,
+    container: bool,
 }
 #[derive(Clone)]
 pub struct Installed(Arc<InstalledDeps>);
 impl Installed {
+    pub(crate) fn with_workspace_sessions(&self) -> Self {
+        let Some(factory) = &self.0.workspace_sessions else {
+            return self.clone();
+        };
+        let local = self.0.local.factory.clone().map(|native| {
+            let factory = factory.clone();
+            Arc::new(move |_: ShellLaunch| factory.wrap_local(native.clone())) as LocalFactory
+        });
+        Self(Arc::new(InstalledDeps {
+            remote: factory.wrap(self.remote()),
+            local: LocalSessions {
+                factory: local,
+                default_program: self.0.local.default_program.clone(),
+            },
+            credentials: self.0.credentials.clone(),
+            recording: self.0.recording.clone(),
+            containers: self.0.containers.clone(),
+            workspace_sessions: self.0.workspace_sessions.clone(),
+            settings: self.0.settings.clone(),
+            container: false,
+        }))
+    }
+    pub(crate) fn container_transport(
+        &self,
+        local: bool,
+        location: nocterm_project_providers::ContainerLocation,
+    ) -> Option<Arc<dyn Transport>> {
+        self.0.containers.as_ref().and_then(|factory| {
+            if local {
+                self.0
+                    .local
+                    .factory
+                    .clone()
+                    .map(|local| factory.wrap_local(local, location))
+            } else {
+                Some(factory.wrap(self.remote(), location))
+            }
+        })
+    }
+    pub(crate) fn with_remote(&self, remote: Arc<dyn Transport>) -> Self {
+        Self(Arc::new(InstalledDeps {
+            remote,
+            local: self.0.local.clone(),
+            credentials: self.0.credentials.clone(),
+            recording: self.0.recording.clone(),
+            containers: self.0.containers.clone(),
+            workspace_sessions: self.0.workspace_sessions.clone(),
+            settings: self.0.settings.clone(),
+            container: true,
+        }))
+    }
+    pub(crate) fn is_container(&self) -> bool {
+        self.0.container
+    }
     pub(crate) fn settings(&self) -> &nocterm_store::SettingsHandle {
         &self.0.settings
     }

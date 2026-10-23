@@ -1,0 +1,32 @@
+[package]
+name = "nocterm-project-providers"
+description = "Typed builtin workspace locations and preparation contracts."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "domain"
+
+[dependencies]
+nocterm-core.workspace = true
+nocterm-project-model.workspace = true
+nocterm-containers.workspace = true
+nocterm-session.workspace = true
+nocterm-settings.workspace = true
+schemars.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test-support = []

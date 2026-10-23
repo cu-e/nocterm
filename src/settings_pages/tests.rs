@@ -71,7 +71,7 @@ fn ordinary_and_startup_catalogs_keep_their_distinct_guests_and_per_item_instanc
         let pages = SettingsPages::new(
             installed.clone(),
             builtins(called.clone()),
-            ["keymap", "monitor", "explorer", "vault"]
+            ["keymap", "monitor", "explorer", "workspaces", "vault"]
                 .into_iter()
                 .map(|id| spec(id, called.clone()))
                 .collect(),
@@ -96,8 +96,8 @@ fn ordinary_and_startup_catalogs_keep_their_distinct_guests_and_per_item_instanc
     cx.update_window(ordinary_window, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(ordinary.read(cx).selected_page_id(), "appearance");
-        assert!(window.within("settings-pages").try_find(8usize).is_some());
-        assert!(window.within("settings-pages").try_find(9usize).is_none());
+        assert!(window.within("settings-pages").try_find(9usize).is_some());
+        assert!(window.within("settings-pages").try_find(10usize).is_none());
     })
     .unwrap();
     cx.update_window(startup_window, |_, window, cx| {

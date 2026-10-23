@@ -6,6 +6,8 @@ use nocterm_store::StoreError;
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum ProjectsError {
+    #[error("workspace capability installation failed: {0}")]
+    Installation(#[source] nocterm_core::SharedCause),
     #[error(transparent)]
     Catalog(#[from] CatalogError),
     #[error(transparent)]
@@ -29,6 +31,9 @@ pub enum ProjectsError {
 }
 
 impl ProjectsError {
+    pub fn installation(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Installation(nocterm_core::SharedCause::new(source))
+    }
     pub(crate) fn read_only(error: Arc<ProjectStorageError>) -> Self {
         Self::ReadOnly(SharedError::from_arc(error))
     }
@@ -47,4 +52,12 @@ impl From<StoreError> for ProjectsError {
             error => Self::Persistence(error),
         }
     }
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum WorkspaceRemovalError {
+    #[error(transparent)]
+    Action(#[from] nocterm_project_providers::ContainerActionError),
+    #[error("workspace settings could not be removed: {0}")]
+    Catalog(#[from] ProjectsError),
 }

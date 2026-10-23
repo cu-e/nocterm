@@ -100,5 +100,5 @@ impl CatalogState {
 }
 
 fn same_location(first: &ProjectDefinition, second: &ProjectDefinition) -> bool {
-    first.host() == second.host() && first.root() == second.root()
+    first.target() == second.target()
 }

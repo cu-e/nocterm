@@ -7,7 +7,11 @@
 //! `UserPromptToken` authority, `LiveCommandLease`, connection facts,
 //! `SessionContext`, `ConnectionSummary` and the typed `TerminalError` and
 //! `TerminalCapability` refusals, inert original folder-source metadata and
-//! ordinary Explorer session projections.
+//! ordinary Explorer session projections and the private immutable MonitorSource.
+//! Monitor observations retain the selected inner executor and inert resource identity.
+//! Creation sources retain original
+//! executor/filesystem capabilities without authorizing a replacement session.
+//! Explicit local creation may retain an injected executor without any terminal.
 //! Does not own: the workspace, its tabs or items, `ConnectionDirectory`
 //! (which opens connections into a workspace), or any implementation.
 //! Ports provided: the contracts above, implemented by the terminal feature
@@ -15,7 +19,8 @@
 //! and checked folder identity/path values.
 //! Settings section: none. Globals: none.
 //! Invariants: observation grants no session authority; every operation names
-//! its `ExpectedSession` and is refused once that connection changed; a
+//! its `ExpectedSession` and is refused once that connection changed; terminal-free
+//! creation is local only and grants no session authority; a
 //! sign-in answer is bound to its prompt; no authentication or launch data
 //! reaches consumers.
 //! Folder source capture is a human creation seam. ExplorerSource supplies
@@ -23,6 +28,7 @@
 mod connections;
 mod errors;
 mod explorer;
+mod monitor;
 mod project_parent;
 mod session;
 mod terminal;
@@ -33,6 +39,7 @@ pub mod testing;
 pub use connections::ConnectionSummary;
 pub use errors::{TerminalCapability, TerminalError};
 pub use explorer::ExplorerSource;
+pub use monitor::MonitorSource;
 pub use project_parent::{
     ProjectCreationSource, ProjectParentCapture, ProjectParentDescriptor, ProjectParentError,
 };

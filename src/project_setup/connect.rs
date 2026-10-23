@@ -1,6 +1,6 @@
 //! Saved connection metadata becomes an ordinary inner terminal configuration.
 use gpui_kit::{App, AppContext as _, EntityId, WeakEntity, Window};
-use nocterm_project_model::HostLocator;
+use nocterm_project_model::{HostLocator, ProjectTarget};
 use nocterm_workspace::{
     ProjectConnectionError, ProjectTerminalResolve, ProjectTerminalSession, SessionSpec,
 };
@@ -24,13 +24,22 @@ impl TerminalResolver {
 impl ProjectTerminalResolve for TerminalResolver {
     fn resolve(
         &self,
-        host: &HostLocator,
+        location: &ProjectTarget,
         cx: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, ProjectConnectionError> {
-        host.validate()?;
+        location.validate()?;
+        let container;
+        let host = match location {
+            ProjectTarget::HostFolder { host, .. } => host,
+            ProjectTarget::Provider { .. } => {
+                container = nocterm_project_providers::ContainerLocation::from_target(location)
+                    .map_err(|_| ProjectConnectionError::ProviderUnavailable)?;
+                container.host()
+            }
+        };
         let spec = match host {
             HostLocator::Local => {
-                return Ok(nocterm_terminal::local_project_session(&self.terminal));
+                return nocterm_terminal::local_project_session(&self.terminal, location);
             }
             HostLocator::SshDirect { target, via } => SessionSpec {
                 options: Default::default(),
@@ -63,11 +72,7 @@ impl ProjectTerminalResolve for TerminalResolver {
                 )?
             }
         };
-        Ok(nocterm_terminal::project_session(
-            &self.terminal,
-            spec,
-            false,
-        ))
+        nocterm_terminal::project_session(&self.terminal, spec, false, location)
     }
 }
 

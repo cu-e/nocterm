@@ -75,7 +75,14 @@ fn independent_policy_cannot_redirect_an_existing_watch_and_closed_model_is_rele
                 })
             })
             .unwrap();
-        let monitor = cx.new(|cx| HostMonitor::new(&workspace, None, &installed, cx));
+        let monitor = cx.new(|cx| {
+            HostMonitor::new(
+                &workspace,
+                workspace.read(cx).monitor_source(cx),
+                &installed,
+                cx,
+            )
+        });
         (window, workspace, monitor)
     });
     cx.run_until_parked();

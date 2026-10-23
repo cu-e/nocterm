@@ -6,16 +6,42 @@ Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault`, `nocterm-project-model` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
 
 ## Workspace folders
 
 `nocterm-project-model` owns stable workspace/context identities, checked names,
-server descriptors with ordered jump hosts, literal folder paths and the catalog
-format. These are metadata used by the UI and storage. Local and SSH sessions
-continue to use the existing session contracts and normal host permissions.
-Workspace identity also selects chat history independently of visible tabs.
+ordinary host folders, provider resource envelopes and the versioned catalog.
+Provider references have independent schema versions and bounded inert data;
+unknown providers retain their references and history without acquiring a session.
+Import provenance grants no execution authority. Existing catalogs migrate to
+ordinary host folders without changing identity.
+
+`nocterm-project-providers` owns checked built-in container locations and the
+host-backed preparation contracts. Container identity includes the original host,
+ordered jump route, Docker/Podman engine, full container ID and folder. Actual
+command execution belongs to the runtime adapter. Checked ephemeral language/version
+selections reject incompatible version syntax and duplicate languages before I/O.
+`WorkspaceEnvironment` separately admits observed platform capabilities and explicit
+tool changes against a checked host or already scoped executor. Neutral environment
+facts and transfer progress remain ephemeral; `WorkspaceSessionFactory` activates
+managed paths independently of container routing
+([ADR 0075](../adr/0075-observed-workspace-environment-management.md)).
+The separate `ImageSearch` port accepts the captured host executor, engine,
+checked query and cancellation without expanding the preparation contract; registry DTOs
+and typed rate-limit cooldowns do not enter the catalog. Workspace identity selects chat
+history independently of visible tabs and provider availability
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
+The same provider domain owns `[workspaces]` defaults. Its container directory is
+a structurally validated absolute POSIX path with `/home` as the initial policy;
+it neither creates directories nor rewrites saved workspace locations.
+
+`WorkspaceContainerActions` is a separate explicit Stop/Delete contract. A checked
+source pairs the saved container location with a matching original host and ordered
+route; its resource key ignores folder and saved profile aliases. Keep requires no
+provider call. Typed failures retain native causes and acknowledged stop effects
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
 
 ## Connection formats and rules
 
@@ -148,6 +174,11 @@ exec channel of the live connection and `nocterm-local` as a child process.
 splits its output into frames, parses them into raw counters and turns
 successive readings into loads, rates and bounded histories. It knows neither
 GPUI nor the workspace.
+The Linux container platform instead builds own-cgroup v1/v2 CPU/memory recipes.
+It resolves process membership and controller mounts, parses bounded facts and
+derives CPU as percent of one CPU. Memory retains an optional observed limit;
+missing host-only facts stay absent. This reuses the watch's supplied executor and
+frame stream, adding no native filesystem or process acquisition to the domain.
 
 `ProgramOpener` is a distinct pure session contract for external local editors. Its
 validated request preserves literal arguments and native cwd; success acknowledges
@@ -274,9 +305,13 @@ output-size contracts. Native decoding and PNG encoding belong to an adapter.
 
 `nocterm-terminal-model` owns the terminal display settings schema, ranges and
 sanitization without GPUI, emulation or native sessions. `nocterm-explorer` owns
-Explorer indexing settings, ordered opener matching and literal argument substitution;
-filesystem traversal and native program requests stay in the Files feature and its
-injected adapters. Monitor and Vault schemas belong to their existing domain crates.
+Explorer indexing settings, ordered opener matching, literal argument substitution,
+pure directory completion rules and read-only directory contracts. Local paths
+retain native identity and remote paths use POSIX semantics. Filesystem traversal
+and native program requests stay in injected adapters; Files owns their browser
+presentation. Shared directory selection is described in
+[ADR 0072](../adr/0072-shared-directory-selection.md).
+Monitor and Vault schemas belong to their existing domain crates.
 These schemas retain their established serialized names and public schema identities.
 The foundation settings schema builder supplies ordered property/default machinery;
 policy descriptions, constraints and defaults remain with each domain owner.

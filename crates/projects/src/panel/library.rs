@@ -56,7 +56,7 @@ impl ProjectLibrary {
                         .text_xs()
                         .font_medium()
                         .text_color(theme.muted_foreground)
-                        .child("For this server"),
+                        .child("For this host"),
                 )
                 .children(self.current.into_iter().map(row))
             })
@@ -70,7 +70,7 @@ impl ProjectLibrary {
                         .child(if self.searching {
                             "No matching workspaces."
                         } else {
-                            "Open a server terminal, then use + to choose a project folder."
+                            "Use + to create a workspace on this host."
                         }),
                 )
             })

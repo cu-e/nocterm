@@ -7,9 +7,10 @@
 //! terminal styling accepts supplied settings; ThemeUi retains the original policy
 //! and paints Design changes without resolving back into Design.
 //!
-//! Owns: Appearance views, theme projections, shared controls and checked text receipts and layout.
+//! Owns: Appearance views, theme projections, shared controls, directory editing/selection,
+//! checked text receipts and layout.
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
-//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
+//! Ports used: `Persisted`, `ShutdownCoordinator`, read-only `DirectoryRead`. Ports provided: UI helpers,
 //! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
 //! Settings section: appearance. Terminal styling uses the terminal-model domain schema.
 //! Globals: Design, Notices.
@@ -21,6 +22,7 @@
 
 mod animations;
 mod design;
+pub mod directory;
 mod drag_preview;
 mod floating;
 pub mod form;
@@ -69,6 +71,7 @@ pub fn init(
         tracing::warn!(%name, "design tokens name a colour the component theme does not have");
     }
 
+    directory::install_bindings(cx);
     cx.set_global(Design::new(tokens));
     settings.register::<crate::AppearanceSettings>(cx);
     settings.register::<crate::TerminalSettings>(cx);

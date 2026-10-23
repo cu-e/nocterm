@@ -25,6 +25,11 @@ pub struct Installed {
     settings: nocterm_store::SettingsHandle,
 }
 impl Installed {
+    pub(crate) fn directories(
+        &self,
+    ) -> &std::sync::Arc<dyn nocterm_explorer::directory::DirectoryReaders> {
+        &self.deps.directories
+    }
     pub(crate) fn settings(&self) -> &nocterm_store::SettingsHandle {
         &self.settings
     }
@@ -56,7 +61,6 @@ pub fn install(deps: Deps, ready: &nocterm_ui::UiReady, cx: &mut App) -> Install
     ready
         .settings()
         .register::<nocterm_session::LocalShellSettings>(cx);
-    crate::path_input::install_bindings(cx);
     Installed {
         deps,
         settings: ready.settings().clone(),

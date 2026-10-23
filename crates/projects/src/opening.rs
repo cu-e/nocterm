@@ -127,19 +127,30 @@ impl ProjectOpenIntent {
         window: &Window,
         cx: &mut App,
     ) -> Result<(ProjectPresentation, ProjectLifetime), ProjectOpenError> {
-        let source = context::capture_host(workspace, self.definition.host(), window, cx);
-        let parent_item = source.as_ref().ok().map(|source| source.expected().item());
-        let parent = context::server(
-            workspace,
-            self.definition.host(),
-            source.as_ref().ok().map(|source| source.parent()),
-            cx,
-        )?;
+        let host = crate::location::host(self.definition.target());
+        let source = host
+            .as_ref()
+            .ok_or(nocterm_workspace_ports::ProjectParentError::UnavailableParent)
+            .and_then(|host| context::capture_host(workspace, &self.installed, host, window, cx));
+        let parent_item = source
+            .as_ref()
+            .ok()
+            .and_then(|source| source.expected())
+            .map(|expected| expected.item());
+        let parent = host.as_ref().and_then(|host| {
+            context::server(
+                workspace,
+                host,
+                source.as_ref().ok().map(|source| source.parent()),
+                cx,
+            )
+            .ok()
+        });
         let session = capture_session(
             &self.installed,
             self.binding,
             self.claim,
-            self.definition.host(),
+            self.definition.target(),
             workspace,
             window,
             cx,
@@ -155,22 +166,24 @@ pub(crate) fn capture_session(
     installed: &Installed,
     binding: ProjectBinding,
     claim: ProjectClaim,
-    host: &nocterm_project_model::HostLocator,
+    location: &nocterm_project_model::ProjectTarget,
     workspace: &Workspace,
     window: &Window,
     cx: &App,
 ) -> Result<std::rc::Rc<dyn nocterm_workspace::ProjectTerminalSession>, ProjectOpenError> {
     installed.model().check_binding(binding, cx)?;
     installed.model().check_claim(claim, cx)?;
-    if let Ok(source) = context::capture_host(workspace, host, window, cx)
-        && let Some(item) = workspace.general_item(source.expected().item(), cx)
-        && let Ok(session) = installed.terminals().capture(item, source.expected(), cx)
+    if let Some(host) = crate::location::host(location)
+        && let Ok(source) = context::capture_host(workspace, installed, &host, window, cx)
+        && let Some(expected) = source.expected()
+        && let Some(item) = workspace.general_item(expected.item(), cx)
+        && let Ok(session) = installed.terminals().capture(item, expected, location, cx)
     {
         return Ok(session);
     }
     installed
         .resolver()
         .ok_or(nocterm_workspace::ProjectConnectionError::Unavailable)?
-        .resolve(host, cx)
+        .resolve(location, cx)
         .map_err(Into::into)
 }

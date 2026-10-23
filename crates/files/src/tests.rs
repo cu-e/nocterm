@@ -65,6 +65,9 @@ fn fixture_deps() -> Deps {
     let local = Arc::new(nocterm_session::testing::InMemoryFs::default());
     Deps {
         local: local.clone(),
+        directories: Arc::new(nocterm_explorer::testing::MemoryDirectoryReaders::new(
+            local.clone(),
+        )),
         mutations: local,
         transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
         opener: Arc::new(nocterm_session::testing::FakeExec::default()),
@@ -76,6 +79,9 @@ fn fixture_deps_at(root: &std::path::Path) -> (Deps, Arc<nocterm_session::testin
     seed_fixture_tree(&local, root);
     let deps = Deps {
         local: local.clone(),
+        directories: Arc::new(nocterm_explorer::testing::MemoryDirectoryReaders::new(
+            local.clone(),
+        )),
         mutations: local.clone(),
         transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
         opener: Arc::new(nocterm_session::testing::FakeExec::default()),

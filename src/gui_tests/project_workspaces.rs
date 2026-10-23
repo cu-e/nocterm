@@ -61,7 +61,15 @@ impl ProjectFixture {
                 cx,
             )
             .unwrap();
-            Self::compose(host, transport, terminal, connections, credentials, cx)
+            Self::compose(
+                host,
+                transport,
+                terminal,
+                connections,
+                credentials,
+                ready.settings().clone(),
+                cx,
+            )
         })
     }
 
@@ -71,6 +79,7 @@ impl ProjectFixture {
         terminal: nocterm_terminal::Installed,
         connections: nocterm_connections::Installed,
         credentials: Arc<FakeCredentialStore>,
+        settings: nocterm_store::SettingsHandle,
         cx: &mut App,
     ) -> Self {
         let model = ProjectsHandle::install(
@@ -87,11 +96,15 @@ impl ProjectFixture {
         let projects = nocterm_projects::init(
             model.clone(),
             nocterm_terminal::project_terminal_opener(&terminal),
+            settings,
+            cx,
         )
-        .with_terminal_resolver(crate::project_setup::terminal_resolver(
-            &terminal,
-            Some(&connections),
-        ));
+        .with_image_search(Arc::new(
+            nocterm_project_providers::testing::FakeImageSearch::default(),
+        ))
+        .with_terminal_resolver(
+            crate::project_setup::terminal_resolver(&terminal, Some(&connections)).unwrap(),
+        );
         let (window, workspace) = project_window(&terminal, &connections, &projects, cx);
         Self {
             window,
@@ -234,8 +247,10 @@ fn definition(host: HostLocator) -> ProjectDefinition {
     ProjectDraft {
         id: ProjectId::from_bytes([1; 16]),
         name: "Test workspace".into(),
-        host,
-        root: RootPath::parse("/home/test/project").unwrap(),
+        target: nocterm_project_model::ProjectTarget::HostFolder {
+            host,
+            root: RootPath::parse("/home/test/project").unwrap(),
+        },
         source: ProjectSource::Manual,
         updated: 123,
     }
@@ -342,6 +357,8 @@ fn creating_a_workspace_from_the_focused_local_terminal_keeps_the_local_host(
     cx.run_until_parked();
     cx.update_window(f.window, |_, window, cx| {
         window.render_frame(cx);
+        window.click("project-next", cx);
+        window.render_frame(cx);
         window.click("project-name", cx);
         window.input("From focused local", cx);
         window.click("project-path", cx);
@@ -356,8 +373,11 @@ fn creating_a_workspace_from_the_focused_local_terminal_keeps_the_local_host(
             .iter()
             .find(|definition| definition.name() == "From focused local")
             .expect("workspace creation should be available for the focused local terminal");
-        assert_eq!(saved.host(), &HostLocator::Local);
-        assert_eq!(saved.root().as_str(), "/home/test/from-local");
+        assert_eq!(saved.host_folder().unwrap().0, &HostLocator::Local);
+        assert_eq!(
+            saved.host_folder().unwrap().1.as_str(),
+            "/home/test/from-local"
+        );
     });
 }
 

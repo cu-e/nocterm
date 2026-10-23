@@ -21,12 +21,37 @@ as a `VaultAccess` port; its installed feature handle owns settings observation
 and is retained by the app. The application window factory reuses installed service handles rather than
 initializing another vault or transfer queue.
 
+Bootstrap supplies Projects with the existing HostServices local executor and
+shared read-only directory readers. It explicitly injects NativeImageSearch alongside
+preparation; each search uses the captured original executor and selected engine.
+It also injects `NativeWorkspaceEnvironment` for observed settings and explicit
+tool changes. `NativeWorkspaceSessions` is supplied separately to Terminal for
+folder workspace activation; container sessions activate inside their scoped
+resource. Ordinary connection transports retain their existing launch behavior.
+The controlled managed paths are exported before the configured workspace shell,
+without reading a mutable environment fragment or editing shell startup files.
+Local creation needs neither a PTY nor a
+synthetic terminal receipt; saved targets open through the existing local resolver.
+
 Workspace terminal resolution composes retained Connections and Terminal installations
-through `ProjectTerminalResolve`. Connections resolves a saved profile and checks
+through `ProjectTerminalResolve` and an explicitly supplied provider registry.
+The registry rejects duplicate provider identities; an unknown provider remains
+unavailable instead of selecting a host fallback. Connections resolves a saved profile and checks
 the original destination and ordered jump route without opening a connection.
 Terminal then opens an ordinary folder session inside the workspace, where normal
 host-key, password and vault prompts appear. Resolution creates no additional
 server tab ([ADR 0070](../adr/0070-original-workspace-connection-recovery.md)).
+Container resolution supplies the built-in runtime adapter through retained
+terminal dependencies. Captured host-backed preparation uses the existing
+connected executor; that requirement does not apply to every provider reference.
+Generic resource identity and concrete built-in codecs have separate domain
+owners ([ADR 0071](../adr/0071-provider-workspace-locations.md)).
+
+The same supplied local filesystem and captured remote filesystem capabilities
+also provide read-only directory readers. Files and Projects receive those readers
+explicitly; shared UI controls acquire neither native filesystem access nor the
+current session through a global lookup
+([ADR 0072](../adr/0072-shared-directory-selection.md)).
 
 The same retained installations implement the narrow `ChatConnectionOpen` port.
 It resolves an explicitly attached saved server with its current credentials and
@@ -155,6 +180,12 @@ startup vault page. Opening another window does not install another document or
 rediscover a compatibility settings global for these builtin consumers.
 Explorer installation retains its prepared native ports together with the actual
 settings handle. Its settings page factory captures the same policy as its panes.
+Projects receives the same settings handle during installation and registers its
+provider-owned Workspaces section. The app composes its lazy settings factory only
+when that installation succeeds, alongside Keymap, Monitor and Explorer. The
+startup Vault-only guest catalog remains independent. No additional settings
+document or compatibility lookup is created.
+
 Bootstrap also retains a Monitor installation over that settings owner and the
 supplied optional local HostExec. Per-workspace monitor models and lazy settings
 pages receive it; constructing the installation or a page factory starts no sampling.

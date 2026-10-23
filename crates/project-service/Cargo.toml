@@ -12,14 +12,20 @@ layer = "service"
 [dependencies]
 gpui.workspace = true
 futures.workspace = true
+event-listener.workspace = true
 nocterm-core.workspace = true
 nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
+nocterm-session.workspace = true
 nocterm-store.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+nocterm-containers.workspace = true
 nocterm-project-model = { workspace = true, features = ["test-support"] }
+nocterm-project-providers = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-store = { workspace = true, features = ["test-support"] }
 
 [lints]

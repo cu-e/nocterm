@@ -4,7 +4,7 @@ use crate::{
     ProjectTerminalOpen, ProjectTerminalSession, ProjectTerminalTarget,
 };
 use gpui_kit::{App, Window};
-use nocterm_project_model::RootPath;
+use nocterm_project_model::{ProjectTarget, RootPath};
 use std::{cell::RefCell, rc::Rc};
 #[derive(Clone, Default)]
 pub struct ProjectTerminalProbe {
@@ -12,8 +12,17 @@ pub struct ProjectTerminalProbe {
     session: Option<crate::SessionSpec>,
     local: bool,
     resolutions: Rc<RefCell<Vec<nocterm_project_model::HostLocator>>>,
+    root: Option<RootPath>,
+    executor: Option<std::sync::Arc<dyn nocterm_session::HostExec>>,
 }
 impl ProjectTerminalProbe {
+    pub fn with_executor(
+        mut self,
+        executor: std::sync::Arc<dyn nocterm_session::HostExec>,
+    ) -> Self {
+        self.executor = Some(executor);
+        self
+    }
     pub fn with_sessions(spec: crate::SessionSpec) -> Self {
         Self {
             session: Some(spec),
@@ -38,6 +47,7 @@ impl ProjectTerminalOpen for ProjectTerminalProbe {
         &self,
         parent: Rc<dyn ItemHandle>,
         expected: ExpectedSession,
+        location: &ProjectTarget,
         cx: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, ContextSelectionError> {
         let info = parent
@@ -50,23 +60,34 @@ impl ProjectTerminalOpen for ProjectTerminalProbe {
         if info.status != crate::TerminalStatus::Connected {
             return Err(ContextSelectionError::ParentUnavailable);
         }
-        Ok(Rc::new(self.clone()))
+        let (_, root) = location
+            .host_folder()
+            .ok_or(ContextSelectionError::Unavailable)?;
+        let mut captured = self.clone();
+        captured.root = Some(root.clone());
+        Ok(Rc::new(captured))
     }
 }
 impl ProjectTerminalSession for ProjectTerminalProbe {
     fn open(
         &self,
         target: ProjectTerminalTarget,
-        root: &RootPath,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), ContextSelectionError> {
         target.validate(window, cx)?;
+        let root = self
+            .root
+            .as_ref()
+            .ok_or(ContextSelectionError::Unavailable)?;
         self.attempts
             .borrow_mut()
             .push((target.selection(), root.clone()));
         if let Some(spec) = &self.session {
             let item = super::SessionProbe::from_app(spec.clone(), true, None, cx);
+            if let Some(executor) = &self.executor {
+                item.update(cx, |item, cx| item.set_executor(executor.clone(), cx));
+            }
             target
                 .surface()
                 .add_item(target.selection(), item, window, cx)?;
@@ -78,10 +99,13 @@ impl ProjectTerminalSession for ProjectTerminalProbe {
 impl crate::ProjectTerminalResolve for ProjectTerminalProbe {
     fn resolve(
         &self,
-        host: &nocterm_project_model::HostLocator,
+        location: &ProjectTarget,
         _: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, crate::ProjectConnectionError> {
         use nocterm_project_model::HostLocator;
+        let (host, root) = location
+            .host_folder()
+            .ok_or(crate::ProjectConnectionError::Unavailable)?;
         self.resolutions.borrow_mut().push(host.clone());
         host.validate()?;
         let matches = match (host, self.session.as_ref()) {
@@ -99,6 +123,8 @@ impl crate::ProjectTerminalResolve for ProjectTerminalProbe {
         if !matches {
             return Err(crate::ProjectConnectionError::ChangedTargetOrRoute);
         }
-        Ok(Rc::new(self.clone()))
+        let mut captured = self.clone();
+        captured.root = Some(root.clone());
+        Ok(Rc::new(captured))
     }
 }

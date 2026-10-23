@@ -11,6 +11,7 @@ layer = "ui"
 
 [dependencies]
 nocterm-terminal-model.workspace = true
+nocterm-explorer.workspace = true
 
 futures.workspace = true
 nocterm-core.workspace = true
@@ -30,6 +31,8 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+nocterm-explorer = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 toml.workspace = true

@@ -8,8 +8,10 @@ pub(crate) fn definition(value: u8) -> ProjectDefinition {
     ProjectDraft {
         id: project(value),
         name: "Example".into(),
-        host: HostLocator::Local,
-        root: RootPath::parse("/home/user/project").unwrap(),
+        target: ProjectTarget::HostFolder {
+            host: HostLocator::Local,
+            root: RootPath::parse("/home/user/project").unwrap(),
+        },
         source: ProjectSource::Manual,
         updated: 123,
     }

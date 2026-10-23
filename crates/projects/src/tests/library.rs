@@ -87,9 +87,32 @@ fn disconnect_keeps_current_saved_rows_visible_but_disables_creation(cx: &mut Te
 #[gpui_kit::test]
 fn saved_metadata_can_be_edited_offline_without_opening_a_terminal(cx: &mut TestAppContext) {
     let original = on_host(1, remote(Some("offline"), "offline.example"));
-    let rig = Fixture::loaded(vec![original.clone()], cx);
+    let rig = Fixture::loaded(vec![original.clone(), definition(2)], cx);
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        let edit = "project-edit-01010101010101010101010101010101";
+        let remove = "project-remove-01010101010101010101010101010101";
+        let other_edit = "project-edit-02020202020202020202020202020202";
+        assert!(!window.find(edit).visible());
+        assert!(!window.find(remove).visible());
+        let name_before = window
+            .find("project-row-name-01010101010101010101010101010101")
+            .bounds();
+        window.hover("project-row-01010101010101010101010101010101", cx);
+        assert!(window.find(edit).visible());
+        assert!(window.find(remove).visible());
+        assert!(!window.find(other_edit).visible());
+        assert_eq!(
+            window
+                .find("project-row-name-01010101010101010101010101010101")
+                .bounds(),
+            name_before
+        );
+        window.hover("project-row-02020202020202020202020202020202", cx);
+        assert!(!window.find(edit).visible());
+        assert!(!window.find(remove).visible());
+        assert!(window.find(other_edit).visible());
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-edit-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         fill(window, "project-name", "Renamed offline", cx);
@@ -100,8 +123,14 @@ fn saved_metadata_can_be_edited_offline_without_opening_a_terminal(cx: &mut Test
     cx.update(|cx| {
         let saved = rig.installed.catalog(cx).get(original.id()).unwrap();
         assert_eq!(saved.name(), "Renamed offline");
-        assert_eq!(saved.host(), original.host());
-        assert_eq!(saved.root(), original.root());
+        assert_eq!(
+            saved.host_folder().unwrap().0,
+            original.host_folder().unwrap().0
+        );
+        assert_eq!(
+            saved.host_folder().unwrap().1,
+            original.host_folder().unwrap().1
+        );
         assert_eq!(rig.workspace.read(cx).items(cx).count(), 0);
     });
 }
@@ -112,6 +141,7 @@ fn an_offline_editor_refuses_to_overwrite_a_newer_saved_definition(cx: &mut Test
     let rig = Fixture::loaded(vec![original.clone()], cx);
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-edit-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         fill(window, "project-name", "Older editor draft", cx);
@@ -153,6 +183,7 @@ fn a_cancelled_pending_save_cannot_close_a_later_editor(cx: &mut TestAppContext)
     let rig = Fixture::new(vec![definition(1), definition(2)], writer, cx);
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-edit-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         fill(window, "project-name", "First accepted save", cx);
@@ -164,6 +195,7 @@ fn a_cancelled_pending_save_cannot_close_a_later_editor(cx: &mut TestAppContext)
         window.render_frame(cx);
         window.click("project-cancel", cx);
         window.render_frame(cx);
+        window.hover("project-row-02020202020202020202020202020202", cx);
         window.click("project-edit-02020202020202020202020202020202", cx);
         window.render_frame(cx);
         fill(window, "project-name", "Second editor draft", cx);
@@ -215,6 +247,7 @@ fn renaming_saved_metadata_updates_the_open_tab_without_replacing_its_scope(
         .unwrap();
     cx.update_window(rig.window, |_, window, cx| {
         window.render_frame(cx);
+        window.hover("project-row-01010101010101010101010101010101", cx);
         window.click("project-edit-01010101010101010101010101010101", cx);
         window.render_frame(cx);
         fill(window, "project-name", "Renamed live tab", cx);

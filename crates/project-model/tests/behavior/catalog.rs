@@ -10,8 +10,8 @@ fn checked_catalog_round_trips_folder_definitions() {
     assert_eq!(decoded.len(), 2);
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let fields = value["projects"][0].as_object().unwrap();
-    assert_eq!(fields.len(), 6);
-    for field in ["id", "name", "host", "root", "source", "updated"] {
+    assert_eq!(fields.len(), 5);
+    for field in ["id", "name", "target", "source", "updated"] {
         assert!(fields.contains_key(field), "missing {field}");
     }
 }
@@ -19,8 +19,8 @@ fn checked_catalog_round_trips_folder_definitions() {
 #[test]
 fn unsupported_and_unknown_catalog_data_are_never_treated_as_empty_or_general() {
     assert!(matches!(
-        Catalog::decode(br#"{"version":2,"projects":[]}"#),
-        Err(CatalogError::UnsupportedVersion(2))
+        Catalog::decode(br#"{"version":3,"projects":[]}"#),
+        Err(CatalogError::UnsupportedVersion(3))
     ));
     assert!(matches!(
         Catalog::decode(br#"{"version":1,"projects":[],"unexpected":true}"#),
@@ -108,7 +108,9 @@ fn byte_capacity_refuses_a_candidate_before_mutating_the_catalog() {
     let mut rejected = false;
     for value in 0..MAX_PROJECTS {
         let mut draft = definition(value as u8).to_draft();
-        draft.root = RootPath::parse(format!("/srv/{}", "\"".repeat(3800))).unwrap();
+        if let nocterm_project_model::ProjectTarget::HostFolder { root, .. } = &mut draft.target {
+            *root = RootPath::parse(format!("/srv/{}", "\"".repeat(3800))).unwrap();
+        }
         draft.source = ProjectSource::Imported {
             provider: "provider".into(),
             deployment: "deployment-one".into(),
@@ -149,15 +151,17 @@ fn current_connection_workspaces_precede_all_other_saved_workspaces() {
     let saved = |id, profile: &str, name: &str| {
         let mut draft = definition(id).to_draft();
         draft.name = name.into();
-        draft.host = HostLocator::Ssh {
-            profile: profile.into(),
-            target: Target::new("ops", "server", 22),
-            via: vec![],
-        };
+        if let nocterm_project_model::ProjectTarget::HostFolder { host, .. } = &mut draft.target {
+            *host = HostLocator::Ssh {
+                profile: profile.into(),
+                target: Target::new("ops", "server", 22),
+                via: vec![],
+            };
+        }
         ProjectDefinition::try_from(draft).unwrap()
     };
     let first = saved(1, "current", "Zulu");
-    let current = first.host().parent_key().unwrap();
+    let current = first.host_folder().unwrap().0.parent_key().unwrap();
     let catalog = Catalog::new(vec![
         first,
         saved(2, "other", "Other"),
@@ -190,10 +194,12 @@ fn current_connection_workspaces_precede_all_other_saved_workspaces() {
 fn workspace_search_filters_both_groups_without_changing_membership_or_catalog() {
     let mut second = definition(2).to_draft();
     second.name = "Other workspace".into();
-    second.host = HostLocator::SshDirect {
-        target: nocterm_session::Target::new("ops", "other-server", 22),
-        via: vec![],
-    };
+    if let nocterm_project_model::ProjectTarget::HostFolder { host, .. } = &mut second.target {
+        *host = HostLocator::SshDirect {
+            target: nocterm_session::Target::new("ops", "other-server", 22),
+            via: vec![],
+        };
+    }
     let catalog = Catalog::new(vec![
         definition(1),
         ProjectDefinition::try_from(second).unwrap(),

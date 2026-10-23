@@ -1,7 +1,7 @@
 //! Consumer UI ports for ordinary terminals inside captured folder surfaces.
 use crate::ProjectTerminalTarget;
 use gpui_kit::{App, Window};
-use nocterm_project_model::RootPath;
+use nocterm_project_model::ProjectTarget;
 use std::rc::Rc;
 
 /// Open an explicitly selected saved server in the chat's original surface.
@@ -58,6 +58,7 @@ pub trait ProjectTerminalOpen: 'static {
         &self,
         parent: Rc<dyn crate::ItemHandle>,
         expected: crate::ExpectedSession,
+        location: &ProjectTarget,
         cx: &App,
     ) -> Result<Rc<dyn ProjectTerminalSession>, ContextSelectionError>;
 }
@@ -67,7 +68,6 @@ pub trait ProjectTerminalSession: 'static {
     fn open(
         &self,
         target: ProjectTerminalTarget,
-        root: &RootPath,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), ContextSelectionError>;

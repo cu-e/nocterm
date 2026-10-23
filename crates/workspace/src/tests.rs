@@ -15,6 +15,8 @@ use std::{
 };
 #[path = "tests/project_tabs.rs"]
 mod project_tabs;
+#[path = "tests/provider_resolution.rs"]
+mod provider_resolution;
 
 struct Probe {
     focus: FocusHandle,

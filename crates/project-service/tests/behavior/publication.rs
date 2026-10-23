@@ -1,5 +1,5 @@
 use nocterm_project_model::{
-    Catalog, CatalogError, ProjectDefinition, ProjectStorageError, RootPath,
+    Catalog, CatalogError, ProjectDefinition, ProjectStorageError, ProjectTarget, RootPath,
 };
 use nocterm_project_service::{ClaimOutcome, PreparedProjects, ProjectsError};
 use nocterm_store::{ShutdownCoordinator, StoreError, test_support::gated_writer};
@@ -165,7 +165,10 @@ async fn rename_preserves_binding_but_restoring_equal_root_values_does_not_renew
         .unwrap();
     cx.update(|cx| handle.check_binding(binding, cx).unwrap());
     let mut draft = renamed.to_draft();
-    draft.root = RootPath::parse("/srv/other").unwrap();
+    draft.target = ProjectTarget::HostFolder {
+        host: draft.target.host_folder().unwrap().0.clone(),
+        root: RootPath::parse("/srv/other").unwrap(),
+    };
     let other = ProjectDefinition::try_from(draft).unwrap();
     cx.update(|cx| handle.save(other.clone(), Some(renamed), cx))
         .await
@@ -230,7 +233,10 @@ async fn each_queued_success_returns_its_original_binding_even_after_a_later_fol
         cx,
     );
     let mut draft = original.to_draft();
-    draft.root = RootPath::parse("/srv/other").unwrap();
+    draft.target = ProjectTarget::HostFolder {
+        host: draft.target.host_folder().unwrap().0.clone(),
+        root: RootPath::parse("/srv/other").unwrap(),
+    };
     let other = ProjectDefinition::try_from(draft).unwrap();
     let one = cx.update(|cx| handle.save(other.clone(), Some(original.clone()), cx));
     let two = cx.update(|cx| handle.save(original, Some(other), cx));
@@ -256,7 +262,10 @@ async fn editing_another_project_cannot_invalidate_an_unrelated_definition_bindi
     let handle = memory(Catalog::new(vec![first.clone(), second]).unwrap(), cx);
     let retained = cx.update(|cx| handle.binding(project(2), cx).unwrap());
     let mut changed = first.to_draft();
-    changed.root = RootPath::parse("/srv/another-folder").unwrap();
+    changed.target = ProjectTarget::HostFolder {
+        host: changed.target.host_folder().unwrap().0.clone(),
+        root: RootPath::parse("/srv/another-folder").unwrap(),
+    };
     cx.update(|cx| {
         handle.save(
             ProjectDefinition::try_from(changed).unwrap(),

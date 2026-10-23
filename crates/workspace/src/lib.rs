@@ -12,7 +12,8 @@
 //! `ChatConnectionOpen`; layout arrives as an
 //! explicit `LayoutHandle`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
-//! file drag contracts, immutable tab/session observations and separate state, text,
+//! file drag contracts, immutable tab/session and selected monitor-source observations,
+//! plus separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
 //! Settings section: none. Globals: none.
@@ -36,6 +37,7 @@
 //! Background promotion retains the same Item entity; close detaches subscriptions
 //! before calling the feature's close hook. Local directory synchronization reports typed
 //! capability refusals and preserves encoding causes through its LocalTerminal port.
+//! ProjectSurface retains shared inert monitor-target metadata separately from live sessions.
 //! SurfaceState owns identity, selection receipts, lifecycle and the starting folder.
 //! SurfaceContent owns foreground and off-dock membership and returns tab effects;
 //! the surface entity applies events and focus. Background promotion transfers the
@@ -63,6 +65,8 @@ mod local_terminal;
 mod open_on_host;
 mod panel;
 mod project_terminal_resolve;
+mod provider_registry;
+pub use provider_registry::ProjectProviderRegistry;
 mod right_panel;
 mod tab_groups;
 pub use open_on_host::OpenOnHostError;
@@ -97,3 +101,5 @@ pub const KEY_CONTEXT: &str = "Workspace";
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+
+pub use nocterm_workspace_ports::MonitorSource;

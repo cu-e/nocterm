@@ -118,7 +118,9 @@ impl TerminalView {
         let focus_handle = cx.focus_handle();
         let settings = terminal.read(cx).installed().settings().clone();
         let weak = cx.entity().downgrade();
-        let origin = if terminal.read(cx).is_command() {
+        let origin = if terminal.read(cx).installed().is_container() {
+            crate::access::AccessOrigin::WorkspaceResource
+        } else if terminal.read(cx).is_command() {
             crate::access::AccessOrigin::GeneralCommand
         } else {
             crate::access::AccessOrigin::GeneralConnection

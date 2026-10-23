@@ -6,6 +6,7 @@ impl ProjectTerminalOpen for NoTerminals {
         &self,
         _: Rc<dyn nocterm_workspace::ItemHandle>,
         _: nocterm_workspace::ExpectedSession,
+        _: &ProjectTarget,
         _: &App,
     ) -> Result<
         Rc<dyn nocterm_workspace::ProjectTerminalSession>,
@@ -19,8 +20,10 @@ pub(super) fn definition(value: u8) -> ProjectDefinition {
     ProjectDefinition::try_from(ProjectDraft {
         id: ProjectId::from_bytes([value; 16]),
         name: format!("Workspace {value}"),
-        host: HostLocator::Local,
-        root: RootPath::parse(format!("/srv/project-{value}")).unwrap(),
+        target: ProjectTarget::HostFolder {
+            host: HostLocator::Local,
+            root: RootPath::parse(format!("/srv/project-{value}")).unwrap(),
+        },
         source: ProjectSource::Manual,
         updated: 123,
     })
@@ -58,6 +61,39 @@ impl Fixture {
         resolver: Option<Rc<dyn nocterm_workspace::ProjectTerminalResolve>>,
         cx: &mut TestAppContext,
     ) -> Self {
+        Self::with_setup(projects, writer, terminals, resolver, None, cx)
+    }
+    fn with_setup(
+        projects: Vec<ProjectDefinition>,
+        writer: nocterm_store::SnapshotWriter<Catalog>,
+        terminals: Rc<dyn ProjectTerminalOpen>,
+        resolver: Option<Rc<dyn nocterm_workspace::ProjectTerminalResolve>>,
+        preparation: Option<Arc<dyn nocterm_project_providers::ProjectPreparation>>,
+        cx: &mut TestAppContext,
+    ) -> Self {
+        Self::with_installation(
+            projects,
+            writer,
+            |mut installed| {
+                if let Some(resolver) = resolver {
+                    installed = installed.with_terminal_resolver(resolver);
+                }
+                if let Some(preparation) = preparation {
+                    installed = installed.with_preparation(preparation);
+                }
+                installed
+            },
+            terminals,
+            cx,
+        )
+    }
+    pub(super) fn with_installation(
+        projects: Vec<ProjectDefinition>,
+        writer: nocterm_store::SnapshotWriter<Catalog>,
+        configure: impl FnOnce(Installed) -> Installed,
+        terminals: Rc<dyn ProjectTerminalOpen>,
+        cx: &mut TestAppContext,
+    ) -> Self {
         let (model, installed) = cx.update(|cx| {
             cx.set_reduce_motion(true);
             gpui_kit::init(cx);
@@ -70,10 +106,12 @@ impl Fixture {
                 cx,
             )
             .unwrap();
-            let mut installed = init(model.clone(), terminals);
-            if let Some(resolver) = resolver {
-                installed = installed.with_terminal_resolver(resolver);
-            }
+            let installed = configure(init(
+                model.clone(),
+                terminals,
+                nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx),
+                cx,
+            ));
             (model, installed)
         });
         let (window, workspace) = open_window(&installed, cx);
@@ -86,6 +124,48 @@ impl Fixture {
     }
     pub(super) fn loaded(projects: Vec<ProjectDefinition>, cx: &mut TestAppContext) -> Self {
         Self::new(projects, Arc::new(|_| Box::pin(async { Ok(()) })), cx)
+    }
+    pub(super) fn preparing(
+        preparation: nocterm_project_providers::testing::FakeProjectPreparation,
+        cx: &mut TestAppContext,
+    ) -> Self {
+        Self::with_setup(
+            vec![],
+            Arc::new(|_| Box::pin(async { Ok(()) })),
+            Rc::new(NoTerminals),
+            None,
+            Some(Arc::new(preparation)),
+            cx,
+        )
+    }
+    pub(super) fn local(
+        preparation: nocterm_project_providers::testing::FakeProjectPreparation,
+        cx: &mut TestAppContext,
+    ) -> (
+        Self,
+        Arc<dyn nocterm_session::HostExec>,
+        Arc<nocterm_session::testing::InMemoryFs>,
+    ) {
+        let exec: Arc<dyn nocterm_session::HostExec> =
+            Arc::new(nocterm_session::testing::FakeExec::default());
+        let fs = Arc::new(nocterm_session::testing::InMemoryFs::default());
+        fs.seed_file("/home/alice/README", b"home").unwrap();
+        fs.set_home("/home/alice").unwrap();
+        let rig = Self::with_installation(
+            vec![],
+            Arc::new(|_| Box::pin(async { Ok(()) })),
+            |installed| {
+                installed
+                    .with_local_host(Some(exec.clone()))
+                    .with_preparation(Arc::new(preparation))
+                    .with_directory_readers(Arc::new(
+                        nocterm_explorer::testing::MemoryDirectoryReaders::new(fs.clone()),
+                    ))
+            },
+            Rc::new(NoTerminals),
+            cx,
+        );
+        (rig, exec, fs)
     }
     pub(super) fn parent(
         &self,
@@ -206,12 +286,92 @@ pub(super) fn remote(profile: Option<&str>, host: &str) -> HostLocator {
 
 pub(super) fn on_host(value: u8, host: HostLocator) -> ProjectDefinition {
     let mut draft = definition(value).to_draft();
-    draft.host = host;
+    draft.target = ProjectTarget::HostFolder {
+        host,
+        root: draft.target.host_folder().unwrap().1.clone(),
+    };
     draft.try_into().unwrap()
 }
 
 pub(super) fn fill(window: &mut gpui_kit::Window, id: &str, text: &str, cx: &mut App) {
+    wizard_field(window, id, cx);
     window.click(id.to_owned(), cx);
     window.press("ctrl-a", cx);
-    window.input(text, cx);
+    if text.is_empty() {
+        window.press("backspace", cx);
+    } else {
+        window.input(text, cx);
+    }
+}
+
+pub(super) fn reveal_form(window: &mut gpui_kit::Window, id: &str, cx: &mut App) {
+    wizard_field(window, id, cx);
+    window.render_frame(cx);
+    let target = window.find(id.to_owned()).bounds();
+    let body = window.find("project-form-body").bounds();
+    if target.top() < body.top() || target.bottom() > body.bottom() {
+        window.scroll(
+            "project-form-body",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                body.center().y - target.center().y,
+            )),
+            cx,
+        );
+        window.render_frame(cx);
+    }
+}
+
+/// Follow the visible wizard actions before using a retained field in older regressions.
+pub(super) fn wizard_field(window: &mut gpui_kit::Window, id: &str, cx: &mut App) {
+    window.render_frame(cx);
+    if window.try_find("project-wizard-steps").is_none() {
+        return;
+    }
+    let project = matches!(id, "project-name" | "project-path" | "project-git");
+    let tools = id.starts_with("project-language") || id.starts_with("project-version");
+    let connection = id.starts_with("project-mode")
+        || id.starts_with("project-image")
+        || id.starts_with("project-engine")
+        || id == "project-custom-image"
+        || id == "project-registry-images";
+    let heading = if project {
+        "Project"
+    } else if tools {
+        "Tools"
+    } else if connection {
+        "Connection"
+    } else {
+        return;
+    };
+    for _ in 0..3 {
+        let current = window
+            .find("project-step-heading")
+            .label()
+            .unwrap()
+            .to_owned();
+        if current == heading {
+            return;
+        }
+        if current == "Tools" || heading == "Connection" {
+            window.click("project-back", cx);
+        } else {
+            window.click("project-next", cx);
+        }
+        window.render_frame(cx);
+    }
+}
+pub(super) fn create_workspace(window: &mut gpui_kit::Window, cx: &mut App) {
+    window.render_frame(cx);
+    for _ in 0..3 {
+        if window.try_find("project-save").is_some() {
+            window.click("project-save", cx);
+            return;
+        }
+        window.click("project-next", cx);
+        window.render_frame(cx);
+        if window.try_find("project-form-error").is_some() {
+            return;
+        }
+    }
 }

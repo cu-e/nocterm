@@ -153,6 +153,7 @@ fn connected_parent(
 fn capture_parent(
     f: &Fixture,
     parent: Rc<dyn nocterm_workspace::ItemHandle>,
+    root: &RootPath,
     cx: &mut TestAppContext,
 ) -> Rc<dyn nocterm_workspace::ProjectTerminalSession> {
     cx.update(|cx| {
@@ -163,15 +164,25 @@ fn capture_parent(
             .info(cx)
             .unwrap()
             .expected;
+        let source = parent
+            .terminal_capabilities(cx)
+            .unwrap()
+            .project_parent()
+            .unwrap()
+            .capture(expected, cx)
+            .unwrap();
+        let location = nocterm_project_model::ProjectTarget::HostFolder {
+            host: source.parent().host().clone(),
+            root: root.clone(),
+        };
         project_terminal_opener(&f.installed)
-            .capture(parent, expected, cx)
+            .capture(parent, expected, &location, cx)
             .unwrap()
     })
 }
 fn open_hidden_and_close_parent(
     f: &Fixture,
     session: &Rc<dyn nocterm_workspace::ProjectTerminalSession>,
-    root: &RootPath,
     parent: Rc<dyn nocterm_workspace::ItemHandle>,
     cx: &mut TestAppContext,
 ) -> ProjectSurface {
@@ -180,12 +191,7 @@ fn open_hidden_and_close_parent(
             let a = project(f, 1, window, cx);
             let b = project(f, 2, window, cx);
             session
-                .open(
-                    a.initial_terminal_target(window, cx).unwrap(),
-                    root,
-                    window,
-                    cx,
-                )
+                .open(a.initial_terminal_target(window, cx).unwrap(), window, cx)
                 .unwrap();
             assert_eq!(
                 f.workspace.read(cx).selected_context(cx),
@@ -218,10 +224,10 @@ fn folder_terminals_keep_literal_cwd_and_normal_reconnect_after_parent_closes(
         ..Default::default()
     });
     let (parent, _driver) = connected_parent(&f, original.clone(), cx);
-    let session = capture_parent(&f, parent.clone(), cx);
     let root = RootPath::parse("/root/space ' directory").unwrap();
+    let session = capture_parent(&f, parent.clone(), &root, cx);
     f.transport.queue(None, None);
-    let surface = open_hidden_and_close_parent(&f, &session, &root, parent, cx);
+    let surface = open_hidden_and_close_parent(&f, &session, parent, cx);
     let requests = f.transport.requests();
     assert_eq!(requests.len(), 2);
     let launch = &requests[1].launch;
@@ -260,7 +266,7 @@ fn folder_terminals_keep_literal_cwd_and_normal_reconnect_after_parent_closes(
         let target = surface
             .terminal_target(surface.selection_receipt(cx), None, window, cx)
             .unwrap();
-        session.open(target, &root, window, cx).unwrap();
+        session.open(target, window, cx).unwrap();
     })
     .unwrap();
     assert_eq!(f.transport.requests().len(), 4);
@@ -285,7 +291,18 @@ fn source_capture_refuses_a_replacement_epoch_before_opening_a_folder_terminal(
         terminal.update(cx, |terminal, cx| terminal.reconnect(cx));
         assert!(
             project_terminal_opener(&f.installed)
-                .capture(parent.clone(), expected, cx)
+                .capture(
+                    parent.clone(),
+                    expected,
+                    &nocterm_project_model::ProjectTarget::HostFolder {
+                        host: nocterm_project_model::HostLocator::SshDirect {
+                            target: spec().target,
+                            via: vec![]
+                        },
+                        root: RootPath::parse("/root").unwrap()
+                    },
+                    cx
+                )
                 .is_err()
         );
     })
@@ -313,15 +330,13 @@ fn folder_sessions_preserve_original_ordered_jump_hosts_and_credentials(cx: &mut
         })
         .collect();
     let (parent, _driver) = connected_parent(&f, original.clone(), cx);
-    let session = capture_parent(&f, parent, cx);
+    let session = capture_parent(&f, parent, &RootPath::parse("/root").unwrap(), cx);
     f.transport.queue(None, None);
     cx.update_window(f.window, |_, window, cx| {
         let surface = project(&f, 1, window, cx);
-        let root = RootPath::parse("/root").unwrap();
         session
             .open(
                 surface.initial_terminal_target(window, cx).unwrap(),
-                &root,
                 window,
                 cx,
             )
@@ -367,7 +382,7 @@ fn local_folder_explorer_uses_its_saved_root_without_ssh_session_metadata(cx: &m
     );
     cx.run_until_parked();
     let parent = cx.update(|cx| f.workspace.read(cx).general_item(id, cx).unwrap());
-    let session = capture_parent(&f, parent, cx);
+    let session = capture_parent(&f, parent, &RootPath::parse("/root").unwrap(), cx);
     f.transport.queue(None, None);
     let root = RootPath::parse("/root").unwrap();
     cx.update_window(f.window, |_, window, cx| {
@@ -376,7 +391,6 @@ fn local_folder_explorer_uses_its_saved_root_without_ssh_session_metadata(cx: &m
         session
             .open(
                 surface.initial_terminal_target(window, cx).unwrap(),
-                &root,
                 window,
                 cx,
             )
@@ -400,7 +414,19 @@ fn local_folder_explorer_uses_its_saved_root_without_ssh_session_metadata(cx: &m
 fn an_offline_folder_configuration_authenticates_in_its_inner_terminal(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let original = spec();
-    let session = project_session(&f.installed, original.clone(), false);
+    let session = project_session(
+        &f.installed,
+        original.clone(),
+        false,
+        &nocterm_project_model::ProjectTarget::HostFolder {
+            host: nocterm_project_model::HostLocator::SshDirect {
+                target: original.target.clone(),
+                via: vec![],
+            },
+            root: RootPath::parse("/srv/project").unwrap(),
+        },
+    )
+    .unwrap();
     assert!(f.transport.requests().is_empty());
     let driver = f.transport.queue(None, None);
     let surface = cx
@@ -409,7 +435,6 @@ fn an_offline_folder_configuration_authenticates_in_its_inner_terminal(cx: &mut 
             session
                 .open(
                     surface.initial_terminal_target(window, cx).unwrap(),
-                    &RootPath::parse("/srv/project").unwrap(),
                     window,
                     cx,
                 )

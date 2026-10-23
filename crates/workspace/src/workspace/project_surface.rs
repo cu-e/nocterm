@@ -83,6 +83,7 @@ impl ProjectSurfaceFactory {
             entity,
             owner: self.owner.clone(),
             project,
+            monitor_target: Rc::new(std::cell::RefCell::new(None)),
         })
     }
 }
@@ -93,6 +94,7 @@ pub struct ProjectSurface {
     entity: Entity<surface::TabSurface>,
     owner: Rc<surface::window::SurfaceWindow>,
     project: ProjectId,
+    monitor_target: Rc<std::cell::RefCell<Option<nocterm_project_model::ProjectTarget>>>,
 }
 impl ProjectSurface {
     pub(super) fn engine(&self) -> Entity<surface::TabSurface> {
@@ -114,6 +116,22 @@ impl ProjectSurface {
             surface: self.clone(),
             _events: events,
         }
+    }
+    pub(super) fn monitor_target(&self) -> Option<nocterm_project_model::ProjectTarget> {
+        self.monitor_target.borrow().clone()
+    }
+    /// Sets inert monitoring identity on this original resource surface.
+    pub fn set_monitor_target(&self, target: nocterm_project_model::ProjectTarget, cx: &mut App) {
+        if self.monitor_target.borrow().as_ref() == Some(&target) {
+            return;
+        }
+        *self.monitor_target.borrow_mut() = Some(target);
+        self.entity.update(cx, |surface, cx| {
+            cx.emit(surface::SurfaceEvent::Observed(
+                surface.context_source(),
+                WorkspaceEvent::ActiveSessionChanged,
+            ))
+        });
     }
     pub fn set_root(&self, root: RootPath, cx: &mut App) {
         self.entity

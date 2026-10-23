@@ -1,7 +1,7 @@
 use nocterm_session::{HostAddress, MAX_JUMP_HOSTS, Target};
 use serde::{Deserialize, Serialize};
 
-use crate::{ProjectId, ProjectValidationError, RootPath};
+use crate::{ProjectId, ProjectTarget, ProjectValidationError, RootPath};
 
 /// Original ordinary connection description, including its ordered jump route.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,16 +166,34 @@ impl ProjectSource {
 pub struct ProjectDraft {
     pub id: ProjectId,
     pub name: String,
-    pub host: HostLocator,
-    pub root: RootPath,
+    pub target: ProjectTarget,
     pub source: ProjectSource,
     /// Supplied Unix timestamp; the domain never reads a clock.
     pub updated: u64,
 }
 
 #[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedDraft {
+    Current(CurrentDraft),
+    Legacy(LegacyDraft),
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SavedDraft {
+struct CurrentDraft {
+    id: ProjectId,
+    name: String,
+    target: ProjectTarget,
+    source: ProjectSource,
+    updated: u64,
+    #[serde(default, rename = "policy")]
+    _legacy: Option<serde::de::IgnoredAny>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyDraft {
     id: ProjectId,
     name: String,
     host: HostLocator,
@@ -188,14 +206,24 @@ struct SavedDraft {
 
 impl<'de> Deserialize<'de> for ProjectDraft {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let saved = SavedDraft::deserialize(deserializer)?;
-        Ok(Self {
-            id: saved.id,
-            name: saved.name,
-            host: saved.host,
-            root: saved.root,
-            source: saved.source,
-            updated: saved.updated,
+        Ok(match SavedDraft::deserialize(deserializer)? {
+            SavedDraft::Current(saved) => Self {
+                id: saved.id,
+                name: saved.name,
+                target: saved.target,
+                source: saved.source,
+                updated: saved.updated,
+            },
+            SavedDraft::Legacy(saved) => Self {
+                id: saved.id,
+                name: saved.name,
+                target: ProjectTarget::HostFolder {
+                    host: saved.host,
+                    root: saved.root,
+                },
+                source: saved.source,
+                updated: saved.updated,
+            },
         })
     }
 }
@@ -222,12 +250,12 @@ impl ProjectDefinition {
         &self.0.name
     }
 
-    pub fn host(&self) -> &HostLocator {
-        &self.0.host
+    pub fn target(&self) -> &ProjectTarget {
+        &self.0.target
     }
 
-    pub fn root(&self) -> &RootPath {
-        &self.0.root
+    pub fn host_folder(&self) -> Option<(&HostLocator, &RootPath)> {
+        self.0.target.host_folder()
     }
 
     pub fn source(&self) -> &ProjectSource {
@@ -250,7 +278,7 @@ impl TryFrom<ProjectDraft> for ProjectDefinition {
         if !valid_text(&draft.name, 128) {
             return Err(ProjectValidationError::InvalidName);
         }
-        draft.host.validate()?;
+        draft.target.validate()?;
         draft.source.validate()?;
         Ok(Self(draft))
     }

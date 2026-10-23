@@ -4,7 +4,7 @@ use gpui_kit::{
     App, SharedString, WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Icon, Sizable as _, WindowExt as _,
+        ActiveTheme as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex, v_flex,
     },
@@ -14,6 +14,8 @@ use gpui_kit::{
 use nocterm_project_model::ProjectDefinition;
 use nocterm_ui::IconName;
 use nocterm_workspace::Workspace;
+
+const ROW_GROUP: &str = "project-row";
 
 #[derive(IntoElement)]
 pub(super) struct ProjectRow {
@@ -58,32 +60,74 @@ impl ProjectRow {
                             .test_support()
                             .aria_label(definition.name().to_owned())
                             .w_full()
+                            .text_sm()
                             .truncate()
                             .child(definition.name().to_owned()),
                     )
                     .when_some(server, |caption, server| {
-                        caption.child(
-                            div()
-                                .id(SharedString::from(format!(
-                                    "project-row-server-{}",
-                                    definition.id()
-                                )))
-                                .test_support()
-                                .aria_label(server.title().clone())
-                                .w_full()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .truncate()
-                                .child(server.title().clone()),
-                        )
+                        caption.child(self.secondary(server, cx))
                     }),
             )
     }
+    fn secondary(
+        &self,
+        server: nocterm_workspace_ports::ProjectParentDescriptor,
+        cx: &App,
+    ) -> impl IntoElement + use<> {
+        let definition = &self.actions.definition;
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .gap_1()
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "project-row-server-{}",
+                        definition.id()
+                    )))
+                    .test_support()
+                    .aria_label(server.title().clone())
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .truncate()
+                    .child(server.title().clone()),
+            )
+            .when_some(
+                nocterm_project_providers::ContainerLocation::from_target(definition.target()).ok(),
+                |line, location| {
+                    let engine = match location.engine() {
+                        nocterm_containers::Engine::Docker => "Docker",
+                        nocterm_containers::Engine::Podman => "Podman",
+                    };
+                    line.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "project-row-engine-{}",
+                                definition.id()
+                            )))
+                            .test_support()
+                            .aria_label(engine)
+                            .flex_shrink_0()
+                            .px_1()
+                            .rounded_sm()
+                            .bg(cx.theme().muted)
+                            .text_xs()
+                            .child(engine),
+                    )
+                },
+            )
+    }
+
     fn actions(&self) -> impl IntoElement + use<> {
         let edit = self.actions.clone();
         let remove = self.actions.clone();
         h_flex()
             .gap_1()
+            .flex_shrink_0()
+            .invisible()
+            .group_hover(ROW_GROUP, |actions| actions.visible())
             .child(
                 Button::new(SharedString::from(format!(
                     "project-edit-{}",
@@ -94,7 +138,14 @@ impl ProjectRow {
                 .icon(IconName::Pencil)
                 .tooltip("Workspace settings")
                 .on_click(move |_, window, cx| {
-                    editor::edit(edit.installed.clone(), edit.definition.clone(), window, cx);
+                    cx.stop_propagation();
+                    editor::edit(
+                        edit.installed.clone(),
+                        edit.definition.clone(),
+                        edit.workspace.clone(),
+                        window,
+                        cx,
+                    );
                 }),
             )
             .child(
@@ -106,7 +157,10 @@ impl ProjectRow {
                 .xsmall()
                 .icon(IconName::Trash)
                 .tooltip("Remove saved workspace")
-                .on_click(move |_, window, cx| remove.confirm_remove(window, cx)),
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    remove.confirm_remove(window, cx);
+                }),
             )
     }
 }
@@ -116,8 +170,14 @@ impl RenderOnce for ProjectRow {
         let open = self.actions.clone();
         let server = self.actions.workspace.upgrade().and_then(|workspace| {
             let workspace = workspace.read(cx);
-            let current = context::current(workspace, window, cx);
-            context::server(workspace, open.definition.host(), current.as_ref(), cx).ok()
+            let current = context::current(workspace, &open.installed, window, cx);
+            context::server(
+                workspace,
+                &crate::location::host(open.definition.target())?,
+                current.as_ref(),
+                cx,
+            )
+            .ok()
         });
         h_flex()
             .id(SharedString::from(format!(
@@ -125,29 +185,29 @@ impl RenderOnce for ProjectRow {
                 open.definition.id()
             )))
             .test_support()
-            .px_3()
+            .group(ROW_GROUP)
+            .mx_1()
+            .px_2()
             .py_2()
             .gap_2()
-            .border_b_1()
-            .border_color(theme.border.opacity(0.5))
+            .rounded(theme.radius)
+            .cursor_pointer()
+            .hover(|row| row.bg(theme.sidebar_accent))
             .child(
-                Button::new(SharedString::from(format!(
-                    "project-open-{}",
-                    open.definition.id()
-                )))
-                .ghost()
-                .small()
-                .h_auto()
-                .py_1()
-                .px_0()
-                .flex_1()
-                .min_w_0()
-                .accessibility_label(open.definition.name().to_owned())
-                .child(self.caption(server, cx))
-                .tooltip(open.definition.root().as_str().to_owned())
-                .on_click(move |_, window, cx| open.open(window, cx)),
+                div()
+                    .id(SharedString::from(format!(
+                        "project-open-{}",
+                        open.definition.id()
+                    )))
+                    .test_support()
+                    .aria_label(open.definition.name().to_owned())
+                    .py_1()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.caption(server, cx)),
             )
             .child(self.actions())
+            .on_click(move |_, window, cx| open.open(window, cx))
     }
 }
 
@@ -176,18 +236,12 @@ impl RowActions {
         }
     }
     fn confirm_remove(&self, window: &mut Window, cx: &mut App) {
-        let actions = self.clone();
-        window.open_alert_dialog(cx,move |dialog,_,_| {
-            let actions=actions.clone();
-            dialog.title(format!("Remove workspace “{}”?",actions.definition.name()))
-                .description("Removes saved workspace settings. Open terminals, project files and chat history are kept.")
-                .ok_text("Remove workspace").show_cancel(true).on_ok(move |_,window,cx| {
-                    let removed=actions.installed.model().remove(actions.definition.clone(),cx);
-                    window.spawn(cx,async move |cx| {if let Err(error)=removed.await {
-                        let _=cx.update(|window,cx|nocterm_ui::notice::error(window,cx,"project-remove","Could not remove workspace",error.to_string()));
-                    }}).detach();
-                    true
-                })
-        });
+        crate::removal::open(
+            self.installed.clone(),
+            self.definition.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
     }
 }

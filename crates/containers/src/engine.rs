@@ -16,7 +16,8 @@ const SHELL: &str = "command -v bash >/dev/null 2>&1 && exec bash || exec sh";
 const NOT_FOUND: u32 = 127;
 
 /// A container engine's command-line client.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Engine {
     Docker,
     Podman,
@@ -89,11 +90,22 @@ impl Engine {
         }
     }
 
-    fn command(self) -> ExecRequest {
+    pub fn command(self) -> ExecRequest {
         ExecRequest::new(match self {
             Self::Docker => "docker",
             Self::Podman => "podman",
         })
+    }
+
+    /// Read-only listing requests; execution belongs to the caller's adapter.
+    pub fn container_listing(self) -> ExecRequest {
+        self.command()
+            .args(["ps", "--all", "--no-trunc", "--format", "json"])
+    }
+
+    pub fn image_listing(self) -> ExecRequest {
+        self.command()
+            .args(["images", "--all", "--no-trunc", "--format", "json"])
     }
 
     /// Every container, running or not, and every image.

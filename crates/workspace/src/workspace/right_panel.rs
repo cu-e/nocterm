@@ -79,6 +79,9 @@ impl RightPanelSlot {
     pub(super) fn attention(&self) -> bool {
         self.attention
     }
+    pub(super) fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        self.handle.as_ref().map(|handle| handle.focus_handle(cx))
+    }
     pub(super) fn view(&self) -> Option<AnyView> {
         self.handle.as_ref().map(|handle| handle.view())
     }

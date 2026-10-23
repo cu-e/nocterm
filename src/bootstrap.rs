@@ -43,6 +43,17 @@ pub(crate) struct HostServices {
     pub(crate) transport: Arc<dyn Transport>,
     pub(crate) local: nocterm_terminal::LocalSessions,
     pub(crate) local_host: Option<Arc<dyn nocterm_session::HostExec>>,
+    pub(crate) image_search: Arc<dyn nocterm_project_providers::ImageSearch>,
+    pub(crate) environment: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
+    pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
+}
+
+struct ProjectResources {
+    settings: nocterm_store::SettingsHandle,
+    directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
+    image_search: Arc<dyn nocterm_project_providers::ImageSearch>,
+    environment: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
+    container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
 }
 
 pub(crate) struct Themes {
@@ -126,22 +137,25 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
     } = services;
     let local_host = hosts.local_host;
     let stored = persist.then_some(&paths);
-    gpui_kit::init(cx);
-    let base = tokens.clone();
-    let settings = settings.install(cx);
-    let ui = nocterm_ui::init(tokens, settings, cx);
-    let shutdown = nocterm_store::ShutdownCoordinator::default();
-    report_store_registration("settings", ui.settings().register_shutdown(&shutdown));
-    let themes = install_themes(themes, ui.settings().clone(), base, cx);
-    let layout = nocterm_ui::LayoutMemory::init(
-        stored.map(|paths| paths.state_dir().join("layout.json")),
-        &shutdown,
-        cx,
-    );
+    let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let terminal_deps = terminal_dependencies(hosts.transport, hosts.local, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
-    let projects = install_projects(projects, &terminal, connections.as_ref(), &shutdown, cx);
+    let projects = install_projects(
+        projects,
+        &terminal,
+        connections.as_ref(),
+        ProjectResources {
+            settings: ui.settings().clone(),
+            directories: files.directory_readers(),
+            image_search: hosts.image_search,
+            environment: hosts.environment,
+            container_actions: hosts.container_actions,
+        },
+        &shutdown,
+        cx,
+    )
+    .map(|projects| projects.with_local_host(local_host.clone()));
     if let Some(factory) = terminal_auth_factory {
         agent.terminal_auth = Some(factory(terminal.clone()));
     }
@@ -153,21 +167,14 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
-    let settings_ui = crate::settings_pages::SettingsPages::compose(
-        nocterm_settings_ui::Installed::new(ui.settings().clone()),
+    let settings_ui = crate::settings_pages::SettingsPages::from_installations(
+        ui.settings().clone(),
         themes.clone(),
-        nocterm_terminal::settings_pages(&terminal),
-        nocterm_agent_settings_ui::settings_page(
-            ui.settings().clone(),
-            agent.agents().clone(),
-            sandbox_probe,
-        ),
-        [
-            nocterm_keymap_ui::settings_page(keymap.clone()),
-            nocterm_monitor_ui::settings_page(&monitor),
-            nocterm_files::settings_page(&files),
-        ],
-        vault.as_deref().map(nocterm_vault_ui::settings_page),
+        &terminal,
+        &agent,
+        sandbox_probe,
+        crate::settings_pages::guest_pages(keymap.clone(), &monitor, &files, projects.as_ref()),
+        vault.as_deref(),
     )?;
     let booted = Booted {
         #[cfg(test)]
@@ -189,16 +196,52 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
     Ok(booted)
 }
 
+/// Establish shared settings, appearance and durable layout before feature installation.
+fn install_interface(
+    tokens: DesignTokens,
+    settings: SettingsConfig,
+    themes: Option<Themes>,
+    stored: Option<&Paths>,
+    cx: &mut App,
+) -> (
+    nocterm_ui::UiReady,
+    nocterm_store::ShutdownCoordinator,
+    nocterm_ui::ThemeUi,
+    nocterm_ui::LayoutHandle,
+) {
+    gpui_kit::init(cx);
+    let base = tokens.clone();
+    let settings = settings.install(cx);
+    let ui = nocterm_ui::init(tokens, settings, cx);
+    let shutdown = nocterm_store::ShutdownCoordinator::default();
+    report_store_registration("settings", ui.settings().register_shutdown(&shutdown));
+    let themes = install_themes(themes, ui.settings().clone(), base, cx);
+    let layout = nocterm_ui::LayoutMemory::init(
+        stored.map(|paths| paths.state_dir().join("layout.json")),
+        &shutdown,
+        cx,
+    );
+    (ui, shutdown, themes, layout)
+}
+
 /// Saved workspaces retain the original terminal installation and shutdown owner.
 fn install_projects(
     projects: crate::project_setup::PreparedProjectSetup,
     terminal: &nocterm_terminal::Installed,
     connections: Option<&nocterm_connections::Installed>,
+    resources: ProjectResources,
     shutdown: &nocterm_store::ShutdownCoordinator,
     cx: &mut App,
 ) -> Option<nocterm_projects::Installed> {
-    match projects.install(terminal, connections, shutdown, cx) {
-        Ok(projects) => Some(projects),
+    match projects.install(terminal, connections, resources.settings, shutdown, cx) {
+        Ok(projects) => Some(
+            projects
+                .with_directory_readers(resources.directories)
+                .with_preparation(Arc::new(nocterm_project_runtime::NativeProjectPreparation))
+                .with_image_search(resources.image_search)
+                .with_environment(resources.environment)
+                .with_container_actions(resources.container_actions),
+        ),
         Err(error) => {
             tracing::error!(%error, "workspace installation failed");
             None
@@ -310,7 +353,9 @@ fn terminal_dependencies(
     stored: Option<&nocterm_core::Paths>,
     shutdown: &nocterm_store::ShutdownCoordinator,
 ) -> nocterm_terminal::Deps {
-    let deps = nocterm_terminal::Deps::new(transport, local);
+    let deps = nocterm_terminal::Deps::new(transport, local)
+        .with_container_sessions(Arc::new(nocterm_project_runtime::NativeContainerSessions))
+        .with_workspace_sessions(Arc::new(nocterm_project_runtime::NativeWorkspaceSessions));
     let Some(paths) = stored else {
         return deps;
     };

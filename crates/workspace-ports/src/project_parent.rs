@@ -1,4 +1,4 @@
-//! Human folder creation captures the original ordinary connection.
+//! Human creation retains an original connection or explicit local capability.
 use std::path::PathBuf;
 
 use gpui::{App, SharedString};
@@ -30,8 +30,10 @@ impl ProjectParentDescriptor {
 #[derive(Clone)]
 pub struct ProjectCreationSource {
     parent: ProjectParentDescriptor,
-    expected: ExpectedSession,
+    expected: Option<ExpectedSession>,
     cwd: Option<PathBuf>,
+    exec: Option<std::sync::Arc<dyn nocterm_session::HostExec>>,
+    fs: Option<std::sync::Arc<dyn nocterm_session::RemoteFs>>,
 }
 
 impl ProjectCreationSource {
@@ -43,15 +45,45 @@ impl ProjectCreationSource {
         parent.host().validate()?;
         let source = Self {
             parent,
-            expected,
+            expected: Some(expected),
             cwd,
+            exec: None,
+            fs: None,
         };
         Ok(source)
+    }
+    /// Terminal-free creation is valid only for the explicitly supplied local host.
+    pub fn local(
+        exec: std::sync::Arc<dyn nocterm_session::HostExec>,
+        cwd: Option<PathBuf>,
+    ) -> Result<Self, ProjectParentError> {
+        Ok(Self {
+            parent: ProjectParentDescriptor::new(HostLocator::Local, "This computer".into())?,
+            expected: None,
+            cwd,
+            exec: Some(exec),
+            fs: None,
+        })
+    }
+    pub fn with_resources(
+        mut self,
+        exec: Option<std::sync::Arc<dyn nocterm_session::HostExec>>,
+        fs: Option<std::sync::Arc<dyn nocterm_session::RemoteFs>>,
+    ) -> Self {
+        self.exec = exec;
+        self.fs = fs;
+        self
+    }
+    pub fn executor(&self) -> Option<std::sync::Arc<dyn nocterm_session::HostExec>> {
+        self.exec.clone()
+    }
+    pub fn filesystem(&self) -> Option<std::sync::Arc<dyn nocterm_session::RemoteFs>> {
+        self.fs.clone()
     }
     pub fn parent(&self) -> &ProjectParentDescriptor {
         &self.parent
     }
-    pub fn expected(&self) -> ExpectedSession {
+    pub fn expected(&self) -> Option<ExpectedSession> {
         self.expected
     }
     pub fn cwd(&self) -> Option<&std::path::Path> {

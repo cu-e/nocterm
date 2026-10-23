@@ -1,17 +1,21 @@
-//! The active host's resources at the start of the status bar.
+//! The selected workspace environment's resources in the status bar.
 //!
 //! A compact summary — CPU and memory by default — follows the active tab's
-//! host; clicking it opens details with every core, memory, temperatures,
+//! environment; clicking it opens supported CPU, memory, temperature,
 //! disks, uptime and graphs of network and disk throughput. Collection runs
 //! on the host itself through [`nocterm_monitor`]: while the details are
 //! closed only what the summary shows is read, at the slow interval.
 //!
-//! Owns: active-host sampling lifecycle, status/details views and monitor settings controls.
+//! Owns: selected monitor-source lifecycle, generation-bound sampling, resource-specific
+//! history, status/details views and monitor settings controls.
 //! Installation retains actual settings and optional supplied local host execution; models share it.
 //! Does not own: metric parsing, host execution or session establishment.
-//! Ports used: workspace active-session contracts and session `HostExec` and supplied SettingsHandle; provided: `SettingsPageSpec`.
+//! Ports used: immutable workspace MonitorSource, scoped session HostExec and supplied
+//! SettingsHandle; provided: SettingsPageSpec.
 //! Settings section: `[monitor]`. Globals: none.
-//! Invariants: one host script collects the current metric union; retained history is bounded.
+//! Invariants: one script collects the current metric union; eight retained records stay
+//! distinct by surface and resource; unavailable projects never use a local fallback.
+//! Container CPU uses a labeled one-CPU basis; cgroup memory never uses host capacity.
 mod details;
 mod installed;
 pub use installed::{Installed, install};
@@ -19,6 +23,7 @@ mod graph;
 mod model;
 mod page;
 mod settings;
+mod source;
 mod status;
 
 use gpui_kit::{AppContext as _, Context, Window};
@@ -46,7 +51,7 @@ pub fn register(
     cx: &mut Context<Workspace>,
 ) {
     let handle = cx.entity();
-    let session = workspace.active_session(cx);
+    let session = workspace.monitor_source(cx);
     let monitor = cx.new(|cx| model::HostMonitor::new(&handle, session, installed, cx));
     let status = cx.new(|cx| status::MonitorStatus::new(monitor, cx));
     workspace.add_leading_status_view(status, cx);

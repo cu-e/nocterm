@@ -18,12 +18,13 @@ use gpui_kit::{
     },
     div,
     prelude::*,
+    px,
 };
 use nocterm_ui::IconName;
 
 use super::{
     ContextSelectionReceipt, MenuBuilder, NewTabMenu, Workspace,
-    layout::{Body, Column},
+    layout::{Body, Column, PanelPresentation},
     panels::Sidebar,
     right_panel::RightPanelSlot,
     surface::SurfaceFrame,
@@ -197,26 +198,15 @@ impl Chrome {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
-        if regions.right.maximized() {
-            return tile(
-                cards,
-                Workspace::forward_commands(div(), cx)
-                    .id("workspace-right-panel")
-                    .test_support()
-                    .size_full()
-                    .when_some(regions.right.view(), |body, panel| {
-                        body.child(cached(panel))
-                    }),
-            );
-        }
         let widths = body_state.widths(window, cx);
-        let arrangement =
-            body_state.arrangement(regions.sidebar.visible(), regions.right.open(), cx);
+        let presentation = PanelPresentation::new(regions.right.open(), regions.right.maximized());
+        let arrangement = body_state.arrangement(regions.sidebar.visible(), presentation, cx);
         let state = body_state.state(arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {
             body = body.child(match column {
                 Column::Sidebar => resizable_panel()
+                    .flex_none()
                     .size(widths.sidebar)
                     .size_range(widths.sidebar_range.clone())
                     .child(tile(
@@ -225,21 +215,33 @@ impl Chrome {
                     )),
                 Column::Content => resizable_panel().child(self.render_content(regions, cards, cx)),
                 Column::SidePanel => resizable_panel()
-                    .size(widths.right_panel)
-                    .size_range(widths.right_panel_range.clone())
-                    .child(tile(
-                        cards,
-                        Workspace::forward_commands(div(), cx)
-                            .id("workspace-right-panel")
-                            .test_support()
-                            .size_full()
-                            .when_some(regions.right.view(), |body, panel| {
-                                body.child(cached(panel))
-                            }),
-                    )),
+                    .map(|panel| match presentation {
+                        PanelPresentation::Docked => panel
+                            .size(widths.right_panel)
+                            .size_range(widths.right_panel_range.clone()),
+                        _ => panel.size_range(px(0.)..gpui_kit::Pixels::MAX),
+                    })
+                    .child(self.render_right_panel(regions.right, cards, cx)),
             });
         }
         body.into_any_element()
+    }
+
+    fn render_right_panel(
+        &self,
+        panel: &RightPanelSlot,
+        cards: Option<FloatingCards>,
+        cx: &mut Context<Workspace>,
+    ) -> AnyElement {
+        tile(
+            cards,
+            Workspace::forward_commands(div(), cx)
+                .id("workspace-right-panel")
+                .test_support()
+                .size_full()
+                .min_w_0()
+                .when_some(panel.view(), |body, view| body.child(cached(view))),
+        )
     }
 
     /// The open tabs, or an invitation to open one.

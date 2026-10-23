@@ -2,6 +2,37 @@
 use super::*;
 use gpui_kit::component::dock::{DockAreaState, NodeId};
 impl Workspace {
+    /// Observes only the selected surface's live monitoring authority.
+    pub fn monitor_source(&self, cx: &App) -> crate::MonitorSource {
+        let source = self.context_source(cx);
+        let surface = self.surfaces.window().resolve(source, cx).ok();
+        let Some(surface) = surface else {
+            return crate::MonitorSource::unavailable(source.surface_id());
+        };
+        let inner = surface.read(cx);
+        let session = inner.tabs().active_session();
+        let local = inner
+            .content()
+            .terminals(cx)
+            .into_iter()
+            .find(|entry| entry.active)
+            .and_then(|entry| entry.capabilities.state().info(cx))
+            .is_some_and(|info| info.local);
+        let general = source.context() == nocterm_project_model::ContextId::General;
+        let local = local || general && session.is_none() && inner.tabs().active_handle().is_none();
+        let target = self
+            .surfaces
+            .outer()
+            .read(cx)
+            .tabs()
+            .active_project()
+            .and_then(|project| project.monitor_target());
+        if general {
+            crate::MonitorSource::general(source.surface_id(), session, local)
+        } else {
+            crate::MonitorSource::project(source.surface_id(), target, session, local)
+        }
+    }
     pub fn explorer_source(&self, cx: &App) -> Option<crate::ExplorerSource> {
         let source = self.context_source(cx);
         if let nocterm_project_model::ContextId::Project(id) = source.context() {
