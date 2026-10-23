@@ -4948,6 +4948,7 @@ dependencies = [
  "nocterm-localfs",
  "nocterm-monitor",
  "nocterm-monitor-ui",
+ "nocterm-project-container-fs",
  "nocterm-project-model",
  "nocterm-project-providers",
  "nocterm-project-runtime",
@@ -5427,6 +5428,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-project-container-fs"
+version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "async-io",
+ "futures",
+ "getrandom 0.4.3",
+ "nocterm-containers",
+ "nocterm-project-model",
+ "nocterm-project-providers",
+ "nocterm-session",
+]
+
+[[package]]
 name = "nocterm-project-model"
 version = "0.0.0"
 dependencies = [
@@ -5458,7 +5473,6 @@ dependencies = [
 name = "nocterm-project-runtime"
 version = "0.0.0"
 dependencies = [
- "async-channel",
  "async-io",
  "futures",
  "getrandom 0.4.3",

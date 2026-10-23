@@ -40,6 +40,7 @@ nocterm-monitor-ui.workspace = true
 nocterm-project-model.workspace = true
 nocterm-project-providers.workspace = true
 nocterm-project-runtime.workspace = true
+nocterm-project-container-fs.workspace = true
 nocterm-directory-io.workspace = true
 nocterm-explorer.workspace = true
 nocterm-project-service.workspace = true
@@ -176,6 +177,7 @@ nocterm-ai = { path = "crates/ai" }
 nocterm-project-model = { path = "crates/project-model" }
 nocterm-project-providers = { path = "crates/project-providers" }
 nocterm-project-runtime = { path = "crates/project-runtime" }
+nocterm-project-container-fs = { path = "crates/project-container-fs" }
 nocterm-directory-io = { path = "crates/directory-io" }
 nocterm-project-storage = { path = "crates/project-storage" }
 nocterm-project-service = { path = "crates/project-service" }
