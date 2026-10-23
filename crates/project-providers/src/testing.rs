@@ -167,3 +167,6 @@ pub use environment::{CreatedEnvironmentCall, EnvironmentCall, FakeWorkspaceEnvi
 
 mod removal;
 pub use removal::{ContainerActionCall, FakeWorkspaceContainerActions};
+
+mod activation;
+pub use activation::FakeWorkspaceCommandActivation;
