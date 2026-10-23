@@ -18,7 +18,7 @@ mod project_tabs;
 #[path = "tests/provider_resolution.rs"]
 mod provider_resolution;
 
-struct Probe {
+pub(super) struct Probe {
     focus: FocusHandle,
     alternate_focus: Option<FocusHandle>,
     closes: Rc<Cell<usize>>,
@@ -142,7 +142,7 @@ pub(super) fn fixture_with_layout(
         (window, workspace, layout)
     })
 }
-fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
+pub(super) fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
     cx.new(|cx| Probe {
         focus: cx.focus_handle(),
         alternate_focus: None,

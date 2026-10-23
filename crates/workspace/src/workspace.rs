@@ -334,4 +334,6 @@ impl Render for Workspace {
 mod tests;
 
 #[cfg(test)]
+mod focus_transition_tests;
+#[cfg(test)]
 mod native_terminal_tab_tests;
