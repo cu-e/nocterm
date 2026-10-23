@@ -26,8 +26,8 @@ shared read-only directory readers. It explicitly injects NativeImageSearch alon
 preparation; each search uses the captured original executor and selected engine.
 It also injects `NativeWorkspaceEnvironment` for observed settings and explicit
 tool changes. `NativeWorkspaceSessions` is supplied separately to Terminal for
-folder workspace activation; container sessions activate inside their scoped
-resource. Ordinary connection transports retain their existing launch behavior.
+folder workspace activation; `nocterm-project-container-fs::NativeContainerSessions`
+receives the same activation capability for its scoped resource. Ordinary connection transports retain their existing launch behavior.
 The controlled managed paths are exported before the configured workspace shell,
 without reading a mutable environment fragment or editing shell startup files.
 Local creation needs neither a PTY nor a
@@ -43,7 +43,7 @@ the original destination and ordered jump route without opening a connection.
 Terminal then opens an ordinary folder session inside the workspace, where normal
 host-key, password and vault prompts appear. Resolution creates no additional
 server tab ([ADR 0070](../adr/0070-original-workspace-connection-recovery.md)).
-Container resolution supplies the built-in runtime adapter through retained
+Container resolution supplies the container-session adapter through retained
 terminal dependencies. Captured host-backed preparation uses the existing
 connected executor; that requirement does not apply to every provider reference.
 Generic resource identity and concrete built-in codecs have separate domain

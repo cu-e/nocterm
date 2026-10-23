@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -46,9 +46,11 @@ container creation uses the chosen engine’s cached image reference or ID and p
 only when missing; curated images retain their explicit pull. Rollback checks the
 exact resource identity, project label and a fresh creation-attempt label. A lost create response triggers bounded reconciliation on
 the original executor; unresolved outcomes retain a typed, recoverable attempt
-reference. Automatic rollback never deletes ordinary folders or attached containers. Container
-sessions wrap normal host transport with scoped execution and no host filesystem projection
-([ADR 0071](../adr/0071-provider-workspace-locations.md)). A process-backed
+reference. Automatic rollback never deletes ordinary folders or attached containers.
+
+`nocterm-project-container-fs` wraps normal host transport with scoped execution and
+no host filesystem projection
+([ADR 0071](../adr/0071-provider-workspace-locations.md)). Its process-backed
 `RemoteFs` adapter uses that same original executor and exact engine/resource for
 container files. It passes paths as arguments to fixed recipes, probes required
 utilities, bounds queues/commands and streams file contents. Upload publication
