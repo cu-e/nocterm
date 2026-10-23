@@ -218,7 +218,7 @@ impl ProjectView {
         let project = owner
             .upgrade()
             .ok_or(ProjectOpenError::Surface(
-                nocterm_workspace::ContextSelectionError::StaleSurface,
+                nocterm_workspace_ports::ContextSelectionError::StaleSurface,
             ))
             .and_then(|view| {
                 let view = view.read(cx);
@@ -369,7 +369,7 @@ impl ProjectView {
     }
     fn open_terminal(
         &self,
-        target: nocterm_workspace::ProjectTerminalTarget,
+        target: nocterm_workspace_ports::ProjectTerminalTarget,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), ProjectOpenError> {
@@ -378,8 +378,8 @@ impl ProjectView {
     }
     fn open_with(
         &self,
-        session: std::rc::Rc<dyn nocterm_workspace::ProjectTerminalSession>,
-        target: nocterm_workspace::ProjectTerminalTarget,
+        session: std::rc::Rc<dyn nocterm_workspace_ports::ProjectTerminalSession>,
+        target: nocterm_workspace_ports::ProjectTerminalTarget,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(), ProjectOpenError> {

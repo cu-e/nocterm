@@ -9,6 +9,9 @@
 //! bound ProjectTerminalSession/ProjectTerminalResolve, WorkspaceEnvironment
 //! and WorkspaceContainerActions. Ports provided:
 //! retained Installed registration and ProjectView.
+//! Workspace remains for outer Item admission, Panel/actions, focused-source capture,
+//! original General Item enumeration and connection-directory projections (ADR0079).
+//! Project terminal contracts/refusals come directly from workspace-ports; containers supplies DTOs.
 //! Settings section: `[workspaces]`. Globals: none.
 //! Invariants: original source capabilities, checked target and ProjectId remain
 //! stable; an injected local source permits creation without a terminal, while
@@ -51,7 +54,7 @@ gpui_kit::actions!(
 
 pub fn init(
     model: nocterm_project_service::ProjectsHandle,
-    terminals: std::rc::Rc<dyn nocterm_workspace::ProjectTerminalOpen>,
+    terminals: std::rc::Rc<dyn nocterm_workspace_ports::ProjectTerminalOpen>,
     settings: nocterm_store::SettingsHandle,
     cx: &mut gpui_kit::App,
 ) -> Installed {

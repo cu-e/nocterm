@@ -2,7 +2,8 @@ use crate::ProjectOpenError;
 use gpui_kit::{App, Context, Subscription, Window};
 use nocterm_project_model::{Catalog, ProjectId};
 use nocterm_project_service::ProjectsHandle;
-use nocterm_workspace::{ProjectTerminalOpen, Workspace};
+use nocterm_workspace::Workspace;
+use nocterm_workspace_ports::ProjectTerminalOpen;
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -10,7 +11,7 @@ pub struct Installed {
     model: ProjectsHandle,
     settings: nocterm_store::SettingsHandle,
     terminals: Rc<dyn ProjectTerminalOpen>,
-    resolver: Option<Rc<dyn nocterm_workspace::ProjectTerminalResolve>>,
+    resolver: Option<Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve>>,
     setup: Option<std::sync::Arc<dyn nocterm_project_providers::ProjectPreparation>>,
     environment: Option<std::sync::Arc<dyn nocterm_project_providers::WorkspaceEnvironment>>,
     container_actions:
@@ -123,12 +124,14 @@ impl Installed {
     }
     pub fn with_terminal_resolver(
         mut self,
-        resolver: Rc<dyn nocterm_workspace::ProjectTerminalResolve>,
+        resolver: Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve>,
     ) -> Self {
         self.resolver = Some(resolver);
         self
     }
-    pub(crate) fn resolver(&self) -> Option<&Rc<dyn nocterm_workspace::ProjectTerminalResolve>> {
+    pub(crate) fn resolver(
+        &self,
+    ) -> Option<&Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve>> {
         self.resolver.as_ref()
     }
     pub fn catalog<'a>(&self, cx: &'a App) -> &'a Catalog {

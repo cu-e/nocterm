@@ -7,7 +7,8 @@ use gpui_kit::{
 use nocterm_project_model::*;
 use nocterm_project_service::{PreparedProjects, ProjectsHandle};
 use nocterm_ui::{Design, DesignTokens};
-use nocterm_workspace::{ItemHandle as _, ProjectTerminalOpen, Workspace};
+use nocterm_workspace::{ItemHandle as _, Workspace};
+use nocterm_workspace_ports::ProjectTerminalOpen;
 
 use crate::*;
 

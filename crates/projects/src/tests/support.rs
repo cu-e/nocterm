@@ -4,15 +4,16 @@ struct NoTerminals;
 impl ProjectTerminalOpen for NoTerminals {
     fn capture(
         &self,
-        _: Rc<dyn nocterm_workspace::ItemHandle>,
+        _: gpui_kit::AnyView,
         _: nocterm_workspace::ExpectedSession,
+        _: nocterm_workspace_ports::TerminalCapabilities,
         _: &ProjectTarget,
         _: &App,
     ) -> Result<
-        Rc<dyn nocterm_workspace::ProjectTerminalSession>,
-        nocterm_workspace::ContextSelectionError,
+        Rc<dyn nocterm_workspace_ports::ProjectTerminalSession>,
+        nocterm_workspace_ports::ContextSelectionError,
     > {
-        Err(nocterm_workspace::ContextSelectionError::Unavailable)
+        Err(nocterm_workspace_ports::ContextSelectionError::Unavailable)
     }
 }
 
@@ -58,7 +59,7 @@ impl Fixture {
         projects: Vec<ProjectDefinition>,
         writer: nocterm_store::SnapshotWriter<Catalog>,
         terminals: Rc<dyn ProjectTerminalOpen>,
-        resolver: Option<Rc<dyn nocterm_workspace::ProjectTerminalResolve>>,
+        resolver: Option<Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve>>,
         cx: &mut TestAppContext,
     ) -> Self {
         Self::with_setup(projects, writer, terminals, resolver, None, cx)
@@ -67,7 +68,7 @@ impl Fixture {
         projects: Vec<ProjectDefinition>,
         writer: nocterm_store::SnapshotWriter<Catalog>,
         terminals: Rc<dyn ProjectTerminalOpen>,
-        resolver: Option<Rc<dyn nocterm_workspace::ProjectTerminalResolve>>,
+        resolver: Option<Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve>>,
         preparation: Option<Arc<dyn nocterm_project_providers::ProjectPreparation>>,
         cx: &mut TestAppContext,
     ) -> Self {

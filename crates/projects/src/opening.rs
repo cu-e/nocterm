@@ -114,7 +114,7 @@ impl ProjectOpenIntent {
                 self.installed.model().release_claim(self.claim, cx)?;
                 return Err(outcome
                     .err()
-                    .unwrap_or(nocterm_workspace::ContextSelectionError::StaleSurface)
+                    .unwrap_or(nocterm_workspace_ports::ContextSelectionError::StaleSurface)
                     .into());
             }
         }
@@ -170,20 +170,24 @@ pub(crate) fn capture_session(
     workspace: &Workspace,
     window: &Window,
     cx: &App,
-) -> Result<std::rc::Rc<dyn nocterm_workspace::ProjectTerminalSession>, ProjectOpenError> {
+) -> Result<std::rc::Rc<dyn nocterm_workspace_ports::ProjectTerminalSession>, ProjectOpenError> {
     installed.model().check_binding(binding, cx)?;
     installed.model().check_claim(claim, cx)?;
     if let Some(host) = crate::location::host(location)
         && let Ok(source) = context::capture_host(workspace, installed, &host, window, cx)
         && let Some(expected) = source.expected()
         && let Some(item) = workspace.general_item(expected.item(), cx)
-        && let Ok(session) = installed.terminals().capture(item, expected, location, cx)
+        && let Some(capabilities) = item.terminal_capabilities(cx)
+        && let Ok(session) =
+            installed
+                .terminals()
+                .capture(item.view(), expected, capabilities, location, cx)
     {
         return Ok(session);
     }
     installed
         .resolver()
-        .ok_or(nocterm_workspace::ProjectConnectionError::Unavailable)?
+        .ok_or(nocterm_workspace_ports::ProjectConnectionError::Unavailable)?
         .resolve(location, cx)
         .map_err(Into::into)
 }

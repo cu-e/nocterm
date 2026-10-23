@@ -2,7 +2,7 @@
 use crate::{Installed, ProjectOpenError};
 use gpui_kit::App;
 use nocterm_project_service::ProjectClaim;
-use nocterm_workspace::{ContextSelectionError, ProjectTerminalSession};
+use nocterm_workspace_ports::{ContextSelectionError, ProjectTerminalSession};
 use std::rc::Rc;
 
 pub(crate) struct ProjectLifetime {
