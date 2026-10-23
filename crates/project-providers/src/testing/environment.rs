@@ -9,6 +9,27 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
+type CreatedStep = (Option<BoxFuture<'static, ()>>, Result<(), EnvironmentError>);
+
+#[derive(Clone)]
+pub struct CreatedEnvironmentCall {
+    commands: Arc<dyn crate::EnvironmentCommands>,
+    owned: crate::OwnedContainer,
+    selections: Vec<LanguageSelection>,
+}
+
+impl CreatedEnvironmentCall {
+    pub fn commands(&self) -> Arc<dyn crate::EnvironmentCommands> {
+        self.commands.clone()
+    }
+    pub fn owned(&self) -> &crate::OwnedContainer {
+        &self.owned
+    }
+    pub fn selections(&self) -> &[LanguageSelection] {
+        &self.selections
+    }
+}
+
 type Step = (
     Option<BoxFuture<'static, ()>>,
     Result<EnvironmentSnapshot, EnvironmentError>,
@@ -25,12 +46,47 @@ struct Script {
     installations: VecDeque<Step>,
     calls: Vec<EnvironmentCall>,
     updates: VecDeque<Vec<SetupUpdate>>,
+    created: VecDeque<CreatedStep>,
+    created_calls: Vec<CreatedEnvironmentCall>,
 }
 #[derive(Clone, Default)]
 pub struct FakeWorkspaceEnvironment {
     state: Arc<Mutex<Script>>,
 }
 impl FakeWorkspaceEnvironment {
+    pub fn respond_created(
+        &self,
+        result: Result<(), EnvironmentError>,
+    ) -> Result<(), EnvironmentError> {
+        self.created_after_optional(None, result)
+    }
+    pub fn created_after(
+        &self,
+        gate: BoxFuture<'static, ()>,
+        result: Result<(), EnvironmentError>,
+    ) -> Result<(), EnvironmentError> {
+        self.created_after_optional(Some(gate), result)
+    }
+    fn created_after_optional(
+        &self,
+        gate: Option<BoxFuture<'static, ()>>,
+        result: Result<(), EnvironmentError>,
+    ) -> Result<(), EnvironmentError> {
+        self.state
+            .lock()
+            .map_err(|_| EnvironmentError::Canceled)?
+            .created
+            .push_back((gate, result));
+        Ok(())
+    }
+    pub fn created_calls(&self) -> Result<Vec<CreatedEnvironmentCall>, EnvironmentError> {
+        Ok(self
+            .state
+            .lock()
+            .map_err(|_| EnvironmentError::Canceled)?
+            .created_calls
+            .clone())
+    }
     pub fn progress(&self, updates: Vec<SetupUpdate>) -> Result<(), EnvironmentError> {
         self.state
             .lock()
@@ -149,5 +205,35 @@ impl WorkspaceEnvironment for FakeWorkspaceEnvironment {
         progress: SetupProgress,
     ) -> EnvironmentFuture<EnvironmentSnapshot> {
         self.run(source, Some(selections), cancel, Some(progress))
+    }
+}
+
+impl crate::CreatedWorkspaceEnvironment for FakeWorkspaceEnvironment {
+    fn install_created(
+        &self,
+        commands: Arc<dyn crate::EnvironmentCommands>,
+        owned: crate::OwnedContainer,
+        selections: Vec<LanguageSelection>,
+    ) -> EnvironmentFuture<()> {
+        let state = self.state.clone();
+        async move {
+            let (gate, result) = {
+                let mut state = state.lock().map_err(|_| EnvironmentError::Canceled)?;
+                state.created_calls.push(CreatedEnvironmentCall {
+                    commands,
+                    owned,
+                    selections,
+                });
+                state
+                    .created
+                    .pop_front()
+                    .unwrap_or((None, Err(EnvironmentError::Unavailable)))
+            };
+            if let Some(gate) = gate {
+                gate.await;
+            }
+            result
+        }
+        .boxed()
     }
 }

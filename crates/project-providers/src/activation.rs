@@ -8,3 +8,11 @@ pub trait WorkspaceSessionFactory: Send + Sync + 'static {
     fn wrap(&self, base: Arc<dyn Transport>) -> Arc<dyn Transport>;
     fn wrap_local(&self, factory: LocalTransportFactory) -> Arc<dyn Transport>;
 }
+
+/// Fixed workspace tool activation applied before resource-specific request wrapping.
+pub trait WorkspaceCommandActivation: Send + Sync + 'static {
+    fn activate_request(
+        &self,
+        request: nocterm_session::ExecRequest,
+    ) -> nocterm_session::ExecRequest;
+}

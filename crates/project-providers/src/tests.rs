@@ -321,3 +321,31 @@ fn removal_errors_preserve_original_codec_causes() {
     }
     assert!(found);
 }
+
+#[test]
+fn scoped_requests_preserve_literal_arguments_stdin_engine_id_and_optional_cwd() {
+    for engine in Engine::ALL {
+        let location = ContainerLocation::new(
+            HostLocator::Local,
+            engine,
+            "b".repeat(64),
+            RootPath::parse("/root space").unwrap(),
+            ContainerOrigin::Attached,
+        )
+        .unwrap();
+        for cwd in [false, true] {
+            let mut request =
+                nocterm_session::ExecRequest::new("printf").args(["%s", "literal $(unchanged)"]);
+            request.stdin = Some(vec![0, 1, 255]);
+            let wrapped = location.exec_request(request, cwd);
+            let mut expected = vec!["exec", "--interactive"];
+            if cwd {
+                expected.extend(["--workdir", "/root space"]);
+            }
+            expected.extend([location.container(), "printf", "%s", "literal $(unchanged)"]);
+            assert_eq!(wrapped.program, engine.command().program);
+            assert_eq!(wrapped.args, expected);
+            assert_eq!(wrapped.stdin, Some(vec![0, 1, 255]));
+        }
+    }
+}

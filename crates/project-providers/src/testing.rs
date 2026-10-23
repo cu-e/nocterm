@@ -163,7 +163,7 @@ impl ProjectPreparation for FakeProjectPreparation {
 mod image_search;
 pub use image_search::{FakeImageSearch, ImageSearchCall};
 mod environment;
-pub use environment::{EnvironmentCall, FakeWorkspaceEnvironment};
+pub use environment::{CreatedEnvironmentCall, EnvironmentCall, FakeWorkspaceEnvironment};
 
 mod removal;
 pub use removal::{ContainerActionCall, FakeWorkspaceContainerActions};

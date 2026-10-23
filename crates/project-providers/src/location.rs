@@ -47,6 +47,24 @@ impl TryFrom<ContainerRecord> for ContainerLocation {
     }
 }
 impl ContainerLocation {
+    /// Wraps a literal program in the original exact-container execution request.
+    pub fn exec_request(
+        &self,
+        program: nocterm_session::ExecRequest,
+        use_workspace_directory: bool,
+    ) -> nocterm_session::ExecRequest {
+        let mut request = self.engine().command().args(["exec", "--interactive"]);
+        if use_workspace_directory {
+            request = request.args(["--workdir", self.root().as_str()]);
+        }
+        request = request
+            .arg(self.container())
+            .arg(program.program)
+            .args(program.args);
+        request.stdin = program.stdin;
+        request
+    }
+
     pub fn new(
         host: HostLocator,
         engine: Engine,

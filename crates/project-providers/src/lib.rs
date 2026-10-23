@@ -1,11 +1,12 @@
 //! Typed builtin workspace locations and host-backed preparation roles.
 //!
 //! Owns: container codecs, checked language versions, captured environment authority and facts,
-//! explicit container lifecycle authority and default container workspace directory policy.
+//! explicit container lifecycle authority, exact-container requests and default workspace directory policy.
 //! Does not own: I/O, credentials, persistence, sessions, GPUI, views or provider registration.
 //! Ports used: captured HostExec and Transport. Ports provided: ProjectPreparation,
 //! ImageSearch, WorkspaceEnvironment, WorkspaceContainerActions, WorkspaceSessionFactory
-//! and ContainerSessionFactory.
+//! ContainerSessionFactory, EnvironmentCommands/EnvironmentCommandFactory,
+//! CreatedWorkspaceEnvironment and WorkspaceCommandActivation.
 //! Settings section: `[workspaces]`. Globals: none.
 //! Invariants: container identity includes original host, explicit engine and full ID;
 //! resource references are bounded nonsecret locators; ephemeral owned receipts
@@ -13,8 +14,11 @@
 //! Language selections and observations are ephemeral; explicit host/scoped execution
 //! is never interchangeable. Managed installation never grants catalog or deletion authority;
 //! container Stop/Delete requires its separate explicit captured-host contract.
+//! Created installation requires an owned receipt; scoped command contexts retain original budgets.
 mod activation;
+mod created_environment;
 mod environment;
+mod environment_commands;
 mod error;
 mod image_search;
 mod language;
@@ -24,8 +28,10 @@ mod removal;
 mod settings;
 mod setup;
 
-pub use activation::WorkspaceSessionFactory;
+pub use activation::{WorkspaceCommandActivation, WorkspaceSessionFactory};
+pub use created_environment::CreatedWorkspaceEnvironment;
 pub use environment::*;
+pub use environment_commands::{EnvironmentCommandFactory, EnvironmentCommands};
 pub use error::{ContainerActionError, EnvironmentError, ProjectSetupError};
 pub use image_search::*;
 pub use language::{LanguageSelection, ProgrammingLanguage, VersionChoice};
