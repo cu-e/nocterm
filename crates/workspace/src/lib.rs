@@ -2,7 +2,7 @@
 //!
 //! Owns: the permanent outer connection dock and inner project docks,
 //! tab membership and cached session context, one authoritative native dock per surface,
-//! window menus and chrome, sidebar and independent side-panel visibility,
+//! window menus and chrome, panel groups (the sidebar and the independent side panel),
 //! per-surface background membership, and per-column layout projections.
 //! Does not own: session connections, feature views, native filesystem implementations,
 //! persistence workers, project definitions or connection authentication,

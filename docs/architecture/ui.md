@@ -93,10 +93,11 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 
 ## Workspace
 
-`Workspace` coordinates eight private owners: focus, `WindowSurfaces`, `Chrome`,
-sidebar, independent side panel, body, installed ports and registered actions.
-`Chrome` owns window menus, the new-tab popover and status views; the
-sidebar and side-panel owners control their own visibility and subscriptions.
+`Workspace` coordinates seven private owners: focus, `WindowSurfaces`, `Chrome`,
+`PanelGroups`, body, installed ports and registered actions.
+`Chrome` owns window menus, the new-tab popover and status views; `PanelGroups`
+owns the navigation and assistant groups: their visibility, selected panel,
+attention, expansion and panel subscriptions (ADR 0081).
 Immutable observations expose tab identities and native pane order without giving
 callers mutable native entities. Transitions commit membership and subscriptions
 before the shell emits events or changes focus (ADR 0026).
@@ -286,19 +287,19 @@ Settings also uses `nocterm-store`, with durable publication rather than optimis
 layout projection. Bootstrap registers both settings and layout with the same
 coordinator alongside snippets, connection state, agent documents and output
 recording.
-The workspace body lays out only its visible columns —
-sidebar, tabs, side panel, or mirrored when `SwapSides` put the side panel on
-the left — with one resize state per arrangement, and remembers widths per
-column rather than per position: a hidden column kept in the resizable group
+The workspace body lays out one column per shown panel group and the tabs —
+navigation, tabs, assistant, or mirrored when the sides are swapped; within a
+side the groups run from the window edge inward — with one resize state per
+arrangement, and remembers widths per width class rather than per position: a hidden column kept in the resizable group
 would hold its stale width and stop its neighbours from growing. Expanded chat
 replaces central content while visible navigation retains its side and width.
 Hidden, docked and expanded panel presentations have separate resize states;
-expanded measurements never overwrite remembered docked widths. Sidebar controls
+expanded measurements never overwrite remembered docked widths. Navigation controls
 preserve expansion, and closing navigation focuses the visible chat.
 The side panel learns its side through `RightPanel::set_docked_left`; the agent panel puts its
 history column on the outer side and remembers that column's width. A side
 panel that opens a column of its own asks the workspace to widen it with
-`RightPanelEvent::Widen`. Sidebar panels are shown and hidden by their feature's
+`RightPanelEvent::Widen`. Navigation panels are shown and hidden by their feature's
 action (`files::ToggleExplorer`, `connections::ToggleServers`,
 `containers::ToggleContainers`) through
 `Workspace::toggle_panel_of`, so the workspace binds no feature's panel.

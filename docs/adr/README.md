@@ -11,7 +11,7 @@ acceptance; a later record supersedes an earlier one.
 | [0003](0003-credential-store-port.md) | Terminals reach saved credentials through a port |
 | [0004](0004-write-queue.md) | Persisted files share one bounded write queue |
 | [0005](0005-agent-runtime-service.md) | The agent runtime is a service crate reached through a client port |
-| [0006](0006-workspace-ports.md) | The side panel is a state machine; tabs open through a session factory |
+| [0006](0006-workspace-ports.md) | The side panel is a state machine; tabs open through a session factory (side-panel slot superseded in part by 0081) |
 | [0007](0007-bootstrap.md) | One bootstrap for the application and its GUI tests |
 | [0008](0008-code-limits.md) | Function size and complexity limits shrink a grandfathered list |
 | [0009](0009-thread-composer.md) | A chat's composer state is kept apart from its conversation |
@@ -26,7 +26,7 @@ acceptance; a later record supersedes an earlier one.
 | [0018](0018-transfer-runtime-capabilities.md) | Transfer execution is an adapter over held filesystem and retryable publication ports |
 | [0022](0022-agent-storage-owners.md) | Agent storage adapters and private lifecycle owners share persistence execution |
 | [0025](0025-native-program-opener.md) | External local programs have an explicit bounded native owner |
-| [0026](0026-workspace-state-owners.md) | Workspace transitions belong to private state owners with explicit shared layout |
+| [0026](0026-workspace-state-owners.md) | Workspace transitions belong to private state owners with explicit shared layout (Sidebar and RightPanelSlot superseded in part by 0081) |
 | [0027](0027-connection-observation-ports.md) | Pure connection observation contracts and network I/O adapter |
 | [0028](0028-theme-library-boundary.md) | Pure theme domain model, adapter registry and theme service |
 | [0029](0029-output-recording-shared-driver.md) | Bounded append persistence and output recording |
@@ -77,3 +77,4 @@ acceptance; a later record supersedes an earlier one.
 | [0078](0078-explicit-workspace-container-removal.md) | Explicit workspace container actions precede checked metadata removal |
 | [0079](0079-project-terminal-contracts-below-shell.md) | Project terminal contracts live below the shell with captured typed placement |
 | [0080](0080-project-adapter-ownership.md) | Project resource, environment and filesystem adapters have separate owners |
+| [0081](0081-panel-groups-own-side-panels.md) | Panel groups own the window's side panels |
