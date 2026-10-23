@@ -79,7 +79,7 @@ impl PreparedApp {
                 environment,
                 preparation,
                 container_sessions: Arc::new(
-                    nocterm_project_runtime::NativeContainerSessions::new(activation.clone()),
+                    nocterm_project_container_fs::NativeContainerSessions::new(activation.clone()),
                 ),
                 workspace_sessions: activation,
                 container_actions: Arc::new(

@@ -310,7 +310,7 @@ fn container_session(
     host_files.set_home("/host-only-sentinel").unwrap();
     let base = ScriptedTransport::default();
     let driver = base.queue(Some(host_files), Some(exec));
-    let transport = nocterm_project_runtime::NativeContainerSessions::new(Arc::new(
+    let transport = nocterm_project_container_fs::NativeContainerSessions::new(Arc::new(
         nocterm_project_runtime::NativeWorkspaceSessions,
     ))
     .wrap(Arc::new(base), owned.location().clone());

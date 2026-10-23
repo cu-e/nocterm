@@ -304,7 +304,7 @@ fn fixture_hosts(
         preparation: Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
             environment,
         )),
-        container_sessions: Arc::new(nocterm_project_runtime::NativeContainerSessions::new(
+        container_sessions: Arc::new(nocterm_project_container_fs::NativeContainerSessions::new(
             activation.clone(),
         )),
         workspace_sessions: activation,

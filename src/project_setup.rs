@@ -2,6 +2,8 @@
 mod connect;
 #[cfg(test)]
 mod native_tests;
+#[cfg(test)]
+mod tests;
 
 use gpui_kit::App;
 use nocterm_core::Paths;
