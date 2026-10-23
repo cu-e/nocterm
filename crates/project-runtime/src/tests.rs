@@ -9,6 +9,14 @@ use nocterm_session::{
 };
 use std::sync::Arc;
 
+pub(crate) fn runtime() -> NativeProjectPreparation {
+    NativeProjectPreparation::new(Arc::new(crate::NativeWorkspaceEnvironment::new(Arc::new(
+        crate::NativeEnvironmentCommands,
+    ))))
+}
+pub(crate) fn container_sessions() -> crate::NativeContainerSessions {
+    crate::NativeContainerSessions::new(Arc::new(crate::NativeWorkspaceSessions))
+}
 pub(crate) fn id() -> String {
     "a".repeat(64)
 }
@@ -57,7 +65,7 @@ pub(crate) fn prepare(
     exec: FakeExec,
     request: ProjectSetupRequest,
 ) -> Result<PreparedProject, ProjectSetupError> {
-    block_on(NativeProjectPreparation.prepare(
+    block_on(runtime().prepare(
         Arc::new(exec),
         request,
         CancelFlag::default(),
@@ -78,7 +86,7 @@ fn discovery_keeps_engines_and_image_failures_independent() {
         r#"[{"ID":"one","Names":"same","Image":"debian","State":"running"}]"#.into(),
     );
     answer(&exec, "podman images", "[]".into());
-    let results = block_on(NativeProjectPreparation.discover(Arc::new(exec))).unwrap();
+    let results = block_on(runtime().discover(Arc::new(exec))).unwrap();
     assert_eq!(results.len(), 2);
     assert!(results[0].images.is_err());
     assert_eq!(
@@ -262,7 +270,7 @@ fn cancellation_before_mutation_runs_no_command() {
     let exec = FakeExec::default();
     let cancel = CancelFlag::default();
     cancel.cancel();
-    let result = block_on(NativeProjectPreparation.prepare(
+    let result = block_on(runtime().prepare(
         Arc::new(exec.clone()),
         request(SetupMode::Create {
             engine: Engine::Docker,
@@ -289,7 +297,7 @@ fn cleanup_refuses_an_unowned_container() {
     )
     .unwrap();
     assert!(matches!(
-        block_on(NativeProjectPreparation.discard_owned(
+        block_on(runtime().discard_owned(
             Arc::new(exec.clone()),
             OwnedContainer::new(
                 location,
@@ -359,7 +367,7 @@ fn cancellation_stops_inflight_container_command_and_keeps_attached_resource() {
     answer(&exec, "docker inspect", inspect("running", false));
     let sink = exec.queue_stream("docker exec");
     let cancel = CancelFlag::default();
-    let mut operation = NativeProjectPreparation.prepare(
+    let mut operation = runtime().prepare(
         Arc::new(exec.clone()),
         request(SetupMode::Attach {
             engine: Engine::Docker,
@@ -489,3 +497,5 @@ fn installation_scripts(requests: &[nocterm_session::ExecRequest]) -> String {
 }
 
 mod removal;
+
+mod commands;

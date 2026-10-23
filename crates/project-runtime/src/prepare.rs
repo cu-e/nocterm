@@ -3,9 +3,9 @@ use futures::{FutureExt as _, future::join_all};
 use nocterm_containers::{ContainersError, Engine};
 use nocterm_project_model::{ProjectTarget, RootPath};
 use nocterm_project_providers::{
-    ContainerLocation, ContainerOrigin, EngineInventory, OwnedContainer, PreparedProject,
-    ProjectPreparation, ProjectSetupError, ProjectSetupRequest, SetupFuture, SetupMode, SetupPhase,
-    SetupProgress, WorkspaceImage,
+    ContainerLocation, ContainerOrigin, CreatedWorkspaceEnvironment, EngineInventory,
+    OwnedContainer, PreparedProject, ProjectPreparation, ProjectSetupError, ProjectSetupRequest,
+    SetupFuture, SetupMode, SetupPhase, SetupProgress, WorkspaceImage,
 };
 use nocterm_session::{ExecRequest, HostExec, local_fs::CancelFlag};
 use std::sync::Arc;
@@ -14,8 +14,15 @@ const DIRECTORY: &str =
     "set -eu; mkdir -p -- \"$1\"; test -d \"$1\"; test -r \"$1\"; test -x \"$1\"";
 const CLONE: &str = "set -eu; export GIT_TERMINAL_PROMPT=0; command -v git >/dev/null 2>&1 || exit 76; test ! -L \"$2\" || exit 73; if test -e \"$2\"; then test -d \"$2\" || exit 74; test -z \"$(find \"$2\" -mindepth 1 -maxdepth 1 -print -quit)\" || exit 73; fi; git clone -- \"$1\" \"$2\"";
 
-#[derive(Clone, Copy, Default)]
-pub struct NativeProjectPreparation;
+#[derive(Clone)]
+pub struct NativeProjectPreparation {
+    environment: Arc<dyn CreatedWorkspaceEnvironment>,
+}
+impl NativeProjectPreparation {
+    pub fn new(environment: Arc<dyn CreatedWorkspaceEnvironment>) -> Self {
+        Self { environment }
+    }
+}
 impl ProjectPreparation for NativeProjectPreparation {
     fn discover(&self, exec: Arc<dyn HostExec>) -> SetupFuture<Vec<EngineInventory>> {
         async move {
@@ -50,16 +57,18 @@ impl ProjectPreparation for NativeProjectPreparation {
         cancel: CancelFlag,
         progress: SetupProgress,
     ) -> SetupFuture<PreparedProject> {
+        let runtime = self.clone();
         async move {
             request.validate()?;
             let commands = Commands::new(exec.clone(), cancel, progress);
             let mut owned = None;
-            let result = prepare(&commands, request, &mut owned).await;
+            let result =
+                prepare(&commands, runtime.environment.as_ref(), request, &mut owned).await;
             match (result, owned) {
                 (Ok(target), owned) => Ok(PreparedProject { target, owned }),
                 (Err(error), Some(receipt)) => {
                     let container = receipt.location().container().to_owned();
-                    match Self.discard_owned(exec, receipt).await {
+                    match runtime.discard_owned(exec, receipt).await {
                         Ok(()) => Err(error),
                         Err(cleanup) => Err(ProjectSetupError::CleanupFailed {
                             container,
@@ -98,6 +107,7 @@ impl ProjectPreparation for NativeProjectPreparation {
 
 async fn prepare(
     commands: &Commands,
+    environment: &dyn CreatedWorkspaceEnvironment,
     request: ProjectSetupRequest,
     owned: &mut Option<OwnedContainer>,
 ) -> Result<ProjectTarget, ProjectSetupError> {
@@ -121,10 +131,11 @@ async fn prepare(
                 .unwrap_or_else(|| RootPath::parse("/workspace"))?;
             let receipt = create(commands, *engine, image, &request, root).await?;
             let location = receipt.location().clone();
-            *owned = Some(receipt);
+            *owned = Some(receipt.clone());
             ensure_started(commands, *engine, location.container(), "created").await?;
             if !languages.is_empty() || !matches!(image, WorkspaceImage::Custom(_)) {
-                crate::environment::install_created(commands, &location, languages)
+                environment
+                    .install_created(Arc::new(commands.clone()), receipt, languages.clone())
                     .await
                     .map_err(|error| ProjectSetupError::Environment(Box::new(error)))?;
             }
@@ -275,27 +286,10 @@ async fn prepare_folder(
         )
     };
     commands
-        .run(phase, container_exec(location, request, false))
+        .run(phase, location.exec_request(request, false))
         .await
         .map(drop)
 }
-pub(crate) fn container_exec(
-    location: &ContainerLocation,
-    program: ExecRequest,
-    workdir: bool,
-) -> ExecRequest {
-    let mut request = location.engine().command().args(["exec", "--interactive"]);
-    if workdir {
-        request = request.args(["--workdir", location.root().as_str()]);
-    }
-    request = request
-        .arg(location.container())
-        .arg(program.program)
-        .args(program.args);
-    request.stdin = program.stdin;
-    request
-}
-
 async fn listing(exec: &dyn HostExec, request: ExecRequest) -> Result<String, ContainersError> {
     let operation = async {
         let output = exec.exec(request).await?.collect(16 * 1024 * 1024).await;

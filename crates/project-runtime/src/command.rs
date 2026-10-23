@@ -9,6 +9,7 @@ use std::{
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
+#[derive(Clone)]
 pub(crate) struct Commands {
     exec: Arc<dyn HostExec>,
     cancel: CancelFlag,
@@ -147,5 +148,47 @@ fn command_error(phase: SetupPhase, status: Option<u32>, stderr_tail: String) ->
             status,
             stderr_tail,
         },
+    }
+}
+
+/// Supplies shared bounded contexts without changing their original authority.
+#[derive(Clone, Copy, Default)]
+pub struct NativeEnvironmentCommands;
+impl nocterm_project_providers::EnvironmentCommandFactory for NativeEnvironmentCommands {
+    fn create(
+        &self,
+        executor: Arc<dyn HostExec>,
+        cancel: CancelFlag,
+        progress: SetupProgress,
+    ) -> Arc<dyn nocterm_project_providers::EnvironmentCommands> {
+        Arc::new(Commands::new(executor, cancel, progress))
+    }
+}
+impl nocterm_project_providers::EnvironmentCommands for Commands {
+    fn run(
+        &self,
+        phase: SetupPhase,
+        request: ExecRequest,
+    ) -> nocterm_project_providers::SetupFuture<String> {
+        let commands = self.clone();
+        async move { Commands::run(&commands, phase, request).await }.boxed()
+    }
+    fn check(&self) -> Result<(), ProjectSetupError> {
+        Commands::check(self)
+    }
+    fn executor(&self) -> Arc<dyn HostExec> {
+        Commands::executor(self)
+    }
+    fn with_executor(
+        &self,
+        executor: Arc<dyn HostExec>,
+    ) -> Arc<dyn nocterm_project_providers::EnvironmentCommands> {
+        Arc::new(Commands::with_executor(self, executor))
+    }
+    fn observation(
+        &self,
+        executor: Option<Arc<dyn HostExec>>,
+    ) -> Arc<dyn nocterm_project_providers::EnvironmentCommands> {
+        Arc::new(Commands::observation(self, executor))
     }
 }

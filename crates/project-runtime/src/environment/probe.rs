@@ -26,7 +26,7 @@ emit java "$(java -version 2>&1 | head -n 1 | head -c 256)"
 "#;
 
 pub(super) async fn inspect(
-    commands: &Commands,
+    commands: &dyn EnvironmentCommands,
     source: &EnvironmentSource,
 ) -> Result<EnvironmentSnapshot, EnvironmentError> {
     let output = commands

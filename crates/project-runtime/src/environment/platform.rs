@@ -29,7 +29,7 @@ impl InstallPlatform {
     }
     pub(crate) async fn prepare(
         &self,
-        commands: &Commands,
+        commands: &dyn EnvironmentCommands,
         snapshot: &EnvironmentSnapshot,
         selections: &[LanguageSelection],
     ) -> Result<(), EnvironmentError> {

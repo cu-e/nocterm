@@ -33,6 +33,7 @@ mod removal;
 mod session;
 
 pub use activation::NativeWorkspaceSessions;
+pub use command::NativeEnvironmentCommands;
 pub use environment::NativeWorkspaceEnvironment;
 pub use image_search::NativeImageSearch;
 pub use prepare::NativeProjectPreparation;

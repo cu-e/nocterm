@@ -40,7 +40,7 @@ fn canceled_create_reconciles_daemon_owned_container_by_exact_attempt_and_engine
         answer(&exec, &format!("{program} pull"), String::new());
         let sink = exec.queue_stream(format!("{program} create"));
         let cancel = CancelFlag::default();
-        let mut pending = NativeProjectPreparation.prepare(
+        let mut pending = runtime().prepare(
             Arc::new(exec.clone()),
             create_input(engine),
             cancel.clone(),
@@ -86,7 +86,7 @@ fn lost_or_malformed_create_output_recovers_only_the_attempt_owned_container() {
         let exec = FakeExec::default();
         answer(&exec, "docker pull", String::new());
         let sink = exec.queue_stream("docker create");
-        let mut pending = NativeProjectPreparation.prepare(
+        let mut pending = runtime().prepare(
             Arc::new(exec.clone()),
             create_input(Engine::Docker),
             CancelFlag::default(),
@@ -127,7 +127,7 @@ fn uncertain_create_never_deletes_missing_ambiguous_malformed_or_other_attempt_m
         let exec = FakeExec::default();
         answer(&exec, "docker pull", String::new());
         let sink = exec.queue_stream("docker create");
-        let mut pending = NativeProjectPreparation.prepare(
+        let mut pending = runtime().prepare(
             Arc::new(exec.clone()),
             create_input(Engine::Docker),
             CancelFlag::default(),
@@ -160,7 +160,7 @@ fn failed_later_setup_cleanup_requires_the_successful_create_receipt_attempt() {
     answer(&exec, "docker rm", String::new());
     answer(&exec, "docker exec", String::new());
     let install = exec.queue_stream(format!("docker exec --interactive {} sh -s", id()));
-    let mut pending = NativeProjectPreparation.prepare(
+    let mut pending = runtime().prepare(
         Arc::new(exec.clone()),
         request(SetupMode::Create {
             engine: Engine::Docker,
@@ -227,7 +227,7 @@ fn saved_ownership_receipt_cannot_delete_another_attempt_of_the_same_project() {
         CreationToken::from_bytes([2; 16]),
     );
     assert!(matches!(
-        block_on(NativeProjectPreparation.discard_owned(Arc::new(exec.clone()), receipt)),
+        block_on(runtime().discard_owned(Arc::new(exec.clone()), receipt)),
         Err(ProjectSetupError::CleanupRefused)
     ));
     assert!(removal_requests(&exec).is_empty());
@@ -312,7 +312,7 @@ fn image_pull_progress_streams_before_exit_and_cancellation_stops_the_original_h
     let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = observed.clone();
     let cancel = CancelFlag::default();
-    let mut pending = NativeProjectPreparation.prepare(
+    let mut pending = runtime().prepare(
         Arc::new(exec.clone()),
         create_input(Engine::Docker),
         cancel.clone(),
@@ -354,7 +354,7 @@ fn a_failed_pull_never_emits_a_creation_phase_or_completes_a_workspace() {
     let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = observed.clone();
     assert!(matches!(
-        block_on(NativeProjectPreparation.prepare(
+        block_on(runtime().prepare(
             Arc::new(exec.clone()),
             create_input(Engine::Podman),
             CancelFlag::default(),

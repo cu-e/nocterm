@@ -1,8 +1,10 @@
 pub(crate) mod paths;
 pub(crate) mod platform;
 pub(crate) mod probe;
-use crate::command::Commands;
 use futures::FutureExt as _;
+use nocterm_project_providers::{
+    CreatedWorkspaceEnvironment, EnvironmentCommandFactory, EnvironmentCommands, OwnedContainer,
+};
 use nocterm_project_providers::{
     EnvironmentError, EnvironmentExecution, EnvironmentFuture, EnvironmentSnapshot,
     EnvironmentSource, LanguageSelection, SetupProgress, WorkspaceEnvironment,
@@ -10,23 +12,31 @@ use nocterm_project_providers::{
 use nocterm_session::{ExecRequest, HostExec, local_fs::CancelFlag};
 use std::sync::Arc;
 
-#[derive(Clone, Copy, Default)]
-pub struct NativeWorkspaceEnvironment;
+#[derive(Clone)]
+pub struct NativeWorkspaceEnvironment {
+    commands: Arc<dyn EnvironmentCommandFactory>,
+}
+impl NativeWorkspaceEnvironment {
+    pub fn new(commands: Arc<dyn EnvironmentCommandFactory>) -> Self {
+        Self { commands }
+    }
+}
 impl WorkspaceEnvironment for NativeWorkspaceEnvironment {
     fn inspect(
         &self,
         source: EnvironmentSource,
         cancel: CancelFlag,
     ) -> EnvironmentFuture<EnvironmentSnapshot> {
+        let factory = self.commands.clone();
         async move {
-            let commands = Commands::new(
+            let commands = factory.create(
                 Arc::new(EnvironmentExec {
                     source: source.clone(),
                 }),
                 cancel,
                 Arc::new(|_| {}),
             );
-            probe::inspect(&commands, &source).await
+            probe::inspect(commands.as_ref(), &source).await
         }
         .boxed()
     }
@@ -37,24 +47,25 @@ impl WorkspaceEnvironment for NativeWorkspaceEnvironment {
         cancel: CancelFlag,
         progress: SetupProgress,
     ) -> EnvironmentFuture<EnvironmentSnapshot> {
+        let factory = self.commands.clone();
         async move {
             nocterm_project_providers::validate_language_selections(&selections)?;
-            let commands = Commands::new(
+            let commands = factory.create(
                 Arc::new(EnvironmentExec {
                     source: source.clone(),
                 }),
                 cancel,
                 progress,
             );
-            let snapshot = probe::inspect(&commands, &source).await?;
-            install(&commands, &snapshot, &selections, false).await?;
-            probe::inspect(&commands, &source).await
+            let snapshot = probe::inspect(commands.as_ref(), &source).await?;
+            install(commands.as_ref(), &snapshot, &selections, false).await?;
+            probe::inspect(commands.as_ref(), &source).await
         }
         .boxed()
     }
 }
 pub(crate) async fn install(
-    commands: &Commands,
+    commands: &dyn EnvironmentCommands,
     snapshot: &EnvironmentSnapshot,
     selections: &[LanguageSelection],
     freshly_created: bool,
@@ -102,7 +113,7 @@ impl HostExec for EnvironmentExec {
                 let request = if let Ok(location) =
                     nocterm_project_providers::ContainerLocation::from_target(self.source.target())
                 {
-                    crate::prepare::container_exec(&location, request, false)
+                    location.exec_request(request, false)
                 } else {
                     request
                 };
@@ -113,8 +124,20 @@ impl HostExec for EnvironmentExec {
     }
 }
 
+impl CreatedWorkspaceEnvironment for NativeWorkspaceEnvironment {
+    fn install_created(
+        &self,
+        commands: Arc<dyn EnvironmentCommands>,
+        owned: OwnedContainer,
+        selections: Vec<LanguageSelection>,
+    ) -> EnvironmentFuture<()> {
+        async move { install_created(commands.as_ref(), owned.location(), &selections).await }
+            .boxed()
+    }
+}
+
 pub(crate) async fn install_created(
-    commands: &Commands,
+    commands: &dyn EnvironmentCommands,
     location: &nocterm_project_providers::ContainerLocation,
     selections: &[LanguageSelection],
 ) -> Result<(), EnvironmentError> {
@@ -125,13 +148,13 @@ pub(crate) async fn install_created(
     let scoped = commands.with_executor(Arc::new(EnvironmentExec {
         source: source.clone(),
     }));
-    let snapshot = probe::inspect(&scoped, &source).await?;
+    let snapshot = probe::inspect(scoped.as_ref(), &source).await?;
     if selections.is_empty() {
         return platform::InstallPlatform::new(&snapshot, true)?
-            .prepare(&scoped, &snapshot, selections)
+            .prepare(scoped.as_ref(), &snapshot, selections)
             .await;
     }
-    install(&scoped, &snapshot, selections, true).await
+    install(scoped.as_ref(), &snapshot, selections, true).await
 }
 #[cfg(test)]
 mod tests;

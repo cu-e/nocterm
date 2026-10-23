@@ -36,7 +36,7 @@ fn container_session_launch_and_nested_execution_keep_original_engine_and_scope_
         ContainerOrigin::Attached,
     )
     .unwrap();
-    let transport = crate::NativeContainerSessions.wrap(Arc::new(base.clone()), location);
+    let transport = container_sessions().wrap(Arc::new(base.clone()), location);
     let session = transport.open(connection());
     assert!(session.fs().is_some());
     assert_eq!(base.requests()[0].launch.program.as_deref(), Some("podman"));
@@ -121,7 +121,7 @@ fn local_container_factory_receives_the_container_launch_before_opening_native_t
         ContainerOrigin::Attached,
     )
     .unwrap();
-    let transport = crate::NativeContainerSessions.wrap_local(factory, location);
+    let transport = container_sessions().wrap_local(factory, location);
     let session = transport.open(ConnectRequest {
         target: Target::new("user", "localhost", 22),
         auth: Auth::Auto,

@@ -27,7 +27,7 @@ impl FilesystemCommands {
             .args(["-c", &source, "nocterm-files"])
             .args(args.iter().cloned());
         program.stdin = stdin;
-        let mut scoped = crate::prepare::container_exec(&self.location, program, false);
+        let mut scoped = self.location.exec_request(program, false);
         scoped.args.splice(2..2, ["--workdir".into(), "/".into()]);
         timed(self.exec.exec(scoped), Duration::from_secs(15))
             .await?

@@ -20,12 +20,14 @@ fn install(
     exec: FakeExec,
     selections: Vec<LanguageSelection>,
 ) -> Result<EnvironmentSnapshot, EnvironmentError> {
-    block_on(NativeWorkspaceEnvironment.install(
-        EnvironmentSource::host(target(), Arc::new(exec)).unwrap(),
-        selections,
-        CancelFlag::default(),
-        Arc::new(|_| {}),
-    ))
+    block_on(
+        NativeWorkspaceEnvironment::new(Arc::new(crate::NativeEnvironmentCommands)).install(
+            EnvironmentSource::host(target(), Arc::new(exec)).unwrap(),
+            selections,
+            CancelFlag::default(),
+            Arc::new(|_| {}),
+        ),
+    )
 }
 #[test]
 fn host_and_already_scoped_sources_route_exactly_once_and_probe_actual_container_os() {
@@ -52,8 +54,11 @@ fn host_and_already_scoped_sources_route_exactly_once_and_probe_actual_container
         } else {
             EnvironmentSource::host(target, Arc::new(exec.clone())).unwrap()
         };
-        let snapshot =
-            block_on(NativeWorkspaceEnvironment.inspect(source, CancelFlag::default())).unwrap();
+        let snapshot = block_on(
+            NativeWorkspaceEnvironment::new(Arc::new(crate::NativeEnvironmentCommands))
+                .inspect(source, CancelFlag::default()),
+        )
+        .unwrap();
         assert_eq!(snapshot.os.id, "alpine");
         assert_eq!(snapshot.os.libc, LibcFamily::Musl);
         assert_eq!(snapshot.container.unwrap().id, "a".repeat(64));

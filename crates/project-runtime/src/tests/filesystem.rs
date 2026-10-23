@@ -21,7 +21,7 @@ fn open(exec: &FakeExec, engine: Engine) -> Arc<dyn RemoteFs> {
         ContainerOrigin::Attached,
     )
     .unwrap();
-    let session = crate::NativeContainerSessions
+    let session = container_sessions()
         .wrap(Arc::new(base), location)
         .open(ConnectRequest {
             target: Target::new("user", "remote-engine", 22),

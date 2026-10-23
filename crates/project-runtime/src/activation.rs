@@ -170,3 +170,9 @@ impl HostExec for WorkspaceExec {
 
 #[cfg(test)]
 mod tests;
+
+impl nocterm_project_providers::WorkspaceCommandActivation for NativeWorkspaceSessions {
+    fn activate_request(&self, request: ExecRequest) -> ExecRequest {
+        activate_request(request)
+    }
+}
