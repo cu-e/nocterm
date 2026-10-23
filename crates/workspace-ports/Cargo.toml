@@ -15,6 +15,7 @@ test-support = []
 [dependencies]
 gpui.workspace = true
 nocterm-session.workspace = true
+nocterm-core.workspace = true
 nocterm-project-model.workspace = true
 thiserror.workspace = true
 

@@ -8,6 +8,8 @@
 //! `SessionContext`, `ConnectionSummary` and the typed `TerminalError` and
 //! `TerminalCapability` refusals, inert original folder-source metadata and
 //! ordinary Explorer session projections and the private immutable MonitorSource.
+//! Owns: project terminal capture/resolve/session contracts and typed context/provider refusals.
+//! Project terminal targets retain opaque original GPUI destinations and type-bound validation.
 //! Monitor observations retain the selected inner executor and inert resource identity.
 //! Creation sources retain original
 //! executor/filesystem capabilities without authorizing a replacement session.
@@ -16,7 +18,7 @@
 //! (which opens connections into a workspace), or any implementation.
 //! Ports provided: the contracts above, implemented by the terminal feature
 //! and consumed by agents, snippets and projects. Ports used: `nocterm-session`
-//! and checked folder identity/path values.
+//! and checked folder identity/path values, GPUI core and SharedCause.
 //! Settings section: none. Globals: none.
 //! Invariants: observation grants no session authority; every operation names
 //! its `ExpectedSession` and is refused once that connection changed; terminal-free
@@ -30,6 +32,7 @@ mod errors;
 mod explorer;
 mod monitor;
 mod project_parent;
+mod project_terminal;
 mod session;
 mod terminal;
 
@@ -49,4 +52,9 @@ pub use terminal::{
     RemoteReconnect, SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalEntry,
     TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
     TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
+};
+
+pub use project_terminal::{
+    ContextSelectionError, ProjectConnectionError, ProjectTerminalDestination, ProjectTerminalOpen,
+    ProjectTerminalResolve, ProjectTerminalSession, ProjectTerminalTarget,
 };
