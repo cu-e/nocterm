@@ -1,8 +1,9 @@
 //! Saved connection metadata becomes an ordinary inner terminal configuration.
 use gpui_kit::{App, AppContext as _, EntityId, WeakEntity, Window};
 use nocterm_project_model::{HostLocator, ProjectTarget};
-use nocterm_workspace::{
-    ProjectConnectionError, ProjectTerminalResolve, ProjectTerminalSession, SessionSpec,
+use nocterm_workspace::SessionSpec;
+use nocterm_workspace_ports::{
+    ProjectConnectionError, ProjectTerminalResolve, ProjectTerminalSession,
 };
 use std::rc::Rc;
 
@@ -85,7 +86,8 @@ impl nocterm_workspace::ChatConnectionOpen for TerminalResolver {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<EntityId, nocterm_workspace::ChatConnectionOpenError> {
-        use nocterm_workspace::{ChatConnectionOpenError, ContextSelectionError};
+        use nocterm_workspace::ChatConnectionOpenError;
+        use nocterm_workspace_ports::ContextSelectionError;
         let workspace = workspace
             .upgrade()
             .ok_or(ContextSelectionError::StaleWindow)?;

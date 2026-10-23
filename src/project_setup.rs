@@ -14,12 +14,14 @@ pub(crate) fn terminal_resolver(
     terminal: &nocterm_terminal::Installed,
     connections: Option<&nocterm_connections::Installed>,
 ) -> Result<
-    std::rc::Rc<dyn nocterm_workspace::ProjectTerminalResolve>,
-    nocterm_workspace::ProjectConnectionError,
+    std::rc::Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve>,
+    nocterm_workspace_ports::ProjectConnectionError,
 > {
-    let builtin: std::rc::Rc<dyn nocterm_workspace::ProjectTerminalResolve> = std::rc::Rc::new(
-        connect::TerminalResolver::new(terminal.clone(), connections.cloned()),
-    );
+    let builtin: std::rc::Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve> =
+        std::rc::Rc::new(connect::TerminalResolver::new(
+            terminal.clone(),
+            connections.cloned(),
+        ));
     let id =
         nocterm_project_model::ProviderId::parse(nocterm_project_providers::CONTAINER_PROVIDER)?;
     Ok(std::rc::Rc::new(

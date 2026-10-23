@@ -64,7 +64,8 @@ fn an_attached_server_opens_in_the_original_hidden_workspace_with_its_saved_rout
 fn an_attached_server_refuses_foreign_windows_and_closed_workspaces_before_connecting(
     cx: &mut TestAppContext,
 ) {
-    use nocterm_workspace::{ChatConnectionOpenError, ContextSelectionError};
+    use nocterm_workspace::ChatConnectionOpenError;
+    use nocterm_workspace_ports::ContextSelectionError;
     let f = ProjectFixture::new(HostLocator::Local, cx);
     let _initial = f.open_project(cx);
     let profile = saved_server();

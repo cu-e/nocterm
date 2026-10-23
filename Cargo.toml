@@ -61,6 +61,7 @@ nocterm-vault.workspace = true
 nocterm-vault-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
+nocterm-workspace-ports.workspace = true
 
 anyhow.workspace = true
 futures.workspace = true
