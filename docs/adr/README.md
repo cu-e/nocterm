@@ -75,3 +75,4 @@ acceptance; a later record supersedes an earlier one.
 | [0076](0076-container-filesystem-capability.md) | Container files use a scoped session filesystem capability |
 | [0077](0077-selected-workspace-monitoring.md) | Resource monitoring follows the selected workspace environment |
 | [0078](0078-explicit-workspace-container-removal.md) | Explicit workspace container actions precede checked metadata removal |
+| [0079](0079-project-terminal-contracts-below-shell.md) | Project terminal contracts live below the shell with captured typed placement |

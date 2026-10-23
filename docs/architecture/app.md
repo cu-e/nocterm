@@ -34,7 +34,9 @@ Local creation needs neither a PTY nor a
 synthetic terminal receipt; saved targets open through the existing local resolver.
 
 Workspace terminal resolution composes retained Connections and Terminal installations
-through `ProjectTerminalResolve` and an explicitly supplied provider registry.
+through `nocterm-workspace-ports::ProjectTerminalResolve` and an explicitly supplied provider registry.
+Project terminal consumers import the lower contracts directly; the shell keeps
+private captured placement and typed admission ([ADR0079](../adr/0079-project-terminal-contracts-below-shell.md)).
 The registry rejects duplicate provider identities; an unknown provider remains
 unavailable instead of selecting a host fallback. Connections resolves a saved profile and checks
 the original destination and ordered jump route without opening a connection.

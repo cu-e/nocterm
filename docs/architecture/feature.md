@@ -305,6 +305,12 @@ exact selection. Search matches names, full IDs, images and engine without I/O o
 changing a filtered-out selection. The fixed shared header retains the original
 server. Image sources use a single full-width bounded result viewport.
 
+Projects retains Workspace for outer ProjectView admission, Panel/action
+registration, focused source capture, General Item enumeration and connection
+directory projections. Its ProjectTerminal contracts and context errors are
+imported directly from workspace-ports; container Engine/Image/Container remain
+domain DTOs ([ADR0079](../adr/0079-project-terminal-contracts-below-shell.md)).
+
 Projects retains its supplied `SettingsHandle` and provides the lazy Workspaces
 settings page. Shared checked text receipts edit the domain-owned
 `WorkspacesSettings` section. A creation window snapshots the container directory

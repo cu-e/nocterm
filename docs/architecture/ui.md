@@ -109,17 +109,25 @@ settings, sidebar and right-panel visibility keep their window owners
 
 The active outer Item supplies the visible chat ContextId; switching inner tabs
 keeps the same workspace history. Source receipts identify the original native
-window, outer Item and inner surface. Selection generations prevent a delayed menu
+window, outer Item and inner surface. `SurfaceSelection` owns source and selection receipts plus presentation lifecycle;
+`SurfaceState` owns initial terminal issuance, the starting folder and monitoring identity.
+Selection generations prevent a delayed menu
 or focus callback from acting after switching tabs. Hidden sessions keep running
 and their events update their original surface.
 
-`ProjectTerminalOpen` captures the connected parent once. Its private terminal
+`nocterm-workspace-ports::ProjectTerminalOpen` captures the connected parent once. Its private terminal
 provider retains the complete resolved location, original SessionSpec and
 installation. Opening an inner tab uses the normal local/SSH terminal lifecycle;
 ordinary folders change the initial directory and container locations adapt the
 launch and execution capabilities. Shell options, credentials, proxy and ordered
 jump hosts stay on that source. New tabs and reconnect work independently of the
 original parent tab.
+
+The project terminal contracts and typed context refusals live in workspace-ports
+without workspace reexports. A private ProjectTerminalPlacement retains original
+surface authority; the typed validation/admission bridge keeps native selection
+and Item cleanup in the shell. Providers validate before creating terminal Items
+([ADR0079](../adr/0079-project-terminal-contracts-below-shell.md)).
 
 `ExplorerSource` exposes ordinary session file access and the workspace's initial
 folder. Local folders use the existing local pane; SSH folders use the remote
@@ -238,7 +246,7 @@ switches and reconnects.
 
 The resource monitor uses a separate consumer projection, `MonitorSource`, because
 outer connection tabs do not identify a selected workspace's inner environment.
-The original `ProjectSurface` retains inert checked target metadata; its live inner
+The original surface entity owns inert checked target metadata; its live inner
 session supplies authority. `Workspace::monitor_source` distinguishes selected,
 unavailable and genuinely local contexts. Monitoring never resolves an unavailable
 project through another surface or the local runner. Shared `Host::resolve` and

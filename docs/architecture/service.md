@@ -12,9 +12,15 @@ and synchronous quit capture for layout, settings, snippets, connection state an
 settings that the runtime, panel and settings page read; `nocterm-snippets-store` owns
 checked snippet publication over the shared persistence driver.
 `nocterm-workspace-ports` declares the terminal contracts, `SessionContext` and
-`ConnectionSummary` with GPUI core alone; the workspace re-exports them and keeps
+`ConnectionSummary` with GPUI core alone; the workspace re-exports those ordinary
+terminal contracts and keeps
 `ConnectionDirectory`, which opens connections into a workspace
 ([ADR 0062](../adr/0062-terminal-contracts-below-the-workspace.md)).
+ProjectTerminalOpen/Resolve/Session/Target and ContextSelectionError/ProjectConnectionError
+also live in workspace-ports, imported directly without shell reexports. Targets retain
+a captured GPUI destination and validator; workspace privately owns typed placement
+and admission. Parent capture checks the actual view and advertised session epoch
+([ADR0079](../adr/0079-project-terminal-contracts-below-shell.md)).
 `nocterm-agent-chat` owns agent chats without views: `AgentThread`, the
 `ChatRoster` of a window's selected and retained context chats and their lifecycle,
 and the `ChatWorkspace` and
