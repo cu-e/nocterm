@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-project-runtime"
-description = "Builtin workspace preparation, environment management and activation."
+description = "Builtin project resource preparation, bounded commands and lifecycle actions."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -12,7 +12,6 @@ layer = "adapter"
 [dependencies]
 getrandom.workspace = true
 nocterm-project-model.workspace = true
-nocterm-connections-model.workspace = true
 nocterm-project-providers.workspace = true
 nocterm-containers.workspace = true
 nocterm-session.workspace = true

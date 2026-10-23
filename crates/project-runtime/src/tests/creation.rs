@@ -152,44 +152,6 @@ fn uncertain_create_never_deletes_missing_ambiguous_malformed_or_other_attempt_m
 }
 
 #[test]
-fn failed_later_setup_cleanup_requires_the_successful_create_receipt_attempt() {
-    let exec = FakeExec::default();
-    answer(&exec, "docker create", id());
-    answer(&exec, "docker pull", String::new());
-    answer(&exec, "docker start", String::new());
-    answer(&exec, "docker rm", String::new());
-    answer(&exec, "docker exec", String::new());
-    let install = exec.queue_stream(format!("docker exec --interactive {} sh -s", id()));
-    let mut pending = runtime().prepare(
-        Arc::new(exec.clone()),
-        request(SetupMode::Create {
-            engine: Engine::Docker,
-            image: WorkspaceImage::Ubuntu,
-            languages: vec![LanguageSelection::default_for(ProgrammingLanguage::Python)],
-            root: None,
-        }),
-        CancelFlag::default(),
-        Arc::new(|_| {}),
-    );
-    assert!(pending.as_mut().now_or_never().is_none());
-    answer(
-        &exec,
-        "docker inspect",
-        inspection_with_attempt(&attempt(&exec)),
-    );
-    install.finish(ExecExit {
-        status: Some(1),
-        stderr: String::new(),
-    });
-    drop(install);
-    assert!(matches!(
-        block_on(pending),
-        Err(ProjectSetupError::Environment(_))
-    ));
-    assert_eq!(removal_requests(&exec).len(), 1);
-}
-
-#[test]
 fn retries_use_distinct_creation_tokens_even_for_the_same_project() {
     let exec = FakeExec::default();
     answer(&exec, "docker create", id());

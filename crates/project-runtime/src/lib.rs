@@ -1,32 +1,25 @@
-//! Builtin host-backed workspace preparation, environment management and activation.
+//! Builtin project resource preparation, bounded commands and lifecycle actions.
 //!
-//! Owns: bounded captured-host commands, exact resource preparation, owned rollback and lifecycle actions.
-//! Owns: observed OS-aware managed language installation and workspace-only activation.
-//! Does not own: provider registration, credentials, catalog persistence, container filesystems, GUI or AI launch.
-//! Ports used: HostExec, Transport, CreatedWorkspaceEnvironment; provided: ProjectPreparation, ImageSearch.
-//! Ports provided: WorkspaceEnvironment, WorkspaceContainerActions, WorkspaceSessionFactory, EnvironmentCommandFactory.
+//! Owns: captured-host command budgets, preparation, owned rollback, bounded search/progress and lifecycle actions.
+//! Does not own: environment installation/activation, container filesystems, credentials, catalog or GUI.
+//! Ports used: HostExec, CreatedWorkspaceEnvironment.
+//! Ports provided: ProjectPreparation, ImageSearch, WorkspaceContainerActions, EnvironmentCommandFactory.
 //! Settings section: none. Globals: none.
-//! Invariants: automatic rollback verifies original ID, project and fresh attempt labels before deletion.
+//! Invariants: command scopes retain the original executor, started budget, cancellation and progress authority.
+//! Invariants: creation delegates installation with its actual owned receipt and original command context.
+//! Invariants: automatic rollback verifies full container ID, project and fresh attempt labels before deletion.
 //! Invariants: uncertain creates reconcile on their original executor or retain a recoverable typed attempt.
-//! Invariants: all bounded command contexts retain the supplied executor and original cancellation/budget.
-//! Invariants: installers observe the actual Linux account/platform and preserve private managed versions.
-//! Invariants: only fresh owned Arch containers may initialize absent package databases with an upgrade.
-//! Invariants: explicit existing-environment failures never delete resources; activation is workspace-only.
 //! Invariants: lifecycle actions stop/remove the original full ID without force, volumes, images or host cleanup.
-mod activation;
+//! Invariants: only bounded recovery creates its deliberate fresh uncancelled command context.
 mod command;
-mod environment;
 mod image_search;
 mod inspect;
-mod languages;
 mod ownership;
 mod prepare;
 mod pull_progress;
 mod removal;
 
-pub use activation::NativeWorkspaceSessions;
 pub use command::NativeEnvironmentCommands;
-pub use environment::NativeWorkspaceEnvironment;
 pub use image_search::NativeImageSearch;
 pub use prepare::NativeProjectPreparation;
 pub use removal::NativeWorkspaceContainerActions;
