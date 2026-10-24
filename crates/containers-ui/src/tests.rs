@@ -137,7 +137,7 @@ pub(crate) fn fixture(cx: &mut TestAppContext, local: Option<Arc<dyn HostExec>>)
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     let deps =
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                        nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx);
                     Workspace::new(deps, window, cx)
                 })
             })
@@ -398,7 +398,7 @@ fn registered_container_panels_keep_their_supplied_host_across_other_windows(
         let fixture = fixture(cx, None);
         cx.update_window(fixture.window, |_, window, cx| {
             fixture.workspace.update(cx, |workspace, cx| {
-                crate::register(Some(host.clone()), workspace, window, cx);
+                crate::register(Some(host.clone()), workspace, window, cx).unwrap();
             });
         })
         .unwrap();

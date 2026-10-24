@@ -536,7 +536,10 @@ pub(crate) fn build_workspace(
             nocterm_snippets_ui::register(workspace, snippets, window, cx),
         );
     }
-    nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
+    report_registration(
+        "containers",
+        nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx),
+    );
     if let Some(projects) = &booted.projects {
         nocterm_projects::register(workspace, projects, window, cx);
     }

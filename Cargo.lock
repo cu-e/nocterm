@@ -5240,6 +5240,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "nocterm-containers",
+ "nocterm-plugin-model",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
