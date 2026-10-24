@@ -5892,6 +5892,7 @@ dependencies = [
  "nocterm-settings",
  "nocterm-store",
  "nocterm-ui",
+ "nocterm-window-layout",
  "nocterm-workspace-ports",
  "serde_json",
  "thiserror 2.0.21",

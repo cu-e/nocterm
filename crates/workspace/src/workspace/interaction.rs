@@ -180,16 +180,22 @@ impl Workspace {
             });
         }
     }
-    pub(super) fn toggle_sidebar_panel(
+    /// The toggle of the panel at `ix` in a group: hides the group when the panel shows, else
+    /// shows the panel.
+    pub(super) fn toggle_group_panel(
         &mut self,
+        group: GroupKey,
         ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.panels.is_showing(GroupKey::Navigation, ix) {
-            self.toggle_sidebar(window, cx);
+        let transition = if self.panels.is_showing(group, ix) {
+            self.panels.toggle(group, window, cx)
         } else {
-            self.activate_panel(ix, window, cx);
+            self.panels.activate(group, ix, cx)
+        };
+        if let Some(transition) = transition {
+            self.apply_panel_transition(transition, window, cx);
         }
     }
     pub(super) fn body_resized(
@@ -247,10 +253,25 @@ impl Workspace {
             cx.notify();
         }
     }
-    /// The icons and tooltips the footer draws for its toggles.
+    /// The icons and tooltips the status bar draws for its toggles.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn footer_toggle_looks(&self, cx: &App) -> super::chrome::FooterLooks {
-        super::chrome::FooterLooks::of(&self.panels, cx)
+    pub(crate) fn toggle_looks(&self, cx: &App) -> chrome::ToggleLooks {
+        let regions = chrome::Regions::new(
+            self.surfaces.frame(cx),
+            self.context_selection_receipt(cx),
+            &self.panels,
+            self.ports.directory(),
+            (&self.shell, self.registrations.catalog()),
+        );
+        self.chrome.bar_inputs(&regions, cx).looks()
+    }
+    /// Makes the side panel ask for the user, or stop asking, as the panel itself does through
+    /// [`Panel::attention`](crate::Panel::attention).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_side_panel_attention(&mut self, attention: bool, cx: &mut Context<Self>) {
+        if self.panels.set_attention(GroupKey::Assistant, attention) {
+            cx.notify();
+        }
     }
     pub fn toggle_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(transition) = self.panels.toggle(GroupKey::Assistant, window, cx) {
@@ -360,8 +381,8 @@ impl Workspace {
         cx.notify();
     }
     pub fn swap_sides(&mut self, cx: &mut Context<Self>) {
-        let swapped = self.body.swap(cx);
-        self.panels.set_docked_left(swapped, cx);
+        self.shell.swap(cx);
+        self.sync_panel_sides(cx);
         cx.notify();
     }
     pub(super) fn widen_group(
@@ -374,7 +395,7 @@ impl Workspace {
         if self.panels.is_expanded(group) || !self.panels.is_shown(group) {
             return;
         }
-        let arrangement = self.body.arrangement(&self.panels, cx);
+        let arrangement = self.body.arrangement(&self.panels, &self.shell, cx);
         self.body
             .widen_group(&arrangement, group, delta, window, cx);
         cx.notify();

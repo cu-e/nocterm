@@ -1,5 +1,5 @@
 //! The window's frame around the tabs: the title bar, the body's columns,
-//! the sidebar and the footer.
+//! the sidebar and the footer, which hosts the status bar.
 //!
 //! In the floating layout ([`FloatingCards`]) every column is a card on the
 //! canvas, and the title bar and footer sit on the canvas between them. The
@@ -9,7 +9,7 @@ use gpui_kit::{
     Anchor, AnyElement, AnyView, App, Context, ElementId, Entity, Hsla, MouseButton,
     StyleRefinement, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
+        ActiveTheme as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
         floating::FloatingCards,
         h_flex, h_resizable,
@@ -20,13 +20,14 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_plugin_model::{PanelChrome, Side, WidthClass};
+use nocterm_plugin_model::{PanelChrome, PluginCatalog, Side, WidthClass};
 use nocterm_ui::IconName;
 
 use super::{
     ContextSelectionReceipt, MenuBuilder, NewTabMenu, Workspace,
     layout::{Body, Column},
     panel_groups::{GroupKey, HostedPanel, PanelGroups},
+    shell_layout::ShellLayout,
     surface::SurfaceFrame,
 };
 use crate::NewTab;
@@ -34,9 +35,12 @@ use std::rc::Rc;
 
 mod empty_state;
 mod menus;
+mod status_bar;
 mod toggle_look;
 
-pub(super) use toggle_look::FooterLooks;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use status_bar::ToggleLooks;
+pub(super) use status_bar::WidgetFactory;
 
 struct NewTabControl {
     entry: Option<NewTabMenu>,
@@ -49,6 +53,8 @@ pub(super) struct Regions<'a> {
     selection: ContextSelectionReceipt,
     groups: &'a PanelGroups,
     directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+    shell: &'a ShellLayout,
+    catalog: &'a PluginCatalog,
 }
 impl<'a> Regions<'a> {
     pub(super) fn new(
@@ -56,18 +62,21 @@ impl<'a> Regions<'a> {
         selection: ContextSelectionReceipt,
         groups: &'a PanelGroups,
         directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+        (shell, catalog): (&'a ShellLayout, &'a PluginCatalog),
     ) -> Self {
         Self {
             tabs,
             selection,
             groups,
             directory,
+            shell,
+            catalog,
         }
     }
 }
 
 pub(super) struct Chrome {
-    status: Vec<(StatusSide, AnyView)>,
+    status: status_bar::StatusBar,
     menus: menus::WindowMenus,
     new_tab: NewTabControl,
 }
@@ -75,7 +84,7 @@ pub(super) struct Chrome {
 impl Chrome {
     pub(super) fn new(menu_focus: gpui_kit::FocusHandle) -> Self {
         Self {
-            status: Vec::new(),
+            status: status_bar::StatusBar::new(),
             menus: menus::WindowMenus::new(menu_focus),
             new_tab: NewTabControl {
                 entry: None,
@@ -83,14 +92,11 @@ impl Chrome {
             },
         }
     }
-    pub(super) fn add_status(&mut self, side: StatusSide, view: AnyView) {
-        self.status.push((side, view));
+    pub(super) fn status_bar(&self) -> &status_bar::StatusBar {
+        &self.status
     }
-    pub(super) fn status_views(&self, side: StatusSide) -> impl Iterator<Item = AnyView> + '_ {
-        self.status
-            .iter()
-            .filter(move |(at, _)| *at == side)
-            .map(|(_, view)| view.clone())
+    pub(super) fn status_bar_mut(&mut self) -> &mut status_bar::StatusBar {
+        &mut self.status
     }
     pub(super) fn install_new_tab(&mut self, view: AnyView, focus: gpui_kit::FocusHandle) {
         self.new_tab.install(view, focus);
@@ -158,13 +164,6 @@ fn tile(cards: Option<FloatingCards>, content: impl IntoElement) -> AnyElement {
     }
 }
 
-/// Which end of the footer a feature's status view sits at.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum StatusSide {
-    Leading,
-    Trailing,
-}
-
 impl Chrome {
     /// What the window is painted with behind its regions: the canvas when
     /// they float, the interface background otherwise.
@@ -199,7 +198,7 @@ impl Chrome {
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let widths = body_state.widths(window, cx);
-        let arrangement = body_state.arrangement(regions.groups, cx);
+        let arrangement = body_state.arrangement(regions.groups, regions.shell, cx);
         let state = body_state.state(&arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {
@@ -238,18 +237,19 @@ impl Chrome {
                 cards,
                 self.render_titled_group(group, panel, side == Side::Right, cx),
             ),
-            PanelChrome::OwnHeader => tile(cards, self.render_own_header_group(panel, cx)),
+            PanelChrome::OwnHeader => tile(cards, self.render_own_header_group(group, panel, cx)),
         }
     }
 
     /// A column whose panel draws its own header.
     fn render_own_header_group(
         &self,
+        group: GroupKey,
         panel: Option<&HostedPanel>,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         Workspace::forward_commands(div(), cx)
-            .id("workspace-right-panel")
+            .id((ElementId::from("panel-group-column"), group.id()))
             .test_support()
             .size_full()
             .min_w_0()
@@ -377,79 +377,12 @@ impl Chrome {
         regions: &Regions<'_>,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
-        let footer = Workspace::forward_commands(div(), cx);
-        let selection = regions.selection;
-        let theme = cx.theme();
-        let floating = FloatingCards::get(cx).is_some();
-        let FooterLooks {
-            navigation,
-            local_terminal,
-            side_panel,
-        } = FooterLooks::of(regions.groups, cx);
-        footer
-            .id("workspace-footer")
-            .test_support()
-            .w_full()
-            .flex_shrink_0()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
-                    // On the canvas the gap above already separates the footer.
-                    .when(!floating, |footer| {
-                        footer.border_t_1().border_color(theme.sidebar_border)
-                    })
-                    .children(
-                        regions
-                            .groups
-                            .members(GroupKey::Navigation)
-                            .zip(navigation)
-                            .map(|((ix, panel), look)| {
-                                Button::new(("sidebar-panel", ix))
-                                    .ghost()
-                                    .small()
-                                    .icon(look.icon)
-                                    .tooltip(look.tooltip)
-                                    .when_some(panel.badge(cx), Button::label)
-                                    .selected(regions.groups.is_showing(GroupKey::Navigation, ix))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        // The shown panel's button hides the sidebar.
-                                        this.toggle_sidebar_panel(ix, window, cx);
-                                    }))
-                            }),
-                    )
-                    .children(self.status_views(StatusSide::Leading))
-                    .child(div().flex_1())
-                    .child(nocterm_ui::notice::NoticeBar::new())
-                    .children(self.status_views(StatusSide::Trailing))
-                    .child(
-                        Button::new("toggle-local-terminal")
-                            .ghost()
-                            .small()
-                            .icon(local_terminal.icon)
-                            .tooltip(local_terminal.tooltip)
-                            .selected(regions.tabs.local_visible())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if this.accepts_context_selection(selection, cx) {
-                                    this.toggle_local_terminal(window, cx);
-                                }
-                            })),
-                    )
-                    .when_some(side_panel, |footer, side| {
-                        footer.child(
-                            Button::new("toggle-right-panel")
-                                .ghost()
-                                .small()
-                                .icon(side.icon)
-                                .tooltip(side.tooltip)
-                                .selected(regions.groups.is_shown(GroupKey::Assistant))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_right_panel(window, cx)
-                                })),
-                        )
-                    }),
-            )
+        status_bar::footer(self.bar_inputs(regions, cx), cx)
+    }
+
+    /// What the status bar draws for the window as it is now.
+    pub(super) fn bar_inputs(&self, regions: &Regions<'_>, cx: &App) -> status_bar::BarInputs {
+        status_bar::BarInputs::new(regions, &self.status, cx)
     }
 }
 

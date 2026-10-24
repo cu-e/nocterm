@@ -52,6 +52,10 @@ fn a_titled_panel_sits_under_the_workspaces_title(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_panel_with_its_own_header_is_not_given_a_title(cx: &mut TestAppContext) {
     // Not registered as expandable: the descriptor alone says the panel draws its own header.
-    let (column, panel) = tops(cx, REQUIRED_EXPANDABLE, "workspace-right-panel".into());
+    let (column, panel) = tops(
+        cx,
+        REQUIRED_EXPANDABLE,
+        ElementId::from((ElementId::from("panel-group-column"), "assistant")),
+    );
     assert_eq!(panel, column, "the panel fills its column");
 }

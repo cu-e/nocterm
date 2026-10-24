@@ -47,6 +47,7 @@ pub use registration::{
     ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
 };
 mod sessions;
+mod shell_layout;
 
 use crate::{
     CloseTab, Item, ItemEvent, ItemHandle, NewTab, NextPanel, NextTab, PreviousTab, SessionContext,
@@ -213,6 +214,7 @@ pub struct Workspace {
     chrome: chrome::Chrome,
     panels: panel_groups::PanelGroups,
     body: layout::Body,
+    shell: shell_layout::ShellLayout,
     ports: ports::WorkspacePorts,
     actions: actions::ActionRegistry,
     registrations: registration::Registrations,
@@ -227,7 +229,8 @@ impl Workspace {
             surfaces: surfaces::WindowSurfaces::new(window, cx),
             chrome: chrome::Chrome::new(cx.focus_handle()),
             panels: panel_groups::PanelGroups::new(),
-            body: layout::Body::new(deps.layout),
+            body: layout::Body::new(deps.layout.clone()),
+            shell: shell_layout::ShellLayout::new(deps.layout, &deps.catalog),
             ports: ports::WorkspacePorts::default(),
             actions: actions::ActionRegistry::default(),
             registrations: registration::Registrations::new(deps.catalog),
@@ -338,6 +341,7 @@ impl Render for Workspace {
             self.context_selection_receipt(cx),
             &self.panels,
             self.ports.directory(),
+            (&self.shell, self.registrations.catalog()),
         );
         let body = self
             .chrome

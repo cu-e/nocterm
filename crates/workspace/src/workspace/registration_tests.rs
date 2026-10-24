@@ -14,8 +14,8 @@ use crate::{
     plugin::{LOCAL_TERMINAL, NOTIFICATIONS},
     test_support::{
         CORE_PANEL, EXPANDABLE, PANEL_A, PANEL_B, REQUIRED_EXPANDABLE, REQUIRED_PLUGIN,
-        SIDEBAR_EXPANDABLE, TEST_CORE, TEST_PLUGIN, TestPanel, Toggle, WIDGET, deps_for_core,
-        toggle_presentation,
+        RIGHT_WIDGET, SIDEBAR_EXPANDABLE, TEST_CORE, TEST_PLUGIN, TRAY_PANEL, TRAY_WIDGET,
+        TestPanel, Toggle, WIDGET, deps_for_core, toggle_id, toggle_presentation,
     },
     workspace::tests::{fixture, fixture_with_deps},
 };
@@ -576,69 +576,5 @@ impl Render for Silent {
     }
 }
 
-/// A status bar view that tests find by its element id.
-struct Marker(&'static str);
-impl Render for Marker {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().id(self.0).test_support().child(self.0)
-    }
-}
-
-fn marker(
-    name: &'static str,
-    created: Rc<Cell<usize>>,
-) -> impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<Marker> + 'static {
-    move |_, _, cx| {
-        created.set(created.get() + 1);
-        cx.new(|_| Marker(name))
-    }
-}
-
-#[gpui_kit::test]
-fn a_widget_joins_the_status_bar_list_of_its_zone(cx: &mut TestAppContext) {
-    let (handle, workspace) = with_everything(cx);
-    let created = Rc::new(Cell::new(0));
-    // The trailing widget registers first, so the zones and not the order place the views.
-    for (contribution, name) in [
-        (&LOCAL_TERMINAL, "trailing-marker"),
-        (WIDGET, "leading-marker"),
-    ] {
-        let registration = WidgetRegistration::new(contribution, marker(name, created.clone()));
-        let registered = run(cx, handle, &workspace, |workspace, window, cx| {
-            window.resize(size(px(1400.), px(700.)));
-            workspace.register_widget(registration, window, cx)
-        });
-        assert_eq!(registered, Ok(()));
-    }
-    assert_eq!(created.get(), 2);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let leading = window.find("leading-marker").bounds();
-        let trailing = window.find("trailing-marker").bounds();
-        assert!(leading.right() <= trailing.left());
-    })
-    .unwrap();
-    assert_eq!(
-        created.get(),
-        2,
-        "rendering does not create the views again"
-    );
-    cx.update(|cx| assert!(workspace.read(cx).is_registered(&id(WIDGET))));
-    let again = run(cx, handle, &workspace, |workspace, window, cx| {
-        let registration = WidgetRegistration::new(WIDGET, marker("twice", created.clone()));
-        workspace.register_widget(registration, window, cx)
-    });
-    assert_eq!(again, Err(RegistrationError::Duplicate(id(WIDGET))));
-    assert_eq!(created.get(), 2, "a refused widget is not created");
-}
-
-#[gpui_kit::test]
-fn the_local_terminal_descriptor_matches_its_footer_toggle(cx: &mut TestAppContext) {
-    let (_, workspace) = fixture(cx);
-    cx.update(|cx| {
-        let (tooltip, icon) =
-            toggle_presentation(workspace.read(cx), Toggle::LocalTerminal, cx).expect("drawn");
-        assert_eq!(tooltip.as_ref(), LOCAL_TERMINAL.title);
-        assert_eq!(icon, nocterm_ui::contribution_icon(LOCAL_TERMINAL.icon));
-    });
-}
+#[path = "registration_tests/widgets.rs"]
+mod widgets;

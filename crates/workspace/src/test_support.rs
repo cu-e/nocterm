@@ -269,9 +269,10 @@ pub use panel::{TestPanel, TestPanelBuilder};
 
 mod plugin;
 pub use plugin::{
-    CORE_PANEL, EXPANDABLE, PANEL_A, PANEL_B, REQUIRED_EXPANDABLE, REQUIRED_PLUGIN,
-    SIDEBAR_EXPANDABLE, TEST_CORE, TEST_PLUGIN, WIDGET, deps_for, deps_for_core,
+    CORE_PANEL, EXPANDABLE, PANEL_A, PANEL_B, REQUIRED_EXPANDABLE, REQUIRED_PLUGIN, RIGHT_WIDGET,
+    SIDEBAR_EXPANDABLE, TEST_CORE, TEST_PLUGIN, TRAY_PANEL, TRAY_WIDGET, WIDGET, deps_for,
+    deps_for_core,
 };
 
 mod shell;
-pub use shell::{Toggle, toggle_id, toggle_presentation};
+pub use shell::{Toggle, set_side_panel_attention, toggle_id, toggle_presentation};

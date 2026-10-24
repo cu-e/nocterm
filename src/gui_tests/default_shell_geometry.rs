@@ -3,7 +3,9 @@ use super::*;
 use gpui_kit::ElementId;
 use gpui_kit::{Bounds, Pixels, SharedString, point, px, size};
 use nocterm_ui::{IconName, UiLayout};
-use nocterm_workspace::test_support::{Toggle, toggle_id, toggle_presentation};
+use nocterm_workspace::test_support::{
+    Toggle, set_side_panel_attention, toggle_id, toggle_presentation,
+};
 
 const NAVIGATION: [(&str, IconName); 5] = [
     ("Connections", IconName::Server),
@@ -57,7 +59,10 @@ fn columns(window: &gpui_kit::Window) -> Vec<(&'static str, Bounds<Pixels>)> {
             ElementId::from((ElementId::from("panel-group-column"), "navigation")),
         ),
         ("content", "workspace-content".into()),
-        ("side-panel", "workspace-right-panel".into()),
+        (
+            "side-panel",
+            ElementId::from((ElementId::from("panel-group-column"), "assistant")),
+        ),
     ] {
         if let Some(column) = window.try_find(id) {
             columns.push((name, column.bounds()));
@@ -179,7 +184,7 @@ fn assert_agent_presentation(workspace: &Entity<Workspace>, cx: &mut TestAppCont
         "resting"
     );
     workspace.update(cx, |workspace, cx| {
-        workspace.set_right_panel_attention(true, cx)
+        set_side_panel_attention(workspace, true, cx)
     });
     assert_eq!(
         side(cx),
@@ -190,7 +195,7 @@ fn assert_agent_presentation(workspace: &Entity<Workspace>, cx: &mut TestAppCont
         "attention"
     );
     workspace.update(cx, |workspace, cx| {
-        workspace.set_right_panel_attention(false, cx)
+        set_side_panel_attention(workspace, false, cx)
     });
     assert_eq!(side(cx), Some(("AI Agents".into(), IconName::PanelRight)));
 }

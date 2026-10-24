@@ -18,6 +18,7 @@ nocterm-ui.workspace = true
 nocterm-keymap.workspace = true
 nocterm-project-model.workspace = true
 nocterm-plugin-model.workspace = true
+nocterm-window-layout.workspace = true
 
 gpui-kit.workspace = true
 tracing.workspace = true

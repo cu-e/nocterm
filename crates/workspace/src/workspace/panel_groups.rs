@@ -49,13 +49,14 @@ impl GroupKey {
     pub(super) fn id(self) -> &'static str {
         self.spec().id.as_str()
     }
+    /// The group the shell declares under this id.
+    pub(super) fn named(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.id() == id)
+    }
     /// The group a panel opens in: the one its placement hints at, else the one of its width
     /// class.
     pub(super) fn hosting(contribution: &SystemContribution, traits: PanelTraits) -> Self {
-        let hinted = contribution
-            .placement
-            .group
-            .and_then(|hint| Self::ALL.into_iter().find(|key| key.id() == hint));
+        let hinted = contribution.placement.group.and_then(Self::named);
         hinted.unwrap_or(match traits.width {
             WidthClass::Navigation => Self::Navigation,
             WidthClass::Assistant => Self::Assistant,
@@ -236,11 +237,12 @@ impl PanelGroups {
             .map(PanelGroup::key)
     }
     /// Whether the group has a panel that the host offers.
-    pub(super) fn is_available(&self, key: GroupKey) -> bool {
-        self.selected_slot(key).is_some_and(PanelSlot::offered)
-    }
+    #[cfg(test)]
     pub(super) fn attention(&self, key: GroupKey) -> bool {
         self.selected(key).is_some_and(HostedPanel::attention)
+    }
+    pub(super) fn is_available(&self, key: GroupKey) -> bool {
+        self.selected_slot(key).is_some_and(PanelSlot::offered)
     }
     /// The shown (or last shown) panel of the group.
     pub(super) fn selected(&self, key: GroupKey) -> Option<&HostedPanel> {
@@ -428,9 +430,9 @@ impl PanelGroups {
     }
 
     /// Tells every expandable panel which side of the content its group is on.
-    pub(super) fn set_docked_left(&self, swapped: bool, cx: &mut App) {
+    pub(super) fn set_docked_left(&self, side_of: impl Fn(GroupKey) -> Side, cx: &mut App) {
         for group in &self.groups {
-            let left = group.key().side().swapped_if(swapped) == Side::Left;
+            let left = side_of(group.key()) == Side::Left;
             for member in group.members() {
                 if let Some(panel) = self.slot(Some(*member)).and_then(|s| s.panel.as_ref()) {
                     panel.set_docked_left(left, cx);
@@ -455,6 +457,36 @@ impl PanelGroups {
             .iter()
             .position(|member| *member == panel)?;
         Some((key, panel, ix))
+    }
+    /// The ids of the registered panels, in registration order.
+    pub(super) fn registered_ids(&self) -> impl Iterator<Item = &ContributionId> {
+        let mut ids: Vec<_> = self
+            .ids
+            .iter()
+            .map(|(id, (_, panel))| (*panel, id))
+            .collect();
+        ids.sort_by_key(|(panel, _)| panel.0);
+        ids.into_iter().map(|(_, id)| id)
+    }
+    /// The group, position and panel of a registered panel that the host offers.
+    pub(super) fn offered(&self, id: &ContributionId) -> Option<(GroupKey, usize, &HostedPanel)> {
+        let (key, panel, ix) = self.position_of(id)?;
+        let slot = self.slot(Some(panel)).filter(|slot| slot.offered())?;
+        Some((key, ix, slot.panel.as_ref()?))
+    }
+    /// The offered members of the group that were not registered under an id, which only the
+    /// pre-plugin panel API adds, with their position.
+    pub(super) fn unidentified(
+        &self,
+        key: GroupKey,
+    ) -> impl Iterator<Item = (usize, &HostedPanel)> + '_ {
+        self.members(key).filter(move |(ix, _)| {
+            self.group(key).members().get(*ix).is_some_and(|member| {
+                self.ids
+                    .values()
+                    .all(|(_, registered)| registered != member)
+            })
+        })
     }
     /// Whether the panel is the shown member of a shown group.
     pub(super) fn panel_is_open(&self, id: &ContributionId) -> bool {

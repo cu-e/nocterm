@@ -68,7 +68,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-vault-ui` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-vault`, `nocterm-workspace` | Credential vault lifecycle and encrypted credential management UI. |
 | `nocterm-vt` | domain |  | Terminal emulation: turns a byte stream into a grid and key presses into bytes. |
 | `nocterm-window-layout` | domain | `nocterm-plugin-model` | The window shell's layout presets as plain data and pure rules: bar zones, groups, the built-in layouts and their resolution against the plugin catalog. |
-| `nocterm-workspace` | ui | `nocterm-core`, `nocterm-keymap`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace-ports` | Window shell: tab strip, sidebar and the registries features plug into. |
+| `nocterm-workspace` | ui | `nocterm-core`, `nocterm-keymap`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-window-layout`, `nocterm-workspace-ports` | Window shell: tab strip, sidebar and the registries features plug into. |
 | `nocterm-workspace-ports` | service | `nocterm-core`, `nocterm-project-model`, `nocterm-session` | Terminal and connection contracts below the window shell. |
 | `xtask` | tooling | `nocterm-ai`, `nocterm-design`, `nocterm-explorer`, `nocterm-monitor`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model`, `nocterm-ui`, `nocterm-vault` | Repository automation: generated documentation and architecture checks. |
 
@@ -352,6 +352,7 @@ graph TD
     nocterm_workspace --> nocterm_settings
     nocterm_workspace --> nocterm_store
     nocterm_workspace --> nocterm_ui
+    nocterm_workspace --> nocterm_window_layout
     nocterm_workspace --> nocterm_workspace_ports
     nocterm_workspace_ports --> nocterm_core
     nocterm_workspace_ports --> nocterm_project_model

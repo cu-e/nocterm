@@ -18,12 +18,11 @@ use nocterm_ui::{LayoutHandle, width_range};
 use super::{
     Workspace,
     panel_groups::{GroupKey, PanelGroups},
+    shell_layout::ShellLayout,
 };
 
 const SIDEBAR: &str = "workspace.sidebar";
 const RIGHT_PANEL: &str = "workspace.right_panel";
-/// Whether the sidebar and the side panel trade places.
-const SWAPPED: &str = "workspace.swapped";
 
 /// One column of the body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -91,15 +90,14 @@ pub(super) struct Body {
 }
 
 impl Body {
-    /// The columns of the groups that are shown now, on the sides the user chose.
-    pub(super) fn arrangement(&self, groups: &PanelGroups, cx: &gpui_kit::App) -> Arrangement {
-        let swapped = self.swapped(cx);
-        Arrangement::new(
-            groups
-                .shown()
-                .map(|group| (group, group.side().swapped_if(swapped))),
-            groups.expanded(),
-        )
+    /// The columns of the groups that are shown now, on the sides the arrangement gives them.
+    pub(super) fn arrangement(
+        &self,
+        groups: &PanelGroups,
+        shell: &ShellLayout,
+        cx: &gpui_kit::App,
+    ) -> Arrangement {
+        Arrangement::new(shell.columns(groups.shown(), cx), groups.expanded())
     }
 
     pub(super) fn new(layout: LayoutHandle) -> Self {
@@ -107,16 +105,6 @@ impl Body {
             states: HashMap::new(),
             layout,
         }
-    }
-
-    pub(super) fn swapped(&self, cx: &gpui_kit::App) -> bool {
-        self.layout.flag(SWAPPED, cx)
-    }
-
-    pub(super) fn swap(&self, cx: &mut gpui_kit::App) -> bool {
-        let swapped = !self.swapped(cx);
-        report_layout(self.layout.set_flag(SWAPPED, swapped, cx));
-        swapped
     }
 
     pub(super) fn widths(&self, window: &Window, cx: &gpui_kit::App) -> BodyWidths {
@@ -230,7 +218,7 @@ fn storage_key(class: WidthClass) -> &'static str {
 #[path = "layout_tests.rs"]
 mod tests;
 
-fn report_layout(result: Result<(), nocterm_store::StoreError>) {
+pub(super) fn report_layout(result: Result<(), nocterm_store::StoreError>) {
     if let Err(error) = result {
         tracing::warn!(%error, "workspace layout change was not admitted");
     }

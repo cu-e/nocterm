@@ -44,8 +44,8 @@ const OWN_HEADER: PanelTraits = PanelTraits {
     chrome: PanelChrome::OwnHeader,
 };
 
-/// A plugin with the ids `test.panel-a`, `test.panel-b`, `test.expandable`, `test.widget` and
-/// `test.sidebar-expandable`.
+/// A plugin with the ids `test.panel-a`, `test.panel-b`, `test.expandable`, `test.widget`,
+/// `test.sidebar-expandable`, `test.right-widget`, `test.tray-widget` and `test.tray-panel`.
 pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
     id: PluginId::new("test"),
     name: "Test",
@@ -99,6 +99,51 @@ pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
             "navigation",
             OWN_HEADER,
         ),
+        SystemContribution {
+            id: ContributionId::new("test.right-widget"),
+            kind: ContributionKind::Widget,
+            title: "Right widget",
+            icon: nocterm_plugin_model::Icon::Clock,
+            placement: Placement {
+                zone: Zone::Right,
+                order: 80,
+                group: None,
+                auto: AutoPlace::Show,
+            },
+            panel: None,
+            preview: None,
+            pinned: false,
+        },
+        SystemContribution {
+            id: ContributionId::new("test.tray-widget"),
+            kind: ContributionKind::Widget,
+            title: "Tray widget",
+            icon: nocterm_plugin_model::Icon::Clock,
+            placement: Placement {
+                zone: Zone::Right,
+                order: 90,
+                group: None,
+                auto: AutoPlace::Tray,
+            },
+            panel: None,
+            preview: None,
+            pinned: false,
+        },
+        SystemContribution {
+            id: ContributionId::new("test.tray-panel"),
+            kind: ContributionKind::Panel,
+            title: "Tray panel",
+            icon: nocterm_plugin_model::Icon::Layers,
+            placement: Placement {
+                zone: Zone::Left,
+                order: 100,
+                group: Some("navigation"),
+                auto: AutoPlace::Tray,
+            },
+            panel: Some(TITLED),
+            preview: None,
+            pinned: false,
+        },
     ],
 };
 
@@ -133,6 +178,12 @@ pub static PANEL_B: &SystemContribution = &TEST_PLUGIN.contributions[1];
 pub static EXPANDABLE: &SystemContribution = &TEST_PLUGIN.contributions[2];
 pub static WIDGET: &SystemContribution = &TEST_PLUGIN.contributions[3];
 pub static SIDEBAR_EXPANDABLE: &SystemContribution = &TEST_PLUGIN.contributions[4];
+/// A widget the bar places in its right zone.
+pub static RIGHT_WIDGET: &SystemContribution = &TEST_PLUGIN.contributions[5];
+/// A widget the default arrangement leaves in the tray.
+pub static TRAY_WIDGET: &SystemContribution = &TEST_PLUGIN.contributions[6];
+/// A panel the default arrangement leaves in the tray.
+pub static TRAY_PANEL: &SystemContribution = &TEST_PLUGIN.contributions[7];
 pub static REQUIRED_EXPANDABLE: &SystemContribution = &REQUIRED_PLUGIN.contributions[0];
 pub static CORE_PANEL: &SystemContribution = &TEST_CORE[0];
 

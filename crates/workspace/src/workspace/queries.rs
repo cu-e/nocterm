@@ -233,7 +233,7 @@ impl Workspace {
         self.panels.is_shown(GroupKey::Navigation)
     }
     pub fn sides_swapped(&self, cx: &App) -> bool {
-        self.body.swapped(cx)
+        self.shell.swapped(cx)
     }
     pub fn tab_group_items(&self, id: EntityId, cx: &App) -> Vec<EntityId> {
         self.surfaces.outer().read(cx).tabs().tab_group_items(id)

@@ -2,8 +2,6 @@
 use super::*;
 use crate::ContextSelectionError;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
-use chrome::StatusSide;
-use nocterm_plugin_model::Zone;
 use nocterm_session::{HostAddress, ShellLaunch};
 use panel_groups::{GroupKey, HostedPanel};
 use registration::{
@@ -274,7 +272,7 @@ impl Workspace {
         let presentation = presentation_of(&panel, cx);
         let hosted = HostedPanel::expandable(Box::new(panel), presentation, subscription);
         self.panels.install(GroupKey::Assistant, hosted);
-        self.panels.set_docked_left(self.sides_swapped(cx), cx);
+        self.sync_panel_sides(cx);
         cx.notify();
     }
     /// Registers the panel of a contribution of the plugin catalog and creates it now.
@@ -303,36 +301,44 @@ impl Workspace {
                 self.registrations.keep_factory(id, factory);
             }
         }
-        self.panels.set_docked_left(self.sides_swapped(cx), cx);
+        self.sync_panel_sides(cx);
         cx.notify();
         Ok(())
     }
-    /// Registers the status bar widget of a contribution of the plugin catalog and creates it
-    /// now. Until the zoned status bar, a widget of the left zone joins the leading views and
-    /// any other joins the trailing views, each in registration order.
+    /// Registers the status bar widget of a contribution of the plugin catalog. Its view is
+    /// created now if the window's arrangement places the widget, and when it first does
+    /// otherwise.
     pub fn register_widget(
         &mut self,
         registration: WidgetRegistration,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), RegistrationError> {
-        let contribution = self.registrations.admit_widget(registration.id())?;
-        let side = match contribution.placement.zone {
-            Zone::Left => StatusSide::Leading,
-            Zone::Center | Zone::Right => StatusSide::Trailing,
-        };
-        let view = registration.create(&*self, window, cx);
-        self.chrome.add_status(side, view);
+        self.registrations.admit_widget(registration.id())?;
+        let id = registration.id().clone();
+        self.chrome
+            .status_bar_mut()
+            .add(id, registration.into_factory());
+        self.sync_status_widgets(window, cx);
         cx.notify();
         Ok(())
     }
-    pub fn add_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
-        self.chrome.add_status(StatusSide::Trailing, view.into());
-        cx.notify();
+    /// Creates the views of the widgets the arrangement places and drops those it does not.
+    fn sync_status_widgets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.chrome.status_bar().pending(self.shell.current(cx));
+        for (id, factory) in pending {
+            let view = factory(&*self, window, cx);
+            self.chrome.status_bar_mut().fill(&id, view);
+        }
+        self.chrome
+            .status_bar_mut()
+            .release_unplaced(self.shell.current(cx));
     }
-    pub fn add_leading_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
-        self.chrome.add_status(StatusSide::Leading, view.into());
-        cx.notify();
+    /// Tells the expandable panels which side of the content their groups are on.
+    pub(super) fn sync_panel_sides(&self, cx: &mut Context<Self>) {
+        let swapped = self.shell.swapped(cx);
+        self.panels
+            .set_docked_left(|group| self.shell.side(group, swapped), cx);
     }
     pub fn set_menu_builder(
         &mut self,

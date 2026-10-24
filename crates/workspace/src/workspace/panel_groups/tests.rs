@@ -92,6 +92,7 @@ mod owner {
     use gpui_kit::{
         App, AppContext as _, Entity, FocusHandle, Focusable as _, TestAppContext, Window,
     };
+    use nocterm_plugin_model::Side;
 
     fn navigation(cx: &mut App, id: &'static str) -> (Entity<TestPanel>, HostedPanel) {
         let panel = TestPanel::builder(id).title(id).build(cx);
@@ -329,10 +330,10 @@ mod owner {
     fn only_expandable_panels_learn_which_side_they_are_on(cx: &mut TestAppContext) {
         with_window(cx, |_, cx| {
             let (groups, [first, _, assistant]) = shell(cx);
-            groups.set_docked_left(true, cx);
+            groups.set_docked_left(|_| Side::Left, cx);
             assert!(assistant.read(cx).docked_left());
             assert!(!first.read(cx).docked_left());
-            groups.set_docked_left(false, cx);
+            groups.set_docked_left(|_| Side::Right, cx);
             assert!(!assistant.read(cx).docked_left());
         });
     }

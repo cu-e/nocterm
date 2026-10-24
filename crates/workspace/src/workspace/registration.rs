@@ -7,6 +7,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -18,6 +19,7 @@ use nocterm_plugin_model::{
 
 use super::{
     Workspace,
+    chrome::WidgetFactory,
     panel_groups::{GroupKey, HostedPanel, Presentation},
 };
 use crate::{Panel, PanelHandle, right_panel::RightPanelHandle};
@@ -162,32 +164,28 @@ impl<T: ExpandablePanel> PanelRegistration<T> {
 /// A status bar widget to register for a contribution.
 pub struct WidgetRegistration {
     id: ContributionId,
-    create: Box<dyn Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> gpui_kit::AnyView>,
+    create: WidgetFactory,
 }
 
 impl WidgetRegistration {
-    /// The workspace calls `factory` once, at registration, and borrows itself to it: the
-    /// factory may read the workspace but cannot update it.
+    /// The workspace calls `factory` when the window's arrangement places the widget, and
+    /// borrows itself to it: the factory may read the workspace but cannot update it. A widget
+    /// that the arrangement leaves out is not created.
     pub fn new<V: Render>(
         contribution: &SystemContribution,
         factory: impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<V> + 'static,
     ) -> Self {
         Self {
             id: contribution.id.clone(),
-            create: Box::new(move |workspace, window, cx| factory(workspace, window, cx).into()),
+            create: Rc::new(move |workspace, window, cx| factory(workspace, window, cx).into()),
         }
     }
 
     pub(super) fn id(&self) -> &ContributionId {
         &self.id
     }
-    pub(super) fn create(
-        &self,
-        workspace: &Workspace,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> gpui_kit::AnyView {
-        (self.create)(workspace, window, cx)
+    pub(super) fn into_factory(self) -> WidgetFactory {
+        self.create
     }
 }
 
@@ -211,6 +209,10 @@ impl Registrations {
     /// Keeps the factory of a registered panel.
     pub(super) fn keep_factory(&mut self, id: ContributionId, factory: PanelFactory) {
         self.factories.insert(id, factory);
+    }
+
+    pub(super) fn catalog(&self) -> &PluginCatalog {
+        &self.catalog
     }
 
     pub(super) fn is_registered(&self, id: &ContributionId) -> bool {
