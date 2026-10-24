@@ -351,5 +351,9 @@ their hints; ids the catalog does not know are kept in the preset but never plac
 contribution is placed once, separators never lead, trail or double, exactly one group
 is primary (the catalog's; a preset's own `primary` flag is ignored) and a pinned widget is always placed. The built-in Default is the empty
 preset and Swapped is its resolution with every group on the other side; neither is
-stored. It reads `nocterm-plugin-model`, has no GPUI types and no I/O. See
-[ADR 0083](../adr/0083-zoned-status-bar.md).
+stored. It also owns the `[layouts]` settings section: stored presets with `p<n>` ids and
+checked names, `select`, which falls back to the earlier swapped flag without writing,
+and `transition`, which tells a window whether a change of the document is a switch, an
+edit or nothing. It reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types
+and no I/O. See [ADR 0083](../adr/0083-zoned-status-bar.md) and
+[ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md).

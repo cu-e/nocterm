@@ -80,3 +80,4 @@ acceptance; a later record supersedes an earlier one.
 | [0081](0081-panel-groups-own-side-panels.md) | Panel groups own the window's side panels |
 | [0082](0082-system-plugins-and-core-contributions.md) | Built-in shell contributions are core or belong to a system plugin in one checked catalog |
 | [0083](0083-zoned-status-bar.md) | The status bar is zoned and drawn from a layout resolved against the plugin catalog |
+| [0084](0084-layout-presets-are-app-wide-settings.md) | Layout presets are app-wide settings that every window follows |

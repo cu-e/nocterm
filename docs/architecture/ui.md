@@ -105,8 +105,11 @@ under the ids of the plugin catalog carried by `Deps`: the workspace checks the 
 its kind, creates the view from the owner's factory (which may read the workspace) and
 places it by the descriptor
 (ADR 0082). `nocterm-ui` maps a descriptor's `Icon` and `WidthClass` onto its icon
-names and column widths. `ShellLayout` holds the built-in Default and Swapped layouts
-resolved against the catalog and selects one with the `workspace.swapped` flag; the
+names and column widths. `ShellLayout` reads the `[layouts]` settings through the
+`SettingsHandle` in `Deps`, keeps the document it last saw and resolves the selected
+layout against the catalog; each window observes the handle and, by the `transition`
+of the two documents, either re-sides its groups and opens the panels a switched-to
+layout names, or only rearranges (ADR 0084). The
 `StatusBar` keeps widget factories and creates a widget's view when the layout first
 places it. A group's side comes from its zone, a pinned widget the layout omits goes
 to the end of the right zone, and an omitted panel that asks for attention is drawn at
@@ -301,7 +304,7 @@ layout projection. Bootstrap registers both settings and layout with the same
 coordinator alongside snippets, connection state, agent documents and output
 recording.
 The workspace body lays out one column per shown panel group and the tabs —
-navigation, tabs, assistant, or mirrored when the sides are swapped; within a
+navigation, tabs, assistant, or mirrored by the Swapped layout; within a
 side the groups run from the window edge inward — with one resize state per
 arrangement, and remembers widths per width class rather than per position: a hidden column kept in the resizable group
 would hold its stale width and stop its neighbours from growing. Expanded chat

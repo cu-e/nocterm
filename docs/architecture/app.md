@@ -82,7 +82,11 @@ before opening; an open popup retains its originating Item. A focused bottom
 terminal takes priority over the central Item. Native clipboard/edit actions
 continue to dispatch to native text fields, including dialogs. The maintained
 [GPUI Component patch](../../vendor/gpui-component/NOCTERM.md) updates menu snapshots
-without replacing native trigger entities or process-wide menu state.
+without replacing native trigger entities or process-wide menu state. The Window menu
+lists the layouts, with the selected one checked, and the panels the layout places,
+by asking the workspace; `SwitchLayout` and `TogglePanel` carry an id and are sent only
+by the menu. `src/shell_setup/reference.rs` renders the application catalog for the
+golden test of `docs/reference/plugins.md`.
 
 ## Generated documentation
 
@@ -107,7 +111,8 @@ all windows share its external-program admission bound and transfer queue. GUI
 bootstrap tests inject the session `FakeExec` program port explicitly.
 
 Bootstrap also retains `nocterm_workspace::Deps`, containing the explicit layout
-handle returned by layout initialization. Every window clones these dependencies,
+handle returned by layout initialization and the shared settings handle, through which
+every window follows the `[layouts]` section (ADR 0084). Every window clones these dependencies,
 so closing a window releases its views and subscriptions while surviving and new
 windows keep the same optimistic layout state and shutdown participant. Services
 remain the composition inputs; `Booted` owns the installed per-window dependencies.

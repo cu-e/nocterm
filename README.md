@@ -194,7 +194,7 @@ and layout overrides always apply.
 `known_hosts` stores accepted keys. In the state directory, `servers.toml` keeps
 detected systems and countries, `flags/` the downloaded flags, `agents.toml`
 model favorites and the last agent used, `agent-chats/` saved AI chats and
-`layout.json` the widths of resizable columns and which side the sidebar is on.
+`layout.json` the widths of resizable columns.
 `keymap.toml` in the configuration directory holds your key binding changes. `vault.bin` stores encrypted credentials and
 uses a sibling `.lock` file for concurrent-writer protection; profiles contain
 only opaque credential IDs. Existing OpenSSH known hosts are also read.
@@ -207,10 +207,58 @@ The window has the sidebar (Servers, Explorer) on one side of the tabs and the
 AI panel on the other; both resize by dragging their edge and keep their width.
 `Ctrl+Shift+C` shows Servers and `Ctrl+Shift+E` the Explorer; pressing it again,
 or clicking the shown panel's button in the footer, hides the sidebar.
-`Ctrl+Alt+B` shows or hides the AI panel (`Cmd` instead of `Ctrl` on macOS). The
-command palette's Swap Sides command puts the two on each other's side. In a
+`Ctrl+Alt+B` shows or hides the AI panel (`Cmd` instead of `Ctrl` on macOS).
+**Window → Layouts** chooses the arrangement of the footer and the panels, for every
+open window: Default, Swapped sides (the sidebar and the AI panel on each other's
+side) or a layout saved in the `[layouts]` section of `settings.toml`. **Window →
+Panels** shows or hides a panel. The command palette also has Next Layout, Previous
+Layout and Pick Layout. In a
 focused terminal `Ctrl+Shift+C` copies, and the terminal no longer receives
 `Ctrl+J`; rebind it in Settings → Keymap if the shell needs it.
+
+A saved layout is an entry of `layouts.presets` in `settings.toml`; `layouts.active`
+holds the id of the selected one (`default`, `swapped` or a preset id):
+
+```toml
+[layouts]
+active = "p1"
+
+[[layouts.presets]]
+id = "p1"
+name = "Reading"
+open = ["files.explorer"]      # panels shown when the layout is selected
+tray = ["snippets.library"]    # registered, but kept off the footer and the menu
+[layouts.presets.bar]
+left = [
+  { group = "navigation", members = ["connections.servers", { separator = true }, "files.explorer"] },
+  { item = "monitor.summary" },
+]
+right = [{ group = "assistant", side = "right", members = ["agent.chats"] }]
+```
+
+The footer has a `left` and a `right` zone, each a list of entries drawn in order. An entry is
+a table with exactly one of these keys:
+
+- `item = "<widget id>"` places a status bar widget, such as `monitor.summary`;
+- `separator = true` draws a divider; dividers never lead, trail or double up;
+- `group = "<group id>"` places a panel group (`navigation` or `assistant`) whose `members`
+  are panel ids, or `{ separator = true }` dividers between their toggles. Its optional
+  `side` (`"left"` or `"right"`) chooses the side of the content the group's panels open on;
+  without it the group follows its zone.
+
+The `navigation` group is always the sidebar; a `primary` key on a group is ignored (and
+logged). A contribution the layout does not mention is placed by its own hint when the hint
+says to show it, and waits in the tray otherwise; the notifications are pinned and always
+shown.
+
+Panel and widget ids are listed in [Plugins and their contributions](docs/reference/plugins.md).
+A panel belongs to the group the layout places it in, wherever its own hint says: the
+sidebar toggle and `Ctrl+Alt+B` act on the groups as the footer draws them. Editing the
+selected layout in the file rearranges every open window at once and keeps the panels
+that are still placed; switching layouts shows exactly the panels the new layout opens.
+If the `[layouts]` table does not read (for example a wrong key type), the window shows
+the Default layout and refuses to switch layouts, so that your table is never
+overwritten; fix the file and switching works again.
 
 Settings → Keymap lists every command with its shortcuts and description. Search
 matches words in any of them and shortcuts in any modifier order; Find by keys
@@ -226,6 +274,7 @@ keymap and Cargo manifests:
 - [Settings](docs/reference/settings.md)
 - [Design tokens](docs/reference/design-tokens.md)
 - [Actions and shortcuts](docs/reference/actions.md)
+- [Plugins and their contributions](docs/reference/plugins.md)
 - [Architecture](docs/ARCHITECTURE.md)
 
 ## Development
