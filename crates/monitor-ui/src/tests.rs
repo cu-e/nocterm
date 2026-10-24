@@ -230,7 +230,7 @@ fn fixture_with_ready(
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     let deps =
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                        nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx);
                     Workspace::new(deps, window, cx)
                 })
             })
@@ -361,7 +361,7 @@ fn registered_monitors_keep_their_supplied_host_across_other_windows(cx: &mut Te
         cx.update_window(window, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
                 let installed = crate::install(Some(host.clone()), &ready, cx);
-                crate::register(&installed, workspace, window, cx);
+                crate::register(&installed, workspace, window, cx).unwrap();
             });
         })
         .unwrap();
@@ -372,6 +372,44 @@ fn registered_monitors_keep_their_supplied_host_across_other_windows(cx: &mut Te
     assert!(first.reading(0));
     assert!(first.reading(1));
     assert!(second.reading(0));
+}
+
+#[gpui_kit::test]
+fn registering_the_summary_starts_reading_the_host(cx: &mut TestAppContext) {
+    let host = FakeHost::new("Linux");
+    let (window, workspace, installed) = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let ready = nocterm_ui::init(
+            DesignTokens::builtin(),
+            (SettingsConfig::in_memory(SettingsDocument::default())).install(cx),
+            cx,
+        );
+        let installed = crate::install(None, &ready, cx);
+        let (window, workspace) =
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let deps =
+                        nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx);
+                    Workspace::new(deps, window, cx)
+                })
+            })
+            .unwrap();
+        (window, workspace, installed)
+    });
+    open_session(cx, window, &workspace, remote(&host, true));
+    cx.run_until_parked();
+    assert!(host.programs().is_empty());
+    cx.update_window(window, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            crate::register(&installed, workspace, window, cx).unwrap();
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(host.reading(0));
+    cx.update(|cx| {
+        assert!(workspace.read(cx).is_registered(&crate::plugin::SUMMARY.id));
+    });
 }
 
 mod dependencies;

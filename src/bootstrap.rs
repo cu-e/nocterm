@@ -546,7 +546,10 @@ pub(crate) fn build_workspace(
             nocterm_projects::register(workspace, projects, window, cx),
         );
     }
-    nocterm_monitor_ui::register(&booted.monitor, workspace, window, cx);
+    report_registration(
+        "monitor",
+        nocterm_monitor_ui::register(&booted.monitor, workspace, window, cx),
+    );
     nocterm_agent::register(workspace, booted.agent.clone(), window, cx);
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
     if let Some(vault) = vault

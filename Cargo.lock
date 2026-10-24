@@ -5419,6 +5419,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-containers",
  "nocterm-monitor",
+ "nocterm-plugin-model",
  "nocterm-project-model",
  "nocterm-project-providers",
  "nocterm-session",

@@ -11,7 +11,8 @@
 //! Installation retains actual settings and optional supplied local host execution; models share it.
 //! Does not own: metric parsing, host execution or session establishment.
 //! Ports used: immutable workspace MonitorSource, scoped session HostExec and supplied
-//! SettingsHandle; provided: SettingsPageSpec.
+//! SettingsHandle; provided: SettingsPageSpec and the `monitor` system plugin
+//! (`plugin::PLUGIN`) with its status bar widget.
 //! Settings section: `[monitor]`. Globals: none.
 //! Invariants: one script collects the current metric union; eight retained records stay
 //! distinct by surface and resource; unavailable projects never use a local fallback.
@@ -22,13 +23,14 @@ pub use installed::{Installed, install};
 mod graph;
 mod model;
 mod page;
+pub mod plugin;
 mod settings;
 mod source;
 mod status;
 
 use gpui_kit::{AppContext as _, Context, Window};
 use nocterm_ui::SettingsPageSpec;
-use nocterm_workspace::Workspace;
+use nocterm_workspace::{RegistrationError, WidgetRegistration, Workspace};
 
 pub use page::MonitorPage;
 pub use settings::{
@@ -44,17 +46,26 @@ gpui_kit::actions!(
 );
 
 /// Adds the monitor to the footer of `workspace`.
+///
+/// The widget creates the monitor, which starts reading the host: a window without the
+/// registration runs no program.
 pub fn register(
     installed: &Installed,
     workspace: &mut Workspace,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
-    let handle = cx.entity();
-    let session = workspace.monitor_source(cx);
-    let monitor = cx.new(|cx| model::HostMonitor::new(&handle, session, installed, cx));
-    let status = cx.new(|cx| status::MonitorStatus::new(monitor, cx));
-    workspace.add_leading_status_view(status, cx);
+) -> Result<(), RegistrationError> {
+    let installed = installed.clone();
+    workspace.register_widget(
+        WidgetRegistration::new(&plugin::SUMMARY, move |workspace, _, cx| {
+            let session = workspace.monitor_source(cx);
+            let handle = cx.entity();
+            let monitor = cx.new(|cx| model::HostMonitor::new(&handle, session, &installed, cx));
+            cx.new(|cx| status::MonitorStatus::new(monitor, cx))
+        }),
+        window,
+        cx,
+    )
 }
 
 /// Supplies the lazy Monitor page to the application Settings host.
