@@ -670,3 +670,96 @@ fn a_nested_page_opens_at_an_anchor_hides_from_the_list_and_leads_back_to_its_pa
     })
     .unwrap();
 }
+
+struct TallPage(FocusHandle);
+impl Focusable for TallPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.0.clone()
+    }
+}
+impl Render for TallPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().h(gpui_kit::px(900.)).child("tall")
+    }
+}
+impl SettingsPage for TallPage {}
+
+#[gpui_kit::test]
+fn opening_a_page_at_a_section_scrolls_the_page_to_it(cx: &mut TestAppContext) {
+    let (handle, workspace, fixture) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+        let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+            cx.new(|cx| Workspace::new(deps, window, cx))
+        })
+        .unwrap();
+        (handle, workspace, fixture)
+    });
+    let sectioned = SettingsPageSpec::new("appearance", "Appearance", |_, cx| {
+        cx.new(|cx| TallPage(cx.focus_handle()))
+    })
+    .with_sections(vec![nocterm_ui::EmbeddedPageSpec::new(
+        "layout",
+        "Layout",
+        |_, cx| cx.new(|cx| TallPage(cx.focus_handle())),
+    )]);
+    let catalog = SettingsCatalog::new(
+        std::iter::once(SettingsPageRegistration::eager(sectioned))
+            .chain(
+                fixture
+                    .pages
+                    .pages()
+                    .iter()
+                    .filter(|page| page.id() != "appearance")
+                    .cloned(),
+            )
+            .collect(),
+        "appearance",
+    )
+    .unwrap();
+    let section_offset = |window: &mut Window, cx: &mut App| {
+        window.render_frame(cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        let view = window.find("settings-view").bounds().origin.y;
+        window.find("settings-section:layout").bounds().origin.y - view
+    };
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            open_page_at(
+                workspace,
+                "appearance",
+                None,
+                &catalog,
+                fixture.installed.clone(),
+                window,
+                cx,
+            );
+        });
+        let before = section_offset(window, cx);
+        assert!(
+            before > gpui_kit::px(800.),
+            "the section starts below the page"
+        );
+        workspace.update(cx, |workspace, cx| {
+            open_page_at(
+                workspace,
+                "appearance",
+                Some("layout"),
+                &catalog,
+                fixture.installed.clone(),
+                window,
+                cx,
+            );
+        });
+        for _ in 0..3 {
+            section_offset(window, cx);
+        }
+        let after = section_offset(window, cx);
+        assert!(
+            after < gpui_kit::px(100.),
+            "the section was scrolled to the top: {after:?}"
+        );
+    })
+    .unwrap();
+}

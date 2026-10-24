@@ -15,7 +15,7 @@ mod installation;
 pub use installation::Installed;
 
 use gpui_kit::{
-    App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
+    App, Context, EventEmitter, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription,
     TestSupportExt as _, Window,
     component::{h_flex, v_flex},
     div,
@@ -35,6 +35,8 @@ struct PageSlot {
     spec: SettingsPageSpec,
     lifecycle: Lifecycle,
     page: Option<Box<dyn SettingsPageHandle>>,
+    /// The scroll of the page, which the page can scroll to a part of itself.
+    scroll: ScrollHandle,
 }
 struct PageBook {
     slots: Vec<PageSlot>,
@@ -52,12 +54,14 @@ impl PageBook {
             .map(|registration| {
                 let spec = registration.spec().clone();
                 let lifecycle = registration.lifecycle();
+                let scroll = ScrollHandle::new();
                 let page = (lifecycle == Lifecycle::Eager)
-                    .then(|| spec.create(context.clone(), window, cx));
+                    .then(|| spec.create(context.clone().with_scroll(scroll.clone()), window, cx));
                 PageSlot {
                     spec,
                     lifecycle,
                     page,
+                    scroll,
                 }
             })
             .collect();
@@ -77,6 +81,7 @@ impl PageBook {
     ) {
         let slot = &mut self.slots[index];
         if slot.page.is_none() {
+            let context = context.with_scroll(slot.scroll.clone());
             slot.page = Some(slot.spec.create(context, window, cx));
         }
     }
@@ -309,6 +314,7 @@ impl Render for SettingsView {
                     .min_w_0()
                     .h_full()
                     .overflow_y_scroll()
+                    .track_scroll(&self.pages.slots[self.selected_page].scroll)
                     .child(content),
             )
     }
