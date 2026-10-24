@@ -1,6 +1,6 @@
 //! The declaration of a system plugin.
 
-use crate::{PluginId, SystemContribution};
+use crate::{PluginId, SettingsSchema, SystemContribution};
 
 /// A plugin compiled into Nocterm and registered by its feature crate.
 ///
@@ -16,4 +16,8 @@ pub struct SystemPlugin {
     /// A required plugin cannot be switched off.
     pub required: bool,
     pub contributions: &'static [SystemContribution],
+    /// The key of the owner's `SettingsSection` that stores the plugin's settings.
+    pub settings_section: Option<&'static str>,
+    /// The settings the plugin exposes. A non-empty schema needs a `settings_section`.
+    pub settings: SettingsSchema,
 }

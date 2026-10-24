@@ -1,7 +1,7 @@
 //! The containers list as a system plugin: one sidebar panel.
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, Icon, PanelChrome, PanelTraits, Placement,
-    PluginId, SystemContribution, SystemPlugin, WidthClass, Zone,
+    PluginId, SettingsSchema, SystemContribution, SystemPlugin, WidthClass, Zone,
 };
 
 /// The containers of the active host in the sidebar.
@@ -31,6 +31,8 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     description: "Containers and images of the active host",
     required: false,
     contributions: &[LIST],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
 };
 
 #[cfg(test)]

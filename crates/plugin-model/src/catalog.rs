@@ -43,7 +43,8 @@ impl PluginCatalog {
     /// Refuses: malformed or repeated ids; a plugin contribution outside its plugin's
     /// namespace; a core contribution inside any plugin's namespace; a group hint naming an
     /// undeclared group or a widget naming any group; panel traits on a widget or missing on
-    /// a panel; a set of groups without exactly one primary group; and two contributions of one
+    /// a panel; a settings schema outside its limits, or one with fields and no settings
+    /// section; a set of groups without exactly one primary group; and two contributions of one
     /// zone with the same order.
     pub fn new(
         groups: &[GroupSpec],
@@ -87,6 +88,7 @@ impl PluginCatalog {
             }
         }
         for (index, plugin) in plugins.iter().enumerate() {
+            check_settings(plugin)?;
             for contribution in plugin.contributions {
                 if contribution.id.namespace() != plugin.id.as_str() {
                     return Err(CatalogError::Namespace {
@@ -161,6 +163,27 @@ impl PluginCatalog {
             .iter()
             .find(|entry| entry.contribution.id == *id)
     }
+}
+
+fn check_settings(plugin: &SystemPlugin) -> Result<(), CatalogError> {
+    let own: Vec<ContributionId> = plugin
+        .contributions
+        .iter()
+        .map(|contribution| contribution.id.clone())
+        .collect();
+    plugin
+        .settings
+        .validate(&own)
+        .map_err(|source| CatalogError::Schema {
+            plugin: plugin.id.clone(),
+            source,
+        })?;
+    if plugin.settings_section.is_none() && !plugin.settings.is_empty() {
+        return Err(CatalogError::SettingsSection {
+            plugin: plugin.id.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn check_entries(entries: &[Entry], groups: &[GroupSpec]) -> Result<(), CatalogError> {

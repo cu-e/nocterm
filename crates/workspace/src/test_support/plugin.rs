@@ -7,7 +7,7 @@ use crate::{Deps, plugin};
 use gpui_kit::App;
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, PanelChrome, PanelTraits, Placement, PluginId,
-    SystemContribution, SystemPlugin, WidthClass, Zone,
+    SettingsSchema, SystemContribution, SystemPlugin, WidthClass, Zone,
 };
 
 const fn panel(
@@ -145,6 +145,8 @@ pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
             pinned: false,
         },
     ],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
 };
 
 /// A required plugin with one expandable panel, `test-required.expandable`.
@@ -161,6 +163,8 @@ pub static REQUIRED_PLUGIN: SystemPlugin = SystemPlugin {
         "assistant",
         OWN_HEADER,
     )],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
 };
 
 /// A core contribution, `shell.panel`, which owns a sidebar panel.

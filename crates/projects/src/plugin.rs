@@ -1,7 +1,7 @@
 //! Workspaces as a system plugin: one sidebar panel.
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, Icon, PanelChrome, PanelTraits, Placement,
-    PluginId, SystemContribution, SystemPlugin, WidthClass, Zone,
+    PluginId, SettingsSchema, SystemContribution, SystemPlugin, WidthClass, Zone,
 };
 
 /// The saved workspaces in the sidebar.
@@ -31,4 +31,6 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     description: "Saved workspaces on a server or this computer",
     required: false,
     contributions: &[WORKSPACES],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
 };

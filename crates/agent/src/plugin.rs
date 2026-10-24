@@ -1,7 +1,7 @@
 //! The agent chats as a required system plugin: one expandable side panel.
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, Icon, PanelChrome, PanelTraits, Placement,
-    PluginId, SystemContribution, SystemPlugin, WidthClass, Zone,
+    PluginId, SettingsSchema, SystemContribution, SystemPlugin, WidthClass, Zone,
 };
 
 /// The agent chats in the side panel, which draws its own header.
@@ -32,4 +32,6 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     description: "Chats with coding agents in the side panel",
     required: true,
     contributions: &[CHATS],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
 };

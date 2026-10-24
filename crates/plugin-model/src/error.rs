@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use crate::{ContributionId, GroupId, PluginId, Zone};
+use crate::{ContributionId, GroupId, PluginId, SchemaError, Zone};
 
 /// An id that does not follow the id syntax.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -61,6 +61,14 @@ pub enum CatalogError {
     PanelTraits { id: ContributionId },
     #[error("exactly one group must be primary, but {count} are")]
     PrimaryGroups { count: usize },
+    #[error("the settings schema of plugin `{plugin}` is invalid")]
+    Schema {
+        plugin: PluginId,
+        #[source]
+        source: SchemaError,
+    },
+    #[error("plugin `{plugin}` declares settings fields but names no settings section")]
+    SettingsSection { plugin: PluginId },
     #[error("two contributions of the {zone:?} zone share the order {order}")]
     DuplicateOrder { zone: Zone, order: u16 },
 }

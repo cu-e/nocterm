@@ -1,7 +1,7 @@
 //! The snippet library as a system plugin: one sidebar panel.
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, Icon, PanelChrome, PanelTraits, Placement,
-    PluginId, SystemContribution, SystemPlugin, WidthClass, Zone,
+    PluginId, SettingsSchema, SystemContribution, SystemPlugin, WidthClass, Zone,
 };
 
 /// The snippet library in the sidebar.
@@ -31,6 +31,8 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     description: "Saved commands to run in the active terminal",
     required: false,
     contributions: &[LIBRARY],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
 };
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! The host monitor as a system plugin: one status bar widget.
 use nocterm_plugin_model::{
-    AutoPlace, ContributionId, ContributionKind, Icon, Placement, PluginId, SystemContribution,
-    SystemPlugin, Zone,
+    AutoPlace, ContributionId, ContributionKind, Icon, Placement, PluginId, SettingsSchema,
+    SystemContribution, SystemPlugin, Zone,
 };
 
 /// The resource summary of the active environment in the status bar.
@@ -28,4 +28,6 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     description: "CPU and memory of the active environment in the status bar",
     required: false,
     contributions: &[SUMMARY],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
 };
