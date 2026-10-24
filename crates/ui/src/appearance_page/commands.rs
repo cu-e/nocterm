@@ -1,17 +1,7 @@
 //! Searchable appearance pickers reached from the workspace command palette.
-use std::rc::Rc;
-
-use crate::AppearanceMode;
 use crate::notice;
-use gpui_kit::{
-    App, AppContext as _, Window,
-    component::{
-        ActiveTheme as _, WindowExt as _,
-        command::{Command, CommandItem, CommandState},
-    },
-    prelude::*,
-    px,
-};
+use crate::{AppearanceMode, PickerOption, open_choice_picker};
+use gpui_kit::{App, Window, component::ActiveTheme as _};
 
 use super::{choices, selection};
 
@@ -44,17 +34,18 @@ pub fn open_theme_picker(
                 dark,
                 name: name.clone(),
             };
-            (name, checked, choice)
+            PickerOption::new(name, checked, choice)
         })
         .collect();
-    open(
-        settings.clone(),
+    let settings = settings.clone();
+    open_choice_picker(
         if dark {
             "Choose dark theme…"
         } else {
             "Choose light theme…"
         },
         options,
+        move |choice, window, cx| save(choice, &settings, window, cx),
         window,
         cx,
     );
@@ -72,59 +63,16 @@ pub fn open_scheme_picker(
         ("Dark", AppearanceMode::Dark),
     ]
     .into_iter()
-    .map(|(label, mode)| (label.to_owned(), mode == current, Choice::Scheme(mode)))
+    .map(|(label, mode)| PickerOption::new(label, mode == current, Choice::Scheme(mode)))
     .collect();
-    open(
-        settings.clone(),
+    let settings = settings.clone();
+    open_choice_picker(
         "Choose color scheme…",
         options,
+        move |choice, window, cx| save(choice, &settings, window, cx),
         window,
         cx,
     );
-}
-
-fn open(
-    settings: nocterm_store::SettingsHandle,
-    placeholder: &'static str,
-    options: Vec<(String, bool, Choice)>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let origin = window.focused(cx);
-    let options = Rc::new(options);
-    let state = cx.new(|cx| CommandState::new(window, cx));
-    let field = state.clone();
-    window.open_dialog(cx, move |dialog, _, _| {
-        let confirm = options.clone();
-        let settings = settings.clone();
-        let origin = origin.clone();
-        dialog.w(px(560.)).p_0().close_button(false).child(
-            Command::new(&state)
-                .items(
-                    options
-                        .iter()
-                        .map(|(label, checked, _)| {
-                            CommandItem::new().label(label.clone()).checked(*checked)
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .placeholder(placeholder)
-                .bordered(false)
-                .max_h(px(420.))
-                .on_confirm(move |index, window, cx| {
-                    let Some((_, _, choice)) = confirm.get(index.row) else {
-                        return;
-                    };
-                    let choice = choice.clone();
-                    window.close_dialog(cx);
-                    if let Some(origin) = &origin {
-                        window.focus(origin, cx);
-                    }
-                    save(choice, &settings, window, cx);
-                }),
-        )
-    });
-    field.update(cx, |state, cx| state.focus(window, cx));
 }
 
 fn save(

@@ -8,7 +8,8 @@
 //! and paints Design changes without resolving back into Design.
 //!
 //! Owns: Appearance views, theme projections, shared controls, directory editing/selection,
-//! checked text receipts, layout, and the icons and column widths of plugin contributions.
+//! checked text receipts, layout, the searchable choice picker, and the icons and column widths of
+//! plugin contributions.
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`, read-only `DirectoryRead`. Ports provided: UI helpers,
 //! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
@@ -107,8 +108,10 @@ pub mod settings_input;
 pub use settings_field::FieldPresentation;
 
 mod appearance_page;
+mod choice_picker;
 pub use appearance_page::appearance_settings_page;
 pub use appearance_page::commands::{open_scheme_picker, open_theme_picker};
+pub use choice_picker::{PickerOption, open_choice_picker};
 
 #[cfg(test)]
 mod settings_initialization_tests;
