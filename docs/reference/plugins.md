@@ -73,6 +73,26 @@ Shown for `monitor.summary`.
 | --- | --- | --- | --- | --- | --- |
 | `status_bar` | Metrics in the status bar | multi-choice | `cpu`, `memory` | `cpu` (CPU), `cores` (CPU cores), `memory` (Memory), `swap` (Swap), `load` (Load average), `uptime` (Uptime), `temperature` (Temperature), `disks` (Disk space), `network` (Network), `disk_io` (Disk I/O); at most 10, kept in the order chosen | `[monitor].status_bar` |
 
+## Clock
+
+Plugin `clock`. Required: no. Enabled by default: yes.
+
+The local time in the status bar
+
+| Id | Kind | Title | Zone | Order | Group | Auto | Pinned |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `clock.time` | widget | Clock | right | 25 | none | tray | no |
+
+### Settings: Display
+
+Shown for `clock.time`.
+
+| Key | Label | Kind | Default | Options or range | Stored in |
+| --- | --- | --- | --- | --- | --- |
+| `format` | Time format | choice | `hour24` | `hour24` (24-hour), `hour12` (12-hour) | `[clock].format` |
+| `seconds` | Show seconds | toggle | off | on or off | `[clock].seconds` |
+| `date` | Show the date | toggle | off | on or off | `[clock].date` |
+
 ## AI Agents
 
 Plugin `agent`. Required: yes. Enabled by default: yes. Own settings page: `ai`, reached from Settings ▸ Plugins.

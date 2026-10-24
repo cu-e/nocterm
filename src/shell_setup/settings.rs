@@ -28,7 +28,7 @@ pub(crate) fn install_guest_pages(
 > {
     let monitor = nocterm_monitor_ui::install(local_host.clone(), ui, cx);
     let plugins = Arc::new(super::plugin_catalog()?);
-    let directory = plugin_settings(&monitor);
+    let directory = plugin_settings(&monitor, ui.settings());
     let page = plugins_page(&plugins, directory.clone(), ui.settings(), cx);
     let sections = super::layout_editor::appearance_sections(&plugins, directory, layout, ui, cx);
     let guests = crate::settings_pages::guest_pages(
@@ -64,11 +64,19 @@ fn plugins_page(
 
 /// The schema and source of every system plugin that has settings. Each source writes the
 /// owner's own section, so a page and the owner's page edit the same values.
-fn plugin_settings(monitor: &nocterm_monitor_ui::Installed) -> PluginSettingsDirectory {
-    PluginSettingsDirectory::new().with_system(
-        &nocterm_monitor_ui::plugin::PLUGIN,
-        nocterm_monitor_ui::plugin_settings(monitor),
-    )
+fn plugin_settings(
+    monitor: &nocterm_monitor_ui::Installed,
+    settings: &SettingsHandle,
+) -> PluginSettingsDirectory {
+    PluginSettingsDirectory::new()
+        .with_system(
+            &nocterm_monitor_ui::plugin::PLUGIN,
+            nocterm_monitor_ui::plugin_settings(monitor),
+        )
+        .with_system(
+            &nocterm_workspace::clock::PLUGIN,
+            nocterm_workspace::clock::plugin_settings(settings.clone()),
+        )
 }
 
 #[cfg(test)]
@@ -83,7 +91,10 @@ mod tests {
             gpui_kit::init(cx);
             let store = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
             let ready = nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), store, cx);
-            plugin_settings(&nocterm_monitor_ui::install(None, &ready, cx))
+            plugin_settings(
+                &nocterm_monitor_ui::install(None, &ready, cx),
+                ready.settings(),
+            )
         });
         for plugin in catalog.plugins() {
             let has_settings = !plugin.settings.groups.is_empty();

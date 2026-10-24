@@ -302,3 +302,42 @@ fn the_switch_on_the_plugins_page_stores_the_choice_in_the_plugins_section(
     });
     assert_eq!(disabled, 1, "a required plugin stays enabled");
 }
+
+#[gpui_kit::test]
+fn the_clock_plugin_shows_its_settings_and_the_form_writes_the_clock_section(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_workspace::clock::{ClockFormat, ClockSettings};
+
+    let (handle, _, settings) = window_over("", cx);
+    dispatch(
+        handle,
+        OpenPlugins {
+            plugin: Some("clock".into()),
+        },
+        cx,
+    );
+    render(handle, cx);
+    assert_eq!(detail_label(handle, cx).as_deref(), Some("Clock"));
+    for control in [
+        "plugin-setting:clock:format:hour12",
+        "plugin-setting:clock:seconds:",
+        "plugin-setting:clock:date:",
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(control.to_owned(), cx)
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    let stored = cx.update(|cx| settings.setting::<ClockSettings>(cx).clone());
+    assert_eq!(
+        stored,
+        ClockSettings {
+            format: ClockFormat::Hour12,
+            seconds: true,
+            date: true,
+        }
+    );
+}

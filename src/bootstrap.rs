@@ -213,7 +213,8 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         files,
         workspace: nocterm_workspace::Deps::new(layout)
             .with_catalog(plugins)
-            .with_settings(ui.settings().clone()),
+            .with_settings(ui.settings().clone())
+            .with_clock(Arc::new(nocterm_local::SystemClock)),
         themes,
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);

@@ -73,3 +73,34 @@ fn switching_the_monitor_off_while_it_samples_stops_the_sampling(cx: &mut TestAp
     cx.run_until_parked();
     assert_eq!(samples(&exec), stopped, "ran {:?}", exec.ran());
 }
+
+fn footer_shows_clock(handle: gpui_kit::AnyWindowHandle, cx: &mut TestAppContext) -> bool {
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.try_find("status-clock").is_some()
+    })
+    .unwrap()
+}
+
+const CLOCK_AT_THE_END: &str = "[layouts]\nactive = \"p1\"\n[[layouts.presets]]\nid = \"p1\"\n\
+    name = \"Clocked\"\n[layouts.presets.bar]\nright = [{ item = \"workspace.notifications\" }, \
+    { item = \"clock.time\" }]\n";
+
+#[gpui_kit::test]
+fn the_composed_window_leaves_the_clock_out_until_a_layout_places_it(cx: &mut TestAppContext) {
+    let (handle, ..) = window_on_local_host("", cx);
+    assert!(
+        !footer_shows_clock(handle, cx),
+        "the default layout is unchanged"
+    );
+    let (handle, ..) = window_on_local_host(CLOCK_AT_THE_END, cx);
+    assert!(footer_shows_clock(handle, cx));
+}
+
+#[gpui_kit::test]
+fn switching_the_clock_plugin_off_removes_it_from_the_composed_window(cx: &mut TestAppContext) {
+    let off = format!("{CLOCK_AT_THE_END}[plugins]\ndisabled = [\"clock\"]\n");
+    let (handle, ..) = window_on_local_host(&off, cx);
+    assert!(!footer_shows_clock(handle, cx));
+}

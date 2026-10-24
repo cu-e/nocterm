@@ -18,6 +18,7 @@ const PLUGINS: &[&SystemPlugin] = &[
     &nocterm_containers_ui::plugin::PLUGIN,
     &nocterm_projects::plugin::PLUGIN,
     &nocterm_monitor_ui::plugin::PLUGIN,
+    &nocterm_workspace::clock::PLUGIN,
     &nocterm_agent::plugin::PLUGIN,
 ];
 

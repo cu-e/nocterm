@@ -253,3 +253,34 @@ fn the_monitor_form_writes_its_own_setting_and_not_a_layout(cx: &mut TestAppCont
     );
     assert_eq!(saved_layouts(&settings, cx), 0, "no layout was written");
 }
+
+#[gpui_kit::test]
+fn the_clock_form_in_the_inspector_writes_the_clock_section_and_not_a_layout(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_workspace::clock::{ClockFormat, ClockSettings};
+
+    let (handle, _, settings) = window_with_settings(cx);
+    dispatch(
+        handle,
+        OpenLayoutSettings {
+            select: Some("clock.time".into()),
+        },
+        cx,
+    );
+    assert!(shown(handle, "layout-inspector:clock.time", cx));
+
+    click(handle, "plugin-setting:clock:format:hour12", cx);
+    click(handle, "plugin-setting:clock:seconds:", cx);
+
+    let stored = cx.update(|cx| settings.setting::<ClockSettings>(cx).clone());
+    assert_eq!(
+        stored,
+        ClockSettings {
+            format: ClockFormat::Hour12,
+            seconds: true,
+            date: false,
+        }
+    );
+    assert_eq!(saved_layouts(&settings, cx), 0, "no layout was written");
+}
