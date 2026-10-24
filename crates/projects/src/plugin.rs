@@ -33,4 +33,5 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     contributions: &[WORKSPACES],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };

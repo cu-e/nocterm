@@ -53,6 +53,7 @@ static ALPHA: SystemPlugin = SystemPlugin {
     contributions: &[FIRST, SECOND],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 static BETA: SystemPlugin = SystemPlugin {
     id: PluginId::new("beta"),
@@ -62,6 +63,7 @@ static BETA: SystemPlugin = SystemPlugin {
     contributions: &[widget("beta.clock", Zone::Right, 20)],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 const CORE: &[SystemContribution] = &[widget("shell.notice", Zone::Right, 5)];
 
@@ -145,6 +147,7 @@ fn a_contribution_outside_its_plugin_namespace_is_refused() {
         contributions: &[widget("delta.clock", Zone::Left, 1)],
         settings_section: None,
         settings: SettingsSchema::NONE,
+        settings_page: None,
     };
     let error = PluginCatalog::new(&groups(), &[], &[&STRAY]).err();
     assert_eq!(
@@ -295,6 +298,7 @@ fn an_invalid_plugin_id_is_refused() {
         contributions: &[],
         settings_section: None,
         settings: SettingsSchema::NONE,
+        settings_page: None,
     };
     let error = PluginCatalog::new(&groups(), &[], &[&BAD]).err();
     assert!(matches!(

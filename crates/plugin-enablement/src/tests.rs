@@ -31,6 +31,7 @@ static OPTIONAL: SystemPlugin = SystemPlugin {
     contributions: &[widget("optional.clock", 10)],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 static REQUIRED: SystemPlugin = SystemPlugin {
     id: PluginId::new("required"),
@@ -40,6 +41,7 @@ static REQUIRED: SystemPlugin = SystemPlugin {
     contributions: &[widget("required.clock", 20)],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 const CORE: &[SystemContribution] = &[widget("shell.notice", 5)];
 

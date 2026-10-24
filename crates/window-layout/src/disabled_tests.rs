@@ -92,6 +92,7 @@ static TOOLS: SystemPlugin = SystemPlugin {
     ],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 
 fn catalog() -> PluginCatalog {
@@ -277,6 +278,7 @@ fn a_group_left_with_no_enabled_panel_leaves_the_bar_unless_it_is_primary() {
         )],
         settings_section: None,
         settings: SettingsSchema::NONE,
+        settings_page: None,
     };
     let groups = [
         GroupSpec {

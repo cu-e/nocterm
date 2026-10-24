@@ -139,3 +139,11 @@ pub struct SwitchLayout {
 pub struct OpenPlugins {
     pub plugin: Option<gpui_kit::SharedString>,
 }
+
+/// Open the Settings page the named plugin keeps for itself (its `settings_page`), whether or
+/// not the plugin is enabled. It has no default binding.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct OpenPluginPage {
+    pub plugin: gpui_kit::SharedString,
+}

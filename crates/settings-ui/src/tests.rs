@@ -529,3 +529,144 @@ fn same_and_unknown_page_opens_preserve_selection_and_do_not_flush(cx: &mut Test
     })
     .unwrap();
 }
+
+#[test]
+fn nested_pages_need_a_top_level_parent_and_cannot_be_the_default() {
+    use SettingsCatalogError::{MissingDefault, NestedParent, UnknownParent};
+    let created = Rc::new(Cell::new(0));
+    let top = |id| SettingsPageRegistration::lazy(descriptor(id, created.clone()));
+    let nested = |id, parent| top(id).under(parent, "anchor");
+    assert_eq!(
+        SettingsCatalog::new(vec![top("one"), nested("child", "absent")], "one").err(),
+        Some(UnknownParent {
+            id: "child",
+            parent: "absent"
+        })
+    );
+    assert_eq!(
+        SettingsCatalog::new(
+            vec![top("one"), nested("child", "one"), nested("deep", "child")],
+            "one"
+        )
+        .err(),
+        Some(NestedParent {
+            id: "deep",
+            parent: "child"
+        })
+    );
+    assert_eq!(
+        SettingsCatalog::new(vec![top("one"), nested("child", "one")], "child").err(),
+        Some(MissingDefault { id: "child" })
+    );
+    let catalog = SettingsCatalog::new(vec![nested("child", "one"), top("one")], "one").unwrap();
+    let pages: Vec<_> = catalog
+        .pages()
+        .iter()
+        .map(|page| (page.id(), page.nested_under()))
+        .collect();
+    assert_eq!(pages, [("child", Some(("one", "anchor"))), ("one", None)]);
+}
+
+struct AnchoredPage {
+    focus: FocusHandle,
+    id: &'static str,
+    revealed: Rc<RefCell<Vec<(&'static str, String)>>>,
+}
+impl Focusable for AnchoredPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl Render for AnchoredPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+impl SettingsPage for AnchoredPage {
+    fn reveal(&mut self, anchor: &str, _: &mut Window, _: &mut Context<Self>) -> bool {
+        self.revealed
+            .borrow_mut()
+            .push((self.id, anchor.to_owned()));
+        true
+    }
+}
+
+#[gpui_kit::test]
+fn a_nested_page_opens_at_an_anchor_hides_from_the_list_and_leads_back_to_its_parent(
+    cx: &mut TestAppContext,
+) {
+    let revealed = Rc::new(RefCell::new(Vec::new()));
+    let anchored = |id: &'static str| {
+        let revealed = revealed.clone();
+        SettingsPageSpec::new(id, id, move |_, cx| {
+            let revealed = revealed.clone();
+            cx.new(|cx| AnchoredPage {
+                focus: cx.focus_handle(),
+                id,
+                revealed,
+            })
+        })
+    };
+    let (handle, workspace, fixture) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+        let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+            cx.new(|cx| Workspace::new(deps, window, cx))
+        })
+        .unwrap();
+        (handle, workspace, fixture)
+    });
+    let catalog = SettingsCatalog::new(
+        fixture
+            .pages
+            .pages()
+            .iter()
+            .cloned()
+            .chain([
+                SettingsPageRegistration::lazy(anchored("plugins")),
+                SettingsPageRegistration::lazy(anchored("monitor")).under("plugins", "monitor"),
+            ])
+            .collect(),
+        "appearance",
+    )
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        let open = |id: &str, anchor: Option<&str>, window: &mut Window, cx: &mut App| {
+            workspace.update(cx, |workspace, cx| {
+                open_page_at(
+                    workspace,
+                    id,
+                    anchor,
+                    &catalog,
+                    fixture.installed.clone(),
+                    window,
+                    cx,
+                );
+            });
+            window.render_frame(cx);
+        };
+        open("plugins", None, window, cx);
+        assert!(revealed.borrow().is_empty(), "open_page reveals nothing");
+        assert!(window.within("settings-pages").try_find(5usize).is_some());
+        assert!(
+            window.within("settings-pages").try_find(6usize).is_none(),
+            "the nested page is not an entry of the list"
+        );
+        assert!(window.try_find("settings-back").is_none());
+
+        open("plugins", Some("monitor"), window, cx);
+        assert_eq!(*revealed.borrow(), [("plugins", "monitor".to_owned())]);
+        revealed.borrow_mut().clear();
+
+        open("monitor", None, window, cx);
+        let settings = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
+        assert_eq!(settings.read(cx).selected_page_id(), "monitor");
+        assert!(revealed.borrow().is_empty());
+        window.click("settings-back", cx);
+        assert_eq!(settings.read(cx).selected_page_id(), "plugins");
+        assert_eq!(*revealed.borrow(), [("plugins", "monitor".to_owned())]);
+        window.render_frame(cx);
+        assert!(window.try_find("settings-back").is_none());
+    })
+    .unwrap();
+}

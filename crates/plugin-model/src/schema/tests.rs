@@ -322,6 +322,7 @@ fn demo(schema: SettingsSchema, section: Option<&'static str>) -> &'static Syste
         contributions: &[],
         settings_section: section,
         settings: schema,
+        settings_page: None,
     }))
 }
 

@@ -25,7 +25,7 @@ pub const CHATS: SystemContribution = SystemContribution {
 };
 
 /// AI Agents: chats with coding agents. It cannot be disabled; the master switch in the AI
-/// settings withdraws its panel instead.
+/// settings withdraws its panel instead. Its settings page is the top-level AI page.
 pub static PLUGIN: SystemPlugin = SystemPlugin {
     id: PluginId::new("agent"),
     name: "AI Agents",
@@ -34,4 +34,5 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     contributions: &[CHATS],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: Some("ai"),
 };

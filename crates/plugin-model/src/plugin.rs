@@ -20,4 +20,8 @@ pub struct SystemPlugin {
     pub settings_section: Option<&'static str>,
     /// The settings the plugin exposes. A non-empty schema needs a `settings_section`.
     pub settings: SettingsSchema,
+    /// The id of the owner's own Settings page, when the plugin has more than a form. The page
+    /// is either nested under Plugins or a top-level page of its own, as the AI page is; it
+    /// opens whether or not the plugin is enabled.
+    pub settings_page: Option<&'static str>,
 }

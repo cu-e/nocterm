@@ -147,6 +147,7 @@ pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
     ],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 
 /// A required plugin with one expandable panel, `test-required.expandable`.
@@ -165,6 +166,7 @@ pub static REQUIRED_PLUGIN: SystemPlugin = SystemPlugin {
     )],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 
 /// A core contribution, `shell.panel`, which owns a sidebar panel.

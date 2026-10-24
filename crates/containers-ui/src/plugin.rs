@@ -33,6 +33,7 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     contributions: &[LIST],
     settings_section: None,
     settings: SettingsSchema::NONE,
+    settings_page: None,
 };
 
 #[cfg(test)]

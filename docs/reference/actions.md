@@ -66,6 +66,7 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `workspace::NextTab` | Switch to the tab on the right, wrapping around. | `ctrl-pagedown` (linux, windows; Workspace); `ctrl-tab` (linux, windows; Workspace); `cmd-shift-]` (macos; Workspace); `ctrl-tab` (macos; Workspace) |
 | `workspace::OpenAiSettings` | Open AI settings. |  |
 | `workspace::OpenKeymap` | Open the keymap: every command and its shortcuts. |  |
+| `workspace::OpenPluginPage` | Open the Settings page the named plugin keeps for itself (its `settings_page`), whether or not the plugin is enabled. It has no default binding. |  |
 | `workspace::OpenPlugins` | Open Settings on the Plugins page, with this plugin selected when one is named. It has no default binding. |  |
 | `workspace::OpenSSHSettings` | Open SSH settings. |  |
 | `workspace::OpenSettings` | Open the settings. | `ctrl-,` (linux, windows; Workspace); `cmd-,` (macos; Workspace) |

@@ -34,6 +34,7 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     settings: SettingsSchema {
         groups: Cow::Borrowed(&[STATUS_BAR_GROUP]),
     },
+    settings_page: None,
 };
 
 /// The key of the status bar metrics field; it is the serde key in `[monitor]`.
