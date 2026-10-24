@@ -19,7 +19,7 @@ tempfile.workspace = true
 futures.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["user"] }
+nix = { version = "0.28", features = ["fs", "user"] }
 
 [features]
 test-support = []
