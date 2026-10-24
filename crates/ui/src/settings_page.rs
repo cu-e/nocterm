@@ -11,6 +11,11 @@ pub trait SettingsPage: Render + Focusable {
     fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_deactivate(window, cx);
     }
+    /// Brings the part of the page named by `anchor` into view and returns whether it knows
+    /// the anchor. Pages without addressable parts keep the default.
+    fn reveal(&mut self, _anchor: &str, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        false
+    }
 }
 
 /// Type-erased page owned by its host Settings view.
@@ -20,6 +25,7 @@ pub trait SettingsPageHandle: 'static {
     fn flush(&self, window: &mut Window, cx: &mut App);
     fn deactivate(&self, window: &mut Window, cx: &mut App);
     fn close(&self, window: &mut Window, cx: &mut App);
+    fn reveal(&self, anchor: &str, window: &mut Window, cx: &mut App) -> bool;
 }
 
 impl<T: SettingsPage> SettingsPageHandle for Entity<T> {
@@ -37,6 +43,9 @@ impl<T: SettingsPage> SettingsPageHandle for Entity<T> {
     }
     fn close(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |page, cx| page.on_close(window, cx));
+    }
+    fn reveal(&self, anchor: &str, window: &mut Window, cx: &mut App) -> bool {
+        self.update(cx, |page, cx| page.reveal(anchor, window, cx))
     }
 }
 
@@ -95,3 +104,63 @@ impl SettingsPageSpec {
 }
 
 use crate::SettingsPageContext;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{AppContext as _, TestAppContext, WindowOptions, div};
+
+    struct Page {
+        focus: FocusHandle,
+        anchors: Vec<&'static str>,
+    }
+    impl Focusable for Page {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus.clone()
+        }
+    }
+    impl Render for Page {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui_kit::IntoElement {
+            div()
+        }
+    }
+    impl SettingsPage for Page {
+        fn reveal(&mut self, anchor: &str, _: &mut Window, _: &mut Context<Self>) -> bool {
+            self.anchors.contains(&anchor)
+        }
+    }
+    struct Plain(FocusHandle);
+    impl Focusable for Plain {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.0.clone()
+        }
+    }
+    impl Render for Plain {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui_kit::IntoElement {
+            div()
+        }
+    }
+    impl SettingsPage for Plain {}
+
+    #[gpui_kit::test]
+    fn a_page_reveals_only_the_anchors_it_knows(cx: &mut TestAppContext) {
+        let (window, _root) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| Plain(cx.focus_handle()))
+            })
+            .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            let addressable: Box<dyn SettingsPageHandle> = Box::new(cx.new(|cx| Page {
+                focus: cx.focus_handle(),
+                anchors: vec!["monitor"],
+            }));
+            let plain: Box<dyn SettingsPageHandle> =
+                Box::new(cx.new(|cx| Plain(cx.focus_handle())));
+            assert!(addressable.reveal("monitor", window, cx));
+            assert!(!addressable.reveal("elsewhere", window, cx));
+            assert!(!plain.reveal("monitor", window, cx));
+        })
+        .unwrap();
+    }
+}
