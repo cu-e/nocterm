@@ -4,102 +4,160 @@
 use gpui_kit::{Action, App, Focusable as _, Menu, MenuItem, Window, component::input};
 use nocterm_workspace::{Workspace, *};
 
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
+/// What the menus read of the window: whether the workspace holds focus, which commands it
+/// accepts and whether the active tab can be the target of one.
+struct MenuState<'a> {
+    workspace: &'a Workspace,
+    window: &'a Window,
+    cx: &'a App,
+    in_workspace: bool,
+    has_target: bool,
+}
+
+impl MenuState<'_> {
+    fn enabled(&self, action: &dyn Action) -> bool {
+        self.in_workspace
+            && self
+                .workspace
+                .command_available(action, self.window, self.cx)
+    }
+}
+
 pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Menu> {
     let in_workspace = workspace.focus_handle(cx).contains_focused(window, cx);
-    let enabled =
-        |action: &dyn Action| in_workspace && workspace.command_available(action, window, cx);
+    let state = MenuState {
+        workspace,
+        window,
+        cx,
+        in_workspace,
+        has_target: in_workspace && workspace.command_title(window, cx).is_some(),
+    };
+    vec![
+        session_menu(&state),
+        edit_menu(&state),
+        search_menu(&state),
+        window_menu(&state),
+        Menu::new("Help").items([MenuItem::action("About Nocterm", About)]),
+    ]
+}
+
+fn session_menu(state: &MenuState) -> Menu {
+    let MenuState {
+        window,
+        cx,
+        in_workspace,
+        has_target,
+        ..
+    } = *state;
+    Menu::new("Session").items([
+        MenuItem::action("New Session", NewTab).disabled(!in_workspace),
+        MenuItem::action("New Window", NewWindow),
+        MenuItem::separator(),
+        MenuItem::action("Disconnect Session", DisconnectSession)
+            .disabled(!state.enabled(&DisconnectSession)),
+        MenuItem::action("Reconnect Session", ReconnectSession)
+            .disabled(!state.enabled(&ReconnectSession)),
+        MenuItem::submenu(
+            Menu::new("Log").items([
+                MenuItem::action("Start Recording", StartRecording)
+                    .disabled(!state.enabled(&StartRecording)),
+                MenuItem::action("Stop Recording", StopRecording)
+                    .disabled(!state.enabled(&StopRecording)),
+                MenuItem::separator(),
+                MenuItem::action("Open Default Logs Directory", LogsDirectory),
+            ]),
+        ),
+        MenuItem::submenu(
+            Menu::new("Preferences").items([
+                MenuItem::action("Settings", OpenSettings).disabled(!in_workspace),
+                MenuItem::action("AI Settings", OpenAiSettings).disabled(!in_workspace),
+                MenuItem::action("Session Settings", SessionSettings)
+                    .disabled(!state.enabled(&SessionSettings)),
+                MenuItem::action("Default Session Settings", DefaultSessionSettings)
+                    .disabled(!in_workspace),
+                MenuItem::action("Password Vault", OpenVault)
+                    .disabled(!in_workspace || !window.is_action_available(&OpenVault, cx)),
+                MenuItem::separator(),
+                MenuItem::action("Profiles Directory", ProfilesDirectory),
+            ]),
+        ),
+        MenuItem::separator(),
+        MenuItem::action("Close View", CloseTab).disabled(!has_target),
+        MenuItem::action("Close All Views", CloseAllTabs).disabled(!has_target),
+        MenuItem::action("Close Window", CloseWindow),
+        MenuItem::action("Exit", Quit),
+    ])
+}
+
+fn edit_menu(state: &MenuState) -> Menu {
     // Cut belongs to native editable fields, never to the terminal screen. Its
     // dispatch path also covers dialog inputs outside the Workspace subtree.
     // During initial window construction no dispatch tree exists yet. State is
     // refreshed again from the rendered tree when the user opens a menu.
-    let editing = window.focused(cx).is_some() && window.is_action_available(&input::Cut, cx);
-    let has_target = in_workspace && workspace.command_title(window, cx).is_some();
-    let can_split = in_workspace && workspace.can_split_active(window, cx);
+    let editing = state.window.focused(state.cx).is_some()
+        && state.window.is_action_available(&input::Cut, state.cx);
+    let has_target = state.has_target;
+    Menu::new("Edit").items([
+        MenuItem::action("Undo", input::Undo).disabled(!editing),
+        MenuItem::action("Redo", input::Redo).disabled(!editing),
+        MenuItem::separator(),
+        MenuItem::action("Cut", input::Cut).disabled(!editing),
+        MenuItem::action("Copy", input::Copy).disabled(!(editing || state.enabled(&input::Copy))),
+        MenuItem::action("Paste", input::Paste)
+            .disabled(!(editing || state.enabled(&input::Paste))),
+        MenuItem::action("Select All", input::SelectAll)
+            .disabled(!(editing || state.enabled(&input::SelectAll))),
+        MenuItem::action("Clear Selection", ClearSelection)
+            .disabled(!state.enabled(&ClearSelection)),
+        MenuItem::separator(),
+        MenuItem::action("Copy Connection Name", CopyConnectionName).disabled(!has_target),
+        MenuItem::action("Rename Tab", RenameTab).disabled(!has_target),
+    ])
+}
 
-    vec![
-        Menu::new("Session").items([
-            MenuItem::action("New Session", NewTab).disabled(!in_workspace),
-            MenuItem::action("New Window", NewWindow),
-            MenuItem::separator(),
-            MenuItem::action("Disconnect Session", DisconnectSession)
-                .disabled(!enabled(&DisconnectSession)),
-            MenuItem::action("Reconnect Session", ReconnectSession)
-                .disabled(!enabled(&ReconnectSession)),
-            MenuItem::submenu(
-                Menu::new("Log").items([
-                    MenuItem::action("Start Recording", StartRecording)
-                        .disabled(!enabled(&StartRecording)),
-                    MenuItem::action("Stop Recording", StopRecording)
-                        .disabled(!enabled(&StopRecording)),
-                    MenuItem::separator(),
-                    MenuItem::action("Open Default Logs Directory", LogsDirectory),
-                ]),
-            ),
-            MenuItem::submenu(
-                Menu::new("Preferences").items([
-                    MenuItem::action("Settings", OpenSettings).disabled(!in_workspace),
-                    MenuItem::action("AI Settings", OpenAiSettings).disabled(!in_workspace),
-                    MenuItem::action("Session Settings", SessionSettings)
-                        .disabled(!enabled(&SessionSettings)),
-                    MenuItem::action("Default Session Settings", DefaultSessionSettings)
-                        .disabled(!in_workspace),
-                    MenuItem::action("Password Vault", OpenVault)
-                        .disabled(!in_workspace || !window.is_action_available(&OpenVault, cx)),
-                    MenuItem::separator(),
-                    MenuItem::action("Profiles Directory", ProfilesDirectory),
-                ]),
-            ),
-            MenuItem::separator(),
-            MenuItem::action("Close View", CloseTab).disabled(!has_target),
-            MenuItem::action("Close All Views", CloseAllTabs).disabled(!has_target),
-            MenuItem::action("Close Window", CloseWindow),
-            MenuItem::action("Exit", Quit),
-        ]),
-        Menu::new("Edit").items([
-            MenuItem::action("Undo", input::Undo).disabled(!editing),
-            MenuItem::action("Redo", input::Redo).disabled(!editing),
-            MenuItem::separator(),
-            MenuItem::action("Cut", input::Cut).disabled(!editing),
-            MenuItem::action("Copy", input::Copy).disabled(!(editing || enabled(&input::Copy))),
-            MenuItem::action("Paste", input::Paste).disabled(!(editing || enabled(&input::Paste))),
-            MenuItem::action("Select All", input::SelectAll)
-                .disabled(!(editing || enabled(&input::SelectAll))),
-            MenuItem::action("Clear Selection", ClearSelection).disabled(!enabled(&ClearSelection)),
-            MenuItem::separator(),
-            MenuItem::action("Copy Connection Name", CopyConnectionName).disabled(!has_target),
-            MenuItem::action("Rename Tab", RenameTab).disabled(!has_target),
-        ]),
-        Menu::new("Search").items([
-            MenuItem::action("Find", Find).disabled(!enabled(&Find)),
-            MenuItem::action("Find Next", FindNext).disabled(!enabled(&FindNext)),
-            MenuItem::action("Find Previous", FindPrevious).disabled(!enabled(&FindPrevious)),
-            MenuItem::action("Find Next Selected Text", FindNextSelection)
-                .disabled(!enabled(&FindNextSelection)),
-        ]),
-        Menu::new("Window").items([
-            MenuItem::action("Split View Horizontally", SplitDown).disabled(!can_split),
-            MenuItem::action("Split View Vertically", SplitRight).disabled(!can_split),
-            MenuItem::action("Split to the Left", SplitLeft).disabled(!can_split),
-            MenuItem::action("Split Above", SplitUp).disabled(!can_split),
-            MenuItem::separator(),
-            MenuItem::action("Next Pane", NextPane).disabled(!has_target),
-            MenuItem::action("Previous Pane", PreviousPane).disabled(!has_target),
-            MenuItem::action("Next Tab", NextTab).disabled(!has_target),
-            MenuItem::action("Previous Tab", PreviousTab).disabled(!has_target),
-            MenuItem::action("Move Tab Left", MoveTabLeft).disabled(!has_target),
-            MenuItem::action("Move Tab Right", MoveTabRight).disabled(!has_target),
-            MenuItem::separator(),
-            MenuItem::action("Sidebar", ToggleSidebar)
-                .checked(workspace.sidebar_is_open())
-                .disabled(!in_workspace),
-            MenuItem::action("Local Terminal", ToggleLocalTerminal)
-                .checked(workspace.local_terminal_is_visible(cx))
-                .disabled(!in_workspace),
-            MenuItem::action("AI Agents", ToggleRightPanel)
-                .checked(workspace.right_panel_is_open())
-                .disabled(!in_workspace || !workspace.right_panel_is_available()),
-        ]),
-        Menu::new("Help").items([MenuItem::action("About Nocterm", About)]),
-    ]
+fn search_menu(state: &MenuState) -> Menu {
+    Menu::new("Search").items([
+        MenuItem::action("Find", Find).disabled(!state.enabled(&Find)),
+        MenuItem::action("Find Next", FindNext).disabled(!state.enabled(&FindNext)),
+        MenuItem::action("Find Previous", FindPrevious).disabled(!state.enabled(&FindPrevious)),
+        MenuItem::action("Find Next Selected Text", FindNextSelection)
+            .disabled(!state.enabled(&FindNextSelection)),
+    ])
+}
+
+/// The Window menu asks the workspace about panels by contribution id and primary group, so
+/// it follows whatever the plugin catalog registers.
+fn window_menu(state: &MenuState) -> Menu {
+    let MenuState {
+        workspace,
+        window,
+        cx,
+        in_workspace,
+        has_target,
+    } = *state;
+    let can_split = in_workspace && workspace.can_split_active(window, cx);
+    let agents = &nocterm_agent::plugin::CHATS.id;
+    Menu::new("Window").items([
+        MenuItem::action("Split View Horizontally", SplitDown).disabled(!can_split),
+        MenuItem::action("Split View Vertically", SplitRight).disabled(!can_split),
+        MenuItem::action("Split to the Left", SplitLeft).disabled(!can_split),
+        MenuItem::action("Split Above", SplitUp).disabled(!can_split),
+        MenuItem::separator(),
+        MenuItem::action("Next Pane", NextPane).disabled(!has_target),
+        MenuItem::action("Previous Pane", PreviousPane).disabled(!has_target),
+        MenuItem::action("Next Tab", NextTab).disabled(!has_target),
+        MenuItem::action("Previous Tab", PreviousTab).disabled(!has_target),
+        MenuItem::action("Move Tab Left", MoveTabLeft).disabled(!has_target),
+        MenuItem::action("Move Tab Right", MoveTabRight).disabled(!has_target),
+        MenuItem::separator(),
+        MenuItem::action("Sidebar", ToggleSidebar)
+            .checked(workspace.primary_group_is_open())
+            .disabled(!in_workspace),
+        MenuItem::action("Local Terminal", ToggleLocalTerminal)
+            .checked(workspace.local_terminal_is_visible(cx))
+            .disabled(!in_workspace),
+        MenuItem::action("AI Agents", ToggleRightPanel)
+            .checked(workspace.panel_is_open(agents))
+            .disabled(!in_workspace || !workspace.panel_is_available(agents)),
+    ])
 }

@@ -51,6 +51,19 @@ fn enabled(menus: &[Menu], label: &str) -> bool {
         .find_map(|menu| find_action(&menu.items, label))
         .unwrap_or_else(|| panic!("application menu action missing: {label}"))
 }
+fn checked(menus: &[Menu], label: &str) -> bool {
+    fn find(items: &[MenuItem], label: &str) -> Option<bool> {
+        items.iter().find_map(|item| match item {
+            MenuItem::Action { name, checked, .. } if name.as_ref() == label => Some(*checked),
+            MenuItem::Submenu(menu) => find(&menu.items, label),
+            _ => None,
+        })
+    }
+    menus
+        .iter()
+        .find_map(|menu| find(&menu.items, label))
+        .unwrap_or_else(|| panic!("application menu action missing: {label}"))
+}
 fn assert_tab_actions(menus: &[Menu], expected: bool) {
     for label in [
         "Close View",
@@ -141,7 +154,7 @@ fn session_menu_follows_the_terminal_handlers_and_reaches_it_from_the_sidebar(
         assert!(!enabled(&menus, "Start Recording"));
         assert!(enabled(&menus, "Reconnect Session"));
         workspace.update(cx, |workspace, cx| {
-            workspace.activate_panel_of::<nocterm_files::FilesPanel>(window, cx)
+            workspace.open_panel(&nocterm_files::plugin::EXPLORER.id, window, cx)
         });
         window.render_frame(cx);
         assert!(
@@ -159,6 +172,46 @@ fn session_menu_follows_the_terminal_handlers_and_reaches_it_from_the_sidebar(
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("find-previous").is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn window_menu_follows_the_agent_panel_and_the_sidebar_as_the_workspace_reports_them(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace, _, _) = fixture(cx);
+    let agents = &nocterm_agent::plugin::CHATS.id;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        assert!(enabled(&menus, "AI Agents"));
+        assert!(!checked(&menus, "AI Agents"));
+        assert!(checked(&menus, "Sidebar"), "the sidebar is open at boot");
+
+        window.dispatch_action(Box::new(nocterm_workspace::ToggleSidebar), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        assert!(!checked(&menus, "Sidebar"), "toggling hides the sidebar");
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel(agents, window, cx)
+        });
+        window.render_frame(cx);
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        assert!(checked(&menus, "AI Agents"));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_panel_available(agents, false, window, cx)
+        });
+        window.render_frame(cx);
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        assert!(!enabled(&menus, "AI Agents"));
+        assert!(!checked(&menus, "AI Agents"));
     })
     .unwrap();
 }

@@ -428,6 +428,13 @@ fn open_workspace(
     .unwrap()
 }
 
+/// Whether the host offers the agent panel of `workspace`.
+fn agent_panel_is_available(workspace: &Entity<Workspace>, cx: &gpui_kit::App) -> bool {
+    workspace
+        .read(cx)
+        .panel_is_available(&nocterm_agent::plugin::CHATS.id)
+}
+
 fn emit(cx: &mut TestAppContext, transport: &MockTransport, index: usize, event: Event) {
     let driver = transport.drivers.lock().unwrap()[index].clone();
     cx.background_executor
@@ -511,7 +518,7 @@ fn reconnect_button_works_when_file_sidebar_has_focus(cx: &mut TestAppContext) {
     );
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.activate_panel_of::<nocterm_files::FilesPanel>(window, cx)
+            workspace.open_panel(&nocterm_files::plugin::EXPLORER.id, window, cx)
         });
         window.render_frame(cx);
         assert!(!terminal.read(cx).focus_handle(cx).is_focused(window));
@@ -538,13 +545,17 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     let (window, workspace, _, _, _, policy) = fixture_with_settings(cx, false, None, false, None);
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
-        assert!(workspace.read(cx).right_panel_is_available());
+        assert!(agent_panel_is_available(&workspace, cx));
         window.dispatch_action(Box::new(nocterm_workspace::ToggleRightPanel), cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
-        assert!(workspace.read(cx).right_panel_is_open());
+        assert!(
+            workspace
+                .read(cx)
+                .panel_is_open(&nocterm_agent::plugin::CHATS.id)
+        );
         window.render_frame(cx);
         window.dispatch_action(Box::new(nocterm_workspace::OpenAiSettings), cx);
     })
@@ -564,8 +575,12 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     .unwrap();
     cx.run_until_parked();
     cx.update_window(window, |_, _, cx| {
-        assert!(!workspace.read(cx).right_panel_is_available());
-        assert!(!workspace.read(cx).right_panel_is_open());
+        assert!(!agent_panel_is_available(&workspace, cx));
+        assert!(
+            !workspace
+                .read(cx)
+                .panel_is_open(&nocterm_agent::plugin::CHATS.id)
+        );
     })
     .unwrap();
 }

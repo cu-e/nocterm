@@ -1,7 +1,7 @@
 # Existing architectural debt, measured from production Rust AST.
 # Entries may only shrink; reductions must lower this inventory.
 [complexity_expects]
-nocterm = 4
+nocterm = 3
 nocterm-acp = 5
 nocterm-agent = 9
 nocterm-ai = 1
