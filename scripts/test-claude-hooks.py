@@ -334,6 +334,19 @@ class EditSignals(HookCase):
         self.assertIn("catch-all", self.written("crates/a/src/utils.rs", "pub fn a() {}\n", "create"))
         self.assertIn("crate-new", self.written("crates/b/Cargo.toml", "[package]\n", "create"))
 
+    def test_plugin_declarations_and_the_catalog_follow_the_plugin_api_skill(self):
+        for path in (
+            "crates/files/src/plugin.rs",
+            "crates/plugin-model/src/catalog.rs",
+            "src/shell_setup.rs",
+            "src/shell_setup/reference.rs",
+        ):
+            self.assertIn("plugin-api", self.written(path, "pub fn a() {}\n"), path)
+
+    def test_files_that_only_mention_plugins_are_left_alone(self):
+        self.assertEqual(self.written("crates/a/src/lib.rs", "// A plugin host.\npub fn plugin() {}\n"), "")
+        self.assertEqual(self.written("src/shell_setup_notes.rs", "pub fn a() {}\n"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

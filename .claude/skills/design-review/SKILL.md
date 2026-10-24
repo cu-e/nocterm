@@ -34,6 +34,7 @@ first and check the code against them.
 | 14 | Crate card, layer note or ADR not updated for a boundary change | blocking for boundary changes |
 | 15 | `#[allow]`/`#[expect]` for `too_many_lines`/`cognitive_complexity`; raised baseline; new oversized entry | always |
 | 16 | A file or type that crossed an early warning in this change with no map or split plan | advisory |
+| 17 | A built-in panel or widget outside a `PLUGIN` or the registration path, a panel entity held outside the workspace, an eagerly created widget, or a getter or `pub` item added for plugins | blocking |
 
 For each finding give: file:line, the rule (AGENTS.md section or ADR), the
 concrete consequence, and the smallest fix.

@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash, Write
 model: opus
 skills:
   - design-review
+  - plugin-api
   - gate
 ---
 

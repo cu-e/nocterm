@@ -6,6 +6,7 @@ skills:
   - owner-extract
   - typed-errors
   - wiring
+  - plugin-api
   - behavior-tests
   - gate
 ---

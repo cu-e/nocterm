@@ -6,7 +6,8 @@ early warnings of `cargo xtask architecture` and the design-review skill:
 - a Rust file at or above 640 lines needs a split designed by responsibility;
 - a new Rust file holding only `impl` blocks moves methods without an owner;
 - a catch-all module name hides a responsibility;
-- a new crate manifest starts the crate-new workflow.
+- a new crate manifest starts the crate-new workflow;
+- a plugin declaration, the plugin model or the plugin catalog follows the plugin-api skill.
 """
 import re
 import sys
@@ -20,6 +21,7 @@ LIMIT = 800
 ROOTS = ("src/", "crates/", "xtask/")
 GENERIC = {"utils", "util", "helpers", "helper", "misc", "common", "stuff", "extra", "ext"}
 DEFINITION = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|union|trait|type)\s+\w", re.MULTILINE)
+PLUGIN_PATHS = re.compile(r"(?:^|/)plugin\.rs$|^crates/plugin-model/|^src/shell_setup(?:\.rs$|/)")
 IMPL = re.compile(r"^\s*(?:unsafe\s+)?impl\b", re.MULTILINE)
 
 
@@ -44,6 +46,12 @@ def signals(path, text, created):
                 f"{path} only implements types declared elsewhere. Moving methods of a parent type to a new "
                 "file is file slicing, not an owner extraction: use the owner-extract skill (AGENTS.md design rules 1 and 7)."
             )
+    if path.endswith(".rs") and path.startswith(ROOTS) and PLUGIN_PATHS.search(path):
+        found.append(
+            f"{path} declares, models or composes plugins. Follow the plugin-api skill: system plugins are "
+            "`pub static PLUGIN`, core owners declare `CORE`, registration goes through the workspace "
+            "contract, and nothing is exposed to user plugins by a getter or a `pub` item."
+        )
     if created and re.fullmatch(r"crates/[^/]+/Cargo\.toml", path):
         found.append(
             f"{path} starts a new crate. Follow the crate-new skill: placement, ownership card, layer metadata, "
