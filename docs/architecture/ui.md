@@ -131,7 +131,9 @@ under the ids of the plugin catalog carried by `Deps`: the workspace checks the 
 its kind, creates the view from the owner's factory (which may read the workspace) and
 places it by the descriptor
 (ADR 0082). `nocterm-ui` maps a descriptor's `Icon` and `WidthClass` onto its icon
-names and column widths. `ShellLayout` reads the `[layouts]` settings through the
+names and column widths. `ShellLayout` also follows `[plugins]`: it re-resolves the layout against the plugins
+that are off, and each window creates a plugin's panels and widgets only while it is
+enabled and drops them when it is switched off (ADR 0086). `ShellLayout` reads the `[layouts]` settings through the
 `SettingsHandle` in `Deps`, keeps the document it last saw and resolves the selected
 layout against the catalog; each window observes the handle and, by the `transition`
 of the two documents, either re-sides its groups and opens the panels a switched-to
@@ -387,3 +389,7 @@ agent resolution and credential policy remain in the AI domain and Agent page.
 `SettingsPageSpec` supports the same plain lazy guest factories and contextual builtin
 factories. The latter receive only their original SettingsHandle and per-Item save
 feedback. The additive flush operation leaves existing guest lifecycle contracts intact.
+`SettingsPage::reveal(anchor, window, cx)` lets a page bring forward the part an anchor
+names (a plugin id on the Plugins page); the default returns `false` and the host
+`SettingsPageHandle::reveal` forwards it to a constructed page
+([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).

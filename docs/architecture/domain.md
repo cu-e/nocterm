@@ -353,8 +353,21 @@ new value of a field from the value current at write time, so quick edits compos
 typed `FieldError` whose text is meant for the field. Text is stripped of control
 characters, line breaks and every `Default_Ignorable_Code_Point`, keeps at most two
 nonspacing or enclosing marks per base character, and is data: never interpreted or
-masked. `bounded` applies the same rules to values read from a stored document. The schema performs no I/O and knows
-nothing of storage. See [ADR 0085](../adr/0085-one-plugin-model-with-separate-trust-tiers.md).
+masked. `bounded` applies the same rules to values read from a stored document. The schema
+performs no I/O and knows nothing of storage. A plugin may also name the full settings page it keeps
+(`settings_page`), which the application registers nested under the Plugins page or, for a
+destination of its own such as the AI page, at the top level. See
+[ADR 0085](../adr/0085-one-plugin-model-with-separate-trust-tiers.md) and
+[ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md).
+
+`nocterm-plugin-enablement` owns the `[plugins]` settings section: the ids of the plugins
+switched off. The list is sanitized (valid ids once each, at most 64; ids this build does not
+know are kept, so a returning plugin finds its state) and `effective_disabled` returns
+the ids that are really off, never a required plugin and never a core contribution.
+`read_error` reports a table that does not read, so a writer can refuse instead of
+replacing it. It
+reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types and no I/O
+([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).
 
 `nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
 zones of the status bar, panel groups with their members and separators, the tray of
@@ -367,6 +380,8 @@ preset and Swapped is its resolution with every group on the other side; neither
 stored. It also owns the `[layouts]` settings section: stored presets with `p<n>` ids and
 checked names, `select`, which falls back to the earlier swapped flag without writing,
 and `transition`, which tells a window whether a change of the document is a switch, an
-edit or nothing. It reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types
+edit or nothing. `resolve` also takes the disabled ids: they stay in the document but are
+not rendered, not appended, not opened and listed by `ResolvedLayout::disabled()`, and
+separators collapse around them. It reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types
 and no I/O. See [ADR 0083](../adr/0083-zoned-status-bar.md) and
 [ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md).

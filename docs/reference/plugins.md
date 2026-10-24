@@ -2,7 +2,7 @@
 
 # Plugins reference
 
-The system plugins compiled into Nocterm, and the panels and widgets they and the shell offer to the window. A contribution's placement is a hint: the Default layout places it by zone and order, and a saved layout may place it elsewhere.
+The system plugins compiled into Nocterm, and the panels and widgets they and the shell offer to the window. A contribution's placement is a hint: the Default layout places it by zone and order, and a saved layout may place it elsewhere. Every plugin is enabled by default; `[plugins].disabled` lists those switched off, and a required plugin ignores it.
 
 ## Panel groups
 
@@ -27,7 +27,7 @@ Contributions of the window shell and its core features. They are not plugins an
 
 ## Snippets
 
-Plugin `snippets`. Required: no.
+Plugin `snippets`. Required: no. Enabled by default: yes.
 
 Saved commands to run in the active terminal
 
@@ -37,7 +37,7 @@ Saved commands to run in the active terminal
 
 ## Containers
 
-Plugin `containers`. Required: no.
+Plugin `containers`. Required: no. Enabled by default: yes.
 
 Containers and images of the active host
 
@@ -47,7 +47,7 @@ Containers and images of the active host
 
 ## Workspaces
 
-Plugin `projects`. Required: no.
+Plugin `projects`. Required: no. Enabled by default: yes. Own settings page: `workspaces`, reached from Settings ▸ Plugins.
 
 Saved workspaces on a server or this computer
 
@@ -57,7 +57,7 @@ Saved workspaces on a server or this computer
 
 ## Monitor
 
-Plugin `monitor`. Required: no.
+Plugin `monitor`. Required: no. Enabled by default: yes. Own settings page: `monitor`, reached from Settings ▸ Plugins.
 
 CPU and memory of the active environment in the status bar
 
@@ -75,7 +75,7 @@ Shown for `monitor.summary`.
 
 ## AI Agents
 
-Plugin `agent`. Required: yes.
+Plugin `agent`. Required: yes. Enabled by default: yes. Own settings page: `ai`, reached from Settings ▸ Plugins.
 
 Chats with coding agents in the side panel
 

@@ -264,6 +264,18 @@ If the `[layouts]` table does not read (for example a wrong key type), the windo
 the Default layout and refuses to switch layouts, so that your table is never
 overwritten; fix the file and switching works again.
 
+Settings → Plugins lists the built-in plugins. A switch turns a plugin off for every window:
+its panels and widgets disappear from the window and the layout keeps their place for when it
+returns. The AI Agents plugin is required and stays on. Select a plugin to change its
+settings, or open its own page with the "settings…" button (AI Agents, Monitor and
+Workspaces have one). The status bar metrics of Monitor are under Plugins → Monitor; the
+Monitor page keeps the refresh intervals and the details. The switches are the `disabled`
+key of the `[plugins]` section of `settings.toml` (see the
+[settings reference](docs/reference/settings.md)), and **Window → Panels** omits the panels
+of a disabled plugin. If that table does not read, every plugin stays on and the page
+refuses to switch one, so that your table is never overwritten; fix the file and the
+switches work again.
+
 Settings → Keymap lists every command with its shortcuts and description. Search
 matches words in any of them and shortcuts in any modifier order; Find by keys
 shows what a pressed shortcut runs. Click a shortcut and press new keys to

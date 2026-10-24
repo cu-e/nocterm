@@ -6,7 +6,7 @@ Features depend on shared contracts and never on other features or the SSH
 adapter. Feature crates use the service, UI, domain and foundation
 layers: `nocterm-terminal`, `nocterm-connections`, `nocterm-settings-ui`,
 `nocterm-files`, `nocterm-snippets-ui`, `nocterm-monitor-ui`,
-`nocterm-containers-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
+`nocterm-containers-ui`, `nocterm-plugins-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
 `nocterm-agent` and `nocterm-agent-settings-ui`.
 
 ## System plugins and core contributions
@@ -20,6 +20,20 @@ for a core function (connections and files). Its `register` places the contribut
 panel by id (`toggle_panel`, `open_panel`), so nothing outside the workspace holds the panel
 entity. The application lists every plugin once in `src/shell_setup.rs`. See
 [ADR 0082](../adr/0082-system-plugins-and-core-contributions.md).
+
+`nocterm-plugins-ui` owns the Plugins settings page: the plugin list with its chips and, for
+the selected plugin, the Enabled switch, the contributions, the settings form and the link to
+the page the plugin names (`settings_page`; one link per plugin that names one, nested or
+top-level like AI). It reads
+the plugin catalog, switches plugins through the `PluginToggles` port named for that need
+(the application implements it over `[plugins]`) and draws the settings of a plugin from
+the `PluginSettingsDirectory` it is given. It keeps no storage and knows no plugin by name.
+The application registers the page as a lazy guest page, and registers the pages that
+plugins keep (Monitor, Workspaces) nested under it with `SettingsPageRegistration::under`:
+they are not navigation entries, the Plugins entry is highlighted while one is shown and a
+back link returns to the plugin's row. `nocterm-settings-ui` refuses a missing or nested
+parent. `OpenPlugins` and `OpenPluginPage` open the page and a plugin's page
+([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).
 
 ## Terminal
 
@@ -275,7 +289,9 @@ exactly one script: the status
 bar's metrics at the slow interval while the details are closed, and the union
 with the details' metrics at the fast interval while they are open. It declares a
 status widget for the left zone of the bar in its system plugin and supplies its Settings page as a
-`SettingsPageSpec`. Local host execution is an optional `HostExec` supplied at
+`SettingsPageSpec`, nested under Plugins. The page keeps whether monitoring runs, the refresh
+intervals and the details metrics; the metrics the status bar shows are a field of the plugin's
+settings schema and are edited on the Plugins page. Local host execution is an optional `HostExec` supplied at
 installation and retained by its model. Container monitoring selects pure
 own-cgroup collection through its already scoped executor, with CPU explicitly
 relative to one CPU and memory current/optional limit. Host-only readings remain

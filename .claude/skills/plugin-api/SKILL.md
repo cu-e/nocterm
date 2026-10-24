@@ -9,7 +9,8 @@ user-invocable: false
 Rules: AGENTS.md "Where code goes" and design rules 2 and 3; crate card
 `crates/plugin-model/src/lib.rs`; ADR `docs/adr/0082-system-plugins-and-core-contributions.md`
 and `docs/adr/0083-zoned-status-bar.md` (placement, zones, pinned and attention rules) and
-`docs/adr/0085-one-plugin-model-with-separate-trust-tiers.md` (settings schema, trust tiers);
+`docs/adr/0085-one-plugin-model-with-separate-trust-tiers.md` (settings schema, trust tiers) and
+`docs/adr/0086-plugin-enablement-and-the-plugins-page.md` (enablement, the Plugins page, nested pages);
 registration types in `crates/workspace/src/workspace/registration.rs`; catalog in
 `src/shell_setup.rs`.
 
@@ -75,6 +76,21 @@ intends otherwise.
    `sanitize_text` too, so the owner's own reads are clean.
 4. **Tests.** Parity of options and defaults with the owner type; a write through the binding
    changes the expected key; `PLUGIN.settings_section == Some(S::KEY)`.
+
+## Enablement and the plugin's own page (ADR 0086)
+1. **Switch.** Never read `[plugins]` or test a plugin's state yourself. The shell creates the
+   panels and widgets of a disabled plugin nowhere; ask `Workspace::panel_is_enabled` or the
+   resolved layout. A required plugin (`required: true`) cannot be disabled; make a plugin
+   required only on the owner's decision.
+2. **Own page.** If the plugin keeps a full settings page, set `settings_page: Some(<page id>)`
+   in `PLUGIN` and have the application register that page, nested with
+   `SettingsPageRegistration::lazy(..).under("plugins", <plugin id>)` or, for a page that is a
+   destination of its own (AI), at the top level; a test must keep the two consistent. A plugin without a page sets `None`. The page stays reachable when the plugin
+   is disabled.
+3. **Anything that runs on its own** (a sampler, a watcher) must stop with the widget or panel
+   that drives it; test it with a fake executor while the plugin is disabled.
+4. **Plugins page code** (`nocterm-plugins-ui`) names no plugin and takes no settings handle;
+   it receives `PluginToggles` and a `PluginSettingsDirectory`.
 
 ## 5. Regenerate
 `docs/reference/plugins.md` is generated from the catalog. After a plugin, descriptor or
