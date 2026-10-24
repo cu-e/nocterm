@@ -717,8 +717,6 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
 
 #[path = "menu_tests.rs"]
 mod menus;
-#[path = "right_panel_tests.rs"]
-mod right_panel;
 
 #[gpui_kit::test]
 fn close_hook_metadata_notification_cannot_republish_removed_membership(cx: &mut TestAppContext) {

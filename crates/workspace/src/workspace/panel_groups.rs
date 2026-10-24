@@ -570,4 +570,6 @@ impl PanelSlot {
 }
 
 #[cfg(test)]
+mod expanded_tests;
+#[cfg(test)]
 mod tests;
