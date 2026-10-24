@@ -42,6 +42,8 @@
 | `explorer.open.remote.args` | "array" | `[]` | Arguments, passed one by one without shell parsing. `{file}` stands for the file; without it the file is added last. |
 | `explorer.open.remote.program` | "string" | `"nano"` | The executable, such as `nvim` or `code`. Empty uses the default. |
 | `explorer.open.rules` | "array" | `[]` | Programs for particular file types. The first rule naming a file's extension with a program for that side wins; with none, the defaults above are used. |
+| `layouts.active` | "string" | `null` | The selected layout, a preset id or a built-in id (`default`, `swapped`). Unset or unknown selects `default`, or `swapped` if the earlier swap-sides choice is still in force. |
+| `layouts.presets` | "array" | `[]` | The saved presets, in the order the user keeps them. |
 | `local.args` | "array" | `[]` | Individual executable arguments, without shell parsing. |
 | `local.cwd` | ["string","null"] | `null` | Initial directory. Empty means the user's home directory. |
 | `local.env` | "object" | `{}` | Additional environment variables; never put passwords here. |

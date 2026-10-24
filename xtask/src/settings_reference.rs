@@ -15,6 +15,7 @@ use nocterm_settings::SettingsSection;
 use nocterm_terminal_model::TerminalSettings;
 use nocterm_ui::AppearanceSettings;
 use nocterm_vault::VaultSettings;
+use nocterm_window_layout::LayoutSettings;
 use schemars::schema_for;
 
 /// A section's key, its type's name and its reference rows.
@@ -43,6 +44,7 @@ fn sections() -> anyhow::Result<Vec<Section>> {
         section::<AiSettings>()?,
         section::<AppearanceSettings>()?,
         section::<ExplorerSettings>()?,
+        section::<LayoutSettings>()?,
         section::<LocalShellSettings>()?,
         section::<LoggingOptions>()?,
         section::<MonitorSettings>()?,

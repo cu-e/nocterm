@@ -8,27 +8,44 @@
 //! hints of the contributions, and [`BuiltIn::Swapped`] is the same arrangement with every
 //! group on the other side.
 //!
+//! The user's presets are the `[layouts]` settings section, [`LayoutSettings`]. [`select`] picks
+//! the layout to show, including the legacy swap-sides flag, and [`transition`] tells a window
+//! whether a change of the section switched layouts, edited the selected one or changed nothing
+//! it shows.
+//!
 //! Owns: bar zones, groups and separators, the tray, default-open panels, the built-in
-//! Default and Swapped sides, and resolution against the catalog.
+//! Default and Swapped sides, resolution against the catalog, the `[layouts]` section and its
+//! sanitizing, selection, the switch-or-edit transition and name validation.
 //! Does not own: which plugins exist or are enabled, panel state, widths, rendering, settings
 //! storage.
-//! Ports used/provided: none; it reads `nocterm-plugin-model`. Settings section: none yet.
-//! Globals: none.
+//! Ports used/provided: none; it reads `nocterm-plugin-model` and defines a section for
+//! `nocterm-settings`. Settings section: layouts. Globals: none.
 //! Invariants: built-ins are never stored and always resolve; unknown ids survive in the preset
 //! but never render; a contribution is placed at most once; at most one open panel per group;
 //! exactly one group is primary, the catalog's (a preset's own `primary` flag is ignored);
 //! pinned widgets are always placed (pinning has no effect on a panel); every panel has a
-//! hosting group, placed or not. No I/O.
+//! hosting group, placed or not; sanitizing leaves every stored preset with a unique usable id
+//! and name. No I/O.
 
 mod builtin;
+mod name;
 mod preset;
 mod resolve;
 mod resolved;
+mod settings;
+mod transition;
+mod wire;
 
 pub use builtin::BuiltIn;
+pub use name::{MAX_NAME_CHARS, NameError, validate_name};
 pub use preset::{Bar, BarItem, GroupEntry, LayoutPreset, PresetId};
 pub use resolve::resolve;
 pub use resolved::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember};
+pub use settings::{LayoutSettings, MAX_GROUP_MEMBERS, MAX_PRESETS, MAX_ZONE_ITEMS, select};
+pub use transition::{LayoutTransition, transition};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod settings_tests;

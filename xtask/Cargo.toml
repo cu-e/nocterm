@@ -20,6 +20,7 @@ nocterm-session.workspace = true
 nocterm-settings.workspace = true
 nocterm-ui.workspace = true
 nocterm-vault.workspace = true
+nocterm-window-layout.workspace = true
 
 anyhow.workspace = true
 serde.workspace = true
