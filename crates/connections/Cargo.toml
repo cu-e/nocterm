@@ -12,6 +12,7 @@ layer = "feature"
 [dependencies]
 nocterm-connections-model.workspace = true
 nocterm-connections-store.workspace = true
+nocterm-plugin-model.workspace = true
 nocterm-project-model.workspace = true
 nocterm-store.workspace = true
 nocterm-session.workspace = true

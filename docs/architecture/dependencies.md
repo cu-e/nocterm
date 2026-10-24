@@ -17,7 +17,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-agent-storage` | adapter | `nocterm-ai`, `nocterm-core`, `nocterm-session` | Bounded agent history and favorites filesystem repositories. |
 | `nocterm-agent-usage` | adapter | `nocterm-ai` | Bounded native reads of provider account plan limits. |
 | `nocterm-ai` | domain | `nocterm-core`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings` |  |
-| `nocterm-connections` | feature | `nocterm-connections-model`, `nocterm-connections-store`, `nocterm-project-model`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace`, `nocterm-workspace-ports` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
+| `nocterm-connections` | feature | `nocterm-connections-model`, `nocterm-connections-store`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace`, `nocterm-workspace-ports` | Saved connections: profiles, recents, the sidebar list, the editor and the new-tab picker. |
 | `nocterm-connections-io` | adapter | `nocterm-connections-model`, `nocterm-core`, `nocterm-session` | Native connection repository, value discovery and bounded observation adapters. |
 | `nocterm-connections-model` | domain | `nocterm-core`, `nocterm-session` | Pure connection formats, drafts, checked transitions and native capability ports. |
 | `nocterm-connections-store` | service | `nocterm-connections-model`, `nocterm-core`, `nocterm-session`, `nocterm-settings`, `nocterm-store` | Ordered connection publication and bounded guarded raw server facts. |
@@ -175,6 +175,7 @@ graph TD
     nocterm_ai --> nocterm_settings
     nocterm_connections --> nocterm_connections_model
     nocterm_connections --> nocterm_connections_store
+    nocterm_connections --> nocterm_plugin_model
     nocterm_connections --> nocterm_project_model
     nocterm_connections --> nocterm_session
     nocterm_connections --> nocterm_store

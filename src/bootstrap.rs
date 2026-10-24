@@ -520,7 +520,10 @@ pub(crate) fn build_workspace(
     let vault = booted.vault().map(Rc::as_ref);
     nocterm_terminal::register(&booted.terminal, workspace);
     if let Some(connections) = &booted.connections {
-        nocterm_connections::register(connections, workspace, window, cx);
+        report_registration(
+            "connections",
+            nocterm_connections::register(connections, workspace, window, cx),
+        );
         workspace.set_chat_connection_opener(crate::project_setup::chat_connection_opener(
             &booted.terminal,
             connections,
