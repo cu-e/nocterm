@@ -61,6 +61,12 @@ when the owner declares `CORE`. Keep the owner's descriptor/panel parity test, t
 entry is registered" bootstrap test, and the default-geometry oracle unchanged unless the change
 intends otherwise.
 
+A widget or panel that shows something native (the local time, a host reading) takes it as a
+narrow port through its owner's constructor or `register`, supplied in `src/bootstrap.rs`; do
+not add a field to the workspace's `Deps` for a plugin (the workspace's own Clock uses
+`Deps::with_clock` because the workspace owns that widget, ADR 0088). A window composed without
+the port simply omits the widget. Never reach a native source from a view.
+
 ## Settings
 1. **Schema.** Add a `FieldGroup` to the owner's `PLUGIN.settings`, with
    `contribution: Some(<id>)` when the field belongs to one widget or panel. Kinds are toggle,

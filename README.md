@@ -289,6 +289,14 @@ of a disabled plugin. If that table does not read, every plugin stays on and the
 refuses to switch one, so that your table is never overwritten; fix the file and the
 switches work again.
 
+The Clock plugin shows the local time as `HH:MM` in the status bar. Default does not place
+it; add it from Settings → Appearance → Status bar and panels (it waits in the tray) or put
+`{ item = "clock.time" }` in a zone of a saved layout. Switching the plugin off removes it
+from every window. Its settings, under Settings → Plugins → Clock and in the editor when the
+clock is selected, choose a 24-hour or 12-hour clock (`1:05 PM`), seconds (the clock then
+updates every second) and a short date before the time (`Oct 24`); they are the `[clock]`
+section of `settings.toml` and apply at once in every window.
+
 Settings → Keymap lists every command with its shortcuts and description. Search
 matches words in any of them and shortcuts in any modifier order; Find by keys
 shows what a pressed shortcut runs. Click a shortcut and press new keys to

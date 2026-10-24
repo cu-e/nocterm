@@ -145,6 +145,14 @@ the inner end of the right zone (ADR 0083). A right click on the footer opens a 
 (`status_bar/menu.rs`): Hide for the item under the pointer, unless it is pinned, Customize Status Bar…
 (`OpenLayoutSettings`, naming the item) and a Layouts submenu. Hide is the same checked edit
 (`edit_layouts`, `RemoveToTray`) the editor uses, and a refused write is shown as a notice (ADR 0087).
+The Clock plugin (`clock::PLUGIN`, widget `clock.time`, right zone, `auto: Tray`) is declared
+here beside the shell: `Deps::with_clock` supplies a `WallClock`, `Workspace::new` registers the
+widget when one is given, and `ClockView` re-reads it when its text can change (each second with seconds on, else at
+the minute boundary and at least every five seconds, so a suspend or a time-zone change shows
+within seconds) only while a layout places the widget and the plugin is
+enabled. The plugin owns the `[clock]` section (`ClockSettings`: 24/12-hour, seconds, short date)
+and its schema; `clock::plugin_settings` binds them for the Plugins page and the editor, and every
+window's view follows a change ([ADR 0088](../adr/0088-wall-clock-contract-and-the-clock-plugin.md)).
 Immutable observations expose tab identities and native pane order without giving
 callers mutable native entities. Transitions commit membership and subscriptions
 before the shell emits events or changes focus (ADR 0026).

@@ -82,7 +82,9 @@ that contract using russh and lazily opened SFTP channels on a dedicated Tokio
 runtime.
 `nocterm-local` adapts portable-pty to
 the same session events and launch contract. Integration supplies bounded OSC 7
-cwd and prompt markers without parsing rendered prompt text.
+cwd and prompt markers without parsing rendered prompt text. It also implements the
+foundation `WallClock` as `SystemClock`, which reads the system time and the local time zone
+in effect at that instant ([ADR 0088](../adr/0088-wall-clock-contract-and-the-clock-plugin.md)).
 
 ## Bounded I/O
 
