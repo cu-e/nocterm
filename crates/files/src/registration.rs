@@ -1,9 +1,9 @@
 //! The Explorer's place in the workspace: its sidebar panel, the transfer
 //! status and the commands that show them.
 use gpui_kit::{App, AppContext as _, Context, Window};
-use nocterm_workspace::Workspace;
+use nocterm_workspace::{PanelRegistration, RegistrationError, WidgetRegistration, Workspace};
 
-use crate::{Deps, FilesPanel, transfers};
+use crate::{Deps, FilesPanel, plugin, transfers};
 
 gpui_kit::actions!(
     files,
@@ -66,21 +66,17 @@ pub fn install(deps: Deps, ready: &nocterm_ui::UiReady, cx: &mut App) -> Install
         settings: ready.settings().clone(),
     }
 }
+/// Adds the Explorer panel, the transfer status and the commands to a workspace.
+///
+/// The commands are registered even when the workspace refuses a contribution.
 pub fn register(
     installed: &Installed,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
-    let active = workspace.explorer_source(cx);
-    let handle = cx.entity();
-    let panel = cx.new(|cx| FilesPanel::new(installed.clone(), handle, active, window, cx));
-    workspace.add_panel(panel, cx);
-    let status =
-        cx.new(|cx| transfers::TransferStatus::new(installed.deps.transfers.clone(), window, cx));
-    workspace.add_status_view(status, cx);
+) -> Result<(), RegistrationError> {
     workspace.register_action(|workspace, _: &ToggleExplorer, window, cx| {
-        workspace.toggle_panel_of::<FilesPanel>(window, cx);
+        workspace.toggle_panel(&plugin::EXPLORER.id, window, cx);
     });
     let service = installed.deps.transfers.clone();
     workspace.register_action(move |workspace, _: &ShowTransfers, window, cx| {
@@ -92,4 +88,24 @@ pub fn register(
             workspace.add_item(view, window, cx);
         }
     });
+    let panel_installed = installed.clone();
+    let panel = workspace.register_panel(
+        PanelRegistration::new(&plugin::EXPLORER, move |workspace, window, cx| {
+            let handle = cx.entity();
+            let active = workspace.explorer_source(cx);
+            cx.new(|cx| FilesPanel::new(panel_installed.clone(), handle, active, window, cx))
+        }),
+        window,
+        cx,
+    );
+    let transfers = installed.deps.transfers.clone();
+    let status = workspace.register_widget(
+        WidgetRegistration::new(&plugin::TRANSFERS, move |_, window, cx| {
+            let transfers = transfers.clone();
+            cx.new(|cx| transfers::TransferStatus::new(transfers, window, cx))
+        }),
+        window,
+        cx,
+    );
+    panel.and(status)
 }

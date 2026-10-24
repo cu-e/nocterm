@@ -13,7 +13,13 @@ const PLUGINS: &[&SystemPlugin] = &[
 
 /// Checks the shell's groups and contributions and the system plugins as one catalog.
 pub(crate) fn plugin_catalog() -> Result<PluginCatalog, CatalogError> {
-    plugin::catalog(&[nocterm_connections::plugin::CORE], PLUGINS)
+    plugin::catalog(
+        &[
+            nocterm_connections::plugin::CORE,
+            nocterm_files::plugin::CORE,
+        ],
+        PLUGINS,
+    )
 }
 
 #[cfg(test)]

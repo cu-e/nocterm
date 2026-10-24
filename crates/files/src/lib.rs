@@ -6,7 +6,8 @@
 //! Does not own: native filesystem traversal/mutations, transfer execution or process spawning.
 //! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `DirectoryReaders`, `TransferService`, `ProgramOpener`,
 //! workspace `LocalTerminal` and the retained settings service handle.
-//! Ports provided: `Panel`, `SettingsPageSpec`. Settings section: explorer. Globals: none.
+//! Ports provided: `Panel`, `SettingsPageSpec` and the core `files.explorer` and
+//! `files.transfers` contributions (`plugin::CORE`). Settings section: explorer. Globals: none.
 //! ExplorerSource supplies ordinary session files or a local folder for the
 //! injected LocalFs. The folder is an initial location; navigation stays ordinary.
 //! Invariants: native paths keep their original names; each pane rejects stale navigation;
@@ -17,6 +18,7 @@ mod local;
 mod local_pane;
 mod open;
 mod operations;
+pub mod plugin;
 use nocterm_ui::directory as path_input;
 mod registration;
 mod remote;

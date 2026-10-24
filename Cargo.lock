@@ -5324,6 +5324,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "nocterm-explorer",
+ "nocterm-plugin-model",
  "nocterm-project-model",
  "nocterm-session",
  "nocterm-settings",

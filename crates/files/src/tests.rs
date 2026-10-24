@@ -271,8 +271,11 @@ fn panel_fixture_with_settings(
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    let deps =
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                    let deps = nocterm_workspace::test_support::deps_for_core(
+                        &[crate::plugin::CORE],
+                        &[],
+                        cx,
+                    );
                     Workspace::new(deps, window, cx)
                 })
             })
@@ -690,6 +693,8 @@ fn pointer_click(
 mod listing_ui;
 #[path = "operations_ui_tests.rs"]
 mod operations_ui;
+#[path = "plugin_tests.rs"]
+mod plugin;
 #[path = "transfer_ui_tests.rs"]
 mod transfer_ui;
 

@@ -532,7 +532,10 @@ pub(crate) fn build_workspace(
     booted
         .settings_ui
         .register(workspace, booted.themes().clone());
-    nocterm_files::register(&booted.files, workspace, window, cx);
+    report_registration(
+        "files",
+        nocterm_files::register(&booted.files, workspace, window, cx),
+    );
     if let Some(snippets) = &booted.snippets {
         report_registration(
             "snippets",

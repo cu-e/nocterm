@@ -12,6 +12,7 @@ layer = "feature"
 [dependencies]
 nocterm-explorer.workspace = true
 thiserror.workspace = true
+nocterm-plugin-model.workspace = true
 nocterm-session.workspace = true
 nocterm-store.workspace = true
 nocterm-transfers.workspace = true
@@ -26,6 +27,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 nocterm-explorer = { workspace = true, features = ["test-support"] }
 nocterm-project-model.workspace = true
 nocterm-settings.workspace = true
+nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-transfers = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

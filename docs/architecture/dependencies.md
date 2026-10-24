@@ -28,7 +28,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-device-unlock` | adapter | `nocterm-vault` | Native authenticated vault key release for Linux, macOS and Windows. |
 | `nocterm-directory-io` | adapter | `nocterm-explorer`, `nocterm-session` | Read-only directory readers over injected local and session filesystems. |
 | `nocterm-explorer` | domain | `nocterm-session`, `nocterm-settings` | Explorer indexing policy and external program selection rules. |
-| `nocterm-files` | feature | `nocterm-explorer`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
+| `nocterm-files` | feature | `nocterm-explorer`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
 | `nocterm-image-codec` | adapter | `nocterm-ai` | Bounded native image inspection and preview encoding. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-store`, `nocterm-ui` | Keymap settings page: search, rebind and reset key bindings. |
@@ -206,6 +206,7 @@ graph TD
     nocterm_explorer --> nocterm_session
     nocterm_explorer --> nocterm_settings
     nocterm_files --> nocterm_explorer
+    nocterm_files --> nocterm_plugin_model
     nocterm_files --> nocterm_project_model
     nocterm_files --> nocterm_session
     nocterm_files --> nocterm_settings
