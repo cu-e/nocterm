@@ -61,7 +61,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-themes-registry` | adapter | `nocterm-core`, `nocterm-themes` | Bounded native theme discovery, registry and archive installation. |
 | `nocterm-transfer-runtime` | adapter | `nocterm-session`, `nocterm-transfers` | Bounded streaming transfers over injected filesystem capabilities. |
 | `nocterm-transfers` | domain | `nocterm-core`, `nocterm-session` | Bounded transfer requests, limits, progress transitions and service contracts. |
-| `nocterm-ui` | ui | `nocterm-core`, `nocterm-design`, `nocterm-explorer`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-terminal-model`, `nocterm-theme-service`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
+| `nocterm-ui` | ui | `nocterm-core`, `nocterm-design`, `nocterm-explorer`, `nocterm-plugin-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-terminal-model`, `nocterm-theme-service`, `nocterm-themes` | GPUI glue: exposes design tokens and settings to views and maps them onto the component theme. |
 | `nocterm-vault` | domain | `nocterm-session`, `nocterm-settings` | Portable encrypted credential rules and lifecycle contracts. |
 | `nocterm-vault-broker` | app |  | Optional privileged Linux fingerprint verification and session-key broker. |
 | `nocterm-vault-store` | adapter | `nocterm-core`, `nocterm-session`, `nocterm-vault` | Durable encrypted vault adapter and bounded worker. |
@@ -316,6 +316,7 @@ graph TD
     nocterm_ui --> nocterm_core
     nocterm_ui --> nocterm_design
     nocterm_ui --> nocterm_explorer
+    nocterm_ui --> nocterm_plugin_model
     nocterm_ui --> nocterm_session
     nocterm_ui --> nocterm_settings
     nocterm_ui --> nocterm_store

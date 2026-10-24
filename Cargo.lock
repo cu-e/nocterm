@@ -5778,6 +5778,7 @@ dependencies = [
  "nocterm-core",
  "nocterm-design",
  "nocterm-explorer",
+ "nocterm-plugin-model",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",

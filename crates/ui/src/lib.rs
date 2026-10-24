@@ -8,7 +8,7 @@
 //! and paints Design changes without resolving back into Design.
 //!
 //! Owns: Appearance views, theme projections, shared controls, directory editing/selection,
-//! checked text receipts and layout.
+//! checked text receipts, layout, and the icons and column widths of plugin contributions.
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`, read-only `DirectoryRead`. Ports provided: UI helpers,
 //! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
@@ -21,6 +21,7 @@
 //! Text errors stay typed until display; close/deactivation synchronously admit distinct literals.
 
 mod animations;
+mod contribution;
 mod design;
 pub mod directory;
 mod drag_preview;
@@ -41,6 +42,7 @@ mod theme;
 mod themes;
 
 pub use animations::thinking_indicator;
+pub use contribution::{contribution_icon, width_range};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use icons::{Assets, IconName, agent_icon};

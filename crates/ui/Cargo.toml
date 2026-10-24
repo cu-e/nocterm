@@ -12,6 +12,7 @@ layer = "ui"
 [dependencies]
 nocterm-terminal-model.workspace = true
 nocterm-explorer.workspace = true
+nocterm-plugin-model.workspace = true
 
 futures.workspace = true
 nocterm-core.workspace = true

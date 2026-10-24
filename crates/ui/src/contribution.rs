@@ -1,0 +1,102 @@
+//! How the window shell draws what plugins contribute: icons and column widths.
+//!
+//! The plugin model names icons and width classes as plain data; this module maps them onto
+//! the drawable icon set and the design tokens.
+
+use std::ops::Range;
+
+use gpui_kit::{App, Pixels, rems};
+use nocterm_plugin_model::{Icon, WidthClass};
+
+use crate::{ActiveDesign as _, IconName};
+
+/// The drawable icon for a contribution's [`Icon`]. Every variant maps, so a new variant does
+/// not compile until it has an icon.
+pub fn contribution_icon(icon: Icon) -> IconName {
+    match icon {
+        Icon::Activity => IconName::Activity,
+        Icon::Bell => IconName::Bell,
+        Icon::Bot => IconName::Bot,
+        Icon::Clock => IconName::Clock,
+        Icon::Container => IconName::Container,
+        Icon::FolderTree => IconName::FolderTree,
+        Icon::Layers => IconName::Layers,
+        Icon::PanelRight => IconName::PanelRight,
+        Icon::Plug => IconName::Plug,
+        Icon::ScrollText => IconName::ScrollText,
+        Icon::Server => IconName::Server,
+        Icon::ShieldCheck => IconName::ShieldCheck,
+        Icon::SquareTerminal => IconName::SquareTerminal,
+        Icon::Upload => IconName::Upload,
+    }
+}
+
+/// The width a class of panel column opens at and the range the user may resize it within,
+/// from the design tokens. `rem` is the window's rem size.
+pub fn width_range(class: WidthClass, rem: Pixels, cx: &App) -> (Pixels, Range<Pixels>) {
+    let layout = &cx.design().layout;
+    let column = match class {
+        WidthClass::Navigation => &layout.sidebar,
+        WidthClass::Assistant => &layout.agent_panel,
+    };
+    let range = rems(column.min_width).to_pixels(rem)..rems(column.max_width).to_pixels(rem);
+    (rems(column.width).to_pixels(rem), range)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{TestAppContext, px};
+
+    use crate::{Design, DesignTokens};
+
+    #[gpui_kit::test]
+    fn a_class_opens_inside_its_resize_range(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Design::new(DesignTokens::builtin()));
+            for class in [WidthClass::Navigation, WidthClass::Assistant] {
+                let (open, range) = width_range(class, px(16.), cx);
+                assert!(range.start <= open && open <= range.end, "{class:?}");
+                assert!(range.start > px(0.));
+            }
+        });
+    }
+
+    #[gpui_kit::test]
+    fn the_assistant_column_follows_the_agent_panel_tokens(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let tokens = DesignTokens::builtin();
+            let agent = tokens.layout.agent_panel.clone();
+            cx.set_global(Design::new(tokens));
+            let (open, range) = width_range(WidthClass::Assistant, px(10.), cx);
+            assert_eq!(open, px(agent.width * 10.));
+            assert_eq!(range, px(agent.min_width * 10.)..px(agent.max_width * 10.));
+        });
+    }
+
+    #[test]
+    fn every_icon_has_a_distinct_drawable() {
+        use std::collections::HashSet;
+        let icons = [
+            Icon::Activity,
+            Icon::Bell,
+            Icon::Bot,
+            Icon::Clock,
+            Icon::Container,
+            Icon::FolderTree,
+            Icon::Layers,
+            Icon::PanelRight,
+            Icon::Plug,
+            Icon::ScrollText,
+            Icon::Server,
+            Icon::ShieldCheck,
+            Icon::SquareTerminal,
+            Icon::Upload,
+        ];
+        let drawn: HashSet<_> = icons
+            .into_iter()
+            .map(|icon| contribution_icon(icon).path())
+            .collect();
+        assert_eq!(drawn.len(), icons.len());
+    }
+}
