@@ -5436,6 +5436,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-plugin-enablement"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-model",
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "nocterm-plugin-model"
 version = "0.0.0"
 dependencies = [
@@ -11499,6 +11510,7 @@ dependencies = [
  "nocterm-design",
  "nocterm-explorer",
  "nocterm-monitor",
+ "nocterm-plugin-enablement",
  "nocterm-project-providers",
  "nocterm-session",
  "nocterm-settings",

@@ -59,6 +59,7 @@
 | `monitor.interval_secs` | "integer"; 1–3600 | `30` | Seconds between updates while the details are closed. Only what the status bar shows is collected then. |
 | `monitor.local` | "boolean" | `true` | Watch this computer while no remote session is active. |
 | `monitor.status_bar` | "array" | `["cpu","memory"]` | What the status bar shows, in this order. |
+| `plugins.disabled` | "array" | `[]` | Ids of the disabled system plugins. A disabled plugin's panels and widgets are not shown in any window; its settings stay available. Required plugins cannot be disabled. |
 | `ssh.connect_timeout_secs` | "integer"; 1–600 | `15` | Seconds to wait for a host to answer before giving up. |
 | `ssh.keepalive_interval_secs` | "integer"; 0–3600 | `30` | Seconds between keep-alive probes on an idle connection. 0 turns them off. |
 | `ssh.launch.args` | "array" | `[]` | Individual executable arguments, without shell parsing. |

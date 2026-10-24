@@ -1,0 +1,22 @@
+[package]
+name = "nocterm-plugin-enablement"
+description = "Which system plugins the user switched off: the [plugins] settings section and the rule that keeps required plugins and unknown ids out of the effective set."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "domain"
+
+[dependencies]
+nocterm-plugin-model.workspace = true
+nocterm-settings.workspace = true
+schemars.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+
+[lints]
+workspace = true

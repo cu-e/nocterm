@@ -9,6 +9,7 @@ use anyhow::bail;
 use nocterm_ai::AiSettings;
 use nocterm_explorer::ExplorerSettings;
 use nocterm_monitor::MonitorSettings;
+use nocterm_plugin_enablement::PluginEnablement;
 use nocterm_project_providers::WorkspacesSettings;
 use nocterm_session::{LocalShellSettings, LoggingOptions, SshSettings};
 use nocterm_settings::SettingsSection;
@@ -48,6 +49,7 @@ fn sections() -> anyhow::Result<Vec<Section>> {
         section::<LocalShellSettings>()?,
         section::<LoggingOptions>()?,
         section::<MonitorSettings>()?,
+        section::<PluginEnablement>()?,
         section::<SshSettings>()?,
         section::<TerminalSettings>()?,
         section::<VaultSettings>()?,
