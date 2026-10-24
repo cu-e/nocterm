@@ -2,7 +2,7 @@
 
 # Actions and default key bindings
 
-Derived from `actions!` declarations and `assets/keymap.toml`.
+Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keymap.toml`.
 
 | Action | Description | Bindings |
 | --- | --- | --- |

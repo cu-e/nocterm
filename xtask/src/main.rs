@@ -9,11 +9,11 @@ use std::{
 };
 
 use anyhow::{Context as _, bail};
-use proc_macro2::TokenTree;
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use serde_json::Value;
 
+mod actions_reference;
 mod crate_cards;
 mod file_size;
 mod lint_policy;
@@ -58,18 +58,6 @@ struct Dependency {
     #[serde(default)]
     uses_default_features: bool,
 }
-#[derive(Deserialize)]
-struct Keymap {
-    section: Vec<Section>,
-}
-#[derive(Deserialize)]
-struct Section {
-    context: Option<String>,
-    #[serde(default)]
-    os: Vec<String>,
-    bindings: BTreeMap<String, String>,
-}
-
 fn main() -> anyhow::Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -388,99 +376,6 @@ pub(crate) fn source_files(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow
     Ok(())
 }
 
-fn action_declarations(source: &str) -> anyhow::Result<BTreeMap<String, String>> {
-    let mut actions = BTreeMap::new();
-    for item in syn::parse_file(source)?.items {
-        let syn::Item::Macro(item) = item else {
-            continue;
-        };
-        if !item
-            .mac
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "actions")
-        {
-            continue;
-        }
-        let mut tokens = item.mac.tokens.into_iter();
-        let Some(TokenTree::Ident(namespace)) = tokens.next() else {
-            bail!("action namespace must be an identifier");
-        };
-        let Some(TokenTree::Punct(_)) = tokens.next() else {
-            bail!("expected action namespace separator");
-        };
-        let Some(TokenTree::Group(group)) = tokens.next() else {
-            bail!("expected actions list");
-        };
-        let mut description = Vec::new();
-        for token in group.stream() {
-            match token {
-                TokenTree::Group(group) if group.delimiter() == proc_macro2::Delimiter::Bracket => {
-                    let attribute = group.stream().to_string();
-                    if let Some(literal) = attribute.strip_prefix("doc = ") {
-                        description.push(
-                            syn::parse_str::<syn::LitStr>(literal)?
-                                .value()
-                                .trim()
-                                .to_owned(),
-                        );
-                    }
-                }
-                TokenTree::Ident(name) => {
-                    actions.insert(format!("{namespace}::{name}"), description.join(" "));
-                    description.clear();
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(actions)
-}
-
-fn actions(root: &Path) -> anyhow::Result<String> {
-    let mut files = Vec::new();
-    source_files(&root.join("crates"), &mut files)?;
-    let mut declarations = BTreeMap::new();
-    for file in files {
-        for (name, description) in action_declarations(&fs::read_to_string(file)?)? {
-            if declarations.insert(name.clone(), description).is_some() {
-                bail!("duplicate action {name}");
-            }
-        }
-    }
-    let keymap: Keymap = toml::from_str(&fs::read_to_string(root.join("assets/keymap.toml"))?)?;
-    let mut bindings: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for section in keymap.section {
-        for (keys, action) in section.bindings {
-            if !declarations.contains_key(&action) {
-                bail!("keymap references undeclared action {action}");
-            }
-            let platform = if section.os.is_empty() {
-                "all".into()
-            } else {
-                section.os.join(", ")
-            };
-            bindings.entry(action).or_default().push(format!(
-                "`{keys}` ({platform}; {})",
-                section.context.as_deref().unwrap_or("global")
-            ));
-        }
-    }
-    let mut text = format!(
-        "{GENERATED}# Actions and default key bindings\n\nDerived from `actions!` declarations and `assets/keymap.toml`.\n\n| Action | Description | Bindings |\n| --- | --- | --- |\n"
-    );
-    for (name, description) in declarations {
-        writeln!(
-            text,
-            "| `{name}` | {} | {} |",
-            escape(&description),
-            escape(&bindings.remove(&name).unwrap_or_default().join("; "))
-        )?;
-    }
-    Ok(text)
-}
-
 fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
     let documents = [
         ("docs/reference/settings.md", settings_reference::render()?),
@@ -491,7 +386,10 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
                 serde_json::to_value(nocterm_design::DesignTokens::builtin())?,
             )?,
         ),
-        ("docs/reference/actions.md", actions(root)?),
+        (
+            "docs/reference/actions.md",
+            actions_reference::render(root)?,
+        ),
         ("docs/architecture/dependencies.md", architecture(root)?),
     ];
     let mut stale = Vec::new();
@@ -605,11 +503,5 @@ mod tests {
         assert!(allowed("app", "feature"));
         assert!(allowed("tooling", "feature"));
         assert!(!allowed("tooling", "app"));
-    }
-    #[test]
-    fn action_parser_reads_namespaces_and_doc_attributes() {
-        let actions = action_declarations("gpui_kit::actions!(example, [ /// First command.\n First, /// Second command.\n Second, ]);").unwrap();
-        assert_eq!(actions.get("example::First").unwrap(), "First command.");
-        assert_eq!(actions.get("example::Second").unwrap(), "Second command.");
     }
 }
