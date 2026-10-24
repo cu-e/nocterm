@@ -5946,8 +5946,11 @@ dependencies = [
  "nocterm-ui",
  "nocterm-window-layout",
  "nocterm-workspace-ports",
+ "schemars 1.2.2",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
 
@@ -11553,6 +11556,7 @@ dependencies = [
  "nocterm-ui",
  "nocterm-vault",
  "nocterm-window-layout",
+ "nocterm-workspace",
  "proc-macro2",
  "schemars 1.2.2",
  "serde",

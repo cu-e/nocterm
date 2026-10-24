@@ -12,6 +12,7 @@ layer = "ui"
 [dependencies]
 nocterm-core.workspace = true
 nocterm-store.workspace = true
+nocterm-settings.workspace = true
 nocterm-session.workspace = true
 nocterm-workspace-ports.workspace = true
 nocterm-ui.workspace = true
@@ -24,6 +25,8 @@ nocterm-window-layout.workspace = true
 gpui-kit.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+schemars.workspace = true
 
 [features]
 test-support = []
@@ -32,7 +35,8 @@ test-support = []
 workspace = true
 
 [dev-dependencies]
+nocterm-core = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 gpui-kit = { workspace = true, features = ["test-support"] }
-nocterm-settings.workspace = true
 serde_json.workspace = true
+toml.workspace = true

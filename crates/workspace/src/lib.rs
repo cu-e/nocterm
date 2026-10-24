@@ -10,6 +10,9 @@
 //! and the panel groups take their members, order and sides from it on every change; it also
 //! follows the app-wide `[plugins]` settings, creating the panels and widgets of a plugin only
 //! while it is enabled, in every window, and saying so when a disabled panel is asked to open),
+//! the Clock plugin (`clock::PLUGIN`, `ClockView`: the local time from the `WallClock` of
+//! `Deps::with_clock`, written as its own `[clock]` section says and created only while a
+//! layout places it and the plugin is enabled),
 //! per-surface background membership, and per-column layout projections.
 //! Does not own: session connections, feature views, native filesystem implementations,
 //! persistence workers, project definitions or connection authentication,
@@ -18,15 +21,15 @@
 //! `LocalTerminal`, `ProjectTerminalOpen`, `ProjectTerminalResolve`,
 //! `ChatConnectionOpen`; project terminal contracts/refusals live in workspace-ports
 //! without shell reexports. Private placement and typed terminal admission remain here.
-//! Layout and the checked plugin catalog arrive as explicit `Deps`.
+//! Layout, the checked plugin catalog and the optional `WallClock` arrive as explicit `Deps`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
 //! file drag contracts, immutable tab/session and selected monitor-source observations,
 //! plus separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
-//! Settings section: reads `[layouts]` (owned by `nocterm-window-layout`) and `[plugins]`
-//! (owned by `nocterm-plugin-enablement`) through the injected settings handle; a table that
-//! does not read is never overwritten. Globals: none.
+//! Settings section: owns `[clock]` (`ClockSettings`); reads `[layouts]` (owned by
+//! `nocterm-window-layout`) and `[plugins]` (owned by `nocterm-plugin-enablement`) through the
+//! injected settings handle; a table that does not read is never overwritten. Globals: none.
 //! Host resolution uses an explicitly supplied optional local executor; it owns no runner.
 //! Invariants: each surface has one native placement authority; each tab
 //! owns its feature handle and subscriptions; cached session identity preserves
@@ -60,6 +63,7 @@
 //! Terminal operations report typed refusals and program opening retains launch validation causes.
 
 mod actions;
+pub mod clock;
 pub mod command_palette;
 mod connection_directory;
 mod context_ports;

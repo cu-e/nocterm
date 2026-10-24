@@ -17,6 +17,7 @@ use nocterm_terminal_model::TerminalSettings;
 use nocterm_ui::AppearanceSettings;
 use nocterm_vault::VaultSettings;
 use nocterm_window_layout::LayoutSettings;
+use nocterm_workspace::clock::ClockSettings;
 use schemars::schema_for;
 
 /// A section's key, its type's name and its reference rows.
@@ -44,6 +45,7 @@ fn sections() -> anyhow::Result<Vec<Section>> {
     let mut sections = vec![
         section::<AiSettings>()?,
         section::<AppearanceSettings>()?,
+        section::<ClockSettings>()?,
         section::<ExplorerSettings>()?,
         section::<LayoutSettings>()?,
         section::<LocalShellSettings>()?,

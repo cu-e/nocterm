@@ -30,6 +30,9 @@
 | `appearance.layout` | "floating", "classic" | `"floating"` | How the window's regions are framed. |
 | `appearance.light_theme` | ["string","null"] | `null` | Imported light theme name. Unset uses Nocterm Default. |
 | `appearance.mode` | "light", "dark", "system" | `"system"` | Which palette the interface uses. |
+| `clock.date` | "boolean" | `false` | Whether a short date (`Oct 24`) comes before the time. |
+| `clock.format` | "hour24", "hour12" | `"hour24"` | How the clock shows the hour. |
+| `clock.seconds` | "boolean" | `false` | Whether the time includes seconds. The clock then updates every second instead of every minute. |
 | `explorer.indexing.excluded` | "array" | `[".cache",".git","node_modules",".cargo",".rustup",".npm",".gradle",".m2",".venv","__pycache__",".var","snap"]` | Folders with these names are never entered while counting, wherever they are. The folder being shown is always counted. |
 | `explorer.indexing.local` | "boolean" | `true` | Count the files and the size of local folders. |
 | `explorer.indexing.max_local_entries` | "integer"; 1000–10000000 | `1000000` | Stop counting a local folder after this many entries. |

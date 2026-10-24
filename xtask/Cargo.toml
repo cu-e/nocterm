@@ -21,6 +21,7 @@ nocterm-session.workspace = true
 nocterm-settings.workspace = true
 nocterm-ui.workspace = true
 nocterm-vault.workspace = true
+nocterm-workspace.workspace = true
 nocterm-window-layout.workspace = true
 
 anyhow.workspace = true

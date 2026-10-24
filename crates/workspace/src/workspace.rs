@@ -192,6 +192,7 @@ pub struct Deps {
     layout: nocterm_ui::LayoutHandle,
     catalog: Arc<PluginCatalog>,
     settings: Option<nocterm_store::SettingsHandle>,
+    clock: Option<Arc<dyn nocterm_core::clock::WallClock>>,
 }
 
 impl Deps {
@@ -205,6 +206,7 @@ impl Deps {
             layout,
             catalog: Arc::new(catalog),
             settings: None,
+            clock: None,
         }
     }
 
@@ -220,6 +222,13 @@ impl Deps {
     /// settings, which is how tests compose a window.
     pub fn with_settings(mut self, settings: nocterm_store::SettingsHandle) -> Self {
         self.settings = Some(settings);
+        self
+    }
+
+    /// Reads the time of the Clock plugin's widget from `clock`. Without it no window has the
+    /// widget, so a window composed for a test needs none.
+    pub fn with_clock(mut self, clock: Arc<dyn nocterm_core::clock::WallClock>) -> Self {
+        self.clock = Some(clock);
         self
     }
 }
@@ -268,6 +277,11 @@ impl Workspace {
             actions: actions::ActionRegistry::default(),
             registrations: registration::Registrations::new(deps.catalog),
         };
+        if let Some(clock) = deps.clock
+            && let Err(error) = crate::clock::register(clock, settings, &mut this, window, cx)
+        {
+            tracing::error!(%error, "the clock widget was not registered");
+        }
         this.register_action::<crate::EditCopy>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::Copy), cx)
         });
@@ -392,6 +406,8 @@ impl Render for Workspace {
 #[path = "tests.rs"]
 mod tests;
 
+#[cfg(test)]
+mod clock_tests;
 #[cfg(test)]
 mod enablement_tests;
 #[cfg(test)]
