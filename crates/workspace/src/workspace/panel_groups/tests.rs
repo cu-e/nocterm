@@ -172,7 +172,11 @@ mod owner {
             assert_eq!(groups.next(GroupKey::Navigation), None);
             let hide = groups.toggle(GroupKey::Navigation, window, cx).unwrap();
             assert_eq!(hide.visibility_changed(), Some(GroupKey::Navigation));
-            assert_eq!(focus_of(hide), "active item");
+            assert_eq!(
+                focus_of(hide),
+                "preserve",
+                "an empty sidebar holds no focus"
+            );
             let show = groups.toggle(GroupKey::Navigation, window, cx).unwrap();
             assert_eq!(focus_of(show), "preserve");
             assert!(groups.is_shown(GroupKey::Navigation));
@@ -256,14 +260,16 @@ mod owner {
     }
 
     #[gpui_kit::test]
-    fn hiding_the_expanded_sidebar_focuses_the_expanded_panel(cx: &mut TestAppContext) {
+    fn hiding_the_sidebar_leaves_focus_alone_when_the_sidebar_does_not_hold_it(
+        cx: &mut TestAppContext,
+    ) {
         with_window(cx, |window, cx| {
-            let (mut groups, [_, _, assistant]) = shell(cx);
+            let (mut groups, _) = shell(cx);
             groups.set_available(GroupKey::Assistant, true, window, cx);
             groups.toggle(GroupKey::Assistant, window, cx);
             groups.set_expanded(GroupKey::Assistant, true, cx);
             let hide = groups.toggle(GroupKey::Navigation, window, cx).unwrap();
-            assert_eq!(focused_panel(hide), assistant.focus_handle(cx));
+            assert_eq!(focus_of(hide), "preserve");
         });
     }
 

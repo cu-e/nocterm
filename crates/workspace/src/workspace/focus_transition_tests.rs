@@ -218,7 +218,7 @@ fn showing_a_hidden_sidebar_keeps_its_selection_and_the_focus(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
-fn hiding_the_sidebar_beside_an_expanded_side_panel_focuses_the_side_panel(
+fn hiding_the_sidebar_beside_an_expanded_side_panel_moves_focus_only_from_the_sidebar(
     cx: &mut TestAppContext,
 ) {
     let shell = shell(cx);
@@ -228,11 +228,16 @@ fn hiding_the_sidebar_beside_an_expanded_side_panel_focuses_the_side_panel(
     shell.update(cx, |w, window, cx| w.toggle_sidebar(window, cx));
     assert!(!shell.sidebar_open(cx));
     assert!(shell.side_maximized(cx));
+    assert_eq!(shell.focus(cx), Focus::Central);
+    shell.update(cx, |w, window, cx| w.toggle_sidebar(window, cx));
+    shell.focus_navigation(0, cx);
+    shell.update(cx, |w, window, cx| w.toggle_sidebar(window, cx));
+    assert!(!shell.sidebar_open(cx));
     assert_eq!(shell.focus(cx), Focus::SidePanel);
 }
 
 #[gpui_kit::test]
-fn hiding_the_sidebar_always_focuses_the_active_tab_even_when_it_held_no_focus(
+fn hiding_the_sidebar_focuses_the_active_tab_only_when_the_sidebar_held_focus(
     cx: &mut TestAppContext,
 ) {
     let shell = shell(cx);
@@ -241,7 +246,7 @@ fn hiding_the_sidebar_always_focuses_the_active_tab_even_when_it_held_no_focus(
     shell.update(cx, |w, window, cx| w.toggle_sidebar(window, cx));
     assert!(!shell.sidebar_open(cx));
     assert!(shell.side_open(cx));
-    assert_eq!(shell.focus(cx), Focus::Central);
+    assert_eq!(shell.focus(cx), Focus::SidePanel);
     shell.update(cx, |w, window, cx| w.toggle_sidebar(window, cx));
     shell.focus_navigation(0, cx);
     shell.update(cx, |w, window, cx| w.toggle_sidebar(window, cx));

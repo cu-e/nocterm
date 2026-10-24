@@ -307,8 +307,8 @@ impl PanelGroups {
 
     /// Shows a hidden group or hides a shown one.
     ///
-    /// The primary group toggles whether or not it has panels, and hiding it moves focus to
-    /// the expanded group, else to the active tab, wherever focus was. Any other group
+    /// The primary group toggles whether or not it has panels. Hiding it moves focus only if
+    /// the group held it: to the expanded group, else to the active tab. Any other group
     /// needs an available panel; opening it focuses the panel, and closing it refocuses the
     /// tab only if the panel held focus. `None` when there is nothing to open.
     pub(super) fn toggle(
@@ -318,8 +318,9 @@ impl PanelGroups {
         cx: &mut App,
     ) -> Option<PanelTransition> {
         if key.primary() {
+            let held_focus = self.holds_focus(key, window, cx);
             let shown = self.group_mut(key).toggle();
-            let focus = if shown {
+            let focus = if shown || !held_focus {
                 PanelFocus::Preserve
             } else {
                 self.focus_after_hiding_primary(cx)
@@ -333,6 +334,12 @@ impl PanelGroups {
         let focus = slot.panel.as_ref()?.focus_handle(cx);
         self.group_mut(key).show();
         Some(PanelTransition::new(Some(key), PanelFocus::Panel(focus)))
+    }
+
+    /// Whether focus is inside the group's selected panel.
+    fn holds_focus(&self, key: GroupKey, window: &Window, cx: &App) -> bool {
+        self.selected(key)
+            .is_some_and(|panel| panel.focus_handle(cx).contains_focused(window, cx))
     }
 
     fn focus_after_hiding_primary(&self, cx: &App) -> PanelFocus {
@@ -350,9 +357,7 @@ impl PanelGroups {
         window: &Window,
         cx: &mut App,
     ) -> PanelTransition {
-        let had_focus = self
-            .selected(key)
-            .is_some_and(|panel| panel.focus_handle(cx).contains_focused(window, cx));
+        let had_focus = self.holds_focus(key, window, cx);
         self.set_expanded(key, false, cx);
         let hidden = self.group(key).is_shown();
         if hidden {
