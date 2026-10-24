@@ -47,7 +47,7 @@ mod theme;
 mod themes;
 
 pub use animations::thinking_indicator;
-pub use contribution::{contribution_icon, width_range};
+pub use contribution::{contribution_icon, width_range, zone_anchor};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use embedded_pages::{EmbeddedPageSpec, EmbeddedPages, SectionedPage};

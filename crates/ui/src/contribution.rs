@@ -5,8 +5,8 @@
 
 use std::ops::Range;
 
-use gpui_kit::{App, Pixels, rems};
-use nocterm_plugin_model::{Icon, WidthClass};
+use gpui_kit::{Anchor, App, Pixels, rems};
+use nocterm_plugin_model::{Icon, WidthClass, Zone};
 
 use crate::{ActiveDesign as _, IconName};
 
@@ -31,6 +31,16 @@ pub fn contribution_icon(icon: Icon) -> IconName {
     }
 }
 
+/// The corner a popover of a status bar item anchors to, so it opens toward the inside of the
+/// window: from the left zone it grows rightwards, from the right zone leftwards, and from the
+/// centre it grows rightwards too.
+pub fn zone_anchor(zone: Zone) -> Anchor {
+    match zone {
+        Zone::Left | Zone::Center => Anchor::BottomLeft,
+        Zone::Right => Anchor::BottomRight,
+    }
+}
+
 /// The width a class of panel column opens at and the range the user may resize it within,
 /// from the design tokens. `rem` is the window's rem size.
 pub fn width_range(class: WidthClass, rem: Pixels, cx: &App) -> (Pixels, Range<Pixels>) {
@@ -49,6 +59,13 @@ mod tests {
     use gpui_kit::{TestAppContext, px};
 
     use crate::{Design, DesignTokens};
+
+    #[test]
+    fn a_popover_opens_toward_the_inside_of_the_window() {
+        assert_eq!(zone_anchor(Zone::Left), Anchor::BottomLeft);
+        assert_eq!(zone_anchor(Zone::Center), Anchor::BottomLeft);
+        assert_eq!(zone_anchor(Zone::Right), Anchor::BottomRight);
+    }
 
     #[gpui_kit::test]
     fn a_class_opens_inside_its_resize_range(cx: &mut TestAppContext) {

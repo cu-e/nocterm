@@ -36,12 +36,29 @@ const MARQUEE_FPS: f32 = 30.;
 ///
 /// Place it in the window's footer; it renders nothing while there are no
 /// notices.
-#[derive(IntoElement, Default)]
-pub struct NoticeBar;
+#[derive(IntoElement)]
+pub struct NoticeBar {
+    anchor: Anchor,
+}
+
+impl Default for NoticeBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl NoticeBar {
+    /// The bar with its list opening above the bell, to the left of it.
     pub fn new() -> Self {
-        Self
+        Self {
+            anchor: Anchor::BottomRight,
+        }
+    }
+
+    /// The corner of the bell the list anchors to, for a bar placed away from the right edge.
+    pub fn anchor(mut self, anchor: Anchor) -> Self {
+        self.anchor = anchor;
+        self
     }
 }
 
@@ -82,7 +99,9 @@ impl RenderOnce for NoticeBar {
             .min_w_0()
             .gap_1()
             .when_some(live, |bar, notice| bar.child(line(notice, window, cx)))
-            .when(total > 0, |bar| bar.child(center(total, expanded)))
+            .when(total > 0, |bar| {
+                bar.child(center(total, expanded, self.anchor))
+            })
     }
 }
 
@@ -165,9 +184,9 @@ fn marquee(id: u64, text: SharedString, window: &mut Window) -> AnyElement {
 }
 
 /// The bell with the number of notices, opening the list above it.
-fn center(total: usize, expanded: bool) -> impl IntoElement {
+fn center(total: usize, expanded: bool, anchor: Anchor) -> impl IntoElement {
     Popover::new("notice-center")
-        .anchor(Anchor::BottomRight)
+        .anchor(anchor)
         .trigger(
             Button::new("notice-toggle")
                 .ghost()
