@@ -218,6 +218,7 @@ nocterm-local = { path = "crates/local" }
 nocterm-localfs = { path = "crates/localfs" }
 nocterm-monitor = { path = "crates/monitor" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
+nocterm-plugin-model = { path = "crates/plugin-model" }
 nocterm-session = { path = "crates/session" }
 nocterm-settings = { path = "crates/settings" }
 nocterm-store = { path = "crates/store" }

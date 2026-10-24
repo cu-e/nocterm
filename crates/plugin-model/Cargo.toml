@@ -1,0 +1,17 @@
+[package]
+name = "nocterm-plugin-model"
+description = "What a plugin is and what the window shell can host: ids, system plugin descriptors, placement hints and the checked catalog."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "domain"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

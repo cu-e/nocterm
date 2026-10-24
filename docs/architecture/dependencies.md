@@ -36,6 +36,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session`, `nocterm-settings` | Host resource monitoring: collection scripts, parsers, rates and history. |
 | `nocterm-monitor-ui` | feature | `nocterm-containers`, `nocterm-monitor`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
+| `nocterm-plugin-model` | domain |  | What a plugin is and what the window shell can host: ids, system plugin descriptors, placement hints and the checked catalog. |
 | `nocterm-project-container-fs` | adapter | `nocterm-containers`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session` | Container-scoped sessions and bounded remote filesystem adaptation. |
 | `nocterm-project-environment` | adapter | `nocterm-connections-model`, `nocterm-project-providers`, `nocterm-session` | Observed workspace tool installation and managed session activation. |
 | `nocterm-project-model` | domain | `nocterm-core`, `nocterm-session` | Provider-neutral workspace definitions and stable context identity. |
