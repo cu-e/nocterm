@@ -415,3 +415,5 @@ fn registering_the_summary_starts_reading_the_host(cx: &mut TestAppContext) {
 mod dependencies;
 
 mod sources;
+
+mod status_bar_settings;

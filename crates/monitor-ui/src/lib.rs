@@ -11,8 +11,9 @@
 //! Installation retains actual settings and optional supplied local host execution; models share it.
 //! Does not own: metric parsing, host execution or session establishment.
 //! Ports used: immutable workspace MonitorSource, scoped session HostExec and supplied
-//! SettingsHandle; provided: SettingsPageSpec and the `monitor` system plugin
-//! (`plugin::PLUGIN`) with its status bar widget.
+//! SettingsHandle; provided: SettingsPageSpec, the `monitor` system plugin
+//! (`plugin::PLUGIN`) with its status bar widget and its "Status bar" settings schema, and
+//! `plugin_settings` (a `SectionBinding` over `[monitor]`).
 //! Settings section: `[monitor]`. Globals: none.
 //! Invariants: one script collects the current metric union; eight retained records stay
 //! distinct by surface and resource; unavailable projects never use a local fallback.
@@ -27,6 +28,7 @@ pub mod plugin;
 mod settings;
 mod source;
 mod status;
+mod status_bar_settings;
 
 use gpui_kit::{AppContext as _, Context, Window};
 use nocterm_ui::SettingsPageSpec;
@@ -36,6 +38,7 @@ pub use page::MonitorPage;
 pub use settings::{
     MONITOR_DETAIL_INTERVAL_RANGE, MONITOR_HISTORY_RANGE, MONITOR_INTERVAL_RANGE, MonitorSettings,
 };
+pub use status_bar_settings::plugin_settings;
 
 gpui_kit::actions!(
     monitor,
