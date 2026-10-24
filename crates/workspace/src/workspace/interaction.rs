@@ -5,7 +5,7 @@ use gpui_kit::{
     component::{Placement, input},
 };
 use nocterm_plugin_model::ContributionId;
-use nocterm_window_layout::{BuiltIn, PresetId};
+use nocterm_window_layout::PresetId;
 use panel_groups::{PanelFocus, PanelTransition};
 impl Workspace {
     pub fn activate_item_by_id(
@@ -300,20 +300,6 @@ impl Workspace {
             }
         }
         cx.notify();
-    }
-    pub fn swap_sides(&mut self, cx: &mut Context<Self>) {
-        let target = if *self.shell.selected() == BuiltIn::Swapped.id() {
-            BuiltIn::Default
-        } else {
-            BuiltIn::Swapped
-        };
-        self.switch_layout(target.id(), cx).detach();
-        // Settings that keep nothing publish at once; the sides follow without a window.
-        if self.shell.refresh(cx) != shell_layout::LayoutChange::Unchanged {
-            self.panels.adopt(self.shell.current());
-            self.sync_panel_sides(cx);
-            cx.notify();
-        }
     }
     pub(super) fn widen_group(
         &mut self,

@@ -85,7 +85,6 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `workspace::SplitUp` | Move the active tab into a new pane above. | `ctrl-alt-shift-up` (linux, windows; Workspace); `cmd-alt-shift-up` (macos; Workspace) |
 | `workspace::StartRecording` | Start recording terminal output. |  |
 | `workspace::StopRecording` | Stop recording terminal output. |  |
-| `workspace::SwapSides` | Put the sidebar and the AI panel on each other's side. |  |
 | `workspace::SwitchLayout` | Switch to the window layout with this id. Only the window menu sends it. |  |
 | `workspace::ToggleCommandPalette` | Search and run any command. | `ctrl-shift-p` (linux, windows; Workspace); `cmd-shift-p` (macos; Workspace) |
 | `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `ctrl-j` (linux, windows; Workspace); `cmd-`` (macos; Workspace); `cmd-j` (macos; Workspace) |

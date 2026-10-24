@@ -49,6 +49,7 @@ pub use registration::{
 mod layout_switch;
 mod sessions;
 mod shell_layout;
+pub(crate) use layout_switch::switch as switch_layout_now;
 pub use layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts};
 
 use crate::{

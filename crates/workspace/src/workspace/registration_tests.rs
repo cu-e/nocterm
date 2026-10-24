@@ -15,7 +15,7 @@ use crate::{
     test_support::{
         CORE_PANEL, EXPANDABLE, PANEL_A, PANEL_B, REQUIRED_EXPANDABLE, REQUIRED_PLUGIN,
         RIGHT_WIDGET, SIDEBAR_EXPANDABLE, TEST_CORE, TEST_PLUGIN, TRAY_PANEL, TRAY_WIDGET,
-        TestPanel, Toggle, WIDGET, deps_for_core, toggle_id, toggle_presentation,
+        TestPanel, Toggle, WIDGET, deps_for_core, select_layout, toggle_id, toggle_presentation,
     },
     workspace::tests::{fixture, fixture_with_deps},
 };
@@ -401,12 +401,14 @@ fn an_expandable_panel_asks_its_group_to_expand_and_close(cx: &mut TestAppContex
 fn an_expandable_panel_learns_the_side_it_is_on(cx: &mut TestAppContext) {
     let shell = expandable(cx);
     cx.update(|cx| assert!(!shell.panel.read(cx).docked_left()));
-    cx.update(|cx| {
-        shell
-            .workspace
-            .update(cx, |workspace, cx| workspace.swap_sides(cx))
-    });
+    select_swapped(cx, shell.handle, &shell.workspace);
     cx.update(|cx| assert!(shell.panel.read(cx).docked_left()));
+}
+
+fn select_swapped(cx: &mut TestAppContext, handle: AnyWindowHandle, workspace: &Entity<Workspace>) {
+    run(cx, handle, workspace, |workspace, window, cx| {
+        select_layout(workspace, "swapped", window, cx)
+    });
 }
 
 /// Registers an expandable panel for `contribution` and returns the panel the factory made.
@@ -446,7 +448,7 @@ fn each_expandable_panel_learns_the_side_of_its_own_group(cx: &mut TestAppContex
         (false, true),
         "the sidebar opens on the left"
     );
-    cx.update(|cx| workspace.update(cx, |workspace, cx| workspace.swap_sides(cx)));
+    select_swapped(cx, handle, &workspace);
     assert_eq!(docked_left(cx), (true, false));
     // A panel registered while the sides are swapped starts on its group's swapped side.
     let late = register_expandable(cx, handle, &workspace, REQUIRED_EXPANDABLE);

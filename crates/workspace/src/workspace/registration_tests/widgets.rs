@@ -264,17 +264,17 @@ fn the_pinned_notice_bar_stays_in_the_right_zone_in_every_arrangement(cx: &mut T
             .register_widget(widget, window, cx)
             .expect("the widget is in the catalog");
     });
-    for swapped in [false, true] {
-        if cx.update(|cx| workspace.read(cx).sides_swapped(cx)) != swapped {
-            cx.update(|cx| workspace.update(cx, |workspace, cx| workspace.swap_sides(cx)));
-        }
+    for layout in ["default", "swapped"] {
+        run(cx, handle, &workspace, |workspace, window, cx| {
+            select_layout(workspace, layout, window, cx)
+        });
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let left = window.find("leading-marker").bounds();
             let notices = window.find("notice-bar").bounds();
             let terminal = window.find(toggle_id(Toggle::LocalTerminal)).bounds();
-            assert!(left.right() <= notices.left(), "swapped: {swapped}");
-            assert!(notices.right() <= terminal.left(), "swapped: {swapped}");
+            assert!(left.right() <= notices.left(), "layout: {layout}");
+            assert!(notices.right() <= terminal.left(), "layout: {layout}");
         })
         .unwrap();
     }

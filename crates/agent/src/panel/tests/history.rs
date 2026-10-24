@@ -528,7 +528,12 @@ fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut T
         "rendered width adoption must not echo a scalar change"
     );
     cx.update_window(other, |_, window, cx| {
-        window.dispatch_action(Box::new(nocterm_workspace::SwapSides), cx);
+        window.dispatch_action(
+            Box::new(nocterm_workspace::SwitchLayout {
+                id: "swapped".into(),
+            }),
+            cx,
+        );
         window.render_frame(cx);
         window.click("agent-history", cx);
         window.render_frame(cx);

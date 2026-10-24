@@ -21,8 +21,6 @@ gpui_kit::actions!(
         PreviousTab,
         /// Show or hide the sidebar.
         ToggleSidebar,
-        /// Put the sidebar and the AI panel on each other's side.
-        SwapSides,
         /// Show or hide the AI panel.
         ToggleRightPanel,
         /// Expand or restore the AI panel in the workspace body.

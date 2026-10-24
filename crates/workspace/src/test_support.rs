@@ -275,4 +275,4 @@ pub use plugin::{
 };
 
 mod shell;
-pub use shell::{Toggle, toggle_id, toggle_presentation};
+pub use shell::{Toggle, select_layout, toggle_id, toggle_presentation};

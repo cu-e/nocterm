@@ -215,7 +215,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         projects,
         vault,
         files,
-        workspace: nocterm_workspace::Deps::new(layout).with_catalog(plugins),
+        workspace: nocterm_workspace::Deps::new(layout)
+            .with_catalog(plugins)
+            .with_settings(ui.settings().clone()),
         themes,
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);

@@ -119,11 +119,6 @@ impl ShellLayout {
         }
     }
 
-    /// The layout in force.
-    pub(super) fn selected(&self) -> &PresetId {
-        &self.selected
-    }
-
     /// The layouts to choose from: the built-ins, then the saved presets in their order.
     pub(super) fn choices(&self) -> Vec<LayoutChoice> {
         BuiltIn::ALL

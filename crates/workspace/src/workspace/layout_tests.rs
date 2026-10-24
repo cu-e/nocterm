@@ -1,7 +1,7 @@
 //! The body's columns: resizing, hiding a sidebar panel from its own
 //! button, and swapping sides.
 use crate::test_support::{
-    EXPANDABLE, PANEL_A, PANEL_B, TestPanel, TestPanelBuilder, Toggle, toggle_id,
+    EXPANDABLE, PANEL_A, PANEL_B, TestPanel, TestPanelBuilder, Toggle, select_layout, toggle_id,
 };
 use gpui_kit::{
     App, AppContext as _, Entity, Focusable, TestAppContext, Window, px, test::TestWindowExt as _,
@@ -151,7 +151,12 @@ fn swapping_puts_the_side_panel_on_the_left(cx: &mut TestAppContext) {
         assert!(
             window.find("side-probe").bounds().left() < window.find("right-probe").bounds().left()
         );
-        window.dispatch_action(Box::new(crate::SwapSides), cx);
+        window.dispatch_action(
+            Box::new(crate::SwitchLayout {
+                id: "swapped".into(),
+            }),
+            cx,
+        );
     })
     .unwrap();
     cx.run_until_parked();
@@ -188,7 +193,7 @@ fn hidden_and_reordered_columns_keep_each_owners_visible_width(cx: &mut TestAppC
         assert!(window.try_find("side-probe").is_none());
         assert_eq!(window.find("right-probe").bounds().size.width, right_width);
         workspace.update(cx, |workspace, cx| {
-            workspace.swap_sides(cx);
+            select_layout(workspace, "swapped", window, cx);
             workspace.toggle_sidebar(window, cx);
         });
         window.render_frame(cx);
@@ -293,7 +298,9 @@ fn expanded_chat_keeps_navigation_beside_it_at_supported_window_widths(cx: &mut 
         assert!(window.find("right-probe").bounds().size.width > docked_width);
         for swapped in [false, true] {
             if swapped {
-                workspace.update(cx, |workspace, cx| workspace.swap_sides(cx));
+                workspace.update(cx, |workspace, cx| {
+                    select_layout(workspace, "swapped", window, cx)
+                });
             }
             for width in [600., 1000., 1400.] {
                 window.resize(gpui_kit::size(px(width), px(700.)));
@@ -384,7 +391,7 @@ fn sidebar_controls_preserve_expansion_and_focus_visible_chat_when_closed(cx: &m
         assert_expanded_columns(window, cx, false);
         assert!(window.find("right-probe").bounds().size.width < full_width);
         workspace.update(cx, |workspace, cx| {
-            workspace.swap_sides(cx);
+            select_layout(workspace, "swapped", window, cx);
             workspace.toggle_sidebar(window, cx);
         });
         window.render_frame(cx);

@@ -3,7 +3,7 @@
 //! Tests name an element through these helpers and not through its element id,
 //! so a change of the production ids only changes this file.
 use crate::Workspace;
-use gpui_kit::{App, ElementId, SharedString};
+use gpui_kit::{App, Context, ElementId, SharedString};
 use nocterm_ui::IconName;
 
 /// A status bar toggle.
@@ -40,4 +40,19 @@ pub fn toggle_presentation(
         Toggle::SidePanel => looks.side_panel,
     }?;
     Some((look.tooltip, look.icon))
+}
+
+/// Selects a layout as the window menu does, and lets the window follow at once.
+pub fn select_layout(
+    workspace: &mut Workspace,
+    id: &str,
+    window: &mut gpui_kit::Window,
+    cx: &mut Context<Workspace>,
+) {
+    crate::workspace::switch_layout_now(
+        workspace,
+        nocterm_window_layout::PresetId::from_owned(id.to_owned()),
+        window,
+        cx,
+    );
 }

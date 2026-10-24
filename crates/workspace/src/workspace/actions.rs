@@ -61,7 +61,6 @@ impl ActionRegistry {
             .on_action(cx.listener(Workspace::on_previous_tab))
             .on_action(cx.listener(Workspace::on_toggle_sidebar))
             .on_action(cx.listener(Workspace::on_next_panel))
-            .on_action(cx.listener(|this, _: &crate::SwapSides, _, cx| this.swap_sides(cx)))
             .on_action(cx.listener(|this, _: &crate::NextLayout, window, cx| {
                 layout_switch::cycle(this, 1, window, cx)
             }))
