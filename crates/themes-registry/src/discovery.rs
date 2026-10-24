@@ -1,10 +1,10 @@
 //! Physical discovery supplies deterministic documents to the pure catalog builder.
+use nocterm_core::fs::{BoundedReadError, read_regular_bounded};
 use nocterm_themes::{
     CatalogBuilder, FILE_LIMIT, ThemeCatalog, ThemeDirs, ThemeOperationError, ThemeSource, valid_id,
 };
 use std::{
-    fs,
-    io::{self, Read},
+    fs, io,
     path::{Path, PathBuf},
 };
 pub(crate) fn scan(dirs: &ThemeDirs) -> ThemeCatalog {
@@ -93,20 +93,11 @@ impl Discovery {
     }
 }
 fn read_bounded(path: &Path) -> Result<Vec<u8>, ThemeOperationError> {
-    let metadata = fs::symlink_metadata(path).map_err(|e| fs_error(path, "inspect", e))?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(ThemeOperationError::NotPlain(path.into()));
-    }
-    let mut bytes = Vec::new();
-    fs::File::open(path)
-        .map_err(|e| fs_error(path, "open", e))?
-        .take(FILE_LIMIT as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| fs_error(path, "read", e))?;
-    if bytes.len() > FILE_LIMIT {
-        return Err(ThemeOperationError::FileLimit);
-    }
-    Ok(bytes)
+    read_regular_bounded(path, FILE_LIMIT).map_err(|error| match error {
+        BoundedReadError::NotRegular { .. } => ThemeOperationError::NotPlain(path.into()),
+        BoundedReadError::TooLarge { .. } => ThemeOperationError::FileLimit,
+        BoundedReadError::Io { source, .. } => fs_error(path, "read", source),
+    })
 }
 fn fs_error(path: &Path, operation: &'static str, source: io::Error) -> ThemeOperationError {
     ThemeOperationError::Filesystem {

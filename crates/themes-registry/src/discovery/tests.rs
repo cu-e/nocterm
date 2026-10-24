@@ -87,3 +87,37 @@ fn linked_originals_and_linked_pack_directories_are_not_followed() {
     assert!(catalog.entries().is_empty());
     assert!(catalog.packs().is_empty());
 }
+#[cfg(unix)]
+#[test]
+fn linked_and_piped_pack_manifests_are_reported_without_being_read() {
+    let root = tempfile::tempdir().unwrap();
+    let dirs = ThemeDirs {
+        user: root.path().join("user"),
+        installed: root.path().join("installed"),
+    };
+    fs::create_dir(&dirs.user).unwrap();
+    fs::write(
+        root.path().join("manifest.toml"),
+        "id = 'linked'\nname = 'Pack'\nversion = '1'\n",
+    )
+    .unwrap();
+    let linked = dirs.installed.join("linked");
+    fs::create_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink(
+        root.path().join("manifest.toml"),
+        linked.join("extension.toml"),
+    )
+    .unwrap();
+    let piped = dirs.installed.join("piped");
+    fs::create_dir_all(&piped).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(piped.join("extension.toml"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let catalog = scan(&dirs);
+    assert!(catalog.packs().is_empty());
+    assert_eq!(catalog.problems().len(), 2);
+}
