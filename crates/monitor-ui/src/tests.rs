@@ -419,3 +419,6 @@ mod sources;
 mod status_bar_settings;
 
 mod status_popover;
+
+#[cfg(feature = "user-plugins")]
+mod host_capabilities;
