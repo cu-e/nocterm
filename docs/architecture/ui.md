@@ -141,7 +141,10 @@ layout names, or only rearranges (ADR 0084). The
 `StatusBar` keeps widget factories and creates a widget's view when the layout first
 places it. A group's side comes from its zone, a pinned widget the layout omits goes
 to the end of the right zone, and an omitted panel that asks for attention is drawn at
-the inner end of the right zone (ADR 0083).
+the inner end of the right zone (ADR 0083). A right click on the footer opens a context menu
+(`status_bar/menu.rs`): Hide for the item under the pointer, unless it is pinned, Customize Status Bar…
+(`OpenLayoutSettings`, naming the item) and a Layouts submenu. Hide is the same checked edit
+(`edit_layouts`, `RemoveToTray`) the editor uses, and a refused write is shown as a notice (ADR 0087).
 Immutable observations expose tab identities and native pane order without giving
 callers mutable native entities. Transitions commit membership and subscriptions
 before the shell emits events or changes focus (ADR 0026).
@@ -390,6 +393,6 @@ agent resolution and credential policy remain in the AI domain and Agent page.
 factories. The latter receive only their original SettingsHandle and per-Item save
 feedback. The additive flush operation leaves existing guest lifecycle contracts intact.
 `SettingsPage::reveal(anchor, window, cx)` lets a page bring forward the part an anchor
-names (a plugin id on the Plugins page); the default returns `false` and the host
+names (a plugin id on the Plugins page, `layout/<id>` for an item in the editor of Appearance); the default returns `false` and the host
 `SettingsPageHandle::reveal` forwards it to a constructed page
 ([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).

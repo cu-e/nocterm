@@ -383,5 +383,11 @@ and `transition`, which tells a window whether a change of the document is a swi
 edit or nothing. `resolve` also takes the disabled ids: they stay in the document but are
 not rendered, not appended, not opened and listed by `ResolvedLayout::disabled()`, and
 separators collapse around them. It reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types
-and no I/O. See [ADR 0083](../adr/0083-zoned-status-bar.md) and
-[ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md).
+and no I/O. It also owns the pure rules of an edit: `edit(settings, legacy_swapped, catalog, target, op)`
+returns the new settings and the preset to show, or a typed `EditError`. Editing a built-in layout in
+use saves a copy named Custom and selects it, a pinned widget cannot leave the bar, and the result
+never has what `resolve` would reshape. A `[layouts]` table that does not read is reported by
+`LayoutSettings::read_error` so no edit overwrites it. See
+[ADR 0083](../adr/0083-zoned-status-bar.md),
+[ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md) and
+[ADR 0087](../adr/0087-status-bar-and-panels-editor.md).

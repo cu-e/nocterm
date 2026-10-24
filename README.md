@@ -264,6 +264,19 @@ If the `[layouts]` table does not read (for example a wrong key type), the windo
 the Default layout and refuses to switch layouts, so that your table is never
 overwritten; fix the file and switching works again.
 
+You need not write the table by hand. **Settings → Appearance → Status bar and panels**
+shows the footer on one line, as it will look, and the panel groups: drag an item (in the
+preview or in the lists) to reorder it, to another zone, into or out of a panel group, or onto
+**Not in the bar** to take it off the footer; or select it and move it with the buttons, the
+**⋯** menu or with `Alt+←`/`→` (within its list), `Alt+↑`/`↓` (to another zone), `G` (to the next group), `|` (add a
+separator) and `Delete` (take it off the footer into the tray); `Ctrl+Z` and `Ctrl+Shift+Z`
+(`Cmd` on macOS) undo and redo. Editing Default or Swapped sides saves a copy named Custom and
+selects it, so the built-in layouts never change. Layouts can be renamed, duplicated, deleted
+and reset there. Right-click the footer for **Hide**, **Customize Status Bar…** and **Layouts**.
+Settings → Plugins has a "Customize in status bar…" button for each plugin. A layout that
+places an item of a plugin that is not installed keeps it there until the first edit, which
+moves it to the tray as "Not installed". The editor refuses to save while the `[layouts]` table does not read, and says so; fix the file first.
+
 Settings → Plugins lists the built-in plugins. A switch turns a plugin off for every window:
 its panels and widgets disappear from the window and the layout keeps their place for when it
 returns. The AI Agents plugin is required and stays on. Select a plugin to change its

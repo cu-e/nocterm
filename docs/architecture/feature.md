@@ -6,7 +6,7 @@ Features depend on shared contracts and never on other features or the SSH
 adapter. Feature crates use the service, UI, domain and foundation
 layers: `nocterm-terminal`, `nocterm-connections`, `nocterm-settings-ui`,
 `nocterm-files`, `nocterm-snippets-ui`, `nocterm-monitor-ui`,
-`nocterm-containers-ui`, `nocterm-plugins-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
+`nocterm-containers-ui`, `nocterm-plugins-ui`, `nocterm-layout-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
 `nocterm-agent` and `nocterm-agent-settings-ui`.
 
 ## System plugins and core contributions
@@ -33,7 +33,20 @@ plugins keep (Monitor, Workspaces) nested under it with `SettingsPageRegistratio
 they are not navigation entries, the Plugins entry is highlighted while one is shown and a
 back link returns to the plugin's row. `nocterm-settings-ui` refuses a missing or nested
 parent. `OpenPlugins` and `OpenPluginPage` open the page and a plugin's page
-([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).
+([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)). The detail of a plugin with
+contributions also links to the editor with its first item selected.
+
+`nocterm-layout-ui` owns the editor of the status bar and the panels, one section of Appearance
+(`layout_section`): the layout shown, the selected item, undo and redo, rename and delete
+confirmation, the keys and the drags that move items (a drop names a place; the move itself is
+a rule of `nocterm-window-layout`) and the one-line preview of the bar. It writes every change as
+one checked update of `[layouts]` through `nocterm_workspace::edit_layouts`, which applies the
+pure rules of `nocterm-window-layout`, and shows the result of the write. It reads the plugin
+catalog and enablement, draws the settings of the selected item with a `PluginSettingsDirectory`
+it is given and holds no layout rule. The application places the section in the ordinary
+Appearance page with `SettingsPageSpec::with_sections` from `src/bootstrap/layout_editor.rs`,
+and `OpenLayoutSettings { select }` opens it with an item selected
+([ADR 0087](../adr/0087-status-bar-and-panels-editor.md)).
 
 ## Terminal
 

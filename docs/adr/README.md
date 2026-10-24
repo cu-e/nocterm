@@ -55,7 +55,7 @@ acceptance; a later record supersedes an earlier one.
 | [0054](0054-checked-settings-text-receipts.md) | Native settings text owns checked publication receipts |
 | [0055](0055-snippet-storage-boundaries.md) | Native snippet documents and viewless publication have separate owners |
 | [0056](0056-owner-settings-pages.md) | Settings controls and pure schemas live with their actual owners |
-| [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition (page list and navigation superseded in part by 0086) |
+| [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition (page list and navigation superseded in part by 0086, Appearance sections by 0087) |
 | [0058](0058-neutral-agent-protocol-boundary.md) | Agent protocol types stop at the ACP adapter |
 | [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards |
 | [0060](0060-ssh-jump-host-routes.md) | SSH jump-host routes are resolved from saved profiles before opening and established by the SSH adapter |
@@ -83,3 +83,4 @@ acceptance; a later record supersedes an earlier one.
 | [0084](0084-layout-presets-are-app-wide-settings.md) | Layout presets are app-wide settings that every window follows |
 | [0085](0085-one-plugin-model-with-separate-trust-tiers.md) | System and user plugins share one contribution and settings model, with separate trust tiers |
 | [0086](0086-plugin-enablement-and-the-plugins-page.md) | Plugin enablement is app-wide and the Plugins page lists plugins with their own pages nested under it |
+| [0087](0087-status-bar-and-panels-editor.md) | The status bar and panels are edited in Appearance through the layout rules |
