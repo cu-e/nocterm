@@ -21,6 +21,9 @@ pub enum NoticeTone {
 }
 
 impl NoticeTone {
+    /// Every tone, in declaration order.
+    pub const ALL: [Self; 2] = [Self::Info, Self::Caution];
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::Info => "info",

@@ -45,9 +45,10 @@ pub use error::{CatalogError, IdError};
 pub use id::{ContributionId, GroupId, PluginId, USER_PREFIX};
 pub use plugin::SystemPlugin;
 pub use schema::{
-    ChoiceOption, FieldEdit, FieldError, FieldGroup, FieldIssue, FieldKind, FieldSpec,
-    MAX_TEXT_LEN, SchemaError, SchemaLimit, SettingValue, SettingValues, SettingsSchema, apply,
-    bounded, resolve, sanitize_text, toggle_choice,
+    ChoiceOption, FieldEdit, FieldError, FieldGroup, FieldIssue, FieldKind, FieldSpec, MAX_FIELDS,
+    MAX_GROUPS, MAX_HELP, MAX_KEY, MAX_LABEL, MAX_OPTIONS, MAX_TEXT_LEN, SchemaError, SchemaLimit,
+    SettingValue, SettingValues, SettingsSchema, apply, bounded, resolve, sanitize_text,
+    toggle_choice,
 };
 pub use user::{PluginTier, UserContribution, UserPlugin, UserPluginError};
 pub use view::{ContributionRef, PluginRef};

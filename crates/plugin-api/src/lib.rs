@@ -42,6 +42,7 @@ mod manifest;
 mod ports;
 mod sanitize;
 mod snapshot;
+mod surface;
 pub mod template;
 mod version;
 mod view;
@@ -71,6 +72,10 @@ pub use ports::{
 };
 pub use sanitize::sanitize_display;
 pub use snapshot::{Observed, Snapshot};
+pub use surface::{
+    EFFECT_REQUESTS, EVENTS, FILTERS, HOST_ERRORS, LIMITS, MANIFEST_TABLES, REFRESHES, RUNTIMES,
+    SETTINGS_KINDS,
+};
 pub use version::{API_VERSION, ApiVersion, VersionError};
 pub use view::{
     MAX_BADGE, MAX_BUTTON, MAX_DEPTH, MAX_LIST_ITEMS, MAX_NODE_KEY, MAX_NODES, MAX_TEXT,

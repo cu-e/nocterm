@@ -12,6 +12,18 @@ pub enum ValueType {
     Time,
 }
 
+impl ValueType {
+    /// The frozen name used in the API surface.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Number => "number",
+            Self::Text => "text",
+            Self::Bool => "bool",
+            Self::Time => "time",
+        }
+    }
+}
+
 /// A value read from observed data or a setting.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {

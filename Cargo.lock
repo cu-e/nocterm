@@ -11573,6 +11573,7 @@ dependencies = [
  "nocterm-design",
  "nocterm-explorer",
  "nocterm-monitor",
+ "nocterm-plugin-api",
  "nocterm-plugin-enablement",
  "nocterm-project-providers",
  "nocterm-session",

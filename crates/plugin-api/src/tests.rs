@@ -7,6 +7,7 @@ mod manifest;
 mod runtime;
 mod sanitize;
 mod support;
+mod surface;
 mod table;
 mod template;
 mod view;

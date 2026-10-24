@@ -16,6 +16,9 @@ pub enum WorkspaceKind {
 }
 
 impl WorkspaceKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 4] = [Self::Local, Self::Remote, Self::Container, Self::Folder];
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::Local => "local",

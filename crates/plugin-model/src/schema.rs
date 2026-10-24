@@ -21,7 +21,10 @@ mod values;
 pub use edit::{FieldError, apply, bounded, toggle_choice};
 pub use resolve::{FieldIssue, resolve};
 pub use text::sanitize_text;
-pub use validate::{MAX_TEXT_LEN, SchemaError, SchemaLimit};
+pub use validate::{
+    MAX_FIELDS, MAX_GROUPS, MAX_HELP, MAX_KEY, MAX_LABEL, MAX_OPTIONS, MAX_TEXT_LEN, SchemaError,
+    SchemaLimit,
+};
 pub use values::{FieldEdit, SettingValue, SettingValues};
 
 /// The settings a plugin declares, in groups.

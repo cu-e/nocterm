@@ -9,12 +9,18 @@ use thiserror::Error;
 use super::{ChoiceOption, FieldKind, FieldSpec, SettingsSchema, sanitize_text};
 use crate::ContributionId;
 
-const MAX_GROUPS: usize = 8;
-const MAX_FIELDS: usize = 32;
-const MAX_OPTIONS: usize = 16;
-const MAX_KEY: usize = 32;
-const MAX_LABEL: usize = 48;
-const MAX_HELP: usize = 160;
+/// The most a schema may hold or the longest a name may be; see [`SettingsSchema::validate`].
+pub const MAX_GROUPS: usize = 8;
+/// The most a schema may hold or the longest a name may be; see [`SettingsSchema::validate`].
+pub const MAX_FIELDS: usize = 32;
+/// The most a schema may hold or the longest a name may be; see [`SettingsSchema::validate`].
+pub const MAX_OPTIONS: usize = 16;
+/// The most a schema may hold or the longest a name may be; see [`SettingsSchema::validate`].
+pub const MAX_KEY: usize = 32;
+/// The most a schema may hold or the longest a name may be; see [`SettingsSchema::validate`].
+pub const MAX_LABEL: usize = 48;
+/// The most a schema may hold or the longest a name may be; see [`SettingsSchema::validate`].
+pub const MAX_HELP: usize = 160;
 /// The longest a text field may be allowed to grow, in characters.
 pub const MAX_TEXT_LEN: u16 = 256;
 

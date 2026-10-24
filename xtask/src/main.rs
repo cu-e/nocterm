@@ -19,6 +19,7 @@ mod file_size;
 mod isolation;
 mod lint_policy;
 mod manifest_lints;
+mod plugin_reference;
 mod ratchet;
 mod settings_reference;
 mod survey;
@@ -393,6 +394,7 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
             actions_reference::render(root)?,
         ),
         ("docs/architecture/dependencies.md", architecture(root)?),
+        (plugin_reference::PATH, plugin_reference::render()?),
     ];
     let mut stale = Vec::new();
     for (name, text) in documents {
