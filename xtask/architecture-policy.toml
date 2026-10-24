@@ -12,6 +12,13 @@
 "nocterm_explorer::settings::Opener" = "Serialized opener description."
 "nocterm_monitor::settings::MonitorSettings" = "Serialized settings section."
 "nocterm_vault::settings::VaultSettings" = "Serialized settings section."
+"nocterm_plugin_host::data::PluginDataDoc" = "Serialized plugin data document."
+"nocterm_plugin_host::host::Call" = "One contribution of one plugin in one window, passed by value to a call."
+"nocterm_plugin_host::host::HostPorts" = "Composition dependencies, moved into the host constructor."
+"nocterm_plugin_host::records::AuditEntry" = "Serialized audit line."
+"nocterm_plugin_host::records::PluginRecord" = "Serialized record of one installed plugin."
+"nocterm_plugin_host::records::RecordsDoc" = "Serialized records document."
+"nocterm_plugin_host::registry::PluginSummary" = "One row of the plugins list, copied by value."
 "nocterm_workspace_ports::connections::ConnectionSummary" = "Saved connection facts listed to consumers."
 "nocterm_workspace_ports::session::SessionContext" = "Remote session facts behind a tab."
 "nocterm_workspace_ports::terminal::FactSessionSnapshot" = "Connection-facts source and its identity, copied by value."
@@ -170,6 +177,12 @@ nocterm_plugin_packages = "Bounded file I/O is the adapter's job: nocterm_core::
 # Method names of the gpui receiver types (App, Window, Context, AsyncApp, AsyncWindowContext)
 # that gpui crates may name (I3), each with a reason. The list starts empty and grows per PR.
 [isolation.gpui_allowed]
+new = "AppContext::new makes an entity from a context; the plugin crates write `new` only for constructors of their own types and make no entity through a context."
+background_executor = "nocterm-plugin-host reads the executor clock for rate limits, gesture lifetimes and cadence, so tests can drive time."
+defer = "nocterm-plugin-host applies queued effects after the current entity update ends, never inside it."
+spawn = "nocterm-plugin-host awaits the records write task only to log its failure."
+update = "nocterm-plugin-host re-enters its own entity from the deferred apply through a weak handle."
+weak_entity = "nocterm-plugin-host holds a weak handle to itself for the deferred apply."
 
 [isolation.providers]
 # Direct dependents of nocterm-plugin-ports (I5).

@@ -1,0 +1,34 @@
+[package]
+name = "nocterm-plugin-host"
+description = "The user plugin host: grants, effect broker, rate limits, cadence and caps, plugin records and plugin data."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "service"
+
+[features]
+# In-memory records, data and packages for tests of the host and of the app's adapters. A crate
+# that enables it as a dev-dependency also enables `nocterm-plugin-api/test-support` there: a
+# feature cannot forward to another crate's test support (xtask checks it).
+test-support = []
+
+[dependencies]
+nocterm-plugin-api.workspace = true
+nocterm-plugin-model.workspace = true
+nocterm-plugin-ports.workspace = true
+gpui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+nocterm-plugin-api = { workspace = true, features = ["test-support"] }
+nocterm-plugin-ports = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }

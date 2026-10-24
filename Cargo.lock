@@ -5480,6 +5480,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-plugin-host"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "nocterm-plugin-ports",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "nocterm-plugin-model"
 version = "0.0.0"
 dependencies = [
