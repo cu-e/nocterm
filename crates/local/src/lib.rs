@@ -1,8 +1,10 @@
-//! Native local PTY, structured commands and detached external editors.
-//! Owns: native launch, bounded I/O, exclusive pinned output logs and process ownership.
+//! Native local PTY, structured commands, detached external editors and the local wall clock.
+//! Owns: native launch, bounded I/O, exclusive pinned output logs, process ownership and
+//! reading the system time and time zone.
 //! Does not own: session contracts, filesystem traversal, editor selection or views.
 //! Ports used: session channels. Ports provided: Transport, HostExec, ProgramOpener,
-//! recording::OutputLogFactory. Output-log operations run only on their caller executor.
+//! recording::OutputLogFactory, nocterm_core::clock::WallClock (`SystemClock`). Output-log
+//! operations run only on their caller executor.
 //! Settings section: local options are composed by the app. Globals: none.
 //! Invariants: PTY/exec cancellation owns process cleanup; external editors instead
 //! retain a bounded independent wait owner and survive receipt/application exit.
@@ -25,10 +27,12 @@ use nocterm_session::{
 };
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
+mod clock;
 mod exec;
 mod program_opener;
 mod recording;
 
+pub use clock::SystemClock;
 pub use exec::LocalExec;
 pub use program_opener::{LocalProgramOpener, MAX_OPEN_PROGRAMS};
 pub use recording::LocalOutputLogFactory;

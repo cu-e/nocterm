@@ -5394,6 +5394,7 @@ name = "nocterm-local"
 version = "0.0.0"
 dependencies = [
  "async-channel",
+ "chrono",
  "futures",
  "nix 0.28.0",
  "nocterm-core",
