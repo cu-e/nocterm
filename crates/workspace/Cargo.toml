@@ -21,6 +21,8 @@ nocterm-project-model.workspace = true
 nocterm-plugin-model.workspace = true
 nocterm-plugin-enablement.workspace = true
 nocterm-window-layout.workspace = true
+nocterm-plugin-api = { workspace = true, optional = true }
+nocterm-plugin-ports = { workspace = true, optional = true }
 
 gpui-kit.workspace = true
 tracing.workspace = true
@@ -30,6 +32,8 @@ schemars.workspace = true
 
 [features]
 test-support = []
+# Providers of what a user plugin may observe (docs/architecture/guardrails.md).
+user-plugins = ["dep:nocterm-plugin-api", "dep:nocterm-plugin-ports"]
 
 [lints]
 workspace = true

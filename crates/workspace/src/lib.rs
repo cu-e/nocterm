@@ -24,6 +24,8 @@
 //! Layout, the checked plugin catalog and the optional `WallClock` arrive as explicit `Deps`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
 //! file drag contracts, immutable tab/session and selected monitor-source observations,
+//! plus, behind `user-plugins`, the `ShellCapabilities` provider of `workspace.kind` for user
+//! plugins (a state kept from the window's own events, never read from the shell on request),
 //! plus separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
@@ -71,6 +73,10 @@ pub use context_ports::{ChatConnectionOpen, ChatConnectionOpenError};
 mod dock_item;
 mod file_drag;
 pub mod host;
+#[cfg(feature = "user-plugins")]
+mod host_capabilities;
+#[cfg(feature = "user-plugins")]
+pub use host_capabilities::ShellCapabilities;
 mod item;
 mod local_terminal;
 mod open_on_host;
