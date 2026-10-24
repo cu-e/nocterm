@@ -7,7 +7,8 @@ user-invocable: false
 # Plugin API: system plugins and contributions
 
 Rules: AGENTS.md "Where code goes" and design rules 2 and 3; crate card
-`crates/plugin-model/src/lib.rs`; ADR `docs/adr/0082-system-plugins-and-core-contributions.md`;
+`crates/plugin-model/src/lib.rs`; ADR `docs/adr/0082-system-plugins-and-core-contributions.md`
+and `docs/adr/0083-zoned-status-bar.md` (placement, zones, pinned and attention rules);
 registration types in `crates/workspace/src/workspace/registration.rs`; catalog in
 `src/shell_setup.rs`.
 

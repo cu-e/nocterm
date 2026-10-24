@@ -64,7 +64,7 @@ acceptance; a later record supersedes an earlier one.
 | [0063](0063-agent-chats-below-the-panel.md) | Agent chats live in a service crate below the panel |
 | [0065](0065-retained-context-surfaces.md) | Context surfaces retain their native dock and original callback authority (whole-window selection superseded by0067) |
 | [0066](0066-scoped-chat-storage.md) | Scoped chat authority precedes payload discovery in versioned storage |
-| [0067](0067-project-tabs-with-inner-surfaces.md) | Workspaces are outer connection tabs with independent inner terminal surfaces |
+| [0067](0067-project-tabs-with-inner-surfaces.md) | Workspaces are outer connection tabs with independent inner terminal surfaces (footer order superseded in part by 0083) |
 | [0069](0069-workspace-chat-launch-boundary.md) | Workspace chat scope preserves the existing local agent launch lifecycle |
 | [0070](0070-original-workspace-connection-recovery.md) | Workspace authentication belongs to its inner terminal |
 | [0071](0071-provider-workspace-locations.md) | Workspace locations retain provider identity and session authority |
@@ -79,3 +79,4 @@ acceptance; a later record supersedes an earlier one.
 | [0080](0080-project-adapter-ownership.md) | Project resource, environment and filesystem adapters have separate owners |
 | [0081](0081-panel-groups-own-side-panels.md) | Panel groups own the window's side panels |
 | [0082](0082-system-plugins-and-core-contributions.md) | Built-in shell contributions are core or belong to a system plugin in one checked catalog |
+| [0083](0083-zoned-status-bar.md) | The status bar is zoned and drawn from a layout resolved against the plugin catalog |

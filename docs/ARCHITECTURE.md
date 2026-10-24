@@ -36,6 +36,15 @@ Each layer's notes describe the behaviour and boundaries of its crates; the
 [dependency map](architecture/dependencies.md) lists every crate with its layer,
 internal dependencies and purpose.
 
+## Plugins
+
+The window shell hosts contributions: panels and status bar widgets. The shell's own
+functions are core contributions; every other contribution belongs to a system plugin
+that its crate declares and that is compiled into the application. One checked catalog
+lists them with their placement hints ([ADR 0082](adr/0082-system-plugins-and-core-contributions.md)),
+and the window draws the status bar and arranges its panel groups from a layout
+resolved against that catalog ([ADR 0083](adr/0083-zoned-status-bar.md)).
+
 ## Extension points
 
 Add a new Item for another kind of tab, a Panel for another sidebar section or a

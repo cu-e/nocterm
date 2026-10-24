@@ -6,7 +6,7 @@ Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
 
 ## Workspace folders
@@ -342,3 +342,14 @@ their plugin's namespace, undeclared groups, a group hint on a widget, a set of 
 without exactly one primary group, panel traits on a widget (or missing on a panel) and
 repeated order values in a zone, with typed errors. It has no GPUI types, no
 I/O and no internal dependencies. See [ADR 0082](../adr/0082-system-plugins-and-core-contributions.md).
+
+`nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
+zones of the status bar, panel groups with their members and separators, the tray of
+registered contributions that are not placed, and the panels that open with a layout.
+`resolve` arranges the catalog's contributions as a preset asks and places the rest by
+their hints; ids the catalog does not know are kept in the preset but never placed, a
+contribution is placed once, separators never lead, trail or double, exactly one group
+is primary (the catalog's; a preset's own `primary` flag is ignored) and a pinned widget is always placed. The built-in Default is the empty
+preset and Swapped is its resolution with every group on the other side; neither is
+stored. It reads `nocterm-plugin-model`, has no GPUI types and no I/O. See
+[ADR 0083](../adr/0083-zoned-status-bar.md).

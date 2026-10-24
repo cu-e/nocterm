@@ -93,16 +93,24 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 
 ## Workspace
 
-`Workspace` coordinates seven private owners: focus, `WindowSurfaces`, `Chrome`,
-`PanelGroups`, body, installed ports and registered actions.
-`Chrome` owns window menus, the new-tab popover and status views; `PanelGroups`
+`Workspace` coordinates eight private owners besides its focus handle: `WindowSurfaces`,
+`Chrome`, `PanelGroups`, body, `ShellLayout`, installed ports, registered actions and the
+registrations of the plugin catalog.
+`Chrome` owns window menus, the new-tab popover and the status bar; `PanelGroups`
 owns the navigation and assistant groups: their visibility, selected panel,
-attention, expansion and panel subscriptions (ADR 0081). Panels and widgets register
+attention, expansion and panel subscriptions (ADR 0081). The members of a group and their
+order come from the resolved layout; a panel the layout leaves in the tray stays openable
+by id but is outside next-panel and the toggle numbering. Panels and widgets register
 under the ids of the plugin catalog carried by `Deps`: the workspace checks the id and
 its kind, creates the view from the owner's factory (which may read the workspace) and
 places it by the descriptor
 (ADR 0082). `nocterm-ui` maps a descriptor's `Icon` and `WidthClass` onto its icon
-names and column widths.
+names and column widths. `ShellLayout` holds the built-in Default and Swapped layouts
+resolved against the catalog and selects one with the `workspace.swapped` flag; the
+`StatusBar` keeps widget factories and creates a widget's view when the layout first
+places it. A group's side comes from its zone, a pinned widget the layout omits goes
+to the end of the right zone, and an omitted panel that asks for attention is drawn at
+the inner end of the right zone (ADR 0083).
 Immutable observations expose tab identities and native pane order without giving
 callers mutable native entities. Transitions commit membership and subscriptions
 before the shell emits events or changes focus (ADR 0026).
@@ -175,7 +183,7 @@ actions operate the same dock for keyboard split/reorder/focus. Tab context-menu
 closures capture the original surface/selection and clicked Item, reject stale
 selections and resolve that surface's current pane order at execution;
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
-footer owns section switches and status views. Removing the last bottom Item also
+footer is drawn from the resolved layout (ADR 0083): panel toggles, the notice bar, the local terminal toggle and status widgets in three zones. Removing the last bottom Item also
 removes its Dock instead of merely emptying the tab list. Hiding the local dock
 uses native dock visibility, preserving its pane tree, sizes, tab order,
 selections, groups and running processes. Within a surface every tab shares one

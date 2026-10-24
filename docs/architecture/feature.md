@@ -168,7 +168,8 @@ best effort within GPUI's shutdown deadline. UI's `SettingsPage`/`SettingsPageSp
 root inject the lazy Vault page without feature-to-feature dependencies; the
 Vault page has Overview, Credentials, Security and Options tabs, and switching
 tabs, deactivation and closure clear typed master passwords. `nocterm-files`
-contributes an Explorer Panel which follows `ActiveSessionChanged`. The remote
+contributes an Explorer panel (left zone) and a transfers widget (right zone) as core
+contributions, placed by their hints (ADR 0083); the panel follows `ActiveSessionChanged`. The remote
 half uses home/listing requests; both halves own their navigation, selection and
 background tasks in private `LocalPane`/`RemotePane` entities. Local I/O is delegated
 to injected session filesystem capabilities. Request tasks are dropped when
@@ -179,7 +180,7 @@ through Workspace's `LocalTerminal` contract, without Files depending on Termina
 
 Explorer receives explicit `Deps` through `install` and `register`; application
 composition retains `Installed` and supplies it to each workspace. Transfers and
-its status view retain the supplied TransferService port, so Show Transfers also works before
+its status widget retain the supplied TransferService port, so Show Transfers also works before
 Explorer is opened. The coordinator handles transfer intents and queue snapshots;
 pane entities own their views and emit typed intents without mutating siblings.
 Local home discovery, listing, completion, statistics and mutations run through
@@ -272,8 +273,8 @@ the original surface and checked resource; watch generations reject stale detect
 and readings across switches or reconnects. It keeps bounded samplers and runs
 exactly one script: the status
 bar's metrics at the slow interval while the details are closed, and the union
-with the details' metrics at the fast interval while they are open. It adds a
-leading footer view through the workspace and supplies its Settings page as a
+with the details' metrics at the fast interval while they are open. It declares a
+status widget for the left zone of the bar in its system plugin and supplies its Settings page as a
 `SettingsPageSpec`. Local host execution is an optional `HostExec` supplied at
 installation and retained by its model. Container monitoring selects pure
 own-cgroup collection through its already scoped executor, with CPU explicitly

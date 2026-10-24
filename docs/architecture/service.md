@@ -71,7 +71,7 @@ registers a `SessionClient` and applies the `SessionEvent`s the runtime emits,
 synchronously and in order, while the runtime reads only a `ClientState`. The
 host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace re-exports the narrow terminal ports
 of `nocterm-workspace-ports` and exposes `ConnectionDirectory` seams so the agent feature never imports other
-features. The right panel lives outside the tab dock and remains available with
+features. The assistant group lives outside the tab dock and remains available with
 no tabs; expansion replaces central content while preserving visible navigation
 and the footer, without changing remembered docked widths.
 `ConnectionDirectory` methods take the workspace as a weak handle and are called
