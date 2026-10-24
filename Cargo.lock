@@ -5500,6 +5500,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-plugin-ports"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+]
+
+[[package]]
 name = "nocterm-plugins-ui"
 version = "0.0.0"
 dependencies = [

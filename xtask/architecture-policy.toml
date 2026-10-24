@@ -158,7 +158,7 @@ external = ["base"]
 [isolation.crates.nocterm-plugin-host]
 kind = "gpui"
 closure = ["nocterm-plugin-ports", "nocterm-plugin-api", "nocterm-plugin-model"]
-direct = ["futures", "gpui-pre", "serde", "serde_json", "thiserror", "tracing"]
+direct = ["gpui-pre", "serde", "serde_json", "thiserror", "tracing"]
 external = ["base"]
 
 # Modules (or whole packages) that may reach file-system, process, environment or dependency
