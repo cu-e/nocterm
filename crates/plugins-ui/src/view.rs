@@ -12,7 +12,7 @@ use gpui_kit::{
 };
 use nocterm_plugin_model::{ContributionKind, PluginId, SystemContribution, SystemPlugin};
 use nocterm_ui::{contribution_icon, form};
-use nocterm_workspace::OpenPluginPage;
+use nocterm_workspace::{OpenLayoutSettings, OpenPluginPage};
 
 use crate::page::PluginsPage;
 
@@ -170,6 +170,7 @@ fn detail(
         .child(contributions(plugin, cx))
         .child(editor)
         .children(page_link(plugin, cx))
+        .children(layout_link(plugin, cx))
         .into_any_element()
 }
 
@@ -223,6 +224,29 @@ fn page_link(plugin: &'static SystemPlugin, cx: &mut Context<PluginsPage>) -> Op
                     .label(format!("{} settings…", plugin.name))
                     .on_click(cx.listener(move |_, _, window, cx| {
                         let action = OpenPluginPage { plugin: id.clone() };
+                        window.dispatch_action(Box::new(action), cx);
+                    })),
+            )
+            .into_any_element(),
+    )
+}
+
+/// The way to the status bar and panels editor, with the plugin's first contribution selected.
+/// A plugin that contributes nothing has nothing to place.
+fn layout_link(plugin: &'static SystemPlugin, cx: &mut Context<PluginsPage>) -> Option<AnyElement> {
+    let first: SharedString = plugin.contributions.first()?.id.as_str().to_owned().into();
+    Some(
+        div()
+            .pt_4()
+            .child(
+                Button::new("plugin-layout-link")
+                    .small()
+                    .outline()
+                    .label("Customize in status bar…")
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        let action = OpenLayoutSettings {
+                            select: Some(first.clone()),
+                        };
                         window.dispatch_action(Box::new(action), cx);
                     })),
             )

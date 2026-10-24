@@ -18,7 +18,7 @@ use nocterm_plugin_model::{
     SystemContribution, SystemPlugin, Zone,
 };
 use nocterm_ui::{FakePluginSettings, PluginSettingsDirectory, SettingsPageHandle};
-use nocterm_workspace::OpenPluginPage;
+use nocterm_workspace::{OpenLayoutSettings, OpenPluginPage};
 
 use super::*;
 
@@ -378,4 +378,20 @@ fn a_plugin_without_settings_says_so(cx: &mut TestAppContext) {
         assert!(window.try_find("plugin-page-link").is_none());
         assert!(window.try_find("plugin-setting:plain:verbose:").is_none());
     });
+}
+
+#[gpui_kit::test]
+fn a_plugin_links_to_its_first_contribution_in_the_layout_editor(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    let selected = Rc::new(RefCell::new(Vec::new()));
+    cx.update(|cx| {
+        let selected = selected.clone();
+        cx.on_action(move |action: &OpenLayoutSettings, _| {
+            selected.borrow_mut().push(action.select.clone());
+        });
+    });
+    frame(&fixture, cx, |window, cx| {
+        window.click("plugin-layout-link", cx);
+    });
+    assert_eq!(*selected.borrow(), [Some("tools.clock".into())]);
 }
