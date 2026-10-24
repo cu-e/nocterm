@@ -64,6 +64,7 @@ impl Render for DetailsView {
         }
         v_flex()
             .id("host-monitor-details")
+            .test_support()
             .w(rems(26.))
             .max_h(rems(36.))
             .overflow_y_scroll()

@@ -60,7 +60,7 @@ pub fn register(
 ) -> Result<(), RegistrationError> {
     let installed = installed.clone();
     workspace.register_widget(
-        WidgetRegistration::new(&plugin::SUMMARY, move |workspace, _, cx| {
+        WidgetRegistration::zone_aware(&plugin::SUMMARY, move |workspace, _, cx| {
             let session = workspace.monitor_source(cx);
             let handle = cx.entity();
             let monitor = cx.new(|cx| model::HostMonitor::new(&handle, session, &installed, cx));

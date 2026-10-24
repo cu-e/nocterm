@@ -1,7 +1,7 @@
 //! The compact summary at the start of the footer, which opens the details.
 
 use gpui_kit::{
-    Anchor, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Hsla, Window,
+    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Hsla, Window,
     component::{
         ActiveTheme as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -13,7 +13,9 @@ use gpui_kit::{
     px,
 };
 use nocterm_monitor::{MonitorMetric, Snapshot, format};
-use nocterm_ui::IconName;
+use nocterm_plugin_model::Zone;
+use nocterm_ui::{IconName, zone_anchor};
+use nocterm_workspace::ZoneAware;
 
 use crate::{
     details::DetailsView,
@@ -25,6 +27,7 @@ pub(crate) struct MonitorStatus {
     monitor: Entity<HostMonitor>,
     details: Entity<DetailsView>,
     focus: FocusHandle,
+    zone: Zone,
 }
 
 impl MonitorStatus {
@@ -35,6 +38,16 @@ impl MonitorStatus {
             monitor,
             details,
             focus: cx.focus_handle(),
+            zone: Zone::Left,
+        }
+    }
+}
+
+impl ZoneAware for MonitorStatus {
+    fn set_zone(&mut self, zone: Zone, cx: &mut Context<Self>) {
+        if self.zone != zone {
+            self.zone = zone;
+            cx.notify();
         }
     }
 }
@@ -75,7 +88,7 @@ impl Render for MonitorStatus {
         let details = self.details.clone();
         let model = self.monitor.downgrade();
         Popover::new("host-monitor-details")
-            .anchor(Anchor::BottomLeft)
+            .anchor(zone_anchor(self.zone))
             .trigger(button)
             .track_focus(&self.focus)
             .open(open)
