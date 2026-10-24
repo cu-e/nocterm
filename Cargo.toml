@@ -65,6 +65,8 @@ nocterm-vault-store.workspace = true
 nocterm-plugin-enablement.workspace = true
 nocterm-plugin-model.workspace = true
 nocterm-plugin-api = { workspace = true, optional = true }
+nocterm-plugin-host = { workspace = true, optional = true }
+nocterm-plugin-ports = { workspace = true, optional = true }
 nocterm-plugins-ui.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
@@ -81,7 +83,15 @@ tracing-subscriber.workspace = true
 [features]
 # The user-plugin track: compiled out of default and release builds until it ships
 # (docs/architecture/guardrails.md, "Isolation of plugin crates").
-user-plugins = ["dep:nocterm-plugin-api"]
+user-plugins = [
+    "dep:nocterm-plugin-api",
+    "dep:nocterm-plugin-host",
+    "dep:nocterm-plugin-ports",
+    "nocterm-workspace/user-plugins",
+    "nocterm-monitor-ui/user-plugins",
+    "nocterm-files/user-plugins",
+    "nocterm-ui/user-plugins",
+]
 
 [lints]
 workspace = true
