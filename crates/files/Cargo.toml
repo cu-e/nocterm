@@ -18,10 +18,16 @@ nocterm-store.workspace = true
 nocterm-transfers.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
+nocterm-plugin-api = { workspace = true, optional = true }
+nocterm-plugin-ports = { workspace = true, optional = true }
 futures.workspace = true
 gpui-kit.workspace = true
 parking_lot.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+[features]
+# The transfer counts, offered to user plugins that were granted `transfers.counts`.
+user-plugins = ["dep:nocterm-plugin-api", "dep:nocterm-plugin-ports"]
 
 [dev-dependencies]
 nocterm-explorer = { workspace = true, features = ["test-support"] }

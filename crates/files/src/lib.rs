@@ -7,13 +7,16 @@
 //! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `DirectoryReaders`, `TransferService`, `ProgramOpener`,
 //! workspace `LocalTerminal` and the retained settings service handle.
 //! Ports provided: `Panel`, `SettingsPageSpec` and the core `files.explorer` and
-//! `files.transfers` contributions (`plugin::CORE`). Settings section: explorer. Globals: none.
+//! `files.transfers` contributions (`plugin::CORE`) and, behind `user-plugins`, the
+//! `TransferCounts` provider of `transfers.counts` for user plugins. Settings section: explorer. Globals: none.
 //! ExplorerSource supplies ordinary session files or a local folder for the
 //! injected LocalFs. The folder is an initial location; navigation stays ordinary.
 //! Invariants: native paths keep their original names; each pane rejects stale navigation;
 //! accepted operations retain their original capability while later navigation proceeds.
 mod activity;
 mod dialogs;
+#[cfg(feature = "user-plugins")]
+mod host_capabilities;
 mod local;
 mod local_pane;
 mod open;
@@ -59,6 +62,8 @@ use operations::FileTarget;
 use remote::{Browser, listing};
 use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
+#[cfg(feature = "user-plugins")]
+pub use host_capabilities::TransferCounts;
 pub use registration::{
     Installed, OpenExplorerSettings, ShowTransfers, ToggleExplorer, install, register,
 };
