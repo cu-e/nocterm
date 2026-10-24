@@ -78,3 +78,4 @@ acceptance; a later record supersedes an earlier one.
 | [0079](0079-project-terminal-contracts-below-shell.md) | Project terminal contracts live below the shell with captured typed placement |
 | [0080](0080-project-adapter-ownership.md) | Project resource, environment and filesystem adapters have separate owners |
 | [0081](0081-panel-groups-own-side-panels.md) | Panel groups own the window's side panels |
+| [0082](0082-system-plugins-and-core-contributions.md) | Built-in shell contributions are core or belong to a system plugin in one checked catalog |

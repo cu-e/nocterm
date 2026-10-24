@@ -97,7 +97,12 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 `PanelGroups`, body, installed ports and registered actions.
 `Chrome` owns window menus, the new-tab popover and status views; `PanelGroups`
 owns the navigation and assistant groups: their visibility, selected panel,
-attention, expansion and panel subscriptions (ADR 0081).
+attention, expansion and panel subscriptions (ADR 0081). Panels and widgets register
+under the ids of the plugin catalog carried by `Deps`: the workspace checks the id and
+its kind, creates the view from the owner's factory (which may read the workspace) and
+places it by the descriptor
+(ADR 0082). `nocterm-ui` maps a descriptor's `Icon` and `WidthClass` onto its icon
+names and column widths.
 Immutable observations expose tab identities and native pane order without giving
 callers mutable native entities. Transitions commit membership and subscriptions
 before the shell emits events or changes focus (ADR 0026).

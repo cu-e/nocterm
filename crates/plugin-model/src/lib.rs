@@ -1,9 +1,10 @@
 //! What a plugin is and what the window shell can host.
 //!
 //! A plugin is a named unit that owns contributions: panels in the side groups and widgets in
-//! the status bar. This crate holds the plain data every owner declares as a `const`, the
-//! placement hints the shell reads, and the checked [`PluginCatalog`] of core contributions
-//! (shell functions that are not plugins and are never disabled) and system plugins.
+//! the status bar. This crate holds the plain data every owner declares (a `static` plugin,
+//! and core contributions as a `const`), the placement hints the shell reads, and the checked
+//! [`PluginCatalog`] of core contributions (shell functions that are not plugins and are never
+//! disabled) and system plugins.
 //!
 //! Owns: id syntax, descriptors and their placement hints, group specs, icons, width classes,
 //! catalog validation and contribution ownership (core or plugin).

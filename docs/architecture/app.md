@@ -14,7 +14,11 @@ once before asynchronous agent-preference hydration. Loading preferences does no
 construct another filesystem, transfer queue or opener. One SettingsConfig is prepared before
 hydration and consumed once to install the explicit settings handle afterward. Checked ordinary and
 startup page catalogs are retained by the existing Booted settings slot; a catalog error quits
-before application registration or first-window creation. The prepared inputs then
+before application registration or first-window creation. `src/shell_setup.rs` lists
+every system plugin once and checks them with the shell's groups and core contributions
+as one `PluginCatalog`; a failure is `BootstrapError::Plugins` and quits like an invalid
+settings catalog ([ADR 0082](../adr/0082-system-plugins-and-core-contributions.md)).
+Every window's workspace receives that catalog through its `Deps`. The prepared inputs then
 pass to `src/bootstrap.rs`, which installs services in one order shared with GUI
 tests and registers independent workspace features. The vault adapter is passed
 as a `VaultAccess` port; its installed feature handle owns settings observation

@@ -6,7 +6,7 @@ Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
 
 ## Workspace folders
@@ -329,3 +329,16 @@ The snippet domain also declares blocking SnippetRepository and supplied Snippet
 capabilities. Storage errors retain the original native source behind a typed read/write
 operation; no native paths, entropy acquisition or I/O enters the domain. Record and
 library serialization, validation and exact expected-record mutations remain pure.
+
+## Plugins and contributions
+
+`nocterm-plugin-model` owns what a plugin is and what the window shell can host:
+ids (their syntax is checked by the catalog), the `SystemPlugin` and `SystemContribution` descriptors that feature
+crates declare, placement hints (zone, order, group, automatic placement), group specs,
+icons and width classes, and the checked `PluginCatalog`. Core contributions are
+functions that are not plugins and are never disabled (the shell's, and those of connections
+and files); every other contribution belongs to a system plugin. The catalog refuses malformed or repeated ids, contributions outside
+their plugin's namespace, undeclared groups, a group hint on a widget, a set of groups
+without exactly one primary group, panel traits on a widget (or missing on a panel) and
+repeated order values in a zone, with typed errors. It has no GPUI types, no
+I/O and no internal dependencies. See [ADR 0082](../adr/0082-system-plugins-and-core-contributions.md).
