@@ -60,6 +60,32 @@ shutdown captures already accepted edits through the existing service. A draft n
 flushed before native quit is not an accepted snapshot. No coordinator phase or quit
 handler is added ([ADR 0054](../adr/0054-checked-settings-text-receipts.md)).
 
+### Plugin settings form
+
+`PluginSettingsForm` draws the settings schema of one plugin (`nocterm-plugin-model`) with
+one control per field kind: a switch, a row of buttons or a searchable list for a choice,
+a checkbox per option, a stepper for a bounded number and a single-line input for text.
+`FormScope` selects the whole plugin or the groups of one contribution, and `FormFrame`
+draws it as part of a host page or labelled with a plugin's name. An empty scope says
+"This item has no settings".
+
+The form never computes a number or a list from its own copy. Each control sends a
+`FieldEdit` to a `PluginSettingsSource`, a port named for the form's need: a switch and a
+choice send the value shown, while an option toggle, a step and text are applied by the
+source to the value current at write time. The source reports a typed
+`PluginSettingsError`; the form
+shows its text under the field and shows what the source holds, including changes made
+elsewhere. Text is sent once per 600 ms pause, on Enter or blur, and on `flush`, and is
+never overwritten while it waits to be sent. Text values are displayed literally in an
+ordinary unmasked input.
+
+`SectionBinding<S>` is the system source: the owner supplies `read` and `write` functions
+over its own `SettingsSection`, and every write runs inside the store's checked update, so
+it is ordered with the owner's own writes and a refused edit changes nothing.
+`PluginSettingsDirectory` maps a system plugin to its schema and source. The
+`test-support` feature supplies `FakePluginSettings`
+([ADR 0085](../adr/0085-one-plugin-model-with-separate-trust-tiers.md)).
+
 ## Rendering
 
 Windows incremental painting stays inside the vendored GPUI renderer. Exact

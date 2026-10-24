@@ -1,6 +1,6 @@
 ---
 name: plugin-api
-description: Add, change or remove a plugin or anything the window shell hosts. Covers a system plugin (pub static PLUGIN, SystemPlugin with its id, name, description and required flag), a panel or status-bar widget contribution (SystemContribution, register_panel, register_widget, panel and widget factories), a contribution kind, icon, width class or group spec, and the plugin catalog in src/shell_setup.rs. Use when a task asks to expose app data or actions to plugins, user-written widgets or panels, or an API "handle" ("ручка"). No user plugin runtime exists yet, so step 0 stops and escalates instead of adding a getter. Not for ports between built-in crates (port-design), MCP tools for AI agents (crates/ai tool catalog), GPUI actions or settings sections that no plugin schema exposes.
+description: Add, change or remove a plugin or anything the window shell hosts. Covers a system plugin (pub static PLUGIN, SystemPlugin with its id, name, description and required flag), a panel or status-bar widget contribution (SystemContribution, register_panel, register_widget, panel and widget factories), a contribution kind, icon, width class or group spec, and the plugin catalog in src/shell_setup.rs. Use when a task asks to expose app data or actions to plugins, user-written widgets or panels, or an API "handle" ("ручка"). No user plugin runtime exists yet, so step 0 stops and escalates instead of adding a getter. Also covers a plugin settings schema (SettingsSchema, FieldGroup, FieldSpec, FieldKind, SettingValue), its SectionBinding to the owner's settings section and the shared plugin settings form. Not for ports between built-in crates (port-design), MCP tools for AI agents (crates/ai tool catalog), GPUI actions or settings sections that no plugin schema exposes.
 user-invocable: false
 ---
 
@@ -8,7 +8,8 @@ user-invocable: false
 
 Rules: AGENTS.md "Where code goes" and design rules 2 and 3; crate card
 `crates/plugin-model/src/lib.rs`; ADR `docs/adr/0082-system-plugins-and-core-contributions.md`
-and `docs/adr/0083-zoned-status-bar.md` (placement, zones, pinned and attention rules);
+and `docs/adr/0083-zoned-status-bar.md` (placement, zones, pinned and attention rules) and
+`docs/adr/0085-one-plugin-model-with-separate-trust-tiers.md` (settings schema, trust tiers);
 registration types in `crates/workspace/src/workspace/registration.rs`; catalog in
 `src/shell_setup.rs`.
 
@@ -58,6 +59,27 @@ Build workspace dependencies with `test_support::deps_for(&[&PLUGIN], cx)`, or `
 when the owner declares `CORE`. Keep the owner's descriptor/panel parity test, the "every catalog
 entry is registered" bootstrap test, and the default-geometry oracle unchanged unless the change
 intends otherwise.
+
+## Settings
+1. **Schema.** Add a `FieldGroup` to the owner's `PLUGIN.settings`, with
+   `contribution: Some(<id>)` when the field belongs to one widget or panel. Kinds are toggle,
+   choice, multi-choice, bounded number and single-line text (`max_len` at most 256,
+   sanitized, never masked). There is no colour, secret, password or multi-line field; stop and
+   `escalate` (ADR 0085 amendment) instead of adding one or a custom view. Never store a
+   credential in a text field.
+2. **Storage.** The field key equals the serde key in the owner's own `SettingsSection`, named
+   by `settings_section`. Never add a generic table or a second section per plugin.
+3. **Binding.** One `SectionBinding::<S>` per plugin, with `read` and `write` functions; writes
+   run inside `update_checked`. The plugin's own code keeps its typed `setting::<S>` read. The
+   binding sanitizes and bounds text on every read; a text field's owner `sanitize` should call
+   `sanitize_text` too, so the owner's own reads are clean.
+4. **Tests.** Parity of options and defaults with the owner type; a write through the binding
+   changes the expected key; `PLUGIN.settings_section == Some(S::KEY)`.
+
+## 5. Regenerate
+`docs/reference/plugins.md` is generated from the catalog. After a plugin, descriptor or
+settings change run `.claude/hooks/cargo-serial.sh cargo test -p nocterm plugins_reference`
+with `NOCTERM_BLESS=1` set, and commit the result.
 
 ## Output (in `30-design.md`)
 ### Plugin <id>

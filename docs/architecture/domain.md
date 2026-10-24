@@ -343,6 +343,19 @@ without exactly one primary group, panel traits on a widget (or missing on a pan
 repeated order values in a zone, with typed errors. It has no GPUI types, no
 I/O and no internal dependencies. See [ADR 0082](../adr/0082-system-plugins-and-core-contributions.md).
 
+Its `schema` module is the declarative settings schema of a plugin: groups of fields of five
+kinds (toggle, choice, multi-choice, bounded number and single-line text), with no colour,
+secret or multi-line kind. `SettingsSchema::validate` bounds the counts and lengths, checks
+that keys, options, ranges and defaults are well formed and that a group names one of the
+plugin's own contributions; the catalog calls it and refuses a plugin with a schema but no
+`settings_section`. `apply` turns a `FieldEdit` (set a value, toggle one option, or step a number) into the
+new value of a field from the value current at write time, so quick edits compose, with a
+typed `FieldError` whose text is meant for the field. Text is stripped of control
+characters, line breaks and every `Default_Ignorable_Code_Point`, keeps at most two
+nonspacing or enclosing marks per base character, and is data: never interpreted or
+masked. `bounded` applies the same rules to values read from a stored document. The schema performs no I/O and knows
+nothing of storage. See [ADR 0085](../adr/0085-one-plugin-model-with-separate-trust-tiers.md).
+
 `nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
 zones of the status bar, panel groups with their members and separators, the tray of
 registered contributions that are not placed, and the panels that open with a layout.
