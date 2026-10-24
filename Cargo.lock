@@ -5873,6 +5873,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-window-layout"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-model",
+]
+
+[[package]]
 name = "nocterm-workspace"
 version = "0.0.0"
 dependencies = [

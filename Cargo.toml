@@ -234,6 +234,7 @@ nocterm-themes-registry = { path = "crates/themes-registry" }
 nocterm-theme-service = { path = "crates/theme-service" }
 nocterm-ui = { path = "crates/ui" }
 nocterm-vt = { path = "crates/vt" }
+nocterm-window-layout = { path = "crates/window-layout" }
 nocterm-workspace = { path = "crates/workspace" }
 nocterm-vault = { path = "crates/vault" }
 nocterm-vault-store = { path = "crates/vault-store" }
