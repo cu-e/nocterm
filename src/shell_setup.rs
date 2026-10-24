@@ -7,6 +7,8 @@ mod plugins;
 #[cfg(test)]
 mod reference;
 mod settings;
+#[cfg(all(test, feature = "user-plugins"))]
+mod user_plugin_contract;
 
 pub(crate) use plugins::AppPluginToggles;
 pub(crate) use settings::install_guest_pages;

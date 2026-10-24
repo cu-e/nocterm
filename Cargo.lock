@@ -4949,6 +4949,7 @@ dependencies = [
  "nocterm-localfs",
  "nocterm-monitor",
  "nocterm-monitor-ui",
+ "nocterm-plugin-api",
  "nocterm-plugin-enablement",
  "nocterm-plugin-model",
  "nocterm-plugins-ui",
@@ -5452,6 +5453,18 @@ dependencies = [
  "nocterm-workspace",
  "serde_json",
  "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-plugin-api"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-model",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
 ]
 
