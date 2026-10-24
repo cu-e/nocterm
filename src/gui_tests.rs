@@ -19,6 +19,7 @@ mod chat_history;
 mod default_shell_geometry;
 mod keymap;
 mod menu_tabs;
+mod plugin_registration;
 mod program_opening;
 mod project_workspaces;
 mod secret_prompts;
