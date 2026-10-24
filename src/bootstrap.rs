@@ -151,7 +151,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         terminal_auth_factory,
         files,
         themes,
-        mut agent,
+        agent,
         sandbox_probe,
         images,
         vault,
@@ -161,15 +161,8 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let stored = persist.then_some(&paths);
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
-    let local_host = hosts.local_host;
-    let terminal_deps = terminal_dependencies(
-        hosts.transport,
-        hosts.local,
-        hosts.container_sessions,
-        hosts.workspace_sessions,
-        stored,
-        &shutdown,
-    );
+    let local_host = hosts.local_host.clone();
+    let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let projects = install_projects(
@@ -181,13 +174,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         cx,
     )
     .map(|projects| projects.with_local_host(local_host.clone()));
-    if let Some(factory) = terminal_auth_factory {
-        agent.terminal_auth = Some(factory(terminal.clone()));
-    }
+    let terminal_auth = terminal_auth_factory.map(|factory| factory(terminal.clone()));
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
-    let (agent, registration) =
-        nocterm_agent::init(agent, images, layout.clone(), &ui, &shutdown, cx);
-    report_store_registration("agent", registration);
+    let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
@@ -376,16 +365,13 @@ fn install_snippets(
 
 /// Compose one registry and native session capabilities for all windows.
 fn terminal_dependencies(
-    transport: Arc<dyn nocterm_session::Transport>,
-    local: nocterm_terminal::LocalSessions,
-    container_sessions: Arc<dyn nocterm_project_providers::ContainerSessionFactory>,
-    workspace_sessions: Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>,
+    hosts: HostServices,
     stored: Option<&nocterm_core::Paths>,
     shutdown: &nocterm_store::ShutdownCoordinator,
 ) -> nocterm_terminal::Deps {
-    let deps = nocterm_terminal::Deps::new(transport, local)
-        .with_container_sessions(container_sessions)
-        .with_workspace_sessions(workspace_sessions);
+    let deps = nocterm_terminal::Deps::new(hosts.transport, hosts.local)
+        .with_container_sessions(hosts.container_sessions)
+        .with_workspace_sessions(hosts.workspace_sessions);
     let Some(paths) = stored else {
         return deps;
     };
@@ -395,6 +381,25 @@ fn terminal_dependencies(
     let registry = Arc::new(nocterm_store::RecordingRegistry::new(log_factory));
     report_store_registration("recording", registry.register(shutdown));
     deps.with_recording(registry)
+}
+
+/// Installs the agent feature; a supplied terminal sign-in opener replaces the one in `agent`.
+fn install_agent(
+    mut agent: nocterm_agent::AgentServices,
+    terminal_auth: Option<nocterm_agent::TerminalAuthOpener>,
+    images: nocterm_agent::ImageDeps,
+    layout: &nocterm_ui::LayoutHandle,
+    ui: &nocterm_ui::UiReady,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> nocterm_agent::Installed {
+    if terminal_auth.is_some() {
+        agent.terminal_auth = terminal_auth;
+    }
+    let (agent, registration) =
+        nocterm_agent::init(agent, images, layout.clone(), ui, shutdown, cx);
+    report_store_registration("agent", registration);
+    agent
 }
 
 /// Freeze transfer admission during synchronous capture, then drain without App.
