@@ -1,4 +1,5 @@
 //! Feature-owned pages embedded in the Settings view, without feature dependencies.
+use gpui_kit::AppContext as _;
 use gpui_kit::{
     AnyView, App, Context, Entity, FocusHandle, Focusable, Render, SharedString, Window,
 };
@@ -101,14 +102,32 @@ impl SettingsPageSpec {
         self.icon = icon;
         self
     }
+
+    /// Shows the page first and each section below it in the host's scroll. A section is
+    /// created when the page first renders it; the page passes flush, hide and close on to the
+    /// sections it created. `reveal("<key>")` scrolls to and focuses a section, and
+    /// `reveal("<key>/<anchor>")` also asks the section to reveal `<anchor>`.
+    pub fn with_sections(mut self, sections: Vec<EmbeddedPageSpec>) -> Self {
+        if sections.is_empty() {
+            return self;
+        }
+        let primary = self.factory.clone();
+        self.factory = Rc::new(move |context, window, cx| {
+            let page = primary(context.clone(), window, cx);
+            let sections = EmbeddedPages::new(sections.clone());
+            let sectioned = SectionedPage::new(page, sections, context.scroll());
+            Box::new(cx.new(|_| sectioned))
+        });
+        self
+    }
 }
 
-use crate::SettingsPageContext;
+use crate::{EmbeddedPageSpec, EmbeddedPages, SectionedPage, SettingsPageContext};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{AppContext as _, TestAppContext, WindowOptions, div};
+    use gpui_kit::{TestAppContext, WindowOptions, div};
 
     struct Page {
         focus: FocusHandle,
