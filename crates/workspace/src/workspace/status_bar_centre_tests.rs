@@ -49,7 +49,7 @@ fn stored() -> LayoutSettings {
 }
 
 /// A layout with the given `bar`, leaving the `tray` panels unplaced.
-fn layout(bar: serde_json::Value, tray: &[&str]) -> LayoutSettings {
+pub(super) fn layout(bar: serde_json::Value, tray: &[&str]) -> LayoutSettings {
     serde_json::from_value(serde_json::json!({
         "active": "p1",
         "presets": [{ "id": "p1", "name": "Centred", "bar": bar, "tray": tray }],
@@ -57,10 +57,10 @@ fn layout(bar: serde_json::Value, tray: &[&str]) -> LayoutSettings {
     .expect("the stored layout is valid")
 }
 
-struct Bar {
-    handle: AnyWindowHandle,
-    workspace: Entity<Workspace>,
-    side_panel: Entity<TestPanel>,
+pub(super) struct Bar {
+    pub(super) handle: AnyWindowHandle,
+    pub(super) workspace: Entity<Workspace>,
+    pub(super) side_panel: Entity<TestPanel>,
 }
 
 /// A window of `width` pixels whose bar has a centre.
@@ -69,7 +69,7 @@ fn centred_bar(cx: &mut TestAppContext, width: f32) -> Bar {
 }
 
 /// A window of `width` pixels whose bar is arranged by `layouts`.
-fn bar_of(cx: &mut TestAppContext, width: f32, layouts: LayoutSettings) -> Bar {
+pub(super) fn bar_of(cx: &mut TestAppContext, width: f32, layouts: LayoutSettings) -> Bar {
     let (handle, workspace, _) = fixture_with_deps(cx, |layout, cx| {
         let mut document = SettingsDocument::default();
         document.register::<LayoutSettings>();
@@ -193,7 +193,7 @@ fn a_narrow_window_cuts_the_notice_text_before_the_bell_and_the_attention_toggle
     .unwrap();
 }
 
-fn say_much(window: &mut Window, cx: &mut gpui_kit::App) {
+pub(super) fn say_much(window: &mut Window, cx: &mut gpui_kit::App) {
     nocterm_ui::notice::info(
         window,
         cx,

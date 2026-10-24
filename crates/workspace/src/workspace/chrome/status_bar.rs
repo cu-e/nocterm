@@ -14,6 +14,7 @@ use crate::Workspace;
 
 mod inputs;
 mod menu;
+mod overflow;
 mod row;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -21,6 +22,7 @@ pub(crate) use inputs::ToggleLooks;
 pub(super) use inputs::{BarEntry, BarInputs};
 pub(super) use menu::BarMenu;
 use menu::Pointed;
+pub(super) use overflow::BarOverflow;
 pub(super) use row::footer;
 
 /// Creates the view of a widget.
@@ -39,6 +41,8 @@ pub(in crate::workspace) struct StatusBar {
     widgets: Vec<WidgetEntry>,
     /// The entry the pointer was last pressed on, for the context menu.
     pointed: Pointed,
+    /// What the row measured and whether the overflow menu is open.
+    overflow: BarOverflow,
 }
 
 impl StatusBar {
@@ -46,7 +50,12 @@ impl StatusBar {
         Self {
             widgets: Vec::new(),
             pointed: Pointed::default(),
+            overflow: BarOverflow::default(),
         }
+    }
+
+    pub(in crate::workspace) fn overflow(&self) -> &BarOverflow {
+        &self.overflow
     }
 
     pub(in crate::workspace) fn pointed(&self) -> &Pointed {

@@ -426,3 +426,5 @@ mod panel_menu_tests;
 mod status_bar_centre_tests;
 #[cfg(test)]
 mod status_bar_menu_tests;
+#[cfg(test)]
+mod status_bar_overflow_tests;

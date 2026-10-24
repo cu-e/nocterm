@@ -4,7 +4,7 @@ use gpui_kit::{AnyView, App, SharedString};
 use nocterm_plugin_model::{ContributionId, PluginCatalog, Zone};
 use nocterm_window_layout::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember};
 
-use super::{Pointed, StatusBar};
+use super::{BarOverflow, Pointed, StatusBar};
 use crate::{
     ContextSelectionReceipt,
     plugin::{LOCAL_TERMINAL, NOTIFICATIONS},
@@ -23,6 +23,7 @@ pub(in crate::workspace) struct PanelToggle {
     look: ToggleLook,
     badge: Option<SharedString>,
     selected: bool,
+    attention: bool,
 }
 
 impl PanelToggle {
@@ -46,6 +47,10 @@ impl PanelToggle {
     }
     pub(in crate::workspace) fn is_selected(&self) -> bool {
         self.selected
+    }
+    /// Whether the panel asks for the user, which keeps its toggle in the bar.
+    pub(in crate::workspace) fn has_attention(&self) -> bool {
+        self.attention
     }
 }
 
@@ -83,24 +88,34 @@ impl BarEntry {
         }
     }
 
-    /// Toggles and separators keep their size. The notice line and a widget's text truncate; the
-    /// bell beside the notice line is not part of what truncates.
+    /// Toggles, widgets and separators keep their size: a bar without room for them moves them
+    /// into the overflow menu. The notice line truncates; the bell beside it is not part of what
+    /// truncates.
     pub(in crate::workspace) fn shrink(&self) -> Shrink {
         match self {
-            Self::Panel(_) | Self::LocalTerminal(_) | Self::Separator => Shrink::Fixed,
-            Self::Notices | Self::Widget(..) => Shrink::Elastic,
+            Self::Panel(_) | Self::LocalTerminal(_) | Self::Widget(..) | Self::Separator => {
+                Shrink::Fixed
+            }
+            Self::Notices => Shrink::Elastic,
         }
     }
 }
 
 /// The entries of the three zones, with the state the entries need.
+#[derive(Clone)]
 pub(in crate::workspace) struct BarInputs {
     left: Vec<BarEntry>,
     center: Vec<BarEntry>,
     right: Vec<BarEntry>,
+    /// The entries the bar has no room for, in bar order.
+    hidden: Vec<BarEntry>,
+    /// Whether the arrangement has a centre, which stays three slots even if the centre's
+    /// entries are all hidden.
+    centred: bool,
     local_terminal_open: bool,
     selection: ContextSelectionReceipt,
     pointed: Pointed,
+    overflow: BarOverflow,
 }
 
 impl BarInputs {
@@ -121,14 +136,41 @@ impl BarInputs {
         let mut right = resolver.zone(Zone::Right);
         let unplaced = resolver.unplaced_asking();
         right.splice(0..0, unplaced);
+        let center = tidy(resolver.zone(Zone::Center));
         Self {
             left: tidy(resolver.zone(Zone::Left)),
-            center: tidy(resolver.zone(Zone::Center)),
+            centred: !center.is_empty(),
+            center,
             right: tidy(right),
+            hidden: Vec::new(),
             local_terminal_open: regions.tabs.local_visible(),
             selection: regions.selection,
             pointed: status.pointed().clone(),
+            overflow: status.overflow().clone(),
         }
+    }
+
+    /// The bar without the entries flagged in `left`, `centre` and `right` (a zone with a
+    /// shorter list, or none, hides nothing beyond it), which are kept for the overflow menu.
+    pub(super) fn collapsed(mut self, left: &[bool], centre: &[bool], right: &[bool]) -> Self {
+        let mut hidden = Vec::new();
+        let mut keep = |entries: Vec<BarEntry>, flags: &[bool]| {
+            let mut kept = Vec::with_capacity(entries.len());
+            for (ix, entry) in entries.into_iter().enumerate() {
+                let gone = flags.get(ix).copied().unwrap_or(false);
+                match (gone, &entry) {
+                    (false, _) => kept.push(entry),
+                    (true, BarEntry::Separator) => {}
+                    (true, _) => hidden.push(entry),
+                }
+            }
+            tidy(kept)
+        };
+        self.left = keep(std::mem::take(&mut self.left), left);
+        self.center = keep(std::mem::take(&mut self.center), centre);
+        self.right = keep(std::mem::take(&mut self.right), right);
+        self.hidden = hidden;
+        self
     }
 
     pub(in crate::workspace) fn left(&self) -> &[BarEntry] {
@@ -139,6 +181,17 @@ impl BarInputs {
     }
     pub(in crate::workspace) fn right(&self) -> &[BarEntry] {
         &self.right
+    }
+    /// Whether the bar is drawn as three slots.
+    pub(super) fn is_centred(&self) -> bool {
+        self.centred
+    }
+    /// The entries the bar had no room for.
+    pub(super) fn hidden(&self) -> &[BarEntry] {
+        &self.hidden
+    }
+    pub(super) fn overflow(&self) -> &BarOverflow {
+        &self.overflow
     }
     pub(in crate::workspace) fn local_terminal_open(&self) -> bool {
         self.local_terminal_open
@@ -250,6 +303,7 @@ impl Resolver<'_> {
             look: ToggleLook::of(contribution, panel.attention()),
             badge: panel.badge(self.cx),
             selected: self.groups.panel_is_open(id),
+            attention: panel.attention(),
         }))
     }
 

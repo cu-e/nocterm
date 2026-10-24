@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use gpui_kit::{
     AnyElement, App, Context, Div, ElementId, IntoElement, MouseButton, Pixels, RenderOnce,
-    TestSupportExt as _, Window,
+    TestSupportExt as _, WeakEntity, Window, canvas,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -22,23 +22,19 @@ use nocterm_ui::{ActiveDesign as _, notice::NoticeBar};
 use super::{
     BarEntry, BarInputs, BarMenu,
     inputs::{PanelToggle, Shrink},
+    overflow::{Frame, OverflowButton, SEPARATOR_WIDTH, SLOT_GAP, TOGGLE_WIDTH},
 };
 use crate::{
     ContextSelectionReceipt, Workspace, plugin::LOCAL_TERMINAL, workspace::panel_groups::GroupKey,
 };
 
-/// The gap between the entries of a slot, which `gap_1` draws.
-const SLOT_GAP: Pixels = px(4.);
-/// The width of a toggle button. A badge beside the icon makes the toggle wider than this.
-const TOGGLE_WIDTH: Pixels = px(24.);
-/// The width of a separator.
-const SEPARATOR_WIDTH: Pixels = px(1.);
-
-/// What a fixed entry needs of its slot.
-fn fixed_width(entry: &BarEntry) -> Pixels {
+/// What a fixed entry needs of its slot: its measure once it has been drawn.
+fn fixed_width(entry: &BarEntry, inputs: &BarInputs) -> Pixels {
+    let measured = entry.id().and_then(|id| inputs.overflow().width_of(&id));
     match entry {
         BarEntry::Separator => SEPARATOR_WIDTH,
-        _ => TOGGLE_WIDTH,
+        BarEntry::Widget(..) => measured.unwrap_or(px(0.)),
+        _ => measured.unwrap_or(TOGGLE_WIDTH).max(TOGGLE_WIDTH),
     }
 }
 
@@ -49,20 +45,32 @@ pub(in crate::workspace) enum BarClick {
     Panel(ContributionId),
     /// The local terminal toggle, for the selection the bar was drawn under.
     LocalTerminal(ContextSelectionReceipt),
+    /// The overflow menu opens or closes.
+    Overflow(bool),
 }
 
-type OnClick = Rc<dyn Fn(BarClick, &mut Window, &mut App)>;
+pub(super) type OnClick = Rc<dyn Fn(BarClick, &mut Window, &mut App)>;
 
 /// The bar's entries over the window's frame.
 #[derive(IntoElement)]
 pub(super) struct StatusBarRow {
     inputs: BarInputs,
     on_click: OnClick,
+    /// The window to draw again when a measure changed what fits.
+    workspace: WeakEntity<Workspace>,
 }
 
 impl StatusBarRow {
-    pub(super) fn new(inputs: BarInputs, on_click: OnClick) -> Self {
-        Self { inputs, on_click }
+    pub(super) fn new(
+        inputs: BarInputs,
+        on_click: OnClick,
+        workspace: WeakEntity<Workspace>,
+    ) -> Self {
+        Self {
+            inputs,
+            on_click,
+            workspace,
+        }
     }
 }
 
@@ -73,13 +81,18 @@ pub(in crate::workspace) fn footer(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let pointed = inputs.pointed().clone();
+    let overflow = inputs.overflow().clone();
     let on_click: OnClick = {
-        let handle = cx.listener(|this, click: &BarClick, window, cx| match click {
+        let handle = cx.listener(move |this, click: &BarClick, window, cx| match click {
             BarClick::Panel(id) => this.toggle_panel(id, window, cx),
             BarClick::LocalTerminal(selection) => {
                 if this.accepts_context_selection(*selection, cx) {
                     this.toggle_local_terminal(window, cx);
                 }
+            }
+            BarClick::Overflow(open) => {
+                overflow.set_open(*open);
+                cx.notify();
             }
         });
         Rc::new(move |click, window, cx| handle(&click, window, cx))
@@ -91,38 +104,62 @@ pub(in crate::workspace) fn footer(
         .flex_shrink_0()
         // The entry under a right press records itself after this clears what was there.
         .capture_any_mouse_down(move |_, _, _| pointed.set(None))
-        .child(StatusBarRow::new(inputs, on_click))
+        .child(StatusBarRow::new(inputs, on_click, cx.weak_entity()))
         .context_menu(move |popup, window, cx| menu.build(popup, window, cx))
 }
 
 impl RenderOnce for StatusBarRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let rem = window.rem_size();
+        let frame = Frame {
+            padding: rems(0.5).to_pixels(rem) * 2.,
+            centre_max: rems(cx.design().layout.status_bar_center_max).to_pixels(rem),
+        };
+        // What does not fit, by what the last frame measured, waits in the overflow menu.
+        let Self {
+            inputs,
+            on_click,
+            workspace,
+        } = self;
+        let inputs = inputs.overflow().clone().collapse(inputs, frame);
+        Self::new(inputs, on_click, workspace).paint(frame, cx)
+    }
+}
+
+impl StatusBarRow {
+    fn paint(&self, frame: Frame, cx: &App) -> Div {
         let border = cx.theme().sidebar_border;
         let floating = FloatingCards::get(cx).is_some();
         let inputs = &self.inputs;
         let row = h_flex()
+            .relative()
             .gap_1()
             .px_2()
             .py_1()
             // On the canvas the gap above already separates the footer.
-            .when(!floating, |row| row.border_t_1().border_color(border));
-        if inputs.center().is_empty() {
+            .when(!floating, |row| row.border_t_1().border_color(border))
+            .child(self.measure_row());
+        if !inputs.is_centred() {
             return row
                 .children(self.draw(inputs.left(), cx))
                 .child(div().flex_1())
+                .children(OverflowButton::of(inputs, self.on_click.clone()))
                 .children(self.draw(inputs.right(), cx));
         }
         // The outer slots share what the centre leaves, equally, so the centre sits at the
         // window's midpoint whenever nothing is cut.
-        let centre_max =
-            rems(cx.design().layout.status_bar_center_max).to_pixels(window.rem_size());
-        row.child(self.slot(inputs.left(), false, cx))
+        row.child(self.slot(inputs.left(), false, None, cx))
             .child(
-                self.slot(inputs.center(), false, cx)
+                self.slot(inputs.center(), false, None, cx)
                     .flex_initial()
-                    .max_w(centre_max),
+                    .max_w(frame.centre_max),
             )
-            .child(self.slot(inputs.right(), true, cx))
+            .child(self.slot(
+                inputs.right(),
+                true,
+                OverflowButton::of(inputs, self.on_click.clone()),
+                cx,
+            ))
     }
 }
 
@@ -132,20 +169,17 @@ impl StatusBarRow {
         entries
             .iter()
             .map(|entry| {
-                // The wrapper of an entry that truncates may shrink below its content, as the
+                // The wrapper of the entry that truncates may shrink below its content, as the
                 // entry does, or it would hold the entry at full width.
-                h_flex()
-                    .when(entry.shrink() == Shrink::Elastic, |wrapper| {
-                        wrapper.min_w_0()
-                    })
+                self.wrapper(entry, cx)
                     .on_mouse_down(MouseButton::Right, self.pointing(entry))
-                    .child(self.entry(entry, &self.inputs, cx))
                     .into_any_element()
             })
             .collect()
     }
 
-    /// One of the three slots: its entries by shrink class.
+    /// One of the three slots: its entries by shrink class, then the overflow button at the end
+    /// of the entries that come first.
     ///
     /// A slot shares the room the centre leaves equally with the other outer slot but never
     /// gives up what its fixed entries need, so the centre and the entries that truncate give way
@@ -153,32 +187,84 @@ impl StatusBarRow {
     ///
     /// With `from_end`, free room goes before the entries so they end at the window's edge;
     /// without room they start at the slot's start and the slot clips them at its outer end.
-    fn slot(&self, entries: &[BarEntry], from_end: bool, cx: &App) -> Div {
+    fn slot(
+        &self,
+        entries: &[BarEntry],
+        from_end: bool,
+        button: Option<OverflowButton>,
+        cx: &App,
+    ) -> Div {
         let fixed = entries
             .iter()
             .filter(|entry| entry.shrink() == Shrink::Fixed)
-            .map(fixed_width)
+            .map(|entry| fixed_width(entry, &self.inputs))
             .fold(px(0.), |sum, width| sum + width);
-        let children = entries.len() + usize::from(from_end);
+        let button_width = if button.is_some() {
+            TOGGLE_WIDTH
+        } else {
+            px(0.)
+        };
+        let children = entries.len() + usize::from(from_end) + usize::from(button.is_some());
         let gaps = SLOT_GAP * children.saturating_sub(1) as f32;
         h_flex()
             .flex_1()
-            .min_w(fixed + gaps)
+            .min_w(fixed + button_width + gaps)
             .gap_1()
             .overflow_hidden()
             .when(from_end, |slot| slot.child(div().flex_1().min_w_0()))
+            .children(button)
             .children(entries.iter().map(|entry| {
-                let drawn = self.entry(entry, &self.inputs, cx);
-                match entry.shrink() {
-                    Shrink::Fixed => h_flex().flex_none().child(drawn),
-                    Shrink::Elastic => h_flex().min_w_0().overflow_hidden().child(drawn),
-                }
-                .on_mouse_down(MouseButton::Right, self.pointing(entry))
+                self.wrapper(entry, cx)
+                    .on_mouse_down(MouseButton::Right, self.pointing(entry))
             }))
+    }
+
+    /// The entry in a wrapper that sizes it by its shrink class and reports its measure.
+    fn wrapper(&self, entry: &BarEntry, cx: &App) -> Div {
+        let wrapper = h_flex().relative();
+        match entry.shrink() {
+            Shrink::Fixed => wrapper.flex_none(),
+            Shrink::Elastic => wrapper.min_w_0().overflow_hidden(),
+        }
+        .child(self.entry(entry, &self.inputs, cx))
+        .children(self.watch(entry))
     }
 }
 
 impl StatusBarRow {
+    /// Reports the width the row was drawn at.
+    fn measure_row(&self) -> impl IntoElement {
+        let (overflow, workspace) = (self.inputs.overflow().clone(), self.workspace.clone());
+        canvas(
+            move |bounds, _, cx| {
+                if overflow.observe_row(bounds.size.width) {
+                    redraw(workspace, cx);
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
+    }
+
+    /// Reports the width an entry was drawn at, if it is one the overflow plans with.
+    fn watch(&self, entry: &BarEntry) -> Option<impl IntoElement> {
+        let id = entry.id()?;
+        let (overflow, workspace) = (self.inputs.overflow().clone(), self.workspace.clone());
+        Some(
+            canvas(
+                move |bounds, _, cx| {
+                    if overflow.observe_entry(&id, bounds.size.width) {
+                        redraw(workspace, cx);
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        )
+    }
+
     /// Records the entry a right press lands on, for the context menu.
     fn pointing(
         &self,
@@ -247,4 +333,11 @@ fn toggle_id(group: GroupKey, ix: usize) -> ElementId {
         )
             .into()
     }
+}
+
+/// Draws the window again after the current frame: a measure changed what fits.
+fn redraw(workspace: WeakEntity<Workspace>, cx: &mut App) {
+    cx.defer(move |cx| {
+        let _ = workspace.update(cx, |_, cx| cx.notify());
+    });
 }
