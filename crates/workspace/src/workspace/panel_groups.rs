@@ -52,7 +52,7 @@ impl GroupKey {
     pub(super) fn named(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|key| key.id() == id)
     }
-    /// The side of the content the group opens on before the user swaps sides.
+    /// The side of the content the group opens on when no layout places it.
     pub(super) fn side(self) -> Side {
         match self {
             Self::Navigation => Side::Left,
@@ -489,6 +489,75 @@ impl PanelGroups {
             return None;
         }
         self.activate(key, ix, cx)
+    }
+    /// Shows exactly the panels of `open` and hides the groups none of them belongs to,
+    /// leaving focus where it is unless a hidden group held it. A group opens at most one
+    /// panel: the first of `open` that the host offers.
+    pub(super) fn set_open(
+        &mut self,
+        open: &[ContributionId],
+        window: &Window,
+        cx: &mut App,
+    ) -> Vec<PanelTransition> {
+        let mut transitions = Vec::new();
+        for key in GroupKey::ALL {
+            let wanted = open
+                .iter()
+                .filter_map(|id| self.offered(id).map(|(group, ix, _)| (group, ix)))
+                .find(|(group, _)| *group == key)
+                .map(|(_, ix)| ix);
+            match wanted {
+                Some(ix) if self.group(key).showing(ix) => {}
+                Some(ix) => {
+                    if let Some(member) = self.group(key).members().get(ix).copied() {
+                        let revealed = self.group_mut(key).select(member);
+                        transitions.push(PanelTransition::new(
+                            revealed.then_some(key),
+                            PanelFocus::Preserve,
+                        ));
+                    }
+                }
+                None if self.group(key).is_shown() => {
+                    transitions.push(self.close(key, window, cx));
+                }
+                None => {}
+            }
+        }
+        transitions
+    }
+    /// Follows a new arrangement: membership and order come from the layout, a switch to a
+    /// saved layout shows exactly the panels it names (`open`), and the panels the layout no
+    /// longer places close.
+    pub(super) fn follow(
+        &mut self,
+        layout: &ResolvedLayout,
+        open: Option<&[ContributionId]>,
+        window: &Window,
+        cx: &mut App,
+    ) -> Vec<PanelTransition> {
+        self.adopt(layout);
+        let mut transitions = open
+            .map(|open| self.set_open(open, window, cx))
+            .unwrap_or_default();
+        let stray: Vec<_> = self
+            .registered_ids()
+            .filter(|id| self.panel_is_open(id) && !layout.is_placed(id))
+            .cloned()
+            .collect();
+        for id in stray {
+            transitions.extend(self.toggle_panel(&id, window, cx));
+        }
+        transitions
+    }
+    /// Shows one panel without taking focus; used while a window composes its panels.
+    pub(super) fn reveal_panel(&mut self, id: &ContributionId) -> Option<PanelTransition> {
+        let (key, panel, _) = self.position_of(id)?;
+        self.slot(Some(panel)).filter(|slot| slot.offered())?;
+        let revealed = self.group_mut(key).select(panel);
+        Some(PanelTransition::new(
+            revealed.then_some(key),
+            PanelFocus::Preserve,
+        ))
     }
     pub(super) fn set_panel_available(
         &mut self,

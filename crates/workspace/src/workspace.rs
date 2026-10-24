@@ -46,8 +46,10 @@ mod registration;
 pub use registration::{
     ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
 };
+mod layout_switch;
 mod sessions;
 mod shell_layout;
+pub use layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts};
 
 use crate::{
     CloseTab, Item, ItemEvent, ItemHandle, NewTab, NextPanel, NextTab, PreviousTab, SessionContext,
@@ -183,6 +185,7 @@ impl TabPane {
 pub struct Deps {
     layout: nocterm_ui::LayoutHandle,
     catalog: Arc<PluginCatalog>,
+    settings: Option<nocterm_store::SettingsHandle>,
 }
 
 impl Deps {
@@ -195,6 +198,7 @@ impl Deps {
         Self {
             layout,
             catalog: Arc::new(catalog),
+            settings: None,
         }
     }
 
@@ -202,6 +206,14 @@ impl Deps {
     /// contributions and groups beside those of the plugins.
     pub fn with_catalog(mut self, catalog: impl Into<Arc<PluginCatalog>>) -> Self {
         self.catalog = catalog.into();
+        self
+    }
+
+    /// Reads and writes the selected layout and the saved layouts through `settings`, which the
+    /// windows of the application share. Without it each window keeps its own in-memory
+    /// settings, which is how tests compose a window.
+    pub fn with_settings(mut self, settings: nocterm_store::SettingsHandle) -> Self {
+        self.settings = Some(settings);
         self
     }
 }
@@ -222,13 +234,30 @@ impl EventEmitter<WorkspaceEvent> for Workspace {}
 
 impl Workspace {
     pub fn new(deps: Deps, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let settings = deps.settings.unwrap_or_else(|| {
+            nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx)
+        });
+        let mut shell = shell_layout::ShellLayout::new(
+            &deps.layout,
+            settings.clone(),
+            deps.catalog.clone(),
+            cx,
+        );
+        let workspace = cx.weak_entity();
+        let window_handle = window.window_handle();
+        shell.follow(cx, move |cx| {
+            let workspace = workspace.clone();
+            let _ = window_handle.update(cx, move |_, window, cx| {
+                let _ = workspace.update(cx, |this, cx| this.layout_settings_changed(window, cx));
+            });
+        });
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             surfaces: surfaces::WindowSurfaces::new(window, cx),
             chrome: chrome::Chrome::new(cx.focus_handle()),
             panels: panel_groups::PanelGroups::new(),
             body: layout::Body::new(deps.layout.clone()),
-            shell: shell_layout::ShellLayout::new(deps.layout, &deps.catalog),
+            shell,
             ports: ports::WorkspacePorts::default(),
             actions: actions::ActionRegistry::default(),
             registrations: registration::Registrations::new(deps.catalog),
@@ -359,6 +388,8 @@ mod tests;
 
 #[cfg(test)]
 mod focus_transition_tests;
+#[cfg(test)]
+mod layout_switch_tests;
 #[cfg(test)]
 mod native_terminal_tab_tests;
 #[cfg(test)]

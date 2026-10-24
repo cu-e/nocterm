@@ -1,10 +1,11 @@
 //! Window effects stay here; native tab mutations belong to the original surface.
 use super::*;
 use gpui_kit::{
-    InteractiveElement,
+    InteractiveElement, Task,
     component::{Placement, input},
 };
 use nocterm_plugin_model::ContributionId;
+use nocterm_window_layout::{BuiltIn, PresetId};
 use panel_groups::{PanelFocus, PanelTransition};
 impl Workspace {
     pub fn activate_item_by_id(
@@ -219,12 +220,6 @@ impl Workspace {
             cx.notify();
         }
     }
-    /// Shows or hides the assistant group, for the actions that predate panel ids.
-    pub(super) fn toggle_assistant_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(transition) = self.panels.toggle(GroupKey::Assistant, window, cx) {
-            self.apply_panel_transition(transition, window, cx);
-        }
-    }
     pub(super) fn toggle_group_expanded(&mut self, group: GroupKey, cx: &mut Context<Self>) {
         if self
             .panels
@@ -232,15 +227,6 @@ impl Workspace {
         {
             cx.notify();
         }
-    }
-    pub(super) fn close_group(
-        &mut self,
-        group: GroupKey,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let transition = self.panels.close(group, window, cx);
-        self.apply_panel_transition(transition, window, cx);
     }
 
     // ── Panels by contribution id ────────────────────────────────────────────
@@ -288,7 +274,7 @@ impl Workspace {
             cx.notify();
         }
     }
-    fn apply_panel_transition(
+    pub(super) fn apply_panel_transition(
         &mut self,
         transition: PanelTransition,
         window: &mut Window,
@@ -316,9 +302,18 @@ impl Workspace {
         cx.notify();
     }
     pub fn swap_sides(&mut self, cx: &mut Context<Self>) {
-        self.shell.swap(cx);
-        self.sync_panel_sides(cx);
-        cx.notify();
+        let target = if *self.shell.selected() == BuiltIn::Swapped.id() {
+            BuiltIn::Default
+        } else {
+            BuiltIn::Swapped
+        };
+        self.switch_layout(target.id(), cx).detach();
+        // Settings that keep nothing publish at once; the sides follow without a window.
+        if self.shell.refresh(cx) != shell_layout::LayoutChange::Unchanged {
+            self.panels.adopt(self.shell.current());
+            self.sync_panel_sides(cx);
+            cx.notify();
+        }
     }
     pub(super) fn widen_group(
         &mut self,
@@ -330,7 +325,7 @@ impl Workspace {
         if self.panels.is_expanded(group) || !self.panels.is_shown(group) {
             return;
         }
-        let arrangement = self.body.arrangement(&self.panels, &self.shell, cx);
+        let arrangement = self.body.arrangement(&self.panels, &self.shell);
         self.body
             .widen_group(&arrangement, group, delta, window, cx);
         cx.notify();
@@ -462,5 +457,23 @@ impl Workspace {
         self.surfaces.outer().update(cx, |surface, cx| {
             surface.content_mut().change_directory(path, window, cx)
         })
+    }
+    // ── Window layouts ───────────────────────────────────────────────────────
+
+    /// The layouts to choose from, in menu order: the built-ins, then the saved presets.
+    pub fn layouts(&self) -> Vec<LayoutChoice> {
+        self.shell.choices()
+    }
+
+    /// Selects the layout for every window. The write goes through the ordered settings queue,
+    /// so the selection changes in the windows only once it is published; a failed write
+    /// leaves it as it was. The commands that switch layouts call `layout_switch::switch`,
+    /// which also lets this window follow at once and reports a failure.
+    pub fn switch_layout(
+        &mut self,
+        id: PresetId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), LayoutSwitchError>> {
+        self.shell.select_layout(id, cx)
     }
 }

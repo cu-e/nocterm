@@ -1,9 +1,11 @@
 //! Explicit installations and typed handoffs to the original tab owner.
 use super::*;
 use crate::ContextSelectionError;
+use crate::plugin::LOCAL_TERMINAL;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
 use nocterm_session::{HostAddress, ShellLaunch};
 use registration::{PanelRegistration, PanelSource, RegistrationError, WidgetRegistration};
+use shell_layout::LayoutChange;
 use surface::admission::SurfaceItemAdmission;
 
 impl Workspace {
@@ -256,19 +258,24 @@ impl Workspace {
             registration.is_eager(),
         )?;
         let id = registration.id().clone();
+        let opened = id.clone();
         match registration.into_source(traits.chrome, window, cx) {
             PanelSource::Hosted(panel) => {
-                self.panels
-                    .register(id, Some(panel), self.shell.current(cx));
+                self.panels.register(id, Some(panel), self.shell.current());
             }
             PanelSource::Factory(factory) => {
                 // The panel's slot exists while the factory reads the workspace.
-                self.panels
-                    .register(id.clone(), None, self.shell.current(cx));
+                self.panels.register(id.clone(), None, self.shell.current());
                 let panel = factory(&*self, window, cx);
                 self.panels.fill(&id, panel);
                 self.registrations.keep_factory(id, factory);
             }
+        }
+        if self.shell.claim_open(&opened)
+            && let Some(transition) = self.panels.reveal_panel(&opened)
+            && transition.visibility_changed().is_some()
+        {
+            cx.emit(WorkspaceEvent::PanelVisibilityChanged);
         }
         self.sync_panel_sides(cx);
         cx.notify();
@@ -293,21 +300,20 @@ impl Workspace {
         Ok(())
     }
     /// Creates the views of the widgets the arrangement places and drops those it does not.
-    fn sync_status_widgets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pending = self.chrome.status_bar().pending(self.shell.current(cx));
+    pub(super) fn sync_status_widgets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.chrome.status_bar().pending(self.shell.current());
         for (id, factory) in pending {
             let view = factory(&*self, window, cx);
             self.chrome.status_bar_mut().fill(&id, view);
         }
         self.chrome
             .status_bar_mut()
-            .release_unplaced(self.shell.current(cx));
+            .release_unplaced(self.shell.current());
     }
     /// Tells the expandable panels which side of the content their groups are on.
     pub(super) fn sync_panel_sides(&self, cx: &mut Context<Self>) {
-        let swapped = self.shell.swapped(cx);
         self.panels
-            .set_docked_left(|group| self.shell.side(group, swapped), cx);
+            .set_docked_left(|group| self.shell.side(group), cx);
     }
     pub fn set_menu_builder(
         &mut self,
@@ -418,5 +424,31 @@ impl Workspace {
     ) {
         let selection = self.surfaces.outer().read(cx).selection();
         let _ = self.add_general_item_from(selection, item, window, cx);
+    }
+    // ── Following the layout settings ────────────────────────────────────────
+
+    /// Applies the layout the settings select now: the groups take the new membership, a switch
+    /// to a saved layout shows the panels it names, and panels the layout no longer places
+    /// close.
+    pub(super) fn layout_settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let change = self.shell.refresh(cx);
+        if change == LayoutChange::Unchanged {
+            return;
+        }
+        let open = match &change {
+            LayoutChange::Opened(open) => Some(open.as_slice()),
+            _ => None,
+        };
+        for transition in self.panels.follow(self.shell.current(), open, window, cx) {
+            self.apply_panel_transition(transition, window, cx);
+        }
+        if let Some(open) = open
+            && open.contains(&LOCAL_TERMINAL.id) != self.local_terminal_is_visible(cx)
+        {
+            self.toggle_local_terminal(window, cx);
+        }
+        self.sync_panel_sides(cx);
+        self.sync_status_widgets(window, cx);
+        cx.notify();
     }
 }

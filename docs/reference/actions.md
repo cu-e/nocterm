@@ -60,6 +60,7 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `workspace::MoveTabRight` | Move the active tab one position to the right in its pane. | `ctrl-alt-right` (linux, windows; Workspace); `cmd-alt-right` (macos; Workspace) |
 | `workspace::NewTab` | Open the menu of connections to start a new tab from. | `ctrl-shift-t` (linux, windows; Workspace); `cmd-t` (macos; Workspace) |
 | `workspace::NewWindow` | Open another application window. | `ctrl-alt-n` (linux, windows; Workspace); `cmd-shift-n` (macos; Workspace) |
+| `workspace::NextLayout` | Switch to the next window layout, wrapping around. |  |
 | `workspace::NextPane` | Focus the next pane in layout order. | `ctrl-alt-pagedown` (linux, windows; Workspace); `cmd-alt-pagedown` (macos; Workspace) |
 | `workspace::NextPanel` | Show the next sidebar panel, wrapping around. |  |
 | `workspace::NextTab` | Switch to the tab on the right, wrapping around. | `ctrl-pagedown` (linux, windows; Workspace); `ctrl-tab` (linux, windows; Workspace); `cmd-shift-]` (macos; Workspace); `ctrl-tab` (macos; Workspace) |
@@ -68,6 +69,8 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `workspace::OpenSSHSettings` | Open SSH settings. |  |
 | `workspace::OpenSettings` | Open the settings. | `ctrl-,` (linux, windows; Workspace); `cmd-,` (macos; Workspace) |
 | `workspace::OpenVault` | Open the encrypted credential vault. |  |
+| `workspace::PickLayout` | Search and pick a window layout. |  |
+| `workspace::PreviousLayout` | Switch to the previous window layout, wrapping around. |  |
 | `workspace::PreviousPane` | Focus the preceding pane in layout order. | `ctrl-alt-pageup` (linux, windows; Workspace); `cmd-alt-pageup` (macos; Workspace) |
 | `workspace::PreviousTab` | Switch to the tab on the left, wrapping around. | `ctrl-pageup` (linux, windows; Workspace); `ctrl-shift-tab` (linux, windows; Workspace); `cmd-shift-[` (macos; Workspace); `ctrl-shift-tab` (macos; Workspace) |
 | `workspace::ProfilesDirectory` | Open the directory containing connection profiles. |  |
@@ -83,6 +86,7 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `workspace::StartRecording` | Start recording terminal output. |  |
 | `workspace::StopRecording` | Stop recording terminal output. |  |
 | `workspace::SwapSides` | Put the sidebar and the AI panel on each other's side. |  |
+| `workspace::SwitchLayout` | Switch to the window layout with this id. Only the window menu sends it. |  |
 | `workspace::ToggleCommandPalette` | Search and run any command. | `ctrl-shift-p` (linux, windows; Workspace); `cmd-shift-p` (macos; Workspace) |
 | `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `ctrl-j` (linux, windows; Workspace); `cmd-`` (macos; Workspace); `cmd-j` (macos; Workspace) |
 | `workspace::ToggleRightPanel` | Show or hide the AI panel. | `ctrl-alt-b` (linux, windows; Workspace); `cmd-alt-b` (macos; Workspace) |

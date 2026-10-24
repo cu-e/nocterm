@@ -338,7 +338,10 @@ fn host_expandable<T: ExpandablePanel>(
             };
             match request {
                 PanelRequest::ToggleExpanded => this.toggle_group_expanded(group, cx),
-                PanelRequest::Close => this.close_group(group, window, cx),
+                PanelRequest::Close => {
+                    let transition = this.panels.close(group, window, cx);
+                    this.apply_panel_transition(transition, window, cx);
+                }
                 PanelRequest::Widen(delta) => this.widen_group(group, *delta, window, cx),
             }
         },

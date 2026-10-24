@@ -1,11 +1,12 @@
 //! Typed action registrations and native command categories for the window shell.
-use super::{TabCloseScope, Workspace, panel_groups::GroupKey};
+use super::{TabCloseScope, Workspace, layout_switch, panel_groups::GroupKey};
 use crate::KEY_CONTEXT;
 use gpui_kit::{
     Action, Context, Div, FocusHandle, Window,
     component::{ActiveTheme as _, v_flex},
     prelude::*,
 };
+use nocterm_window_layout::PresetId;
 use std::rc::Rc;
 
 type Registration = Box<dyn Fn(Div, &mut Context<Workspace>) -> Div>;
@@ -61,9 +62,26 @@ impl ActionRegistry {
             .on_action(cx.listener(Workspace::on_toggle_sidebar))
             .on_action(cx.listener(Workspace::on_next_panel))
             .on_action(cx.listener(|this, _: &crate::SwapSides, _, cx| this.swap_sides(cx)))
+            .on_action(cx.listener(|this, _: &crate::NextLayout, window, cx| {
+                layout_switch::cycle(this, 1, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &crate::PreviousLayout, window, cx| {
+                layout_switch::cycle(this, -1, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &crate::PickLayout, window, cx| {
+                layout_switch::pick_layout(cx.weak_entity(), this.shell.choices(), window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, action: &crate::SwitchLayout, window, cx| {
+                    let id = PresetId::from_owned(action.id.to_string());
+                    layout_switch::switch(this, id, window, cx)
+                }),
+            )
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanel, window, cx| {
-                    this.toggle_assistant_group(window, cx)
+                    if let Some(transition) = this.panels.toggle(GroupKey::Assistant, window, cx) {
+                        this.apply_panel_transition(transition, window, cx);
+                    }
                 }),
             )
             .on_action(

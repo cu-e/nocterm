@@ -91,13 +91,8 @@ pub(super) struct Body {
 
 impl Body {
     /// The columns of the groups that are shown now, on the sides the arrangement gives them.
-    pub(super) fn arrangement(
-        &self,
-        groups: &PanelGroups,
-        shell: &ShellLayout,
-        cx: &gpui_kit::App,
-    ) -> Arrangement {
-        Arrangement::new(shell.columns(groups.shown(), cx), groups.expanded())
+    pub(super) fn arrangement(&self, groups: &PanelGroups, shell: &ShellLayout) -> Arrangement {
+        Arrangement::new(shell.columns(groups.shown()), groups.expanded())
     }
 
     pub(super) fn new(layout: LayoutHandle) -> Self {

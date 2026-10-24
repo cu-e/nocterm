@@ -220,8 +220,8 @@ impl Workspace {
     pub fn new_tab_menu_is_open(&self) -> bool {
         self.chrome.new_tab_open()
     }
-    pub fn sides_swapped(&self, cx: &App) -> bool {
-        self.shell.swapped(cx)
+    pub fn sides_swapped(&self, _: &App) -> bool {
+        *self.shell.selected() == nocterm_window_layout::BuiltIn::Swapped.id()
     }
     pub fn tab_group_items(&self, id: EntityId, cx: &App) -> Vec<EntityId> {
         self.surfaces.outer().read(cx).tabs().tab_group_items(id)

@@ -78,7 +78,7 @@ impl BarInputs {
     /// - A panel that the arrangement does not place is drawn at the inner end of the right zone
     ///   while it asks for the user.
     pub(in crate::workspace) fn new(regions: &Regions<'_>, status: &StatusBar, cx: &App) -> Self {
-        let layout = regions.shell.current(cx);
+        let layout = regions.shell.current();
         let resolver = Resolver {
             layout,
             groups: regions.groups,

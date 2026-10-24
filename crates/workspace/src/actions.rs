@@ -29,6 +29,12 @@ gpui_kit::actions!(
         ToggleRightPanelMaximized,
         /// Open AI settings.
         OpenAiSettings,
+        /// Switch to the next window layout, wrapping around.
+        NextLayout,
+        /// Switch to the previous window layout, wrapping around.
+        PreviousLayout,
+        /// Search and pick a window layout.
+        PickLayout,
         /// Show the next sidebar panel, wrapping around.
         NextPanel,
         /// Open the settings.
@@ -113,3 +119,10 @@ gpui_kit::actions!(
         Quit,
     ]
 );
+
+/// Switch to the window layout with this id. Only the window menu sends it.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct SwitchLayout {
+    pub id: gpui_kit::SharedString,
+}

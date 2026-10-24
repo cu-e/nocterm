@@ -5,11 +5,22 @@ use nocterm_store::SettingsConfig;
 
 use crate::KeymapView;
 
+/// Commands declared for the tests only; kept in a module so the actions reference, which
+/// reads top-level declarations, does not list them.
+mod declared {
+    gpui_kit::actions!(workspace, [KeyBindable]);
+
+    /// A command only a menu sends: it cannot be built from a keymap entry.
+    #[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+    #[action(namespace = workspace, no_json)]
+    pub(super) struct MenuOnly;
+}
+
 const DEFAULTS: &str = r#"
 [[section]]
 context = "Workspace"
 [section.bindings]
-"ctrl-e" = "workspace::SwapSides"
+"ctrl-e" = "workspace::ToggleSidebar"
 "#;
 
 fn setup(cx: &mut TestAppContext) -> (gpui_kit::AnyWindowHandle, Entity<KeymapView>, KeymapHandle) {
@@ -46,7 +57,7 @@ fn pressing_keys_on_a_shortcut_rebinds_it_and_reset_restores_it(cx: &mut TestApp
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("keymap-search", cx);
-        window.input("swap sides", cx);
+        window.input("toggle sidebar", cx);
         window.render_frame(cx);
         assert!(
             window.try_find(("keymap-row", 1usize)).is_none(),
@@ -59,13 +70,13 @@ fn pressing_keys_on_a_shortcut_rebinds_it_and_reset_restores_it(cx: &mut TestApp
     })
     .unwrap();
     assert!(bound(&keymap, cx, "ctrl-e").is_empty());
-    assert_eq!(bound(&keymap, cx, "alt-s"), ["workspace::SwapSides"]);
+    assert_eq!(bound(&keymap, cx, "alt-s"), ["workspace::ToggleSidebar"]);
     cx.update_window(handle, |_, window, cx| {
         window.click(("keymap-reset", 0usize), cx);
         window.render_frame(cx);
     })
     .unwrap();
-    assert_eq!(bound(&keymap, cx, "ctrl-e"), ["workspace::SwapSides"]);
+    assert_eq!(bound(&keymap, cx, "ctrl-e"), ["workspace::ToggleSidebar"]);
     assert!(bound(&keymap, cx, "alt-s").is_empty());
 }
 
@@ -84,7 +95,7 @@ fn escape_cancels_recording_and_find_by_keys_fills_the_search(cx: &mut TestAppCo
         window.press("alt-s", cx);
     })
     .unwrap();
-    assert_eq!(bound(&keymap, cx, "ctrl-e"), ["workspace::SwapSides"]);
+    assert_eq!(bound(&keymap, cx, "ctrl-e"), ["workspace::ToggleSidebar"]);
     assert!(bound(&keymap, cx, "alt-s").is_empty());
 }
 
@@ -103,7 +114,7 @@ fn search_swap(handle: gpui_kit::AnyWindowHandle, cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("keymap-search", cx);
-        window.input("swap sides", cx);
+        window.input("toggle sidebar", cx);
         window.render_frame(cx);
     })
     .unwrap();
@@ -168,5 +179,18 @@ fn shared_pages_refresh_survive_window_closure_and_release_recording(cx: &mut Te
     .unwrap();
     close_page(second, second_view, cx);
     close_page(third, third_view, cx);
-    assert_eq!(bound(&keymap, cx, "alt-t"), ["workspace::SwapSides"]);
+    assert_eq!(bound(&keymap, cx, "alt-t"), ["workspace::ToggleSidebar"]);
+}
+
+#[gpui_kit::test]
+fn commands_a_keymap_entry_cannot_build_are_not_offered_for_binding(cx: &mut TestAppContext) {
+    let (_handle, _view, keymap) = setup(cx);
+    let actions: Vec<String> = cx.update(|cx| {
+        crate::rows::rows(&keymap, cx)
+            .into_iter()
+            .map(|row| row.action)
+            .collect()
+    });
+    assert!(actions.contains(&"workspace::KeyBindable".to_owned()));
+    assert!(!actions.contains(&"workspace::MenuOnly".to_owned()));
 }

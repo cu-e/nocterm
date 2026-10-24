@@ -198,7 +198,7 @@ impl Chrome {
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let widths = body_state.widths(window, cx);
-        let arrangement = body_state.arrangement(regions.groups, regions.shell, cx);
+        let arrangement = body_state.arrangement(regions.groups, regions.shell);
         let state = body_state.state(&arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {

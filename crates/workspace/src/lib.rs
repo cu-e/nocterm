@@ -5,9 +5,10 @@
 //! window menus and chrome, panel groups (the sidebar and the independent side panel),
 //! registration of panels and widgets under the ids of the plugin catalog (the shell's own
 //! `plugin::{CORE, GROUPS}` and the id queries), the resolved shell layout (`ShellLayout`
-//! selects the Default or Swapped built-in of `nocterm-window-layout`; the status bar and the
-//! panel groups take their members, order and sides from it), per-surface background
-//! membership, and per-column layout projections.
+//! follows the app-wide `[layouts]` settings of `nocterm-window-layout`, resolves the selected
+//! built-in or saved preset against the catalog and writes only the selection; the status bar
+//! and the panel groups take their members, order and sides from it on every change),
+//! per-surface background membership, and per-column layout projections.
 //! Does not own: session connections, feature views, native filesystem implementations,
 //! persistence workers, project definitions or connection authentication,
 //! or external-program launch.
@@ -21,7 +22,8 @@
 //! plus separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
-//! Settings section: none. Globals: none.
+//! Settings section: reads `[layouts]` (owned by `nocterm-window-layout`) through the injected
+//! settings handle; a table that does not read is never overwritten. Globals: none.
 //! Host resolution uses an explicitly supplied optional local executor; it owns no runner.
 //! Invariants: each surface has one native placement authority; each tab
 //! owns its feature handle and subscriptions; cached session identity preserves
@@ -92,9 +94,10 @@ pub use nocterm_workspace_ports::{
 };
 pub use workspace::{
     ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,
-    PanelRegistration, PanelRequest, ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory,
-    ProjectSurfaceReceipt, RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane,
-    TabSnapshot, WidgetRegistration, Workspace, WorkspaceEvent, admit_project_terminal,
+    LayoutChoice, LayoutSwitchError, MalformedLayouts, PanelRegistration, PanelRequest,
+    ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectSurfaceReceipt,
+    RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot,
+    WidgetRegistration, Workspace, WorkspaceEvent, admit_project_terminal,
     validate_project_terminal_target,
 };
 
