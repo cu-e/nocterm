@@ -151,7 +151,7 @@ impl PreparedApp {
         let booted = match booted {
             Ok(booted) => booted,
             Err(error) => {
-                tracing::error!(%error, "could not compose settings pages");
+                tracing::error!(?error, "could not compose the application");
                 cx.quit();
                 return;
             }

@@ -16,6 +16,7 @@ mod connection_setup;
 mod keymap;
 mod project_setup;
 mod settings_pages;
+mod shell_setup;
 mod startup;
 
 #[cfg(test)]

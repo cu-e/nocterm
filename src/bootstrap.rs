@@ -9,12 +9,14 @@ use gpui_kit::{App, Context, Window};
 use nocterm_core::Paths;
 use nocterm_design::DesignTokens;
 use nocterm_session::Transport;
-use nocterm_settings_ui::SettingsCatalogError;
 use nocterm_store::SettingsConfig;
 use nocterm_vault::VaultAccess;
 use nocterm_vault_store::VaultService;
 use nocterm_workspace::Workspace;
 use std::rc::Rc;
+
+mod error;
+pub(crate) use error::BootstrapError;
 
 /// What differs between the application and its tests.
 pub(crate) struct Services {
@@ -139,7 +141,7 @@ impl Booted {
 }
 
 /// Composes services and feature dependencies in dependency order.
-pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, SettingsCatalogError> {
+pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, BootstrapError> {
     let Services {
         tokens,
         settings,
@@ -199,6 +201,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         crate::settings_pages::guest_pages(keymap.clone(), &monitor, &files, projects.as_ref()),
         vault.as_deref(),
     )?;
+    let plugins = crate::shell_setup::plugin_catalog()?;
     let booted = Booted {
         #[cfg(test)]
         keymap,
@@ -212,7 +215,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         projects,
         vault,
         files,
-        workspace: nocterm_workspace::Deps::new(layout),
+        workspace: nocterm_workspace::Deps::new(layout).with_catalog(plugins),
         themes,
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
