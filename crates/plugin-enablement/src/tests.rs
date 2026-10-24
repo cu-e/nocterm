@@ -81,6 +81,21 @@ fn sanitizing_drops_invalid_ids_and_repeats() {
 }
 
 #[test]
+fn sanitizing_drops_user_plugin_ids() {
+    let section = read(r#"disabled = ["user-acme-clock", "optional", "user-x"]"#);
+    assert_eq!(section.disabled, ids(&["optional"]));
+}
+
+#[test]
+fn a_user_plugin_is_never_added_to_the_list() {
+    let mut section = PluginEnablement::default();
+    let user = PluginId::user("acme", "clock").unwrap();
+    section.set_enabled(&user, false);
+    assert!(section.disabled.is_empty());
+    assert!(section.effective_disabled(&catalog()).is_empty());
+}
+
+#[test]
 fn sanitizing_caps_the_list() {
     let names: Vec<String> = (0..MAX_DISABLED + 10).map(|n| format!("p{n}")).collect();
     let section = read(&format!("disabled = {names:?}"));
