@@ -1,4 +1,10 @@
 use super::*;
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 const fn widget(id: &'static str, zone: Zone, order: u16) -> SystemContribution {
     SystemContribution {

@@ -4,7 +4,9 @@
 //! [`PluginId::new`] and friends. Construction does not check syntax, because `const`
 //! construction cannot report errors: the catalog checks every id it admits.
 
-use std::{borrow::Cow, fmt};
+use alloc::borrow::Cow;
+use alloc::string::ToString;
+use core::fmt;
 
 use serde::{Deserialize, Serialize};
 

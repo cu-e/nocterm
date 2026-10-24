@@ -1,6 +1,7 @@
 //! Small builders for schemas in tests.
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+use alloc::{vec, vec::Vec};
 
 use super::{ChoiceOption, FieldGroup, FieldKind, FieldSpec, SettingsSchema};
 use crate::ContributionId;

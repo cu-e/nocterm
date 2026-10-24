@@ -15,7 +15,14 @@
 //! group hints name declared groups and only panels have one; panel traits exist exactly for
 //! panels; order values are unique within a zone; settings schemas stay within their limits and
 //! name a settings section.
+//! `no_std` with `alloc`, so file, network, process and environment access is unreachable.
 //! No internal dependencies; no I/O.
+
+#![no_std]
+
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
 mod catalog;
 mod contribution;

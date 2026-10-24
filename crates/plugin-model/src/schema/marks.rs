@@ -9,11 +9,11 @@ pub(super) fn is_stacking_mark(character: char) -> bool {
     MARKS
         .binary_search_by(|&(first, last)| {
             if code < first {
-                std::cmp::Ordering::Greater
+                core::cmp::Ordering::Greater
             } else if code > last {
-                std::cmp::Ordering::Less
+                core::cmp::Ordering::Less
             } else {
-                std::cmp::Ordering::Equal
+                core::cmp::Ordering::Equal
             }
         })
         .is_ok()

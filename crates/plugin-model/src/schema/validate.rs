@@ -1,6 +1,8 @@
 //! The limits a settings schema must stay within.
 
-use std::{collections::HashSet, fmt};
+use alloc::string::ToString;
+use alloc::{collections::BTreeSet, string::String};
+use core::fmt;
 
 use thiserror::Error;
 
@@ -72,7 +74,7 @@ impl SettingsSchema {
                 max: MAX_FIELDS,
             });
         }
-        let mut keys = HashSet::new();
+        let mut keys = BTreeSet::new();
         for (index, group) in self.groups.iter().enumerate() {
             if !plain(&group.title, MAX_LABEL) {
                 return Err(SchemaError::GroupTitle { index });
@@ -127,7 +129,7 @@ fn check_field(field: &FieldSpec) -> Result<(), SchemaError> {
             if *max == 0 || usize::from(*max) > options.len() {
                 return Err(SchemaError::Range { key: key() });
             }
-            let distinct = default.iter().collect::<HashSet<_>>().len() == default.len();
+            let distinct = default.iter().collect::<BTreeSet<_>>().len() == default.len();
             let known = default.iter().all(|option| has_option(options, option));
             if !(distinct && known && default.len() <= usize::from(*max)) {
                 return Err(SchemaError::Default { key: key() });
@@ -199,7 +201,7 @@ fn check_options(key: &str, options: &[ChoiceOption]) -> Result<(), SchemaError>
         || options
             .iter()
             .map(|option| option.key.as_ref())
-            .collect::<HashSet<_>>()
+            .collect::<BTreeSet<_>>()
             .len()
             != options.len();
     if malformed {

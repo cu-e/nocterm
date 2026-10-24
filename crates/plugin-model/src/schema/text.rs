@@ -1,6 +1,7 @@
 //! Sanitizing of single-line text.
 
 use super::marks::is_stacking_mark;
+use alloc::string::String;
 
 /// Nonspacing and enclosing marks kept after one base character.
 const MAX_MARKS: usize = 2;

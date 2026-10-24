@@ -9,7 +9,11 @@ mod includes;
 mod metrics;
 mod source;
 mod symbols;
-pub(crate) use source::test_only;
+pub(crate) use metrics::{io_path, walk_paths};
+#[cfg(test)]
+pub(crate) use source::imports;
+pub(crate) use source::{Module, attributes, flatten, load as load_modules, test_only};
+pub(crate) use symbols::Symbols;
 /// Production structs may have at most this many fields.
 pub(crate) const MAX_FIELDS: usize = 15;
 /// A local type may be implemented in at most this many source files.
@@ -37,6 +41,9 @@ mod tests;
 struct Policy {
     #[serde(default)]
     dto: BTreeMap<String, String>,
+    /// Parsed and enforced by the isolation check.
+    #[serde(default, rename = "isolation")]
+    _isolation: serde::de::IgnoredAny,
 }
 
 pub(crate) fn check(root: &Path) -> anyhow::Result<()> {

@@ -1,5 +1,6 @@
 //! Pure edits of setting values against a schema.
 
+use alloc::{string::String, string::ToString, vec::Vec};
 use thiserror::Error;
 
 use super::{

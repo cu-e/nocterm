@@ -1,4 +1,5 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 
 use super::{fixtures::*, *};
 use crate::{CatalogError, PluginCatalog, PluginId, SystemPlugin};

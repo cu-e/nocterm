@@ -1,6 +1,7 @@
 //! Values of settings fields and the edits that change them.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::{string::String, vec::Vec};
 
 /// The value of one field.
 #[derive(Clone, Debug, PartialEq, Eq)]

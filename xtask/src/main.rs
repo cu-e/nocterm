@@ -16,6 +16,7 @@ use serde_json::Value;
 mod actions_reference;
 mod crate_cards;
 mod file_size;
+mod isolation;
 mod lint_policy;
 mod manifest_lints;
 mod ratchet;
@@ -75,6 +76,7 @@ fn main() -> anyhow::Result<()> {
             lint_policy::check(root)?;
             settings_reference::check(root)?;
             ratchet::check(root)?;
+            isolation::check(root)?;
             file_size::check(root)?;
             crate_cards::check(root)?;
             report_early_warnings(root)

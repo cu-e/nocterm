@@ -1,6 +1,8 @@
 //! The checked set of every core contribution and system plugin of one application.
 
-use std::collections::HashSet;
+use alloc::collections::BTreeSet;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 use crate::{
     CatalogError, ContributionId, ContributionKind, GroupSpec, PluginId, SystemContribution,
@@ -51,7 +53,7 @@ impl PluginCatalog {
         core: &[&'static [SystemContribution]],
         plugins: &[&'static SystemPlugin],
     ) -> Result<Self, CatalogError> {
-        let mut seen_groups = HashSet::new();
+        let mut seen_groups = BTreeSet::new();
         for group in groups {
             group.id.check()?;
             if !seen_groups.insert(&group.id) {
@@ -62,7 +64,7 @@ impl PluginCatalog {
         if primaries != 1 {
             return Err(CatalogError::PrimaryGroups { count: primaries });
         }
-        let mut seen_plugins = HashSet::new();
+        let mut seen_plugins = BTreeSet::new();
         for plugin in plugins {
             plugin.id.check()?;
             if !seen_plugins.insert(&plugin.id) {
@@ -187,8 +189,8 @@ fn check_settings(plugin: &SystemPlugin) -> Result<(), CatalogError> {
 }
 
 fn check_entries(entries: &[Entry], groups: &[GroupSpec]) -> Result<(), CatalogError> {
-    let mut ids = HashSet::new();
-    let mut orders = HashSet::new();
+    let mut ids = BTreeSet::new();
+    let mut orders = BTreeSet::new();
     for Entry { contribution, .. } in entries {
         contribution.id.check()?;
         if !ids.insert(&contribution.id) {

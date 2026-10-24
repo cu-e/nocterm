@@ -15,6 +15,36 @@ pub(super) fn collect(
     symbols: &Symbols,
     dtos: &BTreeMap<String, String>,
 ) -> anyhow::Result<Counts> {
+    run(modules, symbols, dtos, None)
+}
+
+/// Every resolved path of production code in the wanted modules, as `(module, path)`.
+///
+/// It uses the import, alias and re-export resolver of the ratchet, for rules that classify
+/// paths by their own policy.
+pub(crate) fn walk_paths(
+    modules: &[Module],
+    symbols: &Symbols,
+    wanted: &dyn Fn(&Module) -> bool,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let mut found = Vec::new();
+    run(
+        modules,
+        symbols,
+        &BTreeMap::new(),
+        Some((wanted, &mut found)),
+    )?;
+    Ok(found)
+}
+
+type Paths<'a> = (&'a dyn Fn(&Module) -> bool, &'a mut Vec<(String, String)>);
+
+fn run(
+    modules: &[Module],
+    symbols: &Symbols,
+    dtos: &BTreeMap<String, String>,
+    mut paths: Option<Paths<'_>>,
+) -> anyhow::Result<Counts> {
     super::bindings::check_modules(modules)?;
     symbols.check_globs(modules)?;
     symbols.check_declaration_imports(modules)?;
@@ -33,6 +63,10 @@ pub(super) fn collect(
             blocks: BTreeMap::new(),
             implementations: &mut implementations,
             dtos,
+            paths: paths
+                .as_mut()
+                .filter(|(wanted, _)| wanted(module))
+                .map(|(_, found)| &mut **found),
             errors: Vec::new(),
         };
         for item in &module.items {
@@ -129,6 +163,7 @@ struct Collector<'a> {
     blocks: BTreeMap<String, usize>,
     implementations: &'a mut BTreeMap<String, BTreeSet<String>>,
     dtos: &'a BTreeMap<String, String>,
+    paths: Option<&'a mut Vec<(String, String)>>,
     errors: Vec<String>,
 }
 
@@ -361,42 +396,67 @@ impl<'ast> Visit<'ast> for Collector<'_> {
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        if self.module.layer == "domain" {
+        let domain = self.module.layer == "domain";
+        if domain || self.paths.is_some() {
             // A bare identifier matching a dependency can be a local value
             // (e.g. `Image(image)`). Crate roots cannot themselves be values.
-            if path.segments.len() == 1
+            let local_value = path.segments.len() == 1
                 && self
                     .module
                     .io_crates
-                    .contains_key(&path.segments[0].ident.to_string())
-            {
-                return;
-            }
-            for mut name in self
-                .symbols
-                .resolve_candidates(&self.scope, path, &self.imports)
-            {
-                let first = name.split("::").next().unwrap_or("");
-                let dependency = self.module.io_crates.get(first);
-                if let Some(canonical) = dependency {
-                    name = format!("{canonical}{}", &name[first.len()..]);
-                }
-                if !pure_network_value(&name)
-                    && (dependency.is_some()
-                        || core_io(&name)
-                        || ["std::fs", "std::net", "std::process"]
-                            .iter()
-                            .any(|prefix| {
-                                name == *prefix || name.starts_with(&format!("{prefix}::"))
-                            }))
+                    .contains_key(&path.segments[0].ident.to_string());
+            if !local_value {
+                for name in self
+                    .symbols
+                    .resolve_candidates(&self.scope, path, &self.imports)
                 {
-                    self.counts
-                        .bump("domain_io", &format!("{}::{name}", self.module.name));
+                    if let Some(found) = self.paths.as_mut() {
+                        found.push((self.module.name.clone(), name.clone()));
+                    }
+                    if domain && let Some(name) = io_path(&name, &self.module.io_crates, false) {
+                        self.counts
+                            .bump("domain_io", &format!("{}::{name}", self.module.name));
+                    }
                 }
             }
         }
         visit::visit_path(self, path);
     }
+}
+
+/// The canonical name of a resolved path that performs I/O, if it does.
+///
+/// Dependencies listed in `io_crates` are I/O at their root. `isolated` adds the
+/// environment, operating-system and standard-input prefixes that plugin crates may not
+/// reach either.
+pub(crate) fn io_path(
+    name: &str,
+    io_crates: &BTreeMap<String, String>,
+    isolated: bool,
+) -> Option<String> {
+    let first = name.split("::").next().unwrap_or("");
+    let dependency = io_crates.get(first);
+    let name = match dependency {
+        Some(canonical) => format!("{canonical}{}", &name[first.len()..]),
+        None => name.to_owned(),
+    };
+    let prefixes: &[&str] = if isolated {
+        &[
+            "std::fs",
+            "std::net",
+            "std::process",
+            "std::env",
+            "std::os",
+            "std::io::stdin",
+        ]
+    } else {
+        &["std::fs", "std::net", "std::process"]
+    };
+    let listed = prefixes
+        .iter()
+        .any(|prefix| name == *prefix || name.starts_with(&format!("{prefix}::")));
+    (!pure_network_value(&name) && (dependency.is_some() || core_io(&name) || listed))
+        .then_some(name)
 }
 
 fn string_result(

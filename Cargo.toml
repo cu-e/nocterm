@@ -77,6 +77,11 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[features]
+# The user-plugin track: compiled out of default and release builds until it ships
+# (docs/architecture/guardrails.md, "Isolation of plugin crates").
+user-plugins = []
+
 [lints]
 workspace = true
 

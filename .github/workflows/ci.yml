@@ -248,6 +248,46 @@ jobs:
       - run: cargo xtask architecture
       - run: cargo doc --locked --workspace --no-deps
 
+  # The user-plugin track is compiled out of default builds until it ships
+  # (docs/architecture/guardrails.md). Every commit must also build with it.
+  user-plugins:
+    name: User plugins feature build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config clang cmake libssl-dev \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libvulkan-dev mesa-vulkan-drivers dbus
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.0"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: user-plugins
+      - run: cargo clippy --locked --workspace --all-targets --features nocterm/user-plugins -- -D warnings
+      - run: cargo test --locked --workspace --features nocterm/user-plugins
+
+  advisories:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check advisories
+
   device-unlock-native:
     name: Device unlock on ${{ matrix.os }}
     strategy:
@@ -278,7 +318,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [agent-guardrails, release-pipeline, conventions, integration-history, notices, unused-dependencies, rust, device-unlock-native, vendor-patches]
+    needs: [agent-guardrails, release-pipeline, conventions, integration-history, notices, unused-dependencies, rust, user-plugins, advisories, device-unlock-native, vendor-patches]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

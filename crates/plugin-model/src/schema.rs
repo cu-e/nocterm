@@ -7,7 +7,7 @@
 //! The kinds are toggle, choice, multi-choice (a closed option list), bounded integer and
 //! single-line text. There is no colour, secret, masked or multi-line kind.
 
-use std::borrow::Cow;
+use alloc::{borrow::Cow, string::ToString};
 
 use crate::ContributionId;
 
@@ -94,7 +94,9 @@ impl FieldSpec {
     pub fn current(&self, values: &SettingValues) -> SettingValue {
         let default = self.kind.default_value();
         match values.get(&self.key) {
-            Some(stored) if std::mem::discriminant(stored) == std::mem::discriminant(&default) => {
+            Some(stored)
+                if core::mem::discriminant(stored) == core::mem::discriminant(&default) =>
+            {
                 stored.clone()
             }
             _ => default,

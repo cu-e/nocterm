@@ -22,6 +22,7 @@ fn module(name: &str, file: &str, text: &str) -> Module {
         imports: source::imports(&items),
         items,
         io_crates: BTreeMap::new(),
+        inner_attributes: Vec::new(),
     }
 }
 

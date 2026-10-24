@@ -1,5 +1,6 @@
 //! Typed errors of id syntax and catalog validation.
 
+use alloc::{string::String, string::ToString};
 use thiserror::Error;
 
 use crate::{ContributionId, GroupId, PluginId, SchemaError, Zone};
