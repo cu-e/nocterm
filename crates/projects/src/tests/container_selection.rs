@@ -149,7 +149,7 @@ pub(super) fn native_window(
             |window, cx| {
                 cx.new(|cx| {
                     Workspace::new(
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx)),
+                        nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx),
                         window,
                         cx,
                     )
@@ -190,7 +190,7 @@ fn shaped_container_rows_keep_separate_lines_and_a_reachable_footer() {
     let (window, workspace) = native_window(&mut cx);
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            register(workspace, &installed, window, cx)
+            register(workspace, &installed, window, cx).unwrap();
         });
         window.activate_window();
         window.render_frame(cx);

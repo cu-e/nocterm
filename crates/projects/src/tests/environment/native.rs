@@ -36,8 +36,8 @@ fn shaped_environment_settings_keep_facts_and_explicit_actions_reachable() {
     let (window, workspace) = super::super::container_selection::native_window(&mut cx);
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            register(workspace, &installed, window, cx);
-            workspace.activate_panel_of::<ProjectsPanel>(window, cx);
+            register(workspace, &installed, window, cx).unwrap();
+            workspace.open_panel(&crate::plugin::WORKSPACES.id, window, cx);
         });
         window.activate_window();
     })

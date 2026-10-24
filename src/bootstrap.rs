@@ -541,7 +541,10 @@ pub(crate) fn build_workspace(
         nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx),
     );
     if let Some(projects) = &booted.projects {
-        nocterm_projects::register(workspace, projects, window, cx);
+        report_registration(
+            "projects",
+            nocterm_projects::register(workspace, projects, window, cx),
+        );
     }
     nocterm_monitor_ui::register(&booted.monitor, workspace, window, cx);
     nocterm_agent::register(workspace, booted.agent.clone(), window, cx);

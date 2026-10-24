@@ -250,7 +250,7 @@ pub(super) fn open_window(
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 Workspace::new(
-                    nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx)),
+                    nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx),
                     window,
                     cx,
                 )
@@ -261,8 +261,9 @@ pub(super) fn open_window(
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
         workspace.update(cx, |workspace, cx| {
-            register(workspace, installed, window, cx);
-            workspace.activate_panel_of::<ProjectsPanel>(window, cx);
+            register(workspace, installed, window, cx).unwrap();
+            // `open_panel` leaves the focus alone when the panel already shows; actions need it inside.
+            workspace.activate_panel(0, window, cx);
         });
     })
     .unwrap();

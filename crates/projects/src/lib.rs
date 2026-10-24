@@ -8,7 +8,8 @@
 //! Ports used: ProjectsHandle/WorkspaceSetup, captured preparation/ImageSearch, DirectoryRead,
 //! bound ProjectTerminalSession/ProjectTerminalResolve, WorkspaceEnvironment
 //! and WorkspaceContainerActions. Ports provided:
-//! retained Installed registration and ProjectView.
+//! retained Installed registration, ProjectView and the `projects` system plugin
+//! (`plugin::PLUGIN`) with its sidebar panel.
 //! Workspace remains for outer Item admission, Panel/actions, focused-source capture,
 //! original General Item enumeration and connection-directory projections (ADR0079).
 //! Project terminal contracts/refusals come directly from workspace-ports; containers supplies DTOs.
@@ -28,6 +29,7 @@ mod languages;
 mod location;
 mod opening;
 mod panel;
+pub mod plugin;
 mod progress;
 mod removal;
 mod settings_page;
@@ -40,7 +42,7 @@ pub use panel::ProjectsPanel;
 pub use view::ProjectView;
 
 use gpui_kit::{Context, Window};
-use nocterm_workspace::Workspace;
+use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};
 
 gpui_kit::actions!(
     projects,
@@ -61,20 +63,20 @@ pub fn init(
     Installed::new(model, terminals, settings, cx)
 }
 
-/// Registration order puts this footer switch immediately after Containers.
+/// Adds the workspaces panel to the sidebar of `workspace`; its descriptor places it after Containers.
+///
+/// The actions are registered even when the workspace refuses the panel.
 pub fn register(
     workspace: &mut Workspace,
     installed: &Installed,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Result<(), RegistrationError> {
     use gpui_kit::AppContext as _;
-    let owner = cx.entity().downgrade();
+    let panel_installed = installed.clone();
     let installed = installed.clone();
-    let panel = cx.new(|cx| ProjectsPanel::new(installed.clone(), owner, window, cx));
-    workspace.add_panel(panel, cx);
     workspace.register_action(|workspace, _: &ToggleProjects, window, cx| {
-        workspace.toggle_panel_of::<ProjectsPanel>(window, cx);
+        workspace.toggle_panel(&plugin::WORKSPACES.id, window, cx);
     });
     workspace.register_action(move |workspace, _: &NewProject, window, cx| {
         match context::capture_current(workspace, &installed, window, cx) {
@@ -90,6 +92,14 @@ pub fn register(
             ),
         }
     });
+    workspace.register_panel(
+        PanelRegistration::new(&plugin::WORKSPACES, move |_, window, cx| {
+            let owner = cx.entity().downgrade();
+            cx.new(|cx| ProjectsPanel::new(panel_installed.clone(), owner, window, cx))
+        }),
+        window,
+        cx,
+    )
 }
 
 #[cfg(test)]

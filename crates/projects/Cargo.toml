@@ -17,6 +17,7 @@ nocterm-project-providers.workspace = true
 nocterm-containers.workspace = true
 nocterm-explorer.workspace = true
 nocterm-session.workspace = true
+nocterm-plugin-model.workspace = true
 nocterm-project-service.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true

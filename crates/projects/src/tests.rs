@@ -19,6 +19,7 @@ mod environment;
 mod image_selection;
 mod library;
 mod lifecycle;
+mod plugin;
 mod settings;
 mod support;
 mod terminals;

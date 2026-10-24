@@ -245,8 +245,8 @@ fn shaped_removal_choices_and_consequences_keep_the_footer_reachable() {
     let (window, workspace) = super::container_selection::native_window(&mut cx);
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            register(workspace, &installed, window, cx);
-            workspace.activate_panel_of::<ProjectsPanel>(window, cx);
+            register(workspace, &installed, window, cx).unwrap();
+            workspace.open_panel(&crate::plugin::WORKSPACES.id, window, cx);
         });
         window.activate_window();
     })

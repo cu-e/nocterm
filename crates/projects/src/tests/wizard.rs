@@ -184,7 +184,7 @@ fn shaped_wizard_keeps_relevant_steps_and_footer_visible_at_720p_and_in_small_wi
     let (window, workspace) = super::container_selection::native_window(&mut cx);
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            register(workspace, &installed, window, cx)
+            register(workspace, &installed, window, cx).unwrap();
         });
         window.resize(gpui_kit::size(gpui_kit::px(1280.), gpui_kit::px(720.)));
         window.bounds_changed(cx);

@@ -55,7 +55,7 @@ fn shaped_workspace_discovery_keeps_header_results_and_footer_usable() {
     let (window, workspace) = super::container_selection::native_window(&mut cx);
     cx.update_window(window, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            register(workspace, &installed, window, cx)
+            register(workspace, &installed, window, cx).unwrap();
         });
         window.resize(gpui_kit::size(px(1280.), px(720.)));
         window.bounds_changed(cx);

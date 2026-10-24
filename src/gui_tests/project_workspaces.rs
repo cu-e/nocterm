@@ -225,18 +225,18 @@ fn project_window(
     projects: &nocterm_projects::Installed,
     cx: &mut App,
 ) -> (AnyWindowHandle, Entity<Workspace>) {
-    let layout = nocterm_ui::LayoutHandle::in_memory(cx);
+    let deps = nocterm_workspace::test_support::deps_for(&[&nocterm_projects::plugin::PLUGIN], cx);
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         window.activate_window();
         cx.new(|cx| {
-            let mut workspace = Workspace::new(nocterm_workspace::Deps::new(layout), window, cx);
+            let mut workspace = Workspace::new(deps, window, cx);
             nocterm_terminal::register(terminal, &mut workspace);
             nocterm_connections::register(connections, &mut workspace, window, cx);
             workspace.set_chat_connection_opener(crate::project_setup::chat_connection_opener(
                 terminal,
                 connections,
             ));
-            nocterm_projects::register(&mut workspace, projects, window, cx);
+            nocterm_projects::register(&mut workspace, projects, window, cx).unwrap();
             workspace
         })
     })
