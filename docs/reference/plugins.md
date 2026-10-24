@@ -65,6 +65,14 @@ CPU and memory of the active environment in the status bar
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `monitor.summary` | widget | Monitor | left | 60 | none | show | no |
 
+### Settings: Status bar
+
+Shown for `monitor.summary`.
+
+| Key | Label | Kind | Default | Options or range | Stored in |
+| --- | --- | --- | --- | --- | --- |
+| `status_bar` | Metrics in the status bar | multi-choice | `cpu`, `memory` | `cpu` (CPU), `cores` (CPU cores), `memory` (Memory), `swap` (Swap), `load` (Load average), `uptime` (Uptime), `temperature` (Temperature), `disks` (Disk space), `network` (Network), `disk_io` (Disk I/O); at most 10, kept in the order chosen | `[monitor].status_bar` |
+
 ## AI Agents
 
 Plugin `agent`. Required: yes.
