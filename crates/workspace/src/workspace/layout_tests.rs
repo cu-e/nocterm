@@ -1,13 +1,12 @@
 //! The body's columns: resizing, hiding a sidebar panel from its own
 //! button, and swapping sides.
+use crate::test_support::{TestPanel, TestPanelBuilder, Toggle, toggle_id};
 use gpui_kit::{
     App, AppContext as _, Entity, Focusable, TestAppContext, Window, px, test::TestWindowExt as _,
 };
 use nocterm_ui::IconName;
 
 use super::{Arrangement, Column, PanelPresentation};
-use crate::test_support::TestPanel;
-use crate::test_support::TestPanelBuilder;
 use crate::workspace::tests::fixture;
 
 fn side_panel(element_id: &'static str, title: &'static str, icon: IconName) -> TestPanelBuilder {
@@ -79,10 +78,10 @@ fn sidebar_resizes_with_the_side_panel_closed_and_its_button_hides_it(cx: &mut T
         assert!(after > before + px(100.), "{before:?} → {after:?}");
 
         // The shown panel's own button hides the sidebar, and shows it again.
-        window.click(("sidebar-panel", 0usize), cx);
+        window.click(toggle_id(Toggle::Navigation(0)), cx);
         window.render_frame(cx);
         assert!(window.try_find("side-probe").is_none());
-        window.click(("sidebar-panel", 0usize), cx);
+        window.click(toggle_id(Toggle::Navigation(0)), cx);
         window.render_frame(cx);
         assert!(window.try_find("side-probe").is_some());
     })
@@ -223,7 +222,7 @@ fn assert_expanded_columns(window: &mut Window, cx: &mut App, swapped: bool) {
     let side = window.find("side-probe").bounds();
     let right = window.find("right-probe").bounds();
     assert!(window.try_find("empty-new-tab").is_none());
-    assert!(window.try_find("toggle-right-panel").is_some());
+    assert!(window.try_find(toggle_id(Toggle::SidePanel)).is_some());
     assert!(side.size.width > px(100.) && right.size.width > px(0.));
     if swapped {
         assert!(right.right() <= side.left());
@@ -330,10 +329,10 @@ fn sidebar_controls_preserve_expansion_and_focus_visible_chat_when_closed(cx: &m
             workspace.set_right_panel_maximized(true, cx);
         });
         assert_expanded_columns(window, cx, false);
-        window.click(("sidebar-panel", 1usize), cx);
+        window.click(toggle_id(Toggle::Navigation(1)), cx);
         assert_expanded_columns(window, cx, false);
         assert!(other.focus_handle(cx).is_focused(window));
-        window.click(("sidebar-panel", 1usize), cx);
+        window.click(toggle_id(Toggle::Navigation(1)), cx);
         window.render_frame(cx);
         assert!(window.try_find("side-probe").is_none());
         assert!(window.try_find("empty-new-tab").is_none());
@@ -348,7 +347,7 @@ fn sidebar_controls_preserve_expansion_and_focus_visible_chat_when_closed(cx: &m
         });
         window.render_frame(cx);
         assert!(window.try_find("empty-new-tab").is_none());
-        window.click(("sidebar-panel", 0usize), cx);
+        window.click(toggle_id(Toggle::Navigation(0)), cx);
         assert_expanded_columns(window, cx, true);
     })
     .unwrap();

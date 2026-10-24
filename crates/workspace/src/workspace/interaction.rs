@@ -251,6 +251,11 @@ impl Workspace {
             cx.notify();
         }
     }
+    /// The icons and tooltips the footer draws for its toggles.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn footer_toggle_looks(&self, cx: &App) -> super::chrome::FooterLooks {
+        super::chrome::FooterLooks::of(&self.sidebar, &self.right_panel, cx)
+    }
     pub fn toggle_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(transition) = self.right_panel.toggle(window, cx) {
             self.apply_panel_transition(transition, window, cx);

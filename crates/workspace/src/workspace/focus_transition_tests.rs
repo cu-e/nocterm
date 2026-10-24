@@ -1,5 +1,6 @@
 //! Today's sidebar and side-panel transitions: visibility, expansion, availability,
 //! and where focus lands, one test per behaviour of the transition table.
+use crate::test_support::{Toggle, toggle_id};
 use gpui_kit::InteractiveElement as _;
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Entity, Focusable, Subscription, TestAppContext, Window,
@@ -254,20 +255,20 @@ fn clicking_the_showing_panel_button_hides_the_sidebar_like_the_toggle(cx: &mut 
     shell.focus_navigation(0, cx);
     shell.run(cx, |window, cx| {
         window.render_frame(cx);
-        window.click(("sidebar-panel", 0usize), cx);
+        window.click(toggle_id(Toggle::Navigation(0)), cx);
     });
     assert!(!shell.sidebar_open(cx));
     assert_eq!(shell.focus(cx), Focus::Central);
     shell.run(cx, |window, cx| {
         window.render_frame(cx);
-        window.click(("sidebar-panel", 0usize), cx);
+        window.click(toggle_id(Toggle::Navigation(0)), cx);
     });
     assert!(shell.sidebar_open(cx));
     assert_eq!(shell.focus(cx), Focus::Navigation(0));
     shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
     shell.run(cx, |window, cx| {
         window.render_frame(cx);
-        window.click(("sidebar-panel", 0usize), cx);
+        window.click(toggle_id(Toggle::Navigation(0)), cx);
     });
     assert!(!shell.sidebar_open(cx));
     assert_eq!(shell.focus(cx), Focus::SidePanel);

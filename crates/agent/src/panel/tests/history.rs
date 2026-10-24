@@ -4,6 +4,7 @@ use nocterm_ai::model::content::Content;
 use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
 use nocterm_ai::model::ids::SessionId;
 use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
+use nocterm_workspace::test_support::{Toggle, toggle_id};
 
 #[gpui_kit::test]
 fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut TestAppContext) {
@@ -700,7 +701,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
 fn toggle_workspace_panel(f: &Fixture, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("toggle-right-panel", cx);
+        window.click(toggle_id(Toggle::SidePanel), cx);
         window.render_frame(cx);
     })
     .unwrap();

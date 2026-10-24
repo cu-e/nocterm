@@ -1,6 +1,7 @@
 //! The right panel opens beside an empty workspace, maximizes and disables.
 use super::fixture;
 use crate::test_support::TestPanel;
+use crate::test_support::{Toggle, toggle_id};
 use gpui_kit::{
     AppContext as _, TestAppContext, component::floating::FloatingCards, px,
     test::TestWindowExt as _,
@@ -28,8 +29,14 @@ fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mu
         assert!(window.try_find("right-probe").is_some());
         assert!(window.try_find("empty-new-tab").is_some());
         assert!(window.try_find("open-settings").is_none());
-        let toggle = window.find("toggle-right-panel").bounds();
-        assert!(toggle.left() > window.find("toggle-local-terminal").bounds().right());
+        let toggle = window.find(toggle_id(Toggle::SidePanel)).bounds();
+        assert!(
+            toggle.left()
+                > window
+                    .find(toggle_id(Toggle::LocalTerminal))
+                    .bounds()
+                    .right()
+        );
         workspace.update(cx, |workspace, cx| {
             // With navigation hidden, expansion fills the entire body.
             workspace.toggle_sidebar(window, cx);
@@ -37,7 +44,7 @@ fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mu
         });
         window.render_frame(cx);
         assert!(window.try_find("empty-new-tab").is_none());
-        assert!(window.try_find("toggle-right-panel").is_some());
+        assert!(window.try_find(toggle_id(Toggle::SidePanel)).is_some());
         assert!(panel.read(cx).maximized());
         let inset = FloatingCards::get(cx).map_or(px(0.), |cards| cards.gap * 2. + px(2.));
         let probe = window.find("right-probe").bounds().size.width;
@@ -46,7 +53,7 @@ fn independent_right_panel_supports_empty_workspace_maximize_and_disable(cx: &mu
             workspace.set_right_panel_available(false, window, cx)
         });
         window.render_frame(cx);
-        assert!(window.try_find("toggle-right-panel").is_none());
+        assert!(window.try_find(toggle_id(Toggle::SidePanel)).is_none());
         assert!(window.try_find("right-probe").is_none());
         assert!(window.try_find("empty-new-tab").is_some());
         assert!(!panel.read(cx).maximized());

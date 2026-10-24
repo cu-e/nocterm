@@ -1,3 +1,4 @@
+use crate::test_support::{Toggle, toggle_id};
 use crate::{Item, ItemEvent, LocalTerminal, Workspace};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -319,9 +320,9 @@ fn footer_spans_the_window_when_sidebar_is_hidden(cx: &mut TestAppContext) {
             workspace.toggle_sidebar(window, cx);
         });
         window.render_frame(cx);
-        let settings = window.find("toggle-local-terminal").bounds();
+        let settings = window.find(toggle_id(Toggle::LocalTerminal)).bounds();
         assert!(window.viewport_size().width - settings.right() < gpui_kit::px(16.));
-        assert!(window.try_find("toggle-local-terminal").is_some());
+        assert!(window.try_find(toggle_id(Toggle::LocalTerminal)).is_some());
         assert!(window.try_find("open-settings").is_none());
     })
     .unwrap();

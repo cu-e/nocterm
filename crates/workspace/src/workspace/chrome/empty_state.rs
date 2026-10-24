@@ -30,6 +30,8 @@ impl Chrome {
             .map(|directory| directory.recent_connections(cx))
             .unwrap_or_default();
         v_flex()
+            .id("workspace-content")
+            .test_support()
             .size_full()
             .min_h_0()
             .items_center()

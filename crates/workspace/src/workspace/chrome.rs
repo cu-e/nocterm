@@ -6,8 +6,8 @@
 //! dock draws its own tab groups as cards, so the content column only frames
 //! what it shows when no tab is open.
 use gpui_kit::{
-    Anchor, AnyElement, AnyView, App, Context, Entity, Hsla, MouseButton, StyleRefinement,
-    TestSupportExt as _, Window,
+    Anchor, AnyElement, AnyView, App, Context, ElementId, Entity, Hsla, MouseButton,
+    StyleRefinement, TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
@@ -34,6 +34,9 @@ use std::rc::Rc;
 
 mod empty_state;
 mod menus;
+mod toggle_look;
+
+pub(super) use toggle_look::FooterLooks;
 
 struct NewTabControl {
     entry: Option<NewTabMenu>,
@@ -254,6 +257,8 @@ impl Chrome {
         if regions.tabs.visible() {
             // The dock frames each of its tab groups itself.
             return div()
+                .id("workspace-content")
+                .test_support()
                 .size_full()
                 .child(regions.tabs.view())
                 .into_any_element();
@@ -321,6 +326,8 @@ impl Chrome {
         let floating = FloatingCards::get(cx).is_some();
 
         sidebar
+            .id((ElementId::from("panel-group-column"), "navigation"))
+            .test_support()
             .size_full()
             .text_color(theme.sidebar_foreground)
             // A card brings its own fill and outline.
@@ -362,8 +369,15 @@ impl Chrome {
         let selection = regions.selection;
         let theme = cx.theme();
         let floating = FloatingCards::get(cx).is_some();
+        let looks = FooterLooks::of(regions.sidebar, regions.right, cx);
+        let FooterLooks {
+            navigation,
+            local_terminal,
+            side_panel,
+        } = looks;
         footer
             .id("workspace-footer")
+            .test_support()
             .w_full()
             .flex_shrink_0()
             .child(
@@ -375,19 +389,21 @@ impl Chrome {
                     .when(!floating, |footer| {
                         footer.border_t_1().border_color(theme.sidebar_border)
                     })
-                    .children(regions.sidebar.entries().enumerate().map(|(ix, panel)| {
-                        Button::new(("sidebar-panel", ix))
-                            .ghost()
-                            .small()
-                            .icon(panel.icon(cx))
-                            .tooltip(panel.title(cx))
-                            .when_some(panel.badge(cx), Button::label)
-                            .selected(regions.sidebar.showing(ix))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                // The shown panel's button hides the sidebar.
-                                this.toggle_sidebar_panel(ix, window, cx);
-                            }))
-                    }))
+                    .children(regions.sidebar.entries().zip(navigation).enumerate().map(
+                        |(ix, (panel, look))| {
+                            Button::new(("sidebar-panel", ix))
+                                .ghost()
+                                .small()
+                                .icon(look.icon)
+                                .tooltip(look.tooltip)
+                                .when_some(panel.badge(cx), Button::label)
+                                .selected(regions.sidebar.showing(ix))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    // The shown panel's button hides the sidebar.
+                                    this.toggle_sidebar_panel(ix, window, cx);
+                                }))
+                        },
+                    ))
                     .children(self.status_views(StatusSide::Leading))
                     .child(div().flex_1())
                     .child(nocterm_ui::notice::NoticeBar::new())
@@ -396,8 +412,8 @@ impl Chrome {
                         Button::new("toggle-local-terminal")
                             .ghost()
                             .small()
-                            .icon(IconName::SquareTerminal)
-                            .tooltip("Local Terminal")
+                            .icon(local_terminal.icon)
+                            .tooltip(local_terminal.tooltip)
                             .selected(regions.tabs.local_visible())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 if this.accepts_context_selection(selection, cx) {
@@ -405,21 +421,13 @@ impl Chrome {
                                 }
                             })),
                     )
-                    .when(regions.right.available(), |footer| {
+                    .when_some(side_panel, |footer, side| {
                         footer.child(
                             Button::new("toggle-right-panel")
                                 .ghost()
                                 .small()
-                                .icon(if regions.right.attention() {
-                                    IconName::ShieldCheck
-                                } else {
-                                    IconName::PanelRight
-                                })
-                                .tooltip(if regions.right.attention() {
-                                    "AI Agents: permission required"
-                                } else {
-                                    "AI Agents"
-                                })
+                                .icon(side.icon)
+                                .tooltip(side.tooltip)
                                 .selected(regions.right.open())
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_right_panel(window, cx)

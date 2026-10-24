@@ -3,6 +3,7 @@ use nocterm_ai::model::auth::PermissionOutcome;
 use nocterm_ai::model::content::Content;
 use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 use nocterm_ai::model::tools::ToolStatus;
+use nocterm_workspace::test_support::{Toggle, toggle_id};
 
 #[gpui_kit::test]
 async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAppContext) {
@@ -54,7 +55,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(!f.workspace.read(cx).right_panel_is_open());
-        assert!(window.try_find("toggle-right-panel").is_none());
+        assert!(window.try_find(toggle_id(Toggle::SidePanel)).is_none());
         assert!(f.panel.read(cx).chat_documents().len() == 0);
     })
     .unwrap();
@@ -241,7 +242,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
         workspace.update(cx, |workspace, cx| workspace.toggle_right_panel(window, cx));
         window.render_frame(cx);
         assert!(window.try_find("agent-history-empty").is_some());
-        assert!(window.try_find("toggle-right-panel").is_some());
+        assert!(window.try_find(toggle_id(Toggle::SidePanel)).is_some());
     })
     .unwrap();
 }

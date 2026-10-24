@@ -266,3 +266,6 @@ pub use project_surface::ProjectSurfaceProbe;
 
 mod panel;
 pub use panel::{TestPanel, TestPanelBuilder};
+
+mod shell;
+pub use shell::{Toggle, toggle_id, toggle_presentation};
