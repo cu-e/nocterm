@@ -74,10 +74,10 @@ fn stored() -> LayoutSettings {
     ])
 }
 
-struct Windows {
-    handle: AnyWindowHandle,
-    workspace: Entity<Workspace>,
-    settings: SettingsHandle,
+pub(super) struct Windows {
+    pub(super) handle: AnyWindowHandle,
+    pub(super) workspace: Entity<Workspace>,
+    pub(super) settings: SettingsHandle,
 }
 
 /// A window over fresh shared settings that already hold [`stored`] layouts.
@@ -87,7 +87,7 @@ fn windows(cx: &mut TestAppContext) -> Windows {
 
 /// A window over fresh shared settings holding `document`, with `layouts` stored in it, and
 /// the legacy swapped flag as given.
-fn windows_over(
+pub(super) fn windows_over(
     cx: &mut TestAppContext,
     mut document: SettingsDocument,
     layouts: Option<LayoutSettings>,
@@ -116,7 +116,7 @@ fn windows_over(
 }
 
 /// Another window over the same settings.
-fn another_window(
+pub(super) fn another_window(
     cx: &mut TestAppContext,
     settings: &SettingsHandle,
 ) -> (AnyWindowHandle, Entity<Workspace>) {

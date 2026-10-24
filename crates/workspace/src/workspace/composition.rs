@@ -242,7 +242,8 @@ impl Workspace {
         self.open_session(spec, window, cx);
         Ok(())
     }
-    /// Registers the panel of a contribution of the plugin catalog and creates it now.
+    /// Registers the panel of a contribution of the plugin catalog and creates it now, unless
+    /// the user disabled its plugin: then the panel is created when the plugin is enabled.
     ///
     /// The panel joins the group and the position the window's layout gives it, and starts
     /// available.
@@ -266,8 +267,10 @@ impl Workspace {
             PanelSource::Factory(factory) => {
                 // The panel's slot exists while the factory reads the workspace.
                 self.panels.register(id.clone(), None, self.shell.current());
-                let panel = factory(&*self, window, cx);
-                self.panels.fill(&id, panel);
+                if self.shell.is_enabled(&id) {
+                    let panel = factory(&*self, window, cx);
+                    self.panels.fill(&id, panel);
+                }
                 self.registrations.keep_factory(id, factory);
             }
         }
@@ -427,6 +430,43 @@ impl Workspace {
     }
     // ── Following the layout settings ────────────────────────────────────────
 
+    /// Creates the panels of the plugins that are enabled and have none, and releases those of
+    /// the plugins that are disabled. A disabled panel that shows closes first, and its entity
+    /// drops once the change is applied; a panel that is enabled again starts closed.
+    fn apply_enablement(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ids: Vec<_> = self.panels.registered_ids().cloned().collect();
+        for id in ids {
+            if self.shell.is_enabled(&id) {
+                self.create_panel(&id, window, cx);
+                continue;
+            }
+            let Some((transition, panel)) = self.panels.release(&id, window, cx) else {
+                continue;
+            };
+            if let Some(transition) = transition {
+                self.apply_panel_transition(transition, window, cx);
+            }
+            cx.defer(move |_| drop(panel));
+        }
+    }
+
+    /// Runs the factory of a registered panel that has none.
+    fn create_panel(
+        &mut self,
+        id: &nocterm_plugin_model::ContributionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.panels.lacks_panel(id) {
+            return;
+        }
+        let Some(factory) = self.registrations.factory(id) else {
+            return;
+        };
+        let panel = factory(&*self, window, cx);
+        self.panels.fill(id, panel);
+    }
+
     /// Applies the layout the settings select now: the groups take the new membership, a switch
     /// to a saved layout shows the panels it names, and panels the layout no longer places
     /// close.
@@ -439,6 +479,7 @@ impl Workspace {
             LayoutChange::Opened(open) => Some(open.as_slice()),
             _ => None,
         };
+        self.apply_enablement(window, cx);
         for transition in self.panels.follow(self.shell.current(), open, window, cx) {
             self.apply_panel_transition(transition, window, cx);
         }

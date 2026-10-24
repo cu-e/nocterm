@@ -5,6 +5,7 @@ use gpui_kit::{
     component::{Placement, input},
 };
 use nocterm_plugin_model::ContributionId;
+use nocterm_ui::notice;
 use nocterm_window_layout::PresetId;
 use panel_groups::{PanelFocus, PanelTransition};
 impl Workspace {
@@ -232,13 +233,17 @@ impl Workspace {
     // ── Panels by contribution id ────────────────────────────────────────────
 
     /// Shows the registered panel of a contribution, or hides its group when it shows. Nothing
-    /// happens for an unknown id or a panel that is not offered.
+    /// happens for an unknown id or a panel that is not offered; a panel whose plugin is
+    /// disabled says so.
     pub fn toggle_panel(
         &mut self,
         id: &ContributionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.refuse_disabled(id, window, cx) {
+            return;
+        }
         if let Some(transition) = self.panels.toggle_panel(id, window, cx) {
             self.apply_panel_transition(transition, window, cx);
         }
@@ -246,9 +251,37 @@ impl Workspace {
     /// Shows the registered panel of a contribution and focuses it. A panel that already shows
     /// keeps the focus where it is.
     pub fn open_panel(&mut self, id: &ContributionId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_disabled(id, window, cx) {
+            return;
+        }
         if let Some(transition) = self.panels.open_panel(id, cx) {
             self.apply_panel_transition(transition, window, cx);
         }
+    }
+    /// Tells the user that a registered panel cannot open because its plugin is disabled.
+    /// Whether it is.
+    fn refuse_disabled(
+        &self,
+        id: &ContributionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.registrations.is_registered(id) || self.shell.is_enabled(id) {
+            return false;
+        }
+        let name = self
+            .registrations
+            .catalog()
+            .plugin_of(id)
+            .map_or("This plugin", |plugin| plugin.name);
+        notice::info(
+            window,
+            cx,
+            "plugin-disabled",
+            "Plugin disabled",
+            format!("{name} is disabled. Enable it in Settings ▸ Plugins."),
+        );
+        true
     }
     /// Offers or withdraws the registered panel of a contribution. Withdrawing the shown panel
     /// closes its group.

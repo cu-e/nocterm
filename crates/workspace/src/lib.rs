@@ -7,7 +7,9 @@
 //! `plugin::{CORE, GROUPS}` and the id queries), the resolved shell layout (`ShellLayout`
 //! follows the app-wide `[layouts]` settings of `nocterm-window-layout`, resolves the selected
 //! built-in or saved preset against the catalog and writes only the selection; the status bar
-//! and the panel groups take their members, order and sides from it on every change),
+//! and the panel groups take their members, order and sides from it on every change; it also
+//! follows the app-wide `[plugins]` settings, creating the panels and widgets of a plugin only
+//! while it is enabled, in every window, and saying so when a disabled panel is asked to open),
 //! per-surface background membership, and per-column layout projections.
 //! Does not own: session connections, feature views, native filesystem implementations,
 //! persistence workers, project definitions or connection authentication,
@@ -22,8 +24,9 @@
 //! plus separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
-//! Settings section: reads `[layouts]` (owned by `nocterm-window-layout`) through the injected
-//! settings handle; a table that does not read is never overwritten. Globals: none.
+//! Settings section: reads `[layouts]` (owned by `nocterm-window-layout`) and `[plugins]`
+//! (owned by `nocterm-plugin-enablement`) through the injected settings handle; a table that
+//! does not read is never overwritten. Globals: none.
 //! Host resolution uses an explicitly supplied optional local executor; it owns no runner.
 //! Invariants: each surface has one native placement authority; each tab
 //! owns its feature handle and subscriptions; cached session identity preserves

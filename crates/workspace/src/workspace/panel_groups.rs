@@ -204,6 +204,38 @@ impl PanelGroups {
         }
     }
 
+    /// Whether the id is registered and its panel does not exist: the plugin that owns it is
+    /// disabled, or the factory has not run yet.
+    pub(super) fn lacks_panel(&self, id: &ContributionId) -> bool {
+        self.ids
+            .get(id)
+            .and_then(|key| self.slots.get(key.index()))
+            .is_some_and(|slot| slot.panel.is_none())
+    }
+
+    /// Takes the panel out of a registered id's slot, because its plugin was disabled. A panel
+    /// that shows closes first, by the rule for hiding a group: focus moves only if the panel
+    /// held it. The slot stays, so enabling the plugin again supplies a new panel with
+    /// [`PanelGroups::fill`]. `None` when the slot has no panel.
+    ///
+    /// The caller drops the returned panel after applying the transition.
+    pub(super) fn release(
+        &mut self,
+        id: &ContributionId,
+        window: &Window,
+        cx: &mut App,
+    ) -> Option<(Option<PanelTransition>, HostedPanel)> {
+        let key = self.ids.get(id).copied()?;
+        self.slots.get(key.index())?.panel.as_ref()?;
+        let transition = if self.panel_is_open(id) {
+            self.toggle_panel(id, window, cx)
+        } else {
+            None
+        };
+        let panel = self.slots.get_mut(key.index())?.panel.take()?;
+        Some((transition, panel))
+    }
+
     /// Records a changed title, icon or badge. Whether the panel's presentation changed.
     pub(super) fn presentation_changed(
         &mut self,
@@ -566,7 +598,13 @@ impl PanelGroups {
         window: &Window,
         cx: &mut App,
     ) -> Option<PanelTransition> {
-        let (key, panel) = self.registered(id)?;
+        let Some((key, panel)) = self.registered(id) else {
+            // A panel the layout does not host, as while its plugin is disabled, only keeps
+            // what its owner last said, for when it returns.
+            let key = self.ids.get(id).copied()?;
+            self.slots.get_mut(key.index())?.available = available;
+            return None;
+        };
         self.set_slot_available(key, panel, available, window, cx)
     }
     /// Expands the panel over the content or restores it. Whether anything changed. Only the

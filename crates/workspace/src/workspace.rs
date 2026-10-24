@@ -50,6 +50,7 @@ mod layout_switch;
 mod panel_menu;
 mod sessions;
 mod shell_layout;
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use layout_switch::switch as switch_layout_now;
 pub use layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts};
 pub use panel_menu::PanelEntry;
@@ -389,6 +390,8 @@ impl Render for Workspace {
 #[path = "tests.rs"]
 mod tests;
 
+#[cfg(test)]
+mod enablement_tests;
 #[cfg(test)]
 mod focus_transition_tests;
 #[cfg(test)]

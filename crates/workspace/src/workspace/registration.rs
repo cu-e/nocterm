@@ -93,8 +93,10 @@ pub struct PanelRegistration<T> {
 }
 
 impl<T: Panel> PanelRegistration<T> {
-    /// The workspace calls `factory` once, at registration, and borrows itself to it: the
-    /// factory may read the workspace but cannot update it.
+    /// The workspace calls `factory` each time it creates the panel: at registration while its
+    /// plugin is enabled, and again whenever the plugin is enabled after being disabled. It
+    /// borrows itself to the factory: the factory may read the workspace but cannot update it,
+    /// and it must not keep state that has to survive a call.
     ///
     /// The descriptor is read for its id only: the catalog holds the checked descriptor.
     pub fn new(
@@ -207,6 +209,11 @@ impl Registrations {
     /// Keeps the factory of a registered panel.
     pub(super) fn keep_factory(&mut self, id: ContributionId, factory: PanelFactory) {
         self.factories.insert(id, factory);
+    }
+
+    /// How to create the panel of a registered contribution again.
+    pub(super) fn factory(&self, id: &ContributionId) -> Option<&PanelFactory> {
+        self.factories.get(id)
     }
 
     pub(super) fn catalog(&self) -> &PluginCatalog {

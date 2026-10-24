@@ -1,6 +1,7 @@
 //! The arrangement of the window: the selected layout resolved against the plugin catalog.
 //!
-//! The layouts are the app-wide `[layouts]` settings. Every window keeps the document it last
+//! The layouts are the app-wide `[layouts]` settings, and the plugins the user disabled are the
+//! app-wide `[plugins]` settings: a disabled plugin's contributions drop out of the arrangement. Every window keeps the document it last
 //! saw, so a change tells it whether the user switched layouts, edited the selected one or did
 //! something it does not show. The legacy `workspace.swapped` flag is read once, when the window
 //! is composed: nothing sets it any more, but it still picks `swapped` for a user who never
@@ -12,7 +13,8 @@ use std::{
 };
 
 use gpui_kit::{App, Subscription, Task};
-use nocterm_plugin_model::{ContributionId, PluginCatalog, Side};
+use nocterm_plugin_enablement::PluginEnablement;
+use nocterm_plugin_model::{ContributionId, PluginCatalog, PluginId, Side};
 use nocterm_store::{SettingsHandle, StoreError};
 use nocterm_ui::LayoutHandle;
 use nocterm_window_layout::{
@@ -63,6 +65,8 @@ pub(super) struct ShellLayout {
     catalog: Arc<PluginCatalog>,
     legacy_swapped: bool,
     seen: LayoutSettings,
+    /// The plugins the arrangement leaves out: the stored ones the catalog allows to be off.
+    disabled: BTreeSet<PluginId>,
     selected: PresetId,
     resolved: ResolvedLayout,
     /// The panels this window has already opened because the layout names them.
@@ -78,16 +82,21 @@ impl ShellLayout {
         cx: &mut App,
     ) -> Self {
         settings.register::<LayoutSettings>(cx);
+        settings.register::<PluginEnablement>(cx);
         let legacy_swapped = flags.flag(LEGACY_SWAPPED, cx);
         let seen = settings.setting::<LayoutSettings>(cx).clone();
+        let disabled = settings
+            .setting::<PluginEnablement>(cx)
+            .effective_disabled(&catalog);
         let selected = select(&seen, legacy_swapped);
-        let resolved = seen.resolve(&selected, &catalog, &BTreeSet::new());
+        let resolved = seen.resolve(&selected, &catalog, &disabled);
         report_ignored_primary(&seen, None, &catalog);
         Self {
             settings,
             catalog,
             legacy_swapped,
             seen,
+            disabled,
             selected,
             resolved,
             opened: HashSet::new(),
@@ -102,19 +111,36 @@ impl ShellLayout {
     }
 
     /// Reads the settings again and tells how the change affects the window.
+    ///
+    /// Enabling or disabling a plugin is an edit of the arrangement, never a switch: panels that
+    /// stay keep their state and no `open` set applies.
     pub(super) fn refresh(&mut self, cx: &App) -> LayoutChange {
         let next = self.settings.setting::<LayoutSettings>(cx);
-        if *next == self.seen {
+        let disabled = self
+            .settings
+            .setting::<PluginEnablement>(cx)
+            .effective_disabled(&self.catalog);
+        let layouts_changed = *next != self.seen;
+        let enablement_changed = disabled != self.disabled;
+        if !layouts_changed && !enablement_changed {
             return LayoutChange::Unchanged;
         }
-        let change = transition(&self.seen, next, self.legacy_swapped);
-        report_ignored_primary(next, Some(&self.seen), &self.catalog);
-        self.seen = next.clone();
+        let change = if layouts_changed {
+            transition(&self.seen, next, self.legacy_swapped)
+        } else {
+            LayoutTransition::None
+        };
+        if layouts_changed {
+            report_ignored_primary(next, Some(&self.seen), &self.catalog);
+            self.seen = next.clone();
+        }
+        self.disabled = disabled;
         self.selected = select(&self.seen, self.legacy_swapped);
         self.resolved = self
             .seen
-            .resolve(&self.selected, &self.catalog, &BTreeSet::new());
+            .resolve(&self.selected, &self.catalog, &self.disabled);
         match change {
+            LayoutTransition::None if enablement_changed => LayoutChange::Rearranged,
             LayoutTransition::None => LayoutChange::Unchanged,
             LayoutTransition::Switch => match self.open_on_switch() {
                 Some(open) => LayoutChange::Opened(open.to_vec()),
@@ -122,6 +148,14 @@ impl ShellLayout {
             },
             LayoutTransition::Edit => LayoutChange::Rearranged,
         }
+    }
+
+    /// Whether the contribution may exist: core contributions always, a plugin's while the user
+    /// has not disabled the plugin.
+    pub(super) fn is_enabled(&self, id: &ContributionId) -> bool {
+        self.catalog
+            .plugin_of(id)
+            .is_none_or(|plugin| !self.disabled.contains(&plugin.id))
     }
 
     /// The layouts to choose from: the built-ins, then the saved presets in their order.

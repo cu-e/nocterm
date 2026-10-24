@@ -69,7 +69,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-vault-ui` | feature | `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-vault`, `nocterm-workspace` | Credential vault lifecycle and encrypted credential management UI. |
 | `nocterm-vt` | domain |  | Terminal emulation: turns a byte stream into a grid and key presses into bytes. |
 | `nocterm-window-layout` | domain | `nocterm-plugin-model`, `nocterm-settings` | The window shell's layout presets as plain data and pure rules: bar zones, groups, the built-in layouts and their resolution against the plugin catalog. |
-| `nocterm-workspace` | ui | `nocterm-core`, `nocterm-keymap`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-window-layout`, `nocterm-workspace-ports` | Window shell: tab strip, sidebar and the registries features plug into. |
+| `nocterm-workspace` | ui | `nocterm-core`, `nocterm-keymap`, `nocterm-plugin-enablement`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-window-layout`, `nocterm-workspace-ports` | Window shell: tab strip, sidebar and the registries features plug into. |
 | `nocterm-workspace-ports` | service | `nocterm-core`, `nocterm-project-model`, `nocterm-session` | Terminal and connection contracts below the window shell. |
 | `xtask` | tooling | `nocterm-ai`, `nocterm-design`, `nocterm-explorer`, `nocterm-monitor`, `nocterm-plugin-enablement`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model`, `nocterm-ui`, `nocterm-vault`, `nocterm-window-layout` | Repository automation: generated documentation and architecture checks. |
 
@@ -350,6 +350,7 @@ graph TD
     nocterm_window_layout --> nocterm_settings
     nocterm_workspace --> nocterm_core
     nocterm_workspace --> nocterm_keymap
+    nocterm_workspace --> nocterm_plugin_enablement
     nocterm_workspace --> nocterm_plugin_model
     nocterm_workspace --> nocterm_project_model
     nocterm_workspace --> nocterm_session

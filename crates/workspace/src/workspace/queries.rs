@@ -202,6 +202,11 @@ impl Workspace {
     pub fn panel_menu(&self) -> Vec<Vec<crate::PanelEntry>> {
         crate::PanelEntry::listing(self.shell.current(), &self.registrations, &self.panels)
     }
+    /// Whether the registered panel of a contribution may exist: its plugin is not disabled.
+    /// `false` for an unknown id.
+    pub fn panel_is_enabled(&self, id: &ContributionId) -> bool {
+        self.registrations.is_registered(id) && self.shell.is_enabled(id)
+    }
     /// Whether the registered panel of a contribution shows. `false` for an unknown id.
     pub fn panel_is_open(&self, id: &ContributionId) -> bool {
         self.panels.panel_is_open(id)
