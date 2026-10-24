@@ -37,7 +37,9 @@ fn dropping_on_a_row_places_the_connection_above_it(cx: &mut TestAppContext) {
         });
         let panel = cx
             .new(|cx| ConnectionsPanel::new(installed.clone(), workspace.downgrade(), window, cx));
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel, cx));
+        workspace.update(cx, |workspace, cx| {
+            add_servers(workspace, panel, window, cx)
+        });
         window.render_frame(cx);
         window.drag_to(
             SharedString::from(format!("connection-{}", b.id)),

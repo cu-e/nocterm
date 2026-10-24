@@ -41,10 +41,22 @@ impl PanelGroup {
     pub(super) fn is_expanded(&self) -> bool {
         self.expanded
     }
-    /// Appends a member; the first one is selected.
-    pub(super) fn add(&mut self, panel: PanelKey) {
-        self.members.push(panel);
-        self.selected.get_or_insert(panel);
+    /// Replaces the members. The selection stays while it is still a member, and otherwise
+    /// moves to the first member, which ends an expansion; a group left without members
+    /// closes unless it is the primary group.
+    pub(super) fn arrange(&mut self, members: Vec<PanelKey>) {
+        self.members = members;
+        if self
+            .selected
+            .is_some_and(|panel| self.members.contains(&panel))
+        {
+            return;
+        }
+        self.selected = self.members.first().copied();
+        self.expanded = false;
+        if self.selected.is_none() && !self.key.primary() {
+            self.shown = false;
+        }
     }
     /// Selects a member and shows the group; the previous selection is no longer shown.
     /// Whether the group was hidden before.

@@ -5,14 +5,20 @@ use gpui_kit::{AnyView, App, EntityId, FocusHandle, SharedString, Subscription};
 use nocterm_plugin_model::PanelChrome;
 use nocterm_ui::IconName;
 
-use crate::{Panel, PanelHandle, right_panel::RightPanelHandle};
+use crate::PanelHandle;
 
 /// What the chrome draws for a panel outside its view: title, icon and badge.
 pub(in crate::workspace) type Presentation = (SharedString, IconName, Option<SharedString>);
 
+/// An expandable panel as the group drives it.
+pub(in crate::workspace) trait ExpandableHandle: PanelHandle {
+    fn set_expanded(&self, expanded: bool, cx: &mut App);
+    fn set_docked_left(&self, left: bool, cx: &mut App);
+}
+
 enum Handle {
     Plain(Box<dyn PanelHandle>),
-    Expandable(Box<dyn RightPanelHandle>),
+    Expandable(Box<dyn ExpandableHandle>),
 }
 
 pub(in crate::workspace) struct HostedPanel {
@@ -40,7 +46,7 @@ impl HostedPanel {
     }
     /// A panel that draws its own header and can expand over the content.
     pub(in crate::workspace) fn expandable(
-        handle: Box<dyn RightPanelHandle>,
+        handle: Box<dyn ExpandableHandle>,
         presentation: Presentation,
         subscription: Subscription,
     ) -> Self {
@@ -87,9 +93,6 @@ impl HostedPanel {
     pub(in crate::workspace) fn title(&self, _: &App) -> SharedString {
         self.presentation.0.clone()
     }
-    pub(in crate::workspace) fn icon(&self, _: &App) -> IconName {
-        self.presentation.1
-    }
     pub(in crate::workspace) fn badge(&self, _: &App) -> Option<SharedString> {
         self.presentation.2.clone()
     }
@@ -104,9 +107,6 @@ impl HostedPanel {
     }
     pub(in crate::workspace) fn is_expandable(&self) -> bool {
         matches!(self.handle, Handle::Expandable(_))
-    }
-    pub(in crate::workspace) fn is<T: Panel>(&self) -> bool {
-        self.handle().view().downcast::<T>().is_ok()
     }
     pub(in crate::workspace) fn attention(&self) -> bool {
         self.attention
@@ -133,7 +133,7 @@ impl HostedPanel {
     /// Tells an expandable panel that it fills the body; others ignore it.
     pub(super) fn set_expanded(&self, expanded: bool, cx: &mut App) {
         if let Handle::Expandable(handle) = &self.handle {
-            handle.set_maximized(expanded, cx);
+            handle.set_expanded(expanded, cx);
         }
     }
     /// Tells an expandable panel which side of the content it sits on; others ignore it.

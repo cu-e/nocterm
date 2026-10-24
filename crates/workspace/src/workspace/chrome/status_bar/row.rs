@@ -14,6 +14,7 @@ use gpui_kit::{
     prelude::*,
     px,
 };
+use nocterm_plugin_model::ContributionId;
 use nocterm_ui::notice::NoticeBar;
 
 use super::{BarEntry, BarInputs, inputs::PanelToggle};
@@ -24,8 +25,8 @@ use crate::{
 /// What a click on the bar asks of the window.
 #[derive(Clone, Debug)]
 pub(in crate::workspace) enum BarClick {
-    /// The toggle of the panel at this position of its group.
-    Panel { group: GroupKey, ix: usize },
+    /// The toggle of this panel.
+    Panel(ContributionId),
     /// The local terminal toggle, for the selection the bar was drawn under.
     LocalTerminal(ContextSelectionReceipt),
 }
@@ -52,7 +53,7 @@ pub(in crate::workspace) fn footer(
 ) -> impl IntoElement {
     let on_click: OnClick = {
         let handle = cx.listener(|this, click: &BarClick, window, cx| match click {
-            BarClick::Panel { group, ix } => this.toggle_group_panel(*group, *ix, window, cx),
+            BarClick::Panel(id) => this.toggle_panel(id, window, cx),
             BarClick::LocalTerminal(selection) => {
                 if this.accepts_context_selection(*selection, cx) {
                     this.toggle_local_terminal(window, cx);
@@ -123,16 +124,16 @@ impl StatusBarRow {
     }
 
     fn panel_toggle(&self, toggle: &PanelToggle) -> AnyElement {
-        let (group, ix) = (toggle.group(), toggle.ix());
+        let id = toggle.id().clone();
         let on_click = self.on_click.clone();
-        Button::new(toggle_id(group, ix))
+        Button::new(toggle_id(toggle.group(), toggle.ix()))
             .ghost()
             .small()
             .icon(toggle.look().icon)
             .tooltip(toggle.look().tooltip.clone())
             .when_some(toggle.badge().cloned(), Button::label)
             .selected(toggle.is_selected())
-            .on_click(move |_, window, cx| on_click(BarClick::Panel { group, ix }, window, cx))
+            .on_click(move |_, window, cx| on_click(BarClick::Panel(id.clone()), window, cx))
             .into_any_element()
     }
 }

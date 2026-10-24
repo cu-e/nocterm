@@ -1,6 +1,5 @@
 //! Window effects stay here; native tab mutations belong to the original surface.
 use super::*;
-use crate::Panel;
 use gpui_kit::{
     InteractiveElement,
     component::{Placement, input},
@@ -14,7 +13,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.set_right_panel_maximized(false, cx);
+        self.collapse_expanded_group(cx);
         self.surfaces.outer().update(cx, |surface, cx| {
             surface.activate_item_by_id(id, window, cx)
         })
@@ -180,24 +179,6 @@ impl Workspace {
             });
         }
     }
-    /// The toggle of the panel at `ix` in a group: hides the group when the panel shows, else
-    /// shows the panel.
-    pub(super) fn toggle_group_panel(
-        &mut self,
-        group: GroupKey,
-        ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let transition = if self.panels.is_showing(group, ix) {
-            self.panels.toggle(group, window, cx)
-        } else {
-            self.panels.activate(group, ix, cx)
-        };
-        if let Some(transition) = transition {
-            self.apply_panel_transition(transition, window, cx);
-        }
-    }
     pub(super) fn body_resized(
         &mut self,
         arrangement: &layout::Arrangement,
@@ -213,44 +194,9 @@ impl Workspace {
             self.apply_panel_transition(transition, window, cx);
         }
     }
-    pub fn activate_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.panel_index_of::<T>() {
-            self.activate_panel(ix, window, cx);
-        }
-    }
-    pub fn toggle_panel_of<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.panel_index_of::<T>() {
-            Some(ix) if self.panels.is_showing(GroupKey::Navigation, ix) => {
-                self.toggle_sidebar(window, cx)
-            }
-            Some(ix) => self.activate_panel(ix, window, cx),
-            None => {}
-        }
-    }
-    fn panel_index_of<T: Panel>(&self) -> Option<usize> {
-        self.panels.index_of::<T>(GroupKey::Navigation)
-    }
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(transition) = self.panels.toggle(GroupKey::Navigation, window, cx) {
             self.apply_panel_transition(transition, window, cx);
-        }
-    }
-    pub fn set_right_panel_available(
-        &mut self,
-        available: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(transition) =
-            self.panels
-                .set_available(GroupKey::Assistant, available, window, cx)
-        {
-            self.apply_panel_transition(transition, window, cx);
-        }
-    }
-    pub fn set_right_panel_attention(&mut self, attention: bool, cx: &mut Context<Self>) {
-        if self.panels.set_attention(GroupKey::Assistant, attention) {
-            cx.notify();
         }
     }
     /// The icons and tooltips the status bar draws for its toggles.
@@ -265,22 +211,18 @@ impl Workspace {
         );
         self.chrome.bar_inputs(&regions, cx).looks()
     }
-    /// Makes the side panel ask for the user, or stop asking, as the panel itself does through
-    /// [`Panel::attention`](crate::Panel::attention).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_side_panel_attention(&mut self, attention: bool, cx: &mut Context<Self>) {
-        if self.panels.set_attention(GroupKey::Assistant, attention) {
+    /// Ends the expansion of the group that fills the body, if any.
+    pub(super) fn collapse_expanded_group(&mut self, cx: &mut Context<Self>) {
+        if let Some(group) = self.panels.expanded()
+            && self.panels.set_expanded(group, false, cx)
+        {
             cx.notify();
         }
     }
-    pub fn toggle_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Shows or hides the assistant group, for the actions that predate panel ids.
+    pub(super) fn toggle_assistant_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(transition) = self.panels.toggle(GroupKey::Assistant, window, cx) {
             self.apply_panel_transition(transition, window, cx);
-        }
-    }
-    pub fn set_right_panel_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        if self.panels.set_expanded(GroupKey::Assistant, maximized, cx) {
-            cx.notify();
         }
     }
     pub(super) fn toggle_group_expanded(&mut self, group: GroupKey, cx: &mut Context<Self>) {
@@ -346,20 +288,13 @@ impl Workspace {
             cx.notify();
         }
     }
-    /// Shows or hides the primary group, which holds the sidebar.
-    pub fn toggle_primary_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_sidebar(window, cx);
-    }
     fn apply_panel_transition(
         &mut self,
         transition: PanelTransition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(group) = transition.visibility_changed() {
-            if group == GroupKey::Assistant {
-                cx.emit(WorkspaceEvent::RightPanelVisibilityChanged);
-            }
+        if transition.visibility_changed().is_some() {
             cx.emit(WorkspaceEvent::PanelVisibilityChanged);
         }
         match transition.into_focus() {
@@ -465,7 +400,7 @@ impl Workspace {
                 if *event == WorkspaceEvent::ActiveItemChanged
                     && *source == self.general_surface_source(cx)
                 {
-                    self.set_right_panel_maximized(false, cx);
+                    self.collapse_expanded_group(cx);
                 }
                 if self.surfaces.observe_source(self.context_source(cx)) {
                     cx.emit(WorkspaceEvent::ContextChanged);
@@ -495,7 +430,7 @@ impl Workspace {
         }
     }
     pub fn toggle_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_right_panel_maximized(false, cx);
+        self.collapse_expanded_group(cx);
         let focused = self.command_item(window, cx).map(|item| item.item_id());
         let toggled = self
             .surfaces

@@ -211,26 +211,14 @@ impl Workspace {
     }
     /// Whether the primary group, which holds the sidebar, shows.
     pub fn primary_group_is_open(&self) -> bool {
-        self.sidebar_is_open()
+        self.panels.is_shown(GroupKey::Navigation)
     }
     /// Whether a panel or widget was registered for the contribution.
     pub fn is_registered(&self, id: &ContributionId) -> bool {
         self.registrations.is_registered(id)
     }
-    pub fn right_panel_is_available(&self) -> bool {
-        self.panels.is_available(GroupKey::Assistant)
-    }
-    pub fn right_panel_is_open(&self) -> bool {
-        self.panels.is_shown(GroupKey::Assistant)
-    }
-    pub fn right_panel_is_maximized(&self) -> bool {
-        self.panels.is_expanded(GroupKey::Assistant)
-    }
     pub fn new_tab_menu_is_open(&self) -> bool {
         self.chrome.new_tab_open()
-    }
-    pub fn sidebar_is_open(&self) -> bool {
-        self.panels.is_shown(GroupKey::Navigation)
     }
     pub fn sides_swapped(&self, cx: &App) -> bool {
         self.shell.swapped(cx)

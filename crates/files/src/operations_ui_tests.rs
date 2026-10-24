@@ -152,7 +152,9 @@ fn visible_panel_with(
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
         cx.set_reduce_motion(true);
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| panel.navigate_local(local.into(), cx));
     })
     .unwrap();
@@ -736,7 +738,9 @@ fn local_properties_apply_and_right_click_keep_multi_selection(cx: &mut TestAppC
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
         cx.set_reduce_motion(true);
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| {
             panel.navigate_local(directory.path().into(), cx)
         });

@@ -194,6 +194,21 @@ fn native_bytes(local: &dyn nocterm_session::local_fs::LocalFs, path: &std::path
     source.close().unwrap();
     result
 }
+/// Registers the files panel as the Explorer contribution.
+fn add_explorer(
+    workspace: &mut Workspace,
+    panel: Entity<FilesPanel>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .register_panel(
+            nocterm_workspace::PanelRegistration::with_entity(&crate::plugin::EXPLORER, panel),
+            window,
+            cx,
+        )
+        .unwrap();
+}
 fn panel_fixture(
     cx: &mut TestAppContext,
     fs: Arc<dyn RemoteFs>,
@@ -567,7 +582,7 @@ fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mu
                 busy: false,
             });
             workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(panel.clone(), cx);
+                add_explorer(workspace, panel.clone(), window, cx);
                 workspace.set_local_terminal(shell.clone(), window, cx);
             });
             panel.update(cx, |panel, cx| panel.navigate_local(first.clone(), cx));

@@ -1,5 +1,5 @@
 //! One configurable shell panel for tests of the sidebar, the side panel and the footer.
-use crate::{ExpandablePanel, Panel, PanelRequest, RightPanel, RightPanelEvent};
+use crate::{ExpandablePanel, Panel, PanelRequest};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, TestSupportExt as _, Window, div, prelude::*,
@@ -124,7 +124,6 @@ impl TestPanelBuilder {
     }
 }
 
-impl EventEmitter<RightPanelEvent> for TestPanel {}
 impl EventEmitter<PanelRequest> for TestPanel {}
 impl Focusable for TestPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -156,15 +155,6 @@ impl Panel for TestPanel {
     }
     fn attention(&self, _: &App) -> Option<SharedString> {
         self.attention.clone()
-    }
-}
-impl RightPanel for TestPanel {
-    fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        self.maximized = maximized;
-        cx.notify();
-    }
-    fn set_docked_left(&mut self, left: bool, _: &mut Context<Self>) {
-        self.docked_left = left;
     }
 }
 impl ExpandablePanel for TestPanel {

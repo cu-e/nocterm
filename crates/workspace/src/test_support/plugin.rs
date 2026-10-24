@@ -199,6 +199,15 @@ pub fn deps_for_core(
     plugins: &[&'static SystemPlugin],
     cx: &mut App,
 ) -> Deps {
+    deps_over(nocterm_ui::LayoutHandle::in_memory(cx), core, plugins)
+}
+
+/// Like [`deps_for_core`], over a layout memory the test keeps a handle to.
+pub fn deps_over(
+    layout: nocterm_ui::LayoutHandle,
+    core: &[&'static [SystemContribution]],
+    plugins: &[&'static SystemPlugin],
+) -> Deps {
     let catalog = plugin::catalog(core, plugins).expect("the test plugins form a valid catalog");
-    Deps::new(nocterm_ui::LayoutHandle::in_memory(cx)).with_catalog(catalog)
+    Deps::new(layout).with_catalog(catalog)
 }

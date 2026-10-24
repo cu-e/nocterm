@@ -1,6 +1,8 @@
 //! The body's columns: resizing, hiding a sidebar panel from its own
 //! button, and swapping sides.
-use crate::test_support::{TestPanel, TestPanelBuilder, Toggle, toggle_id};
+use crate::test_support::{
+    EXPANDABLE, PANEL_A, PANEL_B, TestPanel, TestPanelBuilder, Toggle, toggle_id,
+};
 use gpui_kit::{
     App, AppContext as _, Entity, Focusable, TestAppContext, Window, px, test::TestWindowExt as _,
 };
@@ -8,7 +10,7 @@ use nocterm_ui::IconName;
 
 use super::{Arrangement, Column};
 use crate::workspace::panel_groups::GroupKey;
-use crate::workspace::tests::fixture;
+use crate::workspace::tests::test_plugin::{fixture_with_test_plugin, register_built};
 use nocterm_plugin_model::Side;
 
 fn side_panel(element_id: &'static str, title: &'static str, icon: IconName) -> TestPanelBuilder {
@@ -97,7 +99,7 @@ fn groups_on_one_side_run_from_the_window_edge_inward() {
 
 #[gpui_kit::test]
 fn sidebar_resizes_with_the_side_panel_closed_and_its_button_hides_it(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
+    let (handle, workspace, _) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         let side = side_panel("side-probe", "Servers", IconName::Server).build(cx);
@@ -105,12 +107,11 @@ fn sidebar_resizes_with_the_side_panel_closed_and_its_button_hides_it(cx: &mut T
             .title("AI Agents")
             .build(cx);
         workspace.update(cx, |workspace, cx| {
-            workspace.add_panel(side, cx);
-            workspace.set_right_panel(right, window, cx);
-            workspace.set_right_panel_available(true, window, cx);
+            register_built(workspace, PANEL_A, &side, window, cx);
+            register_built(workspace, EXPANDABLE, &right, window, cx);
         });
         window.render_frame(cx);
-        assert!(!workspace.read(cx).right_panel_is_open());
+        assert!(!workspace.read(cx).panel_is_open(&EXPANDABLE.id));
         let before = window.find("side-probe").bounds().size.width;
         let bounds = window.find("side-probe").bounds();
         let inset = gpui_kit::component::floating::FloatingCards::get(cx)
@@ -134,7 +135,7 @@ fn sidebar_resizes_with_the_side_panel_closed_and_its_button_hides_it(cx: &mut T
 
 #[gpui_kit::test]
 fn swapping_puts_the_side_panel_on_the_left(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
+    let (handle, workspace, _) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         let side = side_panel("side-probe", "Servers", IconName::Server).build(cx);
@@ -142,10 +143,9 @@ fn swapping_puts_the_side_panel_on_the_left(cx: &mut TestAppContext) {
             .title("AI Agents")
             .build(cx);
         workspace.update(cx, |workspace, cx| {
-            workspace.add_panel(side, cx);
-            workspace.set_right_panel(right, window, cx);
-            workspace.set_right_panel_available(true, window, cx);
-            workspace.toggle_right_panel(window, cx);
+            register_built(workspace, PANEL_A, &side, window, cx);
+            register_built(workspace, EXPANDABLE, &right, window, cx);
+            workspace.toggle_panel(&EXPANDABLE.id, window, cx);
         });
         window.render_frame(cx);
         assert!(
@@ -166,7 +166,7 @@ fn swapping_puts_the_side_panel_on_the_left(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn hidden_and_reordered_columns_keep_each_owners_visible_width(cx: &mut TestAppContext) {
-    let (handle, workspace, layout) = crate::workspace::tests::fixture_with_layout(cx);
+    let (handle, workspace, layout) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         layout.set("workspace.sidebar", px(260.), cx).unwrap();
@@ -176,10 +176,9 @@ fn hidden_and_reordered_columns_keep_each_owners_visible_width(cx: &mut TestAppC
             .title("AI Agents")
             .build(cx);
         workspace.update(cx, |workspace, cx| {
-            workspace.add_panel(side, cx);
-            workspace.set_right_panel(right, window, cx);
-            workspace.set_right_panel_available(true, window, cx);
-            workspace.toggle_right_panel(window, cx);
+            register_built(workspace, PANEL_A, &side, window, cx);
+            register_built(workspace, EXPANDABLE, &right, window, cx);
+            workspace.toggle_panel(&EXPANDABLE.id, window, cx);
         });
         window.render_frame(cx);
         let sidebar_width = window.find("side-probe").bounds().size.width;
@@ -206,7 +205,7 @@ fn hidden_and_reordered_columns_keep_each_owners_visible_width(cx: &mut TestAppC
 
 #[gpui_kit::test]
 fn maximized_panel_does_not_persist_transient_window_or_widen_sizes(cx: &mut TestAppContext) {
-    let (handle, workspace, layout) = crate::workspace::tests::fixture_with_layout(cx);
+    let (handle, workspace, layout) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         layout.set("workspace.sidebar", px(260.), cx).unwrap();
@@ -216,7 +215,7 @@ fn maximized_panel_does_not_persist_transient_window_or_widen_sizes(cx: &mut Tes
         let normal = window.find("right-probe").bounds().size.width;
         let sidebar = window.find("side-probe").bounds().size.width;
         workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(true, cx)
+            workspace.set_panel_expanded(&EXPANDABLE.id, true, cx)
         });
         window.render_frame(cx);
         assert!(window.find("right-probe").bounds().size.width > normal);
@@ -225,13 +224,13 @@ fn maximized_panel_does_not_persist_transient_window_or_widen_sizes(cx: &mut Tes
             .map_or(px(0.), |cards| cards.margin() + px(1.));
         let from = gpui_kit::point(bounds.right() + inset, bounds.center().y);
         window.drag(from, gpui_kit::point(from.x + px(80.), from.y), cx);
-        right.update(cx, |_, cx| cx.emit(crate::RightPanelEvent::Widen(px(200.))));
+        right.update(cx, |_, cx| cx.emit(crate::PanelRequest::Widen(px(200.))));
         window.resize(gpui_kit::size(px(1500.), px(700.)));
         window.render_frame(cx);
         assert_eq!(layout.get("workspace.sidebar", cx), Some(px(260.)));
         assert_eq!(layout.get("workspace.right_panel", cx), Some(px(420.)));
         workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(false, cx)
+            workspace.set_panel_expanded(&EXPANDABLE.id, false, cx)
         });
         window.render_frame(cx);
         assert_eq!(window.find("right-probe").bounds().size.width, normal);
@@ -252,10 +251,9 @@ fn install_columns(
         .title("AI Agents")
         .build(cx);
     workspace.update(cx, |workspace, cx| {
-        workspace.add_panel(side.clone(), cx);
-        workspace.set_right_panel(right.clone(), window, cx);
-        workspace.set_right_panel_available(true, window, cx);
-        workspace.toggle_right_panel(window, cx);
+        register_built(workspace, PANEL_A, &side, window, cx);
+        register_built(workspace, EXPANDABLE, &right, window, cx);
+        workspace.toggle_panel(&EXPANDABLE.id, window, cx);
     });
     (side, right)
 }
@@ -280,7 +278,7 @@ fn assert_expanded_columns(window: &mut Window, cx: &mut App, swapped: bool) {
 
 #[gpui_kit::test]
 fn expanded_chat_keeps_navigation_beside_it_at_supported_window_widths(cx: &mut TestAppContext) {
-    let (handle, workspace, layout) = crate::workspace::tests::fixture_with_layout(cx);
+    let (handle, workspace, layout) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         layout.set("workspace.sidebar", px(260.), cx).unwrap();
@@ -289,7 +287,7 @@ fn expanded_chat_keeps_navigation_beside_it_at_supported_window_widths(cx: &mut 
         let sidebar_width = window.find("side-probe").bounds().size.width;
         let docked_width = window.find("right-probe").bounds().size.width;
         workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(true, cx)
+            workspace.set_panel_expanded(&EXPANDABLE.id, true, cx)
         });
         assert_expanded_columns(window, cx, false);
         assert!(window.find("right-probe").bounds().size.width > docked_width);
@@ -304,7 +302,7 @@ fn expanded_chat_keeps_navigation_beside_it_at_supported_window_widths(cx: &mut 
             }
         }
         workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_available(false, window, cx)
+            workspace.set_panel_available(&EXPANDABLE.id, false, window, cx)
         });
         window.render_frame(cx);
         assert!(window.try_find("empty-new-tab").is_some());
@@ -316,7 +314,7 @@ fn expanded_chat_keeps_navigation_beside_it_at_supported_window_widths(cx: &mut 
 
 #[gpui_kit::test]
 fn chat_expand_restore_and_close_events_preserve_visible_navigation(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
+    let (handle, workspace, _) = fixture_with_test_plugin(cx);
     cx.run_until_parked();
     let (right, sidebar_width, docked_width) = cx
         .update_window(handle, |_, window, cx| {
@@ -331,7 +329,7 @@ fn chat_expand_restore_and_close_events_preserve_visible_navigation(cx: &mut Tes
             )
         })
         .unwrap();
-    use crate::RightPanelEvent::{Close, ToggleMaximized};
+    use crate::PanelRequest::{Close, ToggleExpanded as ToggleMaximized};
     for (event, expanded, open) in [
         (ToggleMaximized, true, true),
         (ToggleMaximized, false, true),
@@ -363,14 +361,14 @@ fn chat_expand_restore_and_close_events_preserve_visible_navigation(cx: &mut Tes
 
 #[gpui_kit::test]
 fn sidebar_controls_preserve_expansion_and_focus_visible_chat_when_closed(cx: &mut TestAppContext) {
-    let (handle, workspace) = fixture(cx);
+    let (handle, workspace, _) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         let (_, right) = install_columns(&workspace, window, cx);
         let other = side_panel("side-probe", "Servers", IconName::Server).build(cx);
         workspace.update(cx, |workspace, cx| {
-            workspace.add_panel(other.clone(), cx);
-            workspace.set_right_panel_maximized(true, cx);
+            register_built(workspace, PANEL_B, &other, window, cx);
+            workspace.set_panel_expanded(&EXPANDABLE.id, true, cx);
         });
         assert_expanded_columns(window, cx, false);
         window.click(toggle_id(Toggle::Navigation(1)), cx);
@@ -422,7 +420,7 @@ fn expanded_resize_receipts_cannot_overwrite_remembered_docked_widths(cx: &mut T
 
 #[gpui_kit::test]
 fn a_docked_receipt_arriving_after_the_side_panel_expanded_is_dropped(cx: &mut TestAppContext) {
-    let (handle, workspace, layout) = crate::workspace::tests::fixture_with_layout(cx);
+    let (handle, workspace, layout) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(px(1400.), px(700.)));
         install_columns(&workspace, window, cx);
@@ -439,13 +437,13 @@ fn a_docked_receipt_arriving_after_the_side_panel_expanded_is_dropped(cx: &mut T
             workspace.body_resized(&docked, vec![px(300.), px(700.), px(400.)], cx)
         };
         workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(true, cx);
+            workspace.set_panel_expanded(&EXPANDABLE.id, true, cx);
             receipt(workspace, cx);
         });
         assert_eq!(layout.get("workspace.sidebar", cx), Some(px(260.)));
         assert_eq!(layout.get("workspace.right_panel", cx), Some(px(420.)));
         workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(false, cx);
+            workspace.set_panel_expanded(&EXPANDABLE.id, false, cx);
             receipt(workspace, cx);
         });
         assert_eq!(layout.get("workspace.sidebar", cx), Some(px(300.)));

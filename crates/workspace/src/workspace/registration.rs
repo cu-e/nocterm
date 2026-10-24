@@ -20,9 +20,9 @@ use nocterm_plugin_model::{
 use super::{
     Workspace,
     chrome::WidgetFactory,
-    panel_groups::{GroupKey, HostedPanel, Presentation},
+    panel_groups::{ExpandableHandle, HostedPanel, Presentation},
 };
-use crate::{Panel, PanelHandle, right_panel::RightPanelHandle};
+use crate::Panel;
 
 /// Why the workspace refused a registration.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -66,7 +66,7 @@ pub trait ExpandablePanel: Panel + EventEmitter<PanelRequest> {
 
 type CreatePanel<T> = Box<dyn Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<T>>;
 
-/// Creates a panel for a registration and hosts it in its group.
+/// Creates a panel for a registration and hosts it.
 pub(super) type PanelFactory =
     Box<dyn Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> HostedPanel>;
 
@@ -77,8 +77,7 @@ pub(super) enum PanelSource {
     /// The panel is created by running the factory.
     Factory(PanelFactory),
 }
-type Host<T> =
-    fn(Entity<T>, GroupKey, PanelChrome, &mut Window, &mut Context<Workspace>) -> HostedPanel;
+type Host<T> = fn(Entity<T>, PanelChrome, &mut Window, &mut Context<Workspace>) -> HostedPanel;
 
 enum Origin<T> {
     Factory(CreatePanel<T>),
@@ -134,18 +133,17 @@ impl<T: Panel> PanelRegistration<T> {
     /// Hosts the panel now if it exists; otherwise gives the factory that creates and hosts it.
     pub(super) fn into_source(
         self,
-        group: GroupKey,
         chrome: PanelChrome,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> PanelSource {
         let host = self.host;
         match self.origin {
-            Origin::Entity(panel) => PanelSource::Hosted(host(panel, group, chrome, window, cx)),
+            Origin::Entity(panel) => PanelSource::Hosted(host(panel, chrome, window, cx)),
             Origin::Factory(create) => {
                 PanelSource::Factory(Box::new(move |workspace, window, cx| {
                     let panel = create(workspace, window, cx);
-                    host(panel, group, chrome, window, cx)
+                    host(panel, chrome, window, cx)
                 }))
             }
         }
@@ -283,7 +281,7 @@ impl Registrations {
 
 /// A panel's title, icon and badge sit in the workspace's chrome; the rest of the panel
 /// redraws itself, so only a change to them counts.
-pub(super) fn presentation_of<T: Panel>(panel: &Entity<T>, cx: &gpui_kit::App) -> Presentation {
+fn presentation_of<T: Panel>(panel: &Entity<T>, cx: &gpui_kit::App) -> Presentation {
     let panel = panel.read(cx);
     (panel.title(cx), panel.icon(cx), panel.badge(cx))
 }
@@ -295,10 +293,7 @@ fn attention_of<T: Panel>(panel: &Entity<T>, cx: &gpui_kit::App) -> bool {
 }
 
 /// Keeps the chrome's copy of the panel's presentation and attention current.
-pub(super) fn observe_presentation<T: Panel>(
-    panel: &Entity<T>,
-    cx: &mut Context<Workspace>,
-) -> Subscription {
+fn observe_presentation<T: Panel>(panel: &Entity<T>, cx: &mut Context<Workspace>) -> Subscription {
     cx.observe(panel, move |this, panel, cx| {
         let presented = this
             .panels
@@ -314,7 +309,6 @@ pub(super) fn observe_presentation<T: Panel>(
 
 fn host_plain<T: Panel>(
     panel: Entity<T>,
-    _: GroupKey,
     chrome: PanelChrome,
     _: &mut Window,
     cx: &mut Context<Workspace>,
@@ -329,60 +323,41 @@ fn host_plain<T: Panel>(
 
 fn host_expandable<T: ExpandablePanel>(
     panel: Entity<T>,
-    group: GroupKey,
     chrome: PanelChrome,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> HostedPanel {
+    // The group is looked up when the request arrives: the layout decides which group holds
+    // the panel, and it can change.
     let requests = cx.subscribe_in(
         &panel,
         window,
-        move |this, _, request: &PanelRequest, window, cx| match request {
-            PanelRequest::ToggleExpanded => this.toggle_group_expanded(group, cx),
-            PanelRequest::Close => this.close_group(group, window, cx),
-            PanelRequest::Widen(delta) => this.widen_group(group, *delta, window, cx),
+        move |this, panel, request: &PanelRequest, window, cx| {
+            let Some(group) = this.panels.group_holding(panel.entity_id()) else {
+                return;
+            };
+            match request {
+                PanelRequest::ToggleExpanded => this.toggle_group_expanded(group, cx),
+                PanelRequest::Close => this.close_group(group, window, cx),
+                PanelRequest::Widen(delta) => this.widen_group(group, *delta, window, cx),
+            }
         },
     );
     let presentation = presentation_of(&panel, cx);
     let subscription = Subscription::join(requests, observe_presentation(&panel, cx));
     let attention = attention_of(&panel, cx);
-    HostedPanel::expandable(Box::new(Expandable(panel)), presentation, subscription)
+    HostedPanel::expandable(Box::new(panel), presentation, subscription)
         .with_chrome(chrome)
         .with_attention(attention)
 }
 
-/// An [`ExpandablePanel`] as the group hosts it.
-struct Expandable<T>(Entity<T>);
-
-impl<T: ExpandablePanel> PanelHandle for Expandable<T> {
-    fn panel_id(&self) -> gpui_kit::EntityId {
-        PanelHandle::panel_id(&self.0)
-    }
-    fn view(&self) -> gpui_kit::AnyView {
-        PanelHandle::view(&self.0)
-    }
-    fn title(&self, cx: &gpui_kit::App) -> gpui_kit::SharedString {
-        PanelHandle::title(&self.0, cx)
-    }
-    fn icon(&self, cx: &gpui_kit::App) -> nocterm_ui::IconName {
-        PanelHandle::icon(&self.0, cx)
-    }
-    fn badge(&self, cx: &gpui_kit::App) -> Option<gpui_kit::SharedString> {
-        PanelHandle::badge(&self.0, cx)
-    }
-    fn focus_handle(&self, cx: &gpui_kit::App) -> gpui_kit::FocusHandle {
-        PanelHandle::focus_handle(&self.0, cx)
-    }
-}
-
-impl<T: ExpandablePanel> RightPanelHandle for Expandable<T> {
-    fn set_maximized(&self, maximized: bool, cx: &mut gpui_kit::App) {
-        self.0
-            .update(cx, |panel, cx| panel.set_expanded(maximized, cx));
+impl<T: ExpandablePanel> ExpandableHandle for Entity<T> {
+    fn set_expanded(&self, expanded: bool, cx: &mut gpui_kit::App) {
+        self.update(cx, |panel, cx| panel.set_expanded(expanded, cx));
     }
     fn set_docked_left(&self, left: bool, cx: &mut gpui_kit::App) {
         let side = if left { Side::Left } else { Side::Right };
-        self.0.update(cx, |panel, cx| panel.set_side(side, cx));
+        self.update(cx, |panel, cx| panel.set_side(side, cx));
     }
 }
 

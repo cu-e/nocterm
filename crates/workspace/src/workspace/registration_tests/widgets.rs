@@ -1,5 +1,6 @@
 //! Status bar widgets and the footer toggles the shell draws beside them.
 use super::*;
+use gpui_kit::{InputEvent as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
 
 /// A status bar view that tests find by its element id.
 struct Marker(&'static str);
@@ -102,6 +103,20 @@ fn a_tray_panel_shows_its_toggle_at_the_inner_end_of_the_right_zone_while_it_ask
     cx: &mut TestAppContext,
 ) {
     let (handle, workspace) = with_everything(cx);
+    for contribution in [PANEL_A, PANEL_B] {
+        let registered = register(
+            cx,
+            handle,
+            &workspace,
+            PanelRegistration::new(contribution, panel_by(contribution.title)),
+        );
+        assert_eq!(registered, Ok(()));
+    }
+    let leading = run(cx, handle, &workspace, |workspace, window, cx| {
+        let widget = WidgetRegistration::new(WIDGET, marker("leading-marker", Rc::default()));
+        workspace.register_widget(widget, window, cx)
+    });
+    assert_eq!(leading, Ok(()));
     let panel = Rc::new(RefCell::new(None));
     let registered = register(cx, handle, &workspace, {
         let panel = panel.clone();
@@ -122,18 +137,32 @@ fn a_tray_panel_shows_its_toggle_at_the_inner_end_of_the_right_zone_while_it_ask
         .unwrap()
     };
     let before = drawn(cx);
+    let placed = before.len();
+    assert!(placed >= 2, "the sidebar has its own toggles");
+    assert_eq!(
+        before,
+        (0..placed).collect::<Vec<_>>(),
+        "a panel in the tray adds no toggle and leaves no gap"
+    );
     cx.update(|cx| panel.update(cx, |panel, cx| panel.set_attention(Some("Look".into()), cx)));
-    let asking = drawn(cx);
-    assert_eq!(asking.len(), before.len() + 1);
-    let added = *asking
-        .iter()
-        .find(|ix| !before.contains(ix))
-        .expect("one new toggle");
+    assert_eq!(
+        drawn(cx),
+        (0..=placed).collect::<Vec<_>>(),
+        "the asking panel is numbered after the placed ones"
+    );
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let toggle = window.find(toggle_id(Toggle::Navigation(added))).bounds();
+        let toggle = window.find(toggle_id(Toggle::Navigation(placed))).bounds();
+        let last_placed = window
+            .find(toggle_id(Toggle::Navigation(placed - 1)))
+            .bounds();
         let terminal = window.find(toggle_id(Toggle::LocalTerminal)).bounds();
-        assert!(toggle.right() <= terminal.left());
+        let notices = window.find("notice-bar").bounds();
+        let leading = window.find("leading-marker").bounds();
+        assert!(last_placed.right() <= toggle.left());
+        assert!(leading.right() <= toggle.left(), "right of the left zone");
+        assert!(toggle.right() <= notices.left());
+        assert!(notices.right() <= terminal.left());
     })
     .unwrap();
     cx.update(|cx| panel.update(cx, |panel, cx| panel.set_attention(None, cx)));
@@ -158,4 +187,95 @@ fn the_local_terminal_toggle_opens_a_terminal_for_the_selection_it_was_drawn_und
     .unwrap();
     cx.run_until_parked();
     assert_eq!(opened.get(), 1);
+}
+
+#[gpui_kit::test]
+fn the_local_terminal_toggle_ignores_a_click_after_the_selection_moved_on(cx: &mut TestAppContext) {
+    let (handle, workspace) = with_everything(cx);
+    let opened = Rc::new(Cell::new(0));
+    run(cx, handle, &workspace, |workspace, window, _| {
+        window.resize(size(px(1400.), px(700.)));
+        let opened = opened.clone();
+        workspace.set_local_terminal_opener(move |_, _, _, _| opened.set(opened.get() + 1));
+    });
+    // Presses the toggle, changes the selection the bar was drawn under before the button
+    // comes up, and releases without drawing the bar again.
+    let press_and_release = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let at = window
+                .find(toggle_id(Toggle::LocalTerminal))
+                .bounds()
+                .center();
+            let modifiers = window.modifiers();
+            for event in [
+                MouseMoveEvent {
+                    position: at,
+                    pressed_button: None,
+                    modifiers,
+                }
+                .to_platform_input(),
+                MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: at,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+            ] {
+                window.dispatch_event(event, cx);
+                window.render_frame(cx);
+            }
+            let item = crate::workspace::tests::probe(cx, Rc::default());
+            workspace.update(cx, |workspace, cx| workspace.add_item(item, window, cx));
+            window.dispatch_event(
+                MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: at,
+                    modifiers,
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    press_and_release(cx);
+    assert_eq!(opened.get(), 0, "the click names a selection that is gone");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(toggle_id(Toggle::LocalTerminal), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(opened.get(), 1, "the redrawn bar names the current one");
+}
+
+#[gpui_kit::test]
+fn the_pinned_notice_bar_stays_in_the_right_zone_in_every_arrangement(cx: &mut TestAppContext) {
+    let (handle, workspace) = with_everything(cx);
+    run(cx, handle, &workspace, |workspace, window, cx| {
+        window.resize(size(px(1400.), px(700.)));
+        let widget = WidgetRegistration::new(WIDGET, marker("leading-marker", Rc::default()));
+        workspace
+            .register_widget(widget, window, cx)
+            .expect("the widget is in the catalog");
+    });
+    for swapped in [false, true] {
+        if cx.update(|cx| workspace.read(cx).sides_swapped(cx)) != swapped {
+            cx.update(|cx| workspace.update(cx, |workspace, cx| workspace.swap_sides(cx)));
+        }
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let left = window.find("leading-marker").bounds();
+            let notices = window.find("notice-bar").bounds();
+            let terminal = window.find(toggle_id(Toggle::LocalTerminal)).bounds();
+            assert!(left.right() <= notices.left(), "swapped: {swapped}");
+            assert!(notices.right() <= terminal.left(), "swapped: {swapped}");
+        })
+        .unwrap();
+    }
 }

@@ -3,7 +3,7 @@
 //! Tests name an element through these helpers and not through its element id,
 //! so a change of the production ids only changes this file.
 use crate::Workspace;
-use gpui_kit::{App, Context, ElementId, SharedString};
+use gpui_kit::{App, ElementId, SharedString};
 use nocterm_ui::IconName;
 
 /// A status bar toggle.
@@ -40,14 +40,4 @@ pub fn toggle_presentation(
         Toggle::SidePanel => looks.side_panel,
     }?;
     Some((look.tooltip, look.icon))
-}
-
-/// Makes the side panel ask for the user, or stop asking, as an agent waiting for a permission
-/// does.
-pub fn set_side_panel_attention(
-    workspace: &mut Workspace,
-    attention: bool,
-    cx: &mut Context<Workspace>,
-) {
-    workspace.set_side_panel_attention(attention, cx);
 }

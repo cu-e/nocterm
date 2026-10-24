@@ -4,13 +4,15 @@
 //! tab membership and cached session context, one authoritative native dock per surface,
 //! window menus and chrome, panel groups (the sidebar and the independent side panel),
 //! registration of panels and widgets under the ids of the plugin catalog (the shell's own
-//! `plugin::{CORE, GROUPS}` and the id queries), per-surface background membership, and
-//! per-column layout projections.
+//! `plugin::{CORE, GROUPS}` and the id queries), the resolved shell layout (`ShellLayout`
+//! selects the Default or Swapped built-in of `nocterm-window-layout`; the status bar and the
+//! panel groups take their members, order and sides from it), per-surface background
+//! membership, and per-column layout projections.
 //! Does not own: session connections, feature views, native filesystem implementations,
 //! persistence workers, project definitions or connection authentication,
 //! or external-program launch.
 //! Ports used: `SessionFactory`, `ConnectionDirectory`, `Item`, `Panel`,
-//! `RightPanel`, `LocalTerminal`, `ProjectTerminalOpen`, `ProjectTerminalResolve`,
+//! `LocalTerminal`, `ProjectTerminalOpen`, `ProjectTerminalResolve`,
 //! `ChatConnectionOpen`; project terminal contracts/refusals live in workspace-ports
 //! without shell reexports. Private placement and typed terminal admission remain here.
 //! Layout and the checked plugin catalog arrive as explicit `Deps`.
@@ -67,7 +69,6 @@ mod panel;
 pub mod plugin;
 mod provider_registry;
 pub use provider_registry::ProjectProviderRegistry;
-mod right_panel;
 mod tab_groups;
 pub use open_on_host::OpenOnHostError;
 mod workspace;
@@ -80,7 +81,6 @@ pub use item::{Item, ItemEvent, ItemHandle, TabState};
 pub use local_terminal::{LocalDirectoryError, LocalTerminal, LocalTerminalTarget};
 use nocterm_workspace_ports::ContextSelectionError;
 pub use panel::{Panel, PanelHandle};
-pub use right_panel::{RightPanel, RightPanelEvent};
 // The terminal and connection contracts live below the shell (ADR 0062).
 pub use nocterm_workspace_ports::{
     ConnectionFactSession, ConnectionSummary, ExpectedSession, ExplorerSource, FactSessionSnapshot,

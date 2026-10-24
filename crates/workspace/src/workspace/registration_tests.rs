@@ -353,7 +353,7 @@ fn a_side_panel_opens_expands_and_withdraws_by_id(cx: &mut TestAppContext) {
     assert_eq!(state(cx), [true, true, false]);
     cx.update_window(handle, |_, window, cx| {
         assert!(shell.panel.read(cx).is_focused(window));
-        assert!(workspace.read(cx).right_panel_is_open());
+        assert!(workspace.read(cx).panel_is_open(&id(EXPANDABLE)));
     })
     .unwrap();
     run(cx, handle, workspace, |workspace, _, cx| {
@@ -500,21 +500,30 @@ fn a_panel_that_asks_for_the_user_marks_its_toggle_until_it_stops(cx: &mut TestA
     let look = |cx: &mut TestAppContext| {
         cx.update(|cx| toggle_presentation(shell.workspace.read(cx), Toggle::SidePanel, cx))
     };
-    let (quiet, asking) = (look(cx), {
-        cx.update(|cx| {
-            shell.panel.update(cx, |panel, cx| {
-                panel.set_attention(Some("Permission".into()), cx)
-            })
-        });
-        look(cx)
+    let quiet = (
+        EXPANDABLE.title.into(),
+        nocterm_ui::contribution_icon(EXPANDABLE.icon),
+    );
+    assert_eq!(look(cx), Some(quiet.clone()));
+    cx.update(|cx| {
+        shell.panel.update(cx, |panel, cx| {
+            panel.set_attention(Some("Permission".into()), cx)
+        })
     });
-    assert_ne!(quiet, asking, "the toggle shows the request");
+    assert_eq!(
+        look(cx),
+        Some((
+            format!("{}: permission required", EXPANDABLE.title).into(),
+            nocterm_ui::IconName::ShieldCheck
+        )),
+        "the toggle shows the request"
+    );
     cx.update(|cx| {
         shell
             .panel
             .update(cx, |panel, cx| panel.set_attention(None, cx))
     });
-    assert_eq!(look(cx), quiet);
+    assert_eq!(look(cx), Some(quiet));
 }
 
 #[gpui_kit::test]
@@ -527,14 +536,11 @@ fn each_group_that_changes_visibility_is_announced(cx: &mut TestAppContext) {
     });
     assert_eq!(
         *shell.events.borrow(),
-        [
-            WorkspaceEvent::RightPanelVisibilityChanged,
-            WorkspaceEvent::PanelVisibilityChanged
-        ]
+        [WorkspaceEvent::PanelVisibilityChanged]
     );
     shell.events.borrow_mut().clear();
     run(cx, handle, workspace, |workspace, window, cx| {
-        workspace.toggle_primary_group(window, cx)
+        workspace.toggle_sidebar(window, cx)
     });
     assert_eq!(
         *shell.events.borrow(),

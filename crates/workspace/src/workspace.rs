@@ -106,8 +106,6 @@ pub enum WorkspaceEvent {
     LocalDirectoryChanged,
     /// Saved server descriptors or discovered facts changed.
     ConnectionsChanged,
-    /// The independent side panel was opened or closed.
-    RightPanelVisibilityChanged,
     /// A panel group was shown or hidden.
     PanelVisibilityChanged,
 }

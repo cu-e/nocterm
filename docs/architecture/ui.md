@@ -307,7 +307,7 @@ panel that opens a column of its own asks the workspace to widen it with
 `PanelRequest::Widen`. Panels are shown and hidden by their feature's action
 (`files::ToggleExplorer`, `connections::ToggleServers`, `containers::ToggleContainers`)
 through `Workspace::toggle_panel` with the contribution's id, so the workspace binds no
-feature's panel. `ToggleRightPanel` is the remaining legacy action for the side panel.
+feature's panel. `ToggleRightPanel` is the remaining legacy action; it acts on the assistant group.
 
 ## Key bindings
 

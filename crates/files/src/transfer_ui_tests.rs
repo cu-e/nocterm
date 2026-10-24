@@ -8,8 +8,10 @@ pub(super) fn show_local(
     panel: &Entity<FilesPanel>,
     directory: &std::path::Path,
 ) {
-    cx.update_window(handle, |_, _, cx| {
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| {
             panel.navigate_local(directory.to_owned(), cx)
         });

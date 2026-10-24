@@ -1,7 +1,6 @@
 //! Today's sidebar and side-panel transitions: visibility, expansion, availability,
 //! and where focus lands, one test per behaviour of the transition table.
-use crate::test_support::{Toggle, toggle_id};
-use gpui_kit::InteractiveElement as _;
+use crate::test_support::{EXPANDABLE, PANEL_A, PANEL_B, Toggle, toggle_id};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Entity, Focusable, Subscription, TestAppContext, Window,
     point, px, size, test::TestWindowExt as _,
@@ -9,8 +8,10 @@ use gpui_kit::{
 use std::{cell::Cell, rc::Rc};
 
 use crate::test_support::TestPanel;
-use crate::workspace::tests::{Probe, fixture_with_layout, probe};
-use crate::{NextPanel, RightPanelEvent, ToggleRightPanelMaximized, Workspace, WorkspaceEvent};
+use crate::workspace::tests::test_plugin::{fixture_with_test_plugin, register_built};
+use crate::workspace::tests::{Probe, probe};
+use crate::{NextPanel, PanelRequest, ToggleRightPanelMaximized, Workspace, WorkspaceEvent};
+use nocterm_plugin_model::{ContributionId, SystemContribution};
 
 /// Where the window's focus currently is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,13 +34,17 @@ struct Shell {
     _events: Subscription,
 }
 
+fn id(contribution: &SystemContribution) -> ContributionId {
+    contribution.id.clone()
+}
+
 fn shell(cx: &mut TestAppContext) -> Shell {
-    let (handle, workspace, layout) = fixture_with_layout(cx);
+    let (handle, workspace, layout) = fixture_with_test_plugin(cx);
     let visibility_events = Rc::new(Cell::new(0));
     let seen = visibility_events.clone();
     let events = cx.update(|cx| {
         cx.subscribe(&workspace, move |_, event, _| {
-            if *event == WorkspaceEvent::RightPanelVisibilityChanged {
+            if *event == WorkspaceEvent::PanelVisibilityChanged {
                 seen.set(seen.get() + 1);
             }
         })
@@ -58,10 +63,11 @@ fn shell(cx: &mut TestAppContext) -> Shell {
                 .build(cx);
             let central = probe(cx, Rc::default());
             workspace.update(cx, |workspace, cx| {
-                for panel in &navigation {
-                    workspace.add_panel(panel.clone(), cx);
-                }
-                workspace.set_right_panel(side.clone(), window, cx);
+                register_built(workspace, PANEL_A, &navigation[0], window, cx);
+                register_built(workspace, PANEL_B, &navigation[1], window, cx);
+                register_built(workspace, EXPANDABLE, &side, window, cx);
+                // The host offers the side panel on demand.
+                workspace.set_panel_available(&id(EXPANDABLE), false, window, cx);
                 workspace.add_item(central.clone(), window, cx);
             });
             window.render_frame(cx);
@@ -77,37 +83,6 @@ fn shell(cx: &mut TestAppContext) -> Shell {
         central,
         visibility_events,
         _events: events,
-    }
-}
-
-/// A navigation panel of a type other than [`TestPanel`], so type lookups can tell them apart.
-struct SecondKind {
-    focus: gpui_kit::FocusHandle,
-}
-
-impl Focusable for SecondKind {
-    fn focus_handle(&self, _: &App) -> gpui_kit::FocusHandle {
-        self.focus.clone()
-    }
-}
-
-impl gpui_kit::Render for SecondKind {
-    fn render(
-        &mut self,
-        _: &mut Window,
-        _: &mut gpui_kit::Context<Self>,
-    ) -> impl gpui_kit::IntoElement {
-        gpui_kit::div().track_focus(&self.focus)
-    }
-}
-
-impl crate::Panel for SecondKind {
-    fn title(&self, _: &App) -> gpui_kit::SharedString {
-        "Second".into()
-    }
-
-    fn icon(&self, _: &App) -> nocterm_ui::IconName {
-        nocterm_ui::IconName::Bot
     }
 }
 
@@ -131,8 +106,8 @@ impl Shell {
 
     fn open_side_panel(&self, cx: &mut TestAppContext) {
         self.update(cx, |workspace, window, cx| {
-            workspace.set_right_panel_available(true, window, cx);
-            workspace.toggle_right_panel(window, cx);
+            workspace.set_panel_available(&id(EXPANDABLE), true, window, cx);
+            workspace.toggle_panel(&id(EXPANDABLE), window, cx);
         });
     }
 
@@ -163,16 +138,18 @@ impl Shell {
     }
 
     fn sidebar_open(&self, cx: &TestAppContext) -> bool {
-        self.workspace.read_with(cx, |w, _| w.sidebar_is_open())
+        self.workspace
+            .read_with(cx, |w, _| w.primary_group_is_open())
     }
 
     fn side_open(&self, cx: &TestAppContext) -> bool {
-        self.workspace.read_with(cx, |w, _| w.right_panel_is_open())
+        self.workspace
+            .read_with(cx, |w, _| w.panel_is_open(&id(EXPANDABLE)))
     }
 
     fn side_maximized(&self, cx: &TestAppContext) -> bool {
         self.workspace
-            .read_with(cx, |w, _| w.right_panel_is_maximized())
+            .read_with(cx, |w, _| w.panel_is_expanded(&id(EXPANDABLE)))
     }
 
     /// Which sidebar panel is rendered, if the sidebar is showing.
@@ -188,16 +165,23 @@ impl Shell {
 fn a_new_window_shows_an_empty_sidebar_and_keeps_the_unoffered_side_panel_away(
     cx: &mut TestAppContext,
 ) {
-    let (handle, workspace, _) = fixture_with_layout(cx);
+    let (handle, workspace, _) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         let side = TestPanel::builder("side-panel").build(cx);
         workspace.update(cx, |workspace, cx| {
-            assert!(workspace.sidebar_is_open());
-            assert!(!workspace.right_panel_is_available());
-            workspace.set_right_panel(side, window, cx);
-            assert!(!workspace.right_panel_is_available() && !workspace.right_panel_is_open());
-            workspace.set_right_panel_available(true, window, cx);
-            assert!(workspace.right_panel_is_available() && !workspace.right_panel_is_open());
+            assert!(workspace.primary_group_is_open());
+            assert!(!workspace.is_registered(&id(EXPANDABLE)));
+            register_built(workspace, EXPANDABLE, &side, window, cx);
+            workspace.set_panel_available(&id(EXPANDABLE), false, window, cx);
+            assert!(
+                !workspace.panel_is_available(&id(EXPANDABLE))
+                    && !workspace.panel_is_open(&id(EXPANDABLE))
+            );
+            workspace.set_panel_available(&id(EXPANDABLE), true, window, cx);
+            assert!(
+                workspace.panel_is_available(&id(EXPANDABLE))
+                    && !workspace.panel_is_open(&id(EXPANDABLE))
+            );
         });
     })
     .unwrap();
@@ -214,7 +198,11 @@ fn showing_a_hidden_sidebar_keeps_its_selection_and_the_focus(cx: &mut TestAppCo
     assert!(shell.sidebar_open(cx));
     assert_eq!(shell.shown_navigation(cx), Some(1));
     assert_eq!(shell.focus(cx), Focus::Central);
-    assert_eq!(shell.visibility_events.get(), 0);
+    assert_eq!(
+        shell.visibility_events.get(),
+        2,
+        "hiding and showing the sidebar"
+    );
 }
 
 #[gpui_kit::test]
@@ -223,7 +211,9 @@ fn hiding_the_sidebar_beside_an_expanded_side_panel_moves_focus_only_from_the_si
 ) {
     let shell = shell(cx);
     shell.open_side_panel(cx);
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx)
+    });
     shell.focus_central(cx);
     shell.update(cx, |w, window, cx| w.toggle_sidebar(window, cx));
     assert!(!shell.sidebar_open(cx));
@@ -270,7 +260,9 @@ fn clicking_the_showing_panel_button_hides_the_sidebar_like_the_toggle(cx: &mut 
     });
     assert!(shell.sidebar_open(cx));
     assert_eq!(shell.focus(cx), Focus::Navigation(0));
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx)
+    });
     shell.run(cx, |window, cx| {
         window.render_frame(cx);
         window.click(toggle_id(Toggle::Navigation(0)), cx);
@@ -296,13 +288,13 @@ fn next_panel_on_a_hidden_sidebar_shows_the_selected_panel_without_advancing(
 
 #[gpui_kit::test]
 fn next_panel_without_sidebar_panels_does_nothing(cx: &mut TestAppContext) {
-    let (handle, workspace, _) = fixture_with_layout(cx);
+    let (handle, workspace, _) = fixture_with_test_plugin(cx);
     cx.update_window(handle, |_, window, cx| {
         let central = probe(cx, Rc::default());
         workspace.update(cx, |w, cx| w.add_item(central.clone(), window, cx));
         window.focus(&central.focus_handle(cx), cx);
         window.dispatch_action(Box::new(NextPanel), cx);
-        assert!(workspace.read(cx).sidebar_is_open());
+        assert!(workspace.read(cx).primary_group_is_open());
         assert!(central.focus_handle(cx).is_focused(window));
     })
     .unwrap();
@@ -323,13 +315,14 @@ fn activating_a_missing_sidebar_panel_changes_nothing(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn toggling_a_panel_type_that_is_not_registered_does_nothing(cx: &mut TestAppContext) {
+fn toggling_a_panel_that_is_not_registered_does_nothing(cx: &mut TestAppContext) {
     let shell = shell(cx);
     shell.focus_navigation(1, cx);
     shell.focus_central(cx);
+    let unknown = ContributionId::new("test.unknown");
     shell.update(cx, |w, window, cx| {
-        w.toggle_panel_of::<SecondKind>(window, cx);
-        w.activate_panel_of::<SecondKind>(window, cx);
+        w.toggle_panel(&unknown, window, cx);
+        w.open_panel(&unknown, window, cx);
     });
     assert!(shell.sidebar_open(cx));
     assert_eq!(shell.shown_navigation(cx), Some(1));
@@ -338,30 +331,17 @@ fn toggling_a_panel_type_that_is_not_registered_does_nothing(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn toggling_the_showing_panel_of_a_type_hides_the_sidebar_like_its_button(cx: &mut TestAppContext) {
-    let (handle, workspace, _) = fixture_with_layout(cx);
-    cx.update_window(handle, |_, window, cx| {
-        let first = TestPanel::builder("navigation-0").build(cx);
-        let second = cx.new(|cx| SecondKind {
-            focus: cx.focus_handle(),
-        });
-        let central = probe(cx, Rc::default());
-        workspace.update(cx, |w, cx| {
-            w.add_panel(first, cx);
-            w.add_panel(second.clone(), cx);
-            w.add_item(central.clone(), window, cx);
-            w.activate_panel_of::<SecondKind>(window, cx);
-        });
-        assert!(workspace.read(cx).sidebar_is_open());
-        assert!(second.focus_handle(cx).is_focused(window));
-        workspace.update(cx, |w, cx| w.toggle_panel_of::<SecondKind>(window, cx));
-        assert!(!workspace.read(cx).sidebar_is_open());
-        assert!(central.focus_handle(cx).is_focused(window));
-        workspace.update(cx, |w, cx| w.toggle_panel_of::<SecondKind>(window, cx));
-        assert!(workspace.read(cx).sidebar_is_open());
-        assert!(second.focus_handle(cx).is_focused(window));
-    })
-    .unwrap();
+fn toggling_the_showing_panel_by_id_hides_the_sidebar_like_its_button(cx: &mut TestAppContext) {
+    let shell = shell(cx);
+    shell.update(cx, |w, window, cx| w.open_panel(&id(PANEL_B), window, cx));
+    assert!(shell.sidebar_open(cx));
+    assert_eq!(shell.focus(cx), Focus::Navigation(1));
+    shell.update(cx, |w, window, cx| w.toggle_panel(&id(PANEL_B), window, cx));
+    assert!(!shell.sidebar_open(cx));
+    assert_eq!(shell.focus(cx), Focus::Central);
+    shell.update(cx, |w, window, cx| w.toggle_panel(&id(PANEL_B), window, cx));
+    assert!(shell.sidebar_open(cx));
+    assert_eq!(shell.focus(cx), Focus::Navigation(1));
 }
 
 #[gpui_kit::test]
@@ -370,7 +350,9 @@ fn closing_the_side_panel_while_it_has_no_focus_leaves_focus_where_it_is(cx: &mu
     shell.open_side_panel(cx);
     assert_eq!(shell.visibility_events.get(), 1);
     shell.focus_navigation(1, cx);
-    shell.update(cx, |w, window, cx| w.toggle_right_panel(window, cx));
+    shell.update(cx, |w, window, cx| {
+        w.toggle_panel(&id(EXPANDABLE), window, cx)
+    });
     assert!(!shell.side_open(cx));
     assert_eq!(shell.visibility_events.get(), 2);
     assert_eq!(shell.focus(cx), Focus::Navigation(1));
@@ -384,24 +366,24 @@ fn withdrawing_an_open_side_panel_closes_it_and_refocuses_only_if_it_held_focus(
     shell.open_side_panel(cx);
     shell.focus_navigation(0, cx);
     shell.update(cx, |w, window, cx| {
-        w.set_right_panel_available(false, window, cx)
+        w.set_panel_available(&id(EXPANDABLE), false, window, cx)
     });
     assert!(
         !shell.side_open(cx)
             && !shell
                 .workspace
-                .read_with(cx, |w, _| w.right_panel_is_available())
+                .read_with(cx, |w, _| w.panel_is_available(&id(EXPANDABLE)))
     );
     assert_eq!(shell.visibility_events.get(), 2);
     assert_eq!(shell.focus(cx), Focus::Navigation(0));
 
     shell.update(cx, |w, window, cx| {
-        w.set_right_panel_available(true, window, cx);
-        w.toggle_right_panel(window, cx);
+        w.set_panel_available(&id(EXPANDABLE), true, window, cx);
+        w.toggle_panel(&id(EXPANDABLE), window, cx);
     });
     assert_eq!(shell.focus(cx), Focus::SidePanel);
     shell.update(cx, |w, window, cx| {
-        w.set_right_panel_available(false, window, cx)
+        w.set_panel_available(&id(EXPANDABLE), false, window, cx)
     });
     assert_eq!(shell.focus(cx), Focus::Central);
 }
@@ -410,16 +392,16 @@ fn withdrawing_an_open_side_panel_closes_it_and_refocuses_only_if_it_held_focus(
 fn withdrawing_a_closed_side_panel_is_silent(cx: &mut TestAppContext) {
     let shell = shell(cx);
     shell.update(cx, |w, window, cx| {
-        w.set_right_panel_available(true, window, cx)
+        w.set_panel_available(&id(EXPANDABLE), true, window, cx)
     });
     shell.focus_navigation(1, cx);
     shell.update(cx, |w, window, cx| {
-        w.set_right_panel_available(false, window, cx)
+        w.set_panel_available(&id(EXPANDABLE), false, window, cx)
     });
     assert!(
         !shell
             .workspace
-            .read_with(cx, |w, _| w.right_panel_is_available())
+            .read_with(cx, |w, _| w.panel_is_available(&id(EXPANDABLE)))
     );
     assert_eq!(shell.visibility_events.get(), 0);
     assert_eq!(shell.focus(cx), Focus::Navigation(1));
@@ -428,11 +410,13 @@ fn withdrawing_a_closed_side_panel_is_silent(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_side_panel_that_is_not_open_cannot_be_expanded(cx: &mut TestAppContext) {
     let shell = shell(cx);
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx)
+    });
     assert!(!shell.side_maximized(cx) && !shell.side.read_with(cx, |p, _| p.maximized()));
     shell.update(cx, |w, window, cx| {
-        w.set_right_panel_available(true, window, cx);
-        w.set_right_panel_maximized(true, cx);
+        w.set_panel_available(&id(EXPANDABLE), true, window, cx);
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx);
     });
     assert!(!shell.side_maximized(cx) && !shell.side.read_with(cx, |p, _| p.maximized()));
     shell.run(cx, |window, cx| {
@@ -440,7 +424,7 @@ fn a_side_panel_that_is_not_open_cannot_be_expanded(cx: &mut TestAppContext) {
     });
     shell
         .side
-        .update(cx, |_, cx| cx.emit(RightPanelEvent::ToggleMaximized));
+        .update(cx, |_, cx| cx.emit(PanelRequest::ToggleExpanded));
     cx.run_until_parked();
     assert!(!shell.side_maximized(cx));
 }
@@ -455,7 +439,7 @@ fn the_expand_action_and_the_panels_own_request_flip_an_open_side_panel(cx: &mut
     assert!(shell.side_maximized(cx) && shell.side.read_with(cx, |p, _| p.maximized()));
     shell
         .side
-        .update(cx, |_, cx| cx.emit(RightPanelEvent::ToggleMaximized));
+        .update(cx, |_, cx| cx.emit(PanelRequest::ToggleExpanded));
     cx.run_until_parked();
     assert!(!shell.side_maximized(cx) && !shell.side.read_with(cx, |p, _| p.maximized()));
 }
@@ -486,7 +470,9 @@ fn resizing_the_body_while_the_side_panel_is_expanded_changes_no_remembered_widt
             .unwrap();
     });
     shell.open_side_panel(cx);
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx)
+    });
     drag_sidebar_edge(&shell, 80., cx);
     shell.run(cx, |window, cx| {
         window.resize(size(px(1500.), px(700.)));
@@ -511,19 +497,25 @@ fn widening_is_ignored_while_the_side_panel_is_expanded_or_not_open(cx: &mut Tes
             .unwrap();
     });
     shell.update(cx, |w, window, cx| {
-        w.set_right_panel_available(true, window, cx)
+        w.set_panel_available(&id(EXPANDABLE), true, window, cx)
     });
     shell
         .side
-        .update(cx, |_, cx| cx.emit(RightPanelEvent::Widen(px(200.))));
+        .update(cx, |_, cx| cx.emit(PanelRequest::Widen(px(200.))));
     cx.run_until_parked();
-    shell.update(cx, |w, window, cx| w.toggle_right_panel(window, cx));
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
+    shell.update(cx, |w, window, cx| {
+        w.toggle_panel(&id(EXPANDABLE), window, cx)
+    });
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx)
+    });
     shell
         .side
-        .update(cx, |_, cx| cx.emit(RightPanelEvent::Widen(px(200.))));
+        .update(cx, |_, cx| cx.emit(PanelRequest::Widen(px(200.))));
     cx.run_until_parked();
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(false, cx));
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), false, cx)
+    });
     let width = shell.run(cx, |window, cx| {
         window.render_frame(cx);
         window.find("side-panel").bounds().size.width
@@ -542,7 +534,9 @@ fn expanded_shell_with_a_second_tab(cx: &mut TestAppContext) -> (Shell, Entity<P
     let other = shell.run(cx, |_, cx| probe(cx, Rc::default()));
     shell.update(cx, |w, window, cx| w.add_item(other.clone(), window, cx));
     shell.open_side_panel(cx);
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx)
+    });
     assert!(shell.side_maximized(cx));
     (shell, other)
 }
@@ -594,7 +588,9 @@ fn toggling_the_local_terminal_collapses_an_expanded_side_panel(cx: &mut TestApp
     shell.update(cx, |w, window, cx| {
         w.set_local_terminal(local.clone(), window, cx)
     });
-    shell.update(cx, |w, _, cx| w.set_right_panel_maximized(true, cx));
+    shell.update(cx, |w, _, cx| {
+        w.set_panel_expanded(&id(EXPANDABLE), true, cx)
+    });
     assert!(shell.side_maximized(cx));
     shell.update(cx, |w, window, cx| w.toggle_local_terminal(window, cx));
     assert!(!shell.side_maximized(cx) && shell.side_open(cx));

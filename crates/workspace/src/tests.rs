@@ -20,6 +20,8 @@ mod local_directory;
 mod project_tabs;
 #[path = "tests/provider_resolution.rs"]
 mod provider_resolution;
+#[path = "tests/test_plugin.rs"]
+pub(super) mod test_plugin;
 
 pub(super) struct Probe {
     focus: FocusHandle,

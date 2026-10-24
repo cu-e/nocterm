@@ -3,11 +3,7 @@ use super::*;
 use crate::ContextSelectionError;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
 use nocterm_session::{HostAddress, ShellLaunch};
-use panel_groups::{GroupKey, HostedPanel};
-use registration::{
-    PanelRegistration, PanelSource, RegistrationError, WidgetRegistration, observe_presentation,
-    presentation_of,
-};
+use registration::{PanelRegistration, PanelSource, RegistrationError, WidgetRegistration};
 use surface::admission::SurfaceItemAdmission;
 
 impl Workspace {
@@ -244,58 +240,31 @@ impl Workspace {
         self.open_session(spec, window, cx);
         Ok(())
     }
-    pub fn add_panel<T: Panel>(&mut self, panel: Entity<T>, cx: &mut Context<Self>) {
-        let metadata = presentation_of(&panel, cx);
-        let subscription = observe_presentation(&panel, cx);
-        self.panels.add(
-            GroupKey::Navigation,
-            HostedPanel::plain(Box::new(panel), metadata, subscription),
-        );
-        cx.notify();
-    }
-    pub fn set_right_panel<T: crate::RightPanel>(
-        &mut self,
-        panel: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let subscription =
-            cx.subscribe_in(&panel, window, |this, _, event, window, cx| match event {
-                crate::RightPanelEvent::ToggleMaximized => {
-                    this.toggle_group_expanded(GroupKey::Assistant, cx)
-                }
-                crate::RightPanelEvent::Close => this.close_group(GroupKey::Assistant, window, cx),
-                crate::RightPanelEvent::Widen(delta) => {
-                    this.widen_group(GroupKey::Assistant, *delta, window, cx)
-                }
-            });
-        let presentation = presentation_of(&panel, cx);
-        let hosted = HostedPanel::expandable(Box::new(panel), presentation, subscription);
-        self.panels.install(GroupKey::Assistant, hosted);
-        self.sync_panel_sides(cx);
-        cx.notify();
-    }
     /// Registers the panel of a contribution of the plugin catalog and creates it now.
     ///
-    /// The panel joins the group its placement hints at, at the end, and starts available.
+    /// The panel joins the group and the position the window's layout gives it, and starts
+    /// available.
     pub fn register_panel<T: Panel>(
         &mut self,
         registration: PanelRegistration<T>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), RegistrationError> {
-        let (contribution, traits) = self.registrations.admit_panel(
+        let (_, traits) = self.registrations.admit_panel(
             registration.id(),
             registration.expandable_requested(),
             registration.is_eager(),
         )?;
         let id = registration.id().clone();
-        let group = GroupKey::hosting(contribution, traits);
-        match registration.into_source(group, traits.chrome, window, cx) {
-            PanelSource::Hosted(panel) => self.panels.register(id, group, Some(panel)),
+        match registration.into_source(traits.chrome, window, cx) {
+            PanelSource::Hosted(panel) => {
+                self.panels
+                    .register(id, Some(panel), self.shell.current(cx));
+            }
             PanelSource::Factory(factory) => {
                 // The panel's slot exists while the factory reads the workspace.
-                self.panels.register(id.clone(), group, None);
+                self.panels
+                    .register(id.clone(), None, self.shell.current(cx));
                 let panel = factory(&*self, window, cx);
                 self.panels.fill(&id, panel);
                 self.registrations.keep_factory(id, factory);

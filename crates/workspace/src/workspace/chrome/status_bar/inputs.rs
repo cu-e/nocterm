@@ -17,6 +17,7 @@ use crate::{
 /// The toggle of one panel.
 #[derive(Clone, Debug)]
 pub(in crate::workspace) struct PanelToggle {
+    id: ContributionId,
     group: GroupKey,
     ix: usize,
     look: ToggleLook,
@@ -25,10 +26,15 @@ pub(in crate::workspace) struct PanelToggle {
 }
 
 impl PanelToggle {
+    pub(in crate::workspace) fn id(&self) -> &ContributionId {
+        &self.id
+    }
     pub(in crate::workspace) fn group(&self) -> GroupKey {
         self.group
     }
-    /// The panel's position in its group.
+    /// The panel's position in its group, which names the toggle's element. A group lists the
+    /// panels the layout places in layout order and the tray after them, so the placed toggles
+    /// are numbered from 0 without gaps.
     pub(in crate::workspace) fn ix(&self) -> usize {
         self.ix
     }
@@ -71,8 +77,6 @@ impl BarInputs {
     /// - A panel's toggle is drawn while the host offers the panel.
     /// - A panel that the arrangement does not place is drawn at the inner end of the right zone
     ///   while it asks for the user.
-    /// - Panels that the pre-plugin API added have no contribution and follow the
-    ///   arrangement's own toggles of their group.
     pub(in crate::workspace) fn new(regions: &Regions<'_>, status: &StatusBar, cx: &App) -> Self {
         let layout = regions.shell.current(cx);
         let resolver = Resolver {
@@ -85,7 +89,6 @@ impl BarInputs {
         let mut right = resolver.zone(Zone::Right);
         let unplaced = resolver.unplaced_asking();
         right.splice(0..0, unplaced);
-        right.extend(resolver.legacy_side_panel());
         Self {
             left: tidy(resolver.zone(Zone::Left)),
             center: tidy(resolver.zone(Zone::Center)),
@@ -192,20 +195,18 @@ impl Resolver<'_> {
                 ResolvedMember::Panel(id) => entries.extend(self.toggle(id)),
             }
         }
-        if group.is_primary() {
-            entries.extend(self.legacy_sidebar_panels());
-        }
     }
 
     fn toggle(&self, id: &ContributionId) -> Option<BarEntry> {
         let (group, ix, panel) = self.groups.offered(id)?;
         let contribution = self.catalog.contribution(id)?;
         Some(BarEntry::Panel(PanelToggle {
+            id: id.clone(),
             group,
             ix,
             look: ToggleLook::of(contribution, panel.attention()),
             badge: panel.badge(self.cx),
-            selected: self.groups.is_showing(group, ix),
+            selected: self.groups.panel_is_open(id),
         }))
     }
 
@@ -220,38 +221,6 @@ impl Resolver<'_> {
                     .is_some_and(|(_, _, panel)| panel.attention())
             })
             .filter_map(|id| self.toggle(id))
-            .collect()
-    }
-
-    fn legacy_sidebar_panels(&self) -> Vec<BarEntry> {
-        let group = GroupKey::Navigation;
-        self.groups
-            .unidentified(group)
-            .map(|(ix, panel)| {
-                BarEntry::Panel(PanelToggle {
-                    group,
-                    ix,
-                    look: ToggleLook::legacy_navigation(panel, self.cx),
-                    badge: panel.badge(self.cx),
-                    selected: self.groups.is_showing(group, ix),
-                })
-            })
-            .collect()
-    }
-
-    fn legacy_side_panel(&self) -> Vec<BarEntry> {
-        let group = GroupKey::Assistant;
-        self.groups
-            .unidentified(group)
-            .map(|(ix, panel)| {
-                BarEntry::Panel(PanelToggle {
-                    group,
-                    ix,
-                    look: ToggleLook::legacy_side_panel(panel.attention()),
-                    badge: None,
-                    selected: self.groups.is_showing(group, ix),
-                })
-            })
             .collect()
     }
 }

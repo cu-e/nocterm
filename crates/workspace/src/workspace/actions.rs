@@ -63,15 +63,12 @@ impl ActionRegistry {
             .on_action(cx.listener(|this, _: &crate::SwapSides, _, cx| this.swap_sides(cx)))
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanel, window, cx| {
-                    this.toggle_right_panel(window, cx)
+                    this.toggle_assistant_group(window, cx)
                 }),
             )
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanelMaximized, _, cx| {
-                    this.set_right_panel_maximized(
-                        !this.panels.is_expanded(GroupKey::Assistant),
-                        cx,
-                    )
+                    this.toggle_group_expanded(GroupKey::Assistant, cx)
                 }),
             )
     }

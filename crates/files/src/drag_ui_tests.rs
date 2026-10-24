@@ -96,8 +96,10 @@ fn native_local_and_remote_previews_keep_full_rows_and_symbolic_link_names(
     let fs = Arc::new(PendingFs::default());
     let (deps, local) = fixture_deps_at(directory.path());
     let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
-    cx.update_window(handle, |_, _, cx| {
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| {
             panel.navigate_local(directory.path().into(), cx)
         });
@@ -163,8 +165,10 @@ fn native_remote_multiselection_preview_keeps_grabbed_name_and_transfers_both_fi
     let service = deps.transfers.clone();
     let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
     let service = cx
-        .update_window(handle, |_, _, cx| {
-            workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+        .update_window(handle, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                add_explorer(workspace, panel.clone(), window, cx)
+            });
             panel.update(cx, |panel, cx| {
                 panel.navigate_local(directory.path().into(), cx)
             });

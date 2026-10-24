@@ -3,9 +3,7 @@ use super::*;
 use gpui_kit::ElementId;
 use gpui_kit::{Bounds, Pixels, SharedString, point, px, size};
 use nocterm_ui::{IconName, UiLayout};
-use nocterm_workspace::test_support::{
-    Toggle, set_side_panel_attention, toggle_id, toggle_presentation,
-};
+use nocterm_workspace::test_support::{Toggle, toggle_id, toggle_presentation};
 
 const NAVIGATION: [(&str, IconName); 5] = [
     ("Connections", IconName::Server),
@@ -174,6 +172,8 @@ fn assert_navigation_presentation(workspace: &Entity<Workspace>, cx: &mut TestAp
     });
 }
 
+/// The agent's resting toggle. How a toggle looks while its panel asks for the user is pinned
+/// by the workspace tests, which drive `Panel::attention` of a test panel.
 fn assert_agent_presentation(workspace: &Entity<Workspace>, cx: &mut TestAppContext) {
     let side = |cx: &mut TestAppContext| {
         cx.update(|cx| toggle_presentation(workspace.read(cx), Toggle::SidePanel, cx))
@@ -183,21 +183,6 @@ fn assert_agent_presentation(workspace: &Entity<Workspace>, cx: &mut TestAppCont
         Some(("AI Agents".into(), IconName::PanelRight)),
         "resting"
     );
-    workspace.update(cx, |workspace, cx| {
-        set_side_panel_attention(workspace, true, cx)
-    });
-    assert_eq!(
-        side(cx),
-        Some((
-            "AI Agents: permission required".into(),
-            IconName::ShieldCheck
-        )),
-        "attention"
-    );
-    workspace.update(cx, |workspace, cx| {
-        set_side_panel_attention(workspace, false, cx)
-    });
-    assert_eq!(side(cx), Some(("AI Agents".into(), IconName::PanelRight)));
 }
 
 /// The width of the monitor button while it has no sample: the icon button.

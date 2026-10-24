@@ -343,8 +343,10 @@ fn empty_directory_upload_refreshes_the_shown_remote_destination(cx: &mut TestAp
     let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
     let service = deps.transfers.clone();
     let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
-    cx.update_window(handle, |_, _, cx| {
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
     })
     .unwrap();
     cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));
@@ -404,8 +406,10 @@ fn empty_directory_download_refreshes_the_shown_local_destination(cx: &mut TestA
     let (deps, local, recording) = transfer_fixture_deps_at(directory.path());
     let service = deps.transfers.clone();
     let (handle, workspace, _, panel) = panel_fixture_with(cx, fs, deps);
-    cx.update_window(handle, |_, _, cx| {
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| {
             panel.navigate_local(directory.path().to_owned(), cx)
         });
@@ -468,8 +472,10 @@ fn partial_directory_download_refreshes(cx: &mut TestAppContext, cancelled: bool
     let (deps, local, recording) = transfer_fixture_deps_at(directory.path());
     let service = deps.transfers.clone();
     let (handle, workspace, _, panel) = panel_fixture_with(cx, fs.clone(), deps);
-    cx.update_window(handle, |_, _, cx| {
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| {
             panel.navigate_local(directory.path().to_owned(), cx)
         });
