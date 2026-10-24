@@ -1,9 +1,9 @@
 //! Resolution of a preset against the plugin catalog.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use nocterm_plugin_model::{
-    AutoPlace, ContributionId, ContributionKind, GroupId, GroupSpec, PluginCatalog, Side,
+    AutoPlace, ContributionId, ContributionKind, GroupId, GroupSpec, PluginCatalog, PluginId, Side,
     SystemContribution, WidthClass, Zone,
 };
 
@@ -24,11 +24,18 @@ const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
 /// - A pinned widget that is still unplaced goes to the end of the right zone. Pinning has no
 ///   effect on a panel: a panel the bar leaves out stays in the tray and opens in its hinted
 ///   group.
+/// - The contributions of the plugins in `disabled` stay in the preset but are not placed, not
+///   added by their hints, not left in the tray and not opened. The ones the bar names are
+///   listed by [`ResolvedLayout::disabled`].
 /// - Exactly one group is primary, and it is in the bar even without members.
 /// - Separators never lead, trail or double in a zone or a group, and a group other than the
 ///   primary one needs a panel to stay.
-pub fn resolve(preset: &LayoutPreset, catalog: &PluginCatalog) -> ResolvedLayout {
-    let mut arrangement = Arrangement::new(catalog);
+pub fn resolve(
+    preset: &LayoutPreset,
+    catalog: &PluginCatalog,
+    disabled: &BTreeSet<PluginId>,
+) -> ResolvedLayout {
+    let mut arrangement = Arrangement::new(catalog, disabled);
     for zone in ZONES {
         arrangement.place_bar(zone, preset.bar.zone(zone));
     }
@@ -41,17 +48,30 @@ pub fn resolve(preset: &LayoutPreset, catalog: &PluginCatalog) -> ResolvedLayout
 /// The zones being filled and the contributions placed so far.
 struct Arrangement<'a> {
     catalog: &'a PluginCatalog,
+    disabled: &'a BTreeSet<PluginId>,
     zones: [Vec<ResolvedItem>; 3],
     placed: HashSet<ContributionId>,
+    /// The disabled contributions the bar names, in bar order.
+    skipped: Vec<ContributionId>,
 }
 
 impl<'a> Arrangement<'a> {
-    fn new(catalog: &'a PluginCatalog) -> Self {
+    fn new(catalog: &'a PluginCatalog, disabled: &'a BTreeSet<PluginId>) -> Self {
         Self {
             catalog,
+            disabled,
             zones: Default::default(),
             placed: HashSet::new(),
+            skipped: Vec::new(),
         }
+    }
+
+    /// Whether the plugin that owns the contribution is disabled. Core contributions have no
+    /// plugin and are never disabled.
+    fn is_disabled(&self, id: &ContributionId) -> bool {
+        self.catalog
+            .plugin_of(id)
+            .is_some_and(|plugin| self.disabled.contains(&plugin.id))
     }
 
     fn items(&mut self, zone: Zone) -> &mut Vec<ResolvedItem> {
@@ -103,12 +123,20 @@ impl<'a> Arrangement<'a> {
             .collect()
     }
 
-    /// Takes the contribution for the bar if it exists, has the kind and is not placed yet.
+    /// Takes the contribution for the bar if it exists, has the kind, is enabled and is not
+    /// placed yet. A disabled one is noted instead, once.
     fn claim(&mut self, id: &ContributionId, kind: ContributionKind) -> bool {
-        self.catalog
+        let fits = self
+            .catalog
             .contribution(id)
-            .is_some_and(|contribution| contribution.kind == kind)
-            && self.placed.insert(id.clone())
+            .is_some_and(|contribution| contribution.kind == kind);
+        if fits && self.is_disabled(id) {
+            if !self.skipped.contains(id) {
+                self.skipped.push(id.clone());
+            }
+            return false;
+        }
+        fits && self.placed.insert(id.clone())
     }
 
     fn group(&mut self, id: &GroupId) -> Option<&mut ResolvedGroup> {
@@ -120,8 +148,9 @@ impl<'a> Arrangement<'a> {
 
     fn place_by_hints(&mut self, tray: &[ContributionId]) {
         for contribution in self.catalog.entries() {
-            let left_out =
-                self.placed.contains(&contribution.id) || tray.contains(&contribution.id);
+            let left_out = self.placed.contains(&contribution.id)
+                || tray.contains(&contribution.id)
+                || self.is_disabled(&contribution.id);
             if contribution.placement.auto == AutoPlace::Show && !left_out {
                 self.place_by_hint(contribution);
             }
@@ -156,6 +185,7 @@ impl<'a> Arrangement<'a> {
         for contribution in self.catalog.entries() {
             if contribution.pinned
                 && contribution.kind == ContributionKind::Widget
+                && !self.is_disabled(&contribution.id)
                 && self.placed.insert(contribution.id.clone())
             {
                 self.items(Zone::Right)
@@ -192,6 +222,7 @@ impl<'a> Arrangement<'a> {
 
     fn finish(self, open: &[ContributionId]) -> ResolvedLayout {
         let catalog = self.catalog;
+        let disabled = self.disabled;
         let [left, center, right] = self.zones.map(tidy_zone);
         let mut layout = ResolvedLayout {
             left,
@@ -199,11 +230,16 @@ impl<'a> Arrangement<'a> {
             right,
             open: Vec::new(),
             tray: Vec::new(),
+            disabled: self.skipped,
         };
         layout.tray = catalog
             .entries()
             .filter(|contribution| {
-                contribution.kind == ContributionKind::Panel && !layout.is_placed(&contribution.id)
+                contribution.kind == ContributionKind::Panel
+                    && !layout.is_placed(&contribution.id)
+                    && !catalog
+                        .plugin_of(&contribution.id)
+                        .is_some_and(|plugin| disabled.contains(&plugin.id))
             })
             .filter_map(|contribution| {
                 let spec = hinted_group(catalog, contribution)?;

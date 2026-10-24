@@ -4,9 +4,10 @@
 //! bar, the panel groups and their members, the tray of contributions that are registered but
 //! not placed, and the panels that open with the layout. [`resolve`] checks a preset against a
 //! [`PluginCatalog`](nocterm_plugin_model::PluginCatalog) and returns the arrangement the shell
-//! draws. The built-in [`BuiltIn::Default`] is the empty preset, resolved from the placement
-//! hints of the contributions, and [`BuiltIn::Swapped`] is the same arrangement with every
-//! group on the other side.
+//! draws; the plugins it is told are disabled keep their entries in the preset and drop out of
+//! the arrangement. The built-in [`BuiltIn::Default`] is the empty preset, resolved from the
+//! placement hints of the contributions, and [`BuiltIn::Swapped`] is the same arrangement with
+//! every group on the other side.
 //!
 //! The user's presets are the `[layouts]` settings section, [`LayoutSettings`]. [`select`] picks
 //! the layout to show, including the legacy swap-sides flag, and [`transition`] tells a window
@@ -16,16 +17,16 @@
 //! Owns: bar zones, groups and separators, the tray, default-open panels, the built-in
 //! Default and Swapped sides, resolution against the catalog, the `[layouts]` section and its
 //! sanitizing, selection, the switch-or-edit transition and name validation.
-//! Does not own: which plugins exist or are enabled, panel state, widths, rendering, settings
-//! storage.
+//! Does not own: which plugins exist or are disabled (the caller passes the disabled set),
+//! panel state, widths, rendering, settings storage.
 //! Ports used/provided: none; it reads `nocterm-plugin-model` and defines a section for
 //! `nocterm-settings`. Settings section: layouts. Globals: none.
-//! Invariants: built-ins are never stored and always resolve; unknown ids survive in the preset
-//! but never render; a contribution is placed at most once; at most one open panel per group;
-//! exactly one group is primary, the catalog's (a preset's own `primary` flag is ignored);
-//! pinned widgets are always placed (pinning has no effect on a panel); every panel has a
-//! hosting group, placed or not; sanitizing leaves every stored preset with a unique usable id
-//! and name. No I/O.
+//! Invariants: built-ins are never stored and always resolve; unknown ids and the ids of
+//! disabled plugins survive in the preset but never render, open or get added by hints; a
+//! contribution is placed at most once; at most one open panel per group; exactly one group is
+//! primary, the catalog's (a preset's own `primary` flag is ignored); pinned widgets are always
+//! placed (pinning has no effect on a panel); every panel has a hosting group, placed or not;
+//! sanitizing leaves every stored preset with a unique usable id and name. No I/O.
 
 mod builtin;
 mod name;
@@ -49,3 +50,6 @@ mod tests;
 
 #[cfg(test)]
 mod settings_tests;
+
+#[cfg(test)]
+mod disabled_tests;

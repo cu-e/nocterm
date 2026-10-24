@@ -1,9 +1,14 @@
 //! The `[layouts]` section: reading, sanitizing, selecting and the transitions between edits.
 
-use nocterm_plugin_model::{ContributionId, GroupId, Side};
+use std::collections::BTreeSet;
+
+use nocterm_plugin_model::{ContributionId, GroupId, PluginId, Side};
 use nocterm_settings::{SettingsDocument, SettingsSection};
 
 use crate::*;
+
+/// No plugin is disabled.
+static NONE: BTreeSet<PluginId> = BTreeSet::new();
 
 fn id(id: &'static str) -> ContributionId {
     ContributionId::new(id)
@@ -508,16 +513,16 @@ fn settings_resolve_stored_presets_and_fall_back_to_default_for_unknown_ids() {
     let catalog = PluginCatalog::new(&groups, &[], &[]).expect("a catalog with one group");
     let one = settings(Some("p1"), vec![stored("p1", "A")]);
     assert_eq!(
-        one.resolve(&pid("gone"), &catalog),
-        BuiltIn::Default.resolve(&catalog)
+        one.resolve(&pid("gone"), &catalog, &NONE),
+        BuiltIn::Default.resolve(&catalog, &NONE)
     );
     assert_eq!(
-        one.resolve(&pid("swapped"), &catalog),
-        BuiltIn::Swapped.resolve(&catalog)
+        one.resolve(&pid("swapped"), &catalog, &NONE),
+        BuiltIn::Swapped.resolve(&catalog, &NONE)
     );
     assert_eq!(
-        one.resolve(&pid("p1"), &catalog),
-        resolve(&one.presets[0], &catalog)
+        one.resolve(&pid("p1"), &catalog, &NONE),
+        resolve(&one.presets[0], &catalog, &NONE)
     );
 }
 

@@ -1,6 +1,8 @@
 //! The layouts that ship with the application and are never stored.
 
-use nocterm_plugin_model::PluginCatalog;
+use std::collections::BTreeSet;
+
+use nocterm_plugin_model::{PluginCatalog, PluginId};
 
 use crate::{Bar, LayoutPreset, PresetId, ResolvedLayout, resolve};
 
@@ -49,9 +51,9 @@ impl BuiltIn {
         }
     }
 
-    /// The arrangement of this built-in against the catalog.
-    pub fn resolve(self, catalog: &PluginCatalog) -> ResolvedLayout {
-        let default = resolve(&Self::preset(), catalog);
+    /// The arrangement of this built-in against the catalog, without the disabled plugins.
+    pub fn resolve(self, catalog: &PluginCatalog, disabled: &BTreeSet<PluginId>) -> ResolvedLayout {
+        let default = resolve(&Self::preset(), catalog, disabled);
         match self {
             Self::Default => default,
             Self::Swapped => default.swapped(),

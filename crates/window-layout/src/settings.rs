@@ -1,8 +1,8 @@
 //! The `[layouts]` section of `settings.toml`: the user's presets and which one is selected.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
-use nocterm_plugin_model::{GroupId, PluginCatalog};
+use nocterm_plugin_model::{GroupId, PluginCatalog, PluginId};
 use nocterm_settings::{SettingsDocument, SettingsSection};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -89,14 +89,20 @@ impl LayoutSettings {
         fresh_id(free_number(&used))
     }
 
-    /// The arrangement of a layout against the catalog. An unknown id resolves as `default`.
-    pub fn resolve(&self, id: &PresetId, catalog: &PluginCatalog) -> ResolvedLayout {
+    /// The arrangement of a layout against the catalog, without the disabled plugins. An
+    /// unknown id resolves as `default`.
+    pub fn resolve(
+        &self,
+        id: &PresetId,
+        catalog: &PluginCatalog,
+        disabled: &BTreeSet<PluginId>,
+    ) -> ResolvedLayout {
         if let Some(built_in) = BuiltIn::of(id) {
-            return built_in.resolve(catalog);
+            return built_in.resolve(catalog, disabled);
         }
         match self.preset(id) {
-            Some(preset) => resolve(preset, catalog),
-            None => BuiltIn::Default.resolve(catalog),
+            Some(preset) => resolve(preset, catalog, disabled),
+            None => BuiltIn::Default.resolve(catalog, disabled),
         }
     }
 

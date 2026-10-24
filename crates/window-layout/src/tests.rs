@@ -1,9 +1,14 @@
+use std::collections::BTreeSet;
+
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, GroupId, GroupSpec, Icon, PanelChrome,
-    PanelTraits, Placement, PluginCatalog, Side, SystemContribution, WidthClass, Zone,
+    PanelTraits, Placement, PluginCatalog, PluginId, Side, SystemContribution, WidthClass, Zone,
 };
 
 use super::*;
+
+/// No plugin is disabled.
+static NONE: BTreeSet<PluginId> = BTreeSet::new();
 
 const fn contribution(
     id: &'static str,
@@ -160,7 +165,7 @@ fn show(items: &[ResolvedItem]) -> Vec<String> {
 
 #[test]
 fn the_default_places_everything_where_the_hints_put_it() {
-    let layout = BuiltIn::Default.resolve(&catalog());
+    let layout = BuiltIn::Default.resolve(&catalog(), &NONE);
 
     assert_eq!(
         show(layout.zone(Zone::Left)),
@@ -195,8 +200,8 @@ fn the_default_places_everything_where_the_hints_put_it() {
 
 #[test]
 fn swapped_flips_the_sides_and_nothing_else() {
-    let default = BuiltIn::Default.resolve(&catalog());
-    let swapped = BuiltIn::Swapped.resolve(&catalog());
+    let default = BuiltIn::Default.resolve(&catalog(), &NONE);
+    let swapped = BuiltIn::Swapped.resolve(&catalog(), &NONE);
 
     assert_ne!(default, swapped);
     for zone in [Zone::Left, Zone::Center, Zone::Right] {
@@ -233,7 +238,7 @@ fn unknown_ids_are_not_placed_and_the_preset_keeps_them() {
     });
     let before = stored.clone();
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert_eq!(stored, before);
     assert!(!layout.is_placed(&id("shell.missing")));
@@ -260,7 +265,7 @@ fn a_contribution_is_placed_once_and_a_wrong_kind_is_dropped() {
         ..Bar::default()
     });
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     let placed: Vec<_> = layout
         .zone(Zone::Left)
@@ -321,7 +326,7 @@ fn separators_collapse_in_runs_and_at_the_ends_of_zones_and_groups() {
         ..Bar::default()
     });
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert_eq!(
         show(layout.zone(Zone::Left)),
@@ -340,7 +345,7 @@ fn a_shown_contribution_missing_from_bar_and_tray_appears_once_at_its_hint() {
         ..Bar::default()
     });
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert_eq!(
         show(layout.zone(Zone::Right)),
@@ -360,7 +365,7 @@ fn a_tray_entry_stays_unplaced() {
         ..BuiltIn::preset()
     };
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert!(!layout.is_placed(&id("shell.transfers")));
     assert!(!layout.is_placed(&id("shell.snippets")));
@@ -378,7 +383,7 @@ fn a_tray_entry_that_the_bar_places_is_placed() {
         ..BuiltIn::preset()
     };
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert_eq!(show(layout.zone(Zone::Left))[0], "shell.transfers");
 }
@@ -391,7 +396,7 @@ fn a_contribution_that_does_not_ask_to_be_shown_waits_in_the_tray() {
         clock
     }];
 
-    let layout = BuiltIn::Default.resolve(&catalog_of(QUIET));
+    let layout = BuiltIn::Default.resolve(&catalog_of(QUIET), &NONE);
 
     assert!(layout.is_placed(&id("quiet.files")));
     assert!(!layout.is_placed(&id("quiet.clock")));
@@ -404,7 +409,7 @@ fn a_panel_in_the_tray_is_hosted_by_the_group_its_hints_name() {
         ..BuiltIn::preset()
     };
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert!(!layout.is_placed(&id("shell.snippets")));
     assert_eq!(
@@ -426,7 +431,7 @@ fn a_placed_panel_is_hosted_by_the_group_that_places_it() {
         ..Bar::default()
     });
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert_eq!(
         layout.host_of(&id("shell.files")),
@@ -449,7 +454,7 @@ fn a_pinned_contribution_cannot_leave_the_bar() {
         },
         ..BuiltIn::preset()
     };
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert!(layout.is_placed(&id("shell.notices")));
     let right = show(layout.zone(Zone::Right));
@@ -463,7 +468,7 @@ fn the_primary_group_is_in_the_bar_even_without_members() {
         assistant("bare.agent", 20),
     ];
 
-    let layout = BuiltIn::Default.resolve(&catalog_of(NO_NAVIGATION));
+    let layout = BuiltIn::Default.resolve(&catalog_of(NO_NAVIGATION), &NONE);
 
     assert_eq!(
         show(layout.zone(Zone::Left)),
@@ -495,7 +500,7 @@ fn the_catalog_decides_which_group_is_primary_whatever_the_preset_flags() {
         ..Bar::default()
     });
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     let primaries: Vec<_> = layout
         .groups()
@@ -520,7 +525,7 @@ fn a_group_other_than_the_primary_one_needs_a_panel() {
         ..stored
     };
 
-    let layout = resolve(&tray, &catalog());
+    let layout = resolve(&tray, &catalog(), &NONE);
 
     assert!(
         layout
@@ -542,7 +547,7 @@ fn a_group_takes_the_side_of_its_zone_unless_the_preset_says_otherwise() {
         ..Bar::default()
     });
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     let sides: Vec<_> = layout.groups().map(ResolvedGroup::side).collect();
     assert_eq!(
@@ -565,7 +570,7 @@ fn open_keeps_the_first_placed_panel_of_each_group() {
         ..BuiltIn::preset()
     };
 
-    let layout = resolve(&stored, &catalog());
+    let layout = resolve(&stored, &catalog(), &NONE);
 
     assert_eq!(
         layout.open(),
@@ -584,7 +589,7 @@ fn a_panel_without_a_hint_joins_the_group_of_its_width_class() {
         },
     ];
 
-    let layout = BuiltIn::Default.resolve(&catalog_of(LOOSE));
+    let layout = BuiltIn::Default.resolve(&catalog_of(LOOSE), &NONE);
 
     let group = |panel: &'static str| {
         layout

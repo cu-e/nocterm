@@ -6,7 +6,10 @@
 //! is composed: nothing sets it any more, but it still picks `swapped` for a user who never
 //! chose a layout.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+};
 
 use gpui_kit::{App, Subscription, Task};
 use nocterm_plugin_model::{ContributionId, PluginCatalog, Side};
@@ -78,7 +81,7 @@ impl ShellLayout {
         let legacy_swapped = flags.flag(LEGACY_SWAPPED, cx);
         let seen = settings.setting::<LayoutSettings>(cx).clone();
         let selected = select(&seen, legacy_swapped);
-        let resolved = seen.resolve(&selected, &catalog);
+        let resolved = seen.resolve(&selected, &catalog, &BTreeSet::new());
         report_ignored_primary(&seen, None, &catalog);
         Self {
             settings,
@@ -108,7 +111,9 @@ impl ShellLayout {
         report_ignored_primary(next, Some(&self.seen), &self.catalog);
         self.seen = next.clone();
         self.selected = select(&self.seen, self.legacy_swapped);
-        self.resolved = self.seen.resolve(&self.selected, &self.catalog);
+        self.resolved = self
+            .seen
+            .resolve(&self.selected, &self.catalog, &BTreeSet::new());
         match change {
             LayoutTransition::None => LayoutChange::Unchanged,
             LayoutTransition::Switch => match self.open_on_switch() {

@@ -14,6 +14,8 @@ pub struct ResolvedLayout {
     pub(crate) open: Vec<ContributionId>,
     /// The panels the bar leaves out, each with the group it opens in.
     pub(crate) tray: Vec<(ContributionId, GroupId)>,
+    /// The contributions of disabled plugins that the bar names.
+    pub(crate) disabled: Vec<ContributionId>,
 }
 
 /// One entry of a resolved zone.
@@ -97,6 +99,12 @@ impl ResolvedLayout {
         &self.open
     }
 
+    /// The contributions the bar names whose plugin is disabled, in bar order. The arrangement
+    /// does not place them; they stay in the preset.
+    pub fn disabled(&self) -> &[ContributionId] {
+        &self.disabled
+    }
+
     /// The same arrangement with every group on the other side of the content.
     pub fn swapped(&self) -> Self {
         let flip = |items: &[ResolvedItem]| {
@@ -117,6 +125,7 @@ impl ResolvedLayout {
             right: flip(&self.right),
             open: self.open.clone(),
             tray: self.tray.clone(),
+            disabled: self.disabled.clone(),
         }
     }
 }

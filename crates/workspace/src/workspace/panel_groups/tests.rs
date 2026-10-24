@@ -92,6 +92,8 @@ mod owner {
     use crate::test_support::{
         CORE_PANEL, EXPANDABLE, PANEL_A, PANEL_B, TEST_CORE, TEST_PLUGIN, TRAY_PANEL, TestPanel,
     };
+    use std::collections::BTreeSet;
+
     use gpui_kit::{
         App, AppContext as _, Entity, FocusHandle, Focusable as _, TestAppContext, Window,
     };
@@ -104,7 +106,7 @@ mod owner {
     /// sidebar in this order, `EXPANDABLE` in the assistant group and `TRAY_PANEL` left out.
     fn layout() -> ResolvedLayout {
         let catalog = crate::plugin::catalog(&[TEST_CORE], &[&TEST_PLUGIN]).expect("valid");
-        BuiltIn::Default.resolve(&catalog)
+        BuiltIn::Default.resolve(&catalog, &BTreeSet::new())
     }
 
     fn id(contribution: &SystemContribution) -> ContributionId {
@@ -431,7 +433,7 @@ mod owner {
                 ..BuiltIn::preset()
             };
             let catalog = crate::plugin::catalog(&[TEST_CORE], &[&TEST_PLUGIN]).expect("valid");
-            groups.adopt(&resolve(&moved, &catalog));
+            groups.adopt(&resolve(&moved, &catalog, &BTreeSet::new()));
             let (host, ix, _) = groups.offered(&id(PANEL_B)).expect("offered");
             assert_eq!((host, ix), (GroupKey::Assistant, 0));
             let (host, ix, _) = groups.offered(&assistant_id()).expect("offered");
