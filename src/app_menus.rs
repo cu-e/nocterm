@@ -150,6 +150,9 @@ fn window_menu(state: &MenuState) -> Menu {
         MenuItem::action("Move Tab Left", MoveTabLeft).disabled(!has_target),
         MenuItem::action("Move Tab Right", MoveTabRight).disabled(!has_target),
         MenuItem::separator(),
+        MenuItem::submenu(layouts_menu(state)),
+        MenuItem::submenu(panels_menu(state)),
+        MenuItem::separator(),
         MenuItem::action("Sidebar", ToggleSidebar)
             .checked(workspace.primary_group_is_open())
             .disabled(!in_workspace),
@@ -160,4 +163,48 @@ fn window_menu(state: &MenuState) -> Menu {
             .checked(workspace.panel_is_open(agents))
             .disabled(!in_workspace || !workspace.panel_is_available(agents)),
     ])
+}
+
+/// The layouts to choose from, the selected one checked, and the commands that move through
+/// them.
+fn layouts_menu(state: &MenuState) -> Menu {
+    let in_workspace = state.in_workspace;
+    let choices = state.workspace.layouts().into_iter().map(|choice| {
+        MenuItem::action(
+            choice.name().to_owned(),
+            SwitchLayout {
+                id: choice.id().as_str().to_owned().into(),
+            },
+        )
+        .checked(choice.is_selected())
+        .disabled(!in_workspace)
+    });
+    Menu::new("Layouts").items(choices.chain([
+        MenuItem::separator(),
+        MenuItem::action("Next Layout", NextLayout).disabled(!in_workspace),
+        MenuItem::action("Previous Layout", PreviousLayout).disabled(!in_workspace),
+        MenuItem::action("Switch Layout…", PickLayout).disabled(!in_workspace),
+    ]))
+}
+
+/// The panels the selected layout places, checked while they show, with a separator between
+/// groups.
+fn panels_menu(state: &MenuState) -> Menu {
+    let mut items = Vec::new();
+    for group in state.workspace.panel_menu() {
+        if !items.is_empty() {
+            items.push(MenuItem::separator());
+        }
+        items.extend(group.into_iter().map(|panel| {
+            MenuItem::action(
+                panel.title(),
+                TogglePanel {
+                    id: panel.id().as_str().to_owned().into(),
+                },
+            )
+            .checked(panel.is_open())
+            .disabled(!state.in_workspace || !panel.is_available())
+        }));
+    }
+    Menu::new("Panels").items(items)
 }

@@ -2,6 +2,9 @@
 use nocterm_plugin_model::{CatalogError, PluginCatalog, SystemPlugin};
 use nocterm_workspace::plugin;
 
+#[cfg(test)]
+mod reference;
+
 /// Every system plugin of the application. A plugin appears here once, beside the others,
 /// so the catalog check sees all contributions together.
 const PLUGINS: &[&SystemPlugin] = &[

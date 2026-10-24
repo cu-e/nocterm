@@ -1,0 +1,202 @@
+//! The Window menu's Layouts and Panels submenus follow the selected layout and the panels.
+use super::fixture;
+use gpui_kit::{
+    AnyWindowHandle, AppContext as _, Entity, Menu, MenuItem, TestAppContext,
+    test::TestWindowExt as _,
+};
+use nocterm_workspace::Workspace;
+
+/// What the user sees of one submenu of the Window menu: label, checked, disabled. A separator
+/// has the label `-`.
+fn entries(menus: &[Menu], submenu: &str) -> Vec<(String, bool, bool)> {
+    let window = menus
+        .iter()
+        .find(|menu| menu.name.as_ref() == "Window")
+        .expect("the Window menu");
+    let menu = window
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MenuItem::Submenu(menu) if menu.name.as_ref() == submenu => Some(menu),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the Window menu has a {submenu} submenu"));
+    menu.items
+        .iter()
+        .map(|item| match item {
+            MenuItem::Action {
+                name,
+                checked,
+                disabled,
+                ..
+            } => (name.to_string(), *checked, *disabled),
+            _ => ("-".to_owned(), false, false),
+        })
+        .collect()
+}
+
+fn window_entries(
+    handle: AnyWindowHandle,
+    workspace: &Entity<Workspace>,
+    submenu: &str,
+    cx: &mut TestAppContext,
+) -> Vec<(String, bool, bool)> {
+    cx.update_window(handle, |_, window, cx| {
+        let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+        entries(&menus, submenu)
+    })
+    .unwrap()
+}
+
+fn dispatch(handle: AnyWindowHandle, action: impl gpui_kit::Action, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| {
+        window.dispatch_action(Box::new(action), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+fn checked_labels(entries: &[(String, bool, bool)]) -> Vec<&str> {
+    entries
+        .iter()
+        .filter(|(_, checked, _)| *checked)
+        .map(|(label, _, _)| label.as_str())
+        .collect()
+}
+
+#[gpui_kit::test]
+fn the_layouts_submenu_checks_the_selected_layout_and_follows_a_switch(cx: &mut TestAppContext) {
+    let (handle, workspace, _, _) = fixture(cx);
+    let labels: Vec<_> = window_entries(handle, &workspace, "Layouts", cx)
+        .into_iter()
+        .map(|(label, _, _)| label)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Default",
+            "Swapped sides",
+            "-",
+            "Next Layout",
+            "Previous Layout",
+            "Switch Layout…"
+        ]
+    );
+    assert_eq!(
+        checked_labels(&window_entries(handle, &workspace, "Layouts", cx)),
+        ["Default"]
+    );
+    dispatch(
+        handle,
+        nocterm_workspace::SwitchLayout {
+            id: "swapped".into(),
+        },
+        cx,
+    );
+    assert_eq!(
+        checked_labels(&window_entries(handle, &workspace, "Layouts", cx)),
+        ["Swapped sides"]
+    );
+    dispatch(handle, nocterm_workspace::NextLayout, cx);
+    assert_eq!(
+        checked_labels(&window_entries(handle, &workspace, "Layouts", cx)),
+        ["Default"]
+    );
+}
+
+#[gpui_kit::test]
+fn the_panels_submenu_lists_the_placed_panels_and_toggles_them(cx: &mut TestAppContext) {
+    let (handle, workspace, _, _) = fixture(cx);
+    let panels = window_entries(handle, &workspace, "Panels", cx);
+    let labels: Vec<_> = panels.iter().map(|(label, _, _)| label.as_str()).collect();
+    assert!(labels.contains(&"AI Agents"), "{labels:?}");
+    assert!(labels.contains(&"-"), "groups are separated: {labels:?}");
+    assert!(!checked_labels(&panels).contains(&"AI Agents"));
+    dispatch(
+        handle,
+        nocterm_workspace::TogglePanel {
+            id: "agent.chats".into(),
+        },
+        cx,
+    );
+    assert!(
+        checked_labels(&window_entries(handle, &workspace, "Panels", cx)).contains(&"AI Agents")
+    );
+    dispatch(
+        handle,
+        nocterm_workspace::TogglePanel {
+            id: "agent.chats".into(),
+        },
+        cx,
+    );
+    assert!(
+        !checked_labels(&window_entries(handle, &workspace, "Panels", cx)).contains(&"AI Agents")
+    );
+}
+
+#[gpui_kit::test]
+fn toggling_a_panel_the_catalog_does_not_list_does_nothing(cx: &mut TestAppContext) {
+    let (handle, workspace, _, _) = fixture(cx);
+    let before = window_entries(handle, &workspace, "Panels", cx);
+    dispatch(
+        handle,
+        nocterm_workspace::TogglePanel {
+            id: "nobody.nothing".into(),
+        },
+        cx,
+    );
+    assert_eq!(window_entries(handle, &workspace, "Panels", cx), before);
+}
+
+/// A window over a local host whose requests the test can read, under the given layouts.
+fn window_on_local_host(
+    layouts: &str,
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, nocterm_session::testing::FakeExec) {
+    use std::sync::Arc;
+    let (handle, exec) = cx.update(|cx| {
+        let settings = nocterm_settings::SettingsDocument::from_table(
+            layouts.parse().expect("the layouts are toml"),
+        );
+        let transport = Arc::new(super::MockTransport::default());
+        let local = {
+            let local = transport.clone();
+            nocterm_terminal::LocalSessions::new(
+                Arc::new(move |_| local.clone()),
+                "/bin/bash".into(),
+            )
+        };
+        let booted = super::boot_with_ports(
+            tempfile::tempdir().unwrap(),
+            nocterm_store::SettingsConfig::in_memory(settings),
+            (transport, local),
+            false,
+            None,
+            None,
+            cx,
+        );
+        let (handle, _) = super::open_workspace(&booted, cx);
+        (handle, cx.global::<super::FixtureLocalHost>().0.clone())
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.activate_window();
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (handle, exec)
+}
+
+#[gpui_kit::test]
+fn a_monitor_the_layout_leaves_in_the_tray_never_reaches_the_host(cx: &mut TestAppContext) {
+    // The monitor feeds its sampling script to a shell; other features run their own commands.
+    let samples = |exec: &nocterm_session::testing::FakeExec| {
+        exec.ran().iter().any(|command| command == "sh -s")
+    };
+    let (_, exec) = window_on_local_host("", cx);
+    assert!(samples(&exec), "the placed monitor samples the host");
+    let quiet = "[layouts]\nactive = \"p1\"\n[[layouts.presets]]\nid = \"p1\"\n\
+                 name = \"Quiet\"\ntray = [\"monitor.summary\"]\n";
+    let (_, exec) = window_on_local_host(quiet, cx);
+    assert!(!samples(&exec), "ran {:?}", exec.ran());
+}

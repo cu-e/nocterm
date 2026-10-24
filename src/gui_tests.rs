@@ -18,6 +18,7 @@ mod agent_installation;
 mod chat_history;
 mod default_shell_geometry;
 mod keymap;
+mod menu_layouts;
 mod menu_tabs;
 mod plugin_registration;
 mod program_opening;
@@ -34,6 +35,10 @@ mod workspace_preferences;
 struct MockTransport {
     drivers: Mutex<Vec<Arc<SessionDriver>>>,
 }
+
+/// The local host the fixture gives the application, so a test can read what ran on it.
+struct FixtureLocalHost(nocterm_session::testing::FakeExec);
+impl gpui_kit::Global for FixtureLocalHost {}
 
 struct FixtureDirectory {
     _directory: tempfile::TempDir,
@@ -325,8 +330,9 @@ fn boot_with_ports_and_probe(
 ) -> crate::bootstrap::Booted {
     let (transport, local) = terminal;
     let local_host = local.is_available().then(|| {
-        Arc::new(nocterm_session::testing::FakeExec::default())
-            as Arc<dyn nocterm_session::HostExec>
+        let exec = nocterm_session::testing::FakeExec::default();
+        cx.set_global(FixtureLocalHost(exec.clone()));
+        Arc::new(exec) as Arc<dyn nocterm_session::HostExec>
     });
     let paths = nocterm_core::Paths::rooted_at(directory.path());
     let vault = vault.then(|| crate::bootstrap::VaultSetup {
