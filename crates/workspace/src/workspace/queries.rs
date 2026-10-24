@@ -1,6 +1,7 @@
 //! Immutable shell observations; no native or owner mutation handle escapes.
 use super::*;
 use gpui_kit::component::dock::{DockAreaState, NodeId};
+use nocterm_plugin_model::ContributionId;
 impl Workspace {
     /// Observes only the selected surface's live monitoring authority.
     pub fn monitor_source(&self, cx: &App) -> crate::MonitorSource {
@@ -195,6 +196,26 @@ impl Workspace {
             .read(cx)
             .content()
             .background_contains(id)
+    }
+    /// Whether the registered panel of a contribution shows. `false` for an unknown id.
+    pub fn panel_is_open(&self, id: &ContributionId) -> bool {
+        self.panels.panel_is_open(id)
+    }
+    /// Whether the host offers the registered panel of a contribution.
+    pub fn panel_is_available(&self, id: &ContributionId) -> bool {
+        self.panels.panel_is_available(id)
+    }
+    /// Whether the registered panel of a contribution fills the body.
+    pub fn panel_is_expanded(&self, id: &ContributionId) -> bool {
+        self.panels.panel_is_expanded(id)
+    }
+    /// Whether the primary group, which holds the sidebar, shows.
+    pub fn primary_group_is_open(&self) -> bool {
+        self.sidebar_is_open()
+    }
+    /// Whether a panel or widget was registered for the contribution.
+    pub fn is_registered(&self, id: &ContributionId) -> bool {
+        self.registrations.is_registered(id)
     }
     pub fn right_panel_is_available(&self) -> bool {
         self.panels.is_available(GroupKey::Assistant)

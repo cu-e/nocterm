@@ -1,9 +1,10 @@
 //! One configurable shell panel for tests of the sidebar, the side panel and the footer.
-use crate::{Panel, RightPanel, RightPanelEvent};
+use crate::{ExpandablePanel, Panel, PanelRequest, RightPanel, RightPanelEvent};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, TestSupportExt as _, Window, div, prelude::*,
 };
+use nocterm_plugin_model::Side;
 use nocterm_ui::IconName;
 use std::{cell::Cell, rc::Rc};
 
@@ -55,6 +56,11 @@ impl TestPanel {
     /// Whether the workspace last said this panel sits left of the content.
     pub fn docked_left(&self) -> bool {
         self.docked_left
+    }
+
+    /// Asks the workspace that hosts this panel to expand it, as an expandable panel would.
+    pub fn request(&self, request: PanelRequest, cx: &mut Context<Self>) {
+        cx.emit(request);
     }
 
     pub fn set_badge(&mut self, badge: Option<SharedString>, cx: &mut Context<Self>) {
@@ -111,6 +117,7 @@ impl TestPanelBuilder {
 }
 
 impl EventEmitter<RightPanelEvent> for TestPanel {}
+impl EventEmitter<PanelRequest> for TestPanel {}
 impl Focusable for TestPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -147,5 +154,14 @@ impl RightPanel for TestPanel {
     }
     fn set_docked_left(&mut self, left: bool, _: &mut Context<Self>) {
         self.docked_left = left;
+    }
+}
+impl ExpandablePanel for TestPanel {
+    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.maximized = expanded;
+        cx.notify();
+    }
+    fn set_side(&mut self, side: Side, _: &mut Context<Self>) {
+        self.docked_left = side == Side::Left;
     }
 }

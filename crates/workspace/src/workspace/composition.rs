@@ -3,15 +3,14 @@ use super::*;
 use crate::ContextSelectionError;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
 use chrome::StatusSide;
+use nocterm_plugin_model::Zone;
 use nocterm_session::{HostAddress, ShellLaunch};
-use panel_groups::{HostedPanel, Presentation};
+use panel_groups::{GroupKey, HostedPanel};
+use registration::{
+    PanelRegistration, PanelSource, RegistrationError, WidgetRegistration, observe_presentation,
+    presentation_of,
+};
 use surface::admission::SurfaceItemAdmission;
-/// A panel's title, icon and badge sit in the workspace's chrome; the rest of the panel
-/// redraws itself, so only a change to them counts.
-fn presentation_of<T: Panel>(panel: &Entity<T>, cx: &App) -> Presentation {
-    let panel = panel.read(cx);
-    (panel.title(cx), panel.icon(cx), panel.badge(cx))
-}
 
 impl Workspace {
     pub fn add_general_background_from<T: Item>(
@@ -249,14 +248,7 @@ impl Workspace {
     }
     pub fn add_panel<T: Panel>(&mut self, panel: Entity<T>, cx: &mut Context<Self>) {
         let metadata = presentation_of(&panel, cx);
-        let subscription = cx.observe(&panel, move |this, panel, cx| {
-            if this
-                .panels
-                .presentation_changed(panel.entity_id(), presentation_of(&panel, cx))
-            {
-                cx.notify();
-            }
-        });
+        let subscription = observe_presentation(&panel, cx);
         self.panels.add(
             GroupKey::Navigation,
             HostedPanel::plain(Box::new(panel), metadata, subscription),
@@ -271,16 +263,68 @@ impl Workspace {
     ) {
         let subscription =
             cx.subscribe_in(&panel, window, |this, _, event, window, cx| match event {
-                crate::RightPanelEvent::ToggleMaximized => this
-                    .set_right_panel_maximized(!this.panels.is_expanded(GroupKey::Assistant), cx),
-                crate::RightPanelEvent::Close => this.close_right_panel(window, cx),
-                crate::RightPanelEvent::Widen(delta) => this.widen_right_panel(*delta, window, cx),
+                crate::RightPanelEvent::ToggleMaximized => {
+                    this.toggle_group_expanded(GroupKey::Assistant, cx)
+                }
+                crate::RightPanelEvent::Close => this.close_group(GroupKey::Assistant, window, cx),
+                crate::RightPanelEvent::Widen(delta) => {
+                    this.widen_group(GroupKey::Assistant, *delta, window, cx)
+                }
             });
         let presentation = presentation_of(&panel, cx);
         let hosted = HostedPanel::expandable(Box::new(panel), presentation, subscription);
         self.panels.install(GroupKey::Assistant, hosted);
         self.panels.set_docked_left(self.sides_swapped(cx), cx);
         cx.notify();
+    }
+    /// Registers the panel of a contribution of the plugin catalog and creates it now.
+    ///
+    /// The panel joins the group its placement hints at, at the end, and starts available.
+    pub fn register_panel<T: Panel>(
+        &mut self,
+        registration: PanelRegistration<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), RegistrationError> {
+        let (contribution, traits) = self.registrations.admit_panel(
+            registration.id(),
+            registration.expandable_requested(),
+            registration.is_eager(),
+        )?;
+        let id = registration.id().clone();
+        let group = GroupKey::hosting(contribution, traits);
+        match registration.into_source(group, traits.chrome, window, cx) {
+            PanelSource::Hosted(panel) => self.panels.register(id, group, Some(panel)),
+            PanelSource::Factory(factory) => {
+                // The panel's slot exists while the factory reads the workspace.
+                self.panels.register(id.clone(), group, None);
+                let panel = factory(&*self, window, cx);
+                self.panels.fill(&id, panel);
+                self.registrations.keep_factory(id, factory);
+            }
+        }
+        self.panels.set_docked_left(self.sides_swapped(cx), cx);
+        cx.notify();
+        Ok(())
+    }
+    /// Registers the status bar widget of a contribution of the plugin catalog and creates it
+    /// now. Until the zoned status bar, a widget of the left zone joins the leading views and
+    /// any other joins the trailing views, each in registration order.
+    pub fn register_widget(
+        &mut self,
+        registration: WidgetRegistration,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), RegistrationError> {
+        let contribution = self.registrations.admit_widget(registration.id())?;
+        let side = match contribution.placement.zone {
+            Zone::Left => StatusSide::Leading,
+            Zone::Center | Zone::Right => StatusSide::Trailing,
+        };
+        let view = registration.create(&*self, window, cx);
+        self.chrome.add_status(side, view);
+        cx.notify();
+        Ok(())
     }
     pub fn add_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
         self.chrome.add_status(StatusSide::Trailing, view.into());

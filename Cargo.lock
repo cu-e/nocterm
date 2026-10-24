@@ -5870,6 +5870,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-core",
  "nocterm-keymap",
+ "nocterm-plugin-model",
  "nocterm-project-model",
  "nocterm-session",
  "nocterm-settings",

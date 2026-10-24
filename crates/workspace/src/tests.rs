@@ -120,6 +120,13 @@ pub(super) fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Works
 pub(super) fn fixture_with_layout(
     cx: &mut TestAppContext,
 ) -> (AnyWindowHandle, Entity<Workspace>, nocterm_ui::LayoutHandle) {
+    fixture_with_deps(cx, |layout, _| crate::Deps::new(layout))
+}
+/// A window composed with the dependencies `deps` builds from the shared layout memory.
+pub(super) fn fixture_with_deps(
+    cx: &mut TestAppContext,
+    deps: impl FnOnce(nocterm_ui::LayoutHandle, &mut App) -> crate::Deps,
+) -> (AnyWindowHandle, Entity<Workspace>, nocterm_ui::LayoutHandle) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(
@@ -131,12 +138,10 @@ pub(super) fn fixture_with_layout(
             cx,
         );
         let layout = nocterm_ui::LayoutHandle::in_memory(cx);
+        let deps = deps(layout.clone(), cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| {
-                    let deps = crate::Deps::new(layout.clone());
-                    Workspace::new(deps, window, cx)
-                })
+                cx.new(|cx| Workspace::new(deps, window, cx))
             })
             .unwrap();
         window

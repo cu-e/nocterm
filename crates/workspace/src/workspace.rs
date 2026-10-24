@@ -1,4 +1,4 @@
-use std::{cell::Cell, path::PathBuf, rc::Rc};
+use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc};
 
 use gpui_kit::{
     Action, AnyView, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
@@ -10,6 +10,7 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
+use nocterm_plugin_model::PluginCatalog;
 use nocterm_session::{Auth, HostAddress, Target};
 
 mod background;
@@ -41,6 +42,10 @@ mod actions;
 mod panel_groups;
 use panel_groups::GroupKey;
 mod ports;
+mod registration;
+pub use registration::{
+    ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
+};
 mod sessions;
 
 use crate::{
@@ -102,6 +107,8 @@ pub enum WorkspaceEvent {
     ConnectionsChanged,
     /// The independent side panel was opened or closed.
     RightPanelVisibilityChanged,
+    /// A panel group was shown or hidden.
+    PanelVisibilityChanged,
 }
 
 /// Close commands use the clicked tab's pane and its current visual order.
@@ -176,11 +183,27 @@ impl TabPane {
 #[derive(Clone)]
 pub struct Deps {
     layout: nocterm_ui::LayoutHandle,
+    catalog: Arc<PluginCatalog>,
 }
 
 impl Deps {
+    /// Dependencies whose catalog lists the shell's own contributions and groups only, so a
+    /// panel or widget of any other plugin is refused until the application supplies its
+    /// catalog with [`Deps::with_catalog`].
     pub fn new(layout: nocterm_ui::LayoutHandle) -> Self {
-        Self { layout }
+        let catalog = crate::plugin::catalog(&[], &[])
+            .expect("the shell's own contributions form a valid catalog");
+        Self {
+            layout,
+            catalog: Arc::new(catalog),
+        }
+    }
+
+    /// Registers panels and widgets against `catalog`, which holds the shell's own
+    /// contributions and groups beside those of the plugins.
+    pub fn with_catalog(mut self, catalog: impl Into<Arc<PluginCatalog>>) -> Self {
+        self.catalog = catalog.into();
+        self
     }
 }
 
@@ -192,6 +215,7 @@ pub struct Workspace {
     body: layout::Body,
     ports: ports::WorkspacePorts,
     actions: actions::ActionRegistry,
+    registrations: registration::Registrations,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -206,6 +230,7 @@ impl Workspace {
             body: layout::Body::new(deps.layout),
             ports: ports::WorkspacePorts::default(),
             actions: actions::ActionRegistry::default(),
+            registrations: registration::Registrations::new(deps.catalog),
         };
         this.register_action::<crate::EditCopy>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::Copy), cx)
@@ -334,3 +359,7 @@ mod tests;
 mod focus_transition_tests;
 #[cfg(test)]
 mod native_terminal_tab_tests;
+#[cfg(test)]
+mod panel_availability_tests;
+#[cfg(test)]
+mod panel_chrome_tests;

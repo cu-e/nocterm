@@ -2,21 +2,13 @@
 //! and the lifetime of the observer that keeps it current.
 
 use gpui_kit::{AnyView, App, EntityId, FocusHandle, SharedString, Subscription};
+use nocterm_plugin_model::PanelChrome;
 use nocterm_ui::IconName;
 
 use crate::{Panel, PanelHandle, right_panel::RightPanelHandle};
 
 /// What the chrome draws for a panel outside its view: title, icon and badge.
 pub(in crate::workspace) type Presentation = (SharedString, IconName, Option<SharedString>);
-
-/// How a hosted panel is framed in its column.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::workspace) enum PanelChrome {
-    /// The workspace draws the upper-case title above the view.
-    Titled,
-    /// The panel draws its own header.
-    OwnHeader,
-}
 
 enum Handle {
     Plain(Box<dyn PanelHandle>),
@@ -26,6 +18,7 @@ enum Handle {
 pub(in crate::workspace) struct HostedPanel {
     handle: Handle,
     presentation: Presentation,
+    chrome: PanelChrome,
     /// The panel asks for the user; its toggle shows this whether or not it is open.
     attention: bool,
     _subscription: Subscription,
@@ -38,7 +31,12 @@ impl HostedPanel {
         presentation: Presentation,
         subscription: Subscription,
     ) -> Self {
-        Self::new(Handle::Plain(handle), presentation, subscription)
+        Self::new(
+            Handle::Plain(handle),
+            PanelChrome::Titled,
+            presentation,
+            subscription,
+        )
     }
     /// A panel that draws its own header and can expand over the content.
     pub(in crate::workspace) fn expandable(
@@ -46,15 +44,31 @@ impl HostedPanel {
         presentation: Presentation,
         subscription: Subscription,
     ) -> Self {
-        Self::new(Handle::Expandable(handle), presentation, subscription)
+        Self::new(
+            Handle::Expandable(handle),
+            PanelChrome::OwnHeader,
+            presentation,
+            subscription,
+        )
     }
-    fn new(handle: Handle, presentation: Presentation, subscription: Subscription) -> Self {
+    fn new(
+        handle: Handle,
+        chrome: PanelChrome,
+        presentation: Presentation,
+        subscription: Subscription,
+    ) -> Self {
         Self {
             handle,
+            chrome,
             presentation,
             attention: false,
             _subscription: subscription,
         }
+    }
+    /// Frames the panel as its contribution says instead of by how it is hosted.
+    pub(in crate::workspace) fn with_chrome(mut self, chrome: PanelChrome) -> Self {
+        self.chrome = chrome;
+        self
     }
     fn handle(&self) -> &dyn PanelHandle {
         match &self.handle {
@@ -81,10 +95,7 @@ impl HostedPanel {
         self.handle().focus_handle(cx)
     }
     pub(in crate::workspace) fn chrome(&self) -> PanelChrome {
-        match self.handle {
-            Handle::Plain(_) => PanelChrome::Titled,
-            Handle::Expandable(_) => PanelChrome::OwnHeader,
-        }
+        self.chrome
     }
     pub(in crate::workspace) fn is_expandable(&self) -> bool {
         matches!(self.handle, Handle::Expandable(_))

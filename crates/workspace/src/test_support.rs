@@ -267,5 +267,11 @@ pub use project_surface::ProjectSurfaceProbe;
 mod panel;
 pub use panel::{TestPanel, TestPanelBuilder};
 
+mod plugin;
+pub use plugin::{
+    CORE_PANEL, EXPANDABLE, PANEL_A, PANEL_B, REQUIRED_EXPANDABLE, REQUIRED_PLUGIN,
+    SIDEBAR_EXPANDABLE, TEST_CORE, TEST_PLUGIN, WIDGET, deps_for, deps_for_core,
+};
+
 mod shell;
 pub use shell::{Toggle, toggle_id, toggle_presentation};

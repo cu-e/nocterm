@@ -3,7 +3,9 @@
 //! Owns: the permanent outer connection dock and inner project docks,
 //! tab membership and cached session context, one authoritative native dock per surface,
 //! window menus and chrome, panel groups (the sidebar and the independent side panel),
-//! per-surface background membership, and per-column layout projections.
+//! registration of panels and widgets under the ids of the plugin catalog (the shell's own
+//! `plugin::{CORE, GROUPS}` and the id queries), per-surface background membership, and
+//! per-column layout projections.
 //! Does not own: session connections, feature views, native filesystem implementations,
 //! persistence workers, project definitions or connection authentication,
 //! or external-program launch.
@@ -11,8 +13,7 @@
 //! `RightPanel`, `LocalTerminal`, `ProjectTerminalOpen`, `ProjectTerminalResolve`,
 //! `ChatConnectionOpen`; project terminal contracts/refusals live in workspace-ports
 //! without shell reexports. Private placement and typed terminal admission remain here.
-//! Layout arrives as an
-//! explicit `LayoutHandle`.
+//! Layout and the checked plugin catalog arrive as explicit `Deps`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
 //! file drag contracts, immutable tab/session and selected monitor-source observations,
 //! plus separate state, text,
@@ -63,6 +64,7 @@ mod item;
 mod local_terminal;
 mod open_on_host;
 mod panel;
+pub mod plugin;
 mod provider_registry;
 pub use provider_registry::ProjectProviderRegistry;
 mod right_panel;
@@ -89,9 +91,10 @@ pub use nocterm_workspace_ports::{
     TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
 };
 pub use workspace::{
-    ContextSelectionReceipt, ContextWindowReceipt, Deps, GeneralTerminalTarget, ProjectSurface,
-    ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectSurfaceReceipt, SessionFactory, SessionSpec,
-    TabCloseScope, TabPane, TabSnapshot, Workspace, WorkspaceEvent, admit_project_terminal,
+    ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,
+    PanelRegistration, PanelRequest, ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory,
+    ProjectSurfaceReceipt, RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane,
+    TabSnapshot, WidgetRegistration, Workspace, WorkspaceEvent, admit_project_terminal,
     validate_project_terminal_target,
 };
 

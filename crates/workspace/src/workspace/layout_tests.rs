@@ -7,8 +7,9 @@ use gpui_kit::{
 use nocterm_ui::IconName;
 
 use super::{Arrangement, Column};
-use crate::workspace::panel_groups::{GroupKey, Side};
+use crate::workspace::panel_groups::GroupKey;
 use crate::workspace::tests::fixture;
+use nocterm_plugin_model::Side;
 
 fn side_panel(element_id: &'static str, title: &'static str, icon: IconName) -> TestPanelBuilder {
     TestPanel::builder(element_id).title(title).icon(icon)

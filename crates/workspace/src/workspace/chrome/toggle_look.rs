@@ -61,7 +61,7 @@ impl FooterLooks {
         Self {
             navigation: groups
                 .members(GroupKey::Navigation)
-                .map(|entry| ToggleLook::navigation(entry, cx))
+                .map(|(_, entry)| ToggleLook::navigation(entry, cx))
                 .collect(),
             local_terminal: ToggleLook::local_terminal(),
             side_panel: groups

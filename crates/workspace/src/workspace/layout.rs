@@ -11,13 +11,13 @@ use std::collections::HashMap;
 use gpui_kit::{
     AppContext as _, Context, Entity, Pixels, Subscription, Window,
     component::{ResizablePanelEvent, ResizableState},
-    rems,
 };
-use nocterm_ui::{ActiveDesign as _, LayoutHandle};
+use nocterm_plugin_model::{Side, WidthClass};
+use nocterm_ui::{LayoutHandle, width_range};
 
 use super::{
     Workspace,
-    panel_groups::{GroupKey, PanelGroups, Side, WidthClass},
+    panel_groups::{GroupKey, PanelGroups},
 };
 
 const SIDEBAR: &str = "workspace.sidebar";
@@ -195,23 +195,18 @@ pub(super) struct BodyWidths {
 
 impl BodyWidths {
     pub(super) fn new(memory: &LayoutHandle, window: &Window, cx: &gpui_kit::App) -> Self {
-        let layout = &cx.design().layout;
         let rem = window.rem_size();
-        let class = |key, (width, min, max): (f32, f32, f32)| {
-            let range = rems(min).to_pixels(rem)..rems(max).to_pixels(rem);
+        let class = |key, class| {
+            let (default, range) = width_range(class, rem, cx);
             let size = memory
                 .get(key, cx)
-                .unwrap_or_else(|| rems(width).to_pixels(rem))
+                .unwrap_or(default)
                 .clamp(range.start, range.end);
             ClassWidth { size, range }
         };
-        let (sidebar, agent) = (&layout.sidebar, &layout.agent_panel);
         Self {
-            navigation: class(
-                SIDEBAR,
-                (sidebar.width, sidebar.min_width, sidebar.max_width),
-            ),
-            assistant: class(RIGHT_PANEL, (agent.width, agent.min_width, agent.max_width)),
+            navigation: class(SIDEBAR, WidthClass::Navigation),
+            assistant: class(RIGHT_PANEL, WidthClass::Assistant),
         }
     }
 

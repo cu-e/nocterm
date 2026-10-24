@@ -81,18 +81,9 @@ impl PanelGroup {
     pub(super) fn showing(&self, ix: usize) -> bool {
         self.shown && self.selected_position() == Some(ix)
     }
-    fn selected_position(&self) -> Option<usize> {
+    /// The position of the selected member.
+    pub(super) fn selected_position(&self) -> Option<usize> {
         let selected = self.selected?;
         self.members.iter().position(|member| *member == selected)
-    }
-    /// The member `NextPanel` goes to: the following one while shown (wrapping), else the
-    /// current one, which the action reveals.
-    pub(super) fn next(&self) -> Option<usize> {
-        let current = self.selected_position()?;
-        Some(if self.shown {
-            (current + 1) % self.members.len()
-        } else {
-            current
-        })
     }
 }

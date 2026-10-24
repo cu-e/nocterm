@@ -5,6 +5,7 @@ use gpui_kit::{
     InteractiveElement,
     component::{Placement, input},
 };
+use nocterm_plugin_model::ContributionId;
 use panel_groups::{PanelFocus, PanelTransition};
 impl Workspace {
     pub fn activate_item_by_id(
@@ -261,9 +262,72 @@ impl Workspace {
             cx.notify();
         }
     }
-    pub(super) fn close_right_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let transition = self.panels.close(GroupKey::Assistant, window, cx);
+    pub(super) fn toggle_group_expanded(&mut self, group: GroupKey, cx: &mut Context<Self>) {
+        if self
+            .panels
+            .set_expanded(group, !self.panels.is_expanded(group), cx)
+        {
+            cx.notify();
+        }
+    }
+    pub(super) fn close_group(
+        &mut self,
+        group: GroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let transition = self.panels.close(group, window, cx);
         self.apply_panel_transition(transition, window, cx);
+    }
+
+    // ── Panels by contribution id ────────────────────────────────────────────
+
+    /// Shows the registered panel of a contribution, or hides its group when it shows. Nothing
+    /// happens for an unknown id or a panel that is not offered.
+    pub fn toggle_panel(
+        &mut self,
+        id: &ContributionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(transition) = self.panels.toggle_panel(id, window, cx) {
+            self.apply_panel_transition(transition, window, cx);
+        }
+    }
+    /// Shows the registered panel of a contribution and focuses it. A panel that already shows
+    /// keeps the focus where it is.
+    pub fn open_panel(&mut self, id: &ContributionId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(transition) = self.panels.open_panel(id, cx) {
+            self.apply_panel_transition(transition, window, cx);
+        }
+    }
+    /// Offers or withdraws the registered panel of a contribution. Withdrawing the shown panel
+    /// closes its group.
+    pub fn set_panel_available(
+        &mut self,
+        id: &ContributionId,
+        available: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(transition) = self.panels.set_panel_available(id, available, window, cx) {
+            self.apply_panel_transition(transition, window, cx);
+        }
+    }
+    /// Expands the shown panel of a contribution over the content, or restores it.
+    pub fn set_panel_expanded(
+        &mut self,
+        id: &ContributionId,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.panels.set_panel_expanded(id, expanded, cx) {
+            cx.notify();
+        }
+    }
+    /// Shows or hides the primary group, which holds the sidebar.
+    pub fn toggle_primary_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_sidebar(window, cx);
     }
     fn apply_panel_transition(
         &mut self,
@@ -271,8 +335,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if transition.visibility_changed() == Some(GroupKey::Assistant) {
-            cx.emit(WorkspaceEvent::RightPanelVisibilityChanged);
+        if let Some(group) = transition.visibility_changed() {
+            if group == GroupKey::Assistant {
+                cx.emit(WorkspaceEvent::RightPanelVisibilityChanged);
+            }
+            cx.emit(WorkspaceEvent::PanelVisibilityChanged);
         }
         match transition.into_focus() {
             PanelFocus::Preserve => {}
@@ -297,20 +364,19 @@ impl Workspace {
         self.panels.set_docked_left(swapped, cx);
         cx.notify();
     }
-    pub(super) fn widen_right_panel(
+    pub(super) fn widen_group(
         &mut self,
+        group: GroupKey,
         delta: Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.panels.is_expanded(GroupKey::Assistant)
-            || !self.panels.is_shown(GroupKey::Assistant)
-        {
+        if self.panels.is_expanded(group) || !self.panels.is_shown(group) {
             return;
         }
         let arrangement = self.body.arrangement(&self.panels, cx);
         self.body
-            .widen_group(&arrangement, GroupKey::Assistant, delta, window, cx);
+            .widen_group(&arrangement, group, delta, window, cx);
         cx.notify();
     }
     pub fn dispatch_command(

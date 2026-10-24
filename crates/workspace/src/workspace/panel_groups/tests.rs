@@ -69,6 +69,22 @@ fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mu
     );
 }
 
+#[test]
+fn the_shells_group_declarations_name_the_group_keys_in_order() {
+    use super::GroupKey;
+    let declared: Vec<_> = crate::plugin::GROUPS
+        .iter()
+        .map(|spec| spec.id.as_str())
+        .collect();
+    let keys: Vec<_> = GroupKey::ALL.iter().map(|key| key.id()).collect();
+    assert_eq!(declared, keys);
+    assert_eq!(
+        GroupKey::ALL.map(GroupKey::primary),
+        [true, false],
+        "only the sidebar is primary"
+    );
+}
+
 /// Transitions of the owner itself, driven the way the workspace drives them.
 mod owner {
     use super::super::{GroupKey, HostedPanel, PanelFocus, PanelGroups, PanelTransition};
@@ -338,12 +354,69 @@ mod owner {
     }
 
     #[gpui_kit::test]
-    fn the_sidebar_finds_a_panel_by_type(cx: &mut TestAppContext) {
-        with_window(cx, |_, cx| {
-            let (groups, _) = shell(cx);
+    fn the_sidebar_finds_an_offered_panel_by_type(cx: &mut TestAppContext) {
+        with_window(cx, |window, cx| {
+            let (mut groups, _) = shell(cx);
             assert_eq!(groups.index_of::<TestPanel>(GroupKey::Navigation), Some(0));
+            assert_eq!(groups.index_of::<TestPanel>(GroupKey::Assistant), None);
+            groups.set_available(GroupKey::Assistant, true, window, cx);
             assert_eq!(groups.index_of::<TestPanel>(GroupKey::Assistant), Some(0));
             assert_eq!(groups.members(GroupKey::Navigation).count(), 2);
+        });
+    }
+
+    fn id(name: &'static str) -> nocterm_plugin_model::ContributionId {
+        nocterm_plugin_model::ContributionId::new(name)
+    }
+
+    #[gpui_kit::test]
+    fn a_withdrawn_member_keeps_its_position_but_is_not_offered(cx: &mut TestAppContext) {
+        with_window(cx, |window, cx| {
+            let mut groups = PanelGroups::new();
+            let ids = [id("test.a"), id("test.b"), id("test.c")];
+            for (name, id) in ["a", "b", "c"].into_iter().zip(&ids) {
+                let (_, hosted) = navigation(cx, name);
+                groups.register(id.clone(), GroupKey::Navigation, Some(hosted));
+            }
+            groups.set_panel_available(&ids[1], false, window, cx);
+            let offered: Vec<_> = groups
+                .members(GroupKey::Navigation)
+                .map(|(ix, _)| ix)
+                .collect();
+            assert_eq!(offered, [0, 2]);
+            assert_eq!(groups.next(GroupKey::Navigation), Some(2));
+            groups.activate(GroupKey::Navigation, 2, cx);
+            assert_eq!(groups.next(GroupKey::Navigation), Some(0));
+            assert!(groups.activate(GroupKey::Navigation, 1, cx).is_none());
+            assert!(groups.toggle_panel(&ids[1], window, cx).is_none());
+            assert!(groups.open_panel(&ids[1], cx).is_none());
+            assert!(groups.is_showing(GroupKey::Navigation, 2));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_registered_panel_is_offered_once_it_is_filled(cx: &mut TestAppContext) {
+        with_window(cx, |window, cx| {
+            let mut groups = PanelGroups::new();
+            let panel = id("test.late");
+            groups.register(panel.clone(), GroupKey::Navigation, None);
+            assert_eq!(groups.members(GroupKey::Navigation).count(), 0);
+            assert!(!groups.panel_is_available(&panel));
+            assert_eq!(groups.next(GroupKey::Navigation), None);
+            assert!(groups.open_panel(&panel, cx).is_none());
+            let (_, hosted) = navigation(cx, "late");
+            assert!(groups.fill(&panel, hosted));
+            let offered: Vec<_> = groups
+                .members(GroupKey::Navigation)
+                .map(|(ix, _)| ix)
+                .collect();
+            assert_eq!(offered, [0]);
+            assert!(groups.panel_is_open(&panel));
+            let (_, again) = navigation(cx, "again");
+            assert!(!groups.fill(&panel, again), "a panel fills its slot once");
+            let (_, stray) = navigation(cx, "stray");
+            assert!(!groups.fill(&id("test.unknown"), stray));
+            assert!(groups.toggle_panel(&panel, window, cx).is_some());
         });
     }
 }

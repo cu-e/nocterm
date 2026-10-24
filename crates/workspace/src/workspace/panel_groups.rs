@@ -6,16 +6,21 @@
 //! expandable side panel). [`PanelGroups`] owns their state and every transition between
 //! states, and returns a [`PanelTransition`] for the workspace to apply to focus and events.
 
-use gpui_kit::{App, EntityId, Window};
+use std::collections::HashMap;
 
-use crate::Panel;
+use gpui_kit::{App, EntityId, Window};
+use nocterm_plugin_model::{
+    ContributionId, GroupSpec, PanelTraits, Side, SystemContribution, WidthClass,
+};
+
+use crate::{Panel, plugin::GROUPS};
 
 mod group;
 mod hosted;
 mod transition;
 
 use group::PanelGroup;
-pub(super) use hosted::{HostedPanel, PanelChrome, Presentation};
+pub(super) use hosted::{HostedPanel, Presentation};
 pub(super) use transition::{PanelFocus, PanelTransition};
 
 /// The groups of today's shell. Declaration order is the order of `PanelGroups::groups`.
@@ -36,12 +41,25 @@ impl GroupKey {
             Self::Assistant => 1,
         }
     }
+    /// The shell's declaration of the group; `GROUPS` lists the groups in `ALL` order.
+    fn spec(self) -> &'static GroupSpec {
+        &GROUPS[self.index()]
+    }
     /// Stable name used for the group's column.
     pub(super) fn id(self) -> &'static str {
-        match self {
-            Self::Navigation => "navigation",
-            Self::Assistant => "assistant",
-        }
+        self.spec().id.as_str()
+    }
+    /// The group a panel opens in: the one its placement hints at, else the one of its width
+    /// class.
+    pub(super) fn hosting(contribution: &SystemContribution, traits: PanelTraits) -> Self {
+        let hinted = contribution
+            .placement
+            .group
+            .and_then(|hint| Self::ALL.into_iter().find(|key| key.id() == hint));
+        hinted.unwrap_or(match traits.width {
+            WidthClass::Navigation => Self::Navigation,
+            WidthClass::Assistant => Self::Assistant,
+        })
     }
     /// The side of the content the group opens on before the user swaps sides.
     pub(super) fn side(self) -> Side {
@@ -58,33 +76,8 @@ impl GroupKey {
     }
     /// The primary group is visible from the start and never needs a member to be shown.
     pub(super) fn primary(self) -> bool {
-        self == Self::Navigation
+        self.spec().primary
     }
-}
-
-/// Which side of the content a group's column sits on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Side {
-    Left,
-    Right,
-}
-
-impl Side {
-    /// The opposite side when `swapped`.
-    pub(super) fn swapped_if(self, swapped: bool) -> Self {
-        match (self, swapped) {
-            (side, false) => side,
-            (Self::Left, true) => Self::Right,
-            (Self::Right, true) => Self::Left,
-        }
-    }
-}
-
-/// Groups whose columns share one remembered width.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum WidthClass {
-    Navigation,
-    Assistant,
 }
 
 /// A permanent index into the panel slots.
@@ -99,13 +92,16 @@ impl PanelKey {
 
 /// A hosted panel and whether the host currently offers it.
 struct PanelSlot {
-    panel: HostedPanel,
+    /// `None` while the panel of a registered contribution is not created.
+    panel: Option<HostedPanel>,
     available: bool,
 }
 
 pub(super) struct PanelGroups {
     groups: Vec<PanelGroup>,
     slots: Vec<PanelSlot>,
+    /// The slots of registered panels, by the id of their contribution.
+    ids: HashMap<ContributionId, (GroupKey, PanelKey)>,
 }
 
 impl PanelGroups {
@@ -113,6 +109,7 @@ impl PanelGroups {
         Self {
             groups: GroupKey::ALL.into_iter().map(PanelGroup::new).collect(),
             slots: Vec::new(),
+            ids: HashMap::new(),
         }
     }
 
@@ -138,12 +135,46 @@ impl PanelGroups {
 
     /// Adds a panel at the end of the group. Panels added to a group start available.
     pub(super) fn add(&mut self, key: GroupKey, panel: HostedPanel) {
+        self.push_slot(key, Some(panel), true);
+    }
+
+    fn push_slot(
+        &mut self,
+        key: GroupKey,
+        panel: Option<HostedPanel>,
+        available: bool,
+    ) -> PanelKey {
         let panel_key = PanelKey(self.slots.len() as u32);
-        self.slots.push(PanelSlot {
-            panel,
-            available: true,
-        });
+        self.slots.push(PanelSlot { panel, available });
         self.group_mut(key).add(panel_key);
+        panel_key
+    }
+
+    /// Registers a panel of the catalog at the end of the group, available. The panel may be
+    /// missing; [`PanelGroups::fill`] supplies it. A registered id is registered once; the
+    /// caller checks.
+    pub(super) fn register(
+        &mut self,
+        id: ContributionId,
+        key: GroupKey,
+        panel: Option<HostedPanel>,
+    ) {
+        let panel_key = self.push_slot(key, panel, true);
+        self.ids.insert(id, (key, panel_key));
+    }
+
+    /// Supplies the panel of a registered id whose panel is missing. Whether it was.
+    pub(super) fn fill(&mut self, id: &ContributionId, panel: HostedPanel) -> bool {
+        let Some((_, key)) = self.registered(id) else {
+            return false;
+        };
+        match self.slots.get_mut(key.index()) {
+            Some(slot) if slot.panel.is_none() => {
+                slot.panel = Some(panel);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Hosts the one panel of a group. A second panel replaces the first and inherits its
@@ -151,16 +182,13 @@ impl PanelGroups {
     /// until the host offers it.
     pub(super) fn install(&mut self, key: GroupKey, mut panel: HostedPanel) {
         if let Some(slot) = self.selected_slot_mut(key) {
-            panel.set_attention(slot.panel.attention());
-            slot.panel = panel;
+            if let Some(replaced) = &slot.panel {
+                panel.set_attention(replaced.attention());
+            }
+            slot.panel = Some(panel);
             return;
         }
-        self.slots.push(PanelSlot {
-            panel,
-            available: false,
-        });
-        let panel_key = PanelKey((self.slots.len() - 1) as u32);
-        self.group_mut(key).add(panel_key);
+        self.push_slot(key, Some(panel), false);
     }
 
     /// Records a changed title, icon or badge. Whether the panel's presentation changed.
@@ -171,8 +199,9 @@ impl PanelGroups {
     ) -> bool {
         self.slots
             .iter_mut()
-            .find(|slot| slot.panel.panel_id() == panel)
-            .is_some_and(|slot| slot.panel.presentation_changed(presentation))
+            .filter_map(|slot| slot.panel.as_mut())
+            .find(|hosted| hosted.panel_id() == panel)
+            .is_some_and(|hosted| hosted.presentation_changed(presentation))
     }
 
     // ── Observations ─────────────────────────────────────────────────────────
@@ -199,40 +228,56 @@ impl PanelGroups {
     }
     /// Whether the group has a panel that the host offers.
     pub(super) fn is_available(&self, key: GroupKey) -> bool {
-        self.selected_slot(key).is_some_and(|slot| slot.available)
+        self.selected_slot(key).is_some_and(PanelSlot::offered)
     }
     pub(super) fn attention(&self, key: GroupKey) -> bool {
-        self.selected_slot(key)
-            .is_some_and(|slot| slot.panel.attention())
+        self.selected(key).is_some_and(HostedPanel::attention)
     }
     /// The shown (or last shown) panel of the group.
     pub(super) fn selected(&self, key: GroupKey) -> Option<&HostedPanel> {
-        self.selected_slot(key).map(|slot| &slot.panel)
+        self.selected_slot(key)?.panel.as_ref()
     }
-    /// The group's panels in switcher order.
-    pub(super) fn members(&self, key: GroupKey) -> impl Iterator<Item = &HostedPanel> {
+    /// The panels the host offers, in switcher order, with their position in the group.
+    ///
+    /// A withdrawn panel or one that is not created yet has no entry, but keeps its position,
+    /// so a position stays valid for the group's transitions.
+    pub(super) fn members(&self, key: GroupKey) -> impl Iterator<Item = (usize, &HostedPanel)> {
         self.group(key)
             .members()
             .iter()
-            .filter_map(|member| self.slot(Some(*member)))
-            .map(|slot| &slot.panel)
+            .enumerate()
+            .filter_map(|(ix, member)| {
+                let slot = self.slot(Some(*member)).filter(|slot| slot.offered())?;
+                Some((ix, slot.panel.as_ref()?))
+            })
     }
     /// Whether the member at `ix` is selected while the group is shown.
     pub(super) fn is_showing(&self, key: GroupKey, ix: usize) -> bool {
         self.group(key).showing(ix)
     }
     pub(super) fn index_of<T: Panel>(&self, key: GroupKey) -> Option<usize> {
-        self.members(key).position(|panel| panel.is::<T>())
+        self.members(key)
+            .find_map(|(ix, panel)| panel.is::<T>().then_some(ix))
     }
-    /// The member `NextPanel` goes to.
+    /// The offered member `NextPanel` goes to: the one after the selection while the group is
+    /// shown (wrapping), else the selection itself, which the action reveals.
     pub(super) fn next(&self, key: GroupKey) -> Option<usize> {
-        self.group(key).next()
+        let group = self.group(key);
+        let members = group.members();
+        let start = group.selected_position()?;
+        let skip = usize::from(group.is_shown());
+        (skip..members.len() + skip)
+            .map(|step| (start + step) % members.len())
+            .find(|ix| {
+                self.slot(members.get(*ix).copied())
+                    .is_some_and(PanelSlot::offered)
+            })
     }
 
     // ── Transitions ──────────────────────────────────────────────────────────
 
     /// Selects the member at `ix`, shows its group and focuses it. `None` for an unknown
-    /// member.
+    /// member and for one the host does not offer.
     pub(super) fn activate(
         &mut self,
         key: GroupKey,
@@ -240,7 +285,8 @@ impl PanelGroups {
         cx: &App,
     ) -> Option<PanelTransition> {
         let member = *self.group(key).members().get(ix)?;
-        let focus = self.slot(Some(member))?.panel.focus_handle(cx);
+        let slot = self.slot(Some(member)).filter(|slot| slot.offered())?;
+        let focus = slot.panel.as_ref()?.focus_handle(cx);
         let revealed = self.group_mut(key).select(member);
         Some(PanelTransition::new(
             revealed.then_some(key),
@@ -269,11 +315,11 @@ impl PanelGroups {
             };
             return Some(PanelTransition::new(Some(key), focus));
         }
-        let slot = self.selected_slot(key).filter(|slot| slot.available)?;
+        let slot = self.selected_slot(key).filter(|slot| slot.offered())?;
         if self.group(key).is_shown() {
             return Some(self.close(key, window, cx));
         }
-        let focus = slot.panel.focus_handle(cx);
+        let focus = slot.panel.as_ref()?.focus_handle(cx);
         self.group_mut(key).show();
         Some(PanelTransition::new(Some(key), PanelFocus::Panel(focus)))
     }
@@ -320,32 +366,47 @@ impl PanelGroups {
         window: &Window,
         cx: &mut App,
     ) -> Option<PanelTransition> {
-        if self.selected_slot(key)?.available == available {
+        let panel = self.group(key).selected()?;
+        self.set_slot_available(key, panel, available, window, cx)
+    }
+
+    /// Withdrawing the selected panel closes its group first; another member's withdrawal
+    /// leaves the group as it is.
+    fn set_slot_available(
+        &mut self,
+        key: GroupKey,
+        panel: PanelKey,
+        available: bool,
+        window: &Window,
+        cx: &mut App,
+    ) -> Option<PanelTransition> {
+        if self.slots.get(panel.index())?.available == available {
             return None;
         }
         if available {
-            self.selected_slot_mut(key)?.available = true;
+            self.slots.get_mut(panel.index())?.available = true;
             return Some(PanelTransition::new(None, PanelFocus::Preserve));
         }
-        let transition = self.close(key, window, cx);
-        self.selected_slot_mut(key)?.available = false;
+        let transition = if self.group(key).selected() == Some(panel) {
+            self.close(key, window, cx)
+        } else {
+            PanelTransition::new(None, PanelFocus::Preserve)
+        };
+        self.slots.get_mut(panel.index())?.available = false;
         Some(transition)
     }
 
     /// Expands the shown panel over the content, or restores it. Whether anything changed.
     /// Only an available, expandable panel of a shown group expands.
     pub(super) fn set_expanded(&mut self, key: GroupKey, expanded: bool, cx: &mut App) -> bool {
-        let Some(slot) = self.selected_slot(key) else {
-            return false;
-        };
-        if !slot.available || !slot.panel.is_expandable() {
-            return false;
-        }
-        if !self.group_mut(key).set_expanded(expanded) {
+        let can_expand = self
+            .selected_slot(key)
+            .is_some_and(|slot| slot.offered() && slot.is_expandable());
+        if !can_expand || !self.group_mut(key).set_expanded(expanded) {
             return false;
         }
-        if let Some(slot) = self.selected_slot(key) {
-            slot.panel.set_expanded(expanded, cx);
+        if let Some(panel) = self.selected(key) {
+            panel.set_expanded(expanded, cx);
         }
         true
     }
@@ -353,14 +414,112 @@ impl PanelGroups {
     /// Whether the attention flag of the group's panel changed.
     pub(super) fn set_attention(&mut self, key: GroupKey, attention: bool) -> bool {
         self.selected_slot_mut(key)
-            .is_some_and(|slot| slot.panel.set_attention(attention))
+            .and_then(|slot| slot.panel.as_mut())
+            .is_some_and(|panel| panel.set_attention(attention))
     }
 
-    /// Tells every expandable panel which side of the content it is on.
-    pub(super) fn set_docked_left(&self, left: bool, cx: &mut App) {
-        for slot in &self.slots {
-            slot.panel.set_docked_left(left, cx);
+    /// Tells every expandable panel which side of the content its group is on.
+    pub(super) fn set_docked_left(&self, swapped: bool, cx: &mut App) {
+        for group in &self.groups {
+            let left = group.key().side().swapped_if(swapped) == Side::Left;
+            for member in group.members() {
+                if let Some(panel) = self.slot(Some(*member)).and_then(|s| s.panel.as_ref()) {
+                    panel.set_docked_left(left, cx);
+                }
+            }
         }
+    }
+}
+
+/// Registered panels by the id of their contribution. An unknown id is never open, available or
+/// expanded, and no transition applies to it.
+impl PanelGroups {
+    fn registered(&self, id: &ContributionId) -> Option<(GroupKey, PanelKey)> {
+        self.ids.get(id).copied()
+    }
+    /// The registered panel's group and its position in the group.
+    fn position_of(&self, id: &ContributionId) -> Option<(GroupKey, PanelKey, usize)> {
+        let (key, panel) = self.registered(id)?;
+        let ix = self
+            .group(key)
+            .members()
+            .iter()
+            .position(|member| *member == panel)?;
+        Some((key, panel, ix))
+    }
+    /// Whether the panel is the shown member of a shown group.
+    pub(super) fn panel_is_open(&self, id: &ContributionId) -> bool {
+        self.position_of(id)
+            .is_some_and(|(key, _, ix)| self.group(key).showing(ix))
+    }
+    pub(super) fn panel_is_available(&self, id: &ContributionId) -> bool {
+        self.registered(id)
+            .and_then(|(_, panel)| self.slot(Some(panel)))
+            .is_some_and(PanelSlot::offered)
+    }
+    /// Whether the panel is the member that fills the body.
+    pub(super) fn panel_is_expanded(&self, id: &ContributionId) -> bool {
+        self.registered(id).is_some_and(|(key, panel)| {
+            self.group(key).selected() == Some(panel) && self.group(key).is_expanded()
+        })
+    }
+    /// Hides the panel's group when the panel is showing, else shows the panel. `None` when
+    /// the id is unknown or its panel is not offered.
+    pub(super) fn toggle_panel(
+        &mut self,
+        id: &ContributionId,
+        window: &Window,
+        cx: &mut App,
+    ) -> Option<PanelTransition> {
+        let (key, _, ix) = self.position_of(id)?;
+        if self.group(key).showing(ix) {
+            return self.toggle(key, window, cx);
+        }
+        self.activate(key, ix, cx)
+    }
+    /// Shows the panel and focuses it; `None` for an unknown id, an unoffered panel or a panel
+    /// that already shows.
+    pub(super) fn open_panel(&mut self, id: &ContributionId, cx: &App) -> Option<PanelTransition> {
+        let (key, _, ix) = self.position_of(id)?;
+        if self.group(key).showing(ix) {
+            return None;
+        }
+        self.activate(key, ix, cx)
+    }
+    pub(super) fn set_panel_available(
+        &mut self,
+        id: &ContributionId,
+        available: bool,
+        window: &Window,
+        cx: &mut App,
+    ) -> Option<PanelTransition> {
+        let (key, panel) = self.registered(id)?;
+        self.set_slot_available(key, panel, available, window, cx)
+    }
+    /// Expands the panel over the content or restores it. Whether anything changed. Only the
+    /// shown member of a group expands.
+    pub(super) fn set_panel_expanded(
+        &mut self,
+        id: &ContributionId,
+        expanded: bool,
+        cx: &mut App,
+    ) -> bool {
+        match self.registered(id) {
+            Some((key, panel)) if self.group(key).selected() == Some(panel) => {
+                self.set_expanded(key, expanded, cx)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PanelSlot {
+    /// Whether the host offers the slot's panel and the panel exists.
+    fn offered(&self) -> bool {
+        self.available && self.panel.is_some()
+    }
+    fn is_expandable(&self) -> bool {
+        self.panel.as_ref().is_some_and(HostedPanel::is_expandable)
     }
 }
 

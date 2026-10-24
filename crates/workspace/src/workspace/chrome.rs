@@ -20,12 +20,13 @@ use gpui_kit::{
     prelude::*,
     px,
 };
+use nocterm_plugin_model::{PanelChrome, Side, WidthClass};
 use nocterm_ui::IconName;
 
 use super::{
     ContextSelectionReceipt, MenuBuilder, NewTabMenu, Workspace,
     layout::{Body, Column},
-    panel_groups::{GroupKey, HostedPanel, PanelChrome, PanelGroups, Side, WidthClass},
+    panel_groups::{GroupKey, HostedPanel, PanelGroups},
     surface::SurfaceFrame,
 };
 use crate::NewTab;
@@ -404,8 +405,7 @@ impl Chrome {
                             .groups
                             .members(GroupKey::Navigation)
                             .zip(navigation)
-                            .enumerate()
-                            .map(|(ix, (panel, look))| {
+                            .map(|((ix, panel), look)| {
                                 Button::new(("sidebar-panel", ix))
                                     .ghost()
                                     .small()
