@@ -36,6 +36,8 @@ impl IdError {
 /// A set of plugins, core contributions and groups that the catalog refuses.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum CatalogError {
+    #[error("`{id}` is in the user plugin space, which the `user-` prefix reserves")]
+    Reserved { id: String },
     #[error("plugin `{0}` is declared twice")]
     DuplicatePlugin(PluginId),
     #[error("contribution `{0}` is declared twice")]

@@ -45,6 +45,8 @@ pub enum SchemaError {
     Key { key: String },
     #[error("`{key}` is declared twice")]
     DuplicateKey { key: String },
+    #[error("`{key}` names a previous key that is malformed, its own, or used by another field")]
+    RenamedFrom { key: String },
     #[error("group {index} has a title that is empty, too long or not plain text")]
     GroupTitle { index: usize },
     #[error("`{key}` has a label or help that is empty, too long or not plain text")]
@@ -75,6 +77,7 @@ impl SettingsSchema {
             });
         }
         let mut keys = BTreeSet::new();
+        let mut previous = BTreeSet::new();
         for (index, group) in self.groups.iter().enumerate() {
             if !plain(&group.title, MAX_LABEL) {
                 return Err(SchemaError::GroupTitle { index });
@@ -91,7 +94,24 @@ impl SettingsSchema {
                         key: field.key.to_string(),
                     });
                 }
+                if let Some(old) = field.renamed_from.as_deref()
+                    && !(key_syntax(old) && old != field.key && previous.insert(old))
+                {
+                    return Err(SchemaError::RenamedFrom {
+                        key: field.key.to_string(),
+                    });
+                }
             }
+        }
+        if let Some(field) = self.fields().find(|field| {
+            field
+                .renamed_from
+                .as_deref()
+                .is_some_and(|old| keys.contains(old))
+        }) {
+            return Err(SchemaError::RenamedFrom {
+                key: field.key.to_string(),
+            });
         }
         Ok(())
     }

@@ -24,6 +24,7 @@ fn more_than_eight_groups_are_refused() {
         .map(|_| group("G", None, Vec::new()))
         .collect::<Vec<_>>();
     let schema = SettingsSchema {
+        version: 1,
         groups: groups.into(),
     };
     assert_eq!(
@@ -93,6 +94,7 @@ fn keys_follow_the_key_syntax_and_are_unique() {
 #[test]
 fn duplicate_keys_are_found_across_groups() {
     let schema = SettingsSchema {
+        version: 1,
         groups: vec![
             group(
                 "A",
@@ -147,6 +149,7 @@ fn labels_and_help_are_short_plain_text() {
 #[test]
 fn a_group_title_is_plain_text() {
     let schema = SettingsSchema {
+        version: 1,
         groups: vec![group("bad\ttitle", None, Vec::new())].into(),
     };
     assert_eq!(invalid(schema), SchemaError::GroupTitle { index: 0 });
@@ -241,10 +244,12 @@ fn ranges_steps_maxima_and_text_lengths_are_bounded() {
 #[test]
 fn a_group_may_name_only_a_contribution_of_the_plugin() {
     let schema = SettingsSchema {
+        version: 1,
         groups: vec![group("G", Some("demo.widget"), Vec::new())].into(),
     };
     assert_eq!(schema.validate(&own()), Ok(()));
     let foreign = SettingsSchema {
+        version: 1,
         groups: vec![group("G", Some("other.widget"), Vec::new())].into(),
     };
     assert_eq!(
@@ -275,6 +280,7 @@ fn defaults_hold_every_field_default() {
 #[test]
 fn a_contribution_sees_its_groups_and_not_the_plugin_level_ones() {
     let schema = SettingsSchema {
+        version: 1,
         groups: vec![
             group(
                 "Plugin",

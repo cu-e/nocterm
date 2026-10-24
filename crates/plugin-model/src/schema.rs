@@ -13,11 +13,13 @@ use crate::ContributionId;
 
 mod edit;
 mod marks;
+mod resolve;
 mod text;
 mod validate;
 mod values;
 
 pub use edit::{FieldError, apply, bounded, toggle_choice};
+pub use resolve::{FieldIssue, resolve};
 pub use text::sanitize_text;
 pub use validate::{MAX_TEXT_LEN, SchemaError, SchemaLimit};
 pub use values::{FieldEdit, SettingValue, SettingValues};
@@ -25,12 +27,17 @@ pub use values::{FieldEdit, SettingValue, SettingValues};
 /// The settings a plugin declares, in groups.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SettingsSchema {
+    /// The revision of the schema. A user plugin raises it when it changes its fields, and
+    /// [`FieldSpec::renamed_from`] carries stored values across the change. System schemas stay at
+    /// `1`: their owners migrate stored values with serde.
+    pub version: u16,
     pub groups: Cow<'static, [FieldGroup]>,
 }
 
 impl SettingsSchema {
     /// A plugin without settings.
     pub const NONE: Self = Self {
+        version: 1,
         groups: Cow::Borrowed(&[]),
     };
 
@@ -86,6 +93,9 @@ pub struct FieldSpec {
     pub label: Cow<'static, str>,
     pub help: Option<Cow<'static, str>>,
     pub kind: FieldKind,
+    /// The key this field had in an earlier version of the schema. [`resolve`] moves a stored
+    /// value from that key to this one.
+    pub renamed_from: Option<Cow<'static, str>>,
 }
 
 impl FieldSpec {
@@ -164,6 +174,8 @@ pub struct ChoiceOption {
 #[cfg(test)]
 mod edit_tests;
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
+#[cfg(test)]
+mod resolve_tests;
 #[cfg(test)]
 mod tests;

@@ -73,6 +73,12 @@ gpui_kit::assets::icon_assets!(
         Square,
         ScrollText,
         Play,
+        // Icons only a user plugin contribution may show (`Icon::user_allowed`).
+        Box,
+        Gem,
+        Hexagon,
+        Puzzle,
+        Shapes,
     ]
 );
 

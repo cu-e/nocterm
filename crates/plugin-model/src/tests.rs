@@ -338,3 +338,101 @@ fn swapping_sides_flips_only_when_asked() {
     assert_eq!(Side::Left.swapped_if(true), Side::Right);
     assert_eq!(Side::Right.swapped_if(true), Side::Left);
 }
+
+static USERISH: SystemPlugin = SystemPlugin {
+    id: PluginId::new("user-acme-clock"),
+    name: "Spoof",
+    description: "A system plugin that squats the user space",
+    required: false,
+    contributions: &[widget("user-acme-clock.time", Zone::Right, 40)],
+    settings_section: None,
+    settings: SettingsSchema::NONE,
+    settings_page: None,
+};
+
+#[test]
+fn the_user_prefix_is_reserved_for_plugins_and_core_namespaces() {
+    let error = PluginCatalog::new(&groups(), &[], &[&USERISH]).err();
+    assert_eq!(
+        error,
+        Some(CatalogError::Reserved {
+            id: "user-acme-clock".to_string()
+        })
+    );
+    const SQUAT: &[SystemContribution] = &[widget("user-acme-clock.time", Zone::Left, 1)];
+    let error = PluginCatalog::new(&groups(), &[SQUAT], &[]).err();
+    assert_eq!(
+        error,
+        Some(CatalogError::Reserved {
+            id: "user-acme-clock.time".to_string()
+        })
+    );
+    assert!(PluginCatalog::new(&groups(), &[CORE], &[&ALPHA, &BETA]).is_ok());
+}
+
+#[test]
+fn a_user_plugin_id_is_built_from_publisher_and_name() {
+    let id = PluginId::user("acme", "clock2").unwrap();
+    assert_eq!(id.as_str(), "user-acme-clock2");
+    assert!(id.is_user() && id.check().is_ok());
+    assert!(!PluginId::new("monitor").is_user());
+    for (publisher, name) in [("Acme", "clock"), ("acme", "my-clock"), ("ac me", "x")] {
+        assert!(matches!(
+            PluginId::user(publisher, name),
+            Err(IdError::Syntax { .. })
+        ));
+    }
+    assert!(matches!(
+        PluginId::user("", "clock"),
+        Err(IdError::Empty { .. })
+    ));
+    assert!(matches!(
+        PluginId::user("publisherpublisher", "namenamename"),
+        Err(IdError::TooLong { .. })
+    ));
+}
+
+#[test]
+fn a_user_contribution_id_joins_the_plugin_id_and_a_local_name() {
+    let plugin = PluginId::user("acme", "clock").unwrap();
+    let id = ContributionId::in_plugin(&plugin, "time").unwrap();
+    assert_eq!(id.as_str(), "user-acme-clock.time");
+    assert_eq!(id.namespace(), plugin.as_str());
+    for local in ["", "Time", "a.b", "with space"] {
+        assert!(ContributionId::in_plugin(&plugin, local).is_err());
+    }
+}
+
+/// The position of an icon in `Icon::ALL`. The match is exhaustive, so a new icon does not
+/// compile until it is placed here, and the test below then checks the list.
+const fn position(icon: Icon) -> usize {
+    match icon {
+        Icon::Activity => 0,
+        Icon::Bell => 1,
+        Icon::Bot => 2,
+        Icon::Box => 3,
+        Icon::Clock => 4,
+        Icon::Container => 5,
+        Icon::FolderTree => 6,
+        Icon::Gem => 7,
+        Icon::Hexagon => 8,
+        Icon::Layers => 9,
+        Icon::PanelRight => 10,
+        Icon::Plug => 11,
+        Icon::Puzzle => 12,
+        Icon::ScrollText => 13,
+        Icon::Server => 14,
+        Icon::Shapes => 15,
+        Icon::ShieldCheck => 16,
+        Icon::SquareTerminal => 17,
+        Icon::Upload => 18,
+    }
+}
+
+#[test]
+fn the_icon_list_names_every_icon_once_in_order() {
+    for (index, icon) in Icon::ALL.into_iter().enumerate() {
+        assert_eq!(position(icon), index, "{icon:?}");
+    }
+    assert_eq!(position(Icon::Upload) + 1, Icon::ALL.len());
+}

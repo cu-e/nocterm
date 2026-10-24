@@ -44,6 +44,7 @@ const GROUP: FieldGroup = FieldGroup {
     title: Cow::Borrowed("Display"),
     contribution: None,
     fields: Cow::Borrowed(&[FieldSpec {
+        renamed_from: None,
         key: Cow::Borrowed("verbose"),
         label: Cow::Borrowed("Verbose"),
         help: None,
@@ -59,6 +60,7 @@ static TOOLS: SystemPlugin = SystemPlugin {
     contributions: &[widget("tools.clock", 10), widget("tools.cpu", 20)],
     settings_section: Some("tools"),
     settings: SettingsSchema {
+        version: 1,
         groups: Cow::Borrowed(&[GROUP]),
     },
     settings_page: Some("tools"),

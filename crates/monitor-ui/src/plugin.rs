@@ -32,6 +32,7 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     contributions: &[SUMMARY],
     settings_section: Some("monitor"),
     settings: SettingsSchema {
+        version: 1,
         groups: Cow::Borrowed(&[STATUS_BAR_GROUP]),
     },
     settings_page: Some("monitor"),
@@ -65,6 +66,7 @@ static METRICS: [ChoiceOption; 10] = [
 static DEFAULT_METRICS: [Cow<'static, str>; 2] = [Cow::Borrowed("cpu"), Cow::Borrowed("memory")];
 
 static STATUS_BAR_FIELDS: [FieldSpec; 1] = [FieldSpec {
+    renamed_from: None,
     key: Cow::Borrowed(STATUS_BAR_KEY),
     label: Cow::Borrowed("Metrics in the status bar"),
     help: Some(Cow::Borrowed(

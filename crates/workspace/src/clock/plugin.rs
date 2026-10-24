@@ -33,6 +33,7 @@ pub static PLUGIN: SystemPlugin = SystemPlugin {
     contributions: &[TIME],
     settings_section: Some("clock"),
     settings: SettingsSchema {
+        version: 1,
         groups: Cow::Borrowed(&[DISPLAY_GROUP]),
     },
     settings_page: None,
@@ -59,6 +60,7 @@ static FORMATS: [ChoiceOption; 2] = [
 
 static DISPLAY_FIELDS: [FieldSpec; 3] = [
     FieldSpec {
+        renamed_from: None,
         key: Cow::Borrowed(FORMAT_KEY),
         label: Cow::Borrowed("Time format"),
         help: None,
@@ -68,6 +70,7 @@ static DISPLAY_FIELDS: [FieldSpec; 3] = [
         },
     },
     FieldSpec {
+        renamed_from: None,
         key: Cow::Borrowed(SECONDS_KEY),
         label: Cow::Borrowed("Show seconds"),
         help: Some(Cow::Borrowed(
@@ -76,6 +79,7 @@ static DISPLAY_FIELDS: [FieldSpec; 3] = [
         kind: FieldKind::Toggle { default: false },
     },
     FieldSpec {
+        renamed_from: None,
         key: Cow::Borrowed(DATE_KEY),
         label: Cow::Borrowed("Show the date"),
         help: Some(Cow::Borrowed(

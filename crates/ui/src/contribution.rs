@@ -17,14 +17,19 @@ pub fn contribution_icon(icon: Icon) -> IconName {
         Icon::Activity => IconName::Activity,
         Icon::Bell => IconName::Bell,
         Icon::Bot => IconName::Bot,
+        Icon::Box => IconName::Box,
         Icon::Clock => IconName::Clock,
         Icon::Container => IconName::Container,
         Icon::FolderTree => IconName::FolderTree,
+        Icon::Gem => IconName::Gem,
+        Icon::Hexagon => IconName::Hexagon,
         Icon::Layers => IconName::Layers,
         Icon::PanelRight => IconName::PanelRight,
         Icon::Plug => IconName::Plug,
+        Icon::Puzzle => IconName::Puzzle,
         Icon::ScrollText => IconName::ScrollText,
         Icon::Server => IconName::Server,
+        Icon::Shapes => IconName::Shapes,
         Icon::ShieldCheck => IconName::ShieldCheck,
         Icon::SquareTerminal => IconName::SquareTerminal,
         Icon::Upload => IconName::Upload,
@@ -94,26 +99,24 @@ mod tests {
     #[test]
     fn every_icon_has_a_distinct_drawable() {
         use std::collections::HashSet;
-        let icons = [
-            Icon::Activity,
-            Icon::Bell,
-            Icon::Bot,
-            Icon::Clock,
-            Icon::Container,
-            Icon::FolderTree,
-            Icon::Layers,
-            Icon::PanelRight,
-            Icon::Plug,
-            Icon::ScrollText,
-            Icon::Server,
-            Icon::ShieldCheck,
-            Icon::SquareTerminal,
-            Icon::Upload,
-        ];
+        let icons = Icon::ALL;
         let drawn: HashSet<_> = icons
             .into_iter()
             .map(|icon| contribution_icon(icon).path())
             .collect();
         assert_eq!(drawn.len(), icons.len());
+    }
+
+    #[test]
+    fn every_contribution_icon_is_embedded() {
+        use gpui_kit::AssetSource as _;
+        let assets = crate::Assets::default();
+        for icon in Icon::ALL {
+            let path = contribution_icon(icon).path();
+            assert!(
+                assets.load(&path).unwrap().is_some(),
+                "{icon:?} is not embedded at {path}"
+            );
+        }
     }
 }

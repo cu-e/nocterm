@@ -31,6 +31,7 @@ fn options(keys: &[&'static str]) -> Cow<'static, [ChoiceOption]> {
 
 fn field(key: &'static str, kind: FieldKind) -> FieldSpec {
     FieldSpec {
+        renamed_from: None,
         key: Cow::Borrowed(key),
         label: Cow::Borrowed(key),
         help: None,
@@ -39,6 +40,7 @@ fn field(key: &'static str, kind: FieldKind) -> FieldSpec {
 }
 
 pub(super) static SCHEMA: LazyLock<SettingsSchema> = LazyLock::new(|| SettingsSchema {
+    version: 1,
     groups: vec![
         FieldGroup {
             title: Cow::Borrowed("General"),

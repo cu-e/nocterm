@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use crate::{
     CatalogError, ContributionId, ContributionKind, GroupSpec, PluginId, SystemContribution,
-    SystemPlugin,
+    SystemPlugin, USER_PREFIX,
 };
 
 /// Who offers a contribution.
@@ -42,7 +42,8 @@ pub struct PluginCatalog {
 impl PluginCatalog {
     /// Checks and joins the groups, the core contributions and the plugins.
     ///
-    /// Refuses: malformed or repeated ids; a plugin contribution outside its plugin's
+    /// Refuses: malformed or repeated ids; a plugin id or core namespace with the reserved
+    /// `user-` prefix; a plugin contribution outside its plugin's
     /// namespace; a core contribution inside any plugin's namespace; a group hint naming an
     /// undeclared group or a widget naming any group; panel traits on a widget or missing on
     /// a panel; a settings schema outside its limits, or one with fields and no settings
@@ -67,6 +68,11 @@ impl PluginCatalog {
         let mut seen_plugins = BTreeSet::new();
         for plugin in plugins {
             plugin.id.check()?;
+            if plugin.id.is_user() {
+                return Err(CatalogError::Reserved {
+                    id: plugin.id.to_string(),
+                });
+            }
             if !seen_plugins.insert(&plugin.id) {
                 return Err(CatalogError::DuplicatePlugin(plugin.id.clone()));
             }
@@ -74,6 +80,11 @@ impl PluginCatalog {
         let mut entries = Vec::new();
         for contributions in core {
             for contribution in *contributions {
+                if contribution.id.namespace().starts_with(USER_PREFIX) {
+                    return Err(CatalogError::Reserved {
+                        id: contribution.id.to_string(),
+                    });
+                }
                 if let Some(plugin) = plugins
                     .iter()
                     .find(|plugin| plugin.id.as_str() == contribution.id.namespace())

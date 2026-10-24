@@ -56,17 +56,74 @@ pub enum Icon {
     Activity,
     Bell,
     Bot,
+    Box,
     Clock,
     Container,
     FolderTree,
+    Gem,
+    Hexagon,
     Layers,
     PanelRight,
     Plug,
+    Puzzle,
     ScrollText,
     Server,
+    Shapes,
     ShieldCheck,
     SquareTerminal,
     Upload,
+}
+
+impl Icon {
+    /// Every icon, in declaration order.
+    pub const ALL: [Self; 19] = [
+        Self::Activity,
+        Self::Bell,
+        Self::Bot,
+        Self::Box,
+        Self::Clock,
+        Self::Container,
+        Self::FolderTree,
+        Self::Gem,
+        Self::Hexagon,
+        Self::Layers,
+        Self::PanelRight,
+        Self::Plug,
+        Self::Puzzle,
+        Self::ScrollText,
+        Self::Server,
+        Self::Shapes,
+        Self::ShieldCheck,
+        Self::SquareTerminal,
+        Self::Upload,
+    ];
+
+    /// The icon a user plugin contribution may show.
+    ///
+    /// Only icons that no system plugin or core contribution draws are allowed, so a plugin
+    /// toggle cannot pass for a host function: a footer toggle shows only its icon. A system
+    /// contribution must therefore never take one of these; the app checks the catalog against
+    /// this set.
+    pub const fn user_allowed(self) -> bool {
+        match self {
+            Self::Box | Self::Gem | Self::Hexagon | Self::Plug | Self::Puzzle | Self::Shapes => {
+                true
+            }
+            Self::Activity
+            | Self::Bell
+            | Self::Bot
+            | Self::Clock
+            | Self::Container
+            | Self::FolderTree
+            | Self::Layers
+            | Self::PanelRight
+            | Self::ScrollText
+            | Self::Server
+            | Self::ShieldCheck
+            | Self::SquareTerminal
+            | Self::Upload => false,
+        }
+    }
 }
 
 /// Panel groups whose columns share one remembered width and resize range.

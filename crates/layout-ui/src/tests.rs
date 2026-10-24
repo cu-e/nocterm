@@ -84,6 +84,7 @@ const CLOCK_GROUP: FieldGroup = FieldGroup {
     title: Cow::Borrowed("Clock"),
     contribution: Some(ContributionId::new("tools.clock")),
     fields: Cow::Borrowed(&[FieldSpec {
+        renamed_from: None,
         key: Cow::Borrowed("seconds"),
         label: Cow::Borrowed("Show seconds"),
         help: None,
@@ -102,6 +103,7 @@ pub(super) static TOOLS: SystemPlugin = SystemPlugin {
     ],
     settings_section: Some("tools"),
     settings: SettingsSchema {
+        version: 1,
         groups: Cow::Borrowed(&[CLOCK_GROUP]),
     },
     settings_page: Some("tools"),
