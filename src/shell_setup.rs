@@ -2,8 +2,13 @@
 use nocterm_plugin_model::{CatalogError, PluginCatalog, SystemPlugin};
 use nocterm_workspace::plugin;
 
+mod plugins;
 #[cfg(test)]
 mod reference;
+mod settings;
+
+pub(crate) use plugins::AppPluginToggles;
+pub(crate) use settings::install_guest_pages;
 
 /// Every system plugin of the application. A plugin appears here once, beside the others,
 /// so the catalog check sees all contributions together.

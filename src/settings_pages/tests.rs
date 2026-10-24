@@ -28,6 +28,16 @@ fn spec(id: &'static str, called: Rc<Cell<usize>>) -> SettingsPageSpec {
         })
     })
 }
+fn guests(specs: Vec<SettingsPageSpec>) -> GuestPages {
+    let plugins = Arc::new(crate::shell_setup::plugin_catalog().unwrap());
+    GuestPages::new(
+        specs
+            .into_iter()
+            .map(SettingsPageRegistration::lazy)
+            .collect(),
+        plugins,
+    )
+}
 fn builtins(called: Rc<Cell<usize>>) -> [SettingsPageSpec; 5] {
     ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| spec(id, called.clone()))
 }
@@ -42,7 +52,7 @@ fn actual_root_catalog_builder_propagates_typed_registration_errors_without_fact
         let duplicate = SettingsPages::new(
             installed.clone(),
             builtins(called.clone()),
-            vec![spec("terminal", called.clone())],
+            guests(vec![spec("terminal", called.clone())]),
             None,
         );
         assert_eq!(
@@ -52,7 +62,7 @@ fn actual_root_catalog_builder_propagates_typed_registration_errors_without_fact
         let mut invalid = builtins(called.clone());
         invalid[0] = spec("other", called.clone());
         assert_eq!(
-            SettingsPages::new(installed, invalid, vec![], None).err(),
+            SettingsPages::new(installed, invalid, guests(vec![]), None).err(),
             Some(SettingsCatalogError::MissingDefault { id: "appearance" })
         );
         assert_eq!(called.get(), 0);
@@ -71,10 +81,12 @@ fn ordinary_and_startup_catalogs_keep_their_distinct_guests_and_per_item_instanc
         let pages = SettingsPages::new(
             installed.clone(),
             builtins(called.clone()),
-            ["keymap", "monitor", "explorer", "workspaces", "vault"]
-                .into_iter()
-                .map(|id| spec(id, called.clone()))
-                .collect(),
+            guests(
+                ["keymap", "monitor", "explorer", "workspaces"]
+                    .into_iter()
+                    .map(|id| spec(id, called.clone()))
+                    .collect(),
+            ),
             Some(spec("vault", called.clone())),
         )
         .unwrap();
@@ -124,7 +136,7 @@ fn catalog_keeps_the_real_keymap_page_alive_without_a_booted_fixture_handle(
             SettingsPages::new(
                 installed.clone(),
                 builtins(Rc::new(Cell::new(0))),
-                vec![nocterm_keymap_ui::settings_page(keymap)],
+                guests(vec![nocterm_keymap_ui::settings_page(keymap)]),
                 None,
             )
             .unwrap()

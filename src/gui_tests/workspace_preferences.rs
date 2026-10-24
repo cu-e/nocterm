@@ -11,8 +11,16 @@ fn the_workspaces_settings_page_updates_the_bootstrapped_policy(cx: &mut TestApp
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.within("settings-pages").click(8usize, cx);
+        window.dispatch_action(
+            Box::new(nocterm_workspace::OpenPluginPage {
+                plugin: "projects".into(),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let settings = workspace
             .read(cx)

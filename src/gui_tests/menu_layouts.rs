@@ -148,14 +148,19 @@ fn toggling_a_panel_the_catalog_does_not_list_does_nothing(cx: &mut TestAppConte
     assert_eq!(window_entries(handle, &workspace, "Panels", cx), before);
 }
 
-/// A window over a local host whose requests the test can read, under the given layouts.
-fn window_on_local_host(
+/// A window over a local host whose requests the test can read, under the given settings.
+pub(super) fn window_on_local_host(
     layouts: &str,
     cx: &mut TestAppContext,
-) -> (AnyWindowHandle, nocterm_session::testing::FakeExec) {
+) -> (
+    AnyWindowHandle,
+    nocterm_session::testing::FakeExec,
+    nocterm_store::SettingsHandle,
+    Entity<Workspace>,
+) {
     use std::sync::Arc;
-    let (handle, exec) = cx.update(|cx| {
-        let settings = nocterm_settings::SettingsDocument::from_table(
+    let (handle, exec, settings, workspace) = cx.update(|cx| {
+        let document = nocterm_settings::SettingsDocument::from_table(
             layouts.parse().expect("the layouts are toml"),
         );
         let transport = Arc::new(super::MockTransport::default());
@@ -168,15 +173,20 @@ fn window_on_local_host(
         };
         let booted = super::boot_with_ports(
             tempfile::tempdir().unwrap(),
-            nocterm_store::SettingsConfig::in_memory(settings),
+            nocterm_store::SettingsConfig::in_memory(document),
             (transport, local),
             false,
             None,
             None,
             cx,
         );
-        let (handle, _) = super::open_workspace(&booted, cx);
-        (handle, cx.global::<super::FixtureLocalHost>().0.clone())
+        let (handle, workspace) = super::open_workspace(&booted, cx);
+        (
+            handle,
+            cx.global::<super::FixtureLocalHost>().0.clone(),
+            booted.settings_deps().settings().clone(),
+            workspace,
+        )
     });
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
@@ -184,7 +194,7 @@ fn window_on_local_host(
     })
     .unwrap();
     cx.run_until_parked();
-    (handle, exec)
+    (handle, exec, settings, workspace)
 }
 
 #[gpui_kit::test]
@@ -193,10 +203,46 @@ fn a_monitor_the_layout_leaves_in_the_tray_never_reaches_the_host(cx: &mut TestA
     let samples = |exec: &nocterm_session::testing::FakeExec| {
         exec.ran().iter().any(|command| command == "sh -s")
     };
-    let (_, exec) = window_on_local_host("", cx);
+    let (_, exec, ..) = window_on_local_host("", cx);
     assert!(samples(&exec), "the placed monitor samples the host");
     let quiet = "[layouts]\nactive = \"p1\"\n[[layouts.presets]]\nid = \"p1\"\n\
                  name = \"Quiet\"\ntray = [\"monitor.summary\"]\n";
-    let (_, exec) = window_on_local_host(quiet, cx);
+    let (_, exec, ..) = window_on_local_host(quiet, cx);
     assert!(!samples(&exec), "ran {:?}", exec.ran());
+}
+
+#[gpui_kit::test]
+fn a_disabled_monitor_plugin_never_reaches_the_host(cx: &mut TestAppContext) {
+    let samples = |exec: &nocterm_session::testing::FakeExec| {
+        exec.ran().iter().any(|command| command == "sh -s")
+    };
+    let (_, exec, ..) = window_on_local_host("[plugins]\ndisabled = [\"monitor\"]\n", cx);
+    assert!(!samples(&exec), "ran {:?}", exec.ran());
+}
+
+#[gpui_kit::test]
+fn the_panels_submenu_omits_a_panel_of_a_disabled_plugin(cx: &mut TestAppContext) {
+    let (handle, workspace, ..) = {
+        let document = nocterm_settings::SettingsDocument::from_table(
+            "[plugins]\ndisabled = [\"snippets\"]\n"
+                .parse()
+                .expect("the settings are toml"),
+        );
+        super::fixture_with_settings(
+            cx,
+            false,
+            None,
+            false,
+            Some(nocterm_store::SettingsConfig::in_memory(document)),
+        )
+    };
+    let panels = window_entries(handle, &workspace, "Panels", cx);
+    let labels: Vec<_> = panels.iter().map(|(label, _, _)| label.as_str()).collect();
+    assert!(labels.contains(&"AI Agents"), "{labels:?}");
+    assert!(!labels.contains(&"Snippets"), "{labels:?}");
+
+    let (handle, workspace, ..) = fixture(cx);
+    let panels = window_entries(handle, &workspace, "Panels", cx);
+    let labels: Vec<_> = panels.iter().map(|(label, _, _)| label.as_str()).collect();
+    assert!(labels.contains(&"Snippets"), "{labels:?}");
 }
