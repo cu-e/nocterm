@@ -218,6 +218,7 @@ nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
 nocterm-keymap = { path = "crates/keymap" }
 nocterm-keymap-ui = { path = "crates/keymap-ui" }
+nocterm-layout-ui = { path = "crates/layout-ui" }
 nocterm-local = { path = "crates/local" }
 nocterm-localfs = { path = "crates/localfs" }
 nocterm-monitor = { path = "crates/monitor" }

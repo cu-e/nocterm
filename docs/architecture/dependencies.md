@@ -32,6 +32,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-image-codec` | adapter | `nocterm-ai` | Bounded native image inspection and preview encoding. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-store`, `nocterm-ui` | Keymap settings page: search, rebind and reset key bindings. |
+| `nocterm-layout-ui` | feature | `nocterm-plugin-enablement`, `nocterm-plugin-model`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-window-layout`, `nocterm-workspace` | The editor of the status bar, the panel groups and their settings, inside Appearance. |
 | `nocterm-local` | adapter | `nocterm-core`, `nocterm-session` | Portable local PTY session and program adapter. |
 | `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session`, `nocterm-settings` | Host resource monitoring: collection scripts, parsers, rates and history. |
@@ -226,6 +227,13 @@ graph TD
     nocterm_keymap_ui --> nocterm_settings
     nocterm_keymap_ui --> nocterm_store
     nocterm_keymap_ui --> nocterm_ui
+    nocterm_layout_ui --> nocterm_plugin_enablement
+    nocterm_layout_ui --> nocterm_plugin_model
+    nocterm_layout_ui --> nocterm_settings
+    nocterm_layout_ui --> nocterm_store
+    nocterm_layout_ui --> nocterm_ui
+    nocterm_layout_ui --> nocterm_window_layout
+    nocterm_layout_ui --> nocterm_workspace
     nocterm_local --> nocterm_core
     nocterm_local --> nocterm_session
     nocterm_localfs --> nocterm_session

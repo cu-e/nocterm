@@ -1,0 +1,182 @@
+//! The inspector shows where the selected item comes from and the settings it has.
+
+use std::{cell::RefCell, rc::Rc};
+
+use gpui_kit::TestAppContext;
+use nocterm_plugin_enablement::PluginEnablement;
+use nocterm_plugin_model::{FieldEdit, GroupId, SettingValue, Side};
+use nocterm_ui::PluginSettingsSource as _;
+use nocterm_window_layout::{Bar, BarItem, LayoutPreset, LayoutSettings, PresetId};
+use nocterm_workspace::OpenPlugins;
+
+use super::{catalog, open};
+use crate::snapshot::Snapshot;
+
+const SECONDS: &str = "plugin-setting:tools:seconds:";
+
+fn opened_plugins(cx: &mut TestAppContext) -> Rc<RefCell<Vec<Option<String>>>> {
+    let opened = Rc::new(RefCell::new(Vec::new()));
+    let sink = opened.clone();
+    cx.update(|cx| {
+        cx.on_action(move |action: &OpenPlugins, _| {
+            sink.borrow_mut()
+                .push(action.plugin.as_ref().map(ToString::to_string));
+        });
+    });
+    opened
+}
+
+#[gpui_kit::test]
+fn a_core_item_is_built_in_and_has_no_settings(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    fixture.click("layout-item:shell.transfers", cx);
+
+    assert_eq!(
+        fixture.label("layout-owner", cx).as_deref(),
+        Some("Built in")
+    );
+    assert!(fixture.has("layout-controls", cx));
+    assert!(fixture.has("layout-inspector:shell.transfers", cx));
+}
+
+#[gpui_kit::test]
+fn an_item_of_a_plugin_without_settings_links_to_the_plugin(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    let opened = opened_plugins(cx);
+    fixture.click("layout-item:plain.note", cx);
+
+    assert_eq!(
+        fixture.label("layout-owner", cx).as_deref(),
+        Some("Part of Plain")
+    );
+    assert!(fixture.has("layout-no-settings", cx));
+    fixture.click("layout-manage-plugin", cx);
+    assert_eq!(*opened.borrow(), [Some("plain".to_owned())]);
+}
+
+#[gpui_kit::test]
+fn the_settings_of_an_item_are_edited_beside_the_bar_and_leave_the_layout_alone(
+    cx: &mut TestAppContext,
+) {
+    let fixture = open(cx);
+    fixture.click("layout-item:tools.clock", cx);
+    fixture.click(SECONDS, cx);
+
+    let edits = fixture.tools.edits();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].0, "seconds");
+    assert_eq!(edits[0].1, FieldEdit::Set(SettingValue::Bool(true)));
+    assert!(
+        fixture.stored(cx).presets.is_empty(),
+        "the layout is untouched"
+    );
+
+    fixture.click("layout-undo", cx);
+    assert_eq!(
+        fixture.tools.edits().len(),
+        1,
+        "undo has nothing of the form to take back"
+    );
+    cx.update(|cx| {
+        assert_eq!(
+            fixture.tools.values(cx).get("seconds"),
+            Some(&SettingValue::Bool(true))
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn an_item_of_a_disabled_plugin_says_so_and_offers_to_enable_it(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    let opened = opened_plugins(cx);
+    fixture.click("layout-item:off.item", cx);
+
+    assert_eq!(
+        fixture.label("layout-owner", cx).as_deref(),
+        Some("Disabled \u{b7} Part of Switched off")
+    );
+    fixture.click("layout-enable-plugin", cx);
+    assert_eq!(*opened.borrow(), [Some("off".to_owned())]);
+}
+
+#[gpui_kit::test]
+fn the_settings_are_editable_on_a_built_in_layout_that_is_not_in_use(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    fixture.click("layout-choice:swapped", cx);
+    fixture.click("layout-item:tools.clock", cx);
+
+    assert!(fixture.has("layout-read-only", cx));
+    assert!(
+        !fixture.has("layout-controls", cx),
+        "the arrangement is read-only"
+    );
+    fixture.click(SECONDS, cx);
+    assert_eq!(fixture.tools.edits().len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_panel_group_has_an_arrangement_and_a_side(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    fixture.click("layout-item:group:navigation", cx);
+
+    assert!(fixture.has("layout-inspector:group:navigation", cx));
+    assert!(fixture.has("layout-side", cx));
+}
+
+#[gpui_kit::test]
+fn an_item_the_plugin_declares_no_settings_for_shows_none(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    fixture.click("layout-item:tools.cpu", cx);
+
+    assert!(fixture.has("layout-no-settings", cx));
+    assert!(!fixture.has(SECONDS, cx));
+}
+
+#[gpui_kit::test]
+fn clicking_a_panel_in_the_preview_selects_the_panel_and_not_its_group(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    fixture.click("layout-preview:shell.files", cx);
+
+    assert!(fixture.has("layout-inspector:shell.files", cx));
+    assert!(!fixture.has("layout-inspector:group:navigation", cx));
+}
+
+#[test]
+fn a_group_that_follows_its_zone_has_no_side_of_its_own() {
+    let group = |id: &'static str, side| BarItem::Group {
+        id: GroupId::new(id),
+        side,
+        primary: false,
+        members: Vec::new(),
+    };
+    let preset = PresetId::from_owned("p1".to_owned());
+    let settings = LayoutSettings {
+        active: Some(preset.clone()),
+        presets: vec![LayoutPreset {
+            id: preset,
+            name: "Work".to_owned(),
+            bar: Bar {
+                center: vec![
+                    group("navigation", Some(Side::Right)),
+                    group("assistant", None),
+                ],
+                ..Bar::default()
+            },
+            ..LayoutPreset::default()
+        }],
+    };
+
+    let snapshot = Snapshot::new(
+        &settings,
+        &PluginEnablement::default(),
+        false,
+        None,
+        &catalog(),
+    );
+
+    assert_eq!(
+        snapshot.side_override(&GroupId::new("navigation")),
+        Some(Side::Right)
+    );
+    assert_eq!(snapshot.side_override(&GroupId::new("assistant")), None);
+}

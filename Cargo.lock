@@ -5373,6 +5373,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-layout-ui"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "nocterm-plugin-enablement",
+ "nocterm-plugin-model",
+ "nocterm-settings",
+ "nocterm-store",
+ "nocterm-ui",
+ "nocterm-window-layout",
+ "nocterm-workspace",
+ "tempfile",
+]
+
+[[package]]
 name = "nocterm-local"
 version = "0.0.0"
 dependencies = [
