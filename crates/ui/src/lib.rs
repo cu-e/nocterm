@@ -9,10 +9,13 @@
 //!
 //! Owns: Appearance views, theme projections, shared controls, directory editing/selection,
 //! checked text receipts, layout, the searchable choice picker, and the icons and column widths of
-//! plugin contributions.
+//! plugin contributions, and the settings form of a plugin (`PluginSettingsForm`, its
+//! `PluginSettingsSource` port, the system `SectionBinding` and the `PluginSettingsDirectory`).
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`, read-only `DirectoryRead`. Ports provided: UI helpers,
-//! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
+//! explicit settings-based terminal styling, SettingsTextField, the installed settings handle and
+//! `PluginSettingsSource` (named for the form's need; `SectionBinding` implements it over an
+//! owner's own settings section).
 //! Settings section: appearance. Terminal styling uses the terminal-model domain schema.
 //! Globals: Design, Notices.
 //! Imported themes use one retained ThemeUi projection over ThemesHandle and SettingsHandle.
@@ -112,6 +115,14 @@ mod choice_picker;
 pub use appearance_page::appearance_settings_page;
 pub use appearance_page::commands::{open_scheme_picker, open_theme_picker};
 pub use choice_picker::{PickerOption, open_choice_picker};
+
+mod plugin_settings;
+#[cfg(any(test, feature = "test-support"))]
+pub use plugin_settings::FakePluginSettings;
+pub use plugin_settings::{
+    FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsError, PluginSettingsForm,
+    PluginSettingsSource, SectionBinding,
+};
 
 #[cfg(test)]
 mod settings_initialization_tests;
