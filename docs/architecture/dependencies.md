@@ -38,6 +38,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-monitor-ui` | feature | `nocterm-containers`, `nocterm-monitor`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
 | `nocterm-plugin-enablement` | domain | `nocterm-plugin-model`, `nocterm-settings` | Which system plugins the user switched off: the [plugins] settings section and the rule that keeps required plugins and unknown ids out of the effective set. |
 | `nocterm-plugin-model` | domain |  | What a plugin is and what the window shell can host: ids, system plugin descriptors, placement hints and the checked catalog. |
+| `nocterm-plugins-ui` | feature | `nocterm-core`, `nocterm-plugin-model`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The Plugins settings page: the system plugins, their enable switches and settings forms. |
 | `nocterm-project-container-fs` | adapter | `nocterm-containers`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session` | Container-scoped sessions and bounded remote filesystem adaptation. |
 | `nocterm-project-environment` | adapter | `nocterm-connections-model`, `nocterm-project-providers`, `nocterm-session` | Observed workspace tool installation and managed session activation. |
 | `nocterm-project-model` | domain | `nocterm-core`, `nocterm-session` | Provider-neutral workspace definitions and stable context identity. |
@@ -240,6 +241,12 @@ graph TD
     nocterm_monitor_ui --> nocterm_workspace
     nocterm_plugin_enablement --> nocterm_plugin_model
     nocterm_plugin_enablement --> nocterm_settings
+    nocterm_plugins_ui --> nocterm_core
+    nocterm_plugins_ui --> nocterm_plugin_model
+    nocterm_plugins_ui --> nocterm_settings
+    nocterm_plugins_ui --> nocterm_store
+    nocterm_plugins_ui --> nocterm_ui
+    nocterm_plugins_ui --> nocterm_workspace
     nocterm_project_container_fs --> nocterm_containers
     nocterm_project_container_fs --> nocterm_project_model
     nocterm_project_container_fs --> nocterm_project_providers

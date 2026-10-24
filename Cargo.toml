@@ -222,6 +222,7 @@ nocterm-monitor = { path = "crates/monitor" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
 nocterm-plugin-enablement = { path = "crates/plugin-enablement" }
 nocterm-plugin-model = { path = "crates/plugin-model" }
+nocterm-plugins-ui = { path = "crates/plugins-ui" }
 nocterm-session = { path = "crates/session" }
 nocterm-settings = { path = "crates/settings" }
 nocterm-store = { path = "crates/store" }

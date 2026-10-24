@@ -5455,6 +5455,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-plugins-ui"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "nocterm-core",
+ "nocterm-plugin-model",
+ "nocterm-settings",
+ "nocterm-store",
+ "nocterm-ui",
+ "nocterm-workspace",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "nocterm-project-container-fs"
 version = "0.0.0"
 dependencies = [

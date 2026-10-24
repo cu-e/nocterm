@@ -1,0 +1,27 @@
+[package]
+name = "nocterm-plugins-ui"
+description = "The Plugins settings page: the system plugins, their enable switches and settings forms."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "feature"
+
+[dependencies]
+nocterm-core.workspace = true
+nocterm-plugin-model.workspace = true
+nocterm-ui.workspace = true
+nocterm-workspace.workspace = true
+gpui-kit.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+nocterm-settings.workspace = true
+nocterm-store.workspace = true
+nocterm-ui = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
