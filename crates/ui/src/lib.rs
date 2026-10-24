@@ -13,7 +13,8 @@
 //! `PluginSettingsSource` port, the system `SectionBinding` and the `PluginSettingsDirectory`).
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`, read-only `DirectoryRead`. Ports provided: UI helpers,
-//! explicit settings-based terminal styling, SettingsTextField, the installed settings handle and
+//! explicit settings-based terminal styling, behind `user-plugins` the `PluginNotices` provider of
+//! `notifications.post` and `notifications.own` for user plugins, SettingsTextField, the installed settings handle and
 //! `PluginSettingsSource` (named for the form's need; `SectionBinding` implements it over an
 //! owner's own settings section).
 //! Settings section: appearance. Terminal styling uses the terminal-model domain schema.

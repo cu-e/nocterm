@@ -87,11 +87,13 @@ impl RenderOnce for NoticeBar {
         let list = notices(window, cx);
         let total = list.notices.len();
         let expanded = list.expanded;
+        // A notice of a plugin never takes the line while an action of the application waits on it.
+        let host_only = list.host_action_live();
         let live = list
             .notices
             .iter()
             .rev()
-            .find(|notice| notice.live)
+            .find(|notice| notice.live && (!host_only || notice.key.is_host()))
             .cloned();
         h_flex()
             .id("notice-bar")
