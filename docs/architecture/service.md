@@ -292,3 +292,16 @@ expected-record conflict and final capture semantics. It has no native I/O, UUID
 generation, view, settings policy or shutdown hook. Composition supplies its snapshot
 writer and registers the same participant once. See
 [ADR0055](../adr/0055-snippet-storage-boundaries.md).
+
+## User plugin host
+
+`nocterm-plugin-ports` declares `Observe<C>`, `Apply<C>` and `Surface`, and `PluginProviders`, the
+immutable record of one window's providers that only the application's composition builds.
+`nocterm-plugin-host` owns the `PluginHost` entity: grants, the sampling cadence, the effect
+queue with gesture tokens, rate limits and the apply-time re-check, fault counting, the caps on
+enabled plugins and renders, and the `PluginRecords` and `PluginData` ports with their documents.
+Neither does I/O; the application implements the two storage ports over the shared persistence
+service. A provider lives in the crate whose state it reads, behind that crate's `user-plugins`
+feature, and is passive: it answers from what the user's own UI already holds (never reading an entity
+that may be updating) and never starts a sampler, watch or connection ([ADR 0090](../adr/0090-user-plugin-host-and-passive-providers.md)). The
+isolation rules for both crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).
