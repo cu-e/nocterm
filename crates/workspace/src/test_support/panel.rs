@@ -15,6 +15,7 @@ pub struct TestPanel {
     title: SharedString,
     icon: IconName,
     badge: Option<SharedString>,
+    attention: Option<SharedString>,
     text: SharedString,
     maximized: bool,
     docked_left: bool,
@@ -68,6 +69,12 @@ impl TestPanel {
         cx.notify();
     }
 
+    /// Makes the panel ask for the user (`Some`) or stop asking.
+    pub fn set_attention(&mut self, attention: Option<SharedString>, cx: &mut Context<Self>) {
+        self.attention = attention;
+        cx.notify();
+    }
+
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.text = text.into();
         cx.notify();
@@ -108,6 +115,7 @@ impl TestPanelBuilder {
             title: self.title,
             icon: self.icon,
             badge: self.badge,
+            attention: None,
             text: self.text,
             maximized: false,
             docked_left: false,
@@ -145,6 +153,9 @@ impl Panel for TestPanel {
     }
     fn badge(&self, _: &App) -> Option<SharedString> {
         self.badge.clone()
+    }
+    fn attention(&self, _: &App) -> Option<SharedString> {
+        self.attention.clone()
     }
 }
 impl RightPanel for TestPanel {

@@ -60,8 +60,9 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
             0,
             "visible current approval needs no notice"
         );
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
@@ -79,15 +80,17 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
             0,
             "streaming must not repost a dismissed notice"
         );
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         assert_eq!(nocterm_ui::notice::count(window, cx), 0);
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
@@ -105,8 +108,9 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
     new_chat(&f, cx);
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
     cx.update_window(f.handle, |_, window, cx| {
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx))
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        })
     })
     .unwrap();
     for id in ["first", "second"] {
@@ -177,8 +181,18 @@ fn separate_installations_keep_original_runtime_and_policy_after_later_compositi
     });
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(first.workspace.read(cx).right_panel_is_available());
-        assert!(!second.workspace.read(cx).right_panel_is_available());
+        assert!(
+            first
+                .workspace
+                .read(cx)
+                .panel_is_available(&crate::plugin::CHATS.id)
+        );
+        assert!(
+            !second
+                .workspace
+                .read(cx)
+                .panel_is_available(&crate::plugin::CHATS.id)
+        );
         assert_eq!(
             first
                 .installation

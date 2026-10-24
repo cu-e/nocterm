@@ -368,12 +368,64 @@ fn hiding_the_panel_flushes_its_latest_text_without_waiting_for_the_timer(cx: &m
     });
     set_input(&f, "before hide", cx);
     cx.update_window(f.handle, |_, window, cx| {
-        f.workspace
-            .update(cx, |workspace, cx| workspace.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
     assert_eq!(saved_value(&f, &id)["draft"], "before hide");
+}
+
+#[gpui_kit::test]
+fn each_close_flushes_the_draft_once_and_nothing_else_writes_it(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let id = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .document()
+            .chat_id()
+            .to_owned()
+    });
+    let toggle = |cx: &mut TestAppContext| {
+        cx.update_window(f.handle, |_, window, cx| {
+            f.workspace.update(cx, |workspace, cx| {
+                workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    set_input(&f, "before hide", cx);
+    let before = persistence::save_count(&f, &id);
+
+    toggle(cx);
+    let hidden = persistence::save_count(&f, &id);
+    for _ in 0..2 {
+        cx.update_window(f.handle, |_, window, cx| {
+            f.workspace
+                .update(cx, |workspace, cx| workspace.toggle_sidebar(window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        persistence::save_count(&f, &id),
+        hidden,
+        "toggling the sidebar while the panel is closed writes nothing"
+    );
+    toggle(cx);
+
+    assert_eq!(hidden, before + 1, "closing flushes once");
+    assert_eq!(
+        persistence::save_count(&f, &id),
+        hidden,
+        "showing writes nothing"
+    );
 }
 
 #[gpui_kit::test]

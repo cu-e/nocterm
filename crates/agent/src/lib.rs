@@ -15,7 +15,8 @@
 //! admission, filesystem storage or image decoding.
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,
 //! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
-//! Ports provided: workspace right panel and TerminalAuthOpener composition callback.
+//! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel,
+//! and the TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: none.
 //! Invariants: preview cache generations reject stale same-key delivery after clear or chat
@@ -30,6 +31,7 @@ mod image_deps;
 mod installation;
 pub use installation::Installed;
 mod panel;
+pub mod plugin;
 pub use image_deps::ImageDeps;
 use nocterm_agent_runtime as runtime;
 mod workspace_seat;
@@ -104,19 +106,21 @@ gpui_kit::actions!(
 );
 
 /// Installs a window-local panel with an initially empty chat history.
+///
+/// A window whose chat context cannot be bound gets no panel; that is logged, not an error.
 pub fn register(
     workspace: &mut nocterm_workspace::Workspace,
     installed: Installed,
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
-) {
+) -> Result<(), nocterm_workspace::RegistrationError> {
     let owner = cx.entity().downgrade();
     let source = workspace.context_source(cx);
     let host = match chat_host::ChatHost::new(owner, installed, source) {
         Ok(host) => host,
         Err(error) => {
             tracing::warn!(%error, "could not bind agent panel context");
-            return;
+            return Ok(());
         }
     };
     let enabled = host
@@ -124,6 +128,11 @@ pub fn register(
         .setting::<nocterm_ai::AiSettings>(cx)
         .enabled;
     let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, window, panel_cx));
-    workspace.set_right_panel(panel, window, cx);
-    workspace.set_right_panel_available(enabled, window, cx);
+    workspace.register_panel(
+        nocterm_workspace::PanelRegistration::with_entity(&plugin::CHATS, panel).expandable(),
+        window,
+        cx,
+    )?;
+    workspace.set_panel_available(&plugin::CHATS.id, enabled, window, cx);
+    Ok(())
 }

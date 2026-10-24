@@ -292,7 +292,7 @@ fn usage_original_bounds_follow_window_resize(cx: &mut TestAppContext) {
     new_chat(&f, cx);
     cx.update(|cx| {
         f.workspace.update(cx, |workspace, cx| {
-            workspace.set_right_panel_maximized(true, cx)
+            workspace.set_panel_expanded(&crate::plugin::CHATS.id, true, cx)
         });
     });
     settle(&f, cx);

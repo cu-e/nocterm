@@ -7,8 +7,9 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_ai::model::controls::ConfigCategory;
+use nocterm_plugin_model::Side;
 use nocterm_ui::IconName;
-use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, WorkspaceEvent};
+use nocterm_workspace::{ExpandablePanel, Panel, PanelRequest, WorkspaceEvent};
 
 mod approvals;
 mod attach;
@@ -70,7 +71,7 @@ pub(crate) struct AgentPanel {
     settings: nocterm_store::SettingsHandle,
     source: nocterm_workspace::ProjectSurfaceReceipt,
 }
-impl EventEmitter<RightPanelEvent> for AgentPanel {}
+impl EventEmitter<PanelRequest> for AgentPanel {}
 
 #[cfg(test)]
 mod tests;
@@ -205,14 +206,14 @@ impl AgentPanel {
                 self.select_context(source, window, cx);
             }
         }
-        if event == WorkspaceEvent::RightPanelVisibilityChanged {
+        if event == WorkspaceEvent::PanelVisibilityChanged {
             let visible = self.history_is_visible(cx);
             self.history.set_visible(visible, cx);
             if !self
                 .host
                 .workspace()
                 .upgrade()
-                .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
+                .is_some_and(|workspace| workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id))
             {
                 self.sync_composer_draft(cx);
                 if let Some(thread) = self.current() {
@@ -231,7 +232,7 @@ impl AgentPanel {
         let workspace = self.host.workspace().clone();
         window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| {
-                workspace.set_right_panel_available(enabled, window, cx)
+                workspace.set_panel_available(&crate::plugin::CHATS.id, enabled, window, cx)
             });
         });
         cx.notify();
@@ -258,7 +259,7 @@ impl AgentPanel {
                 .host
                 .workspace()
                 .upgrade()
-                .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
+                .is_some_and(|workspace| workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id))
     }
     fn on_history_split_settling(
         &mut self,
@@ -328,7 +329,7 @@ impl AgentPanel {
     }
     pub(super) fn set_history(&mut self, open: bool, cx: &mut Context<Self>) {
         if let Some(width) = self.layout.set_history(open, self.current().is_some(), cx) {
-            cx.emit(RightPanelEvent::Widen(width));
+            cx.emit(PanelRequest::Widen(width));
         }
         cx.notify();
     }
@@ -420,15 +421,21 @@ impl Panel for AgentPanel {
     fn icon(&self, _: &App) -> IconName {
         IconName::Bot
     }
+    fn attention(&self, cx: &App) -> Option<SharedString> {
+        self.chats
+            .iter()
+            .any(|thread| thread.read(cx).has_pending_approvals())
+            .then(|| "An agent needs permission to continue.".into())
+    }
 }
 
-impl RightPanel for AgentPanel {
-    fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        self.layout.set_maximized(maximized);
+impl ExpandablePanel for AgentPanel {
+    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.layout.set_maximized(expanded);
         cx.notify();
     }
-    fn set_docked_left(&mut self, left: bool, cx: &mut Context<Self>) {
-        self.layout.set_docked_left(left);
+    fn set_side(&mut self, side: Side, cx: &mut Context<Self>) {
+        self.layout.set_docked_left(side == Side::Left);
         cx.notify();
     }
 }

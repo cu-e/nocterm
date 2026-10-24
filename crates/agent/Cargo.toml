@@ -11,6 +11,7 @@ layer = "feature"
 
 [dependencies]
 nocterm-ai.workspace = true
+nocterm-plugin-model.workspace = true
 nocterm-project-model.workspace = true
 nocterm-agent-chat.workspace = true
 nocterm-agent-runtime.workspace = true

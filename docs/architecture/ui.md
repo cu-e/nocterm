@@ -301,13 +301,13 @@ replaces central content while visible navigation retains its side and width.
 Hidden, docked and expanded panel presentations have separate resize states;
 expanded measurements never overwrite remembered docked widths. Navigation controls
 preserve expansion, and closing navigation focuses the visible chat.
-The side panel learns its side through `RightPanel::set_docked_left`; the agent panel puts its
-history column on the outer side and remembers that column's width. A side
+An expandable panel learns its side through `ExpandablePanel::set_side`; the agent
+panel puts its history column on the outer side and remembers that column's width. A side
 panel that opens a column of its own asks the workspace to widen it with
-`RightPanelEvent::Widen`. Navigation panels are shown and hidden by their feature's
-action (`files::ToggleExplorer`, `connections::ToggleServers`,
-`containers::ToggleContainers`) through
-`Workspace::toggle_panel_of`, so the workspace binds no feature's panel.
+`PanelRequest::Widen`. Panels are shown and hidden by their feature's action
+(`files::ToggleExplorer`, `connections::ToggleServers`, `containers::ToggleContainers`)
+through `Workspace::toggle_panel` with the contribution's id, so the workspace binds no
+feature's panel. `ToggleRightPanel` is the remaining legacy action for the side panel.
 
 ## Key bindings
 

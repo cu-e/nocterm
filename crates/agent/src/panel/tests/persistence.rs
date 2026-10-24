@@ -212,7 +212,7 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
     );
 }
 
-fn save_count(f: &Fixture, id: &str) -> usize {
+pub(super) fn save_count(f: &Fixture, id: &str) -> usize {
     f.repository.operations().iter().filter(|operation|matches!(operation,nocterm_ai::testing::StorageOperation::Save(saved) if saved==id)).count()
 }
 #[gpui_kit::test]

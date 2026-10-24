@@ -5025,6 +5025,7 @@ dependencies = [
  "nocterm-agent-providers",
  "nocterm-agent-runtime",
  "nocterm-ai",
+ "nocterm-plugin-model",
  "nocterm-project-model",
  "nocterm-session",
  "nocterm-store",

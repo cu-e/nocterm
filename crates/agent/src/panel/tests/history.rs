@@ -413,7 +413,7 @@ fn second_history_window(
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut workspace = Workspace::new(
-                    nocterm_workspace::Deps::new(f.installation.layout.clone()),
+                    crate::panel::tests::deps(f.installation.layout.clone()),
                     window,
                     cx,
                 );
@@ -427,9 +427,9 @@ fn second_history_window(
                         cx,
                     )
                 });
-                workspace.set_right_panel(view.clone(), window, cx);
-                workspace.set_right_panel_available(true, window, cx);
-                workspace.toggle_right_panel(window, cx);
+                crate::panel::tests::host_panel(&mut workspace, &view, window, cx);
+                workspace.set_panel_available(&crate::plugin::CHATS.id, true, window, cx);
+                workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
                 panel = Some(view);
                 workspace
             })

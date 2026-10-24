@@ -495,6 +495,29 @@ fn a_factory_reads_the_workspace_it_is_registered_in(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_panel_that_asks_for_the_user_marks_its_toggle_until_it_stops(cx: &mut TestAppContext) {
+    let shell = expandable(cx);
+    let look = |cx: &mut TestAppContext| {
+        cx.update(|cx| toggle_presentation(shell.workspace.read(cx), Toggle::SidePanel, cx))
+    };
+    let (quiet, asking) = (look(cx), {
+        cx.update(|cx| {
+            shell.panel.update(cx, |panel, cx| {
+                panel.set_attention(Some("Permission".into()), cx)
+            })
+        });
+        look(cx)
+    });
+    assert_ne!(quiet, asking, "the toggle shows the request");
+    cx.update(|cx| {
+        shell
+            .panel
+            .update(cx, |panel, cx| panel.set_attention(None, cx))
+    });
+    assert_eq!(look(cx), quiet);
+}
+
+#[gpui_kit::test]
 fn each_group_that_changes_visibility_is_announced(cx: &mut TestAppContext) {
     let shell = expandable(cx);
     let (handle, workspace) = (shell.handle, &shell.workspace);

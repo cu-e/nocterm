@@ -204,6 +204,15 @@ impl PanelGroups {
             .is_some_and(|hosted| hosted.presentation_changed(presentation))
     }
 
+    /// Records whether a panel asks for the user. Whether that changed.
+    pub(super) fn attention_changed(&mut self, panel: EntityId, attention: bool) -> bool {
+        self.slots
+            .iter_mut()
+            .filter_map(|slot| slot.panel.as_mut())
+            .find(|hosted| hosted.panel_id() == panel)
+            .is_some_and(|hosted| hosted.set_attention(attention))
+    }
+
     // ── Observations ─────────────────────────────────────────────────────────
 
     pub(super) fn is_shown(&self, key: GroupKey) -> bool {

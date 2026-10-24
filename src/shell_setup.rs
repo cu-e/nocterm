@@ -9,6 +9,7 @@ const PLUGINS: &[&SystemPlugin] = &[
     &nocterm_containers_ui::plugin::PLUGIN,
     &nocterm_projects::plugin::PLUGIN,
     &nocterm_monitor_ui::plugin::PLUGIN,
+    &nocterm_agent::plugin::PLUGIN,
 ];
 
 /// Checks the shell's groups and contributions and the system plugins as one catalog.

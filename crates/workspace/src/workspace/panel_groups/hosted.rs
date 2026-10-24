@@ -65,6 +65,11 @@ impl HostedPanel {
             _subscription: subscription,
         }
     }
+    /// Starts with the attention the panel asks for.
+    pub(in crate::workspace) fn with_attention(mut self, attention: bool) -> Self {
+        self.attention = attention;
+        self
+    }
     /// Frames the panel as its contribution says instead of by how it is hosted.
     pub(in crate::workspace) fn with_chrome(mut self, chrome: PanelChrome) -> Self {
         self.chrome = chrome;

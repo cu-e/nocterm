@@ -18,14 +18,11 @@ impl AgentPanel {
             && (self
                 .current()
                 .is_none_or(|thread| !thread.read(cx).has_pending_approvals())
-                || self
-                    .host
-                    .workspace()
-                    .upgrade()
-                    .is_none_or(|workspace| !workspace.read(cx).right_panel_is_open()));
-        let _ = self.host.workspace().update(cx, |workspace, cx| {
-            workspace.set_right_panel_attention(attention, cx)
-        });
+                || self.host.workspace().upgrade().is_none_or(|workspace| {
+                    !workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id)
+                }));
+        // The workspace pulls the attention from `Panel::attention` when the panel notifies.
+        cx.notify();
         let requests = needs_notice.then(|| {
             self.chats
                 .iter()
@@ -57,8 +54,8 @@ impl AgentPanel {
             move |window, cx| {
                 let _ = panel.update(cx, |panel, cx| panel.review_pending(cx));
                 let _ = workspace.update(cx, |workspace, cx| {
-                    if !workspace.right_panel_is_open() {
-                        workspace.toggle_right_panel(window, cx);
+                    if !workspace.panel_is_open(&crate::plugin::CHATS.id) {
+                        workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
                     }
                 });
             },

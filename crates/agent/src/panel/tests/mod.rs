@@ -209,48 +209,13 @@ fn fixture_with_width(
                 cx,
             );
             registration.unwrap();
-            let mut panel = None;
             installed
                 .runtime()
                 .inject_events(connector.events.clone(), cx);
-            let mut terminal = None;
-            let (handle, workspace) =
-                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                    cx.new(|cx| {
-                        let mut workspace = Workspace::new(
-                            nocterm_workspace::Deps::new(layout.clone()),
-                            window,
-                            cx,
-                        );
-                        let item = cx.new(|cx| FakeTerminal::new(access.clone(), cx));
-                        terminal = Some(item.entity_id());
-                        workspace.add_item(item, window, cx);
-                        let owner = cx.entity().downgrade();
-                        let source = workspace.general_surface_source(cx);
-                        let view = cx.new(|cx| {
-                            AgentPanel::new(
-                                directory.host(owner, installed.clone(), source),
-                                window,
-                                cx,
-                            )
-                        });
-                        workspace.set_right_panel(view.clone(), window, cx);
-                        workspace.set_right_panel_available(true, window, cx);
-                        workspace.toggle_right_panel(window, cx);
-                        panel = Some(view);
-                        workspace
-                    })
-                })
-                .unwrap();
+            let (handle, workspace, panel, terminal) =
+                open_host(&directory, &installed, &layout, &access, cx);
             (
-                handle,
-                workspace,
-                panel.unwrap(),
-                terminal.unwrap(),
-                ui,
-                shutdown,
-                layout,
-                installed,
+                handle, workspace, panel, terminal, ui, shutdown, layout, installed,
             )
         });
     Fixture {
@@ -294,6 +259,65 @@ fn fixture_services(f: &Fixture) -> AgentServices {
         shared_dirs: Vec::new(),
     }
 }
+/// Opens a window whose workspace holds a terminal and the registered agent panel, shown.
+fn open_host(
+    directory: &HostEnvironment,
+    installed: &crate::Installed,
+    layout: &nocterm_ui::LayoutHandle,
+    access: &Rc<Access>,
+    cx: &mut App,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<AgentPanel>,
+    gpui_kit::EntityId,
+) {
+    let mut panel = None;
+    let mut terminal = None;
+    let (handle, workspace) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        cx.new(|cx| {
+            let mut workspace = Workspace::new(deps(layout.clone()), window, cx);
+            let item = cx.new(|cx| FakeTerminal::new(access.clone(), cx));
+            terminal = Some(item.entity_id());
+            workspace.add_item(item, window, cx);
+            let owner = cx.entity().downgrade();
+            let source = workspace.general_surface_source(cx);
+            let view = cx.new(|cx| {
+                AgentPanel::new(directory.host(owner, installed.clone(), source), window, cx)
+            });
+            host_panel(&mut workspace, &view, window, cx);
+            workspace.set_panel_available(&crate::plugin::CHATS.id, true, window, cx);
+            workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
+            panel = Some(view);
+            workspace
+        })
+    })
+    .unwrap();
+    (handle, workspace, panel.unwrap(), terminal.unwrap())
+}
+/// Dependencies whose plugin catalog lists the agent, over `layout`.
+fn deps(layout: nocterm_ui::LayoutHandle) -> nocterm_workspace::Deps {
+    let catalog = nocterm_workspace::plugin::catalog(&[], &[&crate::plugin::PLUGIN])
+        .expect("the agent plugin forms a valid catalog");
+    nocterm_workspace::Deps::new(layout).with_catalog(catalog)
+}
+/// Registers `view` as the agent panel the way installation does, before the host offers it.
+fn host_panel(
+    workspace: &mut Workspace,
+    view: &Entity<AgentPanel>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .register_panel(
+            nocterm_workspace::PanelRegistration::with_entity(&crate::plugin::CHATS, view.clone())
+                .expandable(),
+            window,
+            cx,
+        )
+        .unwrap();
+    workspace.set_panel_available(&crate::plugin::CHATS.id, false, window, cx);
+}
 /// Simulates a fresh host through public shutdown, installation and view creation.
 fn install_fixture(
     f: &mut Fixture,
@@ -318,26 +342,23 @@ fn install_fixture(
             runtime.inject_events(f.connector.events.clone(), cx)
         };
     });
-    let panel = cx
-        .update_window(f.handle, |_, window, cx| {
-            let panel = cx.new(|cx| {
-                AgentPanel::new(
-                    f._directory.host(
-                        f.workspace.downgrade(),
-                        f.installation.installed.clone(),
-                        f.workspace.read(cx).context_source(cx),
-                    ),
-                    window,
-                    cx,
-                )
-            });
-            f.workspace.update(cx, |workspace, cx| {
-                workspace.set_right_panel(panel.clone(), window, cx)
-            });
-            panel
-        })
-        .unwrap();
+    let (handle, workspace, panel, terminal) = cx.update(|cx| {
+        let host = open_host(
+            &f._directory,
+            &f.installation.installed,
+            &f.installation.layout,
+            &f.access,
+            cx,
+        );
+        let old = f.handle;
+        cx.update_window(old, |_, window, _| window.remove_window())
+            .unwrap();
+        host
+    });
+    f.handle = handle;
+    f.workspace = workspace;
     f.panel = panel;
+    f.terminal = terminal;
 }
 /// Supplies bounded prepared records to the real take-once catalog owner.
 fn reinstall_history(
@@ -448,6 +469,7 @@ mod provider_fixtures;
 mod provider_permissions;
 mod queue_remove;
 mod reconnect;
+mod registration;
 mod resources;
 mod restoration;
 mod routing;

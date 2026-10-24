@@ -21,7 +21,7 @@ async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestApp
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     let mut workspace = Workspace::new(
-                        nocterm_workspace::Deps::new(f.installation.layout.clone()),
+                        crate::panel::tests::deps(f.installation.layout.clone()),
                         window,
                         cx,
                     );
@@ -35,7 +35,7 @@ async fn admission_is_shared_between_separate_workspace_windows(cx: &mut TestApp
                             cx,
                         )
                     });
-                    workspace.set_right_panel(view.clone(), window, cx);
+                    crate::panel::tests::host_panel(&mut workspace, &view, window, cx);
                     panel = Some(view);
                     workspace
                 })

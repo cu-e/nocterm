@@ -286,16 +286,25 @@ pub(super) fn presentation_of<T: Panel>(panel: &Entity<T>, cx: &gpui_kit::App) -
     (panel.title(cx), panel.icon(cx), panel.badge(cx))
 }
 
-/// Keeps the chrome's copy of the panel's presentation current.
+/// Whether the panel asks for the user right now.
+fn attention_of<T: Panel>(panel: &Entity<T>, cx: &gpui_kit::App) -> bool {
+    let panel = panel.read(cx);
+    panel.attention(cx).is_some()
+}
+
+/// Keeps the chrome's copy of the panel's presentation and attention current.
 pub(super) fn observe_presentation<T: Panel>(
     panel: &Entity<T>,
     cx: &mut Context<Workspace>,
 ) -> Subscription {
     cx.observe(panel, move |this, panel, cx| {
-        if this
+        let presented = this
             .panels
-            .presentation_changed(panel.entity_id(), presentation_of(&panel, cx))
-        {
+            .presentation_changed(panel.entity_id(), presentation_of(&panel, cx));
+        let asked = this
+            .panels
+            .attention_changed(panel.entity_id(), attention_of(&panel, cx));
+        if presented || asked {
             cx.notify();
         }
     })
@@ -310,7 +319,10 @@ fn host_plain<T: Panel>(
 ) -> HostedPanel {
     let presentation = presentation_of(&panel, cx);
     let subscription = observe_presentation(&panel, cx);
-    HostedPanel::plain(Box::new(panel), presentation, subscription).with_chrome(chrome)
+    let attention = attention_of(&panel, cx);
+    HostedPanel::plain(Box::new(panel), presentation, subscription)
+        .with_chrome(chrome)
+        .with_attention(attention)
 }
 
 fn host_expandable<T: ExpandablePanel>(
@@ -331,8 +343,10 @@ fn host_expandable<T: ExpandablePanel>(
     );
     let presentation = presentation_of(&panel, cx);
     let subscription = Subscription::join(requests, observe_presentation(&panel, cx));
+    let attention = attention_of(&panel, cx);
     HostedPanel::expandable(Box::new(Expandable(panel)), presentation, subscription)
         .with_chrome(chrome)
+        .with_attention(attention)
 }
 
 /// An [`ExpandablePanel`] as the group hosts it.

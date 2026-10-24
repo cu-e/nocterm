@@ -54,7 +54,7 @@ async fn empty_history_new_chat_streaming_context_and_master_off(cx: &mut TestAp
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(!f.workspace.read(cx).right_panel_is_open());
+        assert!(!f.workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id));
         assert!(window.try_find(toggle_id(Toggle::SidePanel)).is_none());
         assert!(f.panel.read(cx).chat_documents().len() == 0);
     })
@@ -181,7 +181,7 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     let mut workspace = Workspace::new(
-                        nocterm_workspace::Deps::new(f.installation.layout.clone()),
+                        crate::panel::tests::deps(f.installation.layout.clone()),
                         window,
                         cx,
                     );
@@ -195,9 +195,9 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
                             cx,
                         )
                     });
-                    workspace.set_right_panel(view.clone(), window, cx);
-                    workspace.set_right_panel_available(true, window, cx);
-                    workspace.toggle_right_panel(window, cx);
+                    crate::panel::tests::host_panel(&mut workspace, &view, window, cx);
+                    workspace.set_panel_available(&crate::plugin::CHATS.id, true, window, cx);
+                    workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
                     panel = Some(view);
                     workspace
                 })
@@ -223,8 +223,8 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     cx.update(|cx| {
         assert!(f.panel.read(cx).chat_documents().len() == 0);
         assert!(panel.read(cx).chat_documents().len() == 0);
-        assert!(!f.workspace.read(cx).right_panel_is_open());
-        assert!(!workspace.read(cx).right_panel_is_open());
+        assert!(!f.workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id));
+        assert!(!workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id));
     });
     assert_eq!(f.commands.shutdowns.load(Ordering::SeqCst), 1);
     assert_eq!(f.bridge.revoked.lock().unwrap().len(), 1);
@@ -239,7 +239,9 @@ async fn master_switch_clears_all_windows_and_reenable_is_lazy(cx: &mut TestAppC
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 1);
     cx.update_window(handle, |_, window, cx| {
-        workspace.update(cx, |workspace, cx| workspace.toggle_right_panel(window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
         window.render_frame(cx);
         assert!(window.try_find("agent-history-empty").is_some());
         assert!(window.try_find(toggle_id(Toggle::SidePanel)).is_some());
