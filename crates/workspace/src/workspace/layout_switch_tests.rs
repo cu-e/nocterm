@@ -81,7 +81,7 @@ pub(super) struct Windows {
 }
 
 /// A window over fresh shared settings that already hold [`stored`] layouts.
-fn windows(cx: &mut TestAppContext) -> Windows {
+pub(super) fn windows(cx: &mut TestAppContext) -> Windows {
     windows_over(cx, SettingsDocument::default(), Some(stored()), false)
 }
 
@@ -139,7 +139,11 @@ pub(super) fn another_window(
     })
 }
 
-fn register_all(cx: &mut TestAppContext, handle: AnyWindowHandle, workspace: &Entity<Workspace>) {
+pub(super) fn register_all(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    workspace: &Entity<Workspace>,
+) {
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
             for contribution in [PANEL_A, PANEL_B] {
@@ -198,7 +202,7 @@ fn switch(
 }
 
 /// Puts the focus inside the workspace, where its action handlers listen.
-fn focus_workspace(workspace: &Entity<Workspace>, window: &mut Window, cx: &mut App) {
+pub(super) fn focus_workspace(workspace: &Entity<Workspace>, window: &mut Window, cx: &mut App) {
     window.render_frame(cx);
     let focus = workspace.read(cx).focus_handle(cx);
     window.focus(&focus, cx);

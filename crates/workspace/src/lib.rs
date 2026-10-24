@@ -97,11 +97,11 @@ pub use nocterm_workspace_ports::{
 };
 pub use workspace::{
     ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,
-    LayoutChoice, LayoutSwitchError, MalformedLayouts, PanelEntry, PanelRegistration, PanelRequest,
-    ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectSurfaceReceipt,
-    RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot,
-    WidgetRegistration, Workspace, WorkspaceEvent, admit_project_terminal,
-    validate_project_terminal_target,
+    LayoutChoice, LayoutEditError, LayoutSwitchError, MalformedLayouts, PanelEntry,
+    PanelRegistration, PanelRequest, ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory,
+    ProjectSurfaceReceipt, RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane,
+    TabSnapshot, WidgetRegistration, Workspace, WorkspaceEvent, admit_project_terminal,
+    edit_layouts, legacy_layout_swapped, validate_project_terminal_target,
 };
 
 /// The key context of the workspace, for keymap entries.

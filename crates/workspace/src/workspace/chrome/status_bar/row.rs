@@ -3,13 +3,14 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Context, Div, ElementId, IntoElement, Pixels, RenderOnce, TestSupportExt as _,
-    Window,
+    AnyElement, App, Context, Div, ElementId, IntoElement, MouseButton, Pixels, RenderOnce,
+    TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         floating::FloatingCards,
         h_flex,
+        menu::ContextMenuExt as _,
     },
     div,
     prelude::*,
@@ -19,7 +20,7 @@ use nocterm_plugin_model::ContributionId;
 use nocterm_ui::{ActiveDesign as _, notice::NoticeBar};
 
 use super::{
-    BarEntry, BarInputs,
+    BarEntry, BarInputs, BarMenu,
     inputs::{PanelToggle, Shrink},
 };
 use crate::{
@@ -68,8 +69,10 @@ impl StatusBarRow {
 /// The footer: the bar under the body, handling the window's forwarded commands.
 pub(in crate::workspace) fn footer(
     inputs: BarInputs,
+    menu: BarMenu,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
+    let pointed = inputs.pointed().clone();
     let on_click: OnClick = {
         let handle = cx.listener(|this, click: &BarClick, window, cx| match click {
             BarClick::Panel(id) => this.toggle_panel(id, window, cx),
@@ -86,7 +89,10 @@ pub(in crate::workspace) fn footer(
         .test_support()
         .w_full()
         .flex_shrink_0()
+        // The entry under a right press records itself after this clears what was there.
+        .capture_any_mouse_down(move |_, _, _| pointed.set(None))
         .child(StatusBarRow::new(inputs, on_click))
+        .context_menu(move |popup, window, cx| menu.build(popup, window, cx))
 }
 
 impl RenderOnce for StatusBarRow {
@@ -125,7 +131,17 @@ impl StatusBarRow {
     fn draw(&self, entries: &[BarEntry], cx: &App) -> Vec<AnyElement> {
         entries
             .iter()
-            .map(|entry| self.entry(entry, &self.inputs, cx))
+            .map(|entry| {
+                // The wrapper of an entry that truncates may shrink below its content, as the
+                // entry does, or it would hold the entry at full width.
+                h_flex()
+                    .when(entry.shrink() == Shrink::Elastic, |wrapper| {
+                        wrapper.min_w_0()
+                    })
+                    .on_mouse_down(MouseButton::Right, self.pointing(entry))
+                    .child(self.entry(entry, &self.inputs, cx))
+                    .into_any_element()
+            })
             .collect()
     }
 
@@ -157,11 +173,21 @@ impl StatusBarRow {
                     Shrink::Fixed => h_flex().flex_none().child(drawn),
                     Shrink::Elastic => h_flex().min_w_0().overflow_hidden().child(drawn),
                 }
+                .on_mouse_down(MouseButton::Right, self.pointing(entry))
             }))
     }
 }
 
 impl StatusBarRow {
+    /// Records the entry a right press lands on, for the context menu.
+    fn pointing(
+        &self,
+        entry: &BarEntry,
+    ) -> impl Fn(&gpui_kit::MouseDownEvent, &mut Window, &mut App) + 'static {
+        let (pointed, id) = (self.inputs.pointed().clone(), entry.id());
+        move |_, _, _| pointed.set(id.clone())
+    }
+
     fn entry(&self, entry: &BarEntry, inputs: &BarInputs, cx: &App) -> AnyElement {
         match entry {
             BarEntry::Panel(toggle) => self.panel_toggle(toggle),
@@ -180,7 +206,7 @@ impl StatusBarRow {
                     })
                     .into_any_element()
             }
-            BarEntry::Widget(view) => view.clone().into_any_element(),
+            BarEntry::Widget(_, view) => view.clone().into_any_element(),
             BarEntry::Separator => div()
                 .w(px(1.))
                 .h_4()

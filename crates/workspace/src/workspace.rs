@@ -46,10 +46,12 @@ mod registration;
 pub use registration::{
     ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
 };
+mod layout_edit;
 mod layout_switch;
 mod panel_menu;
 mod sessions;
 mod shell_layout;
+pub use layout_edit::{LayoutEditError, edit_layouts, legacy_layout_swapped};
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use layout_switch::switch as switch_layout_now;
 pub use layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts};
@@ -406,3 +408,5 @@ mod panel_chrome_tests;
 mod panel_menu_tests;
 #[cfg(test)]
 mod status_bar_centre_tests;
+#[cfg(test)]
+mod status_bar_menu_tests;

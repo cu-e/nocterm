@@ -4,7 +4,7 @@ use gpui_kit::{AnyView, App, SharedString};
 use nocterm_plugin_model::{ContributionId, PluginCatalog, Zone};
 use nocterm_window_layout::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember};
 
-use super::StatusBar;
+use super::{Pointed, StatusBar};
 use crate::{
     ContextSelectionReceipt,
     plugin::{LOCAL_TERMINAL, NOTIFICATIONS},
@@ -58,7 +58,7 @@ pub(in crate::workspace) enum BarEntry {
     /// The toggle of the local terminal dock, which the shell draws itself.
     LocalTerminal(ToggleLook),
     /// A registered widget's view.
-    Widget(AnyView),
+    Widget(ContributionId, AnyView),
     Separator,
 }
 
@@ -72,12 +72,23 @@ pub(in crate::workspace) enum Shrink {
 }
 
 impl BarEntry {
+    /// The contribution the entry draws; a separator has none.
+    pub(in crate::workspace) fn id(&self) -> Option<ContributionId> {
+        match self {
+            Self::Panel(toggle) => Some(toggle.id().clone()),
+            Self::Notices => Some(NOTIFICATIONS.id.clone()),
+            Self::LocalTerminal(_) => Some(LOCAL_TERMINAL.id.clone()),
+            Self::Widget(id, _) => Some(id.clone()),
+            Self::Separator => None,
+        }
+    }
+
     /// Toggles and separators keep their size. The notice line and a widget's text truncate; the
     /// bell beside the notice line is not part of what truncates.
     pub(in crate::workspace) fn shrink(&self) -> Shrink {
         match self {
             Self::Panel(_) | Self::LocalTerminal(_) | Self::Separator => Shrink::Fixed,
-            Self::Notices | Self::Widget(_) => Shrink::Elastic,
+            Self::Notices | Self::Widget(..) => Shrink::Elastic,
         }
     }
 }
@@ -89,6 +100,7 @@ pub(in crate::workspace) struct BarInputs {
     right: Vec<BarEntry>,
     local_terminal_open: bool,
     selection: ContextSelectionReceipt,
+    pointed: Pointed,
 }
 
 impl BarInputs {
@@ -115,6 +127,7 @@ impl BarInputs {
             right: tidy(right),
             local_terminal_open: regions.tabs.local_visible(),
             selection: regions.selection,
+            pointed: status.pointed().clone(),
         }
     }
 
@@ -129,6 +142,13 @@ impl BarInputs {
     }
     pub(in crate::workspace) fn local_terminal_open(&self) -> bool {
         self.local_terminal_open
+    }
+    pub(in crate::workspace) fn pointed(&self) -> &Pointed {
+        &self.pointed
+    }
+    /// Every entry of the three zones.
+    pub(in crate::workspace) fn entries(&self) -> impl Iterator<Item = &BarEntry> {
+        self.left.iter().chain(&self.center).chain(&self.right)
     }
     pub(in crate::workspace) fn selection(&self) -> ContextSelectionReceipt {
         self.selection
@@ -205,7 +225,10 @@ impl Resolver<'_> {
                 false,
             )));
         }
-        self.status.view(id).cloned().map(BarEntry::Widget)
+        self.status
+            .view(id)
+            .cloned()
+            .map(|view| BarEntry::Widget(id.clone(), view))
     }
 
     fn group(&self, group: &ResolvedGroup, entries: &mut Vec<BarEntry>) {

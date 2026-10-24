@@ -18,15 +18,13 @@ use nocterm_plugin_model::{ContributionId, PluginCatalog, PluginId, Side};
 use nocterm_store::{SettingsHandle, StoreError};
 use nocterm_ui::LayoutHandle;
 use nocterm_window_layout::{
-    BuiltIn, LayoutSettings, LayoutTransition, PresetId, ResolvedGroup, ResolvedLayout, select,
-    transition,
+    BuiltIn, EditOp, EditOutcome, EditTarget, LayoutSettings, LayoutTransition, PresetId,
+    ResolvedGroup, ResolvedLayout, select, transition,
 };
 
+use super::layout_edit::{LayoutEditError, edit_layouts};
 use super::layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts, Removed};
 use super::panel_groups::GroupKey;
-
-/// Whether the sidebar and the side panel traded places, before layouts were stored.
-const LEGACY_SWAPPED: &str = "workspace.swapped";
 
 /// What a change of the layout settings asks of the window.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,7 +81,7 @@ impl ShellLayout {
     ) -> Self {
         settings.register::<LayoutSettings>(cx);
         settings.register::<PluginEnablement>(cx);
-        let legacy_swapped = flags.flag(LEGACY_SWAPPED, cx);
+        let legacy_swapped = super::layout_edit::legacy_layout_swapped(flags, cx);
         let seen = settings.setting::<LayoutSettings>(cx).clone();
         let disabled = settings
             .setting::<PluginEnablement>(cx)
@@ -215,6 +213,23 @@ impl ShellLayout {
             Ok(())
         });
         cx.spawn(async move |_| write.await.map(drop).map_err(LayoutSwitchError::from))
+    }
+
+    /// Applies `op` to the layout `target` names for every window.
+    pub(super) fn edit(
+        &self,
+        target: EditTarget,
+        op: EditOp,
+        cx: &mut App,
+    ) -> Task<Result<Option<EditOutcome>, LayoutEditError>> {
+        edit_layouts(
+            &self.settings,
+            self.catalog.clone(),
+            self.legacy_swapped,
+            target,
+            op,
+            cx,
+        )
     }
 
     /// Whether this window should open the registered panel now: the selected saved layout names

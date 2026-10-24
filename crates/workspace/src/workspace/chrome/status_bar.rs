@@ -13,11 +13,14 @@ use nocterm_window_layout::ResolvedLayout;
 use crate::Workspace;
 
 mod inputs;
+mod menu;
 mod row;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use inputs::ToggleLooks;
 pub(super) use inputs::{BarEntry, BarInputs};
+pub(super) use menu::BarMenu;
+use menu::Pointed;
 pub(super) use row::footer;
 
 /// Creates the view of a widget.
@@ -34,13 +37,20 @@ struct WidgetEntry {
 /// The registered status bar widgets, in registration order.
 pub(in crate::workspace) struct StatusBar {
     widgets: Vec<WidgetEntry>,
+    /// The entry the pointer was last pressed on, for the context menu.
+    pointed: Pointed,
 }
 
 impl StatusBar {
     pub(in crate::workspace) fn new() -> Self {
         Self {
             widgets: Vec::new(),
+            pointed: Pointed::default(),
         }
+    }
+
+    pub(in crate::workspace) fn pointed(&self) -> &Pointed {
+        &self.pointed
     }
 
     /// Registers a widget; its view comes with [`StatusBar::fill`].

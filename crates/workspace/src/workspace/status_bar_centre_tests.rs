@@ -296,3 +296,41 @@ fn a_panel_asking_for_the_user_stays_inside_a_narrow_bar_with_the_notices(cx: &m
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_narrow_flat_bar_cuts_the_notice_text_before_the_toggles_beside_it(cx: &mut TestAppContext) {
+    let layouts = layout(
+        serde_json::json!({
+            "left": [{
+                "group": "navigation",
+                "primary": true,
+                "members": ["test.panel-a", "test.panel-b"],
+            }],
+            "center": [],
+            "right": [
+                { "item": "workspace.notifications" },
+                { "item": "workspace.local-terminal" },
+            ],
+        }),
+        &["test.expandable", "test.widget"],
+    );
+    let bar = bar_of(cx, 520., layouts);
+    cx.update_window(bar.handle, |_, window, cx| {
+        say_much(window, cx);
+        bar.workspace.update(cx, |_, cx| cx.notify());
+        window.render_frame(cx);
+        let footer = window.find("workspace-footer").bounds();
+        let terminal = window.find(toggle_id(Toggle::LocalTerminal)).bounds();
+        let bell = window.find("notice-toggle").bounds();
+        let text = window.find("notice-text").bounds();
+        assert!(
+            terminal.right() <= footer.right() - px(8.),
+            "the terminal toggle {terminal:?} is whole inside {footer:?}"
+        );
+        assert!(
+            text.right() <= bell.left() && text.size.width < px(340.),
+            "the text {text:?} was cut before the bell {bell:?}"
+        );
+    })
+    .unwrap();
+}

@@ -377,7 +377,15 @@ impl Chrome {
         regions: &Regions<'_>,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
-        status_bar::footer(self.bar_inputs(regions, cx), cx)
+        let inputs = self.bar_inputs(regions, cx);
+        let menu = status_bar::BarMenu::new(
+            inputs.pointed().clone(),
+            inputs.entries(),
+            regions.catalog,
+            regions.shell.choices(),
+            cx.weak_entity(),
+        );
+        status_bar::footer(inputs, menu, cx)
     }
 
     /// What the status bar draws for the window as it is now.
