@@ -10,7 +10,8 @@
 //! catalog validation, contribution ownership (core or plugin), schema validation, text
 //! sanitizing, pure field edits, the user tier (`user-` plugin ids, `UserPlugin`,
 //! `UserContribution` and its clamp), borrowed `PluginRef`/`ContributionRef` views over both
-//! tiers and the resolution of stored user settings against a versioned schema.
+//! tiers, the [`PluginSet`] snapshot of both and the resolution of stored user settings against a
+//! versioned schema.
 //! Does not own: GPUI types, rendering, panel state, layouts, settings storage, enablement.
 //! Ports used/provided: none. Settings section: none. Globals: none.
 //! Invariants: ids are unique and namespaced by their plugin; exactly one group is primary;
@@ -33,6 +34,7 @@ mod error;
 mod id;
 mod plugin;
 mod schema;
+mod set;
 mod user;
 mod view;
 
@@ -50,6 +52,7 @@ pub use schema::{
     SettingValue, SettingValues, SettingsSchema, apply, bounded, resolve, sanitize_text,
     toggle_choice,
 };
+pub use set::{PluginSet, PluginSetError, SetOwner, UserEntry};
 pub use user::{PluginTier, UserContribution, UserPlugin, UserPluginError};
 pub use view::{ContributionRef, PluginRef};
 

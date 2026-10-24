@@ -5,8 +5,8 @@
 //! being able to tell which privileges an entry may hold.
 
 use crate::{
-    ContributionId, ContributionKind, Icon, Placement, PluginId, PluginTier, SettingsSchema,
-    SystemContribution, SystemPlugin, UserContribution, UserPlugin,
+    ContributionId, ContributionKind, Icon, PanelTraits, Placement, PluginId, PluginTier,
+    SettingsSchema, SystemContribution, SystemPlugin, UserContribution, UserPlugin,
 };
 
 /// A plugin of either tier.
@@ -152,5 +152,26 @@ impl<'a> ContributionRef<'a> {
             Self::System(contribution) => contribution.pinned,
             Self::User(contribution) => contribution.pinned(),
         }
+    }
+
+    /// What a panel needs from its column; `None` for widgets.
+    pub fn panel(self) -> Option<PanelTraits> {
+        match self {
+            Self::System(contribution) => contribution.panel,
+            Self::User(contribution) => contribution.panel(),
+        }
+    }
+
+    /// Sample text for editor previews.
+    pub fn preview(self) -> Option<&'a str> {
+        match self {
+            Self::System(contribution) => contribution.preview,
+            Self::User(_) => None,
+        }
+    }
+
+    /// Whether a user plugin offers it.
+    pub fn is_user(self) -> bool {
+        matches!(self, Self::User(_))
     }
 }

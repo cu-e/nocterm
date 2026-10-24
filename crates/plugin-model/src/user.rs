@@ -9,8 +9,8 @@ use alloc::vec::Vec;
 use thiserror::Error;
 
 use crate::{
-    AutoPlace, ContributionId, ContributionKind, Icon, IdError, PanelChrome, Placement, PluginId,
-    SchemaError, SettingsSchema, Zone, sanitize_text,
+    AutoPlace, ContributionId, ContributionKind, Icon, IdError, PanelChrome, PanelTraits,
+    Placement, PluginId, SchemaError, SettingsSchema, WidthClass, Zone, sanitize_text,
 };
 
 /// Longest name or title, in characters.
@@ -127,6 +127,14 @@ impl UserContribution {
     /// How a panel is framed. User panels never draw their own header.
     pub fn chrome(&self) -> Option<PanelChrome> {
         (self.kind == ContributionKind::Panel).then_some(PanelChrome::Titled)
+    }
+
+    /// What a user panel needs from its column: the navigation width and a shell-drawn title.
+    pub fn panel(&self) -> Option<PanelTraits> {
+        (self.kind == ContributionKind::Panel).then_some(PanelTraits {
+            width: WidthClass::Navigation,
+            chrome: PanelChrome::Titled,
+        })
     }
 
     /// User contributions are never pinned.
