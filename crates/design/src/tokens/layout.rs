@@ -39,4 +39,6 @@ pub struct Layout {
     pub button_padding: f32,
     /// Initial height of the independent local terminal dock, in rem.
     pub local_terminal_height: f32,
+    /// Widest the centre of the status bar grows, in rem.
+    pub status_bar_center_max: f32,
 }

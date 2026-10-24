@@ -3,7 +3,8 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, App, Context, ElementId, IntoElement, RenderOnce, TestSupportExt as _, Window,
+    AnyElement, App, Context, Div, ElementId, IntoElement, Pixels, RenderOnce, TestSupportExt as _,
+    Window,
     component::{
         ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -12,15 +13,33 @@ use gpui_kit::{
     },
     div,
     prelude::*,
-    px,
+    px, rems,
 };
 use nocterm_plugin_model::ContributionId;
-use nocterm_ui::notice::NoticeBar;
+use nocterm_ui::{ActiveDesign as _, notice::NoticeBar};
 
-use super::{BarEntry, BarInputs, inputs::PanelToggle};
+use super::{
+    BarEntry, BarInputs,
+    inputs::{PanelToggle, Shrink},
+};
 use crate::{
     ContextSelectionReceipt, Workspace, plugin::LOCAL_TERMINAL, workspace::panel_groups::GroupKey,
 };
+
+/// The gap between the entries of a slot, which `gap_1` draws.
+const SLOT_GAP: Pixels = px(4.);
+/// The width of a toggle button. A badge beside the icon makes the toggle wider than this.
+const TOGGLE_WIDTH: Pixels = px(24.);
+/// The width of a separator.
+const SEPARATOR_WIDTH: Pixels = px(1.);
+
+/// What a fixed entry needs of its slot.
+fn fixed_width(entry: &BarEntry) -> Pixels {
+    match entry {
+        BarEntry::Separator => SEPARATOR_WIDTH,
+        _ => TOGGLE_WIDTH,
+    }
+}
 
 /// What a click on the bar asks of the window.
 #[derive(Clone, Debug)]
@@ -71,26 +90,74 @@ pub(in crate::workspace) fn footer(
 }
 
 impl RenderOnce for StatusBarRow {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let border = cx.theme().sidebar_border;
         let floating = FloatingCards::get(cx).is_some();
         let inputs = &self.inputs;
-        let draw = |entries: &[BarEntry], cx: &App| -> Vec<AnyElement> {
-            entries
-                .iter()
-                .map(|entry| self.entry(entry, inputs, cx))
-                .collect()
-        };
-        h_flex()
+        let row = h_flex()
             .gap_1()
             .px_2()
             .py_1()
             // On the canvas the gap above already separates the footer.
-            .when(!floating, |row| row.border_t_1().border_color(border))
-            .children(draw(inputs.left(), cx))
-            .children(draw(inputs.center(), cx))
-            .child(div().flex_1())
-            .children(draw(inputs.right(), cx))
+            .when(!floating, |row| row.border_t_1().border_color(border));
+        if inputs.center().is_empty() {
+            return row
+                .children(self.draw(inputs.left(), cx))
+                .child(div().flex_1())
+                .children(self.draw(inputs.right(), cx));
+        }
+        // The outer slots share what the centre leaves, equally, so the centre sits at the
+        // window's midpoint whenever nothing is cut.
+        let centre_max =
+            rems(cx.design().layout.status_bar_center_max).to_pixels(window.rem_size());
+        row.child(self.slot(inputs.left(), false, cx))
+            .child(
+                self.slot(inputs.center(), false, cx)
+                    .flex_initial()
+                    .max_w(centre_max),
+            )
+            .child(self.slot(inputs.right(), true, cx))
+    }
+}
+
+impl StatusBarRow {
+    /// The entries in order, as the flat bar draws them.
+    fn draw(&self, entries: &[BarEntry], cx: &App) -> Vec<AnyElement> {
+        entries
+            .iter()
+            .map(|entry| self.entry(entry, &self.inputs, cx))
+            .collect()
+    }
+
+    /// One of the three slots: its entries by shrink class.
+    ///
+    /// A slot shares the room the centre leaves equally with the other outer slot but never
+    /// gives up what its fixed entries need, so the centre and the entries that truncate give way
+    /// before a toggle is clipped.
+    ///
+    /// With `from_end`, free room goes before the entries so they end at the window's edge;
+    /// without room they start at the slot's start and the slot clips them at its outer end.
+    fn slot(&self, entries: &[BarEntry], from_end: bool, cx: &App) -> Div {
+        let fixed = entries
+            .iter()
+            .filter(|entry| entry.shrink() == Shrink::Fixed)
+            .map(fixed_width)
+            .fold(px(0.), |sum, width| sum + width);
+        let children = entries.len() + usize::from(from_end);
+        let gaps = SLOT_GAP * children.saturating_sub(1) as f32;
+        h_flex()
+            .flex_1()
+            .min_w(fixed + gaps)
+            .gap_1()
+            .overflow_hidden()
+            .when(from_end, |slot| slot.child(div().flex_1().min_w_0()))
+            .children(entries.iter().map(|entry| {
+                let drawn = self.entry(entry, &self.inputs, cx);
+                match entry.shrink() {
+                    Shrink::Fixed => h_flex().flex_none().child(drawn),
+                    Shrink::Elastic => h_flex().min_w_0().overflow_hidden().child(drawn),
+                }
+            }))
     }
 }
 

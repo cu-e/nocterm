@@ -62,6 +62,26 @@ pub(in crate::workspace) enum BarEntry {
     Separator,
 }
 
+/// How an entry gives way when the bar is too narrow for its zone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::workspace) enum Shrink {
+    /// Never shrinks: it is drawn whole or clipped with its zone.
+    Fixed,
+    /// Truncates its own content, before any zone clips.
+    Elastic,
+}
+
+impl BarEntry {
+    /// Toggles and separators keep their size. The notice line and a widget's text truncate; the
+    /// bell beside the notice line is not part of what truncates.
+    pub(in crate::workspace) fn shrink(&self) -> Shrink {
+        match self {
+            Self::Panel(_) | Self::LocalTerminal(_) | Self::Separator => Shrink::Fixed,
+            Self::Notices | Self::Widget(_) => Shrink::Elastic,
+        }
+    }
+}
+
 /// The entries of the three zones, with the state the entries need.
 pub(in crate::workspace) struct BarInputs {
     left: Vec<BarEntry>,

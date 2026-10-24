@@ -385,6 +385,12 @@ impl DesignTokens {
             5.0,
             60.0,
         )?;
+        within(
+            "layout.status_bar_center_max",
+            layout.status_bar_center_max,
+            4.0,
+            100.0,
+        )?;
         Ok(())
     }
 }

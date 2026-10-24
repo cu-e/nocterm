@@ -233,11 +233,15 @@ left = [
   { group = "navigation", members = ["connections.servers", { separator = true }, "files.explorer"] },
   { item = "monitor.summary" },
 ]
+center = [{ item = "workspace.notifications" }]
 right = [{ group = "assistant", side = "right", members = ["agent.chats"] }]
 ```
 
-The footer has a `left` and a `right` zone, each a list of entries drawn in order. An entry is
-a table with exactly one of these keys:
+The footer has a `left`, a `center` and a `right` zone, each a list of entries drawn in
+order. `center` is optional: its entries stay at the middle of the footer and give way first
+when the window is narrow (the notification line is cut before any toggle), while with an
+empty `center` the footer is one row from the left zone to the right one. An entry is a
+table with exactly one of these keys:
 
 - `item = "<widget id>"` places a status bar widget, such as `monitor.summary`;
 - `separator = true` draws a divider; dividers never lead, trail or double up;

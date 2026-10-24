@@ -44,6 +44,7 @@
 | `layout.sidebar_max_width` | "number" | `32.0` | Widest the sidebar can be dragged. |
 | `layout.sidebar_min_width` | "number" | `12.0` | Narrowest the sidebar can be dragged. |
 | `layout.sidebar_width` | "number" | `17.0` | Initial width of the left sidebar. |
+| `layout.status_bar_center_max` | "number" | `40.0` | Widest the centre of the status bar grows, in rem. |
 | `layout.tab_max_width` | "number" | `14.0` | Width past which a session tab ellipsizes its title. |
 | `layout.terminal_padding` | "number" | `0.5` | Space between the terminal grid and the edge of its pane. |
 | `light.canvas` | ["string","null"] | `null` | The window's backdrop behind floating cards: the gaps between them and the title and status bars. Unset: a shade darker than `background`. |

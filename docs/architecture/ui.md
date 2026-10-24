@@ -186,7 +186,7 @@ actions operate the same dock for keyboard split/reorder/focus. Tab context-menu
 closures capture the original surface/selection and clicked Item, reject stale
 selections and resolve that surface's current pane order at execution;
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
-footer is drawn from the resolved layout (ADR 0083): panel toggles, the notice bar, the local terminal toggle and status widgets in three zones. Removing the last bottom Item also
+footer is drawn from the resolved layout (ADR 0083): panel toggles, the notice bar, the local terminal toggle and status widgets in three zones. A bar with an empty centre is one flat row, with the right zone pushed to the end. A bar with a centre is three slots: the outer two share the width the centre leaves, so the centre stays at the window's midpoint (up to `layout.status_bar_center_max`) while nothing is cut. Toggles and separators never shrink, and an outer slot never gives up the room they need: the centre, the notice line and widgets truncate first, and only then does the right slot clip, from its outer end, so a toggle that asks for the user stays visible. Removing the last bottom Item also
 removes its Dock instead of merely emptying the tab list. Hiding the local dock
 uses native dock visibility, preserving its pane tree, sizes, tab order,
 selections, groups and running processes. Within a surface every tab shares one

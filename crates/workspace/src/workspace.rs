@@ -401,3 +401,5 @@ mod panel_availability_tests;
 mod panel_chrome_tests;
 #[cfg(test)]
 mod panel_menu_tests;
+#[cfg(test)]
+mod status_bar_centre_tests;
