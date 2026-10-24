@@ -5,7 +5,8 @@
 //! SnippetDraft owns literal native controls; AttachmentPicker owns search/folding/section state.
 //! Does not own: checked record rules or ordered background write orchestration.
 //! Native storage/entropy is supplied by composition; the library model lives in snippets-store.
-//! Ports used: SnippetsHandle, SettingsHandle, SnippetIds, UserTerminalPaste. Ports provided: sidebar panel.
+//! Ports used: SnippetsHandle, SettingsHandle, SnippetIds, UserTerminalPaste.
+//! Ports provided: the `snippets` system plugin (`plugin::PLUGIN`) with its sidebar panel.
 //! Settings section: reads terminal through supplied SettingsHandle. Globals: none.
 //! Invariants: failed persistence never publishes a change; malformed libraries
 //! remain read-only; final accepted work uses the shared shutdown coordinator.
@@ -14,13 +15,14 @@
 
 mod editor;
 mod installation;
+pub mod plugin;
 #[cfg(test)]
 mod test_support;
 pub use installation::Installed;
 mod panel;
 use gpui_kit::{App, AppContext as _, Context, Window};
 pub use nocterm_snippets_store::{SnippetsError, SnippetsLoadError};
-use nocterm_workspace::Workspace;
+use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};
 pub use panel::SnippetsPanel;
 
 gpui_kit::actions!(
@@ -43,20 +45,28 @@ pub fn init(
     Installed::new(model, settings, ids)
 }
 /// Register the snippet switch and action in a workspace.
+///
+/// The actions are registered even when the workspace refuses the panel.
 pub fn register(
     workspace: &mut Workspace,
     installed: &Installed,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
-    let handle = cx.entity();
-    let installed = installed.clone();
-    let panel = cx.new(|cx| SnippetsPanel::new(installed.clone(), handle.clone(), window, cx));
-    workspace.add_panel(panel, cx);
+) -> Result<(), RegistrationError> {
+    let editors = installed.clone();
     workspace.register_action(move |_, _: &NewSnippet, window, cx| {
-        editor::open(installed.clone(), None, cx.entity().downgrade(), window, cx);
+        editor::open(editors.clone(), None, cx.entity().downgrade(), window, cx);
     });
     workspace.register_action(|workspace, _: &ToggleSnippets, window, cx| {
-        workspace.toggle_panel_of::<SnippetsPanel>(window, cx)
+        workspace.toggle_panel(&plugin::LIBRARY.id, window, cx)
     });
+    let installed = installed.clone();
+    workspace.register_panel(
+        PanelRegistration::new(&plugin::LIBRARY, move |_, window, cx| {
+            let handle = cx.entity();
+            cx.new(|cx| SnippetsPanel::new(installed.clone(), handle.clone(), window, cx))
+        }),
+        window,
+        cx,
+    )
 }

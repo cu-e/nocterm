@@ -9,6 +9,18 @@ layers: `nocterm-terminal`, `nocterm-connections`, `nocterm-settings-ui`,
 `nocterm-containers-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
 `nocterm-agent` and `nocterm-agent-settings-ui`.
 
+## System plugins and core contributions
+
+A feature crate that owns a sidebar panel or a status bar widget declares it in a `plugin`
+module: `pub static PLUGIN: SystemPlugin` for a feature packaged as a system plugin
+(snippets, containers, workspaces, monitor, and the required AI agents plugin), or `pub const CORE: &[SystemContribution]`
+for a core function (connections and files). Its `register` places the contribution with
+`Workspace::register_panel` or `register_widget` under that id and returns
+`Result<(), RegistrationError>`; bootstrap reports a refusal and continues. Actions reach a
+panel by id (`toggle_panel`, `open_panel`), so nothing outside the workspace holds the panel
+entity. The application lists every plugin once in `src/shell_setup.rs`. See
+[ADR 0082](../adr/0082-system-plugins-and-core-contributions.md).
+
 ## Terminal
 
 `nocterm-terminal` owns the terminal model/view and observes session

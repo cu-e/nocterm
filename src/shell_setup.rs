@@ -4,7 +4,7 @@ use nocterm_workspace::plugin;
 
 /// Every system plugin of the application. A plugin appears here once, beside the others,
 /// so the catalog check sees all contributions together.
-const PLUGINS: &[&SystemPlugin] = &[];
+const PLUGINS: &[&SystemPlugin] = &[&nocterm_snippets_ui::plugin::PLUGIN];
 
 /// Checks the shell's groups and contributions and the system plugins as one catalog.
 pub(crate) fn plugin_catalog() -> Result<PluginCatalog, CatalogError> {

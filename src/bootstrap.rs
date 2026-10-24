@@ -422,6 +422,13 @@ fn register_transfer_shutdown(
     );
 }
 
+/// A feature the workspace refused to place stays installed without its panel or widget.
+fn report_registration(owner: &str, result: Result<(), nocterm_workspace::RegistrationError>) {
+    if let Err(error) = result {
+        tracing::error!(owner, %error, "shell registration failed");
+    }
+}
+
 /// Reports registration failures consistently while retaining installation order.
 fn report_store_registration(owner: &str, result: Result<(), nocterm_store::StoreError>) {
     if let Err(error) = result {
@@ -524,7 +531,10 @@ pub(crate) fn build_workspace(
         .register(workspace, booted.themes().clone());
     nocterm_files::register(&booted.files, workspace, window, cx);
     if let Some(snippets) = &booted.snippets {
-        nocterm_snippets_ui::register(workspace, snippets, window, cx);
+        report_registration(
+            "snippets",
+            nocterm_snippets_ui::register(workspace, snippets, window, cx),
+        );
     }
     nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
     if let Some(projects) = &booted.projects {

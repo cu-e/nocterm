@@ -255,7 +255,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.activate_panel_of::<SnippetsPanel>(window, cx)
+            workspace.open_panel(&crate::plugin::LIBRARY.id, window, cx)
         });
         window.render_frame(cx);
         assert_eq!(window.find("snippet-context").label(), Some("Local"));
@@ -310,7 +310,7 @@ fn run_and_double_click_follow_bottom_then_remote_focus_and_ignore_nested_action
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.activate_panel_of::<SnippetsPanel>(window, cx)
+            workspace.open_panel(&crate::plugin::LIBRARY.id, window, cx)
         });
         window.render_frame(cx);
         assert_eq!(window.find("snippet-context").label(), Some("Remote"));

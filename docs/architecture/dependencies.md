@@ -51,7 +51,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-snippets` | domain |  | Snippet library, validation and connection matching. |
 | `nocterm-snippets-io` | adapter | `nocterm-core`, `nocterm-snippets` | Native snippet document acquisition, publication and draft identities. |
 | `nocterm-snippets-store` | service | `nocterm-core`, `nocterm-snippets`, `nocterm-store` | Checked snippet publication over shared persistence. |
-| `nocterm-snippets-ui` | feature | `nocterm-session`, `nocterm-snippets`, `nocterm-snippets-store`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
+| `nocterm-snippets-ui` | feature | `nocterm-plugin-model`, `nocterm-session`, `nocterm-snippets`, `nocterm-snippets-store`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Contextual snippet panel and highlighted code editor. |
 | `nocterm-ssh` | adapter | `nocterm-core`, `nocterm-session` | SSH and SFTP transport, implemented with russh. |
 | `nocterm-store` | service | `nocterm-core`, `nocterm-monitor`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model` | Ordered snapshot persistence and bounded application shutdown. |
 | `nocterm-terminal` | feature | `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-terminal-model`, `nocterm-theme-service`, `nocterm-themes`, `nocterm-ui`, `nocterm-vt`, `nocterm-workspace`, `nocterm-workspace-ports` | Terminal tab: renders a session's grid and drives its prompts. |
@@ -278,6 +278,7 @@ graph TD
     nocterm_snippets_store --> nocterm_core
     nocterm_snippets_store --> nocterm_snippets
     nocterm_snippets_store --> nocterm_store
+    nocterm_snippets_ui --> nocterm_plugin_model
     nocterm_snippets_ui --> nocterm_session
     nocterm_snippets_ui --> nocterm_snippets
     nocterm_snippets_ui --> nocterm_snippets_store
