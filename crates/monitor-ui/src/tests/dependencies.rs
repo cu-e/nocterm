@@ -129,6 +129,18 @@ fn monitor_page_native_switch_keeps_original_policy_after_unrelated_installation
     assert!(weak.upgrade().is_none());
 }
 
+#[gpui_kit::test]
+fn the_monitor_page_leaves_the_status_bar_metrics_to_the_plugins_page(cx: &mut TestAppContext) {
+    let (_, handle, _) = number_page(SettingsConfig::in_memory(Default::default()), cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("monitor-status-Cpu").is_none());
+        window.find("monitor-details-Cpu");
+        window.find(("monitor-number", 0usize));
+    })
+    .unwrap();
+}
+
 fn number_page(
     store: SettingsConfig,
     cx: &mut TestAppContext,
