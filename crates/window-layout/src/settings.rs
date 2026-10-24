@@ -84,8 +84,16 @@ impl LayoutSettings {
 
     /// The id a new preset would get: `p<n>` with n one more than the largest stored, or the
     /// smallest unused number once the largest is as high as a number goes.
+    ///
+    /// The number `active` names counts as used even when no preset has it, so a new preset
+    /// never takes the id of a selection that is waiting for its preset to come back.
     pub fn next_id(&self) -> PresetId {
-        let used = numbers_in_use(self.presets.iter().map(|preset| &preset.id));
+        let used = numbers_in_use(
+            self.presets
+                .iter()
+                .map(|preset| &preset.id)
+                .chain(&self.active),
+        );
         fresh_id(free_number(&used))
     }
 
@@ -143,7 +151,8 @@ impl LayoutSettings {
                 .iter()
                 .enumerate()
                 .filter(|(index, _)| !unusable.contains(index))
-                .map(|(_, preset)| &preset.id),
+                .map(|(_, preset)| &preset.id)
+                .chain(&self.active),
         );
         let mut selection_follows = true;
         for index in unusable {
@@ -212,7 +221,7 @@ fn fresh_id(number: u32) -> PresetId {
 }
 
 /// The name shortened to 48 characters, trimmed, and numbered until `taken` refuses no more.
-fn fit_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
+pub(crate) fn fit_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
     let base: String = name
         .trim()
         .chars()

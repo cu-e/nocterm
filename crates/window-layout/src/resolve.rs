@@ -11,7 +11,7 @@ use crate::{
     BarItem, GroupEntry, LayoutPreset, ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember,
 };
 
-const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
+pub(crate) const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
 
 /// Arranges the catalog's contributions as `preset` asks.
 ///
@@ -263,7 +263,7 @@ impl<'a> Arrangement<'a> {
 
 /// The group a panel opens in: the one it names, else the primary group for a navigation panel
 /// and the first other group for an assistant.
-fn hinted_group<'a>(
+pub(crate) fn hinted_group<'a>(
     catalog: &'a PluginCatalog,
     contribution: &SystemContribution,
 ) -> Option<&'a GroupSpec> {
@@ -284,7 +284,7 @@ fn hinted_group<'a>(
     named.or_else(by_width)
 }
 
-fn default_side(zone: Zone) -> Side {
+pub(crate) fn default_side(zone: Zone) -> Side {
     match zone {
         Zone::Left | Zone::Center => Side::Left,
         Zone::Right => Side::Right,

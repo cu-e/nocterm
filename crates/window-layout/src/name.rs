@@ -1,6 +1,6 @@
 //! Names of presets: what the user may call one.
 
-use crate::{BuiltIn, LayoutSettings, PresetId};
+use crate::{BuiltIn, LayoutPreset, LayoutSettings, PresetId, settings::fit_name};
 
 /// Longest preset name, in characters.
 pub const MAX_NAME_CHARS: usize = 48;
@@ -57,4 +57,11 @@ pub(crate) fn is_reserved(name: &str) -> bool {
 
 pub(crate) fn same_name(left: &str, right: &str) -> bool {
     left.trim().to_lowercase() == right.trim().to_lowercase()
+}
+
+/// A name for a new preset: `wanted` shortened, and numbered until no preset or built-in has it.
+pub(crate) fn unique_name(presets: &[LayoutPreset], wanted: &str) -> String {
+    fit_name(wanted, |name| {
+        is_reserved(name) || presets.iter().any(|preset| same_name(&preset.name, name))
+    })
 }

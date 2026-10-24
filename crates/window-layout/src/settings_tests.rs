@@ -231,6 +231,24 @@ fn next_id_follows_the_largest_stored_number_and_may_reuse_a_freed_one() {
 }
 
 #[test]
+fn next_id_skips_the_number_a_selection_without_a_preset_names() {
+    let waiting = settings(Some("p1"), Vec::new());
+    assert_eq!(waiting.next_id(), pid("p2"));
+    let elsewhere = settings(Some("work"), vec![stored("p3", "A")]);
+    assert_eq!(elsewhere.next_id(), pid("p4"));
+}
+
+#[test]
+fn a_repaired_id_does_not_take_the_number_a_selection_without_a_preset_names() {
+    let clean = sanitized(settings(
+        Some("p2"),
+        vec![stored("Not Valid", "Hand written")],
+    ));
+    assert_eq!(clean.presets[0].id, pid("p3"));
+    assert_eq!(clean.active, Some(pid("p2")), "the selection is left alone");
+}
+
+#[test]
 fn ids_continue_below_the_largest_number_once_it_cannot_grow() {
     let top = format!("p{}", u32::MAX);
     let clean = sanitized(settings(

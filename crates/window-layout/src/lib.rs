@@ -12,11 +12,14 @@
 //! The user's presets are the `[layouts]` settings section, [`LayoutSettings`]. [`select`] picks
 //! the layout to show, including the legacy swap-sides flag, and [`transition`] tells a window
 //! whether a change of the section switched layouts, edited the selected one or changed nothing
-//! it shows.
+//! it shows. [`edit`] changes the presets: the first edit of a built-in layout copies it into a
+//! preset called "Custom" and selects it, the entry operations move, group, separate, remove
+//! and restore what the bar holds, and the undo of an edit restores the earlier list of presets.
 //!
 //! Owns: bar zones, groups and separators, the tray, default-open panels, the built-in
 //! Default and Swapped sides, resolution against the catalog, the `[layouts]` section and its
-//! sanitizing, selection, the switch-or-edit transition and name validation.
+//! sanitizing, selection, the switch-or-edit transition, name validation and the edit operations
+//! with their pinned and tray rules.
 //! Does not own: which plugins exist or are disabled (the caller passes the disabled set),
 //! panel state, widths, rendering, settings storage.
 //! Ports used/provided: none; it reads `nocterm-plugin-model` and defines a section for
@@ -26,9 +29,13 @@
 //! contribution is placed at most once; at most one open panel per group; exactly one group is
 //! primary, the catalog's (a preset's own `primary` flag is ignored); pinned widgets are always
 //! placed (pinning has no effect on a panel); every panel has a hosting group, placed or not;
-//! sanitizing leaves every stored preset with a unique usable id and name. No I/O.
+//! sanitizing leaves every stored preset with a unique usable id and name; an edit writes the
+//! preset out as it resolves with every plugin enabled, moves ids of the bar the catalog does not
+//! know to the tray, never removes a pinned widget and leaves the settings untouched when it
+//! fails. No I/O.
 
 mod builtin;
+mod edit;
 mod name;
 mod preset;
 mod resolve;
@@ -38,6 +45,7 @@ mod transition;
 mod wire;
 
 pub use builtin::BuiltIn;
+pub use edit::{EditError, EditOp, EditOutcome, EditTarget, Limit, Slot, Subject, edit};
 pub use name::{MAX_NAME_CHARS, NameError, validate_name};
 pub use preset::{Bar, BarItem, GroupEntry, LayoutPreset, PresetId};
 pub use resolve::resolve;
@@ -53,3 +61,9 @@ mod settings_tests;
 
 #[cfg(test)]
 mod disabled_tests;
+
+#[cfg(test)]
+mod edit_tests;
+
+#[cfg(test)]
+mod edit_entry_tests;

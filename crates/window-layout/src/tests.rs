@@ -8,9 +8,9 @@ use nocterm_plugin_model::{
 use super::*;
 
 /// No plugin is disabled.
-static NONE: BTreeSet<PluginId> = BTreeSet::new();
+pub(crate) static NONE: BTreeSet<PluginId> = BTreeSet::new();
 
-const fn contribution(
+pub(crate) const fn contribution(
     id: &'static str,
     kind: ContributionKind,
     zone: Zone,
@@ -41,7 +41,7 @@ const fn contribution(
     }
 }
 
-const fn panel(id: &'static str, order: u16) -> SystemContribution {
+pub(crate) const fn panel(id: &'static str, order: u16) -> SystemContribution {
     contribution(
         id,
         ContributionKind::Panel,
@@ -51,11 +51,11 @@ const fn panel(id: &'static str, order: u16) -> SystemContribution {
     )
 }
 
-const fn widget(id: &'static str, zone: Zone, order: u16) -> SystemContribution {
+pub(crate) const fn widget(id: &'static str, zone: Zone, order: u16) -> SystemContribution {
     contribution(id, ContributionKind::Widget, zone, order, None)
 }
 
-const fn assistant(id: &'static str, order: u16) -> SystemContribution {
+pub(crate) const fn assistant(id: &'static str, order: u16) -> SystemContribution {
     let mut agent = contribution(
         id,
         ContributionKind::Panel,
@@ -70,13 +70,13 @@ const fn assistant(id: &'static str, order: u16) -> SystemContribution {
     agent
 }
 
-const fn pinned(mut widget: SystemContribution) -> SystemContribution {
+pub(crate) const fn pinned(mut widget: SystemContribution) -> SystemContribution {
     widget.pinned = true;
     widget
 }
 
 /// The shell as the application composes it today.
-const SHELL: &[SystemContribution] = &[
+pub(crate) const SHELL: &[SystemContribution] = &[
     panel("shell.servers", 10),
     panel("shell.files", 20),
     panel("shell.snippets", 30),
@@ -87,7 +87,7 @@ const SHELL: &[SystemContribution] = &[
     assistant("shell.agent", 40),
 ];
 
-fn groups() -> [GroupSpec; 2] {
+pub(crate) fn groups() -> [GroupSpec; 2] {
     [
         GroupSpec {
             id: GroupId::new("navigation"),
@@ -110,7 +110,7 @@ fn catalog() -> PluginCatalog {
     catalog_of(SHELL)
 }
 
-fn id(id: &'static str) -> ContributionId {
+pub(crate) fn id(id: &'static str) -> ContributionId {
     ContributionId::new(id)
 }
 
@@ -142,7 +142,7 @@ fn panels(names: &[&'static str]) -> Vec<GroupEntry> {
 }
 
 /// A zone as short text: widgets by id, `|` for a separator, groups as `[id: members]`.
-fn show(items: &[ResolvedItem]) -> Vec<String> {
+pub(crate) fn show(items: &[ResolvedItem]) -> Vec<String> {
     items
         .iter()
         .map(|item| match item {
