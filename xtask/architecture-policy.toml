@@ -103,6 +103,7 @@ sha2 = [
     "digest",
     "generic-array",
     "sha2",
+    "subtle",
     "typenum",
     "version_check",
 ]
@@ -139,13 +140,13 @@ external = ["base"]
 [isolation.crates.nocterm-plugin-packages]
 kind = "std"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model", "nocterm-core"]
-direct = ["serde", "sha2", "thiserror", "toml"]
+direct = ["sha2", "toml"]
 external = ["base", "core", "sha2"]
 
 [isolation.crates.nocterm-plugin-ports]
 kind = "gpui"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
-direct = ["gpui-pre", "thiserror"]
+direct = ["gpui-pre"]
 external = ["base"]
 
 [isolation.crates.nocterm-plugin-view]

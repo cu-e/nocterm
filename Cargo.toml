@@ -233,6 +233,7 @@ nocterm-monitor = { path = "crates/monitor" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
 nocterm-plugin-api = { path = "crates/plugin-api" }
 nocterm-plugin-enablement = { path = "crates/plugin-enablement" }
+nocterm-plugin-packages = { path = "crates/plugin-packages" }
 nocterm-plugin-model = { path = "crates/plugin-model" }
 nocterm-plugins-ui = { path = "crates/plugins-ui" }
 nocterm-session = { path = "crates/session" }

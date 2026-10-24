@@ -5488,6 +5488,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-plugin-packages"
+version = "0.0.0"
+dependencies = [
+ "nocterm-core",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "nocterm-plugins-ui"
 version = "0.0.0"
 dependencies = [

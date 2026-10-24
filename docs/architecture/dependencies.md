@@ -40,6 +40,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-plugin-api` | domain | `nocterm-plugin-model` | The user plugin contract: capability table, snapshot, view and effect data, manifests, grants and the declarative template interpreter. |
 | `nocterm-plugin-enablement` | domain | `nocterm-plugin-model`, `nocterm-settings` | Which system plugins the user switched off: the [plugins] settings section and the rule that keeps required plugins and unknown ids out of the effective set. |
 | `nocterm-plugin-model` | domain |  | What a plugin is and what the window shell can host: ids, system plugin descriptors, placement hints and the checked catalog. |
+| `nocterm-plugin-packages` | adapter | `nocterm-core`, `nocterm-plugin-api`, `nocterm-plugin-model` | Reads, hashes, stores and removes user plugin packages: bounded no-follow reads, TOML parsing, SHA-256 and private publication. |
 | `nocterm-plugins-ui` | feature | `nocterm-core`, `nocterm-plugin-model`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The Plugins settings page: the system plugins, their enable switches and settings forms. |
 | `nocterm-project-container-fs` | adapter | `nocterm-containers`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session` | Container-scoped sessions and bounded remote filesystem adaptation. |
 | `nocterm-project-environment` | adapter | `nocterm-connections-model`, `nocterm-project-providers`, `nocterm-session` | Observed workspace tool installation and managed session activation. |
@@ -256,6 +257,9 @@ graph TD
     nocterm_plugin_api --> nocterm_plugin_model
     nocterm_plugin_enablement --> nocterm_plugin_model
     nocterm_plugin_enablement --> nocterm_settings
+    nocterm_plugin_packages --> nocterm_core
+    nocterm_plugin_packages --> nocterm_plugin_api
+    nocterm_plugin_packages --> nocterm_plugin_model
     nocterm_plugins_ui --> nocterm_core
     nocterm_plugins_ui --> nocterm_plugin_model
     nocterm_plugins_ui --> nocterm_settings
