@@ -51,7 +51,9 @@ In the owner's `register()`, which returns `Result<(), RegistrationError>`:
   workspace refuses it for a plugin that can be disabled (`RegistrationError::EagerNotRequired`);
 - widgets: `workspace.register_widget(WidgetRegistration::new(&DESCRIPTOR, factory))`, where
   `factory` has the same signature and returns `Entity<V>`. The status bar decides when to call
-  it; never create the view, or a sampler it needs, eagerly elsewhere.
+  it; never create the view, or a sampler it needs, eagerly elsewhere. A widget whose view opens a
+  popover implements `ZoneAware` and registers with `WidgetRegistration::zone_aware`, so the popover opens
+  towards the inside of the window from the zone that places it (`nocterm_ui::zone_anchor`).
 Actions, services and observers stay in `register()`; they keep running while the plugin is
 disabled. Never add `impl Workspace` in a new file.
 

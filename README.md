@@ -240,7 +240,11 @@ right = [{ group = "assistant", side = "right", members = ["agent.chats"] }]
 The footer has a `left`, a `center` and a `right` zone, each a list of entries drawn in
 order. `center` is optional: its entries stay at the middle of the footer and give way first
 when the window is narrow (the notification line is cut before any toggle), while with an
-empty `center` the footer is one row from the left zone to the right one. An entry is a
+empty `center` the footer is one row from the left zone to the right one.
+When even then the entries do not fit, the least important move into a **»** menu at the end of
+the footer: widgets first, then the terminal toggle, then panel toggles. The notification line
+and a toggle that asks for you stay in place; the menu lists what is hidden and does what the
+entries would. Popups of widgets open toward the inside of the window. An entry is a
 table with exactly one of these keys:
 
 - `item = "<widget id>"` places a status bar widget, such as `monitor.summary`;
