@@ -47,10 +47,12 @@ pub use registration::{
     ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
 };
 mod layout_switch;
+mod panel_menu;
 mod sessions;
 mod shell_layout;
 pub(crate) use layout_switch::switch as switch_layout_now;
 pub use layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts};
+pub use panel_menu::PanelEntry;
 
 use crate::{
     CloseTab, Item, ItemEvent, ItemHandle, NewTab, NextPanel, NextTab, PreviousTab, SessionContext,
@@ -397,3 +399,5 @@ mod native_terminal_tab_tests;
 mod panel_availability_tests;
 #[cfg(test)]
 mod panel_chrome_tests;
+#[cfg(test)]
+mod panel_menu_tests;

@@ -197,6 +197,11 @@ impl Workspace {
             .content()
             .background_contains(id)
     }
+    /// The registered panels the selected layout places, one list per group in bar order.
+    /// Panels in the tray and panels that were never registered are not listed.
+    pub fn panel_menu(&self) -> Vec<Vec<crate::PanelEntry>> {
+        crate::PanelEntry::listing(self.shell.current(), &self.registrations, &self.panels)
+    }
     /// Whether the registered panel of a contribution shows. `false` for an unknown id.
     pub fn panel_is_open(&self, id: &ContributionId) -> bool {
         self.panels.panel_is_open(id)

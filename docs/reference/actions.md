@@ -88,6 +88,7 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `workspace::SwitchLayout` | Switch to the window layout with this id. Only the window menu sends it. |  |
 | `workspace::ToggleCommandPalette` | Search and run any command. | `ctrl-shift-p` (linux, windows; Workspace); `cmd-shift-p` (macos; Workspace) |
 | `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `ctrl-j` (linux, windows; Workspace); `cmd-`` (macos; Workspace); `cmd-j` (macos; Workspace) |
+| `workspace::TogglePanel` | Show or hide the panel of the contribution with this id. Only the window menu sends it. |  |
 | `workspace::ToggleRightPanel` | Show or hide the AI panel. | `ctrl-alt-b` (linux, windows; Workspace); `cmd-alt-b` (macos; Workspace) |
 | `workspace::ToggleRightPanelMaximized` | Expand or restore the AI panel in the workspace body. |  |
 | `workspace::ToggleSidebar` | Show or hide the sidebar. | `ctrl-shift-b` (linux, windows; Workspace); `cmd-b` (macos; Workspace) |

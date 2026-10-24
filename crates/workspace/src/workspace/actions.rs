@@ -71,6 +71,13 @@ impl ActionRegistry {
                 layout_switch::pick_layout(cx.weak_entity(), this.shell.choices(), window, cx)
             }))
             .on_action(
+                cx.listener(|this, action: &crate::TogglePanel, window, cx| {
+                    if let Some(id) = this.registrations.named(&action.id) {
+                        this.toggle_panel(&id, window, cx);
+                    }
+                }),
+            )
+            .on_action(
                 cx.listener(|this, action: &crate::SwitchLayout, window, cx| {
                     let id = PresetId::from_owned(action.id.to_string());
                     layout_switch::switch(this, id, window, cx)

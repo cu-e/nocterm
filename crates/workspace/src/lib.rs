@@ -94,7 +94,7 @@ pub use nocterm_workspace_ports::{
 };
 pub use workspace::{
     ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,
-    LayoutChoice, LayoutSwitchError, MalformedLayouts, PanelRegistration, PanelRequest,
+    LayoutChoice, LayoutSwitchError, MalformedLayouts, PanelEntry, PanelRegistration, PanelRequest,
     ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory, ProjectSurfaceReceipt,
     RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot,
     WidgetRegistration, Workspace, WorkspaceEvent, admit_project_terminal,

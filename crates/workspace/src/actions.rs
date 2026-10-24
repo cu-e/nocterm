@@ -118,6 +118,13 @@ gpui_kit::actions!(
     ]
 );
 
+/// Show or hide the panel of the contribution with this id. Only the window menu sends it.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct TogglePanel {
+    pub id: gpui_kit::SharedString,
+}
+
 /// Switch to the window layout with this id. Only the window menu sends it.
 #[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
 #[action(namespace = workspace, no_json)]

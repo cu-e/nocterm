@@ -217,6 +217,24 @@ impl Registrations {
         self.registered.contains(id)
     }
 
+    /// The catalog's descriptor of a contribution, if something was registered for it.
+    pub(super) fn registered_contribution(
+        &self,
+        id: &ContributionId,
+    ) -> Option<&'static SystemContribution> {
+        self.is_registered(id)
+            .then(|| self.catalog.contribution(id))
+            .flatten()
+    }
+
+    /// The id of the catalog's contribution with this text, for commands that carry one.
+    pub(super) fn named(&self, name: &str) -> Option<ContributionId> {
+        self.catalog
+            .entries()
+            .find(|contribution| contribution.id.as_str() == name)
+            .map(|contribution| contribution.id.clone())
+    }
+
     /// Checks a panel registration and records it. `expandable` and `eager` describe how the
     /// owner wants to host the panel.
     pub(super) fn admit_panel(
