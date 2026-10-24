@@ -186,6 +186,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         keymap.clone(),
         &files,
         projects.as_ref(),
+        &layout,
         cx,
     )?;
     let settings_ui = crate::settings_pages::SettingsPages::from_installations(

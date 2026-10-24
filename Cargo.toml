@@ -34,6 +34,7 @@ nocterm-design.workspace = true
 nocterm-files.workspace = true
 nocterm-keymap.workspace = true
 nocterm-keymap-ui.workspace = true
+nocterm-layout-ui.workspace = true
 nocterm-local.workspace = true
 nocterm-localfs.workspace = true
 nocterm-monitor-ui.workspace = true
@@ -142,6 +143,7 @@ winresource = "0.1"
 [dev-dependencies]
 async-io.workspace = true
 nocterm-monitor.workspace = true
+nocterm-window-layout.workspace = true
 nocterm-project-providers = { workspace = true, features = ["test-support"] }
 uuid.workspace = true
 nocterm-store = { workspace = true, features = ["test-support"] }

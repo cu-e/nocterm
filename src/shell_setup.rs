@@ -2,6 +2,7 @@
 use nocterm_plugin_model::{CatalogError, PluginCatalog, SystemPlugin};
 use nocterm_workspace::plugin;
 
+mod layout_editor;
 mod plugins;
 #[cfg(test)]
 mod reference;

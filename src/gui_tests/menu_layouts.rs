@@ -79,7 +79,8 @@ fn the_layouts_submenu_checks_the_selected_layout_and_follows_a_switch(cx: &mut 
             "-",
             "Next Layout",
             "Previous Layout",
-            "Switch Layout…"
+            "Switch Layout…",
+            "Customize…"
         ]
     );
     assert_eq!(
@@ -102,6 +103,47 @@ fn the_layouts_submenu_checks_the_selected_layout_and_follows_a_switch(cx: &mut 
         checked_labels(&window_entries(handle, &workspace, "Layouts", cx)),
         ["Default"]
     );
+}
+
+#[gpui_kit::test]
+fn customize_in_the_layouts_submenu_opens_the_editor_in_appearance(cx: &mut TestAppContext) {
+    let (handle, workspace, _, _) = fixture(cx);
+    let customize = window_entries(handle, &workspace, "Layouts", cx)
+        .into_iter()
+        .find(|(label, ..)| label == "Customize…")
+        .expect("the Layouts submenu offers Customize…");
+    assert!(!customize.2, "it is available in a workspace window");
+
+    let action = cx
+        .update_window(handle, |_, window, cx| {
+            let menus = crate::app_menus::build(workspace.read(cx), window, cx);
+            menus
+                .iter()
+                .filter(|menu| menu.name.as_ref() == "Window")
+                .flat_map(|menu| &menu.items)
+                .filter_map(|item| match item {
+                    MenuItem::Submenu(menu) if menu.name.as_ref() == "Layouts" => Some(menu),
+                    _ => None,
+                })
+                .flat_map(|menu| &menu.items)
+                .find_map(|item| match item {
+                    MenuItem::Action { name, action, .. } if name.as_ref() == "Customize…" => {
+                        Some(action.boxed_clone())
+                    }
+                    _ => None,
+                })
+                .expect("the item carries its action")
+        })
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| window.dispatch_action(action, cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("layout-editor".to_owned()).is_some());
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

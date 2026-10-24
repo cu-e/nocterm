@@ -165,8 +165,8 @@ fn window_menu(state: &MenuState) -> Menu {
     ])
 }
 
-/// The layouts to choose from, the selected one checked, and the commands that move through
-/// them.
+/// The layouts to choose from, the selected one checked, the commands that move through them,
+/// and the way into the editor.
 fn layouts_menu(state: &MenuState) -> Menu {
     let in_workspace = state.in_workspace;
     let choices = state.workspace.layouts().into_iter().map(|choice| {
@@ -184,6 +184,7 @@ fn layouts_menu(state: &MenuState) -> Menu {
         MenuItem::action("Next Layout", NextLayout).disabled(!in_workspace),
         MenuItem::action("Previous Layout", PreviousLayout).disabled(!in_workspace),
         MenuItem::action("Switch Layout…", PickLayout).disabled(!in_workspace),
+        MenuItem::action("Customize…", OpenLayoutSettings { select: None }).disabled(!in_workspace),
     ]))
 }
 

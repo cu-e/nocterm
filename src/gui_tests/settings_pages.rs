@@ -506,6 +506,7 @@ fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppCon
 
 mod appearance;
 mod dependencies;
+mod layout_editor;
 mod plugins;
 
 mod text;

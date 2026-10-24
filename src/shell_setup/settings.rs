@@ -9,13 +9,14 @@ use nocterm_store::SettingsHandle;
 use crate::settings_pages::GuestPages;
 
 /// The monitor, the plugin catalog and the lazy settings pages that follow the builtin ones,
-/// among them the Plugins page over the same catalog.
+/// among them the Plugins page over the same catalog, and the editor Appearance shows.
 pub(crate) fn install_guest_pages(
     local_host: &Option<Arc<dyn nocterm_session::HostExec>>,
     ui: &nocterm_ui::UiReady,
     keymap: nocterm_keymap::KeymapHandle,
     files: &nocterm_files::Installed,
     projects: Option<&nocterm_projects::Installed>,
+    layout: &nocterm_ui::LayoutHandle,
     cx: &mut App,
 ) -> Result<
     (
@@ -27,7 +28,9 @@ pub(crate) fn install_guest_pages(
 > {
     let monitor = nocterm_monitor_ui::install(local_host.clone(), ui, cx);
     let plugins = Arc::new(super::plugin_catalog()?);
-    let page = plugins_page(&plugins, &monitor, ui.settings(), cx);
+    let directory = plugin_settings(&monitor);
+    let page = plugins_page(&plugins, directory.clone(), ui.settings(), cx);
+    let sections = super::layout_editor::appearance_sections(&plugins, directory, layout, ui, cx);
     let guests = crate::settings_pages::guest_pages(
         keymap,
         &monitor,
@@ -35,14 +38,16 @@ pub(crate) fn install_guest_pages(
         projects,
         page,
         plugins.clone(),
-    );
+    )
+    .with_appearance_sections(sections);
     Ok((monitor, plugins, guests))
 }
 
-/// The Plugins page over the application catalog, writing `[plugins]` through `handle`.
+/// The Plugins page over the application catalog, writing `[plugins]` through `handle`. The
+/// settings of the plugins come from `settings`, which the status bar editor shares.
 fn plugins_page(
     catalog: &Arc<PluginCatalog>,
-    monitor: &nocterm_monitor_ui::Installed,
+    settings: PluginSettingsDirectory,
     handle: &SettingsHandle,
     cx: &mut App,
 ) -> SettingsPageSpec {
@@ -53,7 +58,7 @@ fn plugins_page(
             handle.clone(),
             cx,
         )),
-        plugin_settings(monitor),
+        settings,
     )
 }
 

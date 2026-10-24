@@ -3,25 +3,39 @@ use nocterm_plugin_model::PluginCatalog;
 use nocterm_settings_ui::{
     Installed, SettingsCatalog, SettingsCatalogError, SettingsPageRegistration,
 };
-use nocterm_ui::{SettingsPageSpec, ThemeUi};
+use nocterm_ui::{EmbeddedPageSpec, SettingsPageSpec, ThemeUi};
 use nocterm_workspace::{
     ChangeColorScheme, ChangeTheme, DefaultSessionSettings, OpenAiSettings, OpenKeymap,
-    OpenPluginPage, OpenPlugins, OpenSSHSettings, OpenVault, Workspace,
+    OpenLayoutSettings, OpenPluginPage, OpenPlugins, OpenSSHSettings, OpenVault, Workspace,
 };
 use std::sync::Arc;
 
 /// The id of the page that lists the plugins; pages of single plugins nest under it.
 const PLUGINS_PAGE: &str = "plugins";
 
+/// The id of the page whose sections other features supply, and the key of the editor section.
+const APPEARANCE_PAGE: &str = "appearance";
+const LAYOUT_SECTION: &str = "layout";
+
 /// The lazy pages after the builtin ones, in navigation order, with the plugin catalog the
-/// Plugins page and the plugin page links read.
+/// Plugins page and the plugin page links read, and the sections guests add to Appearance.
 pub(crate) struct GuestPages {
     pages: Vec<SettingsPageRegistration>,
     plugins: Arc<PluginCatalog>,
+    appearance: Vec<EmbeddedPageSpec>,
 }
 impl GuestPages {
     pub(crate) fn new(pages: Vec<SettingsPageRegistration>, plugins: Arc<PluginCatalog>) -> Self {
-        Self { pages, plugins }
+        Self {
+            pages,
+            plugins,
+            appearance: Vec::new(),
+        }
+    }
+    /// Sections shown below Appearance in the ordinary Settings window.
+    pub(crate) fn with_appearance_sections(mut self, sections: Vec<EmbeddedPageSpec>) -> Self {
+        self.appearance = sections;
+        self
     }
 }
 
@@ -81,10 +95,19 @@ impl SettingsPages {
         guests: GuestPages,
         startup_vault: Option<SettingsPageSpec>,
     ) -> Result<Self, SettingsCatalogError> {
-        let GuestPages { pages, plugins } = guests;
+        let GuestPages {
+            pages,
+            plugins,
+            appearance,
+        } = guests;
         let vault = startup_vault.clone().map(SettingsPageRegistration::lazy);
+        let mut ordinary_builtins = builtins.clone();
+        if !appearance.is_empty() {
+            let [first, ..] = &mut ordinary_builtins;
+            *first = first.clone().with_sections(appearance);
+        }
         let ordinary = catalog(
-            builtins.clone(),
+            ordinary_builtins,
             pages.into_iter().chain(vault.clone()).collect(),
         )?;
         let startup = vault
@@ -111,6 +134,13 @@ impl SettingsPages {
         register_appearance_commands(workspace, themes, self.installed.settings().clone());
         nocterm_settings_ui::register(workspace, self.ordinary.clone(), self.installed.clone());
         open_on::<DefaultSessionSettings>(workspace, "ssh", &self.ordinary, self.installed.clone());
+        open_on_anchor::<OpenLayoutSettings>(
+            workspace,
+            APPEARANCE_PAGE,
+            layout_anchor,
+            &self.ordinary,
+            self.installed.clone(),
+        );
         open_on::<OpenAiSettings>(workspace, "ai", &self.ordinary, self.installed.clone());
         open_on::<OpenSSHSettings>(workspace, "ssh", &self.ordinary, self.installed.clone());
         open_on::<OpenKeymap>(workspace, "keymap", &self.ordinary, self.installed.clone());
@@ -157,6 +187,13 @@ impl SettingsPages {
         });
     }
 }
+/// The anchor of the editor section, with the item the action names selected inside it.
+fn layout_anchor(action: &OpenLayoutSettings) -> Option<gpui_kit::SharedString> {
+    Some(match &action.select {
+        Some(id) => format!("{LAYOUT_SECTION}/{id}").into(),
+        None => LAYOUT_SECTION.into(),
+    })
+}
 /// Lazy pages are composed from the same feature installations as the window. The page of a
 /// single plugin nests under Plugins, anchored at the plugin's id; Plugins comes after the
 /// other guests, and the Vault page after it.
@@ -198,7 +235,7 @@ fn catalog(
             .map(SettingsPageRegistration::eager)
             .chain(guests)
             .collect(),
-        "appearance",
+        APPEARANCE_PAGE,
     )
 }
 fn open_on<A: gpui_kit::Action>(
