@@ -85,3 +85,4 @@ acceptance; a later record supersedes an earlier one.
 | [0086](0086-plugin-enablement-and-the-plugins-page.md) | Plugin enablement is app-wide and the Plugins page lists plugins with their own pages nested under it |
 | [0087](0087-status-bar-and-panels-editor.md) | The status bar and panels are edited in Appearance through the layout rules |
 | [0088](0088-wall-clock-contract-and-the-clock-plugin.md) | The wall clock is a foundation contract read by a local adapter, and the Clock is a plugin |
+| [0089](0089-user-plugin-contract.md) | User plugins are declarative packages over a closed, isolated contract |

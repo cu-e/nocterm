@@ -86,6 +86,15 @@ cwd and prompt markers without parsing rendered prompt text. It also implements 
 foundation `WallClock` as `SystemClock`, which reads the system time and the local time zone
 in effect at that instant ([ADR 0088](../adr/0088-wall-clock-contract-and-the-clock-plugin.md)).
 
+## User plugin packages
+
+`nocterm-plugin-packages` implements the `PluginPackages` port of `nocterm-plugin-api`. It reads a
+package file (one TOML file, at most 256 KiB) without following links through
+`nocterm_core::fs::read_regular_bounded`, hashes the exact bytes it then parses, validates the
+manifest, publishes a package privately and atomically as one file per validated `user-`
+plugin id (`<root>/<id>.toml`), re-hashes it at load and removes it. Its I/O is limited to those `nocterm_core::fs`
+calls and metadata and removal under the package root ([ADR 0089](../adr/0089-user-plugin-contract.md)).
+
 ## Bounded I/O
 
 Input and output channels are bounded. An independent broadcast close signal

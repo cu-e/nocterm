@@ -369,6 +369,19 @@ replacing it. It
 reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types and no I/O
 ([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).
 
+`nocterm-plugin-model` is `#![no_std]` with `alloc`, so I/O is unreachable by construction. It also
+knows the user tier: `user-` plugin ids, borrowed `PluginRef` and `ContributionRef` views over system and user plugins, the clamp that
+bounds where a user plugin may place a contribution, and the `renamed_from` and `resolve` rules
+that move a stored setting value to its renamed key. Its schema carries a `version`.
+
+`nocterm-plugin-api` owns the contract of user plugins: the capability table with its field types,
+`Snapshot`, `View` (a flat arena), `Effects` and `Event`, `sanitize_display`, the manifest and its
+validation onto `SettingsSchema`, grants bound to `(PluginId, ContentHash)`, the template language
+with `DeclarativeRuntime`, and the `PluginPackages` and `PluginRuntime` ports. It is `no_std`,
+reads no file and runs no guest code; `crates/plugin-api/api-surface.json` is generated from it by
+`cargo xtask docs`. See [ADR 0089](../adr/0089-user-plugin-contract.md) and the
+[isolation rules](guardrails.md#isolation-of-the-plugin-crates).
+
 `nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
 zones of the status bar, panel groups with their members and separators, the tray of
 registered contributions that are not placed, and the panels that open with a layout.

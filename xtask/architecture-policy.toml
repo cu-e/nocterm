@@ -21,7 +21,7 @@
 "nocterm_workspace_ports::terminal::TerminalText" = "Text read from a terminal and its bounds."
 "nocterm_workspace_ports::terminal::TextRequest" = "Bounds of a terminal text read."
 
-# Isolation of the plugin crates (docs/architecture/guardrails.md, ADR 0081). A row applies as
+# Isolation of the plugin crates (docs/architecture/guardrails.md, ADR 0089). A row applies as
 # soon as its package exists. Every list is closed: a new crate, dependency or exemption is a
 # reviewed edit of this file, with a reason where a table asks for one.
 [isolation]

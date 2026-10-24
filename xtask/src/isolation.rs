@@ -1,6 +1,6 @@
 //! Guardrails that keep the plugin crates closed: the dependency graph, `std` reachability, the
 //! gpui receivers, structural bans, provider crates and the compile-out of the user-plugin
-//! track (docs/architecture/guardrails.md, ADR 0081).
+//! track (docs/architecture/guardrails.md, ADR 0089).
 //!
 //! The rules guard against host-side regressions. They do not cover I/O reached through an
 //! allowlisted dependency's own API, nor a confused deputy; those are design-review items.
