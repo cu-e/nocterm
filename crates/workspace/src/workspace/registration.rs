@@ -11,15 +11,15 @@ use std::{
     sync::Arc,
 };
 
-use gpui_kit::{Context, Entity, EventEmitter, Pixels, Render, Subscription, Window};
+use gpui_kit::{AnyView, App, Context, Entity, EventEmitter, Pixels, Render, Subscription, Window};
 use nocterm_plugin_model::{
     ContributionId, ContributionKind, Owner, PanelChrome, PanelTraits, PluginCatalog, Side,
-    SystemContribution,
+    SystemContribution, Zone,
 };
 
 use super::{
     Workspace,
-    chrome::WidgetFactory,
+    chrome::{WidgetFactory, ZoneHook},
     panel_groups::{ExpandableHandle, HostedPanel, Presentation},
 };
 use crate::Panel;
@@ -161,10 +161,20 @@ impl<T: ExpandablePanel> PanelRegistration<T> {
     }
 }
 
+/// A widget whose popovers open from the zone of the status bar that places it.
+///
+/// The workspace tells the view its zone when it creates the view and whenever a layout change
+/// moves the widget to another zone, so a popover can open toward the inside of the window.
+pub trait ZoneAware: Render {
+    /// The widget is placed in `zone`.
+    fn set_zone(&mut self, zone: Zone, cx: &mut Context<Self>);
+}
+
 /// A status bar widget to register for a contribution.
 pub struct WidgetRegistration {
     id: ContributionId,
     create: WidgetFactory,
+    zone: Option<ZoneHook>,
 }
 
 impl WidgetRegistration {
@@ -178,14 +188,29 @@ impl WidgetRegistration {
         Self {
             id: contribution.id.clone(),
             create: Rc::new(move |workspace, window, cx| factory(workspace, window, cx).into()),
+            zone: None,
         }
+    }
+
+    /// As [`WidgetRegistration::new`], for a view that follows the zone it is placed in.
+    pub fn zone_aware<V: ZoneAware>(
+        contribution: &SystemContribution,
+        factory: impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<V> + 'static,
+    ) -> Self {
+        let mut registration = Self::new(contribution, factory);
+        registration.zone = Some(Rc::new(|view: &AnyView, zone: Zone, cx: &mut App| {
+            if let Ok(view) = view.clone().downcast::<V>() {
+                view.update(cx, |view, cx| view.set_zone(zone, cx));
+            }
+        }));
+        registration
     }
 
     pub(super) fn id(&self) -> &ContributionId {
         &self.id
     }
-    pub(super) fn into_factory(self) -> WidgetFactory {
-        self.create
+    pub(super) fn into_parts(self) -> (WidgetFactory, Option<ZoneHook>) {
+        (self.create, self.zone)
     }
 }
 

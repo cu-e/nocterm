@@ -104,7 +104,7 @@ pub use workspace::{
     LayoutChoice, LayoutEditError, LayoutSwitchError, MalformedLayouts, PanelEntry,
     PanelRegistration, PanelRequest, ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory,
     ProjectSurfaceReceipt, RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane,
-    TabSnapshot, WidgetRegistration, Workspace, WorkspaceEvent, admit_project_terminal,
+    TabSnapshot, WidgetRegistration, Workspace, WorkspaceEvent, ZoneAware, admit_project_terminal,
     edit_layouts, legacy_layout_swapped, validate_project_terminal_target,
 };
 

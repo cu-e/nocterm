@@ -40,7 +40,7 @@ mod toggle_look;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use status_bar::ToggleLooks;
-pub(super) use status_bar::WidgetFactory;
+pub(super) use status_bar::{WidgetFactory, ZoneHook};
 
 struct NewTabControl {
     entry: Option<NewTabMenu>,

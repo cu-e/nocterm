@@ -295,9 +295,8 @@ impl Workspace {
     ) -> Result<(), RegistrationError> {
         self.registrations.admit_widget(registration.id())?;
         let id = registration.id().clone();
-        self.chrome
-            .status_bar_mut()
-            .add(id, registration.into_factory());
+        let (factory, zone_hook) = registration.into_parts();
+        self.chrome.status_bar_mut().add(id, factory, zone_hook);
         self.sync_status_widgets(window, cx);
         cx.notify();
         Ok(())
@@ -312,6 +311,9 @@ impl Workspace {
         self.chrome
             .status_bar_mut()
             .release_unplaced(self.shell.current());
+        self.chrome
+            .status_bar_mut()
+            .follow_zones(self.shell.current(), cx);
     }
     /// Tells the expandable panels which side of the content their groups are on.
     pub(super) fn sync_panel_sides(&self, cx: &mut Context<Self>) {

@@ -17,7 +17,7 @@ use gpui_kit::{
     px, rems,
 };
 use nocterm_plugin_model::ContributionId;
-use nocterm_ui::{ActiveDesign as _, notice::NoticeBar};
+use nocterm_ui::{ActiveDesign as _, notice::NoticeBar, zone_anchor};
 
 use super::{
     BarEntry, BarInputs, BarMenu,
@@ -277,7 +277,9 @@ impl StatusBarRow {
     fn entry(&self, entry: &BarEntry, inputs: &BarInputs, cx: &App) -> AnyElement {
         match entry {
             BarEntry::Panel(toggle) => self.panel_toggle(toggle),
-            BarEntry::Notices => NoticeBar::new().into_any_element(),
+            BarEntry::Notices(zone) => NoticeBar::new()
+                .anchor(zone_anchor(*zone))
+                .into_any_element(),
             BarEntry::LocalTerminal(look) => {
                 let on_click = self.on_click.clone();
                 let selection = inputs.selection();

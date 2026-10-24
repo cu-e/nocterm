@@ -6,9 +6,9 @@
 
 use std::rc::Rc;
 
-use gpui_kit::{AnyView, Context, Window};
-use nocterm_plugin_model::ContributionId;
-use nocterm_window_layout::ResolvedLayout;
+use gpui_kit::{AnyView, App, Context, Window};
+use nocterm_plugin_model::{ContributionId, Zone};
+use nocterm_window_layout::{ResolvedItem, ResolvedLayout};
 
 use crate::Workspace;
 
@@ -29,11 +29,18 @@ pub(super) use row::footer;
 pub(in crate::workspace) type WidgetFactory =
     Rc<dyn Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> AnyView>;
 
+/// Tells a widget's view the zone it is placed in.
+pub(in crate::workspace) type ZoneHook = Rc<dyn Fn(&AnyView, Zone, &mut App)>;
+
 struct WidgetEntry {
     id: ContributionId,
     factory: WidgetFactory,
+    /// For a widget that follows its zone.
+    zone_hook: Option<ZoneHook>,
     /// `None` while the arrangement does not place the widget.
     view: Option<AnyView>,
+    /// The zone the view was last told about.
+    zone: Option<Zone>,
 }
 
 /// The registered status bar widgets, in registration order.
@@ -63,11 +70,18 @@ impl StatusBar {
     }
 
     /// Registers a widget; its view comes with [`StatusBar::fill`].
-    pub(in crate::workspace) fn add(&mut self, id: ContributionId, factory: WidgetFactory) {
+    pub(in crate::workspace) fn add(
+        &mut self,
+        id: ContributionId,
+        factory: WidgetFactory,
+        zone_hook: Option<ZoneHook>,
+    ) {
         self.widgets.push(WidgetEntry {
             id,
             factory,
+            zone_hook,
             view: None,
+            zone: None,
         });
     }
 
@@ -95,6 +109,23 @@ impl StatusBar {
         for entry in &mut self.widgets {
             if !layout.is_placed(&entry.id) {
                 entry.view = None;
+                entry.zone = None;
+            }
+        }
+    }
+
+    /// Tells the widgets that follow their zone where the arrangement places them now.
+    pub(in crate::workspace) fn follow_zones(&mut self, layout: &ResolvedLayout, cx: &mut App) {
+        for entry in &mut self.widgets {
+            let (Some(view), Some(hook)) = (&entry.view, &entry.zone_hook) else {
+                continue;
+            };
+            let Some(zone) = zone_of(layout, &entry.id) else {
+                continue;
+            };
+            if entry.zone != Some(zone) {
+                entry.zone = Some(zone);
+                hook(view, zone, cx);
             }
         }
     }
@@ -105,4 +136,16 @@ impl StatusBar {
             .find(|entry| entry.id == *id)
             .and_then(|entry| entry.view.as_ref())
     }
+}
+
+/// The zone of the bar that places the widget.
+fn zone_of(layout: &ResolvedLayout, id: &ContributionId) -> Option<Zone> {
+    [Zone::Left, Zone::Center, Zone::Right]
+        .into_iter()
+        .find(|zone| {
+            layout
+                .zone(*zone)
+                .iter()
+                .any(|item| matches!(item, ResolvedItem::Widget(widget) if widget == id))
+        })
 }

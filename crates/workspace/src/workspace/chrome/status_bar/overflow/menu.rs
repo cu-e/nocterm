@@ -158,7 +158,7 @@ fn row(
                 .child(view.clone())
                 .into_any_element(),
         ),
-        BarEntry::Notices | BarEntry::Separator => None,
+        BarEntry::Notices(_) | BarEntry::Separator => None,
     }
 }
 

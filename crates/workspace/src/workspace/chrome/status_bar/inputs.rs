@@ -58,8 +58,8 @@ impl PanelToggle {
 #[derive(Clone)]
 pub(in crate::workspace) enum BarEntry {
     Panel(PanelToggle),
-    /// The notice bar, which the shell draws itself.
-    Notices,
+    /// The notice bar, which the shell draws itself, in the zone that places it.
+    Notices(Zone),
     /// The toggle of the local terminal dock, which the shell draws itself.
     LocalTerminal(ToggleLook),
     /// A registered widget's view.
@@ -81,7 +81,7 @@ impl BarEntry {
     pub(in crate::workspace) fn id(&self) -> Option<ContributionId> {
         match self {
             Self::Panel(toggle) => Some(toggle.id().clone()),
-            Self::Notices => Some(NOTIFICATIONS.id.clone()),
+            Self::Notices(_) => Some(NOTIFICATIONS.id.clone()),
             Self::LocalTerminal(_) => Some(LOCAL_TERMINAL.id.clone()),
             Self::Widget(id, _) => Some(id.clone()),
             Self::Separator => None,
@@ -96,7 +96,7 @@ impl BarEntry {
             Self::Panel(_) | Self::LocalTerminal(_) | Self::Widget(..) | Self::Separator => {
                 Shrink::Fixed
             }
-            Self::Notices => Shrink::Elastic,
+            Self::Notices(_) => Shrink::Elastic,
         }
     }
 }
@@ -261,16 +261,16 @@ impl Resolver<'_> {
         for item in self.layout.zone(zone) {
             match item {
                 ResolvedItem::Separator => entries.push(BarEntry::Separator),
-                ResolvedItem::Widget(id) => entries.extend(self.widget(id)),
+                ResolvedItem::Widget(id) => entries.extend(self.widget(id, zone)),
                 ResolvedItem::Group(group) => self.group(group, &mut entries),
             }
         }
         entries
     }
 
-    fn widget(&self, id: &ContributionId) -> Option<BarEntry> {
+    fn widget(&self, id: &ContributionId, zone: Zone) -> Option<BarEntry> {
         if *id == NOTIFICATIONS.id {
-            return Some(BarEntry::Notices);
+            return Some(BarEntry::Notices(zone));
         }
         if *id == LOCAL_TERMINAL.id {
             return Some(BarEntry::LocalTerminal(ToggleLook::of(

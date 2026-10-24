@@ -45,6 +45,7 @@ mod ports;
 mod registration;
 pub use registration::{
     ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
+    ZoneAware,
 };
 mod layout_edit;
 mod layout_switch;
@@ -428,3 +429,5 @@ mod status_bar_centre_tests;
 mod status_bar_menu_tests;
 #[cfg(test)]
 mod status_bar_overflow_tests;
+#[cfg(test)]
+mod status_bar_zone_tests;

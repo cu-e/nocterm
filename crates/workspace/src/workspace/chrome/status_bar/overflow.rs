@@ -185,7 +185,7 @@ impl BarOverflow {
                 width: SEPARATOR_WIDTH,
                 kind: Kind::Separator,
             },
-            BarEntry::Notices => {
+            BarEntry::Notices(_) => {
                 let shown = measured(&NOTIFICATIONS.id).is_some_and(|width| width > EMPTY);
                 Slot {
                     width: if shown { NOTICE_RESERVE } else { px(0.) },
