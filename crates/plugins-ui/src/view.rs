@@ -26,10 +26,33 @@ pub(crate) fn page(page: &PluginsPage, cx: &mut Context<PluginsPage>) -> impl In
         .selected()
         .and_then(|id| page.catalog().plugin(id))
         .map(|plugin| detail(page, plugin, cx));
-    h_flex()
+    v_flex()
         .id("plugins-page")
         .test_support()
         .track_focus(&page_focus(page, cx))
+        .w_full()
+        .child(system_plugins(page, rows, selected, cx))
+        .children(user_section(page))
+}
+
+#[cfg(feature = "user")]
+fn user_section(page: &PluginsPage) -> Option<gpui_kit::AnyView> {
+    page.user().map(|user| user.clone().into())
+}
+
+#[cfg(not(feature = "user"))]
+fn user_section(_: &PluginsPage) -> Option<gpui_kit::AnyView> {
+    None
+}
+
+fn system_plugins(
+    _page: &PluginsPage,
+    rows: Vec<AnyElement>,
+    selected: Option<AnyElement>,
+    cx: &mut Context<PluginsPage>,
+) -> impl IntoElement {
+    h_flex()
+        .id("system-plugins")
         .w_full()
         .gap_6()
         .items_start()

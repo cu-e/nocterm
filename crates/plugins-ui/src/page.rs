@@ -21,6 +21,8 @@ pub struct PluginsPage {
     /// Why the last switch of this plugin was refused.
     refusal: Option<(PluginId, SharedString)>,
     focus: FocusHandle,
+    #[cfg(feature = "user")]
+    user: Option<Entity<crate::UserPluginsSection>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -48,12 +50,31 @@ impl PluginsPage {
             form: None,
             refusal: None,
             focus: cx.focus_handle(),
+            #[cfg(feature = "user")]
+            user: None,
             _subscriptions: vec![toggled],
         };
         if let Some(id) = first {
             page.select(&id, window, cx);
         }
         page
+    }
+
+    /// Adds the User section below the system plugins.
+    #[cfg(feature = "user")]
+    pub fn with_user_plugins(
+        mut self,
+        manager: Rc<dyn crate::UserPlugins>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let directory = self.directory.clone();
+        self.user = Some(cx.new(|cx| crate::UserPluginsSection::new(manager, directory, cx)));
+        self
+    }
+
+    #[cfg(feature = "user")]
+    pub(crate) fn user(&self) -> Option<&Entity<crate::UserPluginsSection>> {
+        self.user.as_ref()
     }
 
     pub(crate) fn catalog(&self) -> &PluginCatalog {
@@ -129,6 +150,32 @@ impl PluginsPage {
         if let Some(form) = &self.form {
             form.update(cx, |form, cx| form.flush(cx));
         }
+        #[cfg(feature = "user")]
+        if let Some(user) = &self.user {
+            user.update(cx, |user, cx| user.flush(cx));
+        }
+    }
+}
+
+impl PluginsPage {
+    /// Selects the user plugin whose id is `anchor`, if the page has a User section.
+    #[cfg(feature = "user")]
+    fn reveal_user(&mut self, anchor: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let id = PluginId::owned(anchor);
+        let Some(user) = self
+            .user
+            .clone()
+            .filter(|user| user.read(cx).holds(&id, cx))
+        else {
+            return false;
+        };
+        user.update(cx, |user, cx| user.select(&id, window, cx));
+        true
+    }
+
+    #[cfg(not(feature = "user"))]
+    fn reveal_user(&mut self, _: &str, _: &mut Window, _: &mut Context<Self>) -> bool {
+        false
     }
 }
 
@@ -153,7 +200,7 @@ impl SettingsPage for PluginsPage {
                 self.select(&id, window, cx);
                 true
             }
-            None => false,
+            None => self.reveal_user(anchor, window, cx),
         }
     }
 }

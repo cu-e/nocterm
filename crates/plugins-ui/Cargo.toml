@@ -9,6 +9,11 @@ publish = false
 [package.metadata.nocterm]
 layer = "feature"
 
+[features]
+# The User section of the page: install, consent, update, revoke and audit of user plugins.
+# Compiled out of the default build (docs/architecture/guardrails.md).
+user = []
+
 [dependencies]
 nocterm-core.workspace = true
 nocterm-plugin-model.workspace = true

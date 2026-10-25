@@ -3,6 +3,9 @@
 //!
 //! Owns: the page layout and selection, the enable switch with its refusal text, the plugin
 //! settings form per selected plugin, and revealing a plugin by id.
+//! With the cargo feature `user` it also owns the User section: the user plugin list, the install
+//! and update consent (inert for 750 ms, Deny by default), enabling, placement, removal and the
+//! audit log, all through the `UserPlugins` port that the application implements.
 //! Does not own: what disabling does (the workspace), where the choice or the values are stored,
 //! the settings host and its navigation, or the plugins' own pages.
 //! Ports used: `PluginToggles` (implemented by the application over `[plugins]`) and
@@ -15,6 +18,8 @@
 
 mod page;
 mod toggles;
+#[cfg(feature = "user")]
+mod user;
 mod view;
 
 use std::{rc::Rc, sync::Arc};
@@ -25,6 +30,11 @@ use nocterm_ui::{IconName, PluginSettingsDirectory, SettingsPageSpec};
 
 pub use page::PluginsPage;
 pub use toggles::{EnablementError, PluginToggles};
+#[cfg(feature = "user")]
+pub use user::{
+    AuditLine, Candidate, CapabilityLine, FieldLine, InstallRequest, Replaced, RowState,
+    UserPluginError, UserPluginRow, UserPlugins, UserPluginsSection,
+};
 
 /// The lazy Plugins page for the application Settings host.
 pub fn settings_page(
@@ -41,6 +51,29 @@ pub fn settings_page(
                 window,
                 cx,
             )
+        })
+    })
+    .with_icon(IconName::Plug)
+}
+
+/// The lazy Plugins page with a User section below the system plugins, which stay unchanged.
+#[cfg(feature = "user")]
+pub fn settings_page_with_user_plugins(
+    catalog: Arc<PluginCatalog>,
+    toggles: Rc<dyn PluginToggles>,
+    directory: PluginSettingsDirectory,
+    user: Rc<dyn UserPlugins>,
+) -> SettingsPageSpec {
+    SettingsPageSpec::new("plugins", "Plugins", move |window, cx| {
+        cx.new(|cx| {
+            PluginsPage::new(
+                catalog.clone(),
+                toggles.clone(),
+                directory.clone(),
+                window,
+                cx,
+            )
+            .with_user_plugins(user.clone(), cx)
         })
     })
     .with_icon(IconName::Plug)
