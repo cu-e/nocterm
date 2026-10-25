@@ -344,11 +344,17 @@ pub(crate) fn schema_rows(
         if let (Some(minimum), Some(maximum)) = (schema.get("minimum"), schema.get("maximum")) {
             write!(kind, "; {minimum}–{maximum}")?;
         }
+        // A value the file leaves out while it is the default (`skip_serializing_if`) is not in
+        // `defaults`; the schema then names it.
+        let shown = match (defaults, schema.get("default")) {
+            (Value::Null, Some(declared)) => declared,
+            _ => defaults,
+        };
         writeln!(
             text,
             "| `{prefix}` | {} | `{}` | {} |",
             escape(&kind),
-            escape(&defaults.to_string()),
+            escape(&shown.to_string()),
             escape(description)
         )?;
     }

@@ -157,3 +157,57 @@ fn a_table_that_does_not_read_is_reported_and_a_good_one_is_not() {
     );
     assert_eq!(PluginEnablement::read_error(&document("")), None);
 }
+
+#[test]
+fn user_plugins_are_not_allowed_by_default_and_the_key_is_left_out_of_the_file() {
+    let section = PluginEnablement::default();
+    assert!(!section.allows_user_plugins());
+    let text = toml::to_string(&section).unwrap();
+    assert!(!text.contains("user_plugins"), "{text}");
+}
+
+#[test]
+fn the_switch_round_trips_and_survives_sanitizing() {
+    let mut section = PluginEnablement::default();
+    section.set_user_plugins(true);
+    let text = toml::to_string(&section).unwrap();
+    assert!(text.contains("user_plugins = true"), "{text}");
+
+    let mut back: PluginEnablement = toml::from_str(&text).unwrap();
+    back.sanitize();
+    assert!(back.allows_user_plugins());
+    back.set_user_plugins(false);
+    assert!(!toml::to_string(&back).unwrap().contains("user_plugins"));
+}
+
+#[test]
+fn a_table_that_does_not_read_leaves_user_plugins_held() {
+    let mut document =
+        SettingsDocument::from_table("[plugins]\nuser_plugins = \"yes\"\n".parse().unwrap());
+    document.register::<PluginEnablement>();
+    assert!(PluginEnablement::read_error(&document).is_some());
+    assert!(!document.get::<PluginEnablement>().allows_user_plugins());
+}
+
+#[test]
+fn the_document_says_whether_user_plugins_are_allowed_or_why_it_cannot() {
+    let read = |text: &str| {
+        let mut document = SettingsDocument::from_table(text.parse().unwrap());
+        document.register::<PluginEnablement>();
+        PluginEnablement::user_plugins_in(&document)
+    };
+    assert_eq!(read(""), UserPluginsChoice::Off);
+    assert_eq!(
+        read("[plugins]\nuser_plugins = false\n"),
+        UserPluginsChoice::Off
+    );
+    assert_eq!(
+        read("[plugins]\nuser_plugins = true\n"),
+        UserPluginsChoice::Allowed
+    );
+    let broken = read("[plugins]\nuser_plugins = true\ndisabled = [\"monitor\", 3]\n");
+    assert!(
+        matches!(broken, UserPluginsChoice::Unreadable { .. }),
+        "the switch in a table that does not read is not taken"
+    );
+}

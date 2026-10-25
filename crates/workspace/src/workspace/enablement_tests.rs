@@ -44,6 +44,7 @@ fn id(contribution: &SystemContribution) -> ContributionId {
 fn enablement(disabled: &[&'static str]) -> PluginEnablement {
     PluginEnablement {
         disabled: disabled.iter().map(|id| PluginId::new(id)).collect(),
+        ..PluginEnablement::default()
     }
 }
 

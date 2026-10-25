@@ -100,6 +100,7 @@ fn nine_five() -> Arc<FixedClock> {
 fn set_disabled(cx: &mut TestAppContext, window: &Window, disabled: &[&'static str]) {
     let next = PluginEnablement {
         disabled: disabled.iter().map(|id| PluginId::new(id)).collect(),
+        ..PluginEnablement::default()
     };
     let task = cx.update(|cx| {
         window

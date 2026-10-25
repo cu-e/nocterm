@@ -10,10 +10,13 @@
 //! never disabled.
 //!
 //! User plugins are not listed here: their enabled flag lives in the host's records, so a
-//! `user-` id in this section is dropped when it is read and never written.
+//! `user-` id in this section is dropped when it is read and never written. The section holds
+//! only the one switch that lets a build with the `user-plugins` feature load them at all.
 //!
-//! Owns: the `[plugins]` section, its sanitizing and the effective disabled set.
-//! Does not own: which plugins exist or are required (`nocterm-plugin-model`), how a disabled
+//! Owns: the `[plugins]` section, its sanitizing, the effective disabled set and the
+//! `user_plugins` switch.
+//! Does not own: the enabled state of a user plugin (the host's records), which plugins exist or
+//! are required (`nocterm-plugin-model`), how a disabled
 //! plugin is left out of a layout (`nocterm-window-layout`), instantiating panels and widgets
 //! (`nocterm-workspace`), the Plugins page, settings storage.
 //! Ports used/provided: none; it defines a section for `nocterm-settings`. Settings section:
@@ -30,6 +33,20 @@ use nocterm_settings::{SettingsDocument, SettingsSection};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// What a settings document says about loading user plugins at the next start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UserPluginsChoice {
+    /// The user allowed them.
+    Allowed,
+    /// Absent or switched off.
+    Off,
+    /// The `[plugins]` table does not read, so the switch in it is not taken as allowed.
+    Unreadable {
+        /// Why the table does not read.
+        reason: String,
+    },
+}
+
 /// Most plugin ids the section keeps.
 pub const MAX_DISABLED: usize = 64;
 
@@ -41,6 +58,13 @@ pub struct PluginEnablement {
     /// in any window; its settings stay available. Required plugins cannot be disabled.
     #[schemars(with = "Vec<String>")]
     pub disabled: Vec<PluginId>,
+    /// Whether a build with the `user-plugins` feature loads user plugins at the start. Off by
+    /// default and read only by such builds, once, at the start: a change applies at the next
+    /// start. Release builds are made without the feature, so the switch does nothing there.
+    /// Left out of the file while off.
+    #[serde(skip_serializing_if = "core::ops::Not::not")]
+    #[schemars(extend("default" = false))]
+    pub user_plugins: bool,
 }
 
 impl SettingsSection for PluginEnablement {
@@ -76,6 +100,26 @@ impl PluginEnablement {
             .filter(|id| catalog.plugin(id).is_some_and(|plugin| !plugin.required))
             .cloned()
             .collect()
+    }
+
+    /// Whether the user allowed user plugins to load at the start.
+    pub fn allows_user_plugins(&self) -> bool {
+        self.user_plugins
+    }
+
+    /// What `document` says about user plugins. A `[plugins]` table that does not read is never
+    /// taken as allowed, whatever it holds for the switch.
+    pub fn user_plugins_in(document: &SettingsDocument) -> UserPluginsChoice {
+        match Self::read_error(document) {
+            Some(reason) => UserPluginsChoice::Unreadable { reason },
+            None if document.get::<Self>().allows_user_plugins() => UserPluginsChoice::Allowed,
+            None => UserPluginsChoice::Off,
+        }
+    }
+
+    /// Stores whether user plugins may load at the next start.
+    pub fn set_user_plugins(&mut self, allowed: bool) {
+        self.user_plugins = allowed;
     }
 
     /// Switches a plugin on or off in the stored list. The catalog decides later whether the

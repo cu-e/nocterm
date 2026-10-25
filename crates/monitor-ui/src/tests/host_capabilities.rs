@@ -166,6 +166,7 @@ fn a_disabled_monitor_plugin_reports_nothing(cx: &mut TestAppContext) {
 
     let disabled = PluginEnablement {
         disabled: vec![PluginId::new("monitor")],
+        ..PluginEnablement::default()
     };
     let task = cx.update(|cx| {
         rig.settings
