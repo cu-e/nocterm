@@ -14,8 +14,9 @@ A plugin that needs logic can instead be a code package: one WebAssembly module 
 same manifest in its custom section `nocterm.manifest` and says `runtime = "wasm"`. The host runs
 the module in a sandbox with no imports, a fuel budget per call and 16 MiB of memory, and it
 answers with a view or effects that go through the same checks and consent as a declarative
-package. The reference lists the module's exports and limits ("Code package ABI").
-Everything below about the manifest, capabilities and settings applies to both kinds.
+package. The reference lists the module's exports and limits ("Code package ABI"); [Code plugins](#code-plugins)
+below shows how to write one in Rust. Everything below about the manifest, capabilities and settings
+applies to both kinds.
 
 ## A first plugin
 
@@ -146,6 +147,77 @@ would, renders each contribution once with nothing observed (a code package is i
 called in its sandbox for this), and prints the name, id, fingerprint, the
 capabilities it needs and its contributions. The exit status is 0 when every file passes, 1
 when one is refused and 2 for a usage mistake. Symbolic links are not followed.
+
+## Code plugins
+
+A Rust plugin uses the SDK crate `nocterm-plugin-sdk` (in `crates/plugin-sdk`; use it as a path or a
+git dependency). The plugin is a type with `Default` that implements `Plugin`: `render` returns a view for
+the contribution `cx.local()` and `on_event` answers an event with effects. The host makes one
+value per instance and drops it after a fault, so keep durable state in the plugin's storage
+(`storage.set`), which comes back in every snapshot, not in the value.
+
+```rust
+use nocterm_plugin_sdk::{Cx, Plugin, ViewBuilder, api::View};
+
+#[derive(Default)]
+struct Hello;
+
+impl Plugin for Hello {
+    fn render(&mut self, _cx: &mut Cx<'_>) -> View {
+        let mut view = ViewBuilder::new();
+        view.text(None, "hello");
+        view.build()
+    }
+}
+
+nocterm_plugin_sdk::export!(Hello, concat!(env!("CARGO_MANIFEST_DIR"), "/plugin.toml"));
+```
+
+- `cx.observe::<Clock>()` and the other markers in `nocterm_plugin_sdk::observe` read a declared
+  capability. They tell a capability the manifest does not declare apart from one the user
+  declined.
+- `cx.setting("key")` reads a setting, `cx.stored("key")` a stored value, `cx.outcomes()` what
+  happened to the previous call's effects, `cx.log(..)` adds a line to the application log.
+- `ViewBuilder` has a method for every node kind. A button or toggle takes a key that comes back
+  in the `Activated` or `Toggled` event.
+- The `effect` module builds the effects: `notify`, `open_panel`, `badge`, `store` and `forget`.
+  Each needs the matching capability in the manifest. A reply with more than eight effects is
+  refused as a whole, none of them applies, and the refusal counts as a fault of the plugin.
+
+The crate type is `cdylib`, and the module is built for `wasm32-unknown-unknown`. `export!` puts
+`plugin.toml` into the module as the custom section `nocterm.manifest`, so the `.wasm` file is
+the whole package, and writes the exports of the ABI. Write `runtime = "wasm"` in that manifest.
+The expansion uses `unsafe`, so the crate must not `forbid(unsafe_code)`.
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo build --release --target wasm32-unknown-unknown
+nocterm plugin check target/wasm32-unknown-unknown/release   # a directory holding the .wasm
+```
+
+Test the plugin natively with `testing::Host` (enable the SDK feature `testing` for
+dev-dependencies). It builds the same snapshots, runs the same encoding and applies the host's
+rules to the reply, so a view the host would refuse and an effect without a capability fail in
+your test as they would in the application. Set observations, settings and stored values, render
+or send events, and read back the stored data and the log.
+
+To try the plugin in the application, with a build that has user plugins:
+
+```sh
+nocterm plugin dev target/wasm32-unknown-unknown/release/my_plugin.wasm
+```
+
+The session shows the same consent dialog, labelled DEV, and a notice in each window; the bar item
+and the panels of the plugin carry the DEV mark too. The plugin is installed for this session
+only: nothing is written to the plugin records, data or package directories, installed plugins
+are not loaded, and the plugin is gone when the application closes. The session also reads
+`settings.toml` but keeps its changes in memory, so editing the layout or a setting there does
+not reach the file. Everything else saves as usual, including connections, snippets, the vault,
+saved workspaces, installed themes, layout sizes, the keymap, recordings and agent chats. Edit, rebuild and start the session again, or use
+the update flow from the User section.
+
+[`examples/plugins/focus-timer`](../../examples/plugins/focus-timer) is a complete code plugin:
+a bar item and a panel, settings, stored state and tests with `testing::Host`.
 
 ## What the user sees
 

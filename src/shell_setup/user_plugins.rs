@@ -233,4 +233,6 @@ impl WindowUser {
 #[cfg(test)]
 mod dev_session;
 #[cfg(test)]
+mod rust_guest;
+#[cfg(test)]
 mod tests;

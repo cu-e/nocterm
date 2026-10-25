@@ -1,0 +1,46 @@
+# A focus timer. The bar shows the minutes since the stored start; activating it opens the
+# panel. The panel has a meter against the goal, a Reset button that starts a new round and a
+# Close button. All state lives in the plugin's stored data, so a restarted instance carries on.
+api = "0.1"
+runtime = "wasm"
+publisher = "example"
+id = "focus"
+name = "Example Focus Timer"
+description = "A focus timer for the status bar, written in Rust."
+capabilities = ["clock.now", "panels.set-open", "panels.set-badge", "storage.set"]
+
+[reasons]
+"clock.now" = "To count the minutes of a round"
+"panels.set-open" = "To open its panel when the bar item is activated"
+"panels.set-badge" = "To show how many rounds you finished"
+"storage.set" = "To remember when the round started"
+
+[[contribution]]
+local = "bar"
+kind = "widget"
+title = "Focus"
+icon = "gem"
+zone = "right"
+
+[[contribution]]
+local = "panel"
+kind = "panel"
+title = "Focus timer"
+icon = "gem"
+
+[settings]
+version = 1
+
+[[settings.group]]
+title = "Focus timer"
+
+[[settings.group.field]]
+key = "goal"
+label = "Goal"
+help = "Minutes of one round."
+kind = "number"
+min = 5
+max = 120
+step = 5
+default = 25
+unit = "min"

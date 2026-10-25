@@ -394,6 +394,17 @@ bytes.
 `crates/plugin-abi/abi-golden.json` records its exports and canonical encodings and is kept fresh by
 `cargo xtask docs` ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
 
+`nocterm-plugin-sdk` is the guest side of that ABI: the `Plugin` trait, `Cx` (the snapshot of one
+call), a `ViewBuilder`, typed observation markers, effect constructors, the `export!` macro and,
+behind the `testing` feature, `testing::Host`, which drives the real dispatch and encoding
+natively and applies the host's rules to what comes back. It is `no_std` with `alloc`. The only
+`unsafe` code is the expansion of `export!` in the author's crate, and only for `wasm32`. It has no
+isolation row, because the structural bans would reject that macro; instead the policy lists it
+as guest-only, and it must stay out of the closure of `nocterm`
+([guardrails](guardrails.md#isolation-of-the-plugin-crates)). `examples/plugins/focus-timer` is a
+plugin built on it, in a workspace of its own
+([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)).
+
 `nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
 zones of the status bar, panel groups with their members and separators, the tray of
 registered contributions that are not placed, and the panels that open with a layout.
