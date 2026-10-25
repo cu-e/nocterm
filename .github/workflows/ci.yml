@@ -63,6 +63,23 @@ jobs:
           python3 -B scripts/test-claude-config.py
           python3 -B scripts/check-claude-config.py
 
+  plugin-api-compat:
+    name: Plugin API compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test the compatibility rules
+        run: python3 -B scripts/test-plugin-api-compat.py
+      - name: Compare the API surface with the latest release
+        run: python3 -B scripts/check-plugin-api-compat.py
+
   release-pipeline:
     name: Release pipeline regressions
     runs-on: ubuntu-latest
@@ -333,7 +350,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [agent-guardrails, release-pipeline, conventions, integration-history, notices, unused-dependencies, rust, user-plugins, advisories, device-unlock-native, vendor-patches]
+    needs: [agent-guardrails, plugin-api-compat, release-pipeline, conventions, integration-history, notices, unused-dependencies, rust, user-plugins, advisories, device-unlock-native, vendor-patches]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -186,6 +186,7 @@ cargo xtask survey <package> [--json] [--type <Type>]
 .claude/hooks/cargo-serial.sh cargo <command>
 python3 scripts/test-claude-hooks.py
 python3 scripts/check-claude-config.py
+python3 scripts/check-plugin-api-compat.py
 cargo machete --skip-target-dir
 cargo doc --workspace --no-deps -j1
 python3 scripts/generate-license-notices.py --check-inputs
