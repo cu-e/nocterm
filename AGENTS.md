@@ -144,7 +144,10 @@ Code changes require `cargo fmt --all --check`,
 `cargo build --workspace --all-targets`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
 `cargo xtask architecture` and `cargo xtask docs --check` to pass. Run additional
-checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes).
+checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes). Changes to
+user plugins (`nocterm-plugin-*`, `plugins-ui`, `src/shell_setup/user_plugin*`) also run
+`cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings` and
+`cargo test --workspace --features nocterm/user-plugins`: the default build compiles the feature out.
 For documentation-only changes, check links, stale references and generated-doc
 freshness; architecture checks still apply. Build, lint and runtime tests may be
 omitted because executable inputs did not change.
@@ -168,6 +171,8 @@ cargo fmt --all --check
 cargo build --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings
+cargo test --workspace --features nocterm/user-plugins
 NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
 cargo xtask docs
 cargo xtask docs --check

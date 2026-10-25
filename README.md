@@ -316,6 +316,7 @@ keymap and Cargo manifests:
 - [Design tokens](docs/reference/design-tokens.md)
 - [Actions and shortcuts](docs/reference/actions.md)
 - [Plugins and their contributions](docs/reference/plugins.md)
+- [Writing a user plugin (preview)](docs/plugins/guide.md) and its [reference](docs/plugins/reference.md)
 - [Architecture](docs/ARCHITECTURE.md)
 
 ## Development
