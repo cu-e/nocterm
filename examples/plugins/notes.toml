@@ -1,0 +1,47 @@
+# A panel with a note you write in its settings, the load of this computer and the file
+# transfers that are running. It reads two capabilities and asks for nothing optional.
+api = "0.1"
+publisher = "example"
+id = "notes"
+name = "Example Notes"
+description = "A note and a glance at load and transfers."
+capabilities = ["monitor.usage", "transfers.counts"]
+
+[reasons]
+"monitor.usage" = "To draw the load meters"
+"transfers.counts" = "To show how many transfers run"
+
+[[contribution]]
+local = "board"
+kind = "panel"
+title = "Notes board"
+icon = "shapes"
+
+[contribution.view]
+refresh = { after-ms = 2000 }
+nodes = [
+  { kind = "column" },
+  { kind = "text", parent = 0, text = "{settings.note}" },
+  { kind = "divider", parent = 0 },
+  { kind = "row", parent = 0 },
+  { kind = "text", parent = 3, text = "CPU {monitor.usage.cpu_percent|percent}", tone = "muted" },
+  { kind = "meter", parent = 3, value = "monitor.usage.cpu_percent", tone_when = "monitor.usage.cpu_percent|threshold(50, 80)" },
+  { kind = "row", parent = 0 },
+  { kind = "text", parent = 6, text = "Memory {monitor.usage.memory_percent|percent}", tone = "muted" },
+  { kind = "meter", parent = 6, value = "monitor.usage.memory_percent", tone_when = "monitor.usage.memory_percent|threshold(60, 90)" },
+  { kind = "text", parent = 0, text = "Transfers running: {transfers.counts.active}, failed: {transfers.counts.failed}", tone_when = "transfers.counts.failed|threshold(1, 1)" },
+]
+
+[settings]
+version = 1
+
+[[settings.group]]
+title = "Notes"
+
+[[settings.group.field]]
+key = "note"
+label = "Note"
+help = "Shown at the top of the panel."
+kind = "text"
+default = "Nothing to report."
+max_len = 120
