@@ -1,13 +1,17 @@
 //! Reading, hashing, storing and removing user plugin packages.
 //!
-//! The adapter behind the `PluginPackages` port of `nocterm-plugin-api`. A package is one TOML
-//! file of at most 256 KiB. It is read without following a link, hashed over the exact buffer
-//! that is then parsed, and its manifest is validated before anything is shown for consent.
+//! The adapter behind the `PluginPackages` port of `nocterm-plugin-api`. A package is one file:
+//! a TOML manifest of at most 256 KiB (`<id>.toml`, declarative) or a WebAssembly module of at
+//! most 2 MiB whose custom section holds that manifest (`<id>.wasm`, code). The kind comes from
+//! the file's first bytes. A package is read without following a link, hashed over the exact
+//! buffer that is then parsed, and its manifest is validated before anything is shown for
+//! consent; a module is not validated or run here.
 //!
 //! Owns: bounded no-follow reads (through `nocterm_core::fs`), UTF-8 and TOML parsing into the
-//! api DTOs, the API version gate, SHA-256 of the parsed bytes, private atomic publication under
-//! one package directory, re-hashing at load, removal, and reading the packages of a directory for
-//! an author's check.
+//! api DTOs, the manifest section of a module, the check that the declared runtime matches the
+//! kind of file, the API version gate, SHA-256 of the parsed bytes, private atomic publication
+//! under one package directory (one file per plugin, whichever kind), re-hashing at load,
+//! removal, and reading the packages of a directory for an author's check.
 //! Does not own: manifest rules, grants, consent, enablement, the data of a plugin or running a
 //! package (all in the api crate or the host).
 //! Ports used/provided: provides `nocterm_plugin_api::PluginPackages`; uses none.
@@ -22,7 +26,7 @@ mod store;
 
 pub use directory::{CheckedFile, DirectoryError, MAX_CHECKED_FILES, read_directory};
 pub use parse::{parse_package, sha256};
-pub use store::PackageStore;
+pub use store::{PackageStore, read_package};
 
 #[cfg(test)]
 mod tests;

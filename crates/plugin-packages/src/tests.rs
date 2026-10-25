@@ -9,6 +9,8 @@ use nocterm_plugin_model::PluginId;
 use proptest::prelude::*;
 use tempfile::TempDir;
 
+mod code_packages;
+
 use crate::{PackageStore, parse_package, read_directory, sha256};
 
 const PACKAGE: &str = r#"
@@ -367,7 +369,7 @@ proptest! {
 }
 
 #[test]
-fn a_directory_is_read_in_name_order_and_only_toml_files_count() {
+fn a_directory_is_read_in_name_order_and_only_package_files_count() {
     let directory = TempDir::new().unwrap();
     write(directory.path(), "b.toml", PACKAGE);
     write(directory.path(), "a.toml", "api = \"0.1\"\n");

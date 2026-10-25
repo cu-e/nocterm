@@ -9,12 +9,12 @@ use std::{
 
 use nocterm_plugin_api::{Package, PackageError};
 
-use crate::{parse::parse_package, store::PackageStore};
+use crate::store::read_package;
 
 /// Most files of a directory that are read in one check.
 pub const MAX_CHECKED_FILES: usize = 256;
 
-/// One top-level `.toml` file of a directory and what reading it gave.
+/// One top-level `.toml` or `.wasm` file of a directory and what reading it gave.
 #[derive(Debug)]
 pub struct CheckedFile {
     pub path: PathBuf,
@@ -30,11 +30,11 @@ pub enum DirectoryError {
         #[source]
         source: io::Error,
     },
-    #[error("{path} holds more than {max} `.toml` files")]
+    #[error("{path} holds more than {max} `.toml` or `.wasm` files")]
     TooMany { path: String, max: usize },
 }
 
-/// Reads the `.toml` files directly inside `directory`, in name order, exactly as an install
+/// Reads the `.toml` and `.wasm` files directly inside `directory`, in name order, exactly as an install
 /// reads a file: bounded, without following a link, and validated against `reserved_names`. A
 /// link or another file that is not a regular file is reported for that file, not followed.
 /// Read-only: no package store is involved and nothing is stored.
@@ -49,7 +49,8 @@ pub fn read_directory(
     let mut paths = Vec::new();
     for entry in fs::read_dir(directory).map_err(unreadable)? {
         let path = entry.map_err(unreadable)?.path();
-        if path.extension() == Some(OsStr::new("toml")) {
+        let extension = path.extension();
+        if extension == Some(OsStr::new("toml")) || extension == Some(OsStr::new("wasm")) {
             paths.push(path);
         }
         if paths.len() > MAX_CHECKED_FILES {
@@ -63,8 +64,7 @@ pub fn read_directory(
     Ok(paths
         .into_iter()
         .map(|path| CheckedFile {
-            package: PackageStore::read_bytes(&path)
-                .and_then(|bytes| parse_package(bytes, reserved_names)),
+            package: read_package(&path, reserved_names),
             path,
         })
         .collect())
