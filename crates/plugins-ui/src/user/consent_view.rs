@@ -58,6 +58,20 @@ pub(super) fn consent_dialog(
             cx,
         ))
         .child(code_line(candidate, cx))
+        .when(candidate.dev, |dialog| {
+            dialog.child(
+                div()
+                    .id("user-consent-dev")
+                    .aria_label("DEV")
+                    .test_support()
+                    .text_sm()
+                    .font_semibold()
+                    .child(concat!(
+                        "DEV \u{b7} developer session \u{2014} ",
+                        "the plugin and settings are not saved"
+                    )),
+            )
+        })
         .child(versions(candidate, cx))
         .child(form::section("It asks to", capabilities, cx))
         .when(!fields.is_empty(), |dialog| {

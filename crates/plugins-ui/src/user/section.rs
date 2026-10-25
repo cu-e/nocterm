@@ -58,6 +58,11 @@ impl UserPluginsSection {
         }
     }
 
+    /// The file a developer session loads, when this installation is one.
+    pub(super) fn dev_location(&self, cx: &App) -> Option<String> {
+        self.manager.dev_location(cx)
+    }
+
     pub(super) fn rows(&self, cx: &App) -> Vec<UserPluginRow> {
         self.manager.rows(cx)
     }

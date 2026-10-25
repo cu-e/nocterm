@@ -33,6 +33,7 @@ enum Call {
 struct FakeUserPlugins {
     rows: RefCell<Vec<UserPluginRow>>,
     candidate: RefCell<Result<Candidate, UserPluginError>>,
+    dev: RefCell<Option<String>>,
     calls: RefCell<Vec<Call>>,
     changed: Entity<()>,
 }
@@ -58,6 +59,9 @@ impl UserPlugins for Rc<FakeUserPlugins> {
                 action: "disabled".into(),
             },
         ]
+    }
+    fn dev_location(&self, _: &App) -> Option<String> {
+        self.dev.borrow().clone()
     }
     fn inspect(&self, _: &str, _: &App) -> Result<Candidate, UserPluginError> {
         self.candidate.borrow().clone()
@@ -189,6 +193,7 @@ fn candidate() -> Candidate {
         }],
         replaces: None,
         runs_code: false,
+        dev: false,
     }
 }
 
@@ -210,6 +215,7 @@ fn open(
         let plugins = Rc::new(FakeUserPlugins {
             rows: RefCell::new(rows),
             candidate: RefCell::new(candidate),
+            dev: RefCell::default(),
             calls: RefCell::default(),
             changed: cx.new(|_| ()),
         });
@@ -659,4 +665,50 @@ fn an_unchanged_plugin_keeps_its_form_when_the_list_changes(cx: &mut TestAppCont
     cx.run_until_parked();
 
     cx.update(|cx| assert!(fixture.section.read(cx).form().is_some()));
+}
+
+#[gpui_kit::test]
+fn there_is_no_developer_banner_without_a_dev_location(cx: &mut TestAppContext) {
+    let fixture = open(vec![], Ok(candidate()), cx);
+    frame(&fixture, cx, |window, _| {
+        assert!(window.try_find("user-dev").is_none());
+        assert!(window.try_find("user-dev-load").is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn a_developer_session_offers_its_file_and_the_consent_says_dev(cx: &mut TestAppContext) {
+    let fixture = open(
+        vec![],
+        Ok(Candidate {
+            dev: true,
+            ..candidate()
+        }),
+        cx,
+    );
+    fixture.plugins.dev.replace(Some("/work/clock.wasm".into()));
+    fixture.section.update(cx, |_, cx| cx.notify());
+    frame(&fixture, cx, |window, cx| {
+        assert_eq!(window.find("user-dev").label(), Some("Developer session"));
+        assert_eq!(
+            window.find("user-dev-load").label(),
+            Some("Load clock.wasm")
+        );
+        window.click("user-dev-load", cx);
+    });
+    frame(&fixture, cx, |window, _| {
+        assert!(window.try_find("user-consent").is_some());
+        assert_eq!(window.find("user-consent-dev").label(), Some("DEV"));
+    });
+    assert!(fixture.plugins.calls().is_empty());
+}
+
+#[gpui_kit::test]
+fn the_consent_of_a_package_outside_a_developer_session_has_no_dev_label(cx: &mut TestAppContext) {
+    let fixture = open(vec![], Ok(candidate()), cx);
+    begin(&fixture, cx);
+    frame(&fixture, cx, |window, _| {
+        assert!(window.try_find("user-consent").is_some());
+        assert!(window.try_find("user-consent-dev").is_none());
+    });
 }

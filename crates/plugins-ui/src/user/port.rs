@@ -27,6 +27,9 @@ pub struct Candidate {
     pub replaces: Option<Replaced>,
     /// The package is a code module the plugin runs in a sandbox, not a declarative template.
     pub runs_code: bool,
+    /// The package comes from a developer session: the plugin, its data and settings, and the
+    /// application's settings are not saved.
+    pub dev: bool,
 }
 
 /// One capability the package asks for.
@@ -156,6 +159,11 @@ pub trait UserPlugins: 'static {
 
     /// What happened to plugins, oldest first.
     fn audit(&self, cx: &App) -> Vec<AuditLine>;
+
+    /// The file a developer session loads (`nocterm plugin dev <file>`), when this is one.
+    fn dev_location(&self, _cx: &App) -> Option<String> {
+        None
+    }
 
     /// Reads and checks the package at `location`. Nothing is stored.
     fn inspect(&self, location: &str, cx: &App) -> Result<Candidate, UserPluginError>;

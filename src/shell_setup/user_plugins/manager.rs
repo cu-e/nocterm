@@ -157,6 +157,7 @@ fn candidate(host: &PluginHost, location: &str, package: &Package) -> Candidate 
         hash,
         id,
         runs_code: runs_code(next),
+        dev: false,
     }
 }
 

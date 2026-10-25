@@ -59,6 +59,7 @@ pub(super) fn view(
                     })),
             ),
         )
+        .children(dev_banner(section, cx))
         .children(section.notice().map(|notice| {
             div()
                 .id("user-notice")
@@ -67,6 +68,50 @@ pub(super) fn view(
                 .child(form::error_text(notice.clone(), cx))
         }))
         .child(body)
+}
+
+/// The banner of a developer session: the plugin and settings are not saved, and one button
+/// loads the file under test through the same consent as any other package.
+fn dev_banner(
+    section: &UserPluginsSection,
+    cx: &mut Context<UserPluginsSection>,
+) -> Option<AnyElement> {
+    let location = section.dev_location(cx)?;
+    let name = std::path::Path::new(&location).file_name().map_or_else(
+        || location.clone(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    Some(
+        v_flex()
+            .id("user-dev")
+            .aria_label("Developer session")
+            .test_support()
+            .w_full()
+            .gap_1()
+            .p_3()
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded(cx.theme().radius)
+            .child(
+                div()
+                    .text_sm()
+                    .font_semibold()
+                    .child("Developer session \u{2014} the plugin and settings are not saved"),
+            )
+            .child(
+                div().child(
+                    Button::new("user-dev-load")
+                        .small()
+                        .outline()
+                        .label(format!("Load {name}"))
+                        .disabled(section.consent().is_some())
+                        .on_click(cx.listener(move |section, _, window, cx| {
+                            section.begin_install(&location, window, cx);
+                        })),
+                ),
+            )
+            .into_any_element(),
+    )
 }
 
 fn listing(section: &UserPluginsSection, cx: &mut Context<UserPluginsSection>) -> AnyElement {
