@@ -1,0 +1,25 @@
+[package]
+name = "nocterm-plugin-wasm"
+description = "The code runtime of user plugins: WebAssembly modules on wasmi within fuel and memory limits, behind the plugin runtime port."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "adapter"
+
+[dependencies]
+nocterm-plugin-abi.workspace = true
+nocterm-plugin-api.workspace = true
+nocterm-plugin-model.workspace = true
+# `portable-dispatch`: `auto-dispatch` with opt-level 3 overflowed the stack in the X0 spike.
+# No `wat` feature: the host reads binary modules only.
+wasmi = { version = "2.0.0", default-features = false, features = ["std", "validate", "portable-dispatch"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+wat.workspace = true
+
+[lints]
+workspace = true

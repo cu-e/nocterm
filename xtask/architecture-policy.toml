@@ -130,6 +130,25 @@ sha2 = [
     "typenum",
     "version_check",
 ]
+# The closure of wasmi with `std`, `validate` and `portable-dispatch` and no `wat` (the code
+# runtime). The `wasmi` row also reaches `postcard` through the ABI crate.
+wasmi = [
+    "bitflags",
+    "equivalent",
+    "foldhash",
+    "hashbrown",
+    "indexmap",
+    "libm",
+    "lock_api",
+    "scopeguard",
+    "spin",
+    "string-interner",
+    "wasmi",
+    "wasmi_collections",
+    "wasmi_core",
+    "wasmi_ir",
+    "wasmparser",
+]
 
 # Crates inside a list that offer file-system, process or operating-system access. A crate can
 # name only its direct dependencies, and no isolated row lists these directly: they are linked
@@ -165,6 +184,12 @@ kind = "no-std"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["postcard", "serde", "thiserror"]
 external = ["base", "postcard"]
+
+[isolation.crates.nocterm-plugin-wasm]
+kind = "std"
+closure = ["nocterm-plugin-abi", "nocterm-plugin-api", "nocterm-plugin-model"]
+direct = ["wasmi"]
+external = ["base", "postcard", "wasmi"]
 
 [isolation.crates.nocterm-plugin-packages]
 kind = "std"
@@ -227,6 +252,7 @@ crates = [
     "nocterm-plugin-packages",
     "nocterm-plugin-ports",
     "nocterm-plugin-view",
+    "nocterm-plugin-wasm",
 ]
 # Packages whose resolved features must not hold the named feature in the default build.
 features = { nocterm-plugins-ui = "user" }

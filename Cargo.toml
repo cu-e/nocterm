@@ -247,6 +247,7 @@ nocterm-localfs = { path = "crates/localfs" }
 nocterm-monitor = { path = "crates/monitor" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
 nocterm-plugin-abi = { path = "crates/plugin-abi" }
+nocterm-plugin-wasm = { path = "crates/plugin-wasm" }
 nocterm-plugin-api = { path = "crates/plugin-api" }
 nocterm-plugin-enablement = { path = "crates/plugin-enablement" }
 nocterm-plugin-host = { path = "crates/plugin-host" }
@@ -319,6 +320,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 toml = "1"
 toml_edit = "0.25"
 tracing = "0.1"
+# Writes the guest modules the wasm tests run. Dev only: the host reads binary modules.
+wat = "1.262"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
