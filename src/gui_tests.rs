@@ -29,6 +29,8 @@ mod shortcuts;
 mod snippets;
 mod terminal_events;
 mod titlebar;
+#[cfg(feature = "user-plugins")]
+mod user_plugins;
 mod vault;
 mod workspace_preferences;
 
@@ -40,6 +42,12 @@ struct MockTransport {
 /// The local host the fixture gives the application, so a test can read what ran on it.
 struct FixtureLocalHost(nocterm_session::testing::FakeExec);
 impl gpui_kit::Global for FixtureLocalHost {}
+
+/// The user plugin host of the composed application, for tests that install plugins into it.
+#[cfg(feature = "user-plugins")]
+struct FixtureUserPlugins(crate::shell_setup::UserShell);
+#[cfg(feature = "user-plugins")]
+impl gpui_kit::Global for FixtureUserPlugins {}
 
 struct FixtureDirectory {
     _directory: tempfile::TempDir,
@@ -393,6 +401,8 @@ fn boot_with_ports_and_probe(
         cx,
     )
     .expect("valid fixture settings catalogs");
+    #[cfg(feature = "user-plugins")]
+    cx.set_global(FixtureUserPlugins(booted.user_plugins().clone()));
     cx.set_reduce_motion(true);
     booted
 }

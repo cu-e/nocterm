@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use gpui_kit::{App, Context, Window};
-use nocterm_core::Paths;
+use nocterm_core::{Paths, clock::WallClock};
 use nocterm_design::DesignTokens;
 use nocterm_session::Transport;
 use nocterm_store::SettingsConfig;
@@ -14,6 +14,8 @@ use nocterm_vault::VaultAccess;
 use nocterm_vault_store::VaultService;
 use nocterm_workspace::Workspace;
 use std::rc::Rc;
+
+use crate::shell_setup::{GuestInputs, Plugins, install_guest_pages};
 
 mod error;
 pub(crate) use error::BootstrapError;
@@ -107,6 +109,7 @@ pub(crate) struct Booted {
     snippets: Option<nocterm_snippets_ui::Installed>,
     projects: Option<nocterm_projects::Installed>,
     themes: nocterm_ui::ThemeUi,
+    user_plugins: crate::shell_setup::UserShell,
     /// The vault, when it opened; credentials and its settings depend on it.
     vault: Option<Rc<nocterm_vault_ui::Installed>>,
 }
@@ -122,6 +125,10 @@ impl Booted {
     #[cfg(test)]
     pub(crate) fn keymap(&self) -> nocterm_keymap::KeymapHandle {
         self.keymap.clone()
+    }
+    #[cfg(all(test, feature = "user-plugins"))]
+    pub(crate) fn user_plugins(&self) -> &crate::shell_setup::UserShell {
+        &self.user_plugins
     }
     #[cfg(test)]
     pub(crate) fn agent_installation(&self) -> &nocterm_agent::Installed {
@@ -180,15 +187,18 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
-    let (monitor, plugin_source, guests) = crate::shell_setup::install_guest_pages(
-        &local_host,
+    let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);
+    let plugins = Plugins::install(&paths, &shutdown, clock.clone(), cx)?;
+    let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
+    let inputs = GuestInputs::new(
+        &monitor,
         &ui,
         keymap.clone(),
         &files,
         projects.as_ref(),
         &layout,
-        cx,
-    )?;
+    );
+    let guests = install_guest_pages(inputs, &plugins, cx);
     let settings_ui = crate::settings_pages::SettingsPages::from_installations(
         ui.settings().clone(),
         themes.clone(),
@@ -211,14 +221,25 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         projects,
         vault,
         files,
-        workspace: nocterm_workspace::Deps::new(layout)
-            .with_plugin_source(plugin_source)
-            .with_settings(ui.settings().clone())
-            .with_clock(Arc::new(nocterm_local::SystemClock)),
+        user_plugins: plugins.user().clone(),
+        workspace: workspace_deps(layout, &plugins, ui.settings().clone(), clock),
         themes,
     };
     crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
     Ok(booted)
+}
+
+/// The shared dependencies every window's workspace is made from.
+fn workspace_deps(
+    layout: nocterm_ui::LayoutHandle,
+    plugins: &Plugins,
+    settings: nocterm_store::SettingsHandle,
+    clock: Arc<dyn WallClock>,
+) -> nocterm_workspace::Deps {
+    nocterm_workspace::Deps::new(layout)
+        .with_plugin_source(plugins.source())
+        .with_settings(settings)
+        .with_clock(clock)
 }
 
 /// Establish shared settings, appearance and durable layout before feature installation.
@@ -567,15 +588,17 @@ pub(crate) fn build_workspace(
             nocterm_projects::register(workspace, projects, window, cx),
         );
     }
+    let user = booted.user_plugins.window(&booted.files);
     report_registration(
         "monitor",
-        nocterm_monitor_ui::register(&booted.monitor, workspace, window, cx),
+        user.register_monitor(&booted.monitor, workspace, window, cx),
     );
     report_registration(
         "agent",
         nocterm_agent::register(workspace, booted.agent.clone(), window, cx),
     );
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
+    user.attach(workspace, window, cx);
     if let Some(vault) = vault
         && vault
             .settings()

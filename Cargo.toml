@@ -66,7 +66,9 @@ nocterm-plugin-enablement.workspace = true
 nocterm-plugin-model.workspace = true
 nocterm-plugin-api = { workspace = true, optional = true }
 nocterm-plugin-host = { workspace = true, optional = true }
+nocterm-plugin-packages = { workspace = true, optional = true }
 nocterm-plugin-ports = { workspace = true, optional = true }
+nocterm-plugin-view = { workspace = true, optional = true }
 nocterm-plugins-ui.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
@@ -86,7 +88,10 @@ tracing-subscriber.workspace = true
 user-plugins = [
     "dep:nocterm-plugin-api",
     "dep:nocterm-plugin-host",
+    "dep:nocterm-plugin-packages",
     "dep:nocterm-plugin-ports",
+    "dep:nocterm-plugin-view",
+    "nocterm-plugins-ui/user",
     "nocterm-workspace/user-plugins",
     "nocterm-monitor-ui/user-plugins",
     "nocterm-files/user-plugins",

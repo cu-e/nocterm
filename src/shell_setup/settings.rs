@@ -1,66 +1,91 @@
 //! Where each system plugin's settings are stored, for the Plugins page.
-use nocterm_ui::{PluginSettingsDirectory, PluginSource, SettingsPageSpec};
-use std::{rc::Rc, sync::Arc};
+use nocterm_ui::{PluginSettingsDirectory, SettingsPageSpec};
+use std::rc::Rc;
 
 use gpui_kit::App;
-use nocterm_plugin_model::{CatalogError, PluginCatalog};
 use nocterm_store::SettingsHandle;
 
+use super::Plugins;
 use crate::settings_pages::GuestPages;
 
-/// The monitor, the plugin catalog and the lazy settings pages that follow the builtin ones,
-/// among them the Plugins page over the same catalog, and the editor Appearance shows.
-pub(crate) fn install_guest_pages(
-    local_host: &Option<Arc<dyn nocterm_session::HostExec>>,
-    ui: &nocterm_ui::UiReady,
+/// What the guest pages are built from: the installations of the features that own a page.
+pub(crate) struct GuestInputs<'a> {
+    monitor: &'a nocterm_monitor_ui::Installed,
+    ui: &'a nocterm_ui::UiReady,
     keymap: nocterm_keymap::KeymapHandle,
-    files: &nocterm_files::Installed,
-    projects: Option<&nocterm_projects::Installed>,
-    layout: &nocterm_ui::LayoutHandle,
+    files: &'a nocterm_files::Installed,
+    projects: Option<&'a nocterm_projects::Installed>,
+    layout: &'a nocterm_ui::LayoutHandle,
+}
+
+impl<'a> GuestInputs<'a> {
+    pub(crate) fn new(
+        monitor: &'a nocterm_monitor_ui::Installed,
+        ui: &'a nocterm_ui::UiReady,
+        keymap: nocterm_keymap::KeymapHandle,
+        files: &'a nocterm_files::Installed,
+        projects: Option<&'a nocterm_projects::Installed>,
+        layout: &'a nocterm_ui::LayoutHandle,
+    ) -> Self {
+        Self {
+            monitor,
+            ui,
+            keymap,
+            files,
+            projects,
+            layout,
+        }
+    }
+}
+
+/// The lazy settings pages that follow the builtin ones, among them the Plugins page over the
+/// application catalog, and the editor Appearance shows.
+pub(crate) fn install_guest_pages(
+    inputs: GuestInputs<'_>,
+    plugins: &Plugins,
     cx: &mut App,
-) -> Result<
-    (
-        nocterm_monitor_ui::Installed,
-        Rc<dyn PluginSource>,
-        GuestPages,
-    ),
-    CatalogError,
-> {
-    let monitor = nocterm_monitor_ui::install(local_host.clone(), ui, cx);
-    let plugins = Arc::new(super::plugin_catalog()?);
-    let directory = plugin_settings(&monitor, ui.settings());
-    let source = super::plugin_source(&plugins, cx);
-    let page = plugins_page(&plugins, directory.clone(), ui.settings(), cx);
-    let sections = super::layout_editor::appearance_sections(&source, directory, layout, ui, cx);
-    let guests = crate::settings_pages::guest_pages(
+) -> GuestPages {
+    let GuestInputs {
+        monitor,
+        ui,
         keymap,
-        &monitor,
+        files,
+        projects,
+        layout,
+    } = inputs;
+    let directory = plugins
+        .user()
+        .directory(plugin_settings(monitor, ui.settings()));
+    let page = plugins_page(plugins, directory.clone(), ui.settings(), cx);
+    let sections =
+        super::layout_editor::appearance_sections(&plugins.source(), directory, layout, ui, cx);
+    crate::settings_pages::guest_pages(
+        keymap,
+        monitor,
         files,
         projects,
         page,
-        plugins.clone(),
+        plugins.catalog().clone(),
     )
-    .with_appearance_sections(sections);
-    Ok((monitor, source, guests))
+    .with_appearance_sections(sections)
 }
 
 /// The Plugins page over the application catalog, writing `[plugins]` through `handle`. The
 /// settings of the plugins come from `settings`, which the status bar editor shares.
 fn plugins_page(
-    catalog: &Arc<PluginCatalog>,
+    plugins: &Plugins,
     settings: PluginSettingsDirectory,
     handle: &SettingsHandle,
     cx: &mut App,
 ) -> SettingsPageSpec {
-    nocterm_plugins_ui::settings_page(
-        catalog.clone(),
-        Rc::new(super::AppPluginToggles::new(
-            catalog.clone(),
-            handle.clone(),
-            cx,
-        )),
-        settings,
-    )
+    let toggles = Rc::new(super::AppPluginToggles::new(
+        plugins.catalog().clone(),
+        handle.clone(),
+        cx,
+    ));
+    plugins
+        .user()
+        .plugins_page(plugins.catalog(), toggles, settings)
 }
 
 /// The schema and source of every system plugin that has settings. Each source writes the

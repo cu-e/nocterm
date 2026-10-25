@@ -133,6 +133,19 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn a_user_plugin_id_is_unknown_to_the_system_toggles_and_nothing_is_written(
+        cx: &mut TestAppContext,
+    ) {
+        let (toggles, handle) = toggles("", cx);
+        let user = PluginId::owned("user-acme-clock");
+        let task = cx.update(|cx| toggles.set_enabled(&user, false, cx));
+        cx.run_until_parked();
+        let refused = cx.foreground_executor().block_test(task);
+        assert!(matches!(refused, Err(EnablementError::Unknown(id)) if id == user));
+        assert!(stored(&handle, cx).is_empty());
+    }
+
+    #[gpui_kit::test]
     fn an_unknown_plugin_is_refused_and_nothing_is_written(cx: &mut TestAppContext) {
         let (toggles, handle) = toggles("", cx);
         let refused = switch(&toggles, "nobody", false, cx);

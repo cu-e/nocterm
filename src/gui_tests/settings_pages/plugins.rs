@@ -341,3 +341,30 @@ fn the_clock_plugin_shows_its_settings_and_the_form_writes_the_clock_section(
         }
     );
 }
+
+#[cfg(not(feature = "user-plugins"))]
+#[gpui_kit::test]
+fn the_default_build_has_no_user_section(cx: &mut TestAppContext) {
+    let (handle, _, _) = window_over("", cx);
+    dispatch(handle, OpenPlugins { plugin: None }, cx);
+    render(handle, cx);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("plugin-row:monitor").is_some());
+        assert!(window.try_find("user-plugins").is_none());
+        assert!(window.try_find("user-plugin-list").is_none());
+    })
+    .unwrap();
+}
+
+#[cfg(feature = "user-plugins")]
+#[gpui_kit::test]
+fn the_user_feature_adds_a_user_section_below_the_system_plugins(cx: &mut TestAppContext) {
+    let (handle, _, _) = window_over("", cx);
+    dispatch(handle, OpenPlugins { plugin: None }, cx);
+    render(handle, cx);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("plugin-row:monitor").is_some());
+        assert!(window.try_find("user-plugins").is_some());
+    })
+    .unwrap();
+}

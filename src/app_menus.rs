@@ -189,23 +189,39 @@ fn layouts_menu(state: &MenuState) -> Menu {
 }
 
 /// The panels the selected layout places, checked while they show, with a separator between
-/// groups.
+/// groups. The panels of user plugins stay apart, in a submenu that names each by its plugin.
 fn panels_menu(state: &MenuState) -> Menu {
     let mut items = Vec::new();
+    let mut user = Vec::new();
     for group in state.workspace.panel_menu() {
+        let (mine, theirs): (Vec<_>, Vec<_>) = group
+            .into_iter()
+            .partition(|panel| panel.user_plugin().is_none());
+        user.extend(theirs.into_iter().map(|panel| panel_item(&panel, state)));
+        if mine.is_empty() {
+            continue;
+        }
         if !items.is_empty() {
             items.push(MenuItem::separator());
         }
-        items.extend(group.into_iter().map(|panel| {
-            MenuItem::action(
-                panel.title(),
-                TogglePanel {
-                    id: panel.id().as_str().to_owned().into(),
-                },
-            )
-            .checked(panel.is_open())
-            .disabled(!state.in_workspace || !panel.is_available())
-        }));
+        items.extend(mine.iter().map(|panel| panel_item(panel, state)));
+    }
+    if !user.is_empty() {
+        if !items.is_empty() {
+            items.push(MenuItem::separator());
+        }
+        items.push(MenuItem::submenu(Menu::new("User plugins").items(user)));
     }
     Menu::new("Panels").items(items)
+}
+
+fn panel_item(panel: &nocterm_workspace::PanelEntry, state: &MenuState) -> MenuItem {
+    MenuItem::action(
+        panel.label(),
+        TogglePanel {
+            id: panel.id().as_str().to_owned().into(),
+        },
+    )
+    .checked(panel.is_open())
+    .disabled(!state.in_workspace || !panel.is_available())
 }

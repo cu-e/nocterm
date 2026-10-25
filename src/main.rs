@@ -14,6 +14,8 @@ mod application;
 mod bootstrap;
 mod connection_setup;
 mod keymap;
+#[cfg(feature = "user-plugins")]
+mod plugin_command;
 mod project_setup;
 mod settings_pages;
 mod shell_setup;
@@ -40,6 +42,13 @@ const APP_ID: &str = "dev.nocterm.Nocterm";
 const AGENT_BRIDGE: &str = "agent-bridge";
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(feature = "user-plugins")]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "plugin")
+    {
+        std::process::exit(plugin_command::run(std::env::args_os().skip(2)));
+    }
     #[cfg(target_os = "linux")]
     if std::env::args_os()
         .nth(1)
