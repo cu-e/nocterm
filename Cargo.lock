@@ -5574,6 +5574,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-plugin-sdk"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-abi",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "nocterm-plugin-view"
 version = "0.0.0"
 dependencies = [
