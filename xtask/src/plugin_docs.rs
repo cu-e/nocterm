@@ -19,7 +19,8 @@ fn markdown(surface: &Value) -> String {
     let _ = write!(
         text,
         "# Plugin API reference\n\nPreview. This is the contract of user plugins at API {}, declarative packages and code packages. \
-         Read the [guide](guide.md) first. Names and limits below are enforced by the host; \
+         Read the [guide](guide.md) first. An editor can check a manifest against \
+         [manifest.schema.json](manifest.schema.json). Names and limits below are enforced by the host; \
          a package that breaks one is refused with the reason.\n\n",
         surface["api_version"].as_str().unwrap_or_default()
     );
@@ -169,12 +170,16 @@ fn code_abi(text: &mut String) {
     );
 }
 
-/// The type of a manifest key as the reference words it: a choice names its vocabulary.
+/// The type of a manifest key as the reference words it: a choice names its vocabulary, an
+/// integer its range.
 fn key_type(entry: &Value) -> String {
     let ty = entry["type"].as_str().unwrap_or_default();
-    match entry["vocabulary"].as_str() {
-        Some(vocabulary) => format!("{ty} ({})", vocabulary.replace('_', " ")),
-        None => ty.to_owned(),
+    if let Some(vocabulary) = entry["vocabulary"].as_str() {
+        return format!("{ty} ({})", vocabulary.replace('_', " "));
+    }
+    match (entry["min"].as_i64(), entry["max"].as_i64()) {
+        (Some(min), Some(max)) => format!("{ty} ({min} to {max})"),
+        _ => ty.to_owned(),
     }
 }
 

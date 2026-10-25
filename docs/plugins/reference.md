@@ -2,7 +2,7 @@
 
 # Plugin API reference
 
-Preview. This is the contract of user plugins at API 0.1, declarative packages and code packages. Read the [guide](guide.md) first. Names and limits below are enforced by the host; a package that breaks one is refused with the reason.
+Preview. This is the contract of user plugins at API 0.1, declarative packages and code packages. Read the [guide](guide.md) first. An editor can check a manifest against [manifest.schema.json](manifest.schema.json). Names and limits below are enforced by the host; a package that breaks one is refused with the reason.
 
 ## Capabilities
 
@@ -30,7 +30,7 @@ A declarative package is one TOML file; a code package carries the same TOML in 
 | `contribution` | `icon` | choice (icons) | no |
 | `contribution` | `kind` | choice (kinds) | yes |
 | `contribution` | `local` | text | yes |
-| `contribution` | `order` | integer | no |
+| `contribution` | `order` | integer (0 to 65535) | no |
 | `contribution` | `title` | text | yes |
 | `contribution` | `view` | table | no |
 | `contribution` | `zone` | choice (zones) | no |
@@ -40,7 +40,7 @@ A declarative package is one TOML file; a code package carries the same TOML in 
 | `contribution.view.nodes` | `icon` | choice (icons) | no |
 | `contribution.view.nodes` | `key` | text | no |
 | `contribution.view.nodes` | `kind` | choice (node kinds) | yes |
-| `contribution.view.nodes` | `parent` | integer | no |
+| `contribution.view.nodes` | `parent` | integer (0 to 65535) | no |
 | `contribution.view.nodes` | `text` | text | no |
 | `contribution.view.nodes` | `tone` | choice (tones) | no |
 | `contribution.view.nodes` | `tone_when` | text | no |
@@ -57,7 +57,7 @@ A declarative package is one TOML file; a code package carries the same TOML in 
 | `manifest` | `runtime` | choice (runtimes) | no |
 | `manifest` | `settings` | table | no |
 | `settings` | `group` | table-list | no |
-| `settings` | `version` | integer | no |
+| `settings` | `version` | integer (0 to 65535) | no |
 | `settings.group` | `contribution` | text | no |
 | `settings.group` | `field` | table-list | no |
 | `settings.group` | `title` | text | yes |
@@ -66,15 +66,15 @@ A declarative package is one TOML file; a code package carries the same TOML in 
 | `settings.group.field` | `key` | text | yes |
 | `settings.group.field` | `kind` | choice (settings kinds) | yes |
 | `settings.group.field` | `label` | text | yes |
-| `settings.group.field` | `max` | integer | no |
-| `settings.group.field` | `max_chosen` | integer | no |
-| `settings.group.field` | `max_len` | integer | no |
-| `settings.group.field` | `min` | integer | no |
+| `settings.group.field` | `max` | integer (-2147483648 to 2147483647) | no |
+| `settings.group.field` | `max_chosen` | integer (0 to 255) | no |
+| `settings.group.field` | `max_len` | integer (0 to 65535) | no |
+| `settings.group.field` | `min` | integer (-2147483648 to 2147483647) | no |
 | `settings.group.field` | `options` | table-list | no |
 | `settings.group.field` | `ordered` | bool | no |
 | `settings.group.field` | `placeholder` | text | no |
 | `settings.group.field` | `renamed_from` | text | no |
-| `settings.group.field` | `step` | integer | no |
+| `settings.group.field` | `step` | integer (1 to 2147483647) | no |
 | `settings.group.field` | `unit` | text | no |
 | `settings.group.field.options` | `help` | text | no |
 | `settings.group.field.options` | `key` | text | yes |

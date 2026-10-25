@@ -21,7 +21,9 @@ mod lint_policy;
 mod manifest_lints;
 mod plugin_abi;
 mod plugin_docs;
+mod plugin_guide;
 mod plugin_reference;
+mod plugin_schema;
 mod ratchet;
 mod settings_reference;
 mod survey;
@@ -405,6 +407,7 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
         (plugin_abi::PATH, plugin_abi::render(root)?),
         (plugin_reference::PATH, plugin_reference::render()?),
         (plugin_docs::PATH, plugin_docs::render()?),
+        (plugin_schema::PATH, plugin_schema::render()?),
     ];
     let mut stale = Vec::new();
     for (name, text) in documents {
@@ -424,7 +427,7 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
             stale.join(", ")
         );
     }
-    Ok(())
+    plugin_guide::check_documents(root)
 }
 
 #[cfg(test)]
