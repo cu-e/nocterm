@@ -1,5 +1,6 @@
-//! Switching system plugins on and off from the Plugins page: the `[plugins]` section is the
-//! only state, and the window shell follows it.
+//! Switching system plugins on and off from the Plugins page, and the choice to load user
+//! plugins at the next start: the `[plugins]` section is the only state, and the window shell
+//! follows it.
 use std::sync::Arc;
 
 use gpui_kit::{App, Subscription, Task};
@@ -19,6 +20,44 @@ impl AppPluginToggles {
     pub(crate) fn new(catalog: Arc<PluginCatalog>, handle: SettingsHandle, cx: &mut App) -> Self {
         handle.register::<PluginEnablement>(cx);
         Self { catalog, handle }
+    }
+
+    /// Applies `change` to the `[plugins]` section, unless the table does not read; then it is
+    /// refused and left as written, so a hand edit is never overwritten.
+    fn store(
+        &self,
+        cx: &mut App,
+        change: impl FnOnce(&mut PluginEnablement) + 'static,
+    ) -> Task<Result<(), EnablementError>> {
+        if let Some(reason) = PluginEnablement::read_error(self.handle.document(cx)) {
+            return Task::ready(Err(EnablementError::Malformed { reason }));
+        }
+        let stored = self.handle.edit_checked(cx, move |document| {
+            document.register::<PluginEnablement>();
+            if let Some(reason) = PluginEnablement::read_error(document) {
+                return Err(StoreError::edit(MalformedPlugins(reason)));
+            }
+            document.update::<PluginEnablement>(change);
+            Ok(())
+        });
+        cx.spawn(async move |_| stored.await.map(drop).map_err(refusal))
+    }
+}
+
+/// The stored choice to load user plugins, which applies at the next start.
+#[cfg(feature = "user-plugins")]
+impl nocterm_plugins_ui::UserPluginsSwitch for AppPluginToggles {
+    fn allowed(&self, cx: &App) -> bool {
+        PluginEnablement::user_plugins_in(self.handle.document(cx))
+            == nocterm_plugin_enablement::UserPluginsChoice::Allowed
+    }
+
+    fn set_allowed(&self, allowed: bool, cx: &mut App) -> Task<Result<(), EnablementError>> {
+        self.store(cx, move |section| section.set_user_plugins(allowed))
+    }
+
+    fn observe(&self, cx: &mut App, on_change: Box<dyn FnMut(&mut App)>) -> Subscription {
+        self.handle.observe(cx, on_change)
     }
 }
 
@@ -43,19 +82,8 @@ impl PluginToggles for AppPluginToggles {
         if known.required && !enabled {
             return Task::ready(Err(EnablementError::Required(plugin.clone())));
         }
-        if let Some(reason) = PluginEnablement::read_error(self.handle.document(cx)) {
-            return Task::ready(Err(EnablementError::Malformed { reason }));
-        }
         let id = plugin.clone();
-        let stored = self.handle.edit_checked(cx, move |document| {
-            document.register::<PluginEnablement>();
-            if let Some(reason) = PluginEnablement::read_error(document) {
-                return Err(StoreError::edit(MalformedPlugins(reason)));
-            }
-            document.update::<PluginEnablement>(|section| section.set_enabled(&id, enabled));
-            Ok(())
-        });
-        cx.spawn(async move |_| stored.await.map(drop).map_err(refusal))
+        self.store(cx, move |section| section.set_enabled(&id, enabled))
     }
 
     fn observe(&self, cx: &mut App, on_change: Box<dyn FnMut(&mut App)>) -> Subscription {
@@ -161,5 +189,53 @@ mod tests {
         assert!(matches!(refused, Err(EnablementError::Malformed { .. })));
         let raw = cx.update(|cx| handle.document(cx).to_table().to_string());
         assert!(raw.contains("disabled = [\"monitor\", 3]"), "{raw}");
+    }
+
+    #[cfg(feature = "user-plugins")]
+    mod user_switch {
+        use super::*;
+        use nocterm_plugins_ui::UserPluginsSwitch as _;
+
+        fn set(
+            toggles: &AppPluginToggles,
+            allowed: bool,
+            cx: &mut TestAppContext,
+        ) -> Result<(), EnablementError> {
+            let task = cx.update(|cx| toggles.set_allowed(allowed, cx));
+            cx.run_until_parked();
+            cx.foreground_executor().block_test(task)
+        }
+
+        #[gpui_kit::test]
+        fn user_plugins_are_not_allowed_until_the_user_says_so(cx: &mut TestAppContext) {
+            let (toggles, handle) = toggles("", cx);
+            assert!(!cx.update(|cx| toggles.allowed(cx)));
+            assert_eq!(set(&toggles, true, cx).ok(), Some(()));
+            assert!(cx.update(|cx| toggles.allowed(cx)));
+            assert_eq!(set(&toggles, false, cx).ok(), Some(()));
+            assert!(!cx.update(|cx| toggles.allowed(cx)));
+            assert!(
+                stored(&handle, cx).is_empty(),
+                "the system list is untouched"
+            );
+        }
+
+        #[gpui_kit::test]
+        fn allowing_keeps_the_disabled_system_plugins(cx: &mut TestAppContext) {
+            let (toggles, handle) = toggles("[plugins]\ndisabled = [\"monitor\"]\n", cx);
+            assert_eq!(set(&toggles, true, cx).ok(), Some(()));
+            assert_eq!(stored(&handle, cx), [PluginId::new("monitor")]);
+        }
+
+        #[gpui_kit::test]
+        fn a_table_that_does_not_read_is_neither_allowed_nor_rewritten(cx: &mut TestAppContext) {
+            let broken = "[plugins]\nuser_plugins = true\ndisabled = [\"monitor\", 3]\n";
+            let (toggles, handle) = toggles(broken, cx);
+            assert!(!cx.update(|cx| toggles.allowed(cx)));
+            let refused = set(&toggles, true, cx);
+            assert!(matches!(refused, Err(EnablementError::Malformed { .. })));
+            let raw = cx.update(|cx| handle.document(cx).to_table().to_string());
+            assert!(raw.contains("disabled = [\"monitor\", 3]"), "{raw}");
+        }
     }
 }

@@ -42,18 +42,16 @@ const APP_ID: &str = "dev.nocterm.Nocterm";
 const AGENT_BRIDGE: &str = "agent-bridge";
 
 /// Which user plugins this run opens. `nocterm plugin check` leaves the process here;
-/// `nocterm plugin dev <file>` starts a developer session.
+/// `nocterm plugin dev <file>` starts a developer session and `nocterm --safe-mode` loads none.
 #[cfg(feature = "user-plugins")]
 fn user_plugin_mode() -> shell_setup::UserPluginMode {
-    if !std::env::args_os()
-        .nth(1)
-        .is_some_and(|arg| arg == "plugin")
-    {
-        return shell_setup::UserPluginMode::default();
-    }
-    match plugin_command::run(std::env::args_os().skip(2)) {
+    match plugin_command::from_args(std::env::args_os().skip(1)) {
         plugin_command::Command::Exit(status) => std::process::exit(status),
         plugin_command::Command::Dev(file) => shell_setup::UserPluginMode::Dev(file),
+        plugin_command::Command::Start { safe_mode: true } => shell_setup::UserPluginMode::SafeMode,
+        plugin_command::Command::Start { safe_mode: false } => {
+            shell_setup::UserPluginMode::Installed
+        }
     }
 }
 

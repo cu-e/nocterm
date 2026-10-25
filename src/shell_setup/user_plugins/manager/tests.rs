@@ -37,6 +37,7 @@ fn rig(cx: &mut TestAppContext) -> Rig {
     let directory = TempDir::new().unwrap();
     let catalog = Arc::new(plugin_catalog().expect("the application catalog"));
     let paths = nocterm_core::Paths::rooted_at(directory.path());
+    let settings = super::super::gate::allowing(cx);
     let shell = cx.update(|cx| {
         UserShell::install(
             &catalog,
@@ -44,11 +45,15 @@ fn rig(cx: &mut TestAppContext) -> Rig {
             &ShutdownCoordinator::default(),
             Arc::new(Noon),
             UserPluginMode::Installed,
+            &settings,
             cx,
         )
     });
     Rig {
-        plugins: HostPlugins::new(shell.host().clone(), None),
+        plugins: HostPlugins::new(
+            shell.host().expect("the shell loads user plugins").clone(),
+            None,
+        ),
         directory,
     }
 }

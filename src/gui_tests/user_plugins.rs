@@ -55,17 +55,21 @@ fn example(name: &str) -> String {
 
 fn install(window: &Window, name: &str, placeable: bool, cx: &mut TestAppContext) -> PluginId {
     let id = cx.update(|cx| {
-        window.shell.host().update(cx, |host, cx| {
-            let package = host
-                .read_package(&example(name))
-                .expect("the example reads");
-            let id = host
-                .install(package, &[], cx)
-                .expect("the example installs");
-            host.set_placeable(&id, placeable, cx)
-                .expect("it is installed");
-            id
-        })
+        window
+            .shell
+            .host()
+            .expect("the shell loads user plugins")
+            .update(cx, |host, cx| {
+                let package = host
+                    .read_package(&example(name))
+                    .expect("the example reads");
+                let id = host
+                    .install(package, &[], cx)
+                    .expect("the example installs");
+                host.set_placeable(&id, placeable, cx)
+                    .expect("it is installed");
+                id
+            })
     });
     cx.run_until_parked();
     id
@@ -79,7 +83,13 @@ fn change(
         &mut gpui_kit::Context<nocterm_plugin_host::PluginHost>,
     ),
 ) {
-    cx.update(|cx| window.shell.host().update(cx, act));
+    cx.update(|cx| {
+        window
+            .shell
+            .host()
+            .expect("the shell loads user plugins")
+            .update(cx, act)
+    });
     cx.run_until_parked();
 }
 
@@ -282,10 +292,13 @@ fn a_user_plugin_setting_is_kept_by_the_host_and_never_reaches_the_settings_file
     let _ = workspace;
     let shell = cx.update(|cx| cx.global::<FixtureUserPlugins>().0.clone());
     let id = cx.update(|cx| {
-        shell.host().update(cx, |host, cx| {
-            let package = host.read_package(&example("clock")).unwrap();
-            host.install(package, &[], cx).unwrap()
-        })
+        shell
+            .host()
+            .expect("the shell loads user plugins")
+            .update(cx, |host, cx| {
+                let package = host.read_package(&example("clock")).unwrap();
+                host.install(package, &[], cx).unwrap()
+            })
     });
     let before = cx.update(|cx| settings.document(cx).to_table());
     let directory = shell.directory(nocterm_ui::PluginSettingsDirectory::new());
@@ -325,10 +338,13 @@ fn a_user_id_resolves_to_the_user_source_and_never_to_a_system_one(cx: &mut Test
     let directory = shell.directory(system);
     let clock = nocterm_workspace::clock::PLUGIN.id.clone();
     let installed = cx.update(|cx| {
-        shell.host().update(cx, |host, cx| {
-            let package = host.read_package(&example("clock")).unwrap();
-            host.install(package, &[], cx).unwrap()
-        })
+        shell
+            .host()
+            .expect("the shell loads user plugins")
+            .update(cx, |host, cx| {
+                let package = host.read_package(&example("clock")).unwrap();
+                host.install(package, &[], cx).unwrap()
+            })
     });
 
     let system_schema = cx

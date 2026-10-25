@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::Arc};
 use gpui_kit::{App, Context, Window};
 use nocterm_core::{Paths, clock::WallClock};
 use nocterm_plugin_model::{PluginCatalog, PluginSet};
-use nocterm_store::ShutdownCoordinator;
+use nocterm_store::{SettingsHandle, ShutdownCoordinator};
 use nocterm_ui::{PluginSettingsDirectory, PluginSource, SettingsPageSpec, StaticPluginSource};
 use nocterm_workspace::{RegistrationError, Workspace};
 
@@ -22,6 +22,7 @@ impl UserShell {
         _shutdown: &ShutdownCoordinator,
         _clock: Arc<dyn WallClock>,
         _mode: UserPluginMode,
+        _settings: &SettingsHandle,
         _cx: &mut App,
     ) -> Self {
         Self

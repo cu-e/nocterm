@@ -4,7 +4,7 @@ use std::{rc::Rc, sync::Arc};
 use gpui_kit::App;
 use nocterm_core::{Paths, clock::WallClock};
 use nocterm_plugin_model::{CatalogError, PluginCatalog, SystemPlugin};
-use nocterm_store::ShutdownCoordinator;
+use nocterm_store::{SettingsHandle, ShutdownCoordinator};
 use nocterm_ui::PluginSource;
 use nocterm_workspace::plugin;
 
@@ -52,13 +52,18 @@ pub(crate) fn plugin_catalog() -> Result<PluginCatalog, CatalogError> {
     )
 }
 
-/// What the user plugins of this run are: the installed ones, or the one file of a developer
-/// session (`nocterm plugin dev`). X-ship adds a safe mode here, not another field on the
+/// What the user plugins of this run are: the installed ones, none (safe mode), or the one file
+/// of a developer session (`nocterm plugin dev`). A new way to start extends this enum, not the
 /// services.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum UserPluginMode {
+    /// The installed plugins, when `[plugins] user_plugins` allows them.
     #[default]
     Installed,
+    /// `--safe-mode`: no user plugin loads, whatever the setting says. The settings still save,
+    /// so the switch can be changed for the next start.
+    #[cfg(feature = "user-plugins")]
+    SafeMode,
     /// Load this file for consent in a session that loads no installed plugin, keeps the
     /// plugins' records, data and packages in memory, and does not write `settings.toml`.
     #[cfg(feature = "user-plugins")]
@@ -72,6 +77,8 @@ impl UserPluginMode {
     pub(crate) fn saves_settings(&self) -> bool {
         match self {
             Self::Installed => true,
+            #[cfg(feature = "user-plugins")]
+            Self::SafeMode => true,
             #[cfg(feature = "user-plugins")]
             Self::Dev(_) => false,
         }
@@ -88,17 +95,19 @@ pub(crate) struct Plugins {
 }
 
 impl Plugins {
-    /// Checks the catalog and opens the user plugins of `mode`: those stored under `paths`, or
-    /// the developer session's.
+    /// Checks the catalog and opens the user plugins of `mode`: those stored under `paths` when
+    /// `settings` allow them, or the developer session's. Safe mode and a switch that is off
+    /// open nothing.
     pub(crate) fn install(
         paths: &Paths,
         shutdown: &ShutdownCoordinator,
         clock: Arc<dyn WallClock>,
         mode: UserPluginMode,
+        settings: &SettingsHandle,
         cx: &mut App,
     ) -> Result<Self, CatalogError> {
         let catalog = Arc::new(plugin_catalog()?);
-        let user = UserShell::install(&catalog, paths, shutdown, clock, mode, cx);
+        let user = UserShell::install(&catalog, paths, shutdown, clock, mode, settings, cx);
         let source = user.source(&catalog);
         Ok(Self {
             catalog,

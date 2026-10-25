@@ -61,6 +61,24 @@ fn fixture_user_mode(cx: &gpui_kit::App) -> crate::shell_setup::UserPluginMode {
         .map_or_else(Default::default, |mode| mode.0.clone())
 }
 
+/// The composed application starts with user plugins allowed, as a user who turned the switch on
+/// has it, unless a test puts the fixture in safe mode.
+#[cfg(feature = "user-plugins")]
+fn fixture_settings(mut settings: nocterm_store::SettingsConfig) -> nocterm_store::SettingsConfig {
+    settings.register::<nocterm_plugin_enablement::PluginEnablement>();
+    let mut plugins = settings
+        .document()
+        .get::<nocterm_plugin_enablement::PluginEnablement>()
+        .clone();
+    plugins.set_user_plugins(true);
+    settings.with(plugins)
+}
+
+#[cfg(not(feature = "user-plugins"))]
+fn fixture_settings(settings: nocterm_store::SettingsConfig) -> nocterm_store::SettingsConfig {
+    settings
+}
+
 #[cfg(not(feature = "user-plugins"))]
 fn fixture_user_mode(_: &gpui_kit::App) -> crate::shell_setup::UserPluginMode {
     Default::default()
@@ -376,7 +394,7 @@ fn boot_with_ports_and_probe(
                 nocterm_agent::ImageDeps::new(codec.clone(), codec)
             },
             tokens: nocterm_ui::DesignTokens::builtin(),
-            settings,
+            settings: fixture_settings(settings),
             persist: false,
             connections: crate::connection_setup::memory(),
             projects: crate::project_setup::PreparedProjectSetup::memory(),

@@ -95,9 +95,10 @@ fn session(mode: impl FnOnce(&Path) -> UserPluginMode, cx: &mut TestAppContext) 
     let catalog = Arc::new(plugin_catalog().expect("the application catalog"));
     let paths = nocterm_core::Paths::rooted_at(state.path());
     let mode = mode(&file);
+    let settings = super::gate::allowing(cx);
     let dev = match &mode {
         UserPluginMode::Dev(file) => Some(file.clone()),
-        UserPluginMode::Installed => None,
+        UserPluginMode::Installed | UserPluginMode::SafeMode => None,
     };
     let shell = cx.update(|cx| {
         UserShell::install(
@@ -106,11 +107,15 @@ fn session(mode: impl FnOnce(&Path) -> UserPluginMode, cx: &mut TestAppContext) 
             &ShutdownCoordinator::default(),
             Arc::new(Noon),
             mode,
+            &settings,
             cx,
         )
     });
     Session {
-        plugins: HostPlugins::new(shell.host().clone(), dev),
+        plugins: HostPlugins::new(
+            shell.host().expect("the shell loads user plugins").clone(),
+            dev,
+        ),
         shell,
         state,
         file: file.to_str().unwrap().to_owned(),
@@ -152,14 +157,19 @@ fn use_the_plugin(session: &Session, cx: &mut TestAppContext) {
 
     let mut values = SettingValues::default();
     values.insert("label", SettingValue::Text("Hey".into()));
-    session.shell.host().update(cx, |host, cx| {
-        host.replace_values(&plugin(), &values, cx)
-            .expect("the values are stored");
-    });
+    session
+        .shell
+        .host()
+        .expect("the shell loads user plugins")
+        .update(cx, |host, cx| {
+            host.replace_values(&plugin(), &values, cx)
+                .expect("the values are stored");
+        });
     assert_eq!(
         session
             .shell
             .host()
+            .expect("the shell loads user plugins")
             .read_with(cx, |host, _| host.values(&plugin())),
         Some(values),
         "the session keeps what the user set"
@@ -177,16 +187,20 @@ fn use_the_plugin(session: &Session, cx: &mut TestAppContext) {
         },
         in_focus: true,
     };
-    session.shell.host().update(cx, |host, cx| {
-        host.handle(
-            &call,
-            Input::Pointer,
-            Event::Activated { key: "go".into() },
-            &PluginProviders::new(),
-            cx,
-        )
-        .expect("the plugin takes the event");
-    });
+    session
+        .shell
+        .host()
+        .expect("the shell loads user plugins")
+        .update(cx, |host, cx| {
+            host.handle(
+                &call,
+                Input::Pointer,
+                Event::Activated { key: "go".into() },
+                &PluginProviders::new(),
+                cx,
+            )
+            .expect("the plugin takes the event");
+        });
     cx.run_until_parked();
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(5));

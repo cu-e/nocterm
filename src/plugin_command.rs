@@ -1,11 +1,15 @@
-//! `nocterm plugin check <dir>` and `nocterm plugin dev <file>`: the author's tools for user
-//! plugin packages. `check` reports on a directory and exits; `dev` starts the application in a
-//! developer session.
+//! The command line of the user plugin track: `nocterm --safe-mode`, `nocterm plugin check <dir>`
+//! and `nocterm plugin dev <file>`. `--safe-mode` starts the application without loading any user
+//! plugin. `check` reports on a directory and exits; `dev` starts the application in a developer
+//! session, which `--safe-mode` cannot be combined with.
 use std::{ffi::OsString, io, path::PathBuf};
 
 use thiserror::Error;
 
-const USAGE: &str = "usage: nocterm plugin check <directory>\n       nocterm plugin dev <file>";
+const USAGE: &str = "usage: nocterm [--safe-mode]\n       nocterm plugin check <directory>\n       nocterm plugin dev <file>";
+
+/// The flag that starts the application with no user plugin loaded.
+const SAFE_MODE: &str = "--safe-mode";
 
 /// What the subcommand asks the process to do.
 #[derive(Debug, PartialEq, Eq)]
@@ -14,10 +18,36 @@ pub(crate) enum Command {
     Exit(i32),
     /// Start the application in a developer session that loads this file.
     Dev(PathBuf),
+    /// Start the application; with `safe_mode` no user plugin loads.
+    Start { safe_mode: bool },
+}
+
+/// Reads the command line after the program name. `plugin` selects the author's tools; any other
+/// line starts the application, in safe mode when it carries `--safe-mode`.
+pub(crate) fn from_args(mut args: impl Iterator<Item = OsString>) -> Command {
+    let Some(first) = args.next() else {
+        return Command::Start { safe_mode: false };
+    };
+    if first == "plugin" {
+        return run(args);
+    }
+    let safe_mode = std::iter::once(first)
+        .chain(args)
+        .any(|arg| arg == SAFE_MODE);
+    Command::Start { safe_mode }
 }
 
 /// Runs the subcommand with the arguments after `plugin`.
-pub(crate) fn run(mut args: impl Iterator<Item = OsString>) -> Command {
+pub(crate) fn run(args: impl Iterator<Item = OsString>) -> Command {
+    let args: Vec<OsString> = args.collect();
+    if args.iter().any(|arg| arg == SAFE_MODE) {
+        say(
+            &mut io::stderr(),
+            "a plugin subcommand cannot be combined with --safe-mode",
+        );
+        return usage();
+    }
+    let mut args = args.into_iter();
     match (args.next(), args.next(), args.next()) {
         (Some(command), Some(directory), None) if command == "check" => {
             Command::Exit(check(directory.into()))
@@ -167,5 +197,42 @@ mod tests {
         assert_eq!(run(args(&["check"])), Command::Exit(2));
         assert_eq!(run(args(&["unknown", "x"])), Command::Exit(2));
         assert_eq!(run(args(&[])), Command::Exit(2));
+    }
+
+    #[test]
+    fn safe_mode_is_a_flag_of_the_plain_start() {
+        assert_eq!(from_args(args(&[])), Command::Start { safe_mode: false });
+        assert_eq!(
+            from_args(args(&["--safe-mode"])),
+            Command::Start { safe_mode: true }
+        );
+        assert_eq!(
+            from_args(args(&["agent-bridge", "--safe-mode"])),
+            Command::Start { safe_mode: true }
+        );
+        assert_eq!(
+            from_args(args(&["--other"])),
+            Command::Start { safe_mode: false }
+        );
+    }
+
+    #[test]
+    fn the_plugin_subcommands_refuse_safe_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("clock.wasm");
+        std::fs::write(&file, b"\0asm").unwrap();
+        let file = file.to_str().unwrap();
+        for words in [
+            vec!["plugin", "dev", file, "--safe-mode"],
+            vec!["plugin", "dev", "--safe-mode", file],
+            vec!["plugin", "--safe-mode", "dev", file],
+            vec!["plugin", "check", "--safe-mode"],
+        ] {
+            assert_eq!(from_args(args(&words)), Command::Exit(2), "{words:?}");
+        }
+        assert_eq!(
+            from_args(args(&["plugin", "dev", file])),
+            Command::Dev(directory.path().join("clock.wasm"))
+        );
     }
 }
