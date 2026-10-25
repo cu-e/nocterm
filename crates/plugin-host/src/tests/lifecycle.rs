@@ -363,6 +363,78 @@ fn removing_a_plugin_deletes_its_package_and_data_on_request(cx: &mut TestAppCon
     );
 }
 
+#[gpui::test]
+fn removing_the_data_alone_keeps_the_plugin_and_is_audited(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    let id = rig.installed(cx);
+    rig.data.put(&id, PluginDataDoc::default());
+
+    rig.host
+        .update(cx, |host, cx| host.remove_data(&id, cx))
+        .unwrap();
+
+    assert_eq!(rig.data.stored(&id), None);
+    assert_eq!(rig.host.read_with(cx, |host, _| host.plugins()).len(), 1);
+    let last = rig
+        .host
+        .read_with(cx, |host, _| host.audit().last().cloned());
+    assert_eq!(
+        last.map(|entry| entry.action),
+        Some(AuditAction::DataRemoved)
+    );
+}
+
+#[gpui::test]
+fn removing_the_data_drops_the_effects_still_queued(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    let id = rig.installed(cx);
+    rig.script.answer_event(Ok(effects(vec![(
+        Some("a"),
+        nocterm_plugin_api::Effect::StorageSet(nocterm_plugin_api::capability::storage::Set {
+            key: "count".into(),
+            value: "1".into(),
+        }),
+    )])));
+    let call = rig.call("face");
+    rig.host.update(cx, |host, cx| {
+        host.handle(&call, Input::Pointer, activated(), &rig.providers, cx)
+            .unwrap();
+        // Still in the same update: the write waits for the deferred apply.
+        host.remove_data(&id, cx).unwrap();
+    });
+    cx.run_until_parked();
+
+    let changes = rig.data.changes();
+
+    assert!(
+        changes
+            .iter()
+            .all(|(_, change)| matches!(change, PluginDataChange::Remove)),
+        "no key came back after the removal: {changes:?}"
+    );
+}
+
+#[gpui::test]
+fn removing_the_data_is_refused_when_the_port_cannot_take_it(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    let id = rig.installed(cx);
+    rig.data.put(&id, PluginDataDoc::default());
+    rig.data.refuse_changes();
+
+    let refused = rig.host.update(cx, |host, cx| host.remove_data(&id, cx));
+
+    assert!(matches!(refused, Err(ManageError::Unsaved(_))));
+    assert!(rig.data.stored(&id).is_some());
+    let last = rig
+        .host
+        .read_with(cx, |host, _| host.audit().last().cloned());
+    assert_ne!(
+        last.map(|entry| entry.action),
+        Some(AuditAction::DataRemoved),
+        "a removal that did not happen is not audited"
+    );
+}
+
 #[test]
 fn a_call_error_maps_to_the_error_a_plugin_may_see() {
     assert_eq!(

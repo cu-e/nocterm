@@ -39,6 +39,7 @@ pub enum AuditAction {
     Disabled,
     Placeable,
     NotPlaceable,
+    DataRemoved,
     Faulted,
 }
 

@@ -274,6 +274,28 @@ impl PluginHost {
         Ok(())
     }
 
+    /// Removes the values and storage of an installed plugin and leaves the plugin installed.
+    pub fn remove_data(
+        &mut self,
+        plugin: &PluginId,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ManageError> {
+        let installed = self
+            .registry
+            .get_mut(plugin)
+            .ok_or_else(|| ManageError::Unknown(plugin.clone()))?;
+        self.data
+            .change(plugin.clone(), PluginDataChange::Remove, cx)?;
+        if let Some(ready) = installed.ready_mut() {
+            ready.set_data(PluginDataDoc::default());
+        }
+        // An effect still queued must not write a key back after the user removed the data.
+        self.broker.drop_plugin(plugin);
+        self.registry.audit(plugin, AuditAction::DataRemoved);
+        self.save(cx);
+        Ok(())
+    }
+
     /// Records whether the user accepted placing the plugin's contributions.
     pub fn set_placeable(
         &mut self,
