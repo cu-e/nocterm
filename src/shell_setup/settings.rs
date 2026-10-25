@@ -99,7 +99,7 @@ mod tests {
         });
         for plugin in catalog.plugins() {
             let has_settings = !plugin.settings.groups.is_empty();
-            let source = directory.get(&plugin.id);
+            let source = cx.update(|cx| directory.get(&plugin.id, cx));
             assert_eq!(
                 source.is_some(),
                 has_settings,
@@ -107,7 +107,7 @@ mod tests {
                 plugin.id
             );
             if let Some((schema, _)) = source {
-                assert!(std::ptr::eq(schema, &plugin.settings));
+                assert!(std::ptr::eq(&*schema, &plugin.settings));
             }
         }
     }

@@ -197,7 +197,7 @@ impl LayoutEditorSection {
             return None;
         };
         let plugin = self.catalog.plugin_of(id)?;
-        let (schema, source) = self.plugin_settings.get(plugin.id())?;
+        let (schema, source) = self.plugin_settings.get(plugin.id(), cx)?;
         schema.for_contribution(id).next()?;
         let (plugin, scope) = (plugin.id().clone(), FormScope::Contribution(id.clone()));
         Some(cx.new(|cx| {

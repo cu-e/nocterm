@@ -18,7 +18,7 @@ mod form;
 mod source;
 
 pub use binding::SectionBinding;
-pub use directory::PluginSettingsDirectory;
+pub use directory::{PluginSettingsDirectory, SchemaRef, UserPluginSettings};
 #[cfg(any(test, feature = "test-support"))]
 pub use fake::FakePluginSettings;
 pub use form::{FormFrame, FormScope, PluginSettingsForm};

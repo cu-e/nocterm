@@ -1,6 +1,10 @@
 //! The form draws a schema, sends edits through its source and shows what the source holds.
 
-use std::{borrow::Cow, rc::Rc, sync::LazyLock};
+use std::{
+    borrow::Cow,
+    rc::Rc,
+    sync::{Arc, LazyLock},
+};
 
 use gpui_kit::{
     AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowOptions,
@@ -14,7 +18,7 @@ use nocterm_store::SettingsConfig;
 
 use super::{
     FakePluginSettings, FormFrame, FormScope, PluginSettingsError, PluginSettingsForm,
-    PluginSettingsSource,
+    PluginSettingsSource, SchemaRef,
 };
 use crate::DesignTokens;
 
@@ -114,7 +118,7 @@ pub(super) fn open(scope: FormScope, frame: FormFrame, cx: &mut TestAppContext) 
                 PluginSettingsForm::new(
                     shared,
                     PluginId::new("test"),
-                    &SCHEMA,
+                    SchemaRef::System(&SCHEMA),
                     scope,
                     frame,
                     window,
@@ -299,4 +303,39 @@ fn a_plugin_frame_names_the_plugin(cx: &mut TestAppContext) {
         label_of(&fixture, "plugin-settings-frame:test".into(), cx).as_deref(),
         Some("Plugin · Weather")
     );
+}
+
+struct OneUser(PluginId, Rc<dyn PluginSettingsSource>);
+
+impl super::UserPluginSettings for OneUser {
+    fn find(
+        &self,
+        plugin: &PluginId,
+        _: &gpui_kit::App,
+    ) -> Option<(SchemaRef, Rc<dyn PluginSettingsSource>)> {
+        (plugin == &self.0).then(|| (SchemaRef::User(Arc::new(SCHEMA.clone())), self.1.clone()))
+    }
+}
+
+#[gpui_kit::test]
+fn user_ids_resolve_only_through_the_user_lookup(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        crate::init(
+            DesignTokens::builtin(),
+            SettingsConfig::in_memory(Default::default()).install(cx),
+            cx,
+        );
+        let source: Rc<dyn PluginSettingsSource> = Rc::new(FakePluginSettings::new(&SCHEMA, cx));
+        let user = PluginId::owned("user-acme-clock");
+        let directory =
+            super::PluginSettingsDirectory::new().with_user(Rc::new(OneUser(user.clone(), source)));
+        assert!(directory.get(&user, cx).is_some());
+        assert!(
+            directory
+                .get(&PluginId::owned("user-acme-other"), cx)
+                .is_none()
+        );
+        assert!(directory.get(&PluginId::owned("monitor"), cx).is_none());
+    });
 }

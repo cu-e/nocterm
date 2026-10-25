@@ -85,7 +85,7 @@ impl PluginsPage {
             return;
         }
         self.flush_form(cx);
-        self.form = self.directory.get(id).map(|(schema, source)| {
+        self.form = self.directory.get(id, cx).map(|(schema, source)| {
             cx.new(|cx| {
                 PluginSettingsForm::new(
                     source,

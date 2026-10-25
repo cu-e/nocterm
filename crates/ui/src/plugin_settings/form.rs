@@ -18,7 +18,7 @@ use nocterm_plugin_model::{
     SettingsSchema,
 };
 
-use super::{PluginSettingsError, PluginSettingsSource, controls};
+use super::{PluginSettingsError, PluginSettingsSource, SchemaRef, controls};
 use crate::form;
 
 /// How long typing must pause before a text value is sent.
@@ -57,7 +57,7 @@ struct TextInput {
 pub struct PluginSettingsForm {
     source: Rc<dyn PluginSettingsSource>,
     plugin: PluginId,
-    schema: &'static SettingsSchema,
+    schema: SchemaRef,
     scope: FormScope,
     frame: FormFrame,
     values: SettingValues,
@@ -72,7 +72,7 @@ impl PluginSettingsForm {
     pub fn new(
         source: Rc<dyn PluginSettingsSource>,
         plugin: PluginId,
-        schema: &'static SettingsSchema,
+        schema: SchemaRef,
         scope: FormScope,
         frame: FormFrame,
         window: &mut Window,
@@ -80,7 +80,7 @@ impl PluginSettingsForm {
     ) -> Self {
         let values = source.values(cx);
         let mut inputs = BTreeMap::new();
-        for field in fields_in(schema, &scope) {
+        for field in fields_in(&schema, &scope) {
             if let FieldKind::Text { placeholder, .. } = &field.kind {
                 let key = field.key.to_string();
                 let text = text_of(&values, field);
@@ -276,7 +276,7 @@ impl PluginSettingsForm {
 impl Render for PluginSettingsForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut sections = Vec::new();
-        for group in groups_in(self.schema, &self.scope) {
+        for group in groups_in(&self.schema, &self.scope) {
             if group.fields.is_empty() {
                 continue;
             }

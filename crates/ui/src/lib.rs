@@ -126,7 +126,7 @@ mod plugin_settings;
 pub use plugin_settings::FakePluginSettings;
 pub use plugin_settings::{
     FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsError, PluginSettingsForm,
-    PluginSettingsSource, SectionBinding,
+    PluginSettingsSource, SchemaRef, SectionBinding, UserPluginSettings,
 };
 
 #[cfg(test)]
