@@ -15,6 +15,9 @@ mod controls;
 mod sync;
 mod views;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) use controls::Badges;
 pub(super) use sync::WindowSync;
 

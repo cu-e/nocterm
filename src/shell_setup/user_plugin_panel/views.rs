@@ -103,23 +103,39 @@ impl Render for UserPluginPanel {
 pub(super) struct UserPluginWidget {
     content: Content,
     label: SharedString,
+    /// Whether the bar drew the widget since the last refresh. A widget the bar did not draw
+    /// (overflowed while the menu is closed, or the bar hidden) asks the plugin for nothing
+    /// until it is drawn again, which the open overflow menu does with the widget's own view.
+    drawn: bool,
     _refresh: Task<()>,
 }
 
 impl UserPluginWidget {
-    /// `label` is what the tooltip says: the plugin, then the widget.
+    /// `label` is what the tooltip says: the plugin, then the widget. The first look is asked
+    /// for at once, before the bar has drawn the widget.
     pub(super) fn new(content: Content, label: SharedString, cx: &mut Context<Self>) -> Self {
-        let refresh = drive(cx, |this: &mut Self, cx| this.content.poll(true, false, cx));
+        let refresh = drive(cx, |this: &mut Self, cx| this.tick(cx));
         Self {
             content,
             label,
+            drawn: true,
             _refresh: refresh,
+        }
+    }
+
+    /// A refresh clears the mark and asks the bar to draw the widget again, which sets it: an
+    /// idle window draws nothing, so only a refresh can tell that the widget still shows.
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        if self.content.poll(self.drawn, false, cx) {
+            self.drawn = false;
+            cx.notify();
         }
     }
 }
 
 impl Render for UserPluginWidget {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.drawn = true;
         let label = self.label.clone();
         div()
             .id("user-plugin-widget")

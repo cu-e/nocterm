@@ -65,13 +65,16 @@ impl Content {
     }
 
     /// One step of the refresh loop: asks the host for a new view when the plugin's own refresh
-    /// is due or the host's records changed, but only while the view `shown`.
-    pub(super) fn poll(&mut self, shown: bool, in_focus: bool, cx: &mut App) {
+    /// is due or the host's records changed, but only while the view `shown`. Says whether it
+    /// asked.
+    pub(super) fn poll(&mut self, shown: bool, in_focus: bool, cx: &mut App) -> bool {
         self.waited += POLL;
         let stale = self.host.read(cx).revision() != self.revision;
-        if shown && (stale || self.waited >= self.wait) {
+        let due = shown && (stale || self.waited >= self.wait);
+        if due {
             self.refresh(in_focus, cx);
         }
+        due
     }
 
     /// Asks the host for the view and shows it. A plugin that failed shows the fault chip; one
