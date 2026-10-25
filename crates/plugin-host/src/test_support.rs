@@ -151,6 +151,7 @@ impl PluginData for MemoryData {
 #[derive(Default)]
 pub struct MemoryPackages {
     stored: Mutex<BTreeMap<PluginId, Package>>,
+    offered: Mutex<BTreeMap<String, Package>>,
 }
 
 impl MemoryPackages {
@@ -170,6 +171,14 @@ impl MemoryPackages {
         self.stored().insert(id, package.clone());
     }
 
+    /// Makes `read` find `package` at `location`.
+    pub fn offer(&self, location: &str, package: &Package) {
+        self.offered
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(location.to_owned(), package.clone());
+    }
+
     /// Whether a package of the plugin is stored.
     pub fn holds(&self, plugin: &PluginId) -> bool {
         self.stored().contains_key(plugin)
@@ -177,8 +186,13 @@ impl MemoryPackages {
 }
 
 impl PluginPackages for MemoryPackages {
-    fn read(&self, _: &str) -> Result<Package, PackageError> {
-        Err(PackageError::NotFound)
+    fn read(&self, location: &str) -> Result<Package, PackageError> {
+        self.offered
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(location)
+            .cloned()
+            .ok_or(PackageError::NotFound)
     }
 
     fn publish(&self, package: &Package, replace: bool) -> Result<(), PackageError> {

@@ -143,6 +143,13 @@ impl Installed {
         &mut self.record
     }
 
+    pub(crate) fn ready(&self) -> Option<&Ready> {
+        match &self.status {
+            Status::Ready(ready) => Some(ready),
+            Status::Broken(_) => None,
+        }
+    }
+
     pub(crate) fn ready_mut(&mut self) -> Option<&mut Ready> {
         match &mut self.status {
             Status::Ready(ready) => Some(ready),
@@ -179,6 +186,7 @@ pub struct PluginSummary {
 pub(crate) struct Registry {
     entries: BTreeMap<PluginId, Installed>,
     audit: Vec<AuditEntry>,
+    revision: u64,
 }
 
 impl Registry {
@@ -186,7 +194,25 @@ impl Registry {
         Self {
             entries: BTreeMap::new(),
             audit,
+            revision: 0,
         }
+    }
+
+    /// Counts a change the shell must learn of.
+    pub(crate) fn touch(&mut self) {
+        self.revision += 1;
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(crate) fn audit_log(&self) -> &[AuditEntry] {
+        &self.audit
+    }
+
+    pub(crate) fn installed(&self) -> impl Iterator<Item = &Installed> {
+        self.entries.values()
     }
 
     pub(crate) fn insert(&mut self, installed: Installed) {

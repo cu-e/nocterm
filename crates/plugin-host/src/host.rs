@@ -4,14 +4,14 @@ use std::{rc::Rc, sync::Arc};
 
 use gpui::{Context, WindowId};
 use nocterm_plugin_api::{
-    ContentHash, ContributionContext, Effects, Event, Grant, LocalId, Package, PluginPackages,
-    PluginRuntime, RuntimeError, View,
+    ContentHash, ContributionContext, Effects, Event, Grant, LocalId, Manifest, Package,
+    PackageError, PluginPackages, PluginRuntime, RuntimeError, View,
 };
-use nocterm_plugin_model::{PluginId, SettingValues};
+use nocterm_plugin_model::{PluginId, SettingValues, UserEntry};
 use nocterm_plugin_ports::PluginProviders;
 
 use crate::{
-    BrokenPackage, CallError, ManageError, PluginData, PluginDataChange, PluginDataDoc,
+    AuditEntry, BrokenPackage, CallError, ManageError, PluginData, PluginDataChange, PluginDataDoc,
     PluginDataError, PluginRecord, PluginRecords, PluginSummary,
     broker::{Broker, Queued},
     cadence::Cadence,
@@ -83,6 +83,7 @@ impl PluginHost {
             let status = self.load_status(&record, cx);
             registry.insert(Installed::new(record, status));
         }
+        registry.touch();
         self.registry = registry;
         if trimmed {
             self.save(cx);
@@ -92,6 +93,67 @@ impl PluginHost {
     /// The plugins, for the plugins list.
     pub fn plugins(&self) -> Vec<PluginSummary> {
         self.registry.summaries()
+    }
+
+    /// Counts every change of what is installed, enabled, placeable or valued, so a reader can
+    /// tell that its copy is stale.
+    pub fn revision(&self) -> u64 {
+        self.registry.revision()
+    }
+
+    /// The plugins the shell can place: every installed package that matches what the user
+    /// accepted. A plugin that faulted this session is listed as off.
+    pub fn entries(&self) -> Vec<UserEntry> {
+        self.registry
+            .installed()
+            .filter_map(|installed| {
+                let ready = installed.ready()?;
+                Some(UserEntry {
+                    plugin: ready.package().manifest().plugin().clone(),
+                    enabled: installed.record().enabled && !ready.faulted(),
+                    placeable: installed.record().placeable,
+                })
+            })
+            .collect()
+    }
+
+    /// The manifest of an installed plugin whose package matches what the user accepted.
+    pub fn manifest(&self, plugin: &PluginId) -> Option<&Manifest> {
+        self.registry
+            .get(plugin)?
+            .ready()
+            .map(|ready| ready.package().manifest())
+    }
+
+    /// The sha256 the user consented to, in hexadecimal.
+    pub fn hash_of(&self, plugin: &PluginId) -> Option<String> {
+        self.registry
+            .get(plugin)
+            .map(|installed| installed.record().hash.clone())
+    }
+
+    /// Every capability the user allowed the plugin to use.
+    pub fn granted(&self, plugin: &PluginId) -> Vec<String> {
+        self.registry
+            .get(plugin)
+            .and_then(Installed::ready)
+            .map(|ready| ready.grant().granted().map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
+
+    /// The plugin's setting values, resolved against its schema.
+    pub fn values(&self, plugin: &PluginId) -> Option<SettingValues> {
+        self.registry.get(plugin)?.ready().map(Ready::settings)
+    }
+
+    /// What happened to plugins, oldest first.
+    pub fn audit(&self) -> &[AuditEntry] {
+        self.registry.audit_log()
+    }
+
+    /// Reads and checks the package at `location` without storing anything.
+    pub fn read_package(&self, location: &str) -> Result<Package, PackageError> {
+        self.packages.read(location)
     }
 
     /// Installs a package the user consented to, with the optional capabilities they accepted.
@@ -252,6 +314,8 @@ impl PluginHost {
         self.data
             .change(plugin.clone(), PluginDataChange::Replace(next.clone()), cx)?;
         ready.set_data(next);
+        self.registry.touch();
+        cx.notify();
         Ok(())
     }
 
@@ -478,6 +542,8 @@ impl PluginHost {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
+        self.registry.touch();
+        cx.notify();
         let task = self.records.replace(self.registry.to_doc(), cx);
         cx.spawn(async move |_, _| {
             if let Err(error) = task.await {
