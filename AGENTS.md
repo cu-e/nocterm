@@ -148,6 +148,8 @@ checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes
 user plugins (`nocterm-plugin-*`, `plugins-ui`, `src/shell_setup/user_plugin*`) also run
 `cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings` and
 `cargo test --workspace --features nocterm/user-plugins`: the default build compiles the feature out.
+Changes to the plugin SDK or the example (`nocterm-plugin-sdk`, `examples/plugins/`) also build and
+test the example and run the gated guest test (see Commands).
 For documentation-only changes, check links, stale references and generated-doc
 freshness; architecture checks still apply. Build, lint and runtime tests may be
 omitted because executable inputs did not change.
@@ -173,6 +175,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings
 cargo test --workspace --features nocterm/user-plugins
+cargo test --locked --manifest-path examples/plugins/focus-timer/Cargo.toml
+cargo build --locked --release --target wasm32-unknown-unknown --manifest-path examples/plugins/focus-timer/Cargo.toml
+NOCTERM_GUEST_WASM=$PWD/examples/plugins/focus-timer/target/wasm32-unknown-unknown/release/focus_timer.wasm NOCTERM_REQUIRE_WASM_GUEST=1 cargo test -p nocterm --features nocterm/user-plugins user_plugin
 NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
 cargo xtask docs
 cargo xtask docs --check
