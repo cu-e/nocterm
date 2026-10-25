@@ -9,7 +9,7 @@ use nocterm_plugin_model::PluginId;
 use proptest::prelude::*;
 use tempfile::TempDir;
 
-use crate::{PackageStore, parse_package, sha256};
+use crate::{PackageStore, parse_package, read_directory, sha256};
 
 const PACKAGE: &str = r#"
 api = "0.1"
@@ -364,4 +364,78 @@ proptest! {
             prop_assert!(package.manifest().plugin().id().is_user());
         }
     }
+}
+
+#[test]
+fn a_directory_is_read_in_name_order_and_only_toml_files_count() {
+    let directory = TempDir::new().unwrap();
+    write(directory.path(), "b.toml", PACKAGE);
+    write(directory.path(), "a.toml", "api = \"0.1\"\n");
+    write(directory.path(), "readme.txt", "not a package");
+
+    let files = read_directory(directory.path(), &["Files"]).unwrap();
+
+    let names: Vec<_> = files
+        .iter()
+        .map(|file| file.path.file_name().unwrap().to_str().unwrap())
+        .collect();
+    assert_eq!(names, ["a.toml", "b.toml"]);
+    assert!(files[0].package.is_err(), "a broken file is reported");
+    assert_eq!(
+        files[1].package.as_ref().unwrap().manifest().plugin().id(),
+        &id()
+    );
+}
+
+#[test]
+fn reading_a_directory_stores_nothing() {
+    let directory = TempDir::new().unwrap();
+    write(directory.path(), "clock.toml", PACKAGE);
+
+    read_directory(directory.path(), &["Files"]).unwrap();
+
+    let entries: Vec<_> = fs::read_dir(directory.path()).unwrap().collect();
+    assert_eq!(entries.len(), 1, "no directory or file was created");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_in_a_directory_is_reported_not_followed() {
+    let directory = TempDir::new().unwrap();
+    let real = write(directory.path(), "real.toml", PACKAGE);
+    std::os::unix::fs::symlink(&real, directory.path().join("link.toml")).unwrap();
+
+    let files = read_directory(directory.path(), &["Files"]).unwrap();
+
+    let link = files
+        .iter()
+        .find(|file| file.path.ends_with("link.toml"))
+        .unwrap();
+    assert_eq!(
+        link.package.as_ref().unwrap_err(),
+        &PackageError::NotRegular
+    );
+}
+
+#[test]
+fn a_missing_directory_names_itself() {
+    let directory = TempDir::new().unwrap();
+    let missing = directory.path().join("missing");
+
+    let error = read_directory(&missing, &["Files"]).unwrap_err();
+
+    assert!(matches!(error, crate::DirectoryError::Unreadable { .. }));
+    assert!(error.to_string().contains("missing"));
+}
+
+#[test]
+fn a_directory_of_too_many_packages_is_refused_before_reading_them() {
+    let directory = TempDir::new().unwrap();
+    for ix in 0..=crate::MAX_CHECKED_FILES {
+        write(directory.path(), &format!("p{ix}.toml"), PACKAGE);
+    }
+
+    let error = read_directory(directory.path(), &["Files"]).unwrap_err();
+
+    assert!(matches!(error, crate::DirectoryError::TooMany { .. }));
 }

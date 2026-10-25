@@ -6,7 +6,8 @@
 //!
 //! Owns: bounded no-follow reads (through `nocterm_core::fs`), UTF-8 and TOML parsing into the
 //! api DTOs, the API version gate, SHA-256 of the parsed bytes, private atomic publication under
-//! one package directory, re-hashing at load, and removal.
+//! one package directory, re-hashing at load, removal, and reading the packages of a directory for
+//! an author's check.
 //! Does not own: manifest rules, grants, consent, enablement, the data of a plugin or running a
 //! package (all in the api crate or the host).
 //! Ports used/provided: provides `nocterm_plugin_api::PluginPackages`; uses none.
@@ -15,9 +16,11 @@
 //! package is trusted only after it hashes to the value the user consented to; files are named
 //! only by validated `user-` plugin ids, so a package cannot choose its path.
 
+mod directory;
 mod parse;
 mod store;
 
+pub use directory::{CheckedFile, DirectoryError, MAX_CHECKED_FILES, read_directory};
 pub use parse::{parse_package, sha256};
 pub use store::PackageStore;
 

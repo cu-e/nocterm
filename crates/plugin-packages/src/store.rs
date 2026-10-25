@@ -42,7 +42,8 @@ impl PackageStore {
         parse_package(bytes, &names)
     }
 
-    fn read_bytes(path: &Path) -> Result<Vec<u8>, PackageError> {
+    /// Reads the bounded bytes of the regular file at `path`, without following a link.
+    pub(crate) fn read_bytes(path: &Path) -> Result<Vec<u8>, PackageError> {
         let cap = usize::try_from(MAX_PACKAGE_BYTES).unwrap_or(usize::MAX);
         read_regular_bounded(path, cap).map_err(|error| match error {
             BoundedReadError::NotRegular { .. } => PackageError::NotRegular,
