@@ -89,11 +89,21 @@ in effect at that instant ([ADR 0088](../adr/0088-wall-clock-contract-and-the-cl
 ## User plugin packages
 
 `nocterm-plugin-packages` implements the `PluginPackages` port of `nocterm-plugin-api`. It reads a
-package file (one TOML file, at most 256 KiB) without following links through
+package file (a TOML file of at most 256 KiB, or a code package below) without following links through
 `nocterm_core::fs::read_regular_bounded`, hashes the exact bytes it then parses, validates the
 manifest, publishes a package privately and atomically as one file per validated `user-`
 plugin id (`<root>/<id>.toml`), re-hashes it at load and removes it. Its I/O is limited to those `nocterm_core::fs`
 calls and metadata and removal under the package root ([ADR 0089](../adr/0089-user-plugin-contract.md)).
+A code package is one `.wasm` module, at most 2 MiB, that carries the manifest in its custom
+section `nocterm.manifest`; the store keeps `<id>.wasm` or `<id>.toml` per plugin and the hash
+covers the whole file ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
+
+`nocterm-plugin-wasm` implements the `PluginRuntime` port on wasmi for code packages. It reads no
+file: the bytes come from the package port. It validates and compiles a module when a plugin is
+instantiated, caches at most 16 compiled modules, runs each call under a fuel budget and a memory
+limit, allows at most 16 live instances, bounds every read of guest memory, and maps a trap, a
+missed deadline or a memory fault to a `RuntimeError` that the host counts. Guests import
+nothing; their log lines go to an injected `GuestLog`. The crate has no thread and no global.
 
 ## Bounded I/O
 

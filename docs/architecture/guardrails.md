@@ -113,9 +113,10 @@ aid, not a check.
 
 ## Isolation of the plugin crates
 
-The user plugin crates (`nocterm-plugin-model`, `-api`, `-packages` and, as they appear, `-ports`,
-`-view`, `-host` and a runtime crate) are checked by `cargo xtask architecture` against
-[`xtask/architecture-policy.toml`](../../xtask/architecture-policy.toml) ([ADR 0089](../adr/0089-user-plugin-contract.md)).
+The user plugin crates (`nocterm-plugin-model`, `-api`, `-abi`, `-wasm`, `-packages`, `-ports`,
+`-view` and `-host`) are checked by `cargo xtask architecture` against
+[`xtask/architecture-policy.toml`](../../xtask/architecture-policy.toml) ([ADR 0089](../adr/0089-user-plugin-contract.md),
+[ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
 A row applies as soon as its package exists, every list is closed, and a new dependency or
 exemption is a reviewed edit of the policy with a reason.
 
@@ -123,7 +124,7 @@ exemption is a reviewed edit of the policy with a reason.
   build dependencies, the transitive `nocterm-*` closure of a crate must equal its row and the
   external closure must lie in its named list (for gpui crates, that list plus the closure of the
   vendored gpui).
-- **I2, no std.** `nocterm-plugin-model` and `nocterm-plugin-api` are `#![no_std]` with
+- **I2, no std.** `nocterm-plugin-model`, `nocterm-plugin-api` and `nocterm-plugin-abi` are `#![no_std]` with
   `extern crate alloc`; `std` appears only as `#[cfg(test)] extern crate std;`.
 - **I2b, no I/O paths.** In std-based isolated crates, resolved `std::fs`, `net`, `process`, `env`,
   `os` and stdin paths, and I/O dependency crates, are rejected through the same import, alias and

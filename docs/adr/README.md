@@ -87,3 +87,4 @@ acceptance; a later record supersedes an earlier one.
 | [0088](0088-wall-clock-contract-and-the-clock-plugin.md) | The wall clock is a foundation contract read by a local adapter, and the Clock is a plugin |
 | [0089](0089-user-plugin-contract.md) | User plugins are declarative packages over a closed, isolated contract |
 | [0090](0090-user-plugin-host-and-passive-providers.md) | The plugin host brokers every effect, and providers only read what the UI already shows |
+| [0091](0091-user-plugin-code-runs-in-process-on-wasmi.md) | User plugin code runs in-process on wasmi behind the runtime port |

@@ -66,8 +66,8 @@ fn capabilities(text: &mut String, surface: &Value) {
 
 fn manifest(text: &mut String, surface: &Value) {
     text.push_str(
-        "## Manifest keys\n\nA package is one TOML file. Unknown keys are refused. \
-         `contribution` and `settings.group` are arrays of tables.\n\n| Table | Keys |\n| --- | --- |\n",
+        "## Manifest keys\n\nA declarative package is one TOML file; a code package carries the same TOML in its \
+         module. Unknown keys are refused. `contribution` and `settings.group` are arrays of tables.\n\n| Table | Keys |\n| --- | --- |\n",
     );
     for (table, keys) in surface["manifest_tables"].as_object().into_iter().flatten() {
         let _ = writeln!(text, "| `{table}` | {} |", names(keys));

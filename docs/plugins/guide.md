@@ -5,10 +5,17 @@ Preview. User plugins are compiled out of release builds. They exist only in a b
 [reference](reference.md) lists every name and limit this guide uses; it is generated from the
 code and always current.
 
-A user plugin is a single TOML file. It describes what to draw, which readings of the
+The usual user plugin is a single TOML file. It describes what to draw, which readings of the
 application it needs and which settings the user can change. It contains no code: the host reads
 the file, checks it, and draws the view itself. A plugin cannot read files, reach the network,
 run commands or see anything it did not ask for and the user did not allow.
+
+A plugin that needs logic can instead be a code package: one WebAssembly module that carries the
+same manifest in its custom section `nocterm.manifest` and says `runtime = "wasm"`. The host runs
+the module in a sandbox with no imports, a fuel budget per call and 16 MiB of memory, and it
+answers with a view or effects that go through the same checks and consent as a declarative
+package. The reference lists the module's exports and limits ("Code package ABI").
+Everything below about the manifest, capabilities and settings applies to both kinds.
 
 ## A first plugin
 
@@ -134,8 +141,9 @@ field is renamed, `renamed_from` keeps the user's value.
 nocterm plugin check path/to/directory
 ```
 
-reads every top-level `*.toml` file in the directory exactly as the application would, renders
-each contribution once with nothing observed, and prints the name, id, fingerprint, the
+reads every top-level `*.toml` and `*.wasm` file in the directory exactly as the application
+would, renders each contribution once with nothing observed (a code package is instantiated and
+called in its sandbox for this), and prints the name, id, fingerprint, the
 capabilities it needs and its contributions. The exit status is 0 when every file passes, 1
 when one is refused and 2 for a usage mistake. Symbolic links are not followed.
 
@@ -159,6 +167,6 @@ User section.
 
 ## Limits
 
-A package is at most 256 KiB, declares at most eight contributions and 16 capabilities, and a
+A manifest is at most 256 KiB (a code package's module at most 2 MiB), declares at most eight contributions and 16 capabilities, and a
 view has at most 256 nodes. The reference lists all limits. A package that breaks one is
 refused whole, with the reason shown.

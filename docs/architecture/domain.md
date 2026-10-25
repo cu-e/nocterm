@@ -379,8 +379,20 @@ that move a stored setting value to its renamed key. Its schema carries a `versi
 validation onto `SettingsSchema`, grants bound to `(PluginId, ContentHash)`, the template language
 with `DeclarativeRuntime`, and the `PluginPackages` and `PluginRuntime` ports. It is `no_std`,
 reads no file and runs no guest code; `crates/plugin-api/api-surface.json` is generated from it by
-`cargo xtask docs`. See [ADR 0089](../adr/0089-user-plugin-contract.md) and the
+`cargo xtask docs`. It also owns the code-package format rules (kind detection from the module
+magic and a bounded scan for the manifest's custom section) and `Runtimes`, which picks the
+declarative interpreter or the injected code runtime by the manifest's `runtime`. See
+[ADR 0089](../adr/0089-user-plugin-contract.md) and the
 [isolation rules](guardrails.md#isolation-of-the-plugin-crates).
+
+`nocterm-plugin-abi` owns the guest ABI of code plugins: the export names, the `ABI_VERSION`, the
+resource limits, the call and reply wire types and their bounded postcard encoding. It is
+`no_std`, reads no file and runs no code, so the SDK can use it on the guest side. Its wire types
+embed the public types of `nocterm-plugin-api` (views, effects, events, errors, capability
+values) and mirror only observations and setting values, so the golden file is what pins their
+bytes.
+`crates/plugin-abi/abi-golden.json` records its exports and canonical encodings and is kept fresh by
+`cargo xtask docs` ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
 
 `nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
 zones of the status bar, panel groups with their members and separators, the tray of

@@ -23,7 +23,7 @@ A package lists the capabilities it needs in `capabilities` (required) and `opti
 
 ## Manifest keys
 
-A package is one TOML file. Unknown keys are refused. `contribution` and `settings.group` are arrays of tables.
+A declarative package is one TOML file; a code package carries the same TOML in its module. Unknown keys are refused. `contribution` and `settings.group` are arrays of tables.
 
 | Table | Keys |
 | --- | --- |
