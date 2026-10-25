@@ -37,6 +37,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session`, `nocterm-settings` | Host resource monitoring: collection scripts, parsers, rates and history. |
 | `nocterm-monitor-ui` | feature | `nocterm-containers`, `nocterm-monitor`, `nocterm-plugin-api`, `nocterm-plugin-enablement`, `nocterm-plugin-model`, `nocterm-plugin-ports`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
+| `nocterm-plugin-abi` | domain | `nocterm-plugin-api`, `nocterm-plugin-model` | The guest ABI of code plugins: export names, call and reply wire types and their postcard encoding. |
 | `nocterm-plugin-api` | domain | `nocterm-plugin-model` | The user plugin contract: capability table, snapshot, view and effect data, manifests, grants and the declarative template interpreter. |
 | `nocterm-plugin-enablement` | domain | `nocterm-plugin-model`, `nocterm-settings` | Which system plugins the user switched off: the [plugins] settings section and the rule that keeps required plugins and unknown ids out of the effective set. |
 | `nocterm-plugin-host` | service | `nocterm-plugin-api`, `nocterm-plugin-model`, `nocterm-plugin-ports` | The user plugin host: grants, effect broker, rate limits, cadence and caps, plugin records and plugin data. |
@@ -266,6 +267,8 @@ graph TD
     nocterm_monitor_ui --> nocterm_store
     nocterm_monitor_ui --> nocterm_ui
     nocterm_monitor_ui --> nocterm_workspace
+    nocterm_plugin_abi --> nocterm_plugin_api
+    nocterm_plugin_abi --> nocterm_plugin_model
     nocterm_plugin_api --> nocterm_plugin_model
     nocterm_plugin_enablement --> nocterm_plugin_model
     nocterm_plugin_enablement --> nocterm_settings

@@ -111,6 +111,14 @@ core = [
     "windows-sys",
     "winnow",
 ]
+# The closure of postcard with only its `alloc` feature (guest ABI encoding). `embedded-io` is in
+# the metadata resolve through postcard's weak `embedded-io-*?/alloc` feature; cargo does not
+# compile it.
+postcard = [
+    "cobs",
+    "embedded-io",
+    "postcard",
+]
 sha2 = [
     "block-buffer",
     "cpufeatures",
@@ -151,6 +159,12 @@ kind = "no-std"
 closure = ["nocterm-plugin-model"]
 direct = ["serde", "thiserror"]
 external = ["base"]
+
+[isolation.crates.nocterm-plugin-abi]
+kind = "no-std"
+closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
+direct = ["postcard", "serde", "thiserror"]
+external = ["base", "postcard"]
 
 [isolation.crates.nocterm-plugin-packages]
 kind = "std"
@@ -207,6 +221,7 @@ allowed = [
 # User-plugin-only crates, absent from the default-feature closure of the app (section 5.13).
 [isolation.compile_out]
 crates = [
+    "nocterm-plugin-abi",
     "nocterm-plugin-api",
     "nocterm-plugin-host",
     "nocterm-plugin-packages",
