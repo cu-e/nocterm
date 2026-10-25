@@ -27,7 +27,7 @@ pub const MAX_NODE_KEY: usize = 32;
 /// Shortest refresh delay a view may ask for.
 pub const MIN_REFRESH_MS: u32 = 250;
 
-/// How a node is coloured. The caution tone is distinct from the host's warning colour.
+/// How a node is coloured. The application takes every tone from its theme.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tone {

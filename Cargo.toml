@@ -246,6 +246,7 @@ nocterm-plugin-enablement = { path = "crates/plugin-enablement" }
 nocterm-plugin-host = { path = "crates/plugin-host" }
 nocterm-plugin-packages = { path = "crates/plugin-packages" }
 nocterm-plugin-ports = { path = "crates/plugin-ports" }
+nocterm-plugin-view = { path = "crates/plugin-view" }
 nocterm-plugin-model = { path = "crates/plugin-model" }
 nocterm-plugins-ui = { path = "crates/plugins-ui" }
 nocterm-session = { path = "crates/session" }

@@ -43,6 +43,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-plugin-model` | domain |  | What a plugin is and what the window shell can host: ids, system plugin descriptors, placement hints and the checked catalog. |
 | `nocterm-plugin-packages` | adapter | `nocterm-core`, `nocterm-plugin-api`, `nocterm-plugin-model` | Reads, hashes, stores and removes user plugin packages: bounded no-follow reads, TOML parsing, SHA-256 and private publication. |
 | `nocterm-plugin-ports` | service | `nocterm-plugin-api`, `nocterm-plugin-model` | The ports user plugins reach the application through: observation and effect traits, and the immutable record of a window's providers. |
+| `nocterm-plugin-view` | ui | `nocterm-plugin-api` | Draws a validated user plugin view inside a host frame with a marker and a label. |
 | `nocterm-plugins-ui` | feature | `nocterm-core`, `nocterm-plugin-model`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The Plugins settings page: the system plugins, their enable switches and settings forms. |
 | `nocterm-project-container-fs` | adapter | `nocterm-containers`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session` | Container-scoped sessions and bounded remote filesystem adaptation. |
 | `nocterm-project-environment` | adapter | `nocterm-connections-model`, `nocterm-project-providers`, `nocterm-session` | Observed workspace tool installation and managed session activation. |
@@ -274,6 +275,7 @@ graph TD
     nocterm_plugin_packages --> nocterm_plugin_model
     nocterm_plugin_ports --> nocterm_plugin_api
     nocterm_plugin_ports --> nocterm_plugin_model
+    nocterm_plugin_view --> nocterm_plugin_api
     nocterm_plugins_ui --> nocterm_core
     nocterm_plugins_ui --> nocterm_plugin_model
     nocterm_plugins_ui --> nocterm_settings

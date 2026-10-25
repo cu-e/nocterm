@@ -5530,6 +5530,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-plugin-view"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-plugin-api",
+]
+
+[[package]]
 name = "nocterm-plugins-ui"
 version = "0.0.0"
 dependencies = [
