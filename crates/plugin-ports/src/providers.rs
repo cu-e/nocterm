@@ -85,6 +85,23 @@ impl PluginProviders {
         self
     }
 
+    /// Whether this record has a provider for the capability `id`. The storage effects are not
+    /// provider effects (the host handles them), so they are never provided here. An unknown id
+    /// is not provided.
+    pub fn provides(&self, id: &str) -> bool {
+        match id {
+            Now::ID => self.clock.is_some(),
+            Kind::ID => self.workspace.is_some(),
+            UsageNow::ID => self.usage.is_some(),
+            CountsNow::ID => self.counts.is_some(),
+            Own::ID => self.own_notices.is_some(),
+            PostNotice::ID => self.post.is_some(),
+            SetPanelOpen::ID => self.open.is_some(),
+            SetPanelBadge::ID => self.badge.is_some(),
+            _ => false,
+        }
+    }
+
     /// The observation `capability` for `plugin`, wrapped for a snapshot.
     ///
     /// A capability that is not an observation, or has no provider here, is `unavailable`.

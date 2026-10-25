@@ -207,3 +207,25 @@ fn own_notices_are_read_for_the_plugin_that_asks(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[test]
+fn a_record_says_which_capabilities_it_provides() {
+    let none = PluginProviders::new();
+    for id in ["clock.now", "notifications.post", "panels.set-open"] {
+        assert!(!none.provides(id), "{id}");
+    }
+
+    let some = PluginProviders::new()
+        .with_clock(ScriptedObserve::<Now>::new(Err(HostError::Unavailable)))
+        .with_open(RecordingApply::<SetPanelOpen>::new());
+
+    assert!(some.provides("clock.now"));
+    assert!(some.provides("panels.set-open"));
+    assert!(!some.provides("panels.set-badge"));
+    assert!(!some.provides("workspace.kind"));
+    assert!(
+        !some.provides("storage.set"),
+        "the host provides storage itself"
+    );
+    assert!(!some.provides("nothing.like-it"));
+}

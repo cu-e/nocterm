@@ -55,8 +55,10 @@ pub trait Apply<C: Capability> {
 /// The host asks just before it applies an effect, once for the contribution whose event queued
 /// it and once more for the contribution the effect names, if that is another. It runs from the
 /// deferred apply, outside any entity update, so an implementation may read entities. It
-/// answers `Unavailable` when the contribution is not registered in the window and `Denied` when
-/// the shell's attention or displacement rules forbid the act.
+/// answers `Unavailable` when the contribution is not registered in the window, its plugin is
+/// disabled or the user did not approve placing it. The effect's own provider applies the window's
+/// rules again when it performs the effect (a panel that asks for the user is `Denied` there),
+/// since the window may change between the check and the apply.
 pub trait Surface {
     fn permit(&self, plugin: &PluginId, local: &LocalId, cx: &App) -> Result<(), HostError>;
 }
