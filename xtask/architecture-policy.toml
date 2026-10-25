@@ -180,6 +180,7 @@ nocterm_plugin_packages = "Bounded file I/O is the adapter's job: nocterm_core::
 new = "AppContext::new makes an entity from a context; the plugin crates write `new` only for constructors of their own types and make no entity through a context."
 background_executor = "nocterm-plugin-host reads the executor clock for rate limits, gesture lifetimes and cadence, so tests can drive time."
 defer = "nocterm-plugin-host applies queued effects after the current entity update ends, never inside it."
+notify = "nocterm-plugin-host tells observers (the application's plugin source) that its installed set, enablement or placement changed."
 spawn = "nocterm-plugin-host awaits the records write task only to log its failure."
 update = "nocterm-plugin-host re-enters its own entity from the deferred apply through a weak handle."
 weak_entity = "nocterm-plugin-host holds a weak handle to itself for the deferred apply."
