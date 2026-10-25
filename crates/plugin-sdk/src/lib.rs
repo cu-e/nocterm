@@ -44,6 +44,9 @@ mod export;
 pub mod observe;
 mod view;
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 pub use cx::Cx;
 pub use observe::{Observable, ObserveError};
 pub use view::{NodeId, ViewBuilder};

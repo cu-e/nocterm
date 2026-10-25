@@ -38,6 +38,8 @@ pub const MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const MAX_REPLY_BYTES: usize = 256 * 1024;
 /// Most log lines a reply carries. A reply with more is malformed and counts as a fault.
 pub const MAX_LOG_LINES: usize = 8;
+/// Characters of one log line the host keeps; it cuts the rest.
+pub const MAX_LOG_LINE_CHARS: usize = 200;
 
 /// Fuel one guest call may burn before the host stops it (`Deadline`). The spike measured about
 /// 1.2 M for a 256-node render.

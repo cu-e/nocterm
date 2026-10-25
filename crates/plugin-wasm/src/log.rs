@@ -2,14 +2,12 @@
 
 use std::sync::Arc;
 
-use nocterm_plugin_abi::MAX_LOG_LINES;
+use nocterm_plugin_abi::{MAX_LOG_LINE_CHARS, MAX_LOG_LINES};
 use nocterm_plugin_api::sanitize_display;
 use nocterm_plugin_model::PluginId;
 
 /// Lines one instance may log in its lifetime; after that one notice replaces the rest.
 const MAX_LINES_PER_INSTANCE: usize = 256;
-/// Characters of one logged line.
-const MAX_LINE_CHARS: usize = 200;
 const SUPPRESSED: &str = "further log lines of this plugin are suppressed";
 
 /// The sink for what a guest says. The application decides where it goes (a tracing target,
@@ -47,7 +45,7 @@ impl LogBudget {
                 return;
             }
             self.sink
-                .line(&self.plugin, &sanitize_display(text, MAX_LINE_CHARS));
+                .line(&self.plugin, &sanitize_display(text, MAX_LOG_LINE_CHARS));
             self.emitted += 1;
         }
     }

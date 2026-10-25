@@ -18,6 +18,8 @@ use crate::{
     observe::{Clock, Counts, MARKER_IDS, Observable, ObserveError, Usage},
 };
 
+mod host;
+
 mod support {
     use super::*;
 
