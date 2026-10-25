@@ -15,7 +15,7 @@ use nocterm_vault_store::VaultService;
 use nocterm_workspace::Workspace;
 use std::rc::Rc;
 
-use crate::shell_setup::{GuestInputs, Plugins, install_guest_pages};
+use crate::shell_setup::{GuestInputs, Plugins, UserPluginMode, install_guest_pages};
 
 mod error;
 pub(crate) use error::BootstrapError;
@@ -40,6 +40,9 @@ pub(crate) struct Services {
     pub(crate) vault: Option<VaultSetup>,
     pub(crate) connections: nocterm_connections::PreparedConnections,
     pub(crate) projects: crate::project_setup::PreparedProjectSetup,
+    /// Which user plugins this run opens. The services are at the field limit: a new mode
+    /// extends this enum, not the struct.
+    pub(crate) user_plugins: UserPluginMode,
 }
 
 /// Native connection capabilities supplied once for terminal composition.
@@ -164,6 +167,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         vault,
         connections,
         projects,
+        user_plugins,
     } = services;
     let stored = persist.then_some(&paths);
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
@@ -188,7 +192,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
     let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);
-    let plugins = Plugins::install(&paths, &shutdown, clock.clone(), cx)?;
+    let plugins = Plugins::install(&paths, &shutdown, clock.clone(), user_plugins, cx)?;
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
     let inputs = GuestInputs::new(
         &monitor,

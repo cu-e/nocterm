@@ -7,8 +7,8 @@ use gpui_kit::{
 use nocterm_plugin_model::{ContributionId, PluginId};
 use nocterm_workspace::Workspace;
 
-use super::{FixtureUserPlugins, menu_layouts::window_on_local_host};
-use crate::shell_setup::UserShell;
+use super::{FixtureUserMode, FixtureUserPlugins, menu_layouts::window_on_local_host};
+use crate::shell_setup::{UserPluginMode, UserShell};
 
 const WIDGET: &str = "user-example-clock.face";
 const PANEL: &str = "user-example-notes.board";
@@ -127,6 +127,29 @@ fn an_installed_widget_is_drawn_in_the_bar_with_the_plugin_marker(cx: &mut TestA
 
     assert!(registered(&window, WIDGET, cx));
     assert!(present(&window, "plugin-marker", cx));
+}
+
+#[gpui_kit::test]
+fn a_widget_of_a_developer_session_carries_the_dev_chip(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(FixtureUserMode(UserPluginMode::Dev("clock.toml".into())));
+    });
+    let window = window(cx);
+
+    install(&window, "clock", true, cx);
+
+    assert!(present(&window, "plugin-marker", cx));
+    assert!(present(&window, "plugin-dev", cx));
+}
+
+#[gpui_kit::test]
+fn a_widget_of_an_installation_carries_no_dev_chip(cx: &mut TestAppContext) {
+    let window = window(cx);
+
+    install(&window, "clock", true, cx);
+
+    assert!(present(&window, "plugin-marker", cx));
+    assert!(!present(&window, "plugin-dev", cx));
 }
 
 #[gpui_kit::test]

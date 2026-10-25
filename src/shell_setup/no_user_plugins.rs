@@ -9,7 +9,7 @@ use nocterm_store::ShutdownCoordinator;
 use nocterm_ui::{PluginSettingsDirectory, PluginSource, SettingsPageSpec, StaticPluginSource};
 use nocterm_workspace::{RegistrationError, Workspace};
 
-use super::AppPluginToggles;
+use super::{AppPluginToggles, UserPluginMode};
 
 /// Nothing to compose without user plugins.
 #[derive(Clone)]
@@ -21,6 +21,7 @@ impl UserShell {
         _paths: &Paths,
         _shutdown: &ShutdownCoordinator,
         _clock: Arc<dyn WallClock>,
+        _mode: UserPluginMode,
         _cx: &mut App,
     ) -> Self {
         Self

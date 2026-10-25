@@ -10,7 +10,7 @@ use nocterm_store::ShutdownCoordinator;
 use tempfile::TempDir;
 
 use super::HostPlugins;
-use crate::shell_setup::{UserShell, plugin_catalog};
+use crate::shell_setup::{UserPluginMode, UserShell, plugin_catalog};
 
 struct Noon;
 impl WallClock for Noon {
@@ -43,11 +43,12 @@ fn rig(cx: &mut TestAppContext) -> Rig {
             &paths,
             &ShutdownCoordinator::default(),
             Arc::new(Noon),
+            UserPluginMode::Installed,
             cx,
         )
     });
     Rig {
-        plugins: HostPlugins::new(shell.host().clone()),
+        plugins: HostPlugins::new(shell.host().clone(), None),
         directory,
     }
 }

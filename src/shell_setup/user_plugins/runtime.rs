@@ -10,13 +10,32 @@ pub(super) fn runtimes(log: Arc<dyn GuestLog>) -> Arc<Runtimes> {
     Arc::new(Runtimes::new().with_code(Arc::new(WasmRuntime::new(log))))
 }
 
-/// Guest log lines of installed plugins go to the application log at `debug`, so a plugin
-/// cannot flood production logs.
-pub(super) struct TracingGuestLog;
+/// Where the guest log lines of the plugins of this run go.
+pub(super) struct TracingGuestLog {
+    /// A developer session reads its own plugin's lines, so they are shown at `info`.
+    dev: bool,
+}
+
+impl TracingGuestLog {
+    /// Lines of installed plugins go to the application log at `debug`, so a plugin cannot
+    /// flood production logs.
+    pub(super) fn installed() -> Self {
+        Self { dev: false }
+    }
+
+    /// Lines of the plugin under development go to the application log at `info`.
+    pub(super) fn dev() -> Self {
+        Self { dev: true }
+    }
+}
 
 impl GuestLog for TracingGuestLog {
     fn line(&self, plugin: &PluginId, text: &str) {
-        tracing::debug!(target: "nocterm::plugin", plugin = %plugin, "{text}");
+        if self.dev {
+            tracing::info!(target: "nocterm::plugin", plugin = %plugin, "{text}");
+        } else {
+            tracing::debug!(target: "nocterm::plugin", plugin = %plugin, "{text}");
+        }
     }
 }
 

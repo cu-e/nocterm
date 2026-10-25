@@ -1,5 +1,7 @@
 //! The User section's port over the host: rows, the audit log and the install, update and
 //! removal acts, with the consent facts worded by the host.
+use std::path::PathBuf;
+
 use gpui_kit::{App, Entity, Subscription};
 use nocterm_core::error::SharedCause;
 use nocterm_plugin_api::{Additions, Manifest, Package, Runtime, capability};
@@ -13,11 +15,13 @@ use nocterm_plugins_ui::{
 /// The user plugins of the installation, over the host entity.
 pub(super) struct HostPlugins {
     host: Entity<PluginHost>,
+    /// The file a developer session loads; `None` for an installation.
+    dev: Option<PathBuf>,
 }
 
 impl HostPlugins {
-    pub(super) fn new(host: Entity<PluginHost>) -> Self {
-        Self { host }
+    pub(super) fn new(host: Entity<PluginHost>, dev: Option<PathBuf>) -> Self {
+        Self { host, dev }
     }
 
     fn act(
@@ -129,7 +133,7 @@ fn field_lines(next: &Manifest, added: &[String]) -> Vec<FieldLine> {
         .collect()
 }
 
-fn candidate(host: &PluginHost, location: &str, package: &Package) -> Candidate {
+fn candidate(host: &PluginHost, location: &str, package: &Package, dev: bool) -> Candidate {
     let next = package.manifest();
     let id = next.plugin().id().clone();
     let installed = host.plugins().into_iter().find(|summary| summary.id == id);
@@ -157,7 +161,7 @@ fn candidate(host: &PluginHost, location: &str, package: &Package) -> Candidate 
         hash,
         id,
         runs_code: runs_code(next),
-        dev: false,
+        dev,
     }
 }
 
@@ -186,12 +190,19 @@ impl UserPlugins for HostPlugins {
             .collect()
     }
 
+    fn dev_location(&self, _cx: &App) -> Option<String> {
+        self.dev
+            .as_deref()
+            .and_then(std::path::Path::to_str)
+            .map(str::to_owned)
+    }
+
     fn inspect(&self, location: &str, cx: &App) -> Result<Candidate, UserPluginError> {
         let host = self.host.read(cx);
         let package = host
             .read_package(location)
             .map_err(|error| UserPluginError::Package(SharedCause::new(error)))?;
-        Ok(candidate(host, location, &package))
+        Ok(candidate(host, location, &package, self.dev.is_some()))
     }
 
     fn install(&self, request: InstallRequest, cx: &mut App) -> Result<(), UserPluginError> {

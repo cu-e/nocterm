@@ -35,6 +35,7 @@ struct Parts {
     host: gpui_kit::Entity<PluginHost>,
     providers: PluginProviders,
     badges: Badges,
+    dev: bool,
     call: Call,
     plugin: String,
     contribution: UserContribution,
@@ -48,27 +49,31 @@ impl Parts {
             &self.plugin,
             kind,
             self.providers.clone(),
+            self.dev,
             cx,
         )
     }
 }
 
 /// The user contributions registered in one window.
-pub(super) struct WindowSync {
+pub(in crate::shell_setup) struct WindowSync {
     host: gpui_kit::Entity<PluginHost>,
     source: PluginSetHandle,
     providers: PluginProviders,
     badges: Badges,
+    /// Whether the frames are marked as a developer session's.
+    dev: bool,
     window: WindowId,
     registered: HashMap<ContributionId, Registered>,
 }
 
 impl WindowSync {
-    pub(super) fn new(
+    pub(in crate::shell_setup) fn new(
         host: gpui_kit::Entity<PluginHost>,
         source: PluginSetHandle,
         providers: PluginProviders,
         badges: Badges,
+        dev: bool,
         window: WindowId,
     ) -> Self {
         Self {
@@ -76,9 +81,15 @@ impl WindowSync {
             source,
             providers,
             badges,
+            dev,
             window,
             registered: HashMap::new(),
         }
+    }
+
+    /// The set this window follows.
+    pub(super) fn source(&self) -> &PluginSetHandle {
+        &self.source
     }
 
     /// Withdraws what the set no longer holds or holds differently, then registers the rest.
@@ -139,6 +150,7 @@ impl WindowSync {
             host: self.host.clone(),
             providers: self.providers.clone(),
             badges: self.badges.clone(),
+            dev: self.dev,
             call,
             plugin: made.plugin.clone(),
             contribution: contribution.clone(),
@@ -179,9 +191,20 @@ fn panel_of(parts: &Parts, cx: &mut Context<Workspace>) -> gpui_kit::Entity<User
 fn widget_of(parts: &Parts, cx: &mut Context<Workspace>) -> gpui_kit::Entity<UserPluginWidget> {
     cx.new(|cx| {
         let content = parts.content(FrameKind::Bar, cx);
-        let label = user_label(&parts.plugin, parts.contribution.title());
+        let label = widget_label(&parts.plugin, parts.contribution.title(), parts.dev);
         UserPluginWidget::new(content, label.into(), cx)
     })
+}
+
+/// What the tooltip of a bar widget says: the plugin, then the widget, and DEV in a developer
+/// session, whose bar item has no header line to say it.
+fn widget_label(plugin: &str, title: &str, dev: bool) -> String {
+    let label = user_label(plugin, title);
+    if dev {
+        format!("{label} \u{b7} DEV")
+    } else {
+        label
+    }
 }
 
 /// The call for the contribution's views in a window: its local name and where it is drawn.
@@ -231,4 +254,21 @@ pub(super) fn follow(
         }),
         cx,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::widget_label;
+
+    #[test]
+    fn the_tooltip_of_a_developer_widget_ends_in_dev_and_an_installed_one_does_not() {
+        assert_eq!(
+            widget_label("Example Clock", "Clock", false),
+            "Plugin \u{b7} Example Clock \u{2014} Clock"
+        );
+        assert_eq!(
+            widget_label("Example Clock", "Clock", true),
+            "Plugin \u{b7} Example Clock \u{2014} Clock \u{b7} DEV"
+        );
+    }
 }

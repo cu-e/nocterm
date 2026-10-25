@@ -37,10 +37,17 @@ impl Content {
         name: &str,
         kind: FrameKind,
         providers: PluginProviders,
+        dev: bool,
         cx: &mut gpui_kit::Context<T>,
     ) -> Self {
         let hooks = hooks(host.clone(), call.clone(), providers.clone());
-        let view = cx.new(|cx| PluginView::new(name.to_owned(), kind, style(cx), hooks));
+        let view = cx.new(|cx| {
+            let mut view = PluginView::new(name.to_owned(), kind, style(cx), hooks);
+            if dev {
+                view.mark_dev();
+            }
+            view
+        });
         let revision = host.read(cx).revision();
         Self {
             host,

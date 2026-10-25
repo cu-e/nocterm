@@ -49,6 +49,23 @@ struct FixtureUserPlugins(crate::shell_setup::UserShell);
 #[cfg(feature = "user-plugins")]
 impl gpui_kit::Global for FixtureUserPlugins {}
 
+/// The mode the fixture composes the user plugins in, when a test wants a developer session.
+#[cfg(feature = "user-plugins")]
+struct FixtureUserMode(crate::shell_setup::UserPluginMode);
+#[cfg(feature = "user-plugins")]
+impl gpui_kit::Global for FixtureUserMode {}
+
+#[cfg(feature = "user-plugins")]
+fn fixture_user_mode(cx: &gpui_kit::App) -> crate::shell_setup::UserPluginMode {
+    cx.try_global::<FixtureUserMode>()
+        .map_or_else(Default::default, |mode| mode.0.clone())
+}
+
+#[cfg(not(feature = "user-plugins"))]
+fn fixture_user_mode(_: &gpui_kit::App) -> crate::shell_setup::UserPluginMode {
+    Default::default()
+}
+
 struct FixtureDirectory {
     _directory: tempfile::TempDir,
 }
@@ -397,6 +414,7 @@ fn boot_with_ports_and_probe(
             },
             paths,
             vault,
+            user_plugins: fixture_user_mode(cx),
         },
         cx,
     )

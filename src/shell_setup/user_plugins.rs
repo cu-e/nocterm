@@ -3,26 +3,31 @@
 //! window.
 //!
 //! Plugin documents live under `<state dir>/plugins`: the records file, one data file per
-//! plugin and one package file per plugin.
-use std::{rc::Rc, sync::Arc};
+//! plugin and one package file per plugin. A developer session (`nocterm plugin dev <file>`)
+//! composes memory-only ports instead and touches none of it; `startup` also keeps the session's
+//! settings in memory (`UserPluginMode::saves_settings`).
+use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Window};
 use nocterm_core::{Paths, clock::WallClock, fs::BoundedReadError};
 use nocterm_files::TransferCounts;
 use nocterm_monitor_ui::MonitorUsage;
-use nocterm_plugin_host::{HostPorts, PluginHost};
+use nocterm_plugin_host::PluginHost;
 use nocterm_plugin_model::{PluginCatalog, PluginSet};
-use nocterm_plugin_packages::PackageStore;
 use nocterm_store::ShutdownCoordinator;
 use nocterm_ui::{PluginSetHandle, PluginSettingsDirectory, PluginSource, SettingsPageSpec};
 use nocterm_workspace::{RegistrationError, Workspace};
 
-use super::{AppPluginToggles, user_plugin_panel::Badges};
+use super::{
+    AppPluginToggles, UserPluginMode,
+    user_plugin_panel::{Badges, WindowSync},
+};
 
 mod check;
 mod data;
 mod facts;
 mod manager;
+mod ports;
 mod providers;
 mod records;
 mod runtime;
@@ -53,36 +58,28 @@ pub(crate) struct UserShell {
     host: Entity<PluginHost>,
     source: PluginSetHandle,
     clock: Arc<dyn WallClock>,
+    /// The file a developer session loads; `None` for an installation.
+    dev: Option<PathBuf>,
 }
 
 impl UserShell {
-    /// Opens the stored plugins and follows the host: the windows read the set it publishes.
+    /// Opens the plugins of the mode and follows the host: the windows read the set it
+    /// publishes. An installation opens the stored plugins; a developer session starts empty
+    /// over memory-only ports.
     pub(crate) fn install(
         catalog: &Arc<PluginCatalog>,
         paths: &Paths,
         shutdown: &ShutdownCoordinator,
         clock: Arc<dyn WallClock>,
+        mode: UserPluginMode,
         cx: &mut App,
     ) -> Self {
-        let root = paths.state_dir().join("plugins");
-        let records = RecordsFile::open(root.join("records.json"), cx);
-        let data = PluginDataFiles::new(root.join("data"), cx);
-        for (owner, registered) in [
-            ("plugin records", records.register_shutdown(shutdown)),
-            ("plugin data", data.register_shutdown(shutdown)),
-        ] {
-            if let Err(error) = registered {
-                tracing::error!(owner, %error, "shutdown registration failed");
+        let (ports, dev) = match mode {
+            UserPluginMode::Installed => {
+                let root = paths.state_dir().join("plugins");
+                (ports::installed(&root, catalog, shutdown, cx), None)
             }
-        }
-        let ports = HostPorts {
-            records: Rc::new(records),
-            data: Rc::new(data),
-            packages: Arc::new(PackageStore::new(
-                root.join("packages"),
-                reserved_names(catalog),
-            )),
-            runtime: runtime::runtimes(Arc::new(runtime::TracingGuestLog)),
+            UserPluginMode::Dev(file) => (ports::session(catalog), Some(file)),
         };
         let host = cx.new(|_| PluginHost::new(ports));
         host.update(cx, |host, cx| host.restore(cx));
@@ -100,6 +97,7 @@ impl UserShell {
             host,
             source,
             clock,
+            dev,
         }
     }
 
@@ -134,7 +132,10 @@ impl UserShell {
             catalog.clone(),
             toggles,
             directory,
-            Rc::new(manager::HostPlugins::new(self.host.clone())),
+            Rc::new(manager::HostPlugins::new(
+                self.host.clone(),
+                self.dev.clone(),
+            )),
         )
     }
 
@@ -155,6 +156,24 @@ fn published(base: &PluginSet, host: &Entity<PluginHost>, cx: &App) -> PluginSet
             tracing::error!(%error, "the installed user plugins do not form a valid set");
             base.clone()
         })
+}
+
+/// Tells the user, in every window, that this is a developer session and where to load the
+/// plugin under test.
+fn announce_dev(file: &std::path::Path, window: &mut Window, cx: &mut App) {
+    let name = file.file_name().map_or_else(
+        || file.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    nocterm_ui::notice::warning_action(
+        window,
+        cx,
+        "plugin-dev",
+        "Developer session",
+        format!("Settings and the plugin are not saved. Load {name} from Settings, Plugins."),
+        "Open settings",
+        |window, cx| window.dispatch_action(Box::new(nocterm_workspace::OpenSettings), cx),
+    );
 }
 
 /// What one window keeps of the user plugins: the monitor reading its plugins may observe, and
@@ -185,6 +204,9 @@ impl WindowUser {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        if let Some(file) = &self.shell.dev {
+            announce_dev(file, window, cx);
+        }
         let this = cx.entity();
         let badges = Badges::default();
         let providers = window_providers(
@@ -196,17 +218,19 @@ impl WindowUser {
             &badges,
             cx,
         );
-        super::user_plugin_panel::attach(
+        let sync = WindowSync::new(
             self.shell.host,
             self.shell.source,
             providers,
             badges,
-            workspace,
-            window,
-            cx,
+            self.shell.dev.is_some(),
+            window.window_handle().window_id(),
         );
+        super::user_plugin_panel::attach(sync, workspace, window, cx);
     }
 }
 
+#[cfg(test)]
+mod dev_session;
 #[cfg(test)]
 mod tests;

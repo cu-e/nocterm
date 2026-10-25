@@ -14,7 +14,7 @@ use nocterm_settings::{SettingsDocument, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
 use nocterm_store::SettingsConfig;
 
-use crate::{AGENT_BRIDGE, agent_auth, bootstrap};
+use crate::{AGENT_BRIDGE, agent_auth, bootstrap, shell_setup::UserPluginMode};
 
 pub(crate) struct PreparedApp {
     paths: Paths,
@@ -25,14 +25,15 @@ pub(crate) struct PreparedApp {
     hosts: bootstrap::HostServices,
     files: nocterm_files::Deps,
     local_fs: Arc<dyn nocterm_session::local_fs::LocalFs>,
+    user_plugins: UserPluginMode,
 }
 impl PreparedApp {
-    pub(crate) fn load() -> anyhow::Result<Self> {
+    pub(crate) fn load(user_plugins: UserPluginMode) -> anyhow::Result<Self> {
         // Linux reports a replaced running binary as "<path> (deleted)".
         let executable = std::env::current_exe().context("locating the nocterm executable")?;
         let paths = Paths::discover()?;
         let tokens = load_tokens(&paths);
-        let settings = load_settings(&paths);
+        let settings = load_settings(&paths, &user_plugins);
         let dirs = nocterm_themes::ThemeDirs {
             user: paths.user_themes_dir(),
             installed: paths.installed_themes_dir(),
@@ -90,6 +91,7 @@ impl PreparedApp {
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,
+            user_plugins,
         })
     }
 
@@ -145,6 +147,7 @@ impl PreparedApp {
                 vault,
                 connections,
                 projects,
+                user_plugins: self.user_plugins,
             },
             cx,
         );
@@ -250,11 +253,13 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
     })
 }
 
-/// Invalid sections keep their source; malformed files disable writes for this run.
-fn load_settings(paths: &Paths) -> SettingsConfig {
+/// Invalid sections keep their source; malformed files disable writes for this run. A
+/// developer session reads the file and never writes it.
+fn load_settings(paths: &Paths, mode: &UserPluginMode) -> SettingsConfig {
     let file = SettingsFile::new(paths.settings_file());
     match file.load() {
-        Ok(document) => SettingsConfig::new(document, file),
+        Ok(document) if mode.saves_settings() => SettingsConfig::new(document, file),
+        Ok(document) => SettingsConfig::in_memory(document),
         Err(error) => {
             tracing::error!(%error, "could not read the settings; changes will not be saved");
             SettingsConfig::in_memory(SettingsDocument::default())
@@ -271,3 +276,6 @@ fn ssh_config(paths: &Paths) -> SshConfig {
         use_agent: true,
     }
 }
+
+#[cfg(test)]
+mod tests;

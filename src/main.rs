@@ -41,14 +41,29 @@ const APP_ID: &str = "dev.nocterm.Nocterm";
 /// The subcommand agents run to reach a chat's terminal tools.
 const AGENT_BRIDGE: &str = "agent-bridge";
 
-fn main() -> anyhow::Result<()> {
-    #[cfg(feature = "user-plugins")]
-    if std::env::args_os()
+/// Which user plugins this run opens. `nocterm plugin check` leaves the process here;
+/// `nocterm plugin dev <file>` starts a developer session.
+#[cfg(feature = "user-plugins")]
+fn user_plugin_mode() -> shell_setup::UserPluginMode {
+    if !std::env::args_os()
         .nth(1)
         .is_some_and(|arg| arg == "plugin")
     {
-        std::process::exit(plugin_command::run(std::env::args_os().skip(2)));
+        return shell_setup::UserPluginMode::default();
     }
+    match plugin_command::run(std::env::args_os().skip(2)) {
+        plugin_command::Command::Exit(status) => std::process::exit(status),
+        plugin_command::Command::Dev(file) => shell_setup::UserPluginMode::Dev(file),
+    }
+}
+
+#[cfg(not(feature = "user-plugins"))]
+fn user_plugin_mode() -> shell_setup::UserPluginMode {
+    shell_setup::UserPluginMode::default()
+}
+
+fn main() -> anyhow::Result<()> {
+    let user_plugins = user_plugin_mode();
     #[cfg(target_os = "linux")]
     if std::env::args_os()
         .nth(1)
@@ -70,7 +85,7 @@ fn main() -> anyhow::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    let prepared = startup::PreparedApp::load()?;
+    let prepared = startup::PreparedApp::load(user_plugins)?;
     gpui_kit::application()
         .with_assets(nocterm_ui::Assets::with_marks(
             nocterm_agent_providers::catalog()
