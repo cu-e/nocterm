@@ -13,6 +13,7 @@ use nocterm_ui::{FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsFo
 use super::{
     consent::{Consent, INERT},
     port::{Candidate, UserPluginError, UserPluginRow, UserPlugins, describe},
+    removal::{Removal, RemovalKind},
     section_view,
     session::{HeldBy, UserPluginsSwitch, UserSession},
 };
@@ -29,7 +30,10 @@ pub struct UserPluginsSection {
     consent: Option<Consent>,
     /// Why the last action was refused.
     notice: Option<SharedString>,
-    /// Where focus goes when the consent opens: refusing is the default answer.
+    /// A destructive click waiting for its answer.
+    pending_removal: Option<Removal>,
+    /// Where focus goes when the consent or a removal question opens: refusing is the default
+    /// answer.
     deny_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -67,6 +71,7 @@ impl UserPluginsSection {
             form: None,
             consent: None,
             notice: None,
+            pending_removal: None,
             deny_focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -144,6 +149,10 @@ impl UserPluginsSection {
         self.notice.as_ref()
     }
 
+    pub(super) fn pending_removal(&self) -> Option<&Removal> {
+        self.pending_removal.as_ref()
+    }
+
     pub(super) fn deny_focus(&self) -> &FocusHandle {
         &self.deny_focus
     }
@@ -198,6 +207,7 @@ impl UserPluginsSection {
                 cx.notify();
             });
         });
+        self.pending_removal = None;
         self.consent = Some(Consent::new(candidate, timer));
         window.focus(&self.deny_focus, cx);
     }
@@ -236,6 +246,7 @@ impl UserPluginsSection {
             return;
         }
         self.flush(cx);
+        self.pending_removal = None;
         let name = self
             .rows(cx)
             .into_iter()
@@ -290,12 +301,37 @@ impl UserPluginsSection {
         });
     }
 
-    pub(super) fn remove(&mut self, plugin: &PluginId, with_data: bool, cx: &mut Context<Self>) {
-        self.act(cx, |manager, cx| manager.remove(plugin, with_data, cx));
+    /// Asks before a removal: nothing is removed until [`Self::confirm_removal`].
+    pub(super) fn ask_removal(
+        &mut self,
+        plugin: &PluginId,
+        kind: RemovalKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.notice = None;
+        self.pending_removal = Some(Removal::new(plugin.clone(), kind));
+        window.focus(&self.deny_focus, cx);
+        cx.notify();
     }
 
-    pub(super) fn remove_data(&mut self, plugin: &PluginId, cx: &mut Context<Self>) {
-        self.act(cx, |manager, cx| manager.remove_data(plugin, cx));
+    /// Withdraws the question; nothing is removed.
+    pub(super) fn cancel_removal(&mut self, cx: &mut Context<Self>) {
+        if self.pending_removal.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Removes what the question named.
+    pub(super) fn confirm_removal(&mut self, cx: &mut Context<Self>) {
+        let Some((id, kind)) = self.pending_removal.take().map(Removal::into_parts) else {
+            return;
+        };
+        self.act(cx, |manager, cx| match kind {
+            RemovalKind::Keep => manager.remove(&id, false, cx),
+            RemovalKind::WithData => manager.remove(&id, true, cx),
+            RemovalKind::DataOnly => manager.remove_data(&id, cx),
+        });
     }
 
     /// Acts through the port and shows why it was refused. Nothing happens in a held run.
@@ -320,6 +356,13 @@ impl UserPluginsSection {
             .selected
             .as_ref()
             .is_some_and(|selected| self.fingerprint_of(selected, cx) != self.selected_fingerprint);
+        if self
+            .pending_removal
+            .as_ref()
+            .is_some_and(|pending| !self.holds(pending.target(), cx))
+        {
+            self.pending_removal = None;
+        }
         if stale {
             self.selected = None;
             self.selected_fingerprint = None;

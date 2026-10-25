@@ -22,6 +22,7 @@ use nocterm_ui::{
 use super::{port::describe, *};
 use crate::EnablementError;
 
+mod removal;
 mod switch;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -605,34 +606,10 @@ fn the_list_shows_state_and_the_detail_acts_through_the_port(cx: &mut TestAppCon
     frame(&fixture, cx, |window, cx| {
         window.click("user-plugin-placeable", cx)
     });
-    frame(&fixture, cx, |window, cx| {
-        window.click("user-plugin-remove-data", cx)
-    });
     assert_eq!(
         fixture.plugins.calls(),
-        vec![
-            Call::Enabled(id(), true),
-            Call::Placeable(id(), true),
-            Call::RemoveData(id()),
-        ]
+        vec![Call::Enabled(id(), true), Call::Placeable(id(), true)]
     );
-}
-
-#[gpui_kit::test]
-fn a_refused_removal_says_why(cx: &mut TestAppContext) {
-    let fixture = open(vec![row()], Ok(candidate()), cx);
-    frame(&fixture, cx, |window, cx| {
-        window.click("user-plugin-row:user-acme-clock", cx)
-    });
-    frame(&fixture, cx, |window, cx| {
-        window.click("user-plugin-remove", cx)
-    });
-    frame(&fixture, cx, |window, _| {
-        assert_eq!(
-            window.find("user-notice").label(),
-            Some("The change was refused: disk full")
-        );
-    });
 }
 
 #[gpui_kit::test]

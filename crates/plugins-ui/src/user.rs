@@ -8,6 +8,7 @@
 mod consent;
 mod consent_view;
 mod port;
+mod removal;
 mod section;
 mod section_view;
 mod session;

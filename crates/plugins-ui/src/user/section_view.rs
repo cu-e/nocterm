@@ -2,10 +2,13 @@
 //! of the selected plugin.
 
 use gpui_kit::{
-    AnyElement, Context, IntoElement, SharedString, TestSupportExt as _, Window,
+    AnyElement, Context, IntoElement, KeyDownEvent, SharedString, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, button::Button, h_flex,
-        switch::Switch, v_flex,
+        ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _,
+        button::{Button, ButtonVariants as _},
+        h_flex,
+        switch::Switch,
+        v_flex,
     },
     div,
     prelude::*,
@@ -16,6 +19,7 @@ use nocterm_ui::form;
 use super::{
     consent_view::consent_dialog,
     port::{RowState, UserPluginRow, describe},
+    removal::RemovalKind,
     section::UserPluginsSection,
     switch_view,
 };
@@ -294,35 +298,81 @@ fn detail(
             cx,
         ))
         .child(editor)
-        .child(removal(&id, cx))
+        .child(removal(section, row, cx))
         .into_any_element()
 }
 
-fn removal(id: &PluginId, cx: &mut Context<UserPluginsSection>) -> AnyElement {
-    let (keep, wipe, only) = (id.clone(), id.clone(), id.clone());
+/// The three removal buttons, or the question once one of them was pressed.
+fn removal(
+    section: &UserPluginsSection,
+    row: &UserPluginRow,
+    cx: &mut Context<UserPluginsSection>,
+) -> AnyElement {
+    if let Some(pending) = section
+        .pending_removal()
+        .filter(|pending| *pending.target() == row.id)
+    {
+        return confirm_removal(pending.kind(), &row.name, section, cx);
+    }
+    let button =
+        |button_id: &'static str, kind: RemovalKind, cx: &mut Context<UserPluginsSection>| {
+            let id = row.id.clone();
+            Button::new(button_id)
+                .small()
+                .outline()
+                .label(kind.label())
+                .on_click(cx.listener(move |section, _, window, cx| {
+                    section.ask_removal(&id, kind, window, cx);
+                }))
+        };
     h_flex()
         .gap_2()
         .pt_2()
+        .child(button("user-plugin-remove", RemovalKind::Keep, cx))
+        .child(button("user-plugin-remove-all", RemovalKind::WithData, cx))
+        .child(button("user-plugin-remove-data", RemovalKind::DataOnly, cx))
+        .into_any_element()
+}
+
+/// What the removal takes away. The question holds focus, so Escape cancels; the named action
+/// sits beside the primary Cancel.
+fn confirm_removal(
+    kind: RemovalKind,
+    name: &str,
+    section: &UserPluginsSection,
+    cx: &mut Context<UserPluginsSection>,
+) -> AnyElement {
+    let question = kind.question(name);
+    v_flex()
+        .id("user-removal")
+        .aria_label(question.clone())
+        .test_support()
+        .gap_1()
+        .pt_2()
+        .track_focus(section.deny_focus())
+        .on_key_down(cx.listener(|section, event: &KeyDownEvent, _, cx| {
+            if event.keystroke.key == "escape" {
+                section.cancel_removal(cx);
+            }
+        }))
+        .child(div().text_sm().child(question))
         .child(
-            Button::new("user-plugin-remove")
-                .small()
-                .outline()
-                .label("Remove")
-                .on_click(cx.listener(move |section, _, _, cx| section.remove(&keep, false, cx))),
-        )
-        .child(
-            Button::new("user-plugin-remove-all")
-                .small()
-                .outline()
-                .label("Remove with its data")
-                .on_click(cx.listener(move |section, _, _, cx| section.remove(&wipe, true, cx))),
-        )
-        .child(
-            Button::new("user-plugin-remove-data")
-                .small()
-                .outline()
-                .label("Remove its data")
-                .on_click(cx.listener(move |section, _, _, cx| section.remove_data(&only, cx))),
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("user-removal-cancel")
+                        .small()
+                        .primary()
+                        .label("Cancel")
+                        .on_click(cx.listener(|section, _, _, cx| section.cancel_removal(cx))),
+                )
+                .child(
+                    Button::new("user-removal-confirm")
+                        .small()
+                        .outline()
+                        .label(kind.label())
+                        .on_click(cx.listener(|section, _, _, cx| section.confirm_removal(cx))),
+                ),
         )
         .into_any_element()
 }
