@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::Arc};
 use gpui::{Context, WindowId};
 use nocterm_plugin_api::{
     ContentHash, ContributionContext, Effects, Event, Grant, LocalId, Manifest, Package,
-    PackageError, PluginPackages, PluginRuntime, RuntimeError, View,
+    PackageError, PluginPackages, PluginRuntime, Runtime, RuntimeError, View,
 };
 use nocterm_plugin_model::{PluginId, SettingValues, UserEntry};
 use nocterm_plugin_ports::PluginProviders;
@@ -361,7 +361,10 @@ impl PluginHost {
             instance.render(&call.local, snapshot)
         });
         match answer {
-            Ok(view) => Ok(view.into_validated()?),
+            Ok(view) => view.into_validated().map_err(|error| {
+                self.refused_reply(&call.plugin, cx);
+                CallError::from(error)
+            }),
             Err(error) => Err(self.failed(&call.plugin, error, cx)),
         }
     }
@@ -389,6 +392,10 @@ impl PluginHost {
             Ok(effects) => effects,
             Err(error) => return Err(self.failed(&call.plugin, error, cx)),
         };
+        if let Err(error) = effects.check() {
+            self.refused_reply(&call.plugin, cx);
+            return Err(error.into());
+        }
         self.queue(call, effects, token, providers, cx);
         Ok(())
     }
@@ -401,10 +408,6 @@ impl PluginHost {
         providers: &PluginProviders,
         cx: &mut Context<Self>,
     ) {
-        if let Err(error) = effects.check() {
-            tracing::warn!(plugin = %call.plugin.as_str(), %error, "plugin effects dropped");
-            return;
-        }
         let Some(hash) = self
             .registry
             .running(&call.plugin, None)
@@ -459,26 +462,46 @@ impl PluginHost {
         run(ready.instance(self.runtime.as_ref())?, &snapshot)
     }
 
-    /// Counts a runtime failure, and takes the plugin out of service at the third.
+    /// Counts a runtime failure when it is the plugin's fault.
     fn failed(
         &mut self,
         plugin: &PluginId,
         error: RuntimeError,
         cx: &mut Context<Self>,
     ) -> CallError {
-        if Faults::counts(&error) && self.faults.record(plugin) {
-            self.halt(plugin);
-            if let Some(ready) = self.registry.get_mut(plugin).and_then(Installed::ready_mut) {
-                ready.set_faulted(true);
-            }
-            self.registry.audit(plugin, AuditAction::Faulted);
-            self.save(cx);
+        if Faults::counts(&error) {
+            self.fault(plugin, cx);
         }
         match error {
             RuntimeError::UnknownContribution(local) => {
                 CallError::NoContribution(local.to_string())
             }
             other => CallError::Runtime(other),
+        }
+    }
+
+    /// A reply the host refuses to draw or apply (too many nodes, too many effects, a key used
+    /// twice) is the fault of a plugin that runs code. A declarative plugin's views come from the
+    /// host's own interpreter, so a refusal there is not counted.
+    fn refused_reply(&mut self, plugin: &PluginId, cx: &mut Context<Self>) {
+        let runs_code = self
+            .registry
+            .running(plugin, None)
+            .is_some_and(|ready| matches!(ready.package().manifest().runtime(), Runtime::Wasm));
+        if runs_code {
+            self.fault(plugin, cx);
+        }
+    }
+
+    /// Counts one fault, and takes the plugin out of service at the third.
+    fn fault(&mut self, plugin: &PluginId, cx: &mut Context<Self>) {
+        if self.faults.record(plugin) {
+            self.halt(plugin);
+            if let Some(ready) = self.registry.get_mut(plugin).and_then(Installed::ready_mut) {
+                ready.set_faulted(true);
+            }
+            self.registry.audit(plugin, AuditAction::Faulted);
+            self.save(cx);
         }
     }
 

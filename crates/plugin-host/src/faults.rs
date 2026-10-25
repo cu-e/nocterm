@@ -1,4 +1,4 @@
-//! Traps and missed deadlines per plugin in this session.
+//! Faults of a plugin's code per plugin in this session.
 
 use std::collections::BTreeMap;
 
@@ -14,9 +14,20 @@ pub(crate) struct Faults {
 }
 
 impl Faults {
-    /// Whether a runtime error is the plugin's fault: a trap or a missed deadline.
+    /// Whether a runtime error is the plugin's fault: a trap, a missed deadline, passing the
+    /// memory limit, breaking the call protocol, or a module the runtime refuses. Being refused
+    /// for lack of a runtime or of room, or because the host's own call was too large to hand
+    /// over, is the host's situation and does not count. (A view or effects the host refuses to
+    /// use are counted where they are checked, for plugins that run code.)
     pub(crate) fn counts(error: &RuntimeError) -> bool {
-        matches!(error, RuntimeError::Trap | RuntimeError::Deadline)
+        matches!(
+            error,
+            RuntimeError::Trap
+                | RuntimeError::Deadline
+                | RuntimeError::Memory
+                | RuntimeError::Malformed(_)
+                | RuntimeError::Module(_)
+        )
     }
 
     /// Counts one fault. True when it was the one that disables the plugin.

@@ -2,14 +2,14 @@ use std::time::Duration;
 
 use gpui::TestAppContext;
 use nocterm_plugin_api::{
-    Effect, Event, HostError, LocalId,
+    Effect, EffectsError, Event, HostError, LocalId,
     capability::panels::{SetBadge, SetOpen},
 };
 use nocterm_plugin_ports::PluginProviders;
 
 use super::rig::{Rig, activated, effects, open_effect, post_effect};
 use crate::{
-    Input,
+    CallError, Input,
     test_support::{package_with, plugin_id},
 };
 
@@ -352,19 +352,28 @@ fn a_call_that_returns_too_many_or_repeated_or_oversized_effects_applies_none_of
         .map(|index| (None, open_effect("board", index % 2 == 0)))
         .collect();
     rig.script.answer_event(Ok(effects(nine)));
-    rig.press("face", cx).unwrap();
+    assert!(matches!(
+        rig.press("face", cx),
+        Err(CallError::Effects(EffectsError::TooMany))
+    ));
 
     rig.script.answer_event(Ok(effects(vec![
         (Some("k"), post_effect("one")),
         (Some("k"), post_effect("two")),
     ])));
-    rig.press("face", cx).unwrap();
+    assert!(matches!(
+        rig.press("face", cx),
+        Err(CallError::Effects(EffectsError::DuplicateKey { .. }))
+    ));
 
     rig.script.answer_event(Ok(effects(vec![
         (Some("k"), post_effect("fine")),
         (None, post_effect(&"x".repeat(201))),
     ])));
-    rig.press("face", cx).unwrap();
+    assert!(matches!(
+        rig.press("face", cx),
+        Err(CallError::Effects(EffectsError::Limit { .. }))
+    ));
 
     assert!(rig.open.requests().is_empty());
     assert!(rig.post.requests().is_empty());

@@ -2,14 +2,15 @@ use std::time::Duration;
 
 use gpui::TestAppContext;
 use nocterm_plugin_api::{
-    HostError, Node, NodeKind, Observed, RuntimeError, View, capability::clock::ClockNow,
+    EffectsError, HostError, MAX_EFFECTS, MAX_NODES, ModuleError, Node, NodeKind, Observed,
+    ProtocolError, RuntimeError, View, ViewError, capability::clock::ClockNow,
 };
 use nocterm_plugin_model::SettingValue;
 
-use super::rig::Rig;
+use super::rig::{Rig, activated, effects, post_effect};
 use crate::{
-    CallError, MAX_FAULTS, MAX_RENDERS_PER_SECOND, PluginDataDoc, PluginStatus, StoredValue,
-    test_support::plugin_id,
+    CallError, Input, MAX_FAULTS, MAX_RENDERS_PER_SECOND, PluginDataDoc, PluginStatus, StoredValue,
+    test_support::{declarative_package, plugin_id},
 };
 
 fn latest(rig: &Rig) -> nocterm_plugin_api::Snapshot {
@@ -217,6 +218,125 @@ fn three_traps_or_missed_deadlines_take_the_plugin_out_of_service(cx: &mut TestA
         PluginStatus::Running,
         "a switch clears the faults"
     );
+}
+
+#[gpui::test]
+fn faults_of_the_code_runtime_count_like_traps(cx: &mut TestAppContext) {
+    for fault in [
+        RuntimeError::Memory,
+        RuntimeError::Malformed(ProtocolError::WrongAnswer),
+        RuntimeError::Module(ModuleError::Exports),
+    ] {
+        let rig = Rig::new(cx);
+        rig.installed(cx);
+        rig.script.render_with(Err(fault.clone()));
+        for _ in 0..MAX_FAULTS {
+            assert_eq!(
+                rig.render("face", cx),
+                Err(CallError::Runtime(fault.clone()))
+            );
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        let status = rig
+            .host
+            .read_with(cx, |host, _| host.plugins()[0].status.clone());
+        assert_eq!(status, PluginStatus::Faulted, "{fault}");
+    }
+}
+
+#[gpui::test]
+fn views_and_effects_a_code_plugin_returns_and_the_host_refuses_count_as_faults(
+    cx: &mut TestAppContext,
+) {
+    let rig = Rig::new(cx);
+    rig.installed(cx);
+    let status = |cx: &mut TestAppContext| {
+        rig.host
+            .read_with(cx, |host, _| host.plugins()[0].status.clone())
+    };
+    let oversized = View {
+        nodes: (0..=MAX_NODES)
+            .map(|_| Node::new(NodeKind::Spacer))
+            .collect(),
+        ..View::default()
+    };
+    rig.script.render_with(Ok(oversized));
+    for _ in 0..(MAX_FAULTS - 1) {
+        assert_eq!(
+            rig.render("face", cx),
+            Err(CallError::View(ViewError::TooManyNodes))
+        );
+        cx.executor().advance_clock(Duration::from_millis(100));
+    }
+    assert_eq!(status(cx), PluginStatus::Running);
+
+    let too_many = effects(
+        (0..=MAX_EFFECTS)
+            .map(|_| (None, post_effect("x")))
+            .collect(),
+    );
+    rig.script.answer_event(Ok(too_many));
+    assert_eq!(
+        rig.event("face", Input::Pointer, activated(), cx),
+        Err(CallError::Effects(EffectsError::TooMany))
+    );
+    assert_eq!(status(cx), PluginStatus::Faulted, "the third fault");
+    assert!(
+        rig.post.requests().is_empty(),
+        "refused effects are never applied"
+    );
+}
+
+#[gpui::test]
+fn a_view_the_host_refuses_from_a_declarative_plugin_is_not_its_fault(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    rig.install(declarative_package(1), &[], cx).unwrap();
+    let oversized = View {
+        nodes: (0..=MAX_NODES)
+            .map(|_| Node::new(NodeKind::Spacer))
+            .collect(),
+        ..View::default()
+    };
+    rig.script.render_with(Ok(oversized));
+
+    for _ in 0..(MAX_FAULTS + 2) {
+        assert_eq!(
+            rig.render("face", cx),
+            Err(CallError::View(ViewError::TooManyNodes))
+        );
+        cx.executor().advance_clock(Duration::from_millis(100));
+    }
+
+    let status = rig
+        .host
+        .read_with(cx, |host, _| host.plugins()[0].status.clone());
+    assert_eq!(status, PluginStatus::Running);
+}
+
+#[gpui::test]
+fn a_missing_runtime_or_no_room_for_another_guest_is_not_the_plugins_fault(
+    cx: &mut TestAppContext,
+) {
+    for refusal in [
+        RuntimeError::Capacity,
+        RuntimeError::InputTooLarge,
+        RuntimeError::NoRuntime(nocterm_plugin_api::Runtime::Wasm),
+    ] {
+        let rig = Rig::new(cx);
+        rig.installed(cx);
+        rig.script.render_with(Err(refusal.clone()));
+        for _ in 0..(MAX_FAULTS + 2) {
+            assert_eq!(
+                rig.render("face", cx),
+                Err(CallError::Runtime(refusal.clone()))
+            );
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        let status = rig
+            .host
+            .read_with(cx, |host, _| host.plugins()[0].status.clone());
+        assert_eq!(status, PluginStatus::Running, "{refusal}");
+    }
 }
 
 #[gpui::test]

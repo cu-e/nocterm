@@ -6,7 +6,8 @@ use std::time::Duration;
 pub const MAX_ENABLED: usize = 16;
 /// Most renders per second across all user plugins; `AfterMs` refreshes count.
 pub const MAX_RENDERS_PER_SECOND: usize = 32;
-/// Traps and missed deadlines in one session that disable a plugin.
+/// Faults of a plugin's code (traps, missed deadlines, memory, protocol breaks, refused
+/// modules) in one session that disable it.
 pub const MAX_FAULTS: u8 = 3;
 /// How long a gesture token stays valid.
 pub const GESTURE_TTL: Duration = Duration::from_secs(1);

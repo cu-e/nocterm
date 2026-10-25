@@ -345,9 +345,27 @@ pub const ALL: &[&str] = &[
 /// A code package (`runtime = "wasm"`, which a scripted runtime stands in for) that declares
 /// exactly these required capabilities (and `monitor.usage` as optional).
 pub fn package_with(name: &str, hash_byte: u8, capabilities: &[&str]) -> Package {
-    let text = serde_json::json!({
+    let mut text = fixture_manifest(name, capabilities);
+    text["runtime"] = "wasm".into();
+    fixture_package(text, hash_byte)
+}
+
+/// A declarative package of the plugin [`plugin_id`]: no `runtime`, and a one-node view for each
+/// contribution, as the host's own interpreter would draw it.
+pub fn declarative_package(hash_byte: u8) -> Package {
+    let mut text = fixture_manifest("clock", &["clock.now"]);
+    for contribution in text["contribution"].as_array_mut().into_iter().flatten() {
+        contribution["view"] = serde_json::json!({
+            "refresh": "next-minute",
+            "nodes": [{ "kind": "text", "text": "hello" }],
+        });
+    }
+    fixture_package(text, hash_byte)
+}
+
+fn fixture_manifest(name: &str, capabilities: &[&str]) -> serde_json::Value {
+    serde_json::json!({
         "api": "0.1",
-        "runtime": "wasm",
         "publisher": "acme",
         "id": name,
         "name": format!("Acme {name}"),
@@ -369,7 +387,10 @@ pub fn package_with(name: &str, hash_byte: u8, capabilities: &[&str]) -> Package
                 "field": [{ "key": "city", "label": "City", "kind": "text", "max_len": 40 }]
             }]
         }
-    });
+    })
+}
+
+fn fixture_package(text: serde_json::Value, hash_byte: u8) -> Package {
     let dto: ManifestDto = serde_json::from_value(text).expect("the fixture is a manifest");
     let manifest =
         Manifest::validate(&dto, &HostContext::default()).expect("the fixture is a valid manifest");

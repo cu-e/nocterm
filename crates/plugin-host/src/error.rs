@@ -1,7 +1,8 @@
 //! Typed errors of the host and of its two storage ports.
 
 use nocterm_plugin_api::{
-    Cause, GrantError, HashError, HostError, LimitError, PackageError, RuntimeError, ViewError,
+    Cause, EffectsError, GrantError, HashError, HostError, LimitError, PackageError, RuntimeError,
+    ViewError,
 };
 use nocterm_plugin_model::PluginId;
 use thiserror::Error;
@@ -115,6 +116,8 @@ pub enum CallError {
     Runtime(#[from] RuntimeError),
     #[error("the plugin drew an invalid view")]
     View(#[from] ViewError),
+    #[error("the plugin asked for effects the host refuses")]
+    Effects(#[from] EffectsError),
 }
 
 impl From<CallError> for HostError {
