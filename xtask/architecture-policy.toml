@@ -5,6 +5,7 @@
 "nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
 "nocterm_connections::os::Os" = "Detected operating-system facts value."
 "nocterm_files::local::LocalEntry" = "Filesystem listing row returned by the adapter."
+"nocterm_layout_ui::user_facts::UserFacts" = "What the host knows of one installed user plugin, copied by value to the inspector."
 "nocterm_explorer::settings::ExplorerSettings" = "Serialized settings section."
 "nocterm_explorer::settings::IndexingSettings" = "Serialized settings values."
 "nocterm_explorer::settings::OpenRule" = "Serialized opener rule."
@@ -154,7 +155,7 @@ external = ["base"]
 [isolation.crates.nocterm-plugin-packages]
 kind = "std"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model", "nocterm-core"]
-direct = ["sha2", "toml"]
+direct = ["sha2", "thiserror", "toml"]
 external = ["base", "core", "sha2"]
 
 [isolation.crates.nocterm-plugin-ports]

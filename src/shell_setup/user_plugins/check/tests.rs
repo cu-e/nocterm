@@ -95,3 +95,19 @@ fn a_link_is_not_followed() {
 
     assert!(!check(directory.path()).passed());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_file_name_with_control_characters_cannot_move_the_cursor() {
+    let directory = TempDir::new().unwrap();
+    fs::write(
+        directory.path().join("bad\u{1b}[2J.toml"),
+        "api = \"0.1\"\n",
+    )
+    .unwrap();
+
+    let text = check(directory.path()).to_string();
+
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    assert!(text.contains("bad?[2J.toml"), "{text:?}");
+}

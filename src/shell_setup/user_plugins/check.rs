@@ -3,22 +3,39 @@
 //! consent to and whether the views build, without installing anything.
 use std::{
     fmt::{self, Write as _},
-    fs,
     path::{Path, PathBuf},
 };
 
 use nocterm_plugin_api::{
-    ContributionContext, DeclarativeRuntime, Kind, LocalId, Package, PluginPackages as _,
-    PluginRuntime as _, Snapshot, Zone,
+    ContributionContext, DeclarativeRuntime, Kind, LimitError, LocalId, Package, PackageError,
+    PluginRuntime as _, RuntimeError, Snapshot, Zone,
 };
-use nocterm_plugin_model::{ContributionKind, PluginCatalog};
-use nocterm_plugin_packages::PackageStore;
+use nocterm_plugin_model::{ContributionKind, PluginCatalog, PluginId};
+use nocterm_plugin_packages::{CheckedFile, read_directory};
 
 use super::reserved_names;
 
+/// Why a package of the directory fails the check.
+#[derive(Debug, thiserror::Error)]
+enum CheckError {
+    #[error("{0}")]
+    Package(#[from] PackageError),
+    #[error("another package in this directory is `{0}`")]
+    Duplicate(PluginId),
+    #[error("the runtime refuses it: {0}")]
+    Runtime(#[from] RuntimeError),
+    #[error("a contribution has no usable local name: {0}")]
+    Local(#[from] LimitError),
+    #[error("`{local}` does not render: {source}")]
+    Render {
+        local: LocalId,
+        source: RuntimeError,
+    },
+}
+
 /// What a directory held.
 pub(crate) struct Report {
-    files: Vec<(PathBuf, Result<String, String>)>,
+    files: Vec<(PathBuf, Result<String, CheckError>)>,
     problem: Option<String>,
 }
 
@@ -40,42 +57,53 @@ impl fmt::Display for Report {
             return writeln!(f, "error: no `.toml` package in this directory");
         }
         for (path, outcome) in &self.files {
+            let name = shown(path);
             match outcome {
-                Ok(summary) => writeln!(f, "ok    {}\n{summary}", path.display())?,
-                Err(reason) => writeln!(f, "FAIL  {}\n      {reason}", path.display())?,
+                Ok(summary) => writeln!(f, "ok    {name}\n{summary}")?,
+                Err(reason) => writeln!(f, "FAIL  {name}\n      {reason}")?,
             }
         }
         Ok(())
     }
 }
 
+/// A path as the terminal may show it: a file name can hold control characters, which would
+/// otherwise move the cursor or rewrite earlier lines of the report.
+fn shown(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                '?'
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 /// Checks the `.toml` files directly inside `directory`, in name order. Links and other
 /// non-regular files are reported, not followed.
 pub(crate) fn check_directory(directory: &Path, catalog: &PluginCatalog) -> Report {
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
+    let reserved = reserved_names(catalog);
+    let reserved: Vec<&str> = reserved.iter().map(String::as_str).collect();
+    let files = match read_directory(directory, &reserved) {
+        Ok(files) => files,
         Err(error) => {
             return Report {
                 files: Vec::new(),
-                problem: Some(format!("{}: {error}", directory.display())),
+                problem: Some(error.to_string()),
             };
         }
     };
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "toml")
-        })
-        .collect();
-    paths.sort();
-    let store = PackageStore::new(directory.join(".none"), reserved_names(catalog));
     let mut seen = Vec::new();
-    let files = paths
+    let files = files
         .into_iter()
-        .map(|path| {
-            let outcome = check_file(&store, &path, &mut seen);
+        .map(|CheckedFile { path, package }| {
+            let outcome = package
+                .map_err(CheckError::from)
+                .and_then(|package| check_package(&package, &mut seen));
             (path, outcome)
         })
         .collect();
@@ -85,43 +113,35 @@ pub(crate) fn check_directory(directory: &Path, catalog: &PluginCatalog) -> Repo
     }
 }
 
-fn check_file(
-    store: &PackageStore,
-    path: &Path,
-    seen: &mut Vec<nocterm_plugin_model::PluginId>,
-) -> Result<String, String> {
-    let location = path.to_str().ok_or("the path is not text")?;
-    let package = store.read(location).map_err(|error| error.to_string())?;
+fn check_package(package: &Package, seen: &mut Vec<PluginId>) -> Result<String, CheckError> {
     let id = package.manifest().plugin().id().clone();
     if seen.contains(&id) {
-        return Err(format!("another package in this directory is `{id}`"));
+        return Err(CheckError::Duplicate(id));
     }
     seen.push(id);
-    render_all(&package)?;
-    Ok(summary(&package))
+    render_all(package)?;
+    Ok(summary(package))
 }
 
 /// Renders each contribution against an empty snapshot: placeholders without an observation
 /// show a dash, so only a view the host would refuse fails.
-fn render_all(package: &Package) -> Result<(), String> {
-    let instance = DeclarativeRuntime
-        .instantiate(package)
-        .map_err(|error| error.to_string())?;
+fn render_all(package: &Package) -> Result<(), CheckError> {
+    let instance = DeclarativeRuntime.instantiate(package)?;
     for contribution in package.manifest().plugin().contributions() {
         let local = contribution
             .id()
             .as_str()
             .split_once('.')
             .map_or("", |(_, local)| local);
-        let local = LocalId::parse(local).map_err(|error| error.to_string())?;
+        let local = LocalId::parse(local)?;
         let (kind, zone) = match contribution.kind() {
             ContributionKind::Panel => (Kind::Panel, Zone::Left),
             ContributionKind::Widget => (Kind::Widget, Zone::Right),
         };
         let snapshot = Snapshot::new(ContributionContext { kind, zone });
-        instance
-            .render(&local, &snapshot)
-            .map_err(|error| format!("`{local}` does not render: {error}"))?;
+        if let Err(source) = instance.render(&local, &snapshot) {
+            return Err(CheckError::Render { local, source });
+        }
     }
     Ok(())
 }

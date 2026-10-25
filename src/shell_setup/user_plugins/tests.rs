@@ -357,6 +357,7 @@ mod window {
     use nocterm_plugin_api::{
         Capability as _, Effect, HostError, Observed,
         capability::{
+            clock::ClockNow,
             notifications::{NoticeTone, Post},
             transfers::{Counts, CountsNow},
             workspace::{Kind, WorkspaceKind, WorkspaceState},
@@ -365,10 +366,28 @@ mod window {
     use nocterm_transfers::testing::FakeTransfers;
     use nocterm_workspace::Workspace;
 
-    use super::{super::window_providers, plugin};
+    use super::{
+        super::{
+            providers::{HOST_HANDLED, UNAVAILABLE},
+            window_providers,
+        },
+        plugin,
+    };
+    use crate::shell_setup::user_plugin_panel::Badges;
 
-    #[gpui_kit::test]
-    fn a_window_answers_what_its_own_ui_shows_and_nothing_more(cx: &mut TestAppContext) {
+    /// A clock that stands at 1970-01-02 00:30 UTC, an hour east of there.
+    struct Midnight;
+    impl nocterm_core::clock::WallClock for Midnight {
+        fn now(&self) -> nocterm_core::clock::WallTime {
+            nocterm_core::clock::WallTime {
+                unix_seconds: 86_400 + 30 * 60 + 59,
+                utc_offset_seconds: 3_600,
+            }
+        }
+    }
+
+    /// The providers of a window composed the way the application composes them.
+    fn providers(cx: &mut TestAppContext) -> nocterm_plugin_ports::PluginProviders {
         let (handle, workspace) = cx.update(|cx| {
             gpui_kit::init(cx);
             cx.set_global(nocterm_ui::Design::new(nocterm_ui::DesignTokens::builtin()));
@@ -380,15 +399,47 @@ mod window {
             })
             .expect("a window opens")
         });
-        let providers = cx.update(|cx| {
+        cx.update(|cx| {
             window_providers(
                 &workspace,
                 handle,
                 &MonitorUsage::new(),
                 TransferCounts::over(Arc::new(FakeTransfers::default())),
+                Arc::new(Midnight),
+                &Badges::default(),
                 cx,
             )
-        });
+        })
+    }
+
+    #[gpui_kit::test]
+    fn every_capability_of_the_api_has_a_provider_or_is_declared_otherwise(
+        cx: &mut TestAppContext,
+    ) {
+        use nocterm_plugin_api::CAPABILITIES;
+
+        let providers = providers(cx);
+
+        for entry in CAPABILITIES {
+            let declared = HOST_HANDLED.contains(&entry.id) || UNAVAILABLE.contains(&entry.id);
+            assert!(
+                declared ^ providers.provides(entry.id),
+                "`{}` needs exactly one of a window provider, a host handler or an explicit \
+                 unavailable declaration",
+                entry.id
+            );
+        }
+        for id in HOST_HANDLED.iter().chain(UNAVAILABLE) {
+            assert!(
+                CAPABILITIES.iter().any(|entry| entry.id == *id),
+                "`{id}` is declared but is not a capability"
+            );
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_window_answers_what_its_own_ui_shows_and_nothing_more(cx: &mut TestAppContext) {
+        let providers = providers(cx);
 
         cx.update(|cx| {
             assert_eq!(
@@ -404,6 +455,14 @@ mod window {
                     active: 0,
                     failed: 0
                 }))
+            );
+            assert_eq!(
+                providers.read("clock.now", &plugin(), cx),
+                Ok(Observed::Clock(ClockNow {
+                    unix_minutes: 1_440 + 30,
+                    utc_offset_seconds: 3_600
+                })),
+                "the wall clock the application injected, to the minute"
             );
             // No monitor widget was created, so no reading exists and none is started.
             assert_eq!(

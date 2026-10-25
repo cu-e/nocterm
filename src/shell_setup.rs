@@ -2,15 +2,13 @@
 use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::App;
-use nocterm_core::Paths;
+use nocterm_core::{Paths, clock::WallClock};
 use nocterm_plugin_model::{CatalogError, PluginCatalog, SystemPlugin};
 use nocterm_store::ShutdownCoordinator;
 use nocterm_ui::PluginSource;
 use nocterm_workspace::plugin;
 
 mod layout_editor;
-#[cfg(not(feature = "user-plugins"))]
-mod no_user_plugins;
 mod plugins;
 #[cfg(test)]
 mod reference;
@@ -19,15 +17,18 @@ mod settings;
 mod user_plugin_contract;
 #[cfg(feature = "user-plugins")]
 mod user_plugin_panel;
+// The default build has no user plugins and composes nothing in their place.
 #[cfg(feature = "user-plugins")]
 mod user_plugins;
-
 #[cfg(not(feature = "user-plugins"))]
-pub(crate) use no_user_plugins::UserShell;
+#[path = "shell_setup/no_user_plugins.rs"]
+mod user_plugins;
+
 pub(crate) use plugins::AppPluginToggles;
 pub(crate) use settings::{GuestInputs, install_guest_pages};
+pub(crate) use user_plugins::UserShell;
 #[cfg(feature = "user-plugins")]
-pub(crate) use user_plugins::{UserShell, check_directory};
+pub(crate) use user_plugins::check_directory;
 
 /// Every system plugin of the application. A plugin appears here once, beside the others,
 /// so the catalog check sees all contributions together.
@@ -65,10 +66,11 @@ impl Plugins {
     pub(crate) fn install(
         paths: &Paths,
         shutdown: &ShutdownCoordinator,
+        clock: Arc<dyn WallClock>,
         cx: &mut App,
     ) -> Result<Self, CatalogError> {
         let catalog = Arc::new(plugin_catalog()?);
-        let user = UserShell::install(&catalog, paths, shutdown, cx);
+        let user = UserShell::install(&catalog, paths, shutdown, clock, cx);
         let source = user.source(&catalog);
         Ok(Self {
             catalog,
