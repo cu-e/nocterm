@@ -9,11 +9,6 @@ publish = false
 [package.metadata.nocterm]
 layer = "domain"
 
-[features]
-# Constructors that only tests of the host may use, such as a manifest context that lists effect
-# capabilities for a stand-in runtime. Enabled by dev-dependencies only (checked by xtask).
-test-support = []
-
 # The crate is `no_std` with `alloc`, so these do not take the workspace entries (which keep
 # the default `std` features); the isolation check lists the direct dependencies.
 [dependencies]

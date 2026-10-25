@@ -215,8 +215,6 @@ crates = [
 ]
 # Packages whose resolved features must not hold the named feature in the default build.
 features = { nocterm-plugins-ui = "user" }
-# Features that only tests may enable; checked on the normal closure with `cargo tree`.
-test_features = { nocterm-plugin-api = "test-support" }
 
 # M7: user settings never reach the system settings store (identifiers per package).
 [isolation.identifiers.nocterm-plugins-ui]

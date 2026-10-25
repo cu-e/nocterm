@@ -140,7 +140,7 @@ impl Broker {
         // The contribution whose event queued the effect, and the one it names, must still be
         // the plugin's own and still be on this window's surface.
         let manifest = ready.package().manifest();
-        let own = |local: &LocalId| manifest.view(local.as_str()).is_some();
+        let own = |local: &LocalId| manifest.has_contribution(local);
         if !own(&item.local) || !effect.local().is_none_or(own) {
             return Err(HostError::Unavailable);
         }

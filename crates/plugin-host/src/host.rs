@@ -445,12 +445,7 @@ impl PluginHost {
         let Some(ready) = self.registry.running(&call.plugin, None) else {
             return Err(RuntimeError::Trap);
         };
-        if ready
-            .package()
-            .manifest()
-            .view(call.local.as_str())
-            .is_none()
-        {
+        if !ready.package().manifest().has_contribution(&call.local) {
             return Err(RuntimeError::UnknownContribution(call.local.clone()));
         }
         let subject = Subject::new(
@@ -494,12 +489,7 @@ impl PluginHost {
         let Some(ready) = self.registry.running(&call.plugin, None) else {
             return Err(CallError::NotRunning(call.plugin.clone()));
         };
-        if ready
-            .package()
-            .manifest()
-            .view(call.local.as_str())
-            .is_none()
-        {
+        if !ready.package().manifest().has_contribution(&call.local) {
             return Err(CallError::NoContribution(call.local.to_string()));
         }
         Ok(())

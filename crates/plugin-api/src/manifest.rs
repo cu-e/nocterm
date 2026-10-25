@@ -106,9 +106,6 @@ pub struct HostContext<'a> {
     /// Names a package may not take, compared without case: system plugin names and the titles of
     /// built-in contributions and groups. "nocterm" is always refused.
     pub reserved_names: &'a [&'a str],
-    /// Lets a declarative manifest list effect capabilities, which it can never use. Only
-    /// [`HostContext::with_stand_in_runtime`] turns it on.
-    effects_without_code: bool,
 }
 
 impl<'a> HostContext<'a> {
@@ -118,18 +115,7 @@ impl<'a> HostContext<'a> {
         Self {
             api,
             reserved_names,
-            effects_without_code: false,
         }
-    }
-
-    /// A context for tests that drive effects through a stand-in runtime: a declarative
-    /// manifest may then list effect capabilities, which the real declarative runtime never
-    /// uses. Behind the `test-support` feature, so no production code can ask for it.
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub const fn with_stand_in_runtime(mut self) -> Self {
-        self.effects_without_code = true;
-        self
     }
 }
 
@@ -201,7 +187,6 @@ impl Manifest {
             &dto.reasons,
         )?;
         match dto.runtime {
-            Runtime::Declarative if host.effects_without_code => {}
             Runtime::Declarative => declaration.observation_only()?,
             Runtime::Wasm => {}
         }

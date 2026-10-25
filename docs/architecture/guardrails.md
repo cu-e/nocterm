@@ -138,10 +138,10 @@ exemption is a reviewed edit of the policy with a reason.
 - **I5, providers.** The dependents of the provider port are a closed list.
 - **Compile-out.** With default features the resolved closure of `nocterm` holds no user-plugin
   crate.
-- **Test hooks.** A crate that offers a test-only constructor behind a `test-support` feature (the
-  stand-in runtime of `nocterm-plugin-api`) lists it under `test_features` in the policy. The
-  feature must not be enabled by any normal or build dependency edge of `nocterm` with `user-plugins`
-  (the default build holds no such crate); development dependencies may enable it.
+- **Test hooks.** A crate that offers a test-only constructor behind a `test-support` feature lists
+  it under `test_features` in the policy (empty today). The feature must not be enabled by any
+  normal or build dependency edge of `nocterm` with `user-plugins` (the default build holds no such
+  crate); development dependencies may enable it.
 
 These rules protect against host-side regressions. They do not cover I/O reached through an
 allowlisted dependency's own API, nor a confused deputy; those are design-review items.

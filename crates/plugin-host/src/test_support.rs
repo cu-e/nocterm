@@ -342,11 +342,12 @@ pub const ALL: &[&str] = &[
     "storage.remove",
 ];
 
-/// A package that declares exactly these required capabilities (and `monitor.usage` as
-/// optional).
+/// A code package (`runtime = "wasm"`, which a scripted runtime stands in for) that declares
+/// exactly these required capabilities (and `monitor.usage` as optional).
 pub fn package_with(name: &str, hash_byte: u8, capabilities: &[&str]) -> Package {
     let text = serde_json::json!({
         "api": "0.1",
+        "runtime": "wasm",
         "publisher": "acme",
         "id": name,
         "name": format!("Acme {name}"),
@@ -355,12 +356,10 @@ pub fn package_with(name: &str, hash_byte: u8, capabilities: &[&str]) -> Package
         "optional_capabilities": ["monitor.usage"],
         "contribution": [
             {
-                "local": "face", "kind": "widget", "title": "Face",
-                "view": { "nodes": [{ "kind": "text", "text": "{clock.now|hh-mm}" }] }
+                "local": "face", "kind": "widget", "title": "Face"
             },
             {
-                "local": "board", "kind": "panel", "title": "Board",
-                "view": { "nodes": [{ "kind": "text", "text": "board" }] }
+                "local": "board", "kind": "panel", "title": "Board"
             }
         ],
         "settings": {
@@ -372,8 +371,8 @@ pub fn package_with(name: &str, hash_byte: u8, capabilities: &[&str]) -> Package
         }
     });
     let dto: ManifestDto = serde_json::from_value(text).expect("the fixture is a manifest");
-    let manifest = Manifest::validate(&dto, &HostContext::default().with_stand_in_runtime())
-        .expect("the fixture is a valid manifest");
+    let manifest =
+        Manifest::validate(&dto, &HostContext::default()).expect("the fixture is a valid manifest");
     Package::new(ContentHash::new([hash_byte; 32]), manifest, Vec::new())
 }
 

@@ -25,9 +25,6 @@
 //! `parent < index`, unique keys and depth at most 8; a package cannot express a built-in
 //! privilege; a template value is inserted as literal text and never parsed again.
 //! `no_std` with `alloc`; the isolation check keeps it free of I/O and `unsafe`.
-//! Feature `test-support`: constructors for tests of the host (`HostContext::with_stand_in_runtime`);
-//! only dev-dependencies and the host's own `test-support` enable it, and `cargo xtask architecture`
-//! refuses it in the normal build.
 #![no_std]
 
 extern crate alloc;

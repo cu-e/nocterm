@@ -160,14 +160,6 @@ fn a_declarative_package_cannot_ask_for_an_effect() {
     assert!(Manifest::validate(&dto, &host()).is_ok());
 }
 
-#[test]
-fn a_host_driving_a_stand_in_runtime_may_list_effects() {
-    let mut dto = example();
-    dto.capabilities.push("notifications.post".into());
-    let stand_in = host().with_stand_in_runtime();
-    assert!(Manifest::validate(&dto, &stand_in).is_ok());
-}
-
 const CODE: &str = r#"
 api = "0.1"
 runtime = "wasm"

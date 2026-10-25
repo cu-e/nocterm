@@ -10,9 +10,7 @@ publish = false
 layer = "service"
 
 [features]
-# In-memory records, data and packages for tests of the host and of the app's adapters. A crate
-# that enables it as a dev-dependency also enables `nocterm-plugin-api/test-support` there: a
-# feature cannot forward to another crate's test support (xtask checks it).
+# In-memory records, data and packages for tests of the host and of the app's adapters.
 test-support = []
 
 [dependencies]
@@ -29,6 +27,5 @@ tracing.workspace = true
 workspace = true
 
 [dev-dependencies]
-nocterm-plugin-api = { workspace = true, features = ["test-support"] }
 nocterm-plugin-ports = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
