@@ -25,6 +25,8 @@ pub struct Candidate {
     pub fields: Vec<FieldLine>,
     /// What an installed plugin of the same id is, when this replaces it.
     pub replaces: Option<Replaced>,
+    /// The package is a code module the plugin runs in a sandbox, not a declarative template.
+    pub runs_code: bool,
 }
 
 /// One capability the package asks for.
@@ -57,6 +59,8 @@ pub struct Replaced {
     pub fingerprint: String,
     /// The candidate is an older version.
     pub downgrade: bool,
+    /// The installed package is a code module.
+    pub runs_code: bool,
 }
 
 /// What the user decided at the consent.

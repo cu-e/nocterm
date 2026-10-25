@@ -1,19 +1,24 @@
 //! `nocterm plugin check <dir>`: reads every package of a directory the way an install does
 //! and renders each contribution once, so an author sees what the user would be asked to
-//! consent to and whether the views build, without installing anything.
+//! consent to and whether the views build, without installing anything. A code package is
+//! instantiated and called in the sandbox like an installed one, with an empty snapshot.
 use std::{
     fmt::{self, Write as _},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use nocterm_plugin_api::{
-    ContributionContext, DeclarativeRuntime, Kind, LimitError, LocalId, Package, PackageError,
-    PluginRuntime as _, RuntimeError, Snapshot, Zone,
+    ContributionContext, Kind, LimitError, LocalId, Package, PackageError, PluginRuntime as _,
+    Runtime, RuntimeError, Snapshot, ViewError, Zone,
 };
 use nocterm_plugin_model::{ContributionKind, PluginCatalog, PluginId};
 use nocterm_plugin_packages::{CheckedFile, read_directory};
 
-use super::reserved_names;
+use super::{
+    reserved_names,
+    runtime::{DiscardGuestLog, runtimes},
+};
 
 /// Why a package of the directory fails the check.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +36,8 @@ enum CheckError {
         local: LocalId,
         source: RuntimeError,
     },
+    #[error("`{local}` draws a view the host refuses: {source}")]
+    InvalidView { local: LocalId, source: ViewError },
 }
 
 /// What a directory held.
@@ -54,7 +61,7 @@ impl fmt::Display for Report {
             return writeln!(f, "error: {problem}");
         }
         if self.files.is_empty() {
-            return writeln!(f, "error: no `.toml` package in this directory");
+            return writeln!(f, "error: no `.toml` or `.wasm` package in this directory");
         }
         for (path, outcome) in &self.files {
             let name = shown(path);
@@ -83,7 +90,7 @@ fn shown(path: &Path) -> String {
         .collect()
 }
 
-/// Checks the `.toml` files directly inside `directory`, in name order. Links and other
+/// Checks the `.toml` and `.wasm` files directly inside `directory`, in name order. Links and other
 /// non-regular files are reported, not followed.
 pub(crate) fn check_directory(directory: &Path, catalog: &PluginCatalog) -> Report {
     let reserved = reserved_names(catalog);
@@ -124,9 +131,10 @@ fn check_package(package: &Package, seen: &mut Vec<PluginId>) -> Result<String, 
 }
 
 /// Renders each contribution against an empty snapshot: placeholders without an observation
-/// show a dash, so only a view the host would refuse fails.
+/// show a dash, so only a view the host would refuse fails. A code package runs its module
+/// for each call.
 fn render_all(package: &Package) -> Result<(), CheckError> {
-    let instance = DeclarativeRuntime.instantiate(package)?;
+    let instance = runtimes(Arc::new(DiscardGuestLog)).instantiate(package)?;
     for contribution in package.manifest().plugin().contributions() {
         let local = contribution
             .id()
@@ -139,8 +147,14 @@ fn render_all(package: &Package) -> Result<(), CheckError> {
             ContributionKind::Widget => (Kind::Widget, Zone::Right),
         };
         let snapshot = Snapshot::new(ContributionContext { kind, zone });
-        if let Err(source) = instance.render(&local, &snapshot) {
-            return Err(CheckError::Render { local, source });
+        let view = instance
+            .render(&local, &snapshot)
+            .map_err(|source| CheckError::Render {
+                local: local.clone(),
+                source,
+            })?;
+        if let Err(source) = view.into_validated() {
+            return Err(CheckError::InvalidView { local, source });
         }
     }
     Ok(())
@@ -159,6 +173,13 @@ fn summary(package: &Package) -> String {
         manifest.publisher(),
         package.hash().fingerprint(),
     );
+    if manifest.runtime() == Runtime::Wasm {
+        let _ = writeln!(
+            text,
+            "      runs code: a WebAssembly module of {} bytes",
+            package.bytes().len()
+        );
+    }
     for entry in manifest.required() {
         let _ = writeln!(text, "      needs {}: {}", entry.id, entry.consent);
     }

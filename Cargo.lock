@@ -4983,6 +4983,7 @@ dependencies = [
  "nocterm-plugin-packages",
  "nocterm-plugin-ports",
  "nocterm-plugin-view",
+ "nocterm-plugin-wasm",
  "nocterm-plugins-ui",
  "nocterm-project-container-fs",
  "nocterm-project-environment",
@@ -5021,6 +5022,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wat",
  "winresource",
 ]
 

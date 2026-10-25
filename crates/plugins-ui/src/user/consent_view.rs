@@ -57,6 +57,7 @@ pub(super) fn consent_dialog(
             format!("{} (unverified)", candidate.publisher),
             cx,
         ))
+        .child(code_line(candidate, cx))
         .child(versions(candidate, cx))
         .child(form::section("It asks to", capabilities, cx))
         .when(!fields.is_empty(), |dialog| {
@@ -67,6 +68,33 @@ pub(super) fn consent_dialog(
         })
         .child(answer(section, consent, cx))
         .child(state(consent.is_armed(), cx))
+        .into_any_element()
+}
+
+/// Whether the package runs code, as a fact on every consent. An update that changes it says so.
+fn code_line(candidate: &Candidate, cx: &Context<UserPluginsSection>) -> AnyElement {
+    let text = match (
+        candidate.runs_code,
+        candidate.replaces.as_ref().map(|old| old.runs_code),
+    ) {
+        (true, Some(false)) => "Yes, new: the installed version runs no code",
+        (true, _) => "Yes: a WebAssembly module in a sandbox",
+        (false, Some(true)) => "No: the installed version runs code",
+        (false, _) => "No",
+    };
+    h_flex()
+        .id("user-consent-code")
+        .aria_label(text)
+        .test_support()
+        .gap_2()
+        .text_sm()
+        .child(
+            div()
+                .w_24()
+                .text_color(cx.theme().muted_foreground)
+                .child("Runs code"),
+        )
+        .child(div().child(text))
         .into_any_element()
 }
 

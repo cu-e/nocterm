@@ -2,7 +2,7 @@
 //! removal acts, with the consent facts worded by the host.
 use gpui_kit::{App, Entity, Subscription};
 use nocterm_core::error::SharedCause;
-use nocterm_plugin_api::{Additions, Manifest, Package, capability};
+use nocterm_plugin_api::{Additions, Manifest, Package, Runtime, capability};
 use nocterm_plugin_host::{AuditAction, ManageError, PluginHost, PluginStatus, PluginSummary};
 use nocterm_plugin_model::PluginId;
 use nocterm_plugins_ui::{
@@ -152,10 +152,16 @@ fn candidate(host: &PluginHost, location: &str, package: &Package) -> Candidate 
             fingerprint: fingerprint(&summary.hash),
             hash: summary.hash,
             downgrade: previous.is_some_and(|previous| next.api() < previous.api()),
+            runs_code: previous.is_some_and(runs_code),
         }),
         hash,
         id,
+        runs_code: runs_code(next),
     }
+}
+
+fn runs_code(manifest: &Manifest) -> bool {
+    manifest.runtime() == Runtime::Wasm
 }
 
 impl UserPlugins for HostPlugins {

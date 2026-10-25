@@ -188,6 +188,7 @@ fn candidate() -> Candidate {
             added: false,
         }],
         replaces: None,
+        runs_code: false,
     }
 }
 
@@ -373,9 +374,59 @@ fn replacing(downgrade: bool) -> Candidate {
             hash: "11".repeat(32),
             fingerprint: "1111111111111111".into(),
             downgrade,
+            runs_code: false,
         }),
         ..candidate()
     }
+}
+
+/// What the consent says about running code for `candidate`.
+fn code_line(candidate: Candidate, cx: &mut TestAppContext) -> String {
+    let fixture = open(vec![], Ok(candidate), cx);
+    begin(&fixture, cx);
+    let mut text = String::new();
+    frame(&fixture, cx, |window, _| {
+        text = window
+            .find("user-consent-code")
+            .label()
+            .expect("the consent states whether the package runs code")
+            .to_owned();
+    });
+    text
+}
+
+#[gpui_kit::test]
+fn the_consent_always_says_whether_the_package_runs_code(cx: &mut TestAppContext) {
+    assert_eq!(code_line(candidate(), cx), "No");
+    let code = Candidate {
+        runs_code: true,
+        ..candidate()
+    };
+    assert!(code_line(code, cx).starts_with("Yes: a WebAssembly module"));
+}
+
+#[gpui_kit::test]
+fn an_update_from_a_template_to_code_marks_the_change_and_the_reverse_says_so_too(
+    cx: &mut TestAppContext,
+) {
+    let from_template = Candidate {
+        runs_code: true,
+        ..replacing(false)
+    };
+    assert_eq!(
+        code_line(from_template, cx),
+        "Yes, new: the installed version runs no code"
+    );
+
+    let mut from_code = replacing(false);
+    from_code.replaces.as_mut().unwrap().runs_code = true;
+    assert_eq!(
+        code_line(from_code.clone(), cx),
+        "No: the installed version runs code"
+    );
+
+    from_code.runs_code = true;
+    assert!(code_line(from_code, cx).starts_with("Yes: a WebAssembly module"));
 }
 
 #[gpui_kit::test]

@@ -10,7 +10,6 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Window};
 use nocterm_core::{Paths, clock::WallClock, fs::BoundedReadError};
 use nocterm_files::TransferCounts;
 use nocterm_monitor_ui::MonitorUsage;
-use nocterm_plugin_api::DeclarativeRuntime;
 use nocterm_plugin_host::{HostPorts, PluginHost};
 use nocterm_plugin_model::{PluginCatalog, PluginSet};
 use nocterm_plugin_packages::PackageStore;
@@ -26,6 +25,7 @@ mod facts;
 mod manager;
 mod providers;
 mod records;
+mod runtime;
 mod settings;
 
 pub(crate) use check::check_directory;
@@ -82,7 +82,7 @@ impl UserShell {
                 root.join("packages"),
                 reserved_names(catalog),
             )),
-            runtime: Arc::new(DeclarativeRuntime),
+            runtime: runtime::runtimes(Arc::new(runtime::TracingGuestLog)),
         };
         let host = cx.new(|_| PluginHost::new(ports));
         host.update(cx, |host, cx| host.restore(cx));

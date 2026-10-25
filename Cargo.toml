@@ -69,6 +69,7 @@ nocterm-plugin-host = { workspace = true, optional = true }
 nocterm-plugin-packages = { workspace = true, optional = true }
 nocterm-plugin-ports = { workspace = true, optional = true }
 nocterm-plugin-view = { workspace = true, optional = true }
+nocterm-plugin-wasm = { workspace = true, optional = true }
 nocterm-plugins-ui.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
@@ -91,6 +92,7 @@ user-plugins = [
     "dep:nocterm-plugin-packages",
     "dep:nocterm-plugin-ports",
     "dep:nocterm-plugin-view",
+    "dep:nocterm-plugin-wasm",
     "nocterm-plugins-ui/user",
     "nocterm-workspace/user-plugins",
     "nocterm-monitor-ui/user-plugins",
@@ -179,6 +181,8 @@ nocterm-transfers = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
+# Writes the guest modules that the plugin check tests run (user-plugins builds only).
+wat.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 
 [workspace]
@@ -361,6 +365,13 @@ rustybuzz = { opt-level = 3 }
 taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 vte = { opt-level = 3 }
+# The code runtime of user plugins interprets guest code, which is unusably slow unoptimised.
+wasmi = { opt-level = 3 }
+wasmi_collections = { opt-level = 3 }
+wasmi_core = { opt-level = 3 }
+wasmi_ir = { opt-level = 3 }
+wasmparser = { opt-level = 3 }
+postcard = { opt-level = 3 }
 
 [profile.release]
 codegen-units = 1
