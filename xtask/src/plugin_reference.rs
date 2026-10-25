@@ -19,6 +19,14 @@ use serde_json::{Map, Value, json};
 pub(crate) const PATH: &str = "crates/plugin-api/api-surface.json";
 
 pub(crate) fn render() -> anyhow::Result<String> {
+    let mut text =
+        serde_json::to_string_pretty(&surface()).context("serialize the plugin API surface")?;
+    text.push('\n');
+    Ok(text)
+}
+
+/// The surface as a value with every object's keys in sorted order.
+pub(crate) fn surface() -> Value {
     let surface = json!({
         "api_version": API_VERSION.to_string(),
         "capabilities": CAPABILITIES.iter().map(capability).collect::<Vec<_>>(),
@@ -39,10 +47,7 @@ pub(crate) fn render() -> anyhow::Result<String> {
         "workspace_kinds": WorkspaceKind::ALL.map(WorkspaceKind::name),
         "zones": Zone::ALL.map(Zone::name),
     });
-    let mut text = serde_json::to_string_pretty(&canonical(surface))
-        .context("serialize the plugin API surface")?;
-    text.push('\n');
-    Ok(text)
+    canonical(surface)
 }
 
 fn tables(tables: &[(&str, &[&str])]) -> Value {
