@@ -3,7 +3,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::{App, Context, Window};
-use nocterm_core::Paths;
+use nocterm_core::{Paths, clock::WallClock};
 use nocterm_plugin_model::{PluginCatalog, PluginSet};
 use nocterm_store::ShutdownCoordinator;
 use nocterm_ui::{PluginSettingsDirectory, PluginSource, SettingsPageSpec, StaticPluginSource};
@@ -20,6 +20,7 @@ impl UserShell {
         _catalog: &Arc<PluginCatalog>,
         _paths: &Paths,
         _shutdown: &ShutdownCoordinator,
+        _clock: Arc<dyn WallClock>,
         _cx: &mut App,
     ) -> Self {
         Self
@@ -28,6 +29,11 @@ impl UserShell {
     /// The system plugins only, so the set never changes.
     pub(crate) fn source(&self, catalog: &Arc<PluginCatalog>) -> Rc<dyn PluginSource> {
         Rc::new(StaticPluginSource::new(PluginSet::system(catalog.clone())))
+    }
+
+    /// Nothing to tell about: there are no user plugins.
+    pub(crate) fn facts(&self) -> Option<Rc<dyn nocterm_layout_ui::UserPluginFacts>> {
+        None
     }
 
     pub(crate) fn directory(&self, system: PluginSettingsDirectory) -> PluginSettingsDirectory {

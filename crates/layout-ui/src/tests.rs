@@ -193,6 +193,27 @@ fn prepared(mut document: SettingsDocument) -> SettingsDocument {
 }
 
 fn open_config(config: nocterm_store::SettingsConfig, cx: &mut TestAppContext) -> Fixture {
+    let plugins = Plugins {
+        set: catalog(),
+        user: None,
+        facts: None,
+    };
+    open_plugins(config, plugins, cx)
+}
+
+/// The plugins an editor is opened over, besides the system `tools` plugin it can always edit.
+pub(super) struct Plugins {
+    pub(super) set: Arc<PluginSet>,
+    /// The settings of the installed user plugins.
+    pub(super) user: Option<Rc<dyn nocterm_ui::UserPluginSettings>>,
+    pub(super) facts: Option<Rc<dyn crate::UserPluginFacts>>,
+}
+
+pub(super) fn open_plugins(
+    config: nocterm_store::SettingsConfig,
+    plugins: Plugins,
+    cx: &mut TestAppContext,
+) -> Fixture {
     let (window, _section, settings, tools) = cx.update(|cx| {
         gpui_kit::init(cx);
         let settings = config.install(cx);
@@ -200,13 +221,18 @@ fn open_config(config: nocterm_store::SettingsConfig, cx: &mut TestAppContext) -
         settings.register::<LayoutSettings>(cx);
         settings.register::<PluginEnablement>(cx);
         let tools = FakePluginSettings::new(&TOOLS.settings, cx);
-        let directory = PluginSettingsDirectory::new().with_system(&TOOLS, Rc::new(tools.clone()));
+        let mut directory =
+            PluginSettingsDirectory::new().with_system(&TOOLS, Rc::new(tools.clone()));
+        if let Some(user) = plugins.user {
+            directory = directory.with_user(user);
+        }
         let (window, section) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| {
                 LayoutEditorSection::new(
                     settings.clone(),
-                    Rc::new(StaticPluginSource::new(catalog())),
+                    Rc::new(StaticPluginSource::new(plugins.set)),
                     directory,
+                    plugins.facts,
                     false,
                     cx,
                 )

@@ -9,7 +9,7 @@ use gpui_kit::{
     component::{h_flex, v_flex},
 };
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{ContributionKind, PluginSet, Zone};
+use nocterm_plugin_model::{ContributionKind, PluginSet, PluginTier, Zone};
 use nocterm_store::SettingsHandle;
 use nocterm_ui::{
     FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsForm, PluginSource, SettingsPage,
@@ -32,6 +32,7 @@ use crate::{
     selection::Selection,
     snapshot::Snapshot,
     tray::Tray,
+    user_facts::{SharedFacts, UserFacts},
     zones::Zones,
 };
 
@@ -64,6 +65,8 @@ pub struct LayoutEditorSection {
     selection: Selection,
     history: History,
     plugin_settings: PluginSettingsDirectory,
+    /// What the host knows of installed user plugins, when the application has any.
+    facts: Option<SharedFacts>,
     /// The form of the selected item, when its plugin declares settings for it.
     form: Option<Entity<PluginSettingsForm>>,
     /// Writes sent and not yet settled.
@@ -81,6 +84,7 @@ impl LayoutEditorSection {
         settings: SettingsHandle,
         source: Rc<dyn PluginSource>,
         plugin_settings: PluginSettingsDirectory,
+        facts: Option<SharedFacts>,
         legacy_swapped: bool,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -107,6 +111,7 @@ impl LayoutEditorSection {
             selection: Selection::default(),
             history,
             plugin_settings,
+            facts,
             form: None,
             pending: 0,
             mode: Mode::Idle,
@@ -129,6 +134,18 @@ impl LayoutEditorSection {
 
     pub(crate) fn catalog_arc(&self) -> Arc<PluginSet> {
         self.catalog.clone()
+    }
+
+    /// The host's facts about the plugin of the selected item, when it is a user plugin.
+    pub(crate) fn user_facts(&self, cx: &App) -> Option<UserFacts> {
+        let Some(Subject::Contribution(id)) = self.selection.item() else {
+            return None;
+        };
+        let plugin = self.catalog.plugin_of(id)?;
+        if plugin.tier() != PluginTier::User {
+            return None;
+        }
+        self.facts.as_ref()?.facts(plugin.id(), cx)
     }
 
     pub(crate) fn fit(&self) -> Fit {
@@ -199,10 +216,14 @@ impl LayoutEditorSection {
         let plugin = self.catalog.plugin_of(id)?;
         let (schema, source) = self.plugin_settings.get(plugin.id(), cx)?;
         schema.for_contribution(id).next()?;
+        let frame = match plugin.tier() {
+            PluginTier::System => FormFrame::Host,
+            PluginTier::User => FormFrame::Plugin {
+                name: plugin.name().to_owned().into(),
+            },
+        };
         let (plugin, scope) = (plugin.id().clone(), FormScope::Contribution(id.clone()));
-        Some(cx.new(|cx| {
-            PluginSettingsForm::new(source, plugin, schema, scope, FormFrame::Host, window, cx)
-        }))
+        Some(cx.new(|cx| PluginSettingsForm::new(source, plugin, schema, scope, frame, window, cx)))
     }
 
     fn flush_form(&self, cx: &mut Context<Self>) {
@@ -598,6 +619,7 @@ impl Render for LayoutEditorSection {
             catalog.clone(),
             selected.clone(),
             self.form().cloned(),
+            self.user_facts(cx),
             commands.clone(),
         );
         // The bar has the full width on its own line. Below it the lists and the inspector sit

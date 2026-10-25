@@ -1,6 +1,7 @@
 //! The User section's port over the host: rows, the audit log and the install, update and
 //! removal acts, with the consent facts worded by the host.
 use gpui_kit::{App, Entity, Subscription};
+use nocterm_core::error::SharedCause;
 use nocterm_plugin_api::{Additions, Manifest, Package, capability};
 use nocterm_plugin_host::{AuditAction, ManageError, PluginHost, PluginStatus, PluginSummary};
 use nocterm_plugin_model::PluginId;
@@ -24,30 +25,21 @@ impl HostPlugins {
         cx: &mut App,
         act: impl FnOnce(&mut PluginHost, &mut gpui_kit::Context<PluginHost>) -> Result<(), ManageError>,
     ) -> Result<(), UserPluginError> {
-        self.host.update(cx, act).map_err(refused)
+        self.host
+            .update(cx, act)
+            .map_err(|error| UserPluginError::Manage(SharedCause::new(error)))
     }
-}
-
-fn refused(error: impl std::error::Error) -> UserPluginError {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    UserPluginError::Refused(text)
 }
 
 /// The publisher part of `user-<publisher>-<name>`, for a plugin whose package cannot be read.
-fn publisher_of(id: &PluginId) -> String {
+pub(super) fn publisher_of(id: &PluginId) -> String {
     id.as_str()
         .strip_prefix("user-")
         .and_then(|rest| rest.split_once('-'))
         .map_or_else(String::new, |(publisher, _)| publisher.to_owned())
 }
 
-fn fingerprint(hash: &str) -> String {
+pub(super) fn fingerprint(hash: &str) -> String {
     hash.chars().take(16).collect()
 }
 
@@ -55,7 +47,7 @@ fn version_of(manifest: &Manifest) -> String {
     format!("API {}", manifest.api())
 }
 
-fn host_words(capability: &str) -> String {
+pub(super) fn host_words(capability: &str) -> String {
     capability::capability(capability)
         .map_or_else(|| capability.to_owned(), |entry| entry.consent.to_owned())
 }
@@ -68,7 +60,7 @@ fn row(host: &PluginHost, summary: PluginSummary) -> UserPluginRow {
         fingerprint: fingerprint(&summary.hash),
         state: match summary.status {
             PluginStatus::Faulted => RowState::Faulted,
-            PluginStatus::Broken(reason) => RowState::Broken(reason.to_string()),
+            PluginStatus::Broken(reason) => RowState::Broken(SharedCause::new(reason)),
             PluginStatus::Running | PluginStatus::Disabled => RowState::Ready,
         },
         granted: host
@@ -158,6 +150,7 @@ fn candidate(host: &PluginHost, location: &str, package: &Package) -> Candidate 
         replaces: installed.map(|summary| Replaced {
             version: previous.map_or_else(String::new, version_of),
             fingerprint: fingerprint(&summary.hash),
+            hash: summary.hash,
             downgrade: previous.is_some_and(|previous| next.api() < previous.api()),
         }),
         hash,
@@ -188,31 +181,32 @@ impl UserPlugins for HostPlugins {
 
     fn inspect(&self, location: &str, cx: &App) -> Result<Candidate, UserPluginError> {
         let host = self.host.read(cx);
-        let package = host.read_package(location).map_err(refused)?;
+        let package = host
+            .read_package(location)
+            .map_err(|error| UserPluginError::Package(SharedCause::new(error)))?;
         Ok(candidate(host, location, &package))
     }
 
     fn install(&self, request: InstallRequest, cx: &mut App) -> Result<(), UserPluginError> {
-        let package = self
-            .host
-            .read(cx)
+        let host = self.host.read(cx);
+        let package = host
             .read_package(&request.location)
-            .map_err(refused)?;
+            .map_err(|error| UserPluginError::Package(SharedCause::new(error)))?;
         if package.hash().to_string() != request.hash {
-            return Err(UserPluginError::Refused(
-                "The file changed after you looked at it. Open it again.".into(),
-            ));
+            return Err(UserPluginError::Changed);
         }
         let id = package.manifest().plugin().id().clone();
-        let installed = self
-            .host
-            .read(cx)
+        let installed = host
             .plugins()
-            .iter()
-            .any(|summary| summary.id == id);
+            .into_iter()
+            .find(|summary| summary.id == id)
+            .map(|summary| summary.hash);
+        if installed != request.replaces {
+            return Err(UserPluginError::InstalledChanged);
+        }
         let accepted: Vec<&str> = request.accepted.iter().map(String::as_str).collect();
         self.act(cx, |host, cx| {
-            if installed {
+            if installed.is_some() {
                 host.replace(package, &accepted, request.keep_data, cx)
             } else {
                 host.install(package, &accepted, cx).map(drop)
@@ -255,3 +249,6 @@ impl UserPlugins for HostPlugins {
         cx.observe(&self.host, move |_, cx| on_change(cx))
     }
 }
+
+#[cfg(test)]
+mod tests;

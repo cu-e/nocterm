@@ -105,16 +105,17 @@ fn present(window: &Window, selector: &'static str, cx: &mut TestAppContext) -> 
         .is_some()
 }
 
-fn open_panel(window: &Window, open: bool, cx: &mut TestAppContext) -> bool {
-    let opened = cx
-        .update_window(window.handle, |_, w, cx| {
-            window.workspace.update(cx, |workspace, cx| {
-                workspace.set_panel_open(&ContributionId::owned(PANEL), open, w, cx)
-            })
-        })
-        .unwrap();
+/// Opens the panel the way the user does, from the menu, and says whether it shows.
+fn open_panel(window: &Window, cx: &mut TestAppContext) -> bool {
+    let id = ContributionId::owned(PANEL);
+    cx.update_window(window.handle, |_, w, cx| {
+        window
+            .workspace
+            .update(cx, |workspace, cx| workspace.open_panel(&id, w, cx))
+    })
+    .unwrap();
     cx.run_until_parked();
-    opened
+    cx.update(|cx| window.workspace.read(cx).panel_is_open(&id))
 }
 
 #[gpui_kit::test]
@@ -171,7 +172,7 @@ fn an_opened_user_panel_shows_the_plugin_frame_and_is_named_in_the_menu(cx: &mut
     let window = window(cx);
     install(&window, "notes", true, cx);
 
-    assert!(open_panel(&window, true, cx));
+    assert!(open_panel(&window, cx));
 
     assert!(present(&window, "plugin-marker", cx));
     assert!(present(&window, "plugin-label", cx));
@@ -197,7 +198,7 @@ fn a_panel_of_a_package_that_may_not_be_placed_does_not_open(cx: &mut TestAppCon
     let window = window(cx);
     install(&window, "notes", false, cx);
 
-    assert!(!open_panel(&window, true, cx));
+    assert!(!open_panel(&window, cx));
     assert!(!present(&window, "plugin-marker", cx));
 }
 
@@ -291,13 +292,61 @@ fn a_user_plugin_setting_is_kept_by_the_host_and_never_reaches_the_settings_file
 }
 
 #[gpui_kit::test]
-fn a_user_id_never_resolves_to_a_system_settings_source(cx: &mut TestAppContext) {
-    let (_, _, _, _) = window_on_local_host("", cx);
+fn a_user_id_resolves_to_the_user_source_and_never_to_a_system_one(cx: &mut TestAppContext) {
+    let (_, _, settings, _) = window_on_local_host("", cx);
     let shell = cx.update(|cx| cx.global::<FixtureUserPlugins>().0.clone());
-    let directory = shell.directory(nocterm_ui::PluginSettingsDirectory::new());
+    let system = nocterm_ui::PluginSettingsDirectory::new().with_system(
+        &nocterm_workspace::clock::PLUGIN,
+        nocterm_workspace::clock::plugin_settings(settings),
+    );
+    let directory = shell.directory(system);
+    let clock = nocterm_workspace::clock::PLUGIN.id.clone();
+    let installed = cx.update(|cx| {
+        shell.host().update(cx, |host, cx| {
+            let package = host.read_package(&example("clock")).unwrap();
+            host.install(package, &[], cx).unwrap()
+        })
+    });
 
+    let system_schema = cx
+        .update(|cx| directory.get(&clock, cx))
+        .map(|(schema, _)| schema);
+    let user_schema = cx
+        .update(|cx| directory.get(&installed, cx))
+        .map(|(schema, _)| schema);
+
+    let system_schema = system_schema.expect("the system list is not empty");
+    let user_schema = user_schema.expect("the installed plugin resolves to the user source");
+    assert!(system_schema.defaults().get("label").is_none());
+    assert!(user_schema.defaults().get("label").is_some());
     assert!(
         cx.update(|cx| directory.get(&PluginId::owned("user-example-nobody"), cx))
+            .is_none(),
+        "a user id nobody installed does not fall back to the system list"
+    );
+}
+
+#[gpui_kit::test]
+fn the_bar_editor_is_told_the_hosts_facts_of_an_installed_plugin(cx: &mut TestAppContext) {
+    let window = window(cx);
+    let id = install(&window, "notes", true, cx);
+    let facts = window.shell.facts().expect("the build has user plugins");
+
+    let known = cx
+        .update(|cx| facts.facts(&id, cx))
+        .expect("the plugin is installed");
+
+    assert_eq!(known.publisher, "example");
+    assert_eq!(known.fingerprint.len(), 16);
+    assert_eq!(
+        known.capabilities,
+        [
+            "See how busy this computer is.",
+            "See how many file transfers are running or failed."
+        ]
+    );
+    assert!(
+        cx.update(|cx| facts.facts(&PluginId::owned("user-example-nobody"), cx))
             .is_none()
     );
 }

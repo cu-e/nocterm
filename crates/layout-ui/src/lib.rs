@@ -12,7 +12,8 @@
 //! `nocterm-plugin-enablement`), the form of a plugin's settings (`nocterm-ui`), the Settings
 //! host, or how the footer and the panels are drawn (`nocterm-workspace`).
 //! Ports used: `SettingsHandle` (the layouts and the enablement), `PluginSettingsDirectory`
-//! (the settings of the selected item), `nocterm-workspace` (`edit_layouts` and its
+//! (the settings of the selected item), `UserPluginFacts` (what the host knows of a user
+//! plugin), `nocterm-workspace` (`edit_layouts` and its
 //! `LayoutEditError`, the `OpenPlugins` action). Provided: [`layout_section`], an
 //! `EmbeddedPageSpec` for the application to place in Appearance.
 //! Settings section: none of its own; it edits `layouts` (window-layout) through the rules.
@@ -38,6 +39,7 @@ mod section;
 mod selection;
 mod snapshot;
 mod tray;
+mod user_facts;
 mod zones;
 
 use gpui_kit::AppContext as _;
@@ -47,8 +49,12 @@ use std::rc::Rc;
 use nocterm_ui::{EmbeddedPageSpec, PluginSettingsDirectory, PluginSource};
 
 pub use section::LayoutEditorSection;
+pub use user_facts::{UserFacts, UserPluginFacts};
 
 /// The section of Appearance that edits the status bar and the panels.
+///
+/// `facts` tells the inspector what the host knows of an installed user plugin; without it an
+/// item of a user plugin shows its name alone.
 ///
 /// `legacy_swapped` is the frozen `workspace.swapped` flag of the earlier swap-sides choice, which
 /// decides what the built-in layout in use is while nothing else has been chosen.
@@ -56,6 +62,7 @@ pub fn layout_section(
     settings: SettingsHandle,
     source: Rc<dyn PluginSource>,
     directory: PluginSettingsDirectory,
+    facts: Option<Rc<dyn UserPluginFacts>>,
     legacy_swapped: bool,
 ) -> EmbeddedPageSpec {
     EmbeddedPageSpec::new("layout", "Status bar and panels", move |_, cx| {
@@ -64,6 +71,7 @@ pub fn layout_section(
                 settings.clone(),
                 source.clone(),
                 directory.clone(),
+                facts.clone(),
                 legacy_swapped,
                 cx,
             )

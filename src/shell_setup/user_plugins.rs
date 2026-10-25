@@ -7,7 +7,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Window};
-use nocterm_core::{Paths, fs::BoundedReadError};
+use nocterm_core::{Paths, clock::WallClock, fs::BoundedReadError};
 use nocterm_files::TransferCounts;
 use nocterm_monitor_ui::MonitorUsage;
 use nocterm_plugin_api::DeclarativeRuntime;
@@ -18,10 +18,11 @@ use nocterm_store::ShutdownCoordinator;
 use nocterm_ui::{PluginSetHandle, PluginSettingsDirectory, PluginSource, SettingsPageSpec};
 use nocterm_workspace::{RegistrationError, Workspace};
 
-use super::AppPluginToggles;
+use super::{AppPluginToggles, user_plugin_panel::Badges};
 
 mod check;
 mod data;
+mod facts;
 mod manager;
 mod providers;
 mod records;
@@ -51,6 +52,7 @@ fn reserved_names(catalog: &PluginCatalog) -> Vec<String> {
 pub(crate) struct UserShell {
     host: Entity<PluginHost>,
     source: PluginSetHandle,
+    clock: Arc<dyn WallClock>,
 }
 
 impl UserShell {
@@ -59,6 +61,7 @@ impl UserShell {
         catalog: &Arc<PluginCatalog>,
         paths: &Paths,
         shutdown: &ShutdownCoordinator,
+        clock: Arc<dyn WallClock>,
         cx: &mut App,
     ) -> Self {
         let root = paths.state_dir().join("plugins");
@@ -93,7 +96,11 @@ impl UserShell {
             }
         })
         .detach();
-        Self { host, source }
+        Self {
+            host,
+            source,
+            clock,
+        }
     }
 
     /// The host, for tests that install plugins into it.
@@ -109,6 +116,11 @@ impl UserShell {
     /// `system` and the settings of the installed user plugins.
     pub(crate) fn directory(&self, system: PluginSettingsDirectory) -> PluginSettingsDirectory {
         system.with_user(Rc::new(settings::HostSettings::new(self.host.clone())))
+    }
+
+    /// What the editor of the bar shows of a selected user plugin.
+    pub(crate) fn facts(&self) -> Option<Rc<dyn nocterm_layout_ui::UserPluginFacts>> {
+        Some(Rc::new(facts::HostFacts::new(self.host.clone())))
     }
 
     /// The Plugins page with its User section.
@@ -174,12 +186,21 @@ impl WindowUser {
         cx: &mut Context<Workspace>,
     ) {
         let this = cx.entity();
-        let providers =
-            window_providers(&this, window.window_handle(), &self.usage, self.counts, cx);
+        let badges = Badges::default();
+        let providers = window_providers(
+            &this,
+            window.window_handle(),
+            &self.usage,
+            self.counts,
+            self.shell.clock.clone(),
+            &badges,
+            cx,
+        );
         super::user_plugin_panel::attach(
             self.shell.host,
             self.shell.source,
             providers,
+            badges,
             workspace,
             window,
             cx,

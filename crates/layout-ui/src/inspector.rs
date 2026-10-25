@@ -15,13 +15,14 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_plugin_model::{
-    ContributionId, ContributionKind, ContributionRef, GroupId, PluginSet, SetOwner, Side, Zone,
+    ContributionId, ContributionKind, ContributionRef, GroupId, PluginId, PluginSet, PluginTier,
+    SetOwner, Side, Zone,
 };
 use nocterm_ui::{PluginSettingsForm, form};
 use nocterm_window_layout::{EditOp, Subject};
 use nocterm_workspace::OpenPlugins;
 
-use crate::{commands::Commands, parts::action, snapshot::Snapshot};
+use crate::{commands::Commands, parts::action, snapshot::Snapshot, user_facts::UserFacts};
 
 /// The narrowest the inspector is drawn. Next to the lists it takes what they leave; when the
 /// two do not fit side by side it goes below them, across the width.
@@ -33,6 +34,7 @@ pub(crate) struct Inspector {
     catalog: Arc<PluginSet>,
     selected: Option<Subject>,
     form: Option<Entity<PluginSettingsForm>>,
+    user: Option<UserFacts>,
     commands: Commands,
 }
 
@@ -42,6 +44,7 @@ impl Inspector {
         catalog: Arc<PluginSet>,
         selected: Option<Subject>,
         form: Option<Entity<PluginSettingsForm>>,
+        user: Option<UserFacts>,
         commands: Commands,
     ) -> Self {
         Self {
@@ -49,6 +52,7 @@ impl Inspector {
             catalog,
             selected,
             form,
+            user,
             commands,
         }
     }
@@ -100,7 +104,7 @@ impl Inspector {
                 } else {
                     format!("Part of {}", plugin.name())
                 };
-                h_flex()
+                let manage = h_flex()
                     .gap_2()
                     .items_center()
                     .flex_wrap()
@@ -117,9 +121,54 @@ impl Inspector {
                                 window.dispatch_action(Box::new(action), cx);
                             }),
                     )
-                    .into_any_element()
+                    .into_any_element();
+                if plugin.tier() == PluginTier::User {
+                    return v_flex()
+                        .gap_1()
+                        .child(manage)
+                        .child(self.host_facts(plugin.id(), plugin.name(), cx))
+                        .into_any_element();
+                }
+                manage
             }
         }
+    }
+
+    /// What the host knows of a user plugin. The text is the host's: the name and the id are
+    /// sanitized, the publisher is marked as unverified and the capabilities are the ones the
+    /// user allowed.
+    fn host_facts(&self, id: &PluginId, name: &str, cx: &App) -> AnyElement {
+        let mut column = v_flex()
+            .id(SharedString::from(format!("layout-user-facts:{id}")))
+            .aria_label(format!("Plugin \u{b7} {name}"))
+            .test_support()
+            .gap_0p5()
+            .child(line(
+                "layout-user-name",
+                format!("Plugin \u{b7} {name}"),
+                cx,
+            ))
+            .child(line("layout-user-id", format!("Id: {id}"), cx));
+        if let Some(user) = &self.user {
+            let allowed = if user.capabilities.is_empty() {
+                "Allowed: nothing".to_owned()
+            } else {
+                format!("Allowed: {}", user.capabilities.join("; "))
+            };
+            column = column
+                .child(line(
+                    "layout-user-publisher",
+                    format!("Publisher: {} (unverified)", user.publisher),
+                    cx,
+                ))
+                .child(line(
+                    "layout-user-fingerprint",
+                    format!("Fingerprint: {}", user.fingerprint),
+                    cx,
+                ))
+                .child(line("layout-user-capabilities", allowed, cx));
+        }
+        column.into_any_element()
     }
 
     fn controls(&self, contribution: ContributionRef<'_>, cx: &App) -> AnyElement {
