@@ -2,14 +2,14 @@
 
 use std::{
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     rc::Rc,
     sync::{Arc, LazyLock},
     time::Duration,
 };
 
 use gpui_kit::{
-    App, AppContext as _, Entity, Subscription, TestAppContext, WindowOptions,
+    App, AppContext as _, Entity, Subscription, Task, TestAppContext, WindowOptions,
     test::TestWindowExt as _,
 };
 use nocterm_core::error::SharedCause;
@@ -20,6 +20,9 @@ use nocterm_ui::{
 };
 
 use super::{port::describe, *};
+use crate::EnablementError;
+
+mod switch;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Call {
@@ -116,6 +119,32 @@ impl UserPlugins for Rc<FakeUserPlugins> {
     }
 }
 
+/// A stored choice that remembers what it was asked and can refuse the next write.
+struct FakeSwitch {
+    allowed: Cell<bool>,
+    refuse: RefCell<Option<EnablementError>>,
+    calls: RefCell<Vec<bool>>,
+    changed: Entity<()>,
+}
+
+impl UserPluginsSwitch for Rc<FakeSwitch> {
+    fn allowed(&self, _: &App) -> bool {
+        self.allowed.get()
+    }
+    fn set_allowed(&self, allowed: bool, cx: &mut App) -> Task<Result<(), EnablementError>> {
+        self.calls.borrow_mut().push(allowed);
+        if let Some(error) = self.refuse.borrow_mut().take() {
+            return Task::ready(Err(error));
+        }
+        self.allowed.set(allowed);
+        self.changed.update(cx, |_, cx| cx.notify());
+        Task::ready(Ok(()))
+    }
+    fn observe(&self, cx: &mut App, mut on_change: Box<dyn FnMut(&mut App)>) -> Subscription {
+        cx.observe(&self.changed, move |_, cx| on_change(cx))
+    }
+}
+
 static SCHEMA: LazyLock<SettingsSchema> = LazyLock::new(|| SettingsSchema {
     version: 1,
     groups: Cow::Owned(vec![FieldGroup {
@@ -201,11 +230,26 @@ struct Fixture {
     window: gpui_kit::AnyWindowHandle,
     section: Entity<UserPluginsSection>,
     plugins: Rc<FakeUserPlugins>,
+    switch: Rc<FakeSwitch>,
 }
 
 fn open(
     rows: Vec<UserPluginRow>,
     candidate: Result<Candidate, UserPluginError>,
+    cx: &mut TestAppContext,
+) -> Fixture {
+    open_session(rows, candidate, None, cx)
+}
+
+/// A run that held the user plugins, with the stored choice `allowed`.
+fn open_held(by: HeldBy, allowed: bool, cx: &mut TestAppContext) -> Fixture {
+    open_session(vec![row()], Ok(candidate()), Some((by, allowed)), cx)
+}
+
+fn open_session(
+    rows: Vec<UserPluginRow>,
+    candidate: Result<Candidate, UserPluginError>,
+    held: Option<(HeldBy, bool)>,
     cx: &mut TestAppContext,
 ) -> Fixture {
     cx.update(|cx| {
@@ -224,15 +268,26 @@ fn open(
             cx,
         ));
         let directory = PluginSettingsDirectory::new().with_user(Rc::new(OneUser(id(), values)));
-        let manager: Rc<dyn UserPlugins> = Rc::new(plugins.clone());
+        let switch = Rc::new(FakeSwitch {
+            allowed: Cell::new(held.as_ref().is_none_or(|(_, allowed)| *allowed)),
+            refuse: RefCell::default(),
+            calls: RefCell::default(),
+            changed: cx.new(|_| ()),
+        });
+        let session = match held {
+            Some((by, _)) => UserSession::Held(by),
+            None => UserSession::Loaded(Rc::new(plugins.clone())),
+        };
+        let stored: Rc<dyn UserPluginsSwitch> = Rc::new(switch.clone());
         let (window, section) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(|cx| UserPluginsSection::new(manager, directory, cx))
+            cx.new(|cx| UserPluginsSection::new(session, stored, directory, cx))
         })
         .unwrap();
         Fixture {
             window,
             section,
             plugins,
+            switch,
         }
     })
 }

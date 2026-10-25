@@ -64,11 +64,13 @@ impl PluginsPage {
     #[cfg(feature = "user")]
     pub fn with_user_plugins(
         mut self,
-        manager: Rc<dyn crate::UserPlugins>,
+        session: crate::UserSession,
+        switch: Rc<dyn crate::UserPluginsSwitch>,
         cx: &mut Context<Self>,
     ) -> Self {
         let directory = self.directory.clone();
-        self.user = Some(cx.new(|cx| crate::UserPluginsSection::new(manager, directory, cx)));
+        self.user =
+            Some(cx.new(|cx| crate::UserPluginsSection::new(session, switch, directory, cx)));
         self
     }
 

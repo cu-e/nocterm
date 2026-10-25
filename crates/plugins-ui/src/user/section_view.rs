@@ -17,6 +17,7 @@ use super::{
     consent_view::consent_dialog,
     port::{RowState, UserPluginRow, describe},
     section::UserPluginsSection,
+    switch_view,
 };
 
 /// The most audit lines shown, newest first.
@@ -27,10 +28,7 @@ pub(super) fn view(
     _window: &mut Window,
     cx: &mut Context<UserPluginsSection>,
 ) -> impl IntoElement {
-    let body = match section.consent() {
-        Some(consent) => consent_dialog(section, consent, cx),
-        None => listing(section, cx),
-    };
+    let loaded = section.loaded();
     v_flex()
         .id("user-plugins")
         .aria_label("User plugins")
@@ -47,18 +45,22 @@ pub(super) fn view(
             ),
             cx,
         ))
-        .child(
-            div().child(
-                Button::new("user-install")
-                    .small()
-                    .outline()
-                    .label("Install from file…")
-                    .disabled(section.consent().is_some())
-                    .on_click(cx.listener(|section, _, window, cx| {
-                        section.choose_file(window, cx);
-                    })),
-            ),
-        )
+        .children(switch_view::switch_row(section, cx))
+        .children(switch_view::explanation(section, cx))
+        .when(loaded, |section_view| {
+            section_view.child(
+                div().child(
+                    Button::new("user-install")
+                        .small()
+                        .outline()
+                        .label("Install from file…")
+                        .disabled(section.consent().is_some())
+                        .on_click(cx.listener(|section, _, window, cx| {
+                            section.choose_file(window, cx);
+                        })),
+                ),
+            )
+        })
         .children(dev_banner(section, cx))
         .children(section.notice().map(|notice| {
             div()
@@ -67,7 +69,10 @@ pub(super) fn view(
                 .test_support()
                 .child(form::error_text(notice.clone(), cx))
         }))
-        .child(body)
+        .children(loaded.then(|| match section.consent() {
+            Some(consent) => consent_dialog(section, consent, cx),
+            None => listing(section, cx),
+        }))
 }
 
 /// The banner of a developer session: the plugin and settings are not saved, and one button

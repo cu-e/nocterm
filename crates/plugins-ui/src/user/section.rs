@@ -1,5 +1,5 @@
-//! The User section entity: which user plugin is selected, the consent in progress and the last
-//! refusal.
+//! The User section entity: whether this run loaded the user plugins and the switch for the
+//! next run, which user plugin is selected, the consent in progress and the last refusal.
 
 use std::rc::Rc;
 
@@ -14,11 +14,13 @@ use super::{
     consent::{Consent, INERT},
     port::{Candidate, UserPluginError, UserPluginRow, UserPlugins, describe},
     section_view,
+    session::{HeldBy, UserPluginsSwitch, UserSession},
 };
 
 /// The installed user plugins, the install dialog and the detail of the selected plugin.
 pub struct UserPluginsSection {
-    manager: Rc<dyn UserPlugins>,
+    session: UserSession,
+    switch: Rc<dyn UserPluginsSwitch>,
     directory: PluginSettingsDirectory,
     selected: Option<PluginId>,
     /// The fingerprint of the package the selection was made on, to notice a replacement.
@@ -29,24 +31,36 @@ pub struct UserPluginsSection {
     notice: Option<SharedString>,
     /// Where focus goes when the consent opens: refusing is the default answer.
     deny_focus: FocusHandle,
-    _observation: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl UserPluginsSection {
     pub fn new(
-        manager: Rc<dyn UserPlugins>,
+        session: UserSession,
+        switch: Rc<dyn UserPluginsSwitch>,
         directory: PluginSettingsDirectory,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak = cx.weak_entity();
-        let observation = manager.observe(
+        let mut subscriptions = Vec::new();
+        if let Some(manager) = session.loaded() {
+            let weak = weak.clone();
+            subscriptions.push(manager.observe(
+                cx,
+                Box::new(move |cx| {
+                    let _ = weak.update(cx, |section, cx| section.changed(cx));
+                }),
+            ));
+        }
+        subscriptions.push(switch.observe(
             cx,
             Box::new(move |cx| {
-                let _ = weak.update(cx, |section, cx| section.changed(cx));
+                let _ = weak.update(cx, |_, cx| cx.notify());
             }),
-        );
+        ));
         Self {
-            manager,
+            session,
+            switch,
             directory,
             selected: None,
             selected_fingerprint: None,
@@ -54,21 +68,60 @@ impl UserPluginsSection {
             consent: None,
             notice: None,
             deny_focus: cx.focus_handle(),
-            _observation: observation,
+            _subscriptions: subscriptions,
         }
+    }
+
+    /// Why this run did not load the plugins, or `None` when it did.
+    pub(super) fn held(&self) -> Option<&HeldBy> {
+        match &self.session {
+            UserSession::Loaded(_) => None,
+            UserSession::Held(by) => Some(by),
+        }
+    }
+
+    /// Whether this run loaded the plugins.
+    pub(super) fn loaded(&self) -> bool {
+        self.session.is_loaded()
+    }
+
+    /// The stored choice for the next start.
+    pub(super) fn allowed(&self, cx: &App) -> bool {
+        self.switch.allowed(cx)
+    }
+
+    /// Stores the choice for the next start; a refusal shows as the notice and the switch keeps
+    /// the stored value.
+    pub(super) fn set_allowed(&mut self, allowed: bool, cx: &mut Context<Self>) {
+        self.notice = None;
+        let stored = self.switch.set_allowed(allowed, cx);
+        cx.spawn(async move |section, cx| {
+            if let Err(error) = stored.await {
+                let _ = section.update(cx, |section, cx| {
+                    section.notice = Some(describe(&error).into());
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        cx.notify();
     }
 
     /// The file a developer session loads, when this installation is one.
     pub(super) fn dev_location(&self, cx: &App) -> Option<String> {
-        self.manager.dev_location(cx)
+        self.session.loaded()?.dev_location(cx)
     }
 
     pub(super) fn rows(&self, cx: &App) -> Vec<UserPluginRow> {
-        self.manager.rows(cx)
+        self.session
+            .loaded()
+            .map_or_else(Vec::new, |manager| manager.rows(cx))
     }
 
     pub(super) fn audit(&self, cx: &App) -> Vec<super::AuditLine> {
-        self.manager.audit(cx)
+        self.session
+            .loaded()
+            .map_or_else(Vec::new, |manager| manager.audit(cx))
     }
 
     pub(super) fn selected(&self) -> Option<&PluginId> {
@@ -97,7 +150,7 @@ impl UserPluginsSection {
 
     /// Whether the section knows a plugin with this id.
     pub fn holds(&self, plugin: &PluginId, cx: &App) -> bool {
-        self.manager.rows(cx).iter().any(|row| &row.id == plugin)
+        self.rows(cx).iter().any(|row| &row.id == plugin)
     }
 
     /// Asks the user for a package file, then starts the install from it.
@@ -125,7 +178,10 @@ impl UserPluginsSection {
     /// stored until the user accepts.
     pub fn begin_install(&mut self, location: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.notice = None;
-        match self.manager.inspect(location, cx) {
+        let Some(manager) = self.session.loaded() else {
+            return;
+        };
+        match manager.inspect(location, cx) {
             Ok(candidate) => self.open_consent(candidate, window, cx),
             Err(error) => self.notice = Some(describe(&error).into()),
         }
@@ -152,7 +208,10 @@ impl UserPluginsSection {
             return;
         };
         let (request, id) = (consent.request(), consent.candidate().id.clone());
-        match self.manager.install(request, cx) {
+        let Some(manager) = self.session.loaded().cloned() else {
+            return;
+        };
+        match manager.install(request, cx) {
             Ok(()) => {
                 self.consent = None;
                 self.notice = None;
@@ -178,7 +237,6 @@ impl UserPluginsSection {
         }
         self.flush(cx);
         let name = self
-            .manager
             .rows(cx)
             .into_iter()
             .find(|row| &row.id == plugin)
@@ -204,8 +262,7 @@ impl UserPluginsSection {
     }
 
     fn fingerprint_of(&self, plugin: &PluginId, cx: &App) -> Option<String> {
-        self.manager
-            .rows(cx)
+        self.rows(cx)
             .into_iter()
             .find(|row| &row.id == plugin)
             .map(|row| row.fingerprint)
@@ -219,8 +276,7 @@ impl UserPluginsSection {
     }
 
     pub(super) fn set_enabled(&mut self, plugin: &PluginId, enabled: bool, cx: &mut Context<Self>) {
-        let outcome = self.manager.set_enabled(plugin, enabled, cx);
-        self.settle(outcome, cx);
+        self.act(cx, |manager, cx| manager.set_enabled(plugin, enabled, cx));
     }
 
     pub(super) fn set_placeable(
@@ -229,21 +285,29 @@ impl UserPluginsSection {
         placeable: bool,
         cx: &mut Context<Self>,
     ) {
-        let outcome = self.manager.set_placeable(plugin, placeable, cx);
-        self.settle(outcome, cx);
+        self.act(cx, |manager, cx| {
+            manager.set_placeable(plugin, placeable, cx)
+        });
     }
 
     pub(super) fn remove(&mut self, plugin: &PluginId, with_data: bool, cx: &mut Context<Self>) {
-        let outcome = self.manager.remove(plugin, with_data, cx);
-        self.settle(outcome, cx);
+        self.act(cx, |manager, cx| manager.remove(plugin, with_data, cx));
     }
 
     pub(super) fn remove_data(&mut self, plugin: &PluginId, cx: &mut Context<Self>) {
-        let outcome = self.manager.remove_data(plugin, cx);
-        self.settle(outcome, cx);
+        self.act(cx, |manager, cx| manager.remove_data(plugin, cx));
     }
 
-    fn settle(&mut self, outcome: Result<(), UserPluginError>, cx: &mut Context<Self>) {
+    /// Acts through the port and shows why it was refused. Nothing happens in a held run.
+    fn act(
+        &mut self,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(&dyn UserPlugins, &mut App) -> Result<(), UserPluginError>,
+    ) {
+        let Some(manager) = self.session.loaded().cloned() else {
+            return;
+        };
+        let outcome = action(manager.as_ref(), cx);
         self.notice = outcome.err().map(|error| describe(&error).into());
         cx.notify();
     }
