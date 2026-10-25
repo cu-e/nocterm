@@ -301,6 +301,13 @@ clock is selected, choose a 24-hour or 12-hour clock (`1:05 PM`), seconds (the c
 updates every second) and a short date before the time (`Oct 24`); they are the `[clock]`
 section of `settings.toml` and apply at once in every window.
 
+User plugins (preview) are installed from a file and run inside the window under the capabilities
+you allow. They are in builds made with `cargo build --features user-plugins`; release builds do not
+have them yet. Such a build loads none until you turn on Settings → Plugins → User plugins →
+Allow user plugins (the `user_plugins` key of the `[plugins]` section) and restart, and
+`nocterm --safe-mode` starts without any of them, whatever the setting says, to recover from a
+plugin that misbehaves. The [guide](docs/plugins/README.md) is for authors.
+
 Settings → Keymap lists every command with its shortcuts and description. Search
 matches words in any of them and shortcuts in any modifier order; Find by keys
 shows what a pressed shortcut runs. Click a shortcut and press new keys to
@@ -316,7 +323,7 @@ keymap and Cargo manifests:
 - [Design tokens](docs/reference/design-tokens.md)
 - [Actions and shortcuts](docs/reference/actions.md)
 - [Plugins and their contributions](docs/reference/plugins.md)
-- [Writing a user plugin (preview)](docs/plugins/guide.md) and its [reference](docs/plugins/reference.md)
+- [User plugins (preview)](docs/plugins/README.md): the [guide](docs/plugins/guide.md), the [reference](docs/plugins/reference.md) and the [manifest schema](docs/plugins/manifest.schema.json)
 - [Architecture](docs/ARCHITECTURE.md)
 
 ## Development

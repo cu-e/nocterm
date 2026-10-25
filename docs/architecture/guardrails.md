@@ -153,6 +153,21 @@ exemption is a reviewed edit of the policy with a reason.
 These rules protect against host-side regressions. They do not cover I/O reached through an
 allowlisted dependency's own API, nor a confused deputy; those are design-review items.
 
+## Plugin API compatibility
+
+`python3 scripts/check-plugin-api-compat.py` compares `crates/plugin-api/api-surface.json` with
+the file at the highest `v*` release tag (`--base REF` overrides it) and runs in the CI job
+`plugin-api-compat`, with its own regression cases in `scripts/test-plugin-api-compat.py`. It
+fails on a removed or narrowed contract entry (capability, result field, manifest table or key,
+vocabulary value, effect request field, limit), on a gesture, a tighter rate or a lower live cap,
+on an optional key made required or a new required key, and on a lower `api_version`. Any other
+change except wording needs a higher `api_version`; entries the base marked deprecated may be
+removed on a higher major version. A base without the file passes with a notice
+([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)).
+
+`scripts/test-release-pipeline.cjs` also fails when a package or release workflow step builds
+with `user-plugins`.
+
 ## History and maintained documentation
 
 CI runs [`check-architecture-history.py`](../../scripts/check-architecture-history.py)

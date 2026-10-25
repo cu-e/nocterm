@@ -36,6 +36,15 @@ parent. `OpenPlugins` and `OpenPluginPage` open the page and a plugin's page
 ([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)). The detail of a plugin with
 contributions also links to the editor with its first item selected.
 
+With the cargo feature `user` (the application's `user-plugins` turns it on) the page also holds
+the User section (`UserPluginsSection`). It states whether this run loaded the user plugins
+(`UserSession::{Loaded, Held(HeldBy)}`, with `HeldBy::{SafeMode, NotAllowed}`), shows the "Allow
+user plugins" switch, which stores the choice for the next start through the narrow
+`UserPluginsSwitch` port, and, in a loaded run, the install button, consent, list, detail,
+removal questions and audit log through the `UserPlugins` port. A held run shows the reason and
+no list. The application implements both ports; the section keeps no storage
+([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)).
+
 `nocterm-layout-ui` owns the editor of the status bar and the panels, one section of Appearance
 (`layout_section`): the layout shown, the selected item, undo and redo, rename and delete
 confirmation, the keys and the drags that move items (a drop names a place; the move itself is

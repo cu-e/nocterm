@@ -45,6 +45,12 @@ lists them with their placement hints ([ADR 0082](adr/0082-system-plugins-and-co
 and the window draws the status bar and arranges its panel groups from a layout
 resolved against that catalog ([ADR 0083](adr/0083-zoned-status-bar.md)).
 
+User plugins are the second tier: files the user installs, built only with the cargo feature
+`user-plugins`. A run loads them only when `[plugins] user_plugins` is set, and never in
+`--safe-mode`; one gate in the application covers every load path, and the API surface is
+checked against the latest release ([ADR 0093](adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md);
+author documents in [plugins](plugins/README.md)).
+
 ## Extension points
 
 Add a new Item for another kind of tab, a Panel for another sidebar section or a

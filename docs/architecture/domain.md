@@ -365,7 +365,9 @@ switched off. The list is sanitized (valid ids once each, at most 64; ids this b
 know are kept, so a returning plugin finds its state) and `effective_disabled` returns
 the ids that are really off, never a required plugin and never a core contribution.
 `read_error` reports a table that does not read, so a writer can refuse instead of
-replacing it. It
+replacing it. The section also holds the `user_plugins` switch: whether a build with the
+`user-plugins` feature loads user plugins at the start (off by default, left out of the file
+while off; [ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)). It
 reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types and no I/O
 ([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).
 
@@ -379,7 +381,9 @@ that move a stored setting value to its renamed key. Its schema carries a `versi
 validation onto `SettingsSchema`, grants bound to `(PluginId, ContentHash)`, the template language
 with `DeclarativeRuntime`, and the `PluginPackages` and `PluginRuntime` ports. It is `no_std`,
 reads no file and runs no guest code; `crates/plugin-api/api-surface.json` is generated from it by
-`cargo xtask docs`. It also owns the code-package format rules (kind detection from the module
+`cargo xtask docs`, and so are the manifest reference and `docs/plugins/manifest.schema.json`
+from its typed manifest keys (`MANIFEST_KEYS`). A CI job holds the surface compatible with the
+latest release tag ([guardrails](guardrails.md#plugin-api-compatibility)). It also owns the code-package format rules (kind detection from the module
 magic and a bounded scan for the manifest's custom section) and `Runtimes`, which picks the
 declarative interpreter or the injected code runtime by the manifest's `runtime`. See
 [ADR 0089](../adr/0089-user-plugin-contract.md) and the

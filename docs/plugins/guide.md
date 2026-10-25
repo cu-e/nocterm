@@ -1,9 +1,17 @@
 # Writing a user plugin (preview)
 
-Preview. User plugins are compiled out of release builds. They exist only in a build made with
-`cargo build --features user-plugins`, and the contract may still change before API 1.0. The
-[reference](reference.md) lists every name and limit this guide uses; it is generated from the
-code and always current.
+Preview. User plugins exist only in a build made with `cargo build --features user-plugins`;
+release builds are made without it. Until the first release that contains
+`crates/plugin-api/api-surface.json` the contract may still change; from that release on a change
+that breaks a published plugin needs a new API
+version ([compatibility](README.md#compatibility)). The [reference](reference.md) lists every
+name and limit this guide uses; it is generated from the code and always current. Editors can
+check a manifest against [`manifest.schema.json`](manifest.schema.json).
+
+A build with the feature still starts without user plugins. The user allows them in Settings >
+Plugins > User plugins ("Allow user plugins") or with `user_plugins = true` in the `[plugins]`
+section of `settings.toml`, and the choice applies at the next start. `nocterm --safe-mode`
+starts without any user plugin, whatever the switch says.
 
 The usual user plugin is a single TOML file. It describes what to draw, which readings of the
 application it needs and which settings the user can change. It contains no code: the host reads
@@ -201,7 +209,8 @@ rules to the reply, so a view the host would refuse and an effect without a capa
 your test as they would in the application. Set observations, settings and stored values, render
 or send events, and read back the stored data and the log.
 
-To try the plugin in the application, with a build that has user plugins:
+To try the plugin in the application, with a build that has user plugins (the switch does not
+need to be on, since the session loads only this file; `--safe-mode` cannot be combined with it):
 
 ```sh
 nocterm plugin dev target/wasm32-unknown-unknown/release/my_plugin.wasm
@@ -221,6 +230,8 @@ a bar item and a panel, settings, stored state and tests with `testing::Host`.
 
 ## What the user sees
 
+0. The user allows user plugins (Settings > Plugins > User plugins) and restarts. Until then
+   nothing can be installed and nothing installed is loaded.
 1. Settings > Plugins > User plugins > Install from file...: the user picks the file.
 2. The consent dialog shows the name, "publisher (unverified)", the fingerprint of the file, and
    one sentence per capability. The buttons are inert for a moment so that a stray click cannot

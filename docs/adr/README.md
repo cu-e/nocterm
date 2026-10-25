@@ -89,3 +89,4 @@ acceptance; a later record supersedes an earlier one.
 | [0090](0090-user-plugin-host-and-passive-providers.md) | The plugin host brokers every effect, and providers only read what the UI already shows |
 | [0091](0091-user-plugin-code-runs-in-process-on-wasmi.md) | User plugin code runs in-process on wasmi behind the runtime port |
 | [0092](0092-plugin-sdk-and-developer-sessions.md) | The plugin SDK is a guest-only crate, and a developer session keeps its plugin and settings in memory |
+| [0093](0093-user-plugins-start-off-and-the-api-stays-compatible.md) | User plugins start off, safe mode beats the switch, and the API surface stays compatible |

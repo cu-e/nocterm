@@ -88,6 +88,17 @@ by asking the workspace; `SwitchLayout` and `TogglePanel` carry an id and are se
 by the menu. `src/shell_setup/reference.rs` renders the application catalog for the
 golden test of `docs/reference/plugins.md`.
 
+## User plugin start
+
+`UserPluginMode` (`Installed`, `SafeMode`, `Dev(file)`) is chosen by `src/plugin_command.rs`
+from the command line and carried in `bootstrap::Services`. `src/shell_setup/user_plugins.rs`
+reads it with the `[plugins] user_plugins` switch once: `SafeMode` always holds, `Installed`
+holds while the switch is off or its table does not read, and `Dev` is not held by the switch.
+A held run builds no host and publishes a system-only plugin source; the Plugins page gets
+`UserSession::Held` with the reason. The switch changes through the application's
+`UserPluginsSwitch` implementation and applies at the next start
+([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)).
+
 ## Generated documentation
 
 `cargo xtask docs` derives field descriptions/defaults from schemars schemas
@@ -96,7 +107,9 @@ shortcuts from the keymap, and crate dependencies from Cargo metadata. Generated
 files are deterministic and contain no timestamps. `cargo xtask docs --check`
 compares them without modifying files. CI also runs format, build, lint, tests
 and rustdoc. Behavioral architecture notes in these documents remain authored text;
-the dependency graph and references update from code.
+the dependency graph and references update from code. The same command writes
+`docs/plugins/reference.md` and `docs/plugins/manifest.schema.json`, and checks that the
+hand-written plugin documents name only existing capabilities.
 
 Explorer's collaborators are composed before GPUI initialization: the native local
 filesystem supplies session capabilities and the transfer runtime receives the same LocalFs port. Explorer retains the TransferService contract explicitly.

@@ -306,7 +306,10 @@ service. For a developer session (`nocterm plugin dev`) the host also offers `Se
 path to a file, so the records and data of a session are unsaved by construction. The application
 also keeps the session's `settings.toml` edits in memory; everything else (connections, snippets, the
 vault, saved workspaces, installed themes, layout sizes, keymap, recordings) saves as usual
-([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)). A provider lives in the crate
+([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)). The application constructs the host in one
+place, `UserShell::install`, which a held run (`--safe-mode`, or `[plugins] user_plugins` not set)
+leaves without a host, runtime, records, data or package store
+([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)). A provider lives in the crate
 whose state it reads, behind that crate's `user-plugins` feature, and is passive: it answers from
 what the user's own UI already holds (never reading an entity that may be updating) and never
 starts a sampler, watch or connection
