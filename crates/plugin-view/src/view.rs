@@ -57,6 +57,7 @@ pub struct PluginView {
     style: ViewStyle,
     hooks: Hooks,
     content: Content,
+    dev: bool,
 }
 
 impl PluginView {
@@ -72,7 +73,14 @@ impl PluginView {
             style,
             hooks,
             content: Content::Empty,
+            dev: false,
         }
+    }
+
+    /// Marks the view as one from a developer session: the label gains a DEV suffix and a bar
+    /// item gains a DEV chip. The caller redraws the entity afterwards.
+    pub fn mark_dev(&mut self) {
+        self.dev = true;
     }
 
     /// Shows a view. One the host refuses becomes the fault chip and the error is returned.
@@ -104,9 +112,9 @@ impl PluginView {
         matches!(self.content, Content::Fault)
     }
 
-    /// "Plugin · ⟨name⟩".
+    /// "Plugin · ⟨name⟩", with " · DEV" in a developer session.
     pub fn label(&self) -> SharedString {
-        label(&self.name)
+        label(&self.name, self.dev)
     }
 
     fn body(&self, cx: &mut App) -> AnyElement {
@@ -123,6 +131,6 @@ impl PluginView {
 impl Render for PluginView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = self.body(cx);
-        framed(self.kind, &self.style, self.label(), body)
+        framed(self.kind, &self.style, self.label(), self.dev, body)
     }
 }

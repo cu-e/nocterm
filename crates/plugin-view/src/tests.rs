@@ -116,6 +116,20 @@ fn a_panel_draws_the_marker_and_the_label(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_developer_session_adds_dev_to_the_label(cx: &mut TestAppContext) {
+    let (_, window, cx) = open(
+        cx,
+        FrameKind::Panel,
+        view(vec![node(NodeKind::Text("12:00".into()))]),
+    );
+    window.update(cx, |plugin, _, _| plugin.mark_dev()).unwrap();
+    cx.run_until_parked();
+    let label = window.read_with(cx, |plugin, _| plugin.label()).unwrap();
+    assert_eq!(label.as_ref(), "Plugin \u{b7} Clock \u{b7} DEV");
+    assert!(bounds(cx, "plugin-label").is_some());
+}
+
+#[gpui::test]
 fn a_bar_widget_draws_the_marker_and_leaves_the_label_to_the_application(cx: &mut TestAppContext) {
     let (_, _, cx) = open(
         cx,
@@ -124,6 +138,34 @@ fn a_bar_widget_draws_the_marker_and_leaves_the_label_to_the_application(cx: &mu
     );
     assert!(bounds(cx, "plugin-marker").is_some());
     assert!(bounds(cx, "plugin-label").is_none());
+}
+
+#[gpui::test]
+fn a_bar_widget_of_a_developer_session_draws_a_dev_chip_and_an_installed_one_does_not(
+    cx: &mut TestAppContext,
+) {
+    let (_, window, cx) = open(
+        cx,
+        FrameKind::Bar,
+        view(vec![node(NodeKind::Text("12:00".into()))]),
+    );
+    assert!(
+        bounds(cx, "plugin-dev").is_none(),
+        "an installed plugin has no DEV chip"
+    );
+
+    window
+        .update(cx, |plugin, _, cx| {
+            plugin.mark_dev();
+            cx.notify();
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(
+        bounds(cx, "plugin-dev").is_some(),
+        "the developer session's widget does"
+    );
+    assert!(bounds(cx, "plugin-marker").is_some());
 }
 
 #[gpui::test]

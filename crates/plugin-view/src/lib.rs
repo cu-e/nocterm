@@ -1,9 +1,11 @@
 //! Renders validated user plugin views inside a host frame with a marker and a label.
 //!
-//! A plugin returns a [`View`](nocterm_plugin_api::View) of plain nodes. [`PluginView`] checks it again, draws it with the
-//! colours of a [`ViewStyle`] and wraps it in a frame the plugin cannot style: a marker, the
-//! label "Plugin · ⟨name⟩" and, when the view is invalid, a fixed-width fault chip. A button or
-//! toggle reports an [`Interaction`] to the callback that the application supplied.
+//! A plugin returns a [`View`](nocterm_plugin_api::View) of plain nodes. [`PluginView`] checks it
+//! again, draws it with the colours of a [`ViewStyle`] and wraps it in a frame the plugin cannot
+//! style: a marker, the label "Plugin · ⟨name⟩" and, when the view is invalid, a fixed-width fault
+//! chip. After `mark_dev`, for a developer session, the label ends in " · DEV" and a bar item
+//! carries a DEV chip. A button or toggle reports an [`Interaction`] to the callback that the
+//! application supplied.
 //!
 //! Owns: node layout, the mapping of tones onto the supplied `ViewStyle`, pointer and
 //! focused-control gestures, the frame, the marker and the fault chip.
