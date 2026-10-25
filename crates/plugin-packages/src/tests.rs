@@ -10,6 +10,7 @@ use proptest::prelude::*;
 use tempfile::TempDir;
 
 mod code_packages;
+mod session_store;
 
 use crate::{PackageStore, parse_package, read_directory, sha256};
 

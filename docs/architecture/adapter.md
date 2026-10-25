@@ -97,6 +97,9 @@ calls and metadata and removal under the package root ([ADR 0089](../adr/0089-us
 A code package is one `.wasm` module, at most 2 MiB, that carries the manifest in its custom
 section `nocterm.manifest`; the store keeps `<id>.wasm` or `<id>.toml` per plugin and the hash
 covers the whole file ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
+`SessionStore` is the store of a developer session: it reads a file with the same bounded read but
+publishes, loads (re-checking the hash) and removes packages in memory, so no package directory is
+ever created.
 
 `nocterm-plugin-wasm` implements the `PluginRuntime` port on wasmi for code packages. It reads no
 file: the bytes come from the package port. It validates and compiles a module when a plugin is
