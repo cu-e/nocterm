@@ -115,6 +115,11 @@ impl Graph {
         })
     }
 
+    /// Whether a workspace member has this name.
+    pub(super) fn is_member(&self, name: &str) -> bool {
+        self.member(name).is_some()
+    }
+
     fn named(&self, name: &str) -> Option<&Package> {
         self.member(name).or_else(|| {
             self.full
@@ -133,6 +138,12 @@ impl Graph {
             .parent()
             .context("package directory")?
             .to_path_buf())
+    }
+
+    /// Names of every package the workspace member `name` reaches through normal and build
+    /// dependencies; `None` when no such member exists.
+    pub(super) fn member_closure(&self, name: &str) -> Option<BTreeSet<&str>> {
+        self.member(name).map(|member| self.closure(&member.id))
     }
 
     /// Names of every package a package reaches through normal and build dependencies.

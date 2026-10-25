@@ -57,6 +57,9 @@ pub(super) struct Identifiers {
 pub(super) struct Policy {
     pub(super) gpui: String,
     pub(super) app: String,
+    /// Crates the application never reaches, with or without the user-plugins feature.
+    #[serde(default)]
+    pub(super) guest_only: Vec<String>,
     #[serde(default)]
     pub(super) external: BTreeMap<String, Vec<String>>,
     #[serde(default)]

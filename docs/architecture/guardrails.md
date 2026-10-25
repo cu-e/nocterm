@@ -139,6 +139,10 @@ exemption is a reviewed edit of the policy with a reason.
 - **I5, providers.** The dependents of the provider port are a closed list.
 - **Compile-out.** With default features the resolved closure of `nocterm` holds no user-plugin
   crate.
+- **Guest-only crates.** A crate listed under `guest_only` (the plugin SDK, whose `export!` macro
+  writes the symbols and manifest section of a guest module) has no row, because I4 would reject
+  that macro. Instead it must be absent from the `nocterm` closure, with and without
+  `user-plugins`; development dependencies do not count.
 - **Test hooks.** A crate that offers a test-only constructor behind a `test-support` feature lists
   it under `test_features` in the policy (empty today). The feature must not be enabled by any
   normal or build dependency edge of `nocterm` with `user-plugins` (the default build holds no such

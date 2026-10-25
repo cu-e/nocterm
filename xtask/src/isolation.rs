@@ -13,6 +13,7 @@ use crate::ratchet;
 
 mod gpui;
 mod graph;
+mod guest_only;
 mod normal;
 mod policy;
 mod scan;
@@ -40,6 +41,12 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
     let mut problems = graph::closure_problems(&policy, &featured);
     problems.extend(graph::provider_problems(&policy, &featured));
     problems.extend(graph::compile_out_problems(&policy, &default));
+    problems.extend(guest_only::problems(
+        &policy,
+        &featured,
+        "with user-plugins",
+    ));
+    problems.extend(guest_only::problems(&policy, &default, "default"));
     if !policy.compile_out.test_features.is_empty() {
         problems.extend(normal::test_feature_problems(
             &policy,

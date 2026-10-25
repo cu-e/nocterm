@@ -83,7 +83,7 @@ fn policy() -> Policy {
     Policy::parse(POLICY).unwrap()
 }
 
-struct Package {
+pub(super) struct Package {
     name: &'static str,
     member: bool,
     /// `(dependency, kind)` where kind is "" (normal), "build" or "dev".
@@ -92,7 +92,10 @@ struct Package {
     features: Vec<&'static str>,
 }
 
-fn package(name: &'static str, dependencies: &[(&'static str, &'static str)]) -> Package {
+pub(super) fn package(
+    name: &'static str,
+    dependencies: &[(&'static str, &'static str)],
+) -> Package {
     Package {
         name,
         member: name.starts_with("nocterm"),
@@ -102,7 +105,7 @@ fn package(name: &'static str, dependencies: &[(&'static str, &'static str)]) ->
     }
 }
 
-fn graph(packages: Vec<Package>) -> Graph {
+pub(super) fn graph(packages: Vec<Package>) -> Graph {
     let id = |name: &str| format!("{name} 0.0.0 (path+file:///fixture/{name})");
     let described: Vec<_> = packages
         .iter()

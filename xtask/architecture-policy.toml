@@ -44,6 +44,10 @@
 gpui = "gpui-pre"
 # Package whose default-feature closure must not contain a user-plugin-only crate.
 app = "nocterm"
+# Crates that build the plugin (guest) side of the code ABI. The application never reaches them,
+# with or without the user-plugins feature; they have no row because their `export!` macro
+# writes the symbols and the manifest section of a guest module.
+guest_only = ["nocterm-plugin-sdk"]
 
 # Named lists of external crates (package names) that a row may reach transitively.
 [isolation.external]
