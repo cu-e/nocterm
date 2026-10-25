@@ -78,8 +78,8 @@ pub use runtimes::Runtimes;
 pub use sanitize::sanitize_display;
 pub use snapshot::{Observed, Snapshot};
 pub use surface::{
-    EFFECT_REQUESTS, EVENTS, FILTERS, HOST_ERRORS, LIMITS, MANIFEST_TABLES, REFRESHES, RUNTIMES,
-    SETTINGS_KINDS,
+    EFFECT_REQUESTS, EVENTS, FILTERS, HOST_ERRORS, Key, KeyType, LIMITS, MANIFEST_KEYS, REFRESHES,
+    RUNTIMES, SETTINGS_KINDS,
 };
 pub use version::{API_VERSION, ApiVersion, VersionError};
 pub use view::{

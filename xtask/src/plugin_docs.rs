@@ -67,16 +67,40 @@ fn capabilities(text: &mut String, surface: &Value) {
 fn manifest(text: &mut String, surface: &Value) {
     text.push_str(
         "## Manifest keys\n\nA declarative package is one TOML file; a code package carries the same TOML in its \
-         module. Unknown keys are refused. `contribution` and `settings.group` are arrays of tables.\n\n| Table | Keys |\n| --- | --- |\n",
+         module. Unknown keys are refused. A key of type table-list is an array of tables, \
+         written `[[name]]` or inline.\n\n\
+         | Table | Key | Type | Required |\n| --- | --- | --- | --- |\n",
     );
-    for (table, keys) in surface["manifest_tables"].as_object().into_iter().flatten() {
-        let _ = writeln!(text, "| `{table}` | {} |", names(keys));
+    for (table, keys) in surface["manifest"].as_object().into_iter().flatten() {
+        for (key, entry) in keys.as_object().into_iter().flatten() {
+            let _ = writeln!(
+                text,
+                "| `{table}` | `{key}` | {} | {} |",
+                key_type(entry),
+                if entry["required"] == true {
+                    "yes"
+                } else {
+                    "no"
+                }
+            );
+        }
     }
     text.push_str("\n### Effect requests\n\nOnly a runtime that runs code returns effects; \
          a declarative package cannot. The host lists them so that the capability table stays one list.\n\n\
-         | Effect | Fields |\n| --- | --- |\n");
-    for (effect, keys) in surface["effect_requests"].as_object().into_iter().flatten() {
-        let _ = writeln!(text, "| `{effect}` | {} |", names(keys));
+         | Effect | Field | Type | Required |\n| --- | --- | --- | --- |\n");
+    for (effect, fields) in surface["effect_requests"].as_object().into_iter().flatten() {
+        for (field, entry) in fields.as_object().into_iter().flatten() {
+            let _ = writeln!(
+                text,
+                "| `{effect}` | `{field}` | {} | {} |",
+                key_type(entry),
+                if entry["required"] == true {
+                    "yes"
+                } else {
+                    "no"
+                }
+            );
+        }
     }
     text.push('\n');
 }
@@ -143,6 +167,15 @@ fn code_abi(text: &mut String) {
          | Linear memory per instance | {MEMORY_BYTES} bytes |\n\
          | Live instances | {MAX_LIVE_INSTANCES} |\n"
     );
+}
+
+/// The type of a manifest key as the reference words it: a choice names its vocabulary.
+fn key_type(entry: &Value) -> String {
+    let ty = entry["type"].as_str().unwrap_or_default();
+    match entry["vocabulary"].as_str() {
+        Some(vocabulary) => format!("{ty} ({})", vocabulary.replace('_', " ")),
+        None => ty.to_owned(),
+    }
 }
 
 /// A list of names as inline code, comma separated.

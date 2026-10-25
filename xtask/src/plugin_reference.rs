@@ -9,8 +9,8 @@
 use anyhow::Context as _;
 use nocterm_plugin_api::{
     API_VERSION, CAPABILITIES, CapabilityEntry, EFFECT_REQUESTS, EVENTS, EffectTarget, FILTERS,
-    Family, HOST_ERRORS, Kind, LIMITS, MANIFEST_TABLES, NodeKind, PluginIcon, REFRESHES, RUNTIMES,
-    SETTINGS_KINDS, Tone, Zone,
+    Family, HOST_ERRORS, Key, KeyType, Kind, LIMITS, MANIFEST_KEYS, NodeKind, PluginIcon,
+    REFRESHES, RUNTIMES, SETTINGS_KINDS, Tone, Zone,
     capability::{fields_of, notifications::NoticeTone, workspace::WorkspaceKind},
 };
 use serde_json::{Map, Value, json};
@@ -30,14 +30,14 @@ pub(crate) fn surface() -> Value {
     let surface = json!({
         "api_version": API_VERSION.to_string(),
         "capabilities": CAPABILITIES.iter().map(capability).collect::<Vec<_>>(),
-        "effect_requests": tables(EFFECT_REQUESTS),
+        "effect_requests": manifest(EFFECT_REQUESTS),
         "events": EVENTS,
         "filters": FILTERS,
         "host_errors": HOST_ERRORS,
         "icons": PluginIcon::ALL.map(PluginIcon::name),
         "kinds": Kind::ALL.map(Kind::name),
         "limits": LIMITS.iter().map(|(name, value)| ((*name).to_owned(), json!(value))).collect::<Map<_, _>>(),
-        "manifest_tables": tables(MANIFEST_TABLES),
+        "manifest": manifest(MANIFEST_KEYS),
         "node_kinds": NodeKind::NAMES,
         "notice_tones": NoticeTone::ALL.map(NoticeTone::name),
         "refreshes": REFRESHES,
@@ -50,12 +50,33 @@ pub(crate) fn surface() -> Value {
     canonical(surface)
 }
 
-fn tables(tables: &[(&str, &[&str])]) -> Value {
+/// The tables of a package, or the requests of the effects: for each key its type, whether it is required, and for a choice
+/// the vocabulary it takes its values from (the key of another list in the surface).
+fn manifest(tables: &[(&str, &[Key])]) -> Value {
     tables
         .iter()
-        .map(|(name, keys)| ((*name).to_owned(), json!(keys)))
+        .map(|(name, keys)| {
+            let keys = keys
+                .iter()
+                .map(|key| (key.name.to_owned(), key_entry(key)))
+                .collect::<Map<_, _>>();
+            ((*name).to_owned(), Value::Object(keys))
+        })
         .collect::<Map<_, _>>()
         .into()
+}
+
+fn key_entry(key: &Key) -> Value {
+    let mut entry = json!({ "type": key.ty.name(), "required": key.required });
+    match key.ty {
+        KeyType::Choice(vocabulary) => entry["vocabulary"] = json!(vocabulary),
+        KeyType::Integer { min, max } => {
+            entry["min"] = json!(min);
+            entry["max"] = json!(max);
+        }
+        _ => {}
+    }
+    entry
 }
 
 fn capability(entry: &CapabilityEntry) -> Value {
@@ -116,6 +137,24 @@ fn canonical(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_choice_key_names_a_list_of_the_surface() {
+        let surface = surface();
+        for (table, keys) in surface["manifest"].as_object().unwrap() {
+            for (key, entry) in keys.as_object().unwrap() {
+                if entry["type"] == "choice" {
+                    let vocabulary = entry["vocabulary"].as_str().unwrap();
+                    assert!(
+                        surface[vocabulary]
+                            .as_array()
+                            .is_some_and(|v| !v.is_empty()),
+                        "{table}.{key} names `{vocabulary}`, which the surface does not list"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn the_surface_lists_every_capability_once_with_stable_keys() {

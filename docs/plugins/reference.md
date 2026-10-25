@@ -23,30 +23,79 @@ A package lists the capabilities it needs in `capabilities` (required) and `opti
 
 ## Manifest keys
 
-A declarative package is one TOML file; a code package carries the same TOML in its module. Unknown keys are refused. `contribution` and `settings.group` are arrays of tables.
+A declarative package is one TOML file; a code package carries the same TOML in its module. Unknown keys are refused. A key of type table-list is an array of tables, written `[[name]]` or inline.
 
-| Table | Keys |
-| --- | --- |
-| `contribution` | `local`, `kind`, `title`, `icon`, `zone`, `order`, `view` |
-| `contribution.view` | `refresh`, `nodes` |
-| `contribution.view.nodes` | `kind`, `parent`, `key`, `tone`, `tone_when`, `text`, `icon`, `value`, `each` |
-| `manifest` | `api`, `runtime`, `publisher`, `id`, `name`, `description`, `capabilities`, `optional_capabilities`, `reasons`, `contribution`, `settings` |
-| `settings` | `version`, `group` |
-| `settings.group` | `title`, `contribution`, `field` |
-| `settings.group.field` | `key`, `label`, `help`, `kind`, `renamed_from`, `default`, `options`, `ordered`, `max_chosen`, `min`, `max`, `step`, `unit`, `max_len`, `placeholder` |
-| `settings.group.field.options` | `key`, `label`, `help` |
+| Table | Key | Type | Required |
+| --- | --- | --- | --- |
+| `contribution` | `icon` | choice (icons) | no |
+| `contribution` | `kind` | choice (kinds) | yes |
+| `contribution` | `local` | text | yes |
+| `contribution` | `order` | integer | no |
+| `contribution` | `title` | text | yes |
+| `contribution` | `view` | table | no |
+| `contribution` | `zone` | choice (zones) | no |
+| `contribution.view` | `nodes` | table-list | yes |
+| `contribution.view` | `refresh` | any | no |
+| `contribution.view.nodes` | `each` | text | no |
+| `contribution.view.nodes` | `icon` | choice (icons) | no |
+| `contribution.view.nodes` | `key` | text | no |
+| `contribution.view.nodes` | `kind` | choice (node kinds) | yes |
+| `contribution.view.nodes` | `parent` | integer | no |
+| `contribution.view.nodes` | `text` | text | no |
+| `contribution.view.nodes` | `tone` | choice (tones) | no |
+| `contribution.view.nodes` | `tone_when` | text | no |
+| `contribution.view.nodes` | `value` | text | no |
+| `manifest` | `api` | text | yes |
+| `manifest` | `capabilities` | text-list | no |
+| `manifest` | `contribution` | table-list | no |
+| `manifest` | `description` | text | no |
+| `manifest` | `id` | text | yes |
+| `manifest` | `name` | text | yes |
+| `manifest` | `optional_capabilities` | text-list | no |
+| `manifest` | `publisher` | text | yes |
+| `manifest` | `reasons` | text-map | no |
+| `manifest` | `runtime` | choice (runtimes) | no |
+| `manifest` | `settings` | table | no |
+| `settings` | `group` | table-list | no |
+| `settings` | `version` | integer | no |
+| `settings.group` | `contribution` | text | no |
+| `settings.group` | `field` | table-list | no |
+| `settings.group` | `title` | text | yes |
+| `settings.group.field` | `default` | any | no |
+| `settings.group.field` | `help` | text | no |
+| `settings.group.field` | `key` | text | yes |
+| `settings.group.field` | `kind` | choice (settings kinds) | yes |
+| `settings.group.field` | `label` | text | yes |
+| `settings.group.field` | `max` | integer | no |
+| `settings.group.field` | `max_chosen` | integer | no |
+| `settings.group.field` | `max_len` | integer | no |
+| `settings.group.field` | `min` | integer | no |
+| `settings.group.field` | `options` | table-list | no |
+| `settings.group.field` | `ordered` | bool | no |
+| `settings.group.field` | `placeholder` | text | no |
+| `settings.group.field` | `renamed_from` | text | no |
+| `settings.group.field` | `step` | integer | no |
+| `settings.group.field` | `unit` | text | no |
+| `settings.group.field.options` | `help` | text | no |
+| `settings.group.field.options` | `key` | text | yes |
+| `settings.group.field.options` | `label` | text | yes |
 
 ### Effect requests
 
 Only a runtime that runs code returns effects; a declarative package cannot. The host lists them so that the capability table stays one list.
 
-| Effect | Fields |
-| --- | --- |
-| `notifications.post` | `tone`, `text`, `notice_key` |
-| `panels.set-badge` | `local`, `badge` |
-| `panels.set-open` | `local`, `open` |
-| `storage.remove` | `key` |
-| `storage.set` | `key`, `value` |
+| Effect | Field | Type | Required |
+| --- | --- | --- | --- |
+| `notifications.post` | `notice_key` | text | no |
+| `notifications.post` | `text` | text | yes |
+| `notifications.post` | `tone` | choice (notice tones) | yes |
+| `panels.set-badge` | `badge` | integer (0 to 65535) | no |
+| `panels.set-badge` | `local` | text | yes |
+| `panels.set-open` | `local` | text | yes |
+| `panels.set-open` | `open` | bool | yes |
+| `storage.remove` | `key` | text | yes |
+| `storage.set` | `key` | text | yes |
+| `storage.set` | `value` | text | yes |
 
 ## Vocabulary
 

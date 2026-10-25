@@ -168,26 +168,59 @@
     }
   ],
   "effect_requests": {
-    "notifications.post": [
-      "tone",
-      "text",
-      "notice_key"
-    ],
-    "panels.set-badge": [
-      "local",
-      "badge"
-    ],
-    "panels.set-open": [
-      "local",
-      "open"
-    ],
-    "storage.remove": [
-      "key"
-    ],
-    "storage.set": [
-      "key",
-      "value"
-    ]
+    "notifications.post": {
+      "notice_key": {
+        "required": false,
+        "type": "text"
+      },
+      "text": {
+        "required": true,
+        "type": "text"
+      },
+      "tone": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "notice_tones"
+      }
+    },
+    "panels.set-badge": {
+      "badge": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "local": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "panels.set-open": {
+      "local": {
+        "required": true,
+        "type": "text"
+      },
+      "open": {
+        "required": true,
+        "type": "bool"
+      }
+    },
+    "storage.remove": {
+      "key": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "storage.set": {
+      "key": {
+        "required": true,
+        "type": "text"
+      },
+      "value": {
+        "required": true,
+        "type": "text"
+      }
+    }
   },
   "events": [
     "activated",
@@ -252,75 +285,255 @@
     "text-chars": 200,
     "view-depth": 8
   },
-  "manifest_tables": {
-    "contribution": [
-      "local",
-      "kind",
-      "title",
-      "icon",
-      "zone",
-      "order",
-      "view"
-    ],
-    "contribution.view": [
-      "refresh",
-      "nodes"
-    ],
-    "contribution.view.nodes": [
-      "kind",
-      "parent",
-      "key",
-      "tone",
-      "tone_when",
-      "text",
-      "icon",
-      "value",
-      "each"
-    ],
-    "manifest": [
-      "api",
-      "runtime",
-      "publisher",
-      "id",
-      "name",
-      "description",
-      "capabilities",
-      "optional_capabilities",
-      "reasons",
-      "contribution",
-      "settings"
-    ],
-    "settings": [
-      "version",
-      "group"
-    ],
-    "settings.group": [
-      "title",
-      "contribution",
-      "field"
-    ],
-    "settings.group.field": [
-      "key",
-      "label",
-      "help",
-      "kind",
-      "renamed_from",
-      "default",
-      "options",
-      "ordered",
-      "max_chosen",
-      "min",
-      "max",
-      "step",
-      "unit",
-      "max_len",
-      "placeholder"
-    ],
-    "settings.group.field.options": [
-      "key",
-      "label",
-      "help"
-    ]
+  "manifest": {
+    "contribution": {
+      "icon": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "icons"
+      },
+      "kind": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "kinds"
+      },
+      "local": {
+        "required": true,
+        "type": "text"
+      },
+      "order": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "title": {
+        "required": true,
+        "type": "text"
+      },
+      "view": {
+        "required": false,
+        "type": "table"
+      },
+      "zone": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "zones"
+      }
+    },
+    "contribution.view": {
+      "nodes": {
+        "required": true,
+        "type": "table-list"
+      },
+      "refresh": {
+        "required": false,
+        "type": "any"
+      }
+    },
+    "contribution.view.nodes": {
+      "each": {
+        "required": false,
+        "type": "text"
+      },
+      "icon": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "icons"
+      },
+      "key": {
+        "required": false,
+        "type": "text"
+      },
+      "kind": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "node_kinds"
+      },
+      "parent": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "text": {
+        "required": false,
+        "type": "text"
+      },
+      "tone": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "tones"
+      },
+      "tone_when": {
+        "required": false,
+        "type": "text"
+      },
+      "value": {
+        "required": false,
+        "type": "text"
+      }
+    },
+    "manifest": {
+      "api": {
+        "required": true,
+        "type": "text"
+      },
+      "capabilities": {
+        "required": false,
+        "type": "text-list"
+      },
+      "contribution": {
+        "required": false,
+        "type": "table-list"
+      },
+      "description": {
+        "required": false,
+        "type": "text"
+      },
+      "id": {
+        "required": true,
+        "type": "text"
+      },
+      "name": {
+        "required": true,
+        "type": "text"
+      },
+      "optional_capabilities": {
+        "required": false,
+        "type": "text-list"
+      },
+      "publisher": {
+        "required": true,
+        "type": "text"
+      },
+      "reasons": {
+        "required": false,
+        "type": "text-map"
+      },
+      "runtime": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "runtimes"
+      },
+      "settings": {
+        "required": false,
+        "type": "table"
+      }
+    },
+    "settings": {
+      "group": {
+        "required": false,
+        "type": "table-list"
+      },
+      "version": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      }
+    },
+    "settings.group": {
+      "contribution": {
+        "required": false,
+        "type": "text"
+      },
+      "field": {
+        "required": false,
+        "type": "table-list"
+      },
+      "title": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "settings.group.field": {
+      "default": {
+        "required": false,
+        "type": "any"
+      },
+      "help": {
+        "required": false,
+        "type": "text"
+      },
+      "key": {
+        "required": true,
+        "type": "text"
+      },
+      "kind": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "settings_kinds"
+      },
+      "label": {
+        "required": true,
+        "type": "text"
+      },
+      "max": {
+        "max": 2147483647,
+        "min": -2147483648,
+        "required": false,
+        "type": "integer"
+      },
+      "max_chosen": {
+        "max": 255,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "max_len": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "min": {
+        "max": 2147483647,
+        "min": -2147483648,
+        "required": false,
+        "type": "integer"
+      },
+      "options": {
+        "required": false,
+        "type": "table-list"
+      },
+      "ordered": {
+        "required": false,
+        "type": "bool"
+      },
+      "placeholder": {
+        "required": false,
+        "type": "text"
+      },
+      "renamed_from": {
+        "required": false,
+        "type": "text"
+      },
+      "step": {
+        "max": 2147483647,
+        "min": 1,
+        "required": false,
+        "type": "integer"
+      },
+      "unit": {
+        "required": false,
+        "type": "text"
+      }
+    },
+    "settings.group.field.options": {
+      "help": {
+        "required": false,
+        "type": "text"
+      },
+      "key": {
+        "required": true,
+        "type": "text"
+      },
+      "label": {
+        "required": true,
+        "type": "text"
+      }
+    }
   },
   "node_kinds": [
     "row",
