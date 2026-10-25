@@ -88,3 +88,4 @@ acceptance; a later record supersedes an earlier one.
 | [0089](0089-user-plugin-contract.md) | User plugins are declarative packages over a closed, isolated contract |
 | [0090](0090-user-plugin-host-and-passive-providers.md) | The plugin host brokers every effect, and providers only read what the UI already shows |
 | [0091](0091-user-plugin-code-runs-in-process-on-wasmi.md) | User plugin code runs in-process on wasmi behind the runtime port |
+| [0092](0092-plugin-sdk-and-developer-sessions.md) | The plugin SDK is a guest-only crate, and a developer session keeps its plugin and settings in memory |
