@@ -8,8 +8,8 @@
 //! and paints Design changes without resolving back into Design.
 //!
 //! Owns: Appearance views, theme projections, shared controls, directory editing/selection,
-//! checked text receipts, layout, the searchable choice picker, and the icons and column widths of
-//! plugin contributions, and the settings form of a plugin (`PluginSettingsForm`, its
+//! checked text receipts, layout, the searchable choice picker, the icons and column widths of
+//! plugin contributions, the `PluginSource` the shell and its editors read the plugins of both tiers from, and the settings form of a plugin (`PluginSettingsForm`, its
 //! `PluginSettingsSource` port, the system `SectionBinding` and the `PluginSettingsDirectory`).
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
 //! Ports used: `Persisted`, `ShutdownCoordinator`, read-only `DirectoryRead`. Ports provided: UI helpers,
@@ -36,6 +36,7 @@ pub mod form;
 mod icons;
 mod layout;
 pub mod notice;
+mod plugin_source;
 mod sections;
 mod session_options;
 mod settings_page;
@@ -55,6 +56,7 @@ pub use embedded_pages::{EmbeddedPageSpec, EmbeddedPages, SectionedPage};
 pub use icons::{Assets, IconName, agent_icon};
 pub use layout::{LayoutHandle, LayoutMemory};
 pub use nocterm_store::StoreError as SettingsError;
+pub use plugin_source::{PluginSetHandle, PluginSource, StaticPluginSource};
 pub use sections::{
     AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, UiLayout,
 };

@@ -180,7 +180,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
     let keymap = crate::keymap::load(user_keymap, cx);
-    let (monitor, plugins, guests) = crate::shell_setup::install_guest_pages(
+    let (monitor, plugin_source, guests) = crate::shell_setup::install_guest_pages(
         &local_host,
         &ui,
         keymap.clone(),
@@ -212,7 +212,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         vault,
         files,
         workspace: nocterm_workspace::Deps::new(layout)
-            .with_catalog(plugins)
+            .with_plugin_source(plugin_source)
             .with_settings(ui.settings().clone())
             .with_clock(Arc::new(nocterm_local::SystemClock)),
         themes,

@@ -15,7 +15,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_plugin_model::{ContributionId, PluginCatalog, SystemContribution};
+use nocterm_plugin_model::{ContributionId, ContributionRef, PluginSet};
 use nocterm_ui::{IconName, contribution_icon, form};
 use nocterm_window_layout::{EditOp, Subject};
 
@@ -30,7 +30,7 @@ use crate::{
 #[derive(IntoElement)]
 pub(crate) struct Tray {
     snapshot: Rc<Snapshot>,
-    catalog: Arc<PluginCatalog>,
+    catalog: Arc<PluginSet>,
     selected: Option<Subject>,
     commands: Commands,
 }
@@ -38,7 +38,7 @@ pub(crate) struct Tray {
 impl Tray {
     pub(crate) fn new(
         snapshot: Rc<Snapshot>,
-        catalog: Arc<PluginCatalog>,
+        catalog: Arc<PluginSet>,
         selected: Option<Subject>,
         commands: Commands,
     ) -> Self {
@@ -50,8 +50,8 @@ impl Tray {
         }
     }
 
-    fn entry(&self, contribution: &'static SystemContribution, cx: &App) -> AnyElement {
-        let id = contribution.id.clone();
+    fn entry(&self, contribution: ContributionRef<'_>, cx: &App) -> AnyElement {
+        let id = contribution.id().clone();
         let subject = Subject::Contribution(id.clone());
         let selected = self.selected.as_ref() == Some(&subject);
         let disabled = self.snapshot.is_disabled(&id, &self.catalog);
@@ -73,7 +73,7 @@ impl Tray {
         let theme = cx.theme();
         let chip = h_flex()
             .id(SharedString::from(format!("layout-tray:{id}")))
-            .aria_label(contribution.title)
+            .aria_label(contribution.title())
             .test_support()
             .gap_1()
             .px_2()
@@ -94,8 +94,8 @@ impl Tray {
                     section.pick(Some(subject), window, cx);
                 });
             })
-            .child(Icon::new(contribution_icon(contribution.icon)).small())
-            .child(div().text_sm().child(contribution.title))
+            .child(Icon::new(contribution_icon(contribution.icon())).small())
+            .child(div().text_sm().child(contribution.title().to_owned()))
             .when(disabled, |chip| {
                 chip.child(tag(format!("layout-tray-disabled:{id}"), "Disabled", cx))
             });
@@ -166,6 +166,7 @@ impl RenderOnce for Tray {
             .snapshot
             .tray()
             .iter()
+            .filter_map(|id| self.catalog.contribution(id))
             .map(|contribution| self.entry(contribution, cx))
             .chain(
                 self.snapshot

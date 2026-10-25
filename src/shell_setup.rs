@@ -1,5 +1,8 @@
 //! The window shell's plugin catalog: the one list of system plugins an installation knows.
-use nocterm_plugin_model::{CatalogError, PluginCatalog, SystemPlugin};
+use std::{rc::Rc, sync::Arc};
+
+use nocterm_plugin_model::{CatalogError, PluginCatalog, PluginSet, SystemPlugin};
+use nocterm_ui::{PluginSource, StaticPluginSource};
 use nocterm_workspace::plugin;
 
 mod layout_editor;
@@ -35,6 +38,15 @@ pub(crate) fn plugin_catalog() -> Result<PluginCatalog, CatalogError> {
         ],
         PLUGINS,
     )
+}
+
+/// What the windows read the installed plugins from. The default build has the system plugins
+/// only, so the set never changes.
+pub(crate) fn plugin_source(
+    catalog: &Arc<PluginCatalog>,
+    _cx: &mut gpui_kit::App,
+) -> Rc<dyn PluginSource> {
+    Rc::new(StaticPluginSource::new(PluginSet::system(catalog.clone())))
 }
 
 #[cfg(test)]

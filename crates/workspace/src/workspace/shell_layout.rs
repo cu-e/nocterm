@@ -9,14 +9,15 @@
 
 use std::{
     collections::{BTreeSet, HashSet},
+    rc::Rc,
     sync::Arc,
 };
 
 use gpui_kit::{App, Subscription, Task};
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{ContributionId, PluginCatalog, PluginId, Side};
+use nocterm_plugin_model::{ContributionId, PluginId, PluginSet, Side};
 use nocterm_store::{SettingsHandle, StoreError};
-use nocterm_ui::LayoutHandle;
+use nocterm_ui::{LayoutHandle, PluginSource};
 use nocterm_window_layout::{
     BuiltIn, EditOp, EditOutcome, EditTarget, LayoutSettings, LayoutTransition, PresetId,
     ResolvedGroup, ResolvedLayout, select, transition,
@@ -42,7 +43,7 @@ pub(super) enum LayoutChange {
 fn report_ignored_primary(
     layouts: &LayoutSettings,
     before: Option<&LayoutSettings>,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
 ) {
     let known = before.map(|before| before.ignored_primary_flags(catalog));
     for flag in layouts.ignored_primary_flags(catalog) {
@@ -58,9 +59,21 @@ fn report_ignored_primary(
     }
 }
 
+/// The plugins `settings` and the user's switches leave off: the stored system ones that may be
+/// off, and the user plugins that are switched off.
+fn disabled_in(settings: &SettingsHandle, set: &PluginSet, cx: &App) -> BTreeSet<PluginId> {
+    let mut disabled = settings
+        .setting::<PluginEnablement>(cx)
+        .effective_disabled(set.catalog());
+    set.extend_disabled(&mut disabled);
+    disabled
+}
+
 pub(super) struct ShellLayout {
     settings: SettingsHandle,
-    catalog: Arc<PluginCatalog>,
+    source: Rc<dyn PluginSource>,
+    /// The plugins in force when the arrangement was last resolved.
+    set: Arc<PluginSet>,
     legacy_swapped: bool,
     seen: LayoutSettings,
     /// The plugins the arrangement leaves out: the stored ones the catalog allows to be off.
@@ -76,22 +89,22 @@ impl ShellLayout {
     pub(super) fn new(
         flags: &LayoutHandle,
         settings: SettingsHandle,
-        catalog: Arc<PluginCatalog>,
+        source: Rc<dyn PluginSource>,
         cx: &mut App,
     ) -> Self {
         settings.register::<LayoutSettings>(cx);
         settings.register::<PluginEnablement>(cx);
         let legacy_swapped = super::layout_edit::legacy_layout_swapped(flags, cx);
         let seen = settings.setting::<LayoutSettings>(cx).clone();
-        let disabled = settings
-            .setting::<PluginEnablement>(cx)
-            .effective_disabled(&catalog);
+        let set = source.current(cx);
+        let disabled = disabled_in(&settings, &set, cx);
         let selected = select(&seen, legacy_swapped);
-        let resolved = seen.resolve(&selected, &catalog, &disabled);
-        report_ignored_primary(&seen, None, &catalog);
+        let resolved = seen.resolve(&selected, &set, &disabled);
+        report_ignored_primary(&seen, None, &set);
         Self {
             settings,
-            catalog,
+            source,
+            set,
             legacy_swapped,
             seen,
             disabled,
@@ -102,41 +115,41 @@ impl ShellLayout {
         }
     }
 
-    /// Calls `on_change` whenever the layout settings are published, for as long as the window
-    /// lives.
-    pub(super) fn follow(&mut self, cx: &mut App, on_change: impl FnMut(&mut App) + 'static) {
-        self.subscription = Some(self.settings.observe(cx, on_change));
+    /// Calls `on_change` whenever the layout settings or the plugins are published, for as long
+    /// as the window lives.
+    pub(super) fn follow(&mut self, cx: &mut App, on_change: impl Fn(&mut App) + Clone + 'static) {
+        let plugins = self.source.observe(Box::new(on_change.clone()), cx);
+        let settings = self.settings.observe(cx, on_change);
+        self.subscription = Some(Subscription::join(settings, plugins));
     }
 
     /// Reads the settings again and tells how the change affects the window.
     ///
-    /// Enabling or disabling a plugin is an edit of the arrangement, never a switch: panels that
-    /// stay keep their state and no `open` set applies.
+    /// Enabling or disabling a plugin, or installing or removing a user plugin, is an edit of
+    /// the arrangement, never a switch: panels that stay keep their state and no `open` set
+    /// applies.
     pub(super) fn refresh(&mut self, cx: &App) -> LayoutChange {
         let next = self.settings.setting::<LayoutSettings>(cx);
-        let disabled = self
-            .settings
-            .setting::<PluginEnablement>(cx)
-            .effective_disabled(&self.catalog);
+        let set = self.source.current(cx);
+        let disabled = disabled_in(&self.settings, &set, cx);
         let layouts_changed = *next != self.seen;
-        let enablement_changed = disabled != self.disabled;
+        let enablement_changed = disabled != self.disabled || !Arc::ptr_eq(&set, &self.set);
         if !layouts_changed && !enablement_changed {
             return LayoutChange::Unchanged;
         }
+        self.set = set;
         let change = if layouts_changed {
             transition(&self.seen, next, self.legacy_swapped)
         } else {
             LayoutTransition::None
         };
         if layouts_changed {
-            report_ignored_primary(next, Some(&self.seen), &self.catalog);
+            report_ignored_primary(next, Some(&self.seen), &self.set);
             self.seen = next.clone();
         }
         self.disabled = disabled;
         self.selected = select(&self.seen, self.legacy_swapped);
-        self.resolved = self
-            .seen
-            .resolve(&self.selected, &self.catalog, &self.disabled);
+        self.resolved = self.seen.resolve(&self.selected, &self.set, &self.disabled);
         match change {
             LayoutTransition::None if enablement_changed => LayoutChange::Rearranged,
             LayoutTransition::None => LayoutChange::Unchanged,
@@ -151,9 +164,14 @@ impl ShellLayout {
     /// Whether the contribution may exist: core contributions always, a plugin's while the user
     /// has not disabled the plugin.
     pub(super) fn is_enabled(&self, id: &ContributionId) -> bool {
-        self.catalog
+        self.set
             .plugin_of(id)
-            .is_none_or(|plugin| !self.disabled.contains(&plugin.id))
+            .is_none_or(|plugin| !self.disabled.contains(plugin.id()))
+    }
+
+    /// The plugins the arrangement was resolved against.
+    pub(super) fn set(&self) -> &Arc<PluginSet> {
+        &self.set
     }
 
     /// The layouts to choose from: the built-ins, then the saved presets in their order.
@@ -224,7 +242,7 @@ impl ShellLayout {
     ) -> Task<Result<Option<EditOutcome>, LayoutEditError>> {
         edit_layouts(
             &self.settings,
-            self.catalog.clone(),
+            self.set.clone(),
             self.legacy_swapped,
             target,
             op,

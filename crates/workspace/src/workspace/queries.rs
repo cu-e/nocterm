@@ -200,7 +200,12 @@ impl Workspace {
     /// The registered panels the selected layout places, one list per group in bar order.
     /// Panels in the tray and panels that were never registered are not listed.
     pub fn panel_menu(&self) -> Vec<Vec<crate::PanelEntry>> {
-        crate::PanelEntry::listing(self.shell.current(), &self.registrations, &self.panels)
+        crate::PanelEntry::listing(
+            self.shell.current(),
+            self.shell.set(),
+            &self.registrations,
+            &self.panels,
+        )
     }
     /// Whether the registered panel of a contribution may exist: its plugin is not disabled.
     /// `false` for an unknown id.

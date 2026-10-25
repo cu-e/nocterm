@@ -21,7 +21,7 @@ use nocterm_ui::{ActiveDesign as _, notice::NoticeBar, zone_anchor};
 
 use super::{
     BarEntry, BarInputs, BarMenu,
-    inputs::{PanelToggle, Shrink},
+    inputs::{PanelToggle, Shrink, USER_WIDGET_MAX_WIDTH},
     overflow::{Frame, OverflowButton, SEPARATOR_WIDTH, SLOT_GAP, TOGGLE_WIDTH},
 };
 use crate::{
@@ -33,7 +33,7 @@ fn fixed_width(entry: &BarEntry, inputs: &BarInputs) -> Pixels {
     let measured = entry.id().and_then(|id| inputs.overflow().width_of(&id));
     match entry {
         BarEntry::Separator => SEPARATOR_WIDTH,
-        BarEntry::Widget(..) => measured.unwrap_or(px(0.)),
+        BarEntry::Widget(..) | BarEntry::UserWidget(..) => measured.unwrap_or(px(0.)),
         _ => measured.unwrap_or(TOGGLE_WIDTH).max(TOGGLE_WIDTH),
     }
 }
@@ -225,6 +225,10 @@ impl StatusBarRow {
         match entry.shrink() {
             Shrink::Fixed => wrapper.flex_none(),
             Shrink::Elastic => wrapper.min_w_0().overflow_hidden(),
+            Shrink::UserPlugin => wrapper
+                .min_w_0()
+                .max_w(px(USER_WIDGET_MAX_WIDTH))
+                .overflow_hidden(),
         }
         .child(self.entry(entry, &self.inputs, cx))
         .children(self.watch(entry))
@@ -294,7 +298,9 @@ impl StatusBarRow {
                     })
                     .into_any_element()
             }
-            BarEntry::Widget(_, view) => view.clone().into_any_element(),
+            BarEntry::Widget(_, view) | BarEntry::UserWidget(_, view) => {
+                view.clone().into_any_element()
+            }
             BarEntry::Separator => div()
                 .w(px(1.))
                 .h_4()

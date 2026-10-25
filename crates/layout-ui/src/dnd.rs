@@ -14,7 +14,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_plugin_model::{ContributionKind, GroupId, SystemContribution, Zone};
+use nocterm_plugin_model::{ContributionKind, ContributionRef, GroupId, Zone};
 use nocterm_ui::{DragSource, IconName, contribution_icon};
 use nocterm_window_layout::{EditOp, Slot, Subject};
 
@@ -51,16 +51,16 @@ pub(crate) struct Dragged {
 }
 
 impl Dragged {
-    pub(crate) fn contribution(contribution: &SystemContribution, snapshot: &Snapshot) -> Self {
-        let subject = Subject::Contribution(contribution.id.clone());
+    pub(crate) fn contribution(contribution: ContributionRef<'_>, snapshot: &Snapshot) -> Self {
+        let subject = Subject::Contribution(contribution.id().clone());
         Self {
-            kind: match contribution.kind {
+            kind: match contribution.kind() {
                 ContributionKind::Widget => Kind::Widget,
                 ContributionKind::Panel => Kind::Panel,
             },
-            title: contribution.title.into(),
-            icon: Some(contribution_icon(contribution.icon)),
-            pinned: contribution.pinned,
+            title: contribution.title().to_owned().into(),
+            icon: Some(contribution_icon(contribution.icon())),
+            pinned: contribution.pinned(),
             from: snapshot.before(&subject),
             subject,
         }

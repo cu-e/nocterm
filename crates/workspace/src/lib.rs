@@ -13,6 +13,9 @@
 //! the Clock plugin (`clock::PLUGIN`, `ClockView`: the local time from the `WallClock` of
 //! `Deps::with_clock`, written as its own `[clock]` section says and created only while a
 //! layout places it and the plugin is enabled),
+//! the rules under which a user plugin's panel opens or closes (`plugin_panels`,
+//! `PanelGroups::open_for_plugin`: only a registered, enabled, approved panel, never replacing a
+//! panel that shows, nothing while a panel asks for the user, focus left where it is),
 //! per-surface background membership, and per-column layout projections.
 //! Does not own: session connections, feature views, native filesystem implementations,
 //! persistence workers, project definitions or connection authentication,
@@ -24,8 +27,11 @@
 //! Layout, the checked plugin catalog and the optional `WallClock` arrive as explicit `Deps`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
 //! file drag contracts, immutable tab/session and selected monitor-source observations,
-//! plus, behind `user-plugins`, the `ShellCapabilities` provider of `workspace.kind` for user
-//! plugins (a state kept from the window's own events, never read from the shell on request),
+//! plus, behind `user-plugins`, the `ShellCapabilities` provider for user plugins: the
+//! `workspace.kind` observation (a state kept from the window's own events, never read from the
+//! shell on request), the `panels.set-open` effect and the `Surface` check of whether a panel may
+//! be shown (both read the workspace when they apply, and the window's rules decide), and the
+//! withdrawal of a user contribution (a built-in one is refused),
 //! plus separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
@@ -76,7 +82,7 @@ pub mod host;
 #[cfg(feature = "user-plugins")]
 mod host_capabilities;
 #[cfg(feature = "user-plugins")]
-pub use host_capabilities::ShellCapabilities;
+pub use host_capabilities::{ShellCapabilities, WithdrawRefused};
 mod item;
 mod local_terminal;
 mod open_on_host;

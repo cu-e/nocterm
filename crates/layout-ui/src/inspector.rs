@@ -15,7 +15,7 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_plugin_model::{
-    ContributionId, ContributionKind, GroupId, Owner, PluginCatalog, Side, SystemContribution, Zone,
+    ContributionId, ContributionKind, ContributionRef, GroupId, PluginSet, SetOwner, Side, Zone,
 };
 use nocterm_ui::{PluginSettingsForm, form};
 use nocterm_window_layout::{EditOp, Subject};
@@ -30,7 +30,7 @@ pub(crate) const INSPECTOR_MIN_REMS: f32 = 16.;
 #[derive(IntoElement)]
 pub(crate) struct Inspector {
     snapshot: Rc<Snapshot>,
-    catalog: Arc<PluginCatalog>,
+    catalog: Arc<PluginSet>,
     selected: Option<Subject>,
     form: Option<Entity<PluginSettingsForm>>,
     commands: Commands,
@@ -39,7 +39,7 @@ pub(crate) struct Inspector {
 impl Inspector {
     pub(crate) fn new(
         snapshot: Rc<Snapshot>,
-        catalog: Arc<PluginCatalog>,
+        catalog: Arc<PluginSet>,
         selected: Option<Subject>,
         form: Option<Entity<PluginSettingsForm>>,
         commands: Commands,
@@ -57,16 +57,16 @@ impl Inspector {
         let Some(contribution) = self.catalog.contribution(id) else {
             return form::note("This item is not known to this application.", cx);
         };
-        let kind = match contribution.kind {
+        let kind = match contribution.kind() {
             ContributionKind::Widget => "Status bar widget",
             ContributionKind::Panel => "Panel",
         };
         v_flex()
             .id(SharedString::from(format!("layout-inspector:{id}")))
-            .aria_label(contribution.title)
+            .aria_label(contribution.title())
             .test_support()
             .gap_3()
-            .child(heading(contribution.title, kind, cx))
+            .child(heading(contribution.title(), kind, cx))
             .child(self.owner(id, cx))
             .when(self.snapshot.editable(), |column| {
                 column.child(self.controls(contribution, cx))
@@ -81,10 +81,10 @@ impl Inspector {
             return div().into_any_element();
         };
         match owner {
-            Owner::Core => line("layout-owner", "Built in", cx),
-            Owner::Plugin(plugin) => {
-                let disabled = self.snapshot.disabled().contains(&plugin.id);
-                let target: SharedString = plugin.id.as_str().to_owned().into();
+            SetOwner::Core => line("layout-owner", "Built in", cx),
+            SetOwner::Plugin(plugin) => {
+                let disabled = self.snapshot.disabled().contains(plugin.id());
+                let target: SharedString = plugin.id().as_str().to_owned().into();
                 let (label, button) = if disabled {
                     ("Disabled", "layout-enable-plugin")
                 } else {
@@ -96,9 +96,9 @@ impl Inspector {
                     "Manage plugin\u{2026}"
                 };
                 let text = if disabled {
-                    format!("{label} \u{b7} Part of {}", plugin.name)
+                    format!("{label} \u{b7} Part of {}", plugin.name())
                 } else {
-                    format!("Part of {}", plugin.name)
+                    format!("Part of {}", plugin.name())
                 };
                 h_flex()
                     .gap_2()
@@ -122,8 +122,8 @@ impl Inspector {
         }
     }
 
-    fn controls(&self, contribution: &'static SystemContribution, cx: &App) -> AnyElement {
-        let id = contribution.id.clone();
+    fn controls(&self, contribution: ContributionRef<'_>, cx: &App) -> AnyElement {
+        let id = contribution.id().clone();
         let subject = Subject::Contribution(id.clone());
         let placed = self.snapshot.layout().is_placed(&id);
         let mut column = v_flex().id("layout-controls").test_support().gap_2();
@@ -144,7 +144,7 @@ impl Inspector {
                 .into_any_element();
         }
         column = column.child(self.arrange(&subject));
-        match contribution.kind {
+        match contribution.kind() {
             ContributionKind::Widget => {
                 column = column.child(self.zones(subject.clone()));
             }
@@ -252,11 +252,11 @@ impl Inspector {
     fn separator_and_remove(
         &self,
         subject: &Subject,
-        contribution: &'static SystemContribution,
+        contribution: ContributionRef<'_>,
     ) -> AnyElement {
         let after = self.snapshot.after(subject);
         let (insert, remove) = (self.commands.clone(), self.commands.clone());
-        let id = contribution.id.clone();
+        let id = contribution.id().clone();
         h_flex()
             .flex_wrap()
             .gap_2()
@@ -275,12 +275,12 @@ impl Inspector {
             ))
             .child(action(
                 "layout-op-remove",
-                if contribution.pinned {
+                if contribution.pinned() {
                     "Always shown"
                 } else {
                     "Remove from the bar"
                 },
-                !contribution.pinned,
+                !contribution.pinned(),
                 move |window, cx| {
                     let id = id.clone();
                     remove.run(window, cx, move |section, _, cx| {
@@ -375,9 +375,9 @@ impl Inspector {
     }
 }
 
-fn heading(title: &'static str, kind: &'static str, cx: &App) -> AnyElement {
+fn heading(title: &str, kind: &'static str, cx: &App) -> AnyElement {
     v_flex()
-        .child(div().text_base().font_semibold().child(title))
+        .child(div().text_base().font_semibold().child(title.to_owned()))
         .child(
             div()
                 .text_xs()

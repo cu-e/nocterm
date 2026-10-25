@@ -209,7 +209,7 @@ impl Workspace {
             self.context_selection_receipt(cx),
             &self.panels,
             self.ports.directory(),
-            (&self.shell, self.registrations.catalog()),
+            &self.shell,
         );
         self.chrome.bar_inputs(&regions, cx).looks()
     }
@@ -269,11 +269,10 @@ impl Workspace {
         if !self.registrations.is_registered(id) || self.shell.is_enabled(id) {
             return false;
         }
-        let name = self
-            .registrations
-            .catalog()
+        let set = self.shell.set();
+        let name = set
             .plugin_of(id)
-            .map_or("This plugin", |plugin| plugin.name);
+            .map_or("This plugin", |plugin| plugin.name());
         notice::info(
             window,
             cx,

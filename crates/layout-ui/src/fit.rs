@@ -8,7 +8,7 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::{Pixels, px};
-use nocterm_plugin_model::{PluginCatalog, Zone};
+use nocterm_plugin_model::{PluginSet, Zone};
 use nocterm_window_layout::{ResolvedItem, ResolvedMember};
 
 use crate::snapshot::Snapshot;
@@ -97,7 +97,7 @@ impl Fit {
     }
 
     /// How to draw the bar in a box as wide as the last one seen. Before any is seen, in full.
-    pub(crate) fn plan(&self, snapshot: &Snapshot, catalog: &PluginCatalog) -> Plan {
+    pub(crate) fn plan(&self, snapshot: &Snapshot, catalog: &PluginSet) -> Plan {
         let Some(width) = self.width.get() else {
             return Plan {
                 density: Density::Full,
@@ -126,7 +126,7 @@ impl Fit {
 
 /// The width the bar takes at `density`. Centred, the wider of the two sides counts on both, as
 /// the real bar centres its middle.
-fn needed(snapshot: &Snapshot, catalog: &PluginCatalog, density: Density, spread: Spread) -> f32 {
+fn needed(snapshot: &Snapshot, catalog: &PluginSet, density: Density, spread: Spread) -> f32 {
     let width = |zone| zone_width(snapshot, catalog, zone, density);
     let (left, centre, right) = (width(Zone::Left), width(Zone::Center), width(Zone::Right));
     let sides = match spread {
@@ -136,7 +136,7 @@ fn needed(snapshot: &Snapshot, catalog: &PluginCatalog, density: Density, spread
     BOX_PADDING + sides + centre + 2. * ZONE_GAP
 }
 
-fn zone_width(snapshot: &Snapshot, catalog: &PluginCatalog, zone: Zone, density: Density) -> f32 {
+fn zone_width(snapshot: &Snapshot, catalog: &PluginSet, zone: Zone, density: Density) -> f32 {
     let items = snapshot.layout().zone(zone);
     if items.is_empty() {
         return EMPTY;
@@ -145,9 +145,9 @@ fn zone_width(snapshot: &Snapshot, catalog: &PluginCatalog, zone: Zone, density:
         .iter()
         .map(|item| match item {
             ResolvedItem::Widget(id) => {
-                let text = catalog
-                    .contribution(id)
-                    .map_or(0, |spec| spec.preview.unwrap_or(spec.title).chars().count());
+                let text = catalog.contribution(id).map_or(0, |spec| {
+                    spec.preview().unwrap_or(spec.title()).chars().count()
+                });
                 chip(density, Some(text), snapshot.is_disabled(id, catalog))
             }
             ResolvedItem::Separator => 1.,

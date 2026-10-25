@@ -224,6 +224,12 @@ impl UserPlugin {
     }
 }
 
+/// What menus, the palette and toggles call a user plugin's contribution: the plugin's name
+/// before the title, so it cannot pass for one of the shell's own.
+pub fn user_label(plugin: &str, title: &str) -> String {
+    alloc::format!("Plugin \u{b7} {plugin} \u{2014} {title}")
+}
+
 fn shortened(text: &str, max: usize, field: &'static str) -> Result<String, UserPluginError> {
     let text: String = sanitize_text(text).trim().chars().take(max).collect();
     if text.is_empty() {

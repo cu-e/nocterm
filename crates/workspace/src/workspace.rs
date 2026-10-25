@@ -10,8 +10,9 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
-use nocterm_plugin_model::PluginCatalog;
+use nocterm_plugin_model::PluginSet;
 use nocterm_session::{Auth, HostAddress, Target};
+use nocterm_ui::{PluginSource, StaticPluginSource};
 
 mod background;
 mod bindings;
@@ -50,6 +51,8 @@ pub use registration::{
 mod layout_edit;
 mod layout_switch;
 mod panel_menu;
+#[cfg(feature = "user-plugins")]
+pub(crate) mod plugin_panels;
 mod sessions;
 mod shell_layout;
 pub use layout_edit::{LayoutEditError, edit_layouts, legacy_layout_swapped};
@@ -191,7 +194,7 @@ impl TabPane {
 #[derive(Clone)]
 pub struct Deps {
     layout: nocterm_ui::LayoutHandle,
-    catalog: Arc<PluginCatalog>,
+    source: Rc<dyn PluginSource>,
     settings: Option<nocterm_store::SettingsHandle>,
     clock: Option<Arc<dyn nocterm_core::clock::WallClock>>,
 }
@@ -199,22 +202,22 @@ pub struct Deps {
 impl Deps {
     /// Dependencies whose catalog lists the shell's own contributions and groups only, so a
     /// panel or widget of any other plugin is refused until the application supplies its
-    /// catalog with [`Deps::with_catalog`].
+    /// plugins with [`Deps::with_plugin_source`].
     pub fn new(layout: nocterm_ui::LayoutHandle) -> Self {
         let catalog = crate::plugin::catalog(&[], &[])
             .expect("the shell's own contributions form a valid catalog");
         Self {
             layout,
-            catalog: Arc::new(catalog),
+            source: Rc::new(StaticPluginSource::new(PluginSet::from(catalog))),
             settings: None,
             clock: None,
         }
     }
 
-    /// Registers panels and widgets against `catalog`, which holds the shell's own
-    /// contributions and groups beside those of the plugins.
-    pub fn with_catalog(mut self, catalog: impl Into<Arc<PluginCatalog>>) -> Self {
-        self.catalog = catalog.into();
+    /// Registers panels and widgets against the plugins `source` lists, which may change while
+    /// the windows are open: user plugins come and go.
+    pub fn with_plugin_source(mut self, source: Rc<dyn PluginSource>) -> Self {
+        self.source = source;
         self
     }
 
@@ -253,12 +256,8 @@ impl Workspace {
         let settings = deps.settings.unwrap_or_else(|| {
             nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx)
         });
-        let mut shell = shell_layout::ShellLayout::new(
-            &deps.layout,
-            settings.clone(),
-            deps.catalog.clone(),
-            cx,
-        );
+        let mut shell =
+            shell_layout::ShellLayout::new(&deps.layout, settings.clone(), deps.source.clone(), cx);
         let workspace = cx.weak_entity();
         let window_handle = window.window_handle();
         shell.follow(cx, move |cx| {
@@ -276,7 +275,7 @@ impl Workspace {
             shell,
             ports: ports::WorkspacePorts::default(),
             actions: actions::ActionRegistry::default(),
-            registrations: registration::Registrations::new(deps.catalog),
+            registrations: registration::Registrations::new(),
         };
         if let Some(clock) = deps.clock
             && let Err(error) = crate::clock::register(clock, settings, &mut this, window, cx)
@@ -389,7 +388,7 @@ impl Render for Workspace {
             self.context_selection_receipt(cx),
             &self.panels,
             self.ports.directory(),
-            (&self.shell, self.registrations.catalog()),
+            &self.shell,
         );
         let body = self
             .chrome
@@ -431,3 +430,5 @@ mod status_bar_menu_tests;
 mod status_bar_overflow_tests;
 #[cfg(test)]
 mod status_bar_zone_tests;
+#[cfg(test)]
+mod user_plugin_tests;

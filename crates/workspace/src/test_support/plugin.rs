@@ -215,5 +215,7 @@ pub fn deps_over(
     plugins: &[&'static SystemPlugin],
 ) -> Deps {
     let catalog = plugin::catalog(core, plugins).expect("the test plugins form a valid catalog");
-    Deps::new(layout).with_catalog(catalog)
+    Deps::new(layout).with_plugin_source(std::rc::Rc::new(nocterm_ui::StaticPluginSource::new(
+        nocterm_plugin_model::PluginSet::from(catalog),
+    )))
 }

@@ -1,7 +1,7 @@
 //! What the status bar draws, resolved against the window's state.
 
 use gpui_kit::{AnyView, App, SharedString};
-use nocterm_plugin_model::{ContributionId, PluginCatalog, Zone};
+use nocterm_plugin_model::{ContributionId, PluginSet, Zone};
 use nocterm_window_layout::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember};
 
 use super::{BarOverflow, Pointed, StatusBar};
@@ -24,6 +24,7 @@ pub(in crate::workspace) struct PanelToggle {
     badge: Option<SharedString>,
     selected: bool,
     attention: bool,
+    user: bool,
 }
 
 impl PanelToggle {
@@ -48,6 +49,11 @@ impl PanelToggle {
     pub(in crate::workspace) fn is_selected(&self) -> bool {
         self.selected
     }
+    /// Whether a user plugin owns the panel, so its toggle is the first to move into the
+    /// overflow menu.
+    pub(in crate::workspace) fn is_user(&self) -> bool {
+        self.user
+    }
     /// Whether the panel asks for the user, which keeps its toggle in the bar.
     pub(in crate::workspace) fn has_attention(&self) -> bool {
         self.attention
@@ -64,6 +70,8 @@ pub(in crate::workspace) enum BarEntry {
     LocalTerminal(ToggleLook),
     /// A registered widget's view.
     Widget(ContributionId, AnyView),
+    /// The view of a user plugin's widget, which the shell holds to a narrow, clipped width.
+    UserWidget(ContributionId, AnyView),
     Separator,
 }
 
@@ -74,7 +82,13 @@ pub(in crate::workspace) enum Shrink {
     Fixed,
     /// Truncates its own content, before any zone clips.
     Elastic,
+    /// A user plugin's widget: at most [`USER_WIDGET_MAX_WIDTH`] wide, clipped, and the first to
+    /// give way.
+    UserPlugin,
 }
+
+/// The widest a user plugin's widget is drawn, in pixels.
+pub(in crate::workspace) const USER_WIDGET_MAX_WIDTH: f32 = 160.;
 
 impl BarEntry {
     /// The contribution the entry draws; a separator has none.
@@ -83,7 +97,7 @@ impl BarEntry {
             Self::Panel(toggle) => Some(toggle.id().clone()),
             Self::Notices(_) => Some(NOTIFICATIONS.id.clone()),
             Self::LocalTerminal(_) => Some(LOCAL_TERMINAL.id.clone()),
-            Self::Widget(id, _) => Some(id.clone()),
+            Self::Widget(id, _) | Self::UserWidget(id, _) => Some(id.clone()),
             Self::Separator => None,
         }
     }
@@ -97,6 +111,7 @@ impl BarEntry {
                 Shrink::Fixed
             }
             Self::Notices(_) => Shrink::Elastic,
+            Self::UserWidget(..) => Shrink::UserPlugin,
         }
     }
 }
@@ -130,7 +145,7 @@ impl BarInputs {
             layout,
             groups: regions.groups,
             status,
-            catalog: regions.catalog,
+            set: regions.shell.set(),
             cx,
         };
         let mut right = resolver.zone(Zone::Right);
@@ -251,7 +266,7 @@ struct Resolver<'a> {
     layout: &'a ResolvedLayout,
     groups: &'a PanelGroups,
     status: &'a StatusBar,
-    catalog: &'a PluginCatalog,
+    set: &'a PluginSet,
     cx: &'a App,
 }
 
@@ -273,15 +288,18 @@ impl Resolver<'_> {
             return Some(BarEntry::Notices(zone));
         }
         if *id == LOCAL_TERMINAL.id {
-            return Some(BarEntry::LocalTerminal(ToggleLook::of(
+            return Some(BarEntry::LocalTerminal(ToggleLook::of_system(
                 &LOCAL_TERMINAL,
                 false,
             )));
         }
-        self.status
-            .view(id)
-            .cloned()
-            .map(|view| BarEntry::Widget(id.clone(), view))
+        let view = self.status.view(id).cloned()?;
+        let user = self.set.contribution(id).is_some_and(|c| c.is_user());
+        Some(if user {
+            BarEntry::UserWidget(id.clone(), view)
+        } else {
+            BarEntry::Widget(id.clone(), view)
+        })
     }
 
     fn group(&self, group: &ResolvedGroup, entries: &mut Vec<BarEntry>) {
@@ -295,15 +313,19 @@ impl Resolver<'_> {
 
     fn toggle(&self, id: &ContributionId) -> Option<BarEntry> {
         let (group, ix, panel) = self.groups.offered(id)?;
-        let contribution = self.catalog.contribution(id)?;
+        let contribution = self.set.contribution(id)?;
         Some(BarEntry::Panel(PanelToggle {
             id: id.clone(),
             group,
             ix,
-            look: ToggleLook::of(contribution, panel.attention()),
+            look: match self.set.plugin_of(id).filter(|_| contribution.is_user()) {
+                Some(plugin) => ToggleLook::of_user(contribution, plugin.name(), panel.attention()),
+                None => ToggleLook::of(contribution, panel.attention()),
+            },
             badge: panel.badge(self.cx),
             selected: self.groups.panel_is_open(id),
             attention: panel.attention(),
+            user: contribution.is_user(),
         }))
     }
 

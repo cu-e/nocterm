@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use nocterm_plugin_model::{GroupId, PluginCatalog, PluginId};
+use nocterm_plugin_model::{GroupId, PluginId, PluginSet};
 use nocterm_settings::{SettingsDocument, SettingsSection};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -102,7 +102,7 @@ impl LayoutSettings {
     pub fn resolve(
         &self,
         id: &PresetId,
-        catalog: &PluginCatalog,
+        catalog: &PluginSet,
         disabled: &BTreeSet<PluginId>,
     ) -> ResolvedLayout {
         if let Some(built_in) = BuiltIn::of(id) {
@@ -116,7 +116,7 @@ impl LayoutSettings {
 
     /// The saved presets' `primary` flags that `resolve` ignores, as (preset, group) pairs: the
     /// flag is set on a group other than the one the catalog makes primary.
-    pub fn ignored_primary_flags(&self, catalog: &PluginCatalog) -> Vec<(PresetId, GroupId)> {
+    pub fn ignored_primary_flags(&self, catalog: &PluginSet) -> Vec<(PresetId, GroupId)> {
         let primary = catalog.groups().iter().find(|spec| spec.primary);
         let mut ignored = Vec::new();
         for preset in &self.presets {

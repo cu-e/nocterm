@@ -8,12 +8,11 @@
 use std::{
     collections::{HashMap, HashSet},
     rc::Rc,
-    sync::Arc,
 };
 
 use gpui_kit::{AnyView, App, Context, Entity, EventEmitter, Pixels, Render, Subscription, Window};
 use nocterm_plugin_model::{
-    ContributionId, ContributionKind, Owner, PanelChrome, PanelTraits, PluginCatalog, Side,
+    ContributionId, ContributionKind, ContributionRef, PanelChrome, PanelTraits, PluginSet, Side,
     SystemContribution, Zone,
 };
 
@@ -113,9 +112,22 @@ impl<T: Panel> PanelRegistration<T> {
         Self::of(contribution, Origin::Entity(panel))
     }
 
+    /// As [`PanelRegistration::new`], for a panel of an installed user plugin. The panel is
+    /// always created by a factory and never expands.
+    pub fn user(
+        id: &ContributionId,
+        factory: impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<T> + 'static,
+    ) -> Self {
+        Self::named(id.clone(), Origin::Factory(Box::new(factory)))
+    }
+
     fn of(contribution: &SystemContribution, origin: Origin<T>) -> Self {
+        Self::named(contribution.id.clone(), origin)
+    }
+
+    fn named(id: ContributionId, origin: Origin<T>) -> Self {
         Self {
-            id: contribution.id.clone(),
+            id,
             origin,
             host: host_plain::<T>,
             expandable: false,
@@ -185,8 +197,16 @@ impl WidgetRegistration {
         contribution: &SystemContribution,
         factory: impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<V> + 'static,
     ) -> Self {
+        Self::user(&contribution.id, factory)
+    }
+
+    /// As [`WidgetRegistration::new`], for a widget of an installed user plugin.
+    pub fn user<V: Render>(
+        id: &ContributionId,
+        factory: impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<V> + 'static,
+    ) -> Self {
         Self {
-            id: contribution.id.clone(),
+            id: id.clone(),
             create: Rc::new(move |workspace, window, cx| factory(workspace, window, cx).into()),
             zone: None,
         }
@@ -214,18 +234,17 @@ impl WidgetRegistration {
     }
 }
 
-/// The catalog a window was composed with and the contributions registered against it.
+/// The contributions registered in a window and how to create their panels again. They are
+/// checked against the plugin set in force when they register.
 pub(super) struct Registrations {
-    catalog: Arc<PluginCatalog>,
     registered: HashSet<ContributionId>,
     /// How to create the panel of a registration again, by contribution id.
     factories: HashMap<ContributionId, PanelFactory>,
 }
 
 impl Registrations {
-    pub(super) fn new(catalog: Arc<PluginCatalog>) -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            catalog,
             registered: HashSet::new(),
             factories: HashMap::new(),
         }
@@ -241,85 +260,90 @@ impl Registrations {
         self.factories.get(id)
     }
 
-    pub(super) fn catalog(&self) -> &PluginCatalog {
-        &self.catalog
-    }
-
     pub(super) fn is_registered(&self, id: &ContributionId) -> bool {
         self.registered.contains(id)
     }
 
-    /// The catalog's descriptor of a contribution, if something was registered for it.
-    pub(super) fn registered_contribution(
+    /// Forgets a registration, so the contribution can register again.
+    #[cfg(feature = "user-plugins")]
+    pub(super) fn forget(&mut self, id: &ContributionId) {
+        self.registered.remove(id);
+        self.factories.remove(id);
+    }
+
+    /// The set's descriptor of a contribution, if something was registered for it.
+    pub(super) fn registered_contribution<'a>(
         &self,
+        set: &'a PluginSet,
         id: &ContributionId,
-    ) -> Option<&'static SystemContribution> {
+    ) -> Option<ContributionRef<'a>> {
         self.is_registered(id)
-            .then(|| self.catalog.contribution(id))
+            .then(|| set.contribution(id))
             .flatten()
     }
 
-    /// The id of the catalog's contribution with this text, for commands that carry one.
-    pub(super) fn named(&self, name: &str) -> Option<ContributionId> {
-        self.catalog
-            .entries()
-            .find(|contribution| contribution.id.as_str() == name)
-            .map(|contribution| contribution.id.clone())
+    /// The id of the contribution with this text, for commands that carry one.
+    pub(super) fn named(&self, set: &PluginSet, name: &str) -> Option<ContributionId> {
+        set.entries()
+            .find(|contribution| contribution.id().as_str() == name)
+            .map(|contribution| contribution.id().clone())
     }
 
     /// Checks a panel registration and records it. `expandable` and `eager` describe how the
     /// owner wants to host the panel.
     pub(super) fn admit_panel(
         &mut self,
+        set: &PluginSet,
         id: &ContributionId,
         expandable: bool,
         eager: bool,
-    ) -> Result<(&'static SystemContribution, PanelTraits), RegistrationError> {
-        let contribution = self.check(id, ContributionKind::Panel)?;
-        // The catalog refuses a panel without traits, so this guard only names the kind.
-        let Some(traits) = contribution.panel else {
+    ) -> Result<PanelTraits, RegistrationError> {
+        let contribution = self.check(set, id, ContributionKind::Panel)?;
+        // The set refuses a panel without traits, so this guard only names the kind.
+        let Some(traits) = contribution.panel() else {
             return Err(RegistrationError::KindMismatch {
                 id: id.clone(),
                 expected: ContributionKind::Widget,
             });
         };
-        if expandable && traits.chrome != PanelChrome::OwnHeader {
+        if expandable && (traits.chrome != PanelChrome::OwnHeader || contribution.is_user()) {
             return Err(RegistrationError::NotExpandable(id.clone()));
         }
         let may_be_disabled = matches!(
-            self.catalog.owner(id),
-            Some(Owner::Plugin(plugin)) if !plugin.required
+            set.plugin_of(id),
+            Some(plugin) if !plugin.required()
         );
         if eager && may_be_disabled {
             return Err(RegistrationError::EagerNotRequired(id.clone()));
         }
         self.registered.insert(id.clone());
-        Ok((contribution, traits))
+        Ok(traits)
     }
 
     /// Checks a widget registration and records it.
     pub(super) fn admit_widget(
         &mut self,
+        set: &PluginSet,
         id: &ContributionId,
-    ) -> Result<&'static SystemContribution, RegistrationError> {
-        let contribution = self.check(id, ContributionKind::Widget)?;
+    ) -> Result<(), RegistrationError> {
+        self.check(set, id, ContributionKind::Widget)?;
         self.registered.insert(id.clone());
-        Ok(contribution)
+        Ok(())
     }
 
-    fn check(
+    fn check<'a>(
         &self,
+        set: &'a PluginSet,
         id: &ContributionId,
         kind: ContributionKind,
-    ) -> Result<&'static SystemContribution, RegistrationError> {
-        let contribution = self
-            .catalog
+    ) -> Result<ContributionRef<'a>, RegistrationError> {
+        let contribution = set
             .contribution(id)
             .ok_or_else(|| RegistrationError::Unlisted(id.clone()))?;
-        if contribution.kind != kind {
+        if contribution.kind() != kind {
             return Err(RegistrationError::KindMismatch {
                 id: id.clone(),
-                expected: contribution.kind,
+                expected: contribution.kind(),
             });
         }
         if self.registered.contains(id) {

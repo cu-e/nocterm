@@ -522,13 +522,14 @@ mod transitions {
 
 #[test]
 fn settings_resolve_stored_presets_and_fall_back_to_default_for_unknown_ids() {
-    use nocterm_plugin_model::{GroupSpec, PluginCatalog};
+    use nocterm_plugin_model::{GroupSpec, PluginCatalog, PluginSet};
     let groups = [GroupSpec {
         id: GroupId::new("navigation"),
         title: "Sidebar",
         primary: true,
     }];
-    let catalog = PluginCatalog::new(&groups, &[], &[]).expect("a catalog with one group");
+    let catalog =
+        PluginSet::from(PluginCatalog::new(&groups, &[], &[]).expect("a catalog with one group"));
     let one = settings(Some("p1"), vec![stored("p1", "A")]);
     assert_eq!(
         one.resolve(&pid("gone"), &catalog, &NONE),
@@ -546,7 +547,7 @@ fn settings_resolve_stored_presets_and_fall_back_to_default_for_unknown_ids() {
 
 #[test]
 fn a_primary_flag_on_a_group_the_catalog_does_not_make_primary_is_reported_as_ignored() {
-    use nocterm_plugin_model::{GroupSpec, PluginCatalog};
+    use nocterm_plugin_model::{GroupSpec, PluginCatalog, PluginSet};
     let groups = [
         GroupSpec {
             id: GroupId::new("navigation"),
@@ -559,7 +560,8 @@ fn a_primary_flag_on_a_group_the_catalog_does_not_make_primary_is_reported_as_ig
             primary: false,
         },
     ];
-    let catalog = PluginCatalog::new(&groups, &[], &[]).expect("a catalog with two groups");
+    let catalog =
+        PluginSet::from(PluginCatalog::new(&groups, &[], &[]).expect("a catalog with two groups"));
     let flagged = |group: &'static str| BarItem::Group {
         id: GroupId::new(group),
         side: None,

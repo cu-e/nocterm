@@ -33,10 +33,12 @@ const EMPTY: Pixels = px(0.5);
 
 /// The ranks of what may be hidden, lowest first.
 mod rank {
-    pub(super) const WIDGET: u8 = 0;
-    pub(super) const TERMINAL: u8 = 1;
-    pub(super) const TOGGLE: u8 = 2;
-    pub(super) const OPEN_TOGGLE: u8 = 3;
+    /// A user plugin's widget or toggle: it goes before anything the application supplies.
+    pub(super) const USER: u8 = 0;
+    pub(super) const WIDGET: u8 = 1;
+    pub(super) const TERMINAL: u8 = 2;
+    pub(super) const TOGGLE: u8 = 3;
+    pub(super) const OPEN_TOGGLE: u8 = 4;
 }
 
 /// What the row learned of the window and its design.
@@ -198,6 +200,8 @@ impl BarOverflow {
                     Kind::Fixed
                 } else if toggle.is_selected() {
                     Kind::Hideable(rank::OPEN_TOGGLE)
+                } else if toggle.is_user() {
+                    Kind::Hideable(rank::USER)
                 } else {
                     Kind::Hideable(rank::TOGGLE)
                 },
@@ -209,10 +213,14 @@ impl BarOverflow {
                     .unwrap_or(TOGGLE_WIDTH),
                 kind: Kind::Hideable(rank::TERMINAL),
             },
-            BarEntry::Widget(id, _) => match measured(id) {
+            BarEntry::Widget(id, _) | BarEntry::UserWidget(id, _) => match measured(id) {
                 Some(width) if width > EMPTY => Slot {
                     width,
-                    kind: Kind::Hideable(rank::WIDGET),
+                    kind: Kind::Hideable(if matches!(entry, BarEntry::UserWidget(..)) {
+                        rank::USER
+                    } else {
+                        rank::WIDGET
+                    }),
                 },
                 // Not drawn yet, or drawing nothing: there is nothing to move.
                 _ => Slot {

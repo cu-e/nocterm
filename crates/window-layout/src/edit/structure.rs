@@ -2,7 +2,7 @@
 //! holds, on a preset in its written-out form.
 
 use nocterm_plugin_model::{
-    ContributionId, ContributionKind, GroupId, PluginCatalog, Side, SystemContribution, Zone,
+    ContributionId, ContributionKind, ContributionRef, GroupId, PluginSet, Side, Zone,
 };
 
 use super::{EditError, EditOp, Limit, Slot, Subject, settle::settle};
@@ -19,7 +19,7 @@ use crate::{
 pub(super) fn apply(
     next: &mut LayoutSettings,
     id: &PresetId,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
     op: EditOp,
 ) -> Result<(), EditError> {
     let Some(stored) = next.presets.iter_mut().find(|preset| preset.id == *id) else {
@@ -44,11 +44,11 @@ enum Spot {
 }
 
 struct Editing<'a> {
-    catalog: &'a PluginCatalog,
+    catalog: &'a PluginSet,
     preset: &'a mut LayoutPreset,
 }
 
-impl Editing<'_> {
+impl<'a> Editing<'a> {
     fn run(&mut self, op: EditOp) -> Result<(), EditError> {
         match op {
             EditOp::Move { subject, by } => self.shift(&subject, by),
@@ -133,9 +133,12 @@ impl Editing<'_> {
         }
     }
 
-    fn contribution(&self, id: &ContributionId) -> Result<&'static SystemContribution, EditError> {
+    /// The contribution the user may place: a user plugin's one only after its package was
+    /// approved for placement.
+    fn contribution(&self, id: &ContributionId) -> Result<ContributionRef<'a>, EditError> {
         self.catalog
             .contribution(id)
+            .filter(|_| self.catalog.is_placeable(id))
             .ok_or_else(|| EditError::Unknown(id.to_string()))
     }
 
@@ -163,7 +166,7 @@ impl Editing<'_> {
         let spot = self.find(subject);
         match subject {
             Subject::Contribution(id) => {
-                if self.contribution(id)?.kind != ContributionKind::Widget {
+                if self.contribution(id)?.kind() != ContributionKind::Widget {
                     return Err(EditError::WrongKind(subject.clone()));
                 }
             }
@@ -193,7 +196,7 @@ impl Editing<'_> {
     fn put_in_group(&mut self, panel: &ContributionId, group: &GroupId) -> Result<(), EditError> {
         let spec = self.contribution(panel)?;
         let subject = Subject::Contribution(panel.clone());
-        if spec.kind != ContributionKind::Panel {
+        if spec.kind() != ContributionKind::Panel {
             return Err(EditError::WrongKind(subject));
         }
         self.check_group(group)?;
@@ -201,7 +204,7 @@ impl Editing<'_> {
             self.take(spot);
         }
         if self.group_at(group).is_none() {
-            let zone = spec.placement.zone;
+            let zone = spec.placement().zone;
             if self.zone(zone).len() >= MAX_ZONE_ITEMS {
                 return Err(EditError::Full(Limit::ZoneItems));
             }
@@ -285,7 +288,7 @@ impl Editing<'_> {
     ) -> Result<(), EditError> {
         match (subject, place) {
             (Subject::Contribution(id), Slot::Zone(_)) => {
-                if self.contribution(id)?.kind != ContributionKind::Widget {
+                if self.contribution(id)?.kind() != ContributionKind::Widget {
                     return Err(EditError::WrongKind(subject.clone()));
                 }
             }
@@ -296,7 +299,7 @@ impl Editing<'_> {
                 }
             }
             (Subject::Contribution(id), Slot::Group(group)) => {
-                if self.contribution(id)?.kind != ContributionKind::Panel {
+                if self.contribution(id)?.kind() != ContributionKind::Panel {
                     return Err(EditError::WrongKind(subject.clone()));
                 }
                 self.check_group(group)?;
@@ -373,7 +376,7 @@ impl Editing<'_> {
     }
 
     fn remove_to_tray(&mut self, id: &ContributionId) -> Result<(), EditError> {
-        if self.contribution(id)?.pinned {
+        if self.contribution(id)?.pinned() {
             return Err(EditError::Pinned(id.clone()));
         }
         if let Some(spot) = self.find(&Subject::Contribution(id.clone())) {
@@ -392,8 +395,8 @@ impl Editing<'_> {
         if self.find(&subject).is_some() {
             return Ok(());
         }
-        match spec.kind {
-            ContributionKind::Widget => self.put_in_zone(&subject, spec.placement.zone),
+        match spec.kind() {
+            ContributionKind::Widget => self.put_in_zone(&subject, spec.placement().zone),
             ContributionKind::Panel => {
                 let group = hinted_group(self.catalog, spec)
                     .ok_or(EditError::WrongKind(subject))?
@@ -410,7 +413,7 @@ impl Editing<'_> {
         if self.find(&subject).is_some() {
             return Ok(());
         }
-        match spec.kind {
+        match spec.kind() {
             ContributionKind::Widget => self.put_in_zone(&subject, zone),
             ContributionKind::Panel => {
                 let group = hinted_group(self.catalog, spec)

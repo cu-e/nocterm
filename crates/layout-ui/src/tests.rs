@@ -9,12 +9,12 @@ use gpui_kit::{
 use nocterm_plugin_enablement::PluginEnablement;
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, FieldGroup, FieldKind, FieldSpec, GroupId,
-    GroupSpec, Icon, PanelChrome, PanelTraits, Placement, PluginCatalog, PluginId, SettingsSchema,
-    SystemContribution, SystemPlugin, WidthClass, Zone,
+    GroupSpec, Icon, PanelChrome, PanelTraits, Placement, PluginCatalog, PluginId, PluginSet,
+    SettingsSchema, SystemContribution, SystemPlugin, WidthClass, Zone,
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsHandle;
-use nocterm_ui::{FakePluginSettings, PluginSettingsDirectory};
+use nocterm_ui::{FakePluginSettings, PluginSettingsDirectory, StaticPluginSource};
 use nocterm_window_layout::LayoutSettings;
 
 use crate::section::LayoutEditorSection;
@@ -131,7 +131,7 @@ static OFF: SystemPlugin = SystemPlugin {
     settings_page: None,
 };
 
-fn catalog() -> Arc<PluginCatalog> {
+fn catalog() -> Arc<PluginSet> {
     let groups = [
         GroupSpec {
             id: GroupId::new("navigation"),
@@ -144,7 +144,9 @@ fn catalog() -> Arc<PluginCatalog> {
             primary: false,
         },
     ];
-    Arc::new(PluginCatalog::new(&groups, &[CORE], &[&TOOLS, &PLAIN, &OFF]).unwrap())
+    Arc::new(PluginSet::from(
+        PluginCatalog::new(&groups, &[CORE], &[&TOOLS, &PLAIN, &OFF]).unwrap(),
+    ))
 }
 
 pub(super) struct Fixture {
@@ -200,7 +202,15 @@ fn open_config(config: nocterm_store::SettingsConfig, cx: &mut TestAppContext) -
         let tools = FakePluginSettings::new(&TOOLS.settings, cx);
         let directory = PluginSettingsDirectory::new().with_system(&TOOLS, Rc::new(tools.clone()));
         let (window, section) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(|cx| LayoutEditorSection::new(settings.clone(), catalog(), directory, false, cx))
+            cx.new(|cx| {
+                LayoutEditorSection::new(
+                    settings.clone(),
+                    Rc::new(StaticPluginSource::new(catalog())),
+                    directory,
+                    false,
+                    cx,
+                )
+            })
         })
         .unwrap();
         (window, section, settings, tools)

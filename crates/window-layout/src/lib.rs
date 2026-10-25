@@ -3,8 +3,8 @@
 //! A preset arranges the contributions of the plugin catalog: the three zones of the status
 //! bar, the panel groups and their members, the tray of contributions that are registered but
 //! not placed, and the panels that open with the layout. [`resolve`] checks a preset against a
-//! [`PluginCatalog`](nocterm_plugin_model::PluginCatalog) and returns the arrangement the shell
-//! draws; the plugins it is told are disabled keep their entries in the preset and drop out of
+//! [`PluginSet`](nocterm_plugin_model::PluginSet) (the system catalog and the installed user
+//! plugins) and returns the arrangement the shell draws; the plugins it is told are disabled keep their entries in the preset and drop out of
 //! the arrangement. The built-in [`BuiltIn::Default`] is the empty preset, resolved from the
 //! placement hints of the contributions, and [`BuiltIn::Swapped`] is the same arrangement with
 //! every group on the other side.
@@ -25,7 +25,8 @@
 //! Ports used/provided: none; it reads `nocterm-plugin-model` and defines a section for
 //! `nocterm-settings`. Settings section: layouts. Globals: none.
 //! Invariants: built-ins are never stored and always resolve; unknown ids and the ids of
-//! disabled plugins survive in the preset but never render, open or get added by hints; a
+//! disabled plugins and user contributions the user has not approved for placement survive in the
+//! preset but never render, open or get added by hints; a
 //! contribution is placed at most once; at most one open panel per group; exactly one group is
 //! primary, the catalog's (a preset's own `primary` flag is ignored); pinned widgets are always
 //! placed (pinning has no effect on a panel); every panel has a hosting group, placed or not;
@@ -67,3 +68,5 @@ mod edit_tests;
 
 #[cfg(test)]
 mod edit_entry_tests;
+#[cfg(test)]
+mod user_plugin_tests;

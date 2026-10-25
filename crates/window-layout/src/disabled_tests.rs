@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, GroupId, GroupSpec, Icon, PanelChrome,
-    PanelTraits, Placement, PluginCatalog, PluginId, SettingsSchema, SystemContribution,
+    PanelTraits, Placement, PluginCatalog, PluginId, PluginSet, SettingsSchema, SystemContribution,
     SystemPlugin, WidthClass, Zone,
 };
 
@@ -95,7 +95,7 @@ static TOOLS: SystemPlugin = SystemPlugin {
     settings_page: None,
 };
 
-fn catalog() -> PluginCatalog {
+fn catalog() -> PluginSet {
     let groups = [
         GroupSpec {
             id: GroupId::new("navigation"),
@@ -108,7 +108,9 @@ fn catalog() -> PluginCatalog {
             primary: false,
         },
     ];
-    PluginCatalog::new(&groups, &[CORE], &[&TOOLS]).expect("a valid catalog")
+    PluginCatalog::new(&groups, &[CORE], &[&TOOLS])
+        .expect("a valid catalog")
+        .into()
 }
 
 fn tools_off() -> BTreeSet<PluginId> {
@@ -292,7 +294,8 @@ fn a_group_left_with_no_enabled_panel_leaves_the_bar_unless_it_is_primary() {
             primary: false,
         },
     ];
-    let catalog = PluginCatalog::new(&groups, &[CORE], &[&TOOLS, &ASSISTANT]).unwrap();
+    let catalog =
+        PluginSet::from(PluginCatalog::new(&groups, &[CORE], &[&TOOLS, &ASSISTANT]).unwrap());
     let off = BTreeSet::from([PluginId::new("chat"), PluginId::new("tools")]);
 
     let layout = BuiltIn::Default.resolve(&catalog, &off);

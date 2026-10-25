@@ -7,7 +7,7 @@ use gpui_kit::{
     Context, SharedString, WeakEntity, Window,
     component::menu::{PopupMenu, PopupMenuItem},
 };
-use nocterm_plugin_model::{ContributionId, PluginCatalog};
+use nocterm_plugin_model::{ContributionId, PluginSet};
 
 use super::BarEntry;
 use crate::{LayoutChoice, OpenLayoutSettings, SwitchLayout, Workspace, workspace::layout_edit};
@@ -30,7 +30,7 @@ impl Pointed {
 /// An item of the bar the menu can hide.
 struct Hideable {
     id: ContributionId,
-    title: &'static str,
+    title: String,
     pinned: bool,
 }
 
@@ -46,7 +46,7 @@ impl BarMenu {
     pub(in crate::workspace) fn new<'a>(
         pointed: Pointed,
         entries: impl IntoIterator<Item = &'a BarEntry>,
-        catalog: &PluginCatalog,
+        catalog: &PluginSet,
         layouts: Vec<LayoutChoice>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -55,9 +55,9 @@ impl BarMenu {
             .filter_map(BarEntry::id)
             .filter_map(|id| catalog.contribution(&id))
             .map(|contribution| Hideable {
-                id: contribution.id.clone(),
-                title: contribution.title,
-                pinned: contribution.pinned,
+                id: contribution.id().clone(),
+                title: contribution.title().to_owned(),
+                pinned: contribution.pinned(),
             })
             .collect();
         Self {

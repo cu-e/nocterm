@@ -67,7 +67,10 @@ fn add_project(
 
 /// The provider of a window, with its first refresh done.
 fn follow(workspace: &Entity<Workspace>, cx: &mut TestAppContext) -> ShellCapabilities {
-    let provider = cx.update(|cx| ShellCapabilities::new(workspace, cx));
+    let provider = cx.update(|cx| {
+        let window = cx.windows()[0];
+        ShellCapabilities::new(workspace, window, cx)
+    });
     cx.run_until_parked();
     provider
 }
@@ -172,7 +175,7 @@ fn the_provider_can_be_built_and_sampled_from_inside_a_workspace_update(cx: &mut
     let built = cx
         .update_window(window, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
-                let provider = ShellCapabilities::new(&cx.entity(), cx);
+                let provider = ShellCapabilities::new(&cx.entity(), window.window_handle(), cx);
                 // Sampling here would panic if it read the workspace, which is updating.
                 assert_eq!(provider.sample(&plugin(), cx), Err(HostError::Unavailable));
                 let session = SessionProbe::new(spec(), true, cx);

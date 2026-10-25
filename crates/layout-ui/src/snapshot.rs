@@ -3,9 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{
-    ContributionId, GroupId, GroupSpec, PluginCatalog, PluginId, Side, SystemContribution, Zone,
-};
+use nocterm_plugin_model::{ContributionId, GroupId, GroupSpec, PluginId, PluginSet, Side, Zone};
 use nocterm_window_layout::{
     BarItem, BuiltIn, LayoutSettings, PresetId, ResolvedGroup, ResolvedItem, ResolvedLayout,
     ResolvedMember, Slot, Subject, select,
@@ -46,7 +44,7 @@ pub(crate) struct Snapshot {
     choices: Vec<Choice>,
     layout: ResolvedLayout,
     /// Contributions the layout leaves out of the bar, in catalog order.
-    tray: Vec<&'static SystemContribution>,
+    tray: Vec<ContributionId>,
     /// Ids in the tray that this application does not know.
     unknown: Vec<ContributionId>,
     disabled: BTreeSet<PluginId>,
@@ -62,7 +60,7 @@ impl Snapshot {
         enablement: &PluginEnablement,
         legacy_swapped: bool,
         shown: Option<&PresetId>,
-        catalog: &PluginCatalog,
+        catalog: &PluginSet,
     ) -> Self {
         let in_use_id = select(settings, legacy_swapped);
         let shown = shown
@@ -80,7 +78,8 @@ impl Snapshot {
         let layout = settings.resolve(&shown, catalog, &BTreeSet::new());
         let tray = catalog
             .entries()
-            .filter(|contribution| !layout.is_placed(&contribution.id))
+            .filter(|contribution| !layout.is_placed(contribution.id()))
+            .map(|contribution| contribution.id().clone())
             .collect();
         let unknown = settings
             .preset(&shown)
@@ -135,7 +134,7 @@ impl Snapshot {
             layout,
             tray,
             unknown,
-            disabled: enablement.effective_disabled(catalog),
+            disabled: enablement.effective_disabled(catalog.catalog()),
             groups: catalog.groups().to_vec(),
             sides,
         }
@@ -161,7 +160,7 @@ impl Snapshot {
         &self.layout
     }
 
-    pub(crate) fn tray(&self) -> &[&'static SystemContribution] {
+    pub(crate) fn tray(&self) -> &[ContributionId] {
         &self.tray
     }
 
@@ -188,10 +187,10 @@ impl Snapshot {
         !self.built_in || self.in_use
     }
 
-    pub(crate) fn is_disabled(&self, id: &ContributionId, catalog: &PluginCatalog) -> bool {
+    pub(crate) fn is_disabled(&self, id: &ContributionId, catalog: &PluginSet) -> bool {
         catalog
             .plugin_of(id)
-            .is_some_and(|plugin| self.disabled.contains(&plugin.id))
+            .is_some_and(|plugin| self.disabled.contains(plugin.id()))
     }
 
     /// The zone a placed widget, group or panel is in.

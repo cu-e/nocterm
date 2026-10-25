@@ -53,7 +53,7 @@ pub use schema::{
     toggle_choice,
 };
 pub use set::{PluginSet, PluginSetError, SetOwner, UserEntry};
-pub use user::{PluginTier, UserContribution, UserPlugin, UserPluginError};
+pub use user::{PluginTier, UserContribution, UserPlugin, UserPluginError, user_label};
 pub use view::{ContributionRef, PluginRef};
 
 #[cfg(test)]

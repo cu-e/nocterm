@@ -7,7 +7,7 @@
 mod settle;
 mod structure;
 
-use nocterm_plugin_model::{ContributionId, GroupId, PluginCatalog, Side, Zone};
+use nocterm_plugin_model::{ContributionId, GroupId, PluginSet, Side, Zone};
 
 use crate::{
     BuiltIn, LayoutPreset, LayoutSettings, MAX_GROUP_MEMBERS, MAX_PRESETS, MAX_ZONE_ITEMS,
@@ -191,7 +191,7 @@ pub enum EditError {
 pub fn edit(
     settings: &mut LayoutSettings,
     legacy_swapped: bool,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
     target: EditTarget,
     op: EditOp,
 ) -> Result<EditOutcome, EditError> {
@@ -210,7 +210,7 @@ pub fn edit(
 fn run(
     next: &mut LayoutSettings,
     legacy_swapped: bool,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
     target: EditTarget,
     op: EditOp,
 ) -> Result<PresetId, EditError> {
@@ -249,7 +249,7 @@ fn run(
 fn copy_on_write(
     next: &mut LayoutSettings,
     built_in: BuiltIn,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
 ) -> Result<PresetId, EditError> {
     let id = add_copy(next, "Custom", settle::written_out(built_in, catalog))?;
     next.active = Some(id.clone());
@@ -278,7 +278,7 @@ fn add_copy(
 fn duplicate(
     next: &mut LayoutSettings,
     id: &PresetId,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
 ) -> Result<PresetId, EditError> {
     let (name, contents) = match BuiltIn::of(id) {
         Some(built_in) => (

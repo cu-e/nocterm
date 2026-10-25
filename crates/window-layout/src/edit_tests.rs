@@ -2,7 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use nocterm_plugin_model::{PluginCatalog, PluginId, SettingsSchema, SystemPlugin, Zone};
+use nocterm_plugin_model::{
+    PluginCatalog, PluginId, PluginSet, SettingsSchema, SystemPlugin, Zone,
+};
 
 use crate::{
     tests::{NONE, SHELL, groups, id, panel, show, widget},
@@ -23,8 +25,10 @@ static TOOLS: SystemPlugin = SystemPlugin {
     settings_page: None,
 };
 
-pub(crate) fn catalog() -> PluginCatalog {
-    PluginCatalog::new(&groups(), &[SHELL], &[&TOOLS]).expect("a valid catalog")
+pub(crate) fn catalog() -> PluginSet {
+    PluginCatalog::new(&groups(), &[SHELL], &[&TOOLS])
+        .expect("a valid catalog")
+        .into()
 }
 
 pub(crate) fn pid(id: &str) -> PresetId {

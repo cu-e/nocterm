@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use nocterm_plugin_model::{PluginCatalog, PluginId};
+use nocterm_plugin_model::{PluginId, PluginSet};
 
 use crate::{Bar, LayoutPreset, PresetId, ResolvedLayout, resolve};
 
@@ -52,7 +52,7 @@ impl BuiltIn {
     }
 
     /// The arrangement of this built-in against the catalog, without the disabled plugins.
-    pub fn resolve(self, catalog: &PluginCatalog, disabled: &BTreeSet<PluginId>) -> ResolvedLayout {
+    pub fn resolve(self, catalog: &PluginSet, disabled: &BTreeSet<PluginId>) -> ResolvedLayout {
         let default = resolve(&Self::preset(), catalog, disabled);
         match self {
             Self::Default => default,

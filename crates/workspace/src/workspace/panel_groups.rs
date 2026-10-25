@@ -634,6 +634,76 @@ impl PanelSlot {
     }
 }
 
+/// Why a plugin may not show its panel now.
+#[cfg(feature = "user-plugins")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OpeningRefused {
+    /// Another member of the panel's group shows, and showing this one would replace it.
+    WouldReplace,
+    /// A panel asks for the user, so nothing else may take the screen.
+    UserIsBeingAsked,
+}
+
+/// What a user plugin may do to the panels, under the rules that protect what the user is doing.
+#[cfg(feature = "user-plugins")]
+impl PanelGroups {
+    /// Shows the registered panel without taking focus. It refuses when that would replace a
+    /// panel that shows (the group is shown with another member selected) or while any panel
+    /// asks for the user; a panel that shows already is not a replacement. `Ok(None)` when
+    /// nothing changes: an unknown id or a panel that is not offered.
+    pub(super) fn open_for_plugin(
+        &mut self,
+        id: &ContributionId,
+    ) -> Result<Option<PanelTransition>, OpeningRefused> {
+        if let Some((key, _, ix)) = self.position_of(id) {
+            let group = self.group(key);
+            if group.is_shown() && !group.showing(ix) {
+                return Err(OpeningRefused::WouldReplace);
+            }
+        }
+        if self
+            .slots
+            .iter()
+            .filter_map(|slot| slot.panel.as_ref())
+            .any(HostedPanel::attention)
+        {
+            return Err(OpeningRefused::UserIsBeingAsked);
+        }
+        Ok(self.reveal_panel(id))
+    }
+
+    /// Closes the registered panel's group if the panel is the one showing, leaving focus alone
+    /// unless the panel held it. `None` when it does not show.
+    pub(super) fn close_for_plugin(
+        &mut self,
+        id: &ContributionId,
+        window: &Window,
+        cx: &mut App,
+    ) -> Option<PanelTransition> {
+        let (key, _, ix) = self.position_of(id)?;
+        self.group(key)
+            .showing(ix)
+            .then(|| self.close(key, window, cx))
+    }
+
+    /// Removes a registration whose plugin was uninstalled or replaced. A panel that shows closes
+    /// first, as when its plugin is disabled. Returns the transition and the panel for the
+    /// caller to apply and drop; the id can register again.
+    pub(super) fn forget(
+        &mut self,
+        id: &ContributionId,
+        window: &Window,
+        cx: &mut App,
+    ) -> (Option<PanelTransition>, Option<HostedPanel>) {
+        let released = self.release(id, window, cx);
+        self.ids.remove(id);
+        match released {
+            Some((transition, panel)) => (transition, Some(panel)),
+            None => (None, None),
+        }
+    }
+}
+
 #[cfg(test)]
 mod expanded_tests;
 #[cfg(test)]

@@ -20,7 +20,7 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_plugin_model::{PanelChrome, PluginCatalog, Side, WidthClass};
+use nocterm_plugin_model::{PanelChrome, Side, WidthClass};
 use nocterm_ui::IconName;
 
 use super::{
@@ -54,7 +54,6 @@ pub(super) struct Regions<'a> {
     groups: &'a PanelGroups,
     directory: Option<Rc<dyn crate::ConnectionDirectory>>,
     shell: &'a ShellLayout,
-    catalog: &'a PluginCatalog,
 }
 impl<'a> Regions<'a> {
     pub(super) fn new(
@@ -62,7 +61,7 @@ impl<'a> Regions<'a> {
         selection: ContextSelectionReceipt,
         groups: &'a PanelGroups,
         directory: Option<Rc<dyn crate::ConnectionDirectory>>,
-        (shell, catalog): (&'a ShellLayout, &'a PluginCatalog),
+        shell: &'a ShellLayout,
     ) -> Self {
         Self {
             tabs,
@@ -70,7 +69,6 @@ impl<'a> Regions<'a> {
             groups,
             directory,
             shell,
-            catalog,
         }
     }
 }
@@ -381,7 +379,7 @@ impl Chrome {
         let menu = status_bar::BarMenu::new(
             inputs.pointed().clone(),
             inputs.entries(),
-            regions.catalog,
+            regions.shell.set(),
             regions.shell.choices(),
             cx.weak_entity(),
         );

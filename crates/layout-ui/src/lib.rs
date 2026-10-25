@@ -40,12 +40,11 @@ mod snapshot;
 mod tray;
 mod zones;
 
-use std::sync::Arc;
-
 use gpui_kit::AppContext as _;
-use nocterm_plugin_model::PluginCatalog;
 use nocterm_store::SettingsHandle;
-use nocterm_ui::{EmbeddedPageSpec, PluginSettingsDirectory};
+use std::rc::Rc;
+
+use nocterm_ui::{EmbeddedPageSpec, PluginSettingsDirectory, PluginSource};
 
 pub use section::LayoutEditorSection;
 
@@ -55,7 +54,7 @@ pub use section::LayoutEditorSection;
 /// decides what the built-in layout in use is while nothing else has been chosen.
 pub fn layout_section(
     settings: SettingsHandle,
-    catalog: Arc<PluginCatalog>,
+    source: Rc<dyn PluginSource>,
     directory: PluginSettingsDirectory,
     legacy_swapped: bool,
 ) -> EmbeddedPageSpec {
@@ -63,7 +62,7 @@ pub fn layout_section(
         cx.new(|cx| {
             LayoutEditorSection::new(
                 settings.clone(),
-                catalog.clone(),
+                source.clone(),
                 directory.clone(),
                 legacy_swapped,
                 cx,

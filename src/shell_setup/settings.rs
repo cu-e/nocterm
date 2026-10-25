@@ -1,5 +1,5 @@
 //! Where each system plugin's settings are stored, for the Plugins page.
-use nocterm_ui::{PluginSettingsDirectory, SettingsPageSpec};
+use nocterm_ui::{PluginSettingsDirectory, PluginSource, SettingsPageSpec};
 use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::App;
@@ -21,7 +21,7 @@ pub(crate) fn install_guest_pages(
 ) -> Result<
     (
         nocterm_monitor_ui::Installed,
-        Arc<PluginCatalog>,
+        Rc<dyn PluginSource>,
         GuestPages,
     ),
     CatalogError,
@@ -29,8 +29,9 @@ pub(crate) fn install_guest_pages(
     let monitor = nocterm_monitor_ui::install(local_host.clone(), ui, cx);
     let plugins = Arc::new(super::plugin_catalog()?);
     let directory = plugin_settings(&monitor, ui.settings());
+    let source = super::plugin_source(&plugins, cx);
     let page = plugins_page(&plugins, directory.clone(), ui.settings(), cx);
-    let sections = super::layout_editor::appearance_sections(&plugins, directory, layout, ui, cx);
+    let sections = super::layout_editor::appearance_sections(&source, directory, layout, ui, cx);
     let guests = crate::settings_pages::guest_pages(
         keymap,
         &monitor,
@@ -40,7 +41,7 @@ pub(crate) fn install_guest_pages(
         plugins.clone(),
     )
     .with_appearance_sections(sections);
-    Ok((monitor, plugins, guests))
+    Ok((monitor, source, guests))
 }
 
 /// The Plugins page over the application catalog, writing `[plugins]` through `handle`. The

@@ -253,7 +253,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), RegistrationError> {
-        let (_, traits) = self.registrations.admit_panel(
+        self.layout_settings_changed(window, cx);
+        let set = self.shell.set().clone();
+        let traits = self.registrations.admit_panel(
+            &set,
             registration.id(),
             registration.expandable_requested(),
             registration.is_eager(),
@@ -293,7 +296,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), RegistrationError> {
-        self.registrations.admit_widget(registration.id())?;
+        self.layout_settings_changed(window, cx);
+        let set = self.shell.set().clone();
+        self.registrations.admit_widget(&set, registration.id())?;
         let id = registration.id().clone();
         let (factory, zone_hook) = registration.into_parts();
         self.chrome.status_bar_mut().add(id, factory, zone_hook);

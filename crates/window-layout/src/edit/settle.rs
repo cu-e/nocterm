@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use nocterm_plugin_model::{ContributionId, PluginCatalog, Zone};
+use nocterm_plugin_model::{ContributionId, PluginSet, Zone};
 
 use crate::{
     Bar, BarItem, BuiltIn, GroupEntry, LayoutPreset, ResolvedItem, ResolvedLayout, ResolvedMember,
@@ -14,7 +14,7 @@ use crate::{
 ///
 /// Every plugin counts as enabled, so the entries of disabled plugins sit where their hints put
 /// them and come back with their plugin.
-pub(super) fn written_out(built_in: BuiltIn, catalog: &PluginCatalog) -> LayoutPreset {
+pub(super) fn written_out(built_in: BuiltIn, catalog: &PluginSet) -> LayoutPreset {
     explicit(
         &built_in.resolve(catalog, &BTreeSet::new()),
         Vec::new(),
@@ -25,8 +25,8 @@ pub(super) fn written_out(built_in: BuiltIn, catalog: &PluginCatalog) -> LayoutP
 /// The preset as it resolves with every plugin enabled, written out.
 ///
 /// The id, name and contents are the same when the preset was already in this form. Ids the
-/// catalog does not know leave the bar for the tray, in bar order after the ones already there.
-pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginCatalog) -> LayoutPreset {
+/// catalog does not know or may not place leave the bar for the tray, in bar order after the ones already there.
+pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginSet) -> LayoutPreset {
     let layout = resolve(preset, catalog, &BTreeSet::new());
     let mut tray: Vec<ContributionId> = Vec::new();
     let held = preset.tray.iter().filter(|id| !layout.is_placed(id));
@@ -34,7 +34,7 @@ pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginCatalog) -> LayoutPr
         .iter()
         .flat_map(|zone| preset.bar.zone(*zone))
         .flat_map(ids_of)
-        .filter(|id| catalog.contribution(id).is_none());
+        .filter(|id| !catalog.is_placeable(id));
     for id in held.cloned().chain(unknown) {
         if !tray.contains(&id) {
             tray.push(id);

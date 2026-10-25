@@ -9,7 +9,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_plugin_model::{ContributionId, PluginCatalog, Side, Zone};
+use nocterm_plugin_model::{ContributionId, PluginSet, Side, Zone};
 use nocterm_ui::{contribution_icon, form};
 use nocterm_window_layout::{EditOp, ResolvedGroup, ResolvedItem, ResolvedMember, Slot, Subject};
 
@@ -35,7 +35,7 @@ const HINT: &str = "Drag an item to move it. Keys: Alt+\u{2190}\u{2192} order, A
 #[derive(IntoElement)]
 pub(crate) struct Zones {
     snapshot: Rc<Snapshot>,
-    catalog: Arc<PluginCatalog>,
+    catalog: Arc<PluginSet>,
     selected: Option<Subject>,
     focus: FocusHandle,
     commands: Commands,
@@ -44,7 +44,7 @@ pub(crate) struct Zones {
 impl Zones {
     pub(crate) fn new(
         snapshot: Rc<Snapshot>,
-        catalog: Arc<PluginCatalog>,
+        catalog: Arc<PluginSet>,
         selected: Option<Subject>,
         focus: FocusHandle,
         commands: Commands,
@@ -246,17 +246,17 @@ impl Zones {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .child(Icon::new(contribution_icon(contribution.icon)).small()),
+                            .child(Icon::new(contribution_icon(contribution.icon())).small()),
                     )
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
                             .text_sm()
-                            .child(contribution.title),
+                            .child(contribution.title().to_owned()),
                     ),
             )
-            .when(contribution.pinned, |label| {
+            .when(contribution.pinned(), |label| {
                 label.child(tag(format!("layout-pinned:{id}"), "Always shown", cx))
             })
             .when(disabled, |label| {

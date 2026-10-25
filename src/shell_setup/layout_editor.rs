@@ -1,13 +1,12 @@
 //! The editor of the status bar and panels, placed in Appearance.
-use std::sync::Arc;
+use std::rc::Rc;
 
-use nocterm_plugin_model::PluginCatalog;
-use nocterm_ui::{EmbeddedPageSpec, LayoutHandle, PluginSettingsDirectory, UiReady};
+use nocterm_ui::{EmbeddedPageSpec, LayoutHandle, PluginSettingsDirectory, PluginSource, UiReady};
 
 /// The sections Appearance shows below its own settings. The editor reads the same catalog and
 /// plugin settings as the Plugins page, and the frozen `workspace.swapped` flag the windows read.
 pub(super) fn appearance_sections(
-    catalog: &Arc<PluginCatalog>,
+    source: &Rc<dyn PluginSource>,
     directory: PluginSettingsDirectory,
     layout: &LayoutHandle,
     ui: &UiReady,
@@ -15,7 +14,7 @@ pub(super) fn appearance_sections(
 ) -> Vec<EmbeddedPageSpec> {
     vec![nocterm_layout_ui::layout_section(
         ui.settings().clone(),
-        catalog.clone(),
+        source.clone(),
         directory,
         nocterm_workspace::legacy_layout_swapped(layout, cx),
     )]

@@ -29,6 +29,11 @@ impl Selection {
         self.item = item;
     }
 
+    /// Selects nothing.
+    pub(crate) fn clear(&mut self) {
+        self.item = None;
+    }
+
     /// The target of an operation on the layout shown: the layout in use is named by its role,
     /// so that an operation queued behind the first edit of a built-in lands on the copy.
     pub(crate) fn target(&self, in_use: &PresetId) -> EditTarget {

@@ -1,5 +1,5 @@
 //! The panels the window menu lists.
-use nocterm_plugin_model::ContributionId;
+use nocterm_plugin_model::{ContributionId, PluginSet};
 use nocterm_window_layout::ResolvedLayout;
 
 use super::panel_groups::PanelGroups;
@@ -9,7 +9,9 @@ use super::registration::Registrations;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PanelEntry {
     id: ContributionId,
-    title: &'static str,
+    title: String,
+    /// The name of the user plugin that owns the panel; `None` for the shell and system plugins.
+    user_plugin: Option<String>,
     open: bool,
     available: bool,
 }
@@ -19,6 +21,7 @@ impl PanelEntry {
     /// tray and panels that were never registered are left out, and so are empty groups.
     pub(super) fn listing(
         layout: &ResolvedLayout,
+        set: &PluginSet,
         registrations: &Registrations,
         panels: &PanelGroups,
     ) -> Vec<Vec<Self>> {
@@ -28,10 +31,14 @@ impl PanelEntry {
                 group
                     .panels()
                     .filter_map(|id| {
-                        let contribution = registrations.registered_contribution(id)?;
+                        let contribution = registrations.registered_contribution(set, id)?;
                         Some(Self {
                             id: id.clone(),
-                            title: contribution.title,
+                            title: contribution.title().to_owned(),
+                            user_plugin: contribution
+                                .is_user()
+                                .then(|| set.plugin_of(id).map(|plugin| plugin.name().to_owned()))
+                                .flatten(),
                             open: panels.panel_is_open(id),
                             available: panels.panel_is_available(id),
                         })
@@ -46,8 +53,22 @@ impl PanelEntry {
         &self.id
     }
 
-    pub fn title(&self) -> &'static str {
-        self.title
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// The name of the user plugin that owns the panel, if it is one.
+    pub fn user_plugin(&self) -> Option<&str> {
+        self.user_plugin.as_deref()
+    }
+
+    /// What menus and the palette call the panel: a user plugin's panel is named after its
+    /// plugin, so it cannot pass for one of the shell's own.
+    pub fn label(&self) -> String {
+        match &self.user_plugin {
+            Some(name) => nocterm_plugin_model::user_label(name, &self.title),
+            None => self.title.clone(),
+        }
     }
 
     /// Whether the panel shows now.

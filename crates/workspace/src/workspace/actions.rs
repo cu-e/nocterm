@@ -72,7 +72,7 @@ impl ActionRegistry {
             }))
             .on_action(
                 cx.listener(|this, action: &crate::TogglePanel, window, cx| {
-                    if let Some(id) = this.registrations.named(&action.id) {
+                    if let Some(id) = this.registrations.named(this.shell.set(), &action.id) {
                         this.toggle_panel(&id, window, cx);
                     }
                 }),

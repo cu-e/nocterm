@@ -17,7 +17,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_plugin_model::{ContributionId, PluginCatalog, SystemContribution, Zone};
+use nocterm_plugin_model::{ContributionId, ContributionRef, PluginSet, Zone};
 use nocterm_ui::contribution_icon;
 use nocterm_window_layout::{ResolvedGroup, ResolvedItem, ResolvedMember, Subject};
 
@@ -33,7 +33,7 @@ use crate::{
 #[derive(IntoElement)]
 pub(crate) struct Preview {
     snapshot: Rc<Snapshot>,
-    catalog: Arc<PluginCatalog>,
+    catalog: Arc<PluginSet>,
     selected: Option<Subject>,
     fit: Fit,
     commands: Commands,
@@ -49,7 +49,7 @@ struct Setting {
 impl Preview {
     pub(crate) fn new(
         snapshot: Rc<Snapshot>,
-        catalog: Arc<PluginCatalog>,
+        catalog: Arc<PluginSet>,
         selected: Option<Subject>,
         fit: Fit,
         commands: Commands,
@@ -147,7 +147,7 @@ impl Preview {
         let Some(contribution) = self.catalog.contribution(id) else {
             return div().into_any_element();
         };
-        let text = contribution.preview.unwrap_or(contribution.title);
+        let text = contribution.preview().unwrap_or(contribution.title());
         let setting = Setting {
             density,
             landing: Landing::in_zone(zone, index),
@@ -268,28 +268,28 @@ impl Preview {
     /// otherwise the chip is its icon and a tooltip names it.
     fn chip(
         &self,
-        contribution: &'static SystemContribution,
-        text: Option<&'static str>,
+        contribution: ContributionRef<'_>,
+        text: Option<&str>,
         setting: Setting,
         cx: &App,
     ) -> AnyElement {
-        let id = contribution.id.clone();
+        let id = contribution.id().clone();
         let subject = Subject::Contribution(id.clone());
         let selected = self.selected.as_ref() == Some(&subject);
         let disabled = self.snapshot.is_disabled(&id, &self.catalog);
         let shown = text.filter(|_| setting.density == Density::Full);
-        let empty_when_idle = shown.is_some() && contribution.preview.is_none();
+        let empty_when_idle = shown.is_some() && contribution.preview().is_none();
         let commands = self.commands.clone();
         let menu = ItemMenu::new(&subject, &self.snapshot, &self.catalog, commands.clone());
         let theme = cx.theme();
         let name: SharedString = if disabled {
-            format!("{} (disabled)", contribution.title).into()
+            format!("{} (disabled)", contribution.title()).into()
         } else {
-            contribution.title.into()
+            contribution.title().to_owned().into()
         };
         let chip = h_flex()
             .id(SharedString::from(format!("layout-preview:{id}")))
-            .aria_label(contribution.title)
+            .aria_label(contribution.title())
             .test_support()
             .group(CHIP)
             .relative()
@@ -313,8 +313,8 @@ impl Preview {
                     section.pick(Some(subject), window, cx);
                 });
             })
-            .child(Icon::new(contribution_icon(contribution.icon)).small())
-            .children(shown.map(|text| div().text_xs().child(text)))
+            .child(Icon::new(contribution_icon(contribution.icon())).small())
+            .children(shown.map(|text| div().text_xs().child(text.to_owned())))
             .when(disabled && shown.is_some(), |chip| {
                 chip.child(tag(format!("layout-preview-disabled:{id}"), "Disabled", cx))
             })

@@ -105,7 +105,9 @@ mod owner {
     /// The default arrangement of the test catalog: `PANEL_A`, `PANEL_B` and `CORE_PANEL` in the
     /// sidebar in this order, `EXPANDABLE` in the assistant group and `TRAY_PANEL` left out.
     fn layout() -> ResolvedLayout {
-        let catalog = crate::plugin::catalog(&[TEST_CORE], &[&TEST_PLUGIN]).expect("valid");
+        let catalog = nocterm_plugin_model::PluginSet::from(
+            crate::plugin::catalog(&[TEST_CORE], &[&TEST_PLUGIN]).expect("valid"),
+        );
         BuiltIn::Default.resolve(&catalog, &BTreeSet::new())
     }
 
@@ -432,7 +434,9 @@ mod owner {
                 },
                 ..BuiltIn::preset()
             };
-            let catalog = crate::plugin::catalog(&[TEST_CORE], &[&TEST_PLUGIN]).expect("valid");
+            let catalog = nocterm_plugin_model::PluginSet::from(
+                crate::plugin::catalog(&[TEST_CORE], &[&TEST_PLUGIN]).expect("valid"),
+            );
             groups.adopt(&resolve(&moved, &catalog, &BTreeSet::new()));
             let (host, ix, _) = groups.offered(&id(PANEL_B)).expect("offered");
             assert_eq!((host, ix), (GroupKey::Assistant, 0));

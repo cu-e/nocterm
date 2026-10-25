@@ -9,9 +9,11 @@ use gpui_kit::{
     component::{h_flex, v_flex},
 };
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{ContributionKind, PluginCatalog, Zone};
+use nocterm_plugin_model::{ContributionKind, PluginSet, Zone};
 use nocterm_store::SettingsHandle;
-use nocterm_ui::{FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsForm, SettingsPage};
+use nocterm_ui::{
+    FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsForm, PluginSource, SettingsPage,
+};
 use nocterm_window_layout::{
     EditError, EditOp, EditOutcome, LayoutSettings, PresetId, Subject, select,
 };
@@ -54,7 +56,10 @@ pub(crate) struct Notice {
 /// panel groups, edited in place, with the settings of the selected item beside it.
 pub struct LayoutEditorSection {
     settings: SettingsHandle,
-    catalog: Arc<PluginCatalog>,
+    /// Where the plugins come from, which changes while the page is open when the user installs
+    /// or removes a plugin.
+    source: Rc<dyn PluginSource>,
+    catalog: Arc<PluginSet>,
     legacy_swapped: bool,
     selection: Selection,
     history: History,
@@ -74,7 +79,7 @@ pub struct LayoutEditorSection {
 impl LayoutEditorSection {
     pub fn new(
         settings: SettingsHandle,
-        catalog: Arc<PluginCatalog>,
+        source: Rc<dyn PluginSource>,
         plugin_settings: PluginSettingsDirectory,
         legacy_swapped: bool,
         cx: &mut Context<Self>,
@@ -86,8 +91,17 @@ impl LayoutEditorSection {
         let changed = settings.observe(cx, move |cx| {
             let _ = weak.update(cx, |section, cx| section.stored_changed(cx));
         });
+        let catalog = source.current(cx);
+        let weak = cx.weak_entity();
+        let plugins = source.observe(
+            Box::new(move |cx| {
+                let _ = weak.update(cx, |section, cx| section.plugins_changed(cx));
+            }),
+            cx,
+        );
         Self {
             settings,
+            source,
             catalog,
             legacy_swapped,
             selection: Selection::default(),
@@ -99,7 +113,7 @@ impl LayoutEditorSection {
             notice: None,
             focus: cx.focus_handle(),
             fit: Fit::default(),
-            _subscriptions: vec![changed],
+            _subscriptions: vec![changed, plugins],
         }
     }
 
@@ -113,7 +127,7 @@ impl LayoutEditorSection {
         )
     }
 
-    pub(crate) fn catalog_arc(&self) -> Arc<PluginCatalog> {
+    pub(crate) fn catalog_arc(&self) -> Arc<PluginSet> {
         self.catalog.clone()
     }
 
@@ -183,9 +197,9 @@ impl LayoutEditorSection {
             return None;
         };
         let plugin = self.catalog.plugin_of(id)?;
-        let (schema, source) = self.plugin_settings.get(&plugin.id)?;
+        let (schema, source) = self.plugin_settings.get(plugin.id())?;
         schema.for_contribution(id).next()?;
-        let (plugin, scope) = (plugin.id.clone(), FormScope::Contribution(id.clone()));
+        let (plugin, scope) = (plugin.id().clone(), FormScope::Contribution(id.clone()));
         Some(cx.new(|cx| {
             PluginSettingsForm::new(source, plugin, schema, scope, FormFrame::Host, window, cx)
         }))
@@ -313,7 +327,7 @@ impl LayoutEditorSection {
                 let title = self
                     .catalog
                     .contribution(id)
-                    .map_or(id.as_str(), |it| it.title);
+                    .map_or(id.as_str(), |it| it.title());
                 format!("\u{201c}{title}\u{201d} is always shown and cannot be hidden.").into()
             }
             LayoutEditError::Store(other) => format!("Could not save the layout: {other}").into(),
@@ -323,6 +337,19 @@ impl LayoutEditorSection {
             (EditOp::Rename { .. }, Mode::Renaming(draft)) => draft.refuse(text),
             _ => self.notice = Some(Notice::failed(text)),
         }
+    }
+
+    /// Reads the plugins again after one was installed, replaced or removed. An item that is no
+    /// longer in the set leaves the selection.
+    fn plugins_changed(&mut self, cx: &mut Context<Self>) {
+        self.catalog = self.source.current(cx);
+        if let Some(Subject::Contribution(id)) = self.selection.item()
+            && self.catalog.contribution(id).is_none()
+        {
+            self.selection.clear();
+            self.form = None;
+        }
+        cx.notify();
     }
 
     /// Forgets the history when the layouts changed by someone else, once no write of ours is
@@ -451,7 +478,7 @@ impl LayoutEditorSection {
                 let Subject::Contribution(panel) = subject else {
                     return None;
                 };
-                if self.catalog.contribution(panel)?.kind != ContributionKind::Panel {
+                if self.catalog.contribution(panel)?.kind() != ContributionKind::Panel {
                     return None;
                 }
                 let groups = &snapshot.groups();
@@ -481,7 +508,7 @@ impl LayoutEditorSection {
     fn movable(&self, subject: &Subject, snapshot: &Snapshot) -> Option<Subject> {
         match subject {
             Subject::Group(_) => Some(subject.clone()),
-            Subject::Contribution(id) => match self.catalog.contribution(id)?.kind {
+            Subject::Contribution(id) => match self.catalog.contribution(id)?.kind() {
                 ContributionKind::Widget => Some(subject.clone()),
                 ContributionKind::Panel => snapshot
                     .group_of(id)
@@ -536,8 +563,8 @@ impl SettingsPage for LayoutEditorSection {
         let subject = self
             .catalog
             .entries()
-            .find(|entry| entry.id.as_str() == anchor)
-            .map(|entry| Subject::Contribution(entry.id.clone()))
+            .find(|entry| entry.id().as_str() == anchor)
+            .map(|entry| Subject::Contribution(entry.id().clone()))
             .or_else(|| {
                 self.catalog
                     .group(anchor)

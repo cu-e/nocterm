@@ -152,7 +152,7 @@ fn row(
                 .into_any_element(),
             )
         }
-        BarEntry::Widget(id, view) => Some(
+        BarEntry::Widget(id, view) | BarEntry::UserWidget(id, view) => Some(
             div()
                 .id((ElementId::from("overflow-widget"), id.as_str().to_owned()))
                 .child(view.clone())

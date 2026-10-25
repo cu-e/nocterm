@@ -3,8 +3,8 @@
 use std::collections::{BTreeSet, HashSet};
 
 use nocterm_plugin_model::{
-    AutoPlace, ContributionId, ContributionKind, GroupId, GroupSpec, PluginCatalog, PluginId, Side,
-    SystemContribution, WidthClass, Zone,
+    AutoPlace, ContributionId, ContributionKind, ContributionRef, GroupId, GroupSpec, PluginId,
+    PluginSet, Side, WidthClass, Zone,
 };
 
 use crate::{
@@ -16,7 +16,8 @@ pub(crate) const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
 /// Arranges the catalog's contributions as `preset` asks.
 ///
 /// - Ids the catalog does not know, widgets named as panels and panels named as widgets are not
-///   placed; the preset itself is never changed.
+///   placed; the preset itself is never changed. A user contribution is placed only once the
+///   user approved placing its package (`placeable`).
 /// - A contribution is placed once: the first mention wins.
 /// - Contributions that appear neither in the bar nor in the tray are placed where their hints
 ///   say, if they ask to be shown, in `(zone, order)` order. Panels join their hinted group, or
@@ -32,7 +33,7 @@ pub(crate) const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
 ///   primary one needs a panel to stay.
 pub fn resolve(
     preset: &LayoutPreset,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
     disabled: &BTreeSet<PluginId>,
 ) -> ResolvedLayout {
     let mut arrangement = Arrangement::new(catalog, disabled);
@@ -47,7 +48,7 @@ pub fn resolve(
 
 /// The zones being filled and the contributions placed so far.
 struct Arrangement<'a> {
-    catalog: &'a PluginCatalog,
+    catalog: &'a PluginSet,
     disabled: &'a BTreeSet<PluginId>,
     zones: [Vec<ResolvedItem>; 3],
     placed: HashSet<ContributionId>,
@@ -56,7 +57,7 @@ struct Arrangement<'a> {
 }
 
 impl<'a> Arrangement<'a> {
-    fn new(catalog: &'a PluginCatalog, disabled: &'a BTreeSet<PluginId>) -> Self {
+    fn new(catalog: &'a PluginSet, disabled: &'a BTreeSet<PluginId>) -> Self {
         Self {
             catalog,
             disabled,
@@ -71,7 +72,7 @@ impl<'a> Arrangement<'a> {
     fn is_disabled(&self, id: &ContributionId) -> bool {
         self.catalog
             .plugin_of(id)
-            .is_some_and(|plugin| self.disabled.contains(&plugin.id))
+            .is_some_and(|plugin| self.disabled.contains(plugin.id()))
     }
 
     fn items(&mut self, zone: Zone) -> &mut Vec<ResolvedItem> {
@@ -126,10 +127,11 @@ impl<'a> Arrangement<'a> {
     /// Takes the contribution for the bar if it exists, has the kind, is enabled and is not
     /// placed yet. A disabled one is noted instead, once.
     fn claim(&mut self, id: &ContributionId, kind: ContributionKind) -> bool {
-        let fits = self
-            .catalog
-            .contribution(id)
-            .is_some_and(|contribution| contribution.kind == kind);
+        let fits = self.catalog.is_placeable(id)
+            && self
+                .catalog
+                .contribution(id)
+                .is_some_and(|contribution| contribution.kind() == kind);
         if fits && self.is_disabled(id) {
             if !self.skipped.contains(id) {
                 self.skipped.push(id.clone());
@@ -148,27 +150,29 @@ impl<'a> Arrangement<'a> {
 
     fn place_by_hints(&mut self, tray: &[ContributionId]) {
         for contribution in self.catalog.entries() {
-            let left_out = self.placed.contains(&contribution.id)
-                || tray.contains(&contribution.id)
-                || self.is_disabled(&contribution.id);
-            if contribution.placement.auto == AutoPlace::Show && !left_out {
+            let id = contribution.id();
+            let left_out = self.placed.contains(id)
+                || tray.contains(id)
+                || self.is_disabled(id)
+                || !self.catalog.is_placeable(id);
+            if contribution.placement().auto == AutoPlace::Show && !left_out {
                 self.place_by_hint(contribution);
             }
         }
     }
 
-    fn place_by_hint(&mut self, contribution: &SystemContribution) {
-        let zone = contribution.placement.zone;
-        self.placed.insert(contribution.id.clone());
-        if contribution.kind == ContributionKind::Widget {
+    fn place_by_hint(&mut self, contribution: ContributionRef<'_>) {
+        let zone = contribution.placement().zone;
+        self.placed.insert(contribution.id().clone());
+        if contribution.kind() == ContributionKind::Widget {
             self.items(zone)
-                .push(ResolvedItem::Widget(contribution.id.clone()));
+                .push(ResolvedItem::Widget(contribution.id().clone()));
             return;
         }
         let Some(spec) = hinted_group(self.catalog, contribution) else {
             return;
         };
-        let member = ResolvedMember::Panel(contribution.id.clone());
+        let member = ResolvedMember::Panel(contribution.id().clone());
         if let Some(group) = self.group(&spec.id) {
             group.members.push(member);
             return;
@@ -183,13 +187,13 @@ impl<'a> Arrangement<'a> {
 
     fn place_pinned(&mut self) {
         for contribution in self.catalog.entries() {
-            if contribution.pinned
-                && contribution.kind == ContributionKind::Widget
-                && !self.is_disabled(&contribution.id)
-                && self.placed.insert(contribution.id.clone())
+            if contribution.pinned()
+                && contribution.kind() == ContributionKind::Widget
+                && !self.is_disabled(contribution.id())
+                && self.placed.insert(contribution.id().clone())
             {
                 self.items(Zone::Right)
-                    .push(ResolvedItem::Widget(contribution.id.clone()));
+                    .push(ResolvedItem::Widget(contribution.id().clone()));
             }
         }
     }
@@ -235,15 +239,16 @@ impl<'a> Arrangement<'a> {
         layout.tray = catalog
             .entries()
             .filter(|contribution| {
-                contribution.kind == ContributionKind::Panel
-                    && !layout.is_placed(&contribution.id)
+                contribution.kind() == ContributionKind::Panel
+                    && catalog.is_placeable(contribution.id())
+                    && !layout.is_placed(contribution.id())
                     && !catalog
-                        .plugin_of(&contribution.id)
-                        .is_some_and(|plugin| disabled.contains(&plugin.id))
+                        .plugin_of(contribution.id())
+                        .is_some_and(|plugin| disabled.contains(plugin.id()))
             })
             .filter_map(|contribution| {
                 let spec = hinted_group(catalog, contribution)?;
-                Some((contribution.id.clone(), spec.id.clone()))
+                Some((contribution.id().clone(), spec.id.clone()))
             })
             .collect();
         let mut opened_groups = HashSet::new();
@@ -264,17 +269,17 @@ impl<'a> Arrangement<'a> {
 /// The group a panel opens in: the one it names, else the primary group for a navigation panel
 /// and the first other group for an assistant.
 pub(crate) fn hinted_group<'a>(
-    catalog: &'a PluginCatalog,
-    contribution: &SystemContribution,
+    catalog: &'a PluginSet,
+    contribution: ContributionRef<'_>,
 ) -> Option<&'a GroupSpec> {
     let groups = catalog.groups();
     let named = contribution
-        .placement
+        .placement()
         .group
         .and_then(|hint| catalog.group(hint));
     let by_width = || {
         let assistant = contribution
-            .panel
+            .panel()
             .is_some_and(|traits| traits.width == WidthClass::Assistant);
         groups
             .iter()

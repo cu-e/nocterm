@@ -85,6 +85,12 @@ impl StatusBar {
         });
     }
 
+    /// Forgets a widget, so its plugin's uninstall or replacement leaves no view behind.
+    #[cfg(feature = "user-plugins")]
+    pub(in crate::workspace) fn remove(&mut self, id: &ContributionId) {
+        self.widgets.retain(|entry| entry.id != *id);
+    }
+
     /// The widgets the arrangement places and that have no view yet.
     pub(in crate::workspace) fn pending(
         &self,

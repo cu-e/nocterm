@@ -297,9 +297,7 @@ fn open_host(
 }
 /// Dependencies whose plugin catalog lists the agent, over `layout`.
 fn deps(layout: nocterm_ui::LayoutHandle) -> nocterm_workspace::Deps {
-    let catalog = nocterm_workspace::plugin::catalog(&[], &[&crate::plugin::PLUGIN])
-        .expect("the agent plugin forms a valid catalog");
-    nocterm_workspace::Deps::new(layout).with_catalog(catalog)
+    nocterm_workspace::test_support::deps_over(layout, &[], &[&crate::plugin::PLUGIN])
 }
 /// Registers `view` as the agent panel the way installation does, before the host offers it.
 fn host_panel(

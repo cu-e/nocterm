@@ -8,7 +8,7 @@
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use gpui_kit::{App, Context, Task, Window};
-use nocterm_plugin_model::{ContributionId, PluginCatalog};
+use nocterm_plugin_model::{ContributionId, PluginSet};
 use nocterm_store::{SettingsHandle, StoreError};
 use nocterm_ui::{LayoutHandle, notice};
 use nocterm_window_layout::{EditError, EditOp, EditOutcome, EditTarget, LayoutSettings, edit};
@@ -86,7 +86,7 @@ impl From<StoreError> for LayoutEditError {
 /// without the edit running, which a store that drops the change reports.
 pub fn edit_layouts(
     settings: &SettingsHandle,
-    catalog: Arc<PluginCatalog>,
+    catalog: Arc<PluginSet>,
     legacy_swapped: bool,
     target: EditTarget,
     op: EditOp,

@@ -8,7 +8,7 @@ use gpui_kit::{
     Context, SharedString, Window,
     component::menu::{PopupMenu, PopupMenuItem},
 };
-use nocterm_plugin_model::{ContributionId, ContributionKind, PluginCatalog, Zone};
+use nocterm_plugin_model::{ContributionId, ContributionKind, PluginSet, Zone};
 use nocterm_window_layout::{EditOp, Subject};
 
 use crate::{commands::Commands, snapshot::Snapshot};
@@ -45,7 +45,7 @@ impl ItemMenu {
     pub(crate) fn new(
         subject: &Subject,
         snapshot: &Snapshot,
-        catalog: &PluginCatalog,
+        catalog: &PluginSet,
         commands: Commands,
     ) -> Rc<Self> {
         Rc::new(Self {
@@ -98,11 +98,7 @@ fn fill(
 }
 
 /// The entries for `subject`: the ones for an item in the bar, or for one waiting in the tray.
-pub(crate) fn entries(
-    subject: &Subject,
-    snapshot: &Snapshot,
-    catalog: &PluginCatalog,
-) -> Vec<Entry> {
+pub(crate) fn entries(subject: &Subject, snapshot: &Snapshot, catalog: &PluginSet) -> Vec<Entry> {
     let editable = snapshot.editable();
     let run = |label: &str, op: EditOp, enabled: bool| Entry::Do {
         label: label.to_owned(),
@@ -156,7 +152,7 @@ pub(crate) fn entries(
         }
     }
     if let Subject::Contribution(id) = subject
-        && catalog.contribution(id).is_some_and(|spec| !spec.pinned)
+        && catalog.contribution(id).is_some_and(|spec| !spec.pinned())
     {
         entries.push(Entry::Rule);
         let op = EditOp::RemoveToTray { id: id.clone() };
@@ -165,10 +161,10 @@ pub(crate) fn entries(
     entries
 }
 
-fn is_panel(id: &ContributionId, catalog: &PluginCatalog) -> bool {
+fn is_panel(id: &ContributionId, catalog: &PluginSet) -> bool {
     catalog
         .contribution(id)
-        .is_some_and(|spec| spec.kind == ContributionKind::Panel)
+        .is_some_and(|spec| spec.kind() == ContributionKind::Panel)
 }
 
 /// "Move into group", with the groups other than the panel's own.
@@ -200,7 +196,7 @@ fn move_into_group(panel: &ContributionId, snapshot: &Snapshot, editable: bool) 
 fn unplaced(
     subject: &Subject,
     snapshot: &Snapshot,
-    catalog: &PluginCatalog,
+    catalog: &PluginSet,
     run: &impl Fn(&str, EditOp, bool) -> Entry,
 ) -> Vec<Entry> {
     let Subject::Contribution(id) = subject else {

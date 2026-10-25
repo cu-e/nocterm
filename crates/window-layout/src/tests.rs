@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use nocterm_plugin_model::{
     AutoPlace, ContributionId, ContributionKind, GroupId, GroupSpec, Icon, PanelChrome,
-    PanelTraits, Placement, PluginCatalog, PluginId, Side, SystemContribution, WidthClass, Zone,
+    PanelTraits, Placement, PluginCatalog, PluginId, PluginSet, Side, SystemContribution,
+    WidthClass, Zone,
 };
 
 use super::*;
@@ -102,11 +103,13 @@ pub(crate) fn groups() -> [GroupSpec; 2] {
     ]
 }
 
-fn catalog_of(core: &'static [SystemContribution]) -> PluginCatalog {
-    PluginCatalog::new(&groups(), &[core], &[]).expect("a valid catalog")
+fn catalog_of(core: &'static [SystemContribution]) -> PluginSet {
+    PluginCatalog::new(&groups(), &[core], &[])
+        .expect("a valid catalog")
+        .into()
 }
 
-fn catalog() -> PluginCatalog {
+fn catalog() -> PluginSet {
     catalog_of(SHELL)
 }
 
