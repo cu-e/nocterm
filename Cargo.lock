@@ -5517,6 +5517,7 @@ dependencies = [
  "nocterm-core",
  "nocterm-plugin-api",
  "nocterm-plugin-model",
+ "proptest",
  "sha2 0.10.9",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",

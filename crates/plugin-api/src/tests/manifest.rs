@@ -1,6 +1,8 @@
 use alloc::{format, string::ToString};
 
-use nocterm_plugin_model::{AutoPlace, ContributionKind, FieldKind, Icon, Zone as ModelZone};
+use nocterm_plugin_model::{
+    AutoPlace, ContributionKind, FieldEdit, FieldKind, Icon, SettingValue, Zone as ModelZone, apply,
+};
 use proptest::prelude::*;
 
 use super::support::{EXAMPLE, dto, example, host, manifest};
@@ -477,5 +479,68 @@ proptest! {
         dto.contributions[0].title = title;
         dto.contributions[0].view.nodes[2].text = Some(template);
         let _ = Manifest::validate(&dto, &HostContext::default());
+    }
+}
+
+fn arbitrary_edit() -> impl Strategy<Value = (&'static str, FieldEdit)> {
+    let key = prop_oneof![
+        Just("on"),
+        Just("mode"),
+        Just("tags"),
+        Just("size"),
+        Just("name"),
+        Just("nope"),
+    ];
+    let option = prop_oneof![Just("fast"), Just("slow"), Just("other")].prop_map(str::to_string);
+    let value = prop_oneof![
+        any::<bool>().prop_map(SettingValue::Bool),
+        option.clone().prop_map(SettingValue::Choice),
+        proptest::collection::vec(option.clone(), 0..4).prop_map(SettingValue::Choices),
+        prop_oneof![any::<i32>(), -2i32..12].prop_map(SettingValue::Number),
+        ".{0,40}".prop_map(SettingValue::Text),
+    ];
+    let edit = prop_oneof![
+        value.prop_map(FieldEdit::Set),
+        (option, any::<bool>()).prop_map(|(option, on)| FieldEdit::Toggle { option, on }),
+        any::<bool>().prop_map(|up| FieldEdit::Step { up }),
+    ];
+    (key, edit)
+}
+
+proptest! {
+    #[test]
+    fn edits_of_a_packages_settings_keep_every_value_inside_its_field(
+        edits in proptest::collection::vec(arbitrary_edit(), 0..24),
+    ) {
+        let manifest = Manifest::validate(&dto(SETTINGS), &host()).unwrap();
+        let schema = manifest.plugin().settings();
+        let mut values = schema.defaults();
+        for (key, edit) in edits {
+            if let Ok(value) = apply(schema, &values, key, edit) {
+                values.insert(key, value);
+            }
+            for field in schema.fields() {
+                let value = field.current(&values);
+                match (&field.kind, value) {
+                    (FieldKind::Toggle { .. }, SettingValue::Bool(_)) => {}
+                    (FieldKind::Choice { options, .. }, SettingValue::Choice(chosen)) => {
+                        prop_assert!(options.iter().any(|option| option.key == chosen));
+                    }
+                    (FieldKind::MultiChoice { options, max, .. }, SettingValue::Choices(chosen)) => {
+                        prop_assert!(chosen.len() <= usize::from(*max));
+                        for one in &chosen {
+                            prop_assert!(options.iter().any(|option| option.key == *one));
+                        }
+                    }
+                    (FieldKind::Number { min, max, .. }, SettingValue::Number(number)) => {
+                        prop_assert!((*min..=*max).contains(&number));
+                    }
+                    (FieldKind::Text { max_len, .. }, SettingValue::Text(text)) => {
+                        prop_assert!(text.chars().count() <= usize::from(*max_len));
+                    }
+                    (kind, value) => prop_assert!(false, "{kind:?} holds {value:?}"),
+                }
+            }
+        }
     }
 }

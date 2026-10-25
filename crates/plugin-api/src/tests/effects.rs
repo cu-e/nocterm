@@ -1,5 +1,7 @@
 use alloc::{string::ToString, vec::Vec};
 
+use proptest::prelude::*;
+
 use crate::{
     Effect, EffectRequest, Effects, EffectsError, Event, HostError, LimitError, MAX_EFFECTS,
     capability::{
@@ -94,4 +96,53 @@ fn host_errors_use_frozen_names_and_never_include_faulted() {
         "\"not-granted\""
     );
     assert!(serde_json::from_str::<HostError>("\"faulted\"").is_err());
+}
+
+fn arbitrary_request() -> impl Strategy<Value = EffectRequest> {
+    let key = proptest::option::of(prop_oneof![
+        Just("a".to_string()),
+        Just("b".to_string()),
+        Just("A b".to_string()),
+        "[a-z0-9._-]{0,70}",
+    ]);
+    let stored = prop_oneof![
+        "[a-z0-9._-]{0,70}",
+        Just("k".to_string()),
+        Just("".to_string())
+    ];
+    let value = prop_oneof![
+        ".{0,20}".prop_map(|text| text),
+        (4090usize..4100).prop_map(|len| "x".repeat(len)),
+    ];
+    let effect = prop_oneof![
+        (stored.clone(), value).prop_map(|(key, value)| Effect::StorageSet(Set { key, value })),
+        stored.prop_map(|key| Effect::StorageRemove(crate::capability::storage::Remove { key })),
+    ];
+    (key, effect).prop_map(|(key, effect)| EffectRequest { key, effect })
+}
+
+proptest! {
+    #[test]
+    fn accepted_effects_obey_the_count_the_keys_and_the_value_limit(
+        requests in proptest::collection::vec(arbitrary_request(), 0..12),
+    ) {
+        if Effects(requests.clone()).check().is_ok() {
+            prop_assert!(requests.len() <= MAX_EFFECTS);
+            let keys: Vec<_> = requests.iter().filter_map(|r| r.key.as_deref()).collect();
+            let mut distinct = keys.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            prop_assert_eq!(distinct.len(), keys.len());
+            for request in &requests {
+                if let Effect::StorageSet(set) = &request.effect {
+                    prop_assert!(set.value.len() <= MAX_VALUE);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn effects_read_from_arbitrary_text_never_panic(text in ".{0,200}") {
+        let _ = serde_json::from_str::<Effects>(&text);
+    }
 }

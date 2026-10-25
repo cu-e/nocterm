@@ -6,6 +6,7 @@ use nocterm_plugin_api::{
     API_VERSION, ContentHash, MAX_PACKAGE_BYTES, PackageError, PluginPackages as _,
 };
 use nocterm_plugin_model::PluginId;
+use proptest::prelude::*;
 use tempfile::TempDir;
 
 use crate::{PackageStore, parse_package, sha256};
@@ -324,4 +325,43 @@ fn deeply_nested_tables_are_refused_not_recursed_into() {
         panic!("{error:?}");
     };
     assert!(reason.contains("recursion"), "{reason}");
+}
+
+/// One edit of the bytes of a valid package: a byte replaced, a byte inserted or the tail cut.
+fn damage(bytes: &mut Vec<u8>, at: usize, with: u8, how: u8) {
+    if bytes.is_empty() {
+        return;
+    }
+    let at = at % bytes.len();
+    match how % 3 {
+        0 => bytes[at] = with,
+        1 => bytes.insert(at, with),
+        _ => bytes.truncate(at),
+    }
+}
+
+proptest! {
+    #[test]
+    fn arbitrary_bytes_are_refused_or_kept_with_the_hash_of_their_bytes(
+        bytes in proptest::collection::vec(any::<u8>(), 0..400),
+    ) {
+        if let Ok(package) = parse_package(bytes.clone(), &[]) {
+            prop_assert_eq!(package.bytes(), bytes.as_slice());
+            prop_assert_eq!(*package.hash(), sha256(&bytes));
+        }
+    }
+
+    #[test]
+    fn a_damaged_package_never_panics_and_keeps_the_hash_of_what_was_read(
+        edits in proptest::collection::vec((any::<usize>(), any::<u8>(), any::<u8>()), 1..6),
+    ) {
+        let mut bytes = PACKAGE.as_bytes().to_vec();
+        for (at, with, how) in edits {
+            damage(&mut bytes, at, with, how);
+        }
+        if let Ok(package) = parse_package(bytes.clone(), &["Files"]) {
+            prop_assert_eq!(*package.hash(), sha256(&bytes));
+            prop_assert!(package.manifest().plugin().id().is_user());
+        }
+    }
 }

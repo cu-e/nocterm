@@ -17,6 +17,7 @@ sha2 = "0.10"
 toml.workspace = true
 
 [dev-dependencies]
+proptest = "1"
 tempfile.workspace = true
 
 [lints]
