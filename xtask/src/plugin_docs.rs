@@ -18,7 +18,7 @@ fn markdown(surface: &Value) -> String {
     let mut text = String::from(crate::GENERATED);
     let _ = write!(
         text,
-        "# Plugin API reference\n\nPreview. This is the contract of declarative user plugins at API {}. \
+        "# Plugin API reference\n\nPreview. This is the contract of user plugins at API {}, declarative packages and code packages. \
          Read the [guide](guide.md) first. Names and limits below are enforced by the host; \
          a package that breaks one is refused with the reason.\n\n",
         surface["api_version"].as_str().unwrap_or_default()
@@ -27,6 +27,7 @@ fn markdown(surface: &Value) -> String {
     manifest(&mut text, surface);
     vocabulary(&mut text, surface);
     limits(&mut text, surface);
+    code_abi(&mut text);
     text
 }
 
@@ -107,6 +108,41 @@ fn limits(text: &mut String, surface: &Value) {
     for (name, value) in surface["limits"].as_object().into_iter().flatten() {
         let _ = writeln!(text, "| `{name}` | {value} |");
     }
+}
+
+/// The ABI of a code package, from the constants of `nocterm-plugin-abi`.
+fn code_abi(text: &mut String) {
+    use nocterm_plugin_abi::{
+        ABI_VERSION, CALL_FUEL, MAX_INPUT_BYTES, MAX_LIVE_INSTANCES, MAX_LOG_LINES,
+        MAX_REPLY_BYTES, MEMORY_BYTES, START_FUEL, names::EXPORTS,
+    };
+    use nocterm_plugin_api::{MANIFEST_SECTION, MAX_MODULE_BYTES};
+    let _ = write!(
+        text,
+        "\n## Code package ABI\n\nA code package is one WebAssembly module (at most {MAX_MODULE_BYTES} bytes) \
+         whose custom section `{MANIFEST_SECTION}` holds the manifest TOML, with `runtime = \"wasm\"`. \
+         The module has no imports: it cannot reach the host except through the call below. \
+         ABI version: {ABI_VERSION}. The golden file `crates/plugin-abi/abi-golden.json` pins the \
+         bytes of the wire types, and the host refuses a module whose `nocterm_abi_version` differs.\n\n\
+         | Export | Signature |\n| --- | --- |\n"
+    );
+    for (name, signature) in EXPORTS {
+        let _ = writeln!(text, "| `{name}` | `{signature}` |");
+    }
+    let _ = write!(
+        text,
+        "\nThe host writes a postcard `Call` into a buffer from `nocterm_alloc` and calls \
+         `nocterm_call(ptr, len)`; the guest returns `ptr << 32 | len` of a postcard `Reply`. \
+         The reply pointer stays valid until the next call.\n\n\
+         | ABI limit | Value |\n| --- | --- |\n\
+         | Call input | {MAX_INPUT_BYTES} bytes |\n\
+         | Reply | {MAX_REPLY_BYTES} bytes |\n\
+         | Log lines per call | at most {MAX_LOG_LINES} |\n\
+         | Fuel per call | {CALL_FUEL} |\n\
+         | Fuel to instantiate | {START_FUEL} |\n\
+         | Linear memory per instance | {MEMORY_BYTES} bytes |\n\
+         | Live instances | {MAX_LIVE_INSTANCES} |\n"
+    );
 }
 
 /// A list of names as inline code, comma separated.

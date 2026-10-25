@@ -39,6 +39,16 @@ pub const MAX_REPLY_BYTES: usize = 256 * 1024;
 /// Most log lines a reply carries. A reply with more is malformed and counts as a fault.
 pub const MAX_LOG_LINES: usize = 8;
 
+/// Fuel one guest call may burn before the host stops it (`Deadline`). The spike measured about
+/// 1.2 M for a 256-node render.
+pub const CALL_FUEL: u64 = 4_000_000;
+/// Fuel the instantiation and the version check may burn.
+pub const START_FUEL: u64 = 20_000_000;
+/// The most linear memory one instance may hold, in bytes.
+pub const MEMORY_BYTES: usize = 16 * 1024 * 1024;
+/// The most live instances of code plugins, which bounds guest memory at 256 MiB.
+pub const MAX_LIVE_INSTANCES: usize = 16;
+
 /// Packs a guest pointer and a length into the `i64` bits `nocterm_call` returns.
 pub const fn pack(ptr: u32, len: u32) -> u64 {
     ((ptr as u64) << 32) | len as u64

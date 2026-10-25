@@ -2,7 +2,7 @@
 
 # Plugin API reference
 
-Preview. This is the contract of declarative user plugins at API 0.1. Read the [guide](guide.md) first. Names and limits below are enforced by the host; a package that breaks one is refused with the reason.
+Preview. This is the contract of user plugins at API 0.1, declarative packages and code packages. Read the [guide](guide.md) first. Names and limits below are enforced by the host; a package that breaks one is refused with the reason.
 
 ## Capabilities
 
@@ -101,3 +101,26 @@ Only a runtime that runs code returns effects; a declarative package cannot. The
 | `template-chars` | 512 |
 | `text-chars` | 200 |
 | `view-depth` | 8 |
+
+## Code package ABI
+
+A code package is one WebAssembly module (at most 2097152 bytes) whose custom section `nocterm.manifest` holds the manifest TOML, with `runtime = "wasm"`. The module has no imports: it cannot reach the host except through the call below. ABI version: 1. The golden file `crates/plugin-abi/abi-golden.json` pins the bytes of the wire types, and the host refuses a module whose `nocterm_abi_version` differs.
+
+| Export | Signature |
+| --- | --- |
+| `memory` | `memory` |
+| `nocterm_abi_version` | `() -> i32` |
+| `nocterm_alloc` | `(i32) -> i32` |
+| `nocterm_call` | `(i32, i32) -> i64` |
+
+The host writes a postcard `Call` into a buffer from `nocterm_alloc` and calls `nocterm_call(ptr, len)`; the guest returns `ptr << 32 | len` of a postcard `Reply`. The reply pointer stays valid until the next call.
+
+| ABI limit | Value |
+| --- | --- |
+| Call input | 262144 bytes |
+| Reply | 262144 bytes |
+| Log lines per call | at most 8 |
+| Fuel per call | 4000000 |
+| Fuel to instantiate | 20000000 |
+| Linear memory per instance | 16777216 bytes |
+| Live instances | 16 |

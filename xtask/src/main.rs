@@ -19,6 +19,7 @@ mod file_size;
 mod isolation;
 mod lint_policy;
 mod manifest_lints;
+mod plugin_abi;
 mod plugin_docs;
 mod plugin_reference;
 mod ratchet;
@@ -395,6 +396,7 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
             actions_reference::render(root)?,
         ),
         ("docs/architecture/dependencies.md", architecture(root)?),
+        (plugin_abi::PATH, plugin_abi::render(root)?),
         (plugin_reference::PATH, plugin_reference::render()?),
         (plugin_docs::PATH, plugin_docs::render()?),
     ];

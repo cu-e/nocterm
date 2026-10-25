@@ -15,6 +15,7 @@ nocterm-design.workspace = true
 nocterm-explorer.workspace = true
 nocterm-terminal-model.workspace = true
 nocterm-monitor.workspace = true
+nocterm-plugin-abi.workspace = true
 nocterm-plugin-api.workspace = true
 nocterm-plugin-enablement.workspace = true
 nocterm-project-providers.workspace = true
