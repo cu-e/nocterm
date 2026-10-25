@@ -301,7 +301,14 @@ immutable record of one window's providers that only the application's compositi
 queue with gesture tokens, rate limits and the apply-time re-check, fault counting, the caps on
 enabled plugins and renders, and the `PluginRecords` and `PluginData` ports with their documents.
 Neither does I/O; the application implements the two storage ports over the shared persistence
-service. A provider lives in the crate whose state it reads, behind that crate's `user-plugins`
-feature, and is passive: it answers from what the user's own UI already holds (never reading an entity
-that may be updating) and never starts a sampler, watch or connection ([ADR 0090](../adr/0090-user-plugin-host-and-passive-providers.md)). The
-isolation rules for both crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).
+service. For a developer session (`nocterm plugin dev`) the host also offers `SessionRecords` and
+`SessionData`, in-memory implementations of the same two ports: composing them leaves the host no
+path to a file, so the records and data of a session are unsaved by construction. The application
+also keeps the session's `settings.toml` edits in memory; everything else (connections, snippets, the
+vault, saved workspaces, installed themes, layout sizes, keymap, recordings) saves as usual
+([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)). A provider lives in the crate
+whose state it reads, behind that crate's `user-plugins` feature, and is passive: it answers from
+what the user's own UI already holds (never reading an entity that may be updating) and never
+starts a sampler, watch or connection
+([ADR 0090](../adr/0090-user-plugin-host-and-passive-providers.md)). The isolation rules for both
+crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).

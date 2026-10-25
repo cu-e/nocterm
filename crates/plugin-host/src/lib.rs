@@ -10,7 +10,9 @@
 //! accepted), the effect broker with its queue, gesture tokens, per-capability rate limits and
 //! apply-time re-check, the sampling cadence and render budget, fault counting, the caps of
 //! design 5.12, the `PluginRecords` and `PluginData` ports and their documents, and the
-//! handling of the storage effects.
+//! handling of the storage effects, and the session-only in-memory implementations of both
+//! ports (`SessionRecords`, `SessionData`), which a developer session composes so nothing is
+//! written.
 //! Does not own: any provider or the `Observe`/`Apply` traits (`nocterm-plugin-ports`), the
 //! packages on disk (`PluginPackages`), a runtime, views, consent dialogs, settings forms or any
 //! settings section.
@@ -38,6 +40,7 @@ mod host;
 mod rate;
 mod records;
 mod registry;
+mod session;
 mod snapshot;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -57,6 +60,7 @@ pub use records::{
     AuditAction, AuditEntry, MAX_AUDIT, MAX_RECORDS, PluginRecord, PluginRecords, RecordsDoc,
 };
 pub use registry::{PluginStatus, PluginSummary};
+pub use session::{SessionData, SessionRecords};
 
 #[cfg(test)]
 mod tests;

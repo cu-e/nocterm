@@ -18,14 +18,14 @@ use nocterm_plugin_model::PluginId;
 
 use crate::{
     PluginData, PluginDataChange, PluginDataDoc, PluginDataError, PluginRecords, RecordsDoc,
-    RecordsError,
+    RecordsError, SessionData, SessionRecords,
 };
 
-/// A records port that keeps the last document in memory.
+/// A records port that keeps the last document in memory and counts the saves.
 #[derive(Default)]
 pub struct MemoryRecords {
-    doc: RefCell<RecordsDoc>,
-    saves: RefCell<usize>,
+    inner: SessionRecords,
+    saves: Cell<usize>,
 }
 
 impl MemoryRecords {
@@ -36,31 +36,30 @@ impl MemoryRecords {
     /// Starts from a document, as if it had been saved by an earlier run.
     pub fn seeded(doc: RecordsDoc) -> Rc<Self> {
         Rc::new(Self {
-            doc: RefCell::new(doc),
-            saves: RefCell::new(0),
+            inner: SessionRecords::seeded(doc),
+            saves: Cell::new(0),
         })
     }
 
     /// The document last saved.
     pub fn doc(&self) -> RecordsDoc {
-        self.doc.borrow().clone()
+        self.inner.doc()
     }
 
     /// How many times the host saved.
     pub fn saves(&self) -> usize {
-        *self.saves.borrow()
+        self.saves.get()
     }
 }
 
 impl PluginRecords for MemoryRecords {
-    fn load(&self, _: &App) -> RecordsDoc {
-        self.doc.borrow().clone()
+    fn load(&self, cx: &App) -> RecordsDoc {
+        self.inner.load(cx)
     }
 
-    fn replace(&self, doc: RecordsDoc, _: &mut App) -> Task<Result<(), RecordsError>> {
-        *self.doc.borrow_mut() = doc;
-        *self.saves.borrow_mut() += 1;
-        Task::ready(Ok(()))
+    fn replace(&self, doc: RecordsDoc, cx: &mut App) -> Task<Result<(), RecordsError>> {
+        self.saves.set(self.saves.get() + 1);
+        self.inner.replace(doc, cx)
     }
 }
 
@@ -69,10 +68,10 @@ impl PluginRecords for MemoryRecords {
 #[error("the stand-in refuses every change")]
 struct Refused;
 
-/// A data port that keeps documents in memory and can hold a broken file.
+/// A data port that keeps documents in memory, records every change and can hold a broken file.
 #[derive(Default)]
 pub struct MemoryData {
-    docs: RefCell<BTreeMap<PluginId, PluginDataDoc>>,
+    inner: SessionData,
     broken: RefCell<BTreeSet<PluginId>>,
     changes: RefCell<Vec<(PluginId, PluginDataChange)>>,
     refusing: Cell<bool>,
@@ -90,7 +89,7 @@ impl MemoryData {
 
     /// Puts a document on "disk".
     pub fn put(&self, plugin: &PluginId, doc: PluginDataDoc) {
-        self.docs.borrow_mut().insert(plugin.clone(), doc);
+        self.inner.put(plugin, doc);
     }
 
     /// Makes the plugin's file unreadable until a change replaces it.
@@ -100,7 +99,7 @@ impl MemoryData {
 
     /// The document on "disk", if any.
     pub fn stored(&self, plugin: &PluginId) -> Option<PluginDataDoc> {
-        self.docs.borrow().get(plugin).cloned()
+        self.inner.stored(plugin)
     }
 
     /// Whether the plugin's file is still the unreadable one.
@@ -115,33 +114,26 @@ impl MemoryData {
 }
 
 impl PluginData for MemoryData {
-    fn load(&self, plugin: &PluginId, _: &App) -> Result<PluginDataDoc, PluginDataError> {
+    fn load(&self, plugin: &PluginId, cx: &App) -> Result<PluginDataDoc, PluginDataError> {
         if self.is_broken(plugin) {
             let syntax = PluginDataDoc::decode(b"not a data document")
                 .expect_err("the text is not a document");
             return Err(PluginDataError::Broken(Cause::new(syntax)));
         }
-        Ok(self.stored(plugin).unwrap_or_default())
+        self.inner.load(plugin, cx)
     }
 
     fn change(
         &self,
         plugin: PluginId,
         change: PluginDataChange,
-        _: &mut App,
+        cx: &mut App,
     ) -> Result<(), PluginDataError> {
         if self.refusing.get() {
             return Err(PluginDataError::NotSaved(Cause::new(Refused)));
         }
         self.broken.borrow_mut().remove(&plugin);
-        match &change {
-            PluginDataChange::Replace(doc) => {
-                self.docs.borrow_mut().insert(plugin.clone(), doc.clone());
-            }
-            PluginDataChange::Remove => {
-                self.docs.borrow_mut().remove(&plugin);
-            }
-        }
+        self.inner.change(plugin.clone(), change.clone(), cx)?;
         self.changes.borrow_mut().push((plugin, change));
         Ok(())
     }
