@@ -1,8 +1,9 @@
 //! Ports of the user plugin track: where packages come from and how a package's code runs.
 //!
 //! The api crate only names them. The adapter `nocterm-plugin-packages` implements
-//! [`PluginPackages`]; the declarative interpreter in this crate and, later, a code runtime
-//! implement [`PluginRuntime`].
+//! [`PluginPackages`]; the declarative interpreter in this crate and the code runtime adapter
+//! `nocterm-plugin-wasm` implement [`PluginRuntime`], and [`Runtimes`](crate::Runtimes) picks one
+//! by the manifest.
 
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use core::{error::Error as StdError, fmt};
@@ -11,12 +12,14 @@ use nocterm_plugin_model::PluginId;
 use thiserror::Error;
 
 use crate::{
-    ApiVersion, ContentHash, Effects, Event, LocalId, Manifest, ManifestError, Snapshot, View,
-    ViewError,
+    ApiVersion, ContentHash, Effects, Event, LocalId, Manifest, ManifestError, PackageKind,
+    Runtime, SectionError, Snapshot, View, ViewError,
 };
 
-/// The largest package, in bytes.
+/// The largest declarative package (a TOML manifest), in bytes.
 pub const MAX_PACKAGE_BYTES: u64 = 256 * 1024;
+/// The largest code package (a WebAssembly module), in bytes.
+pub const MAX_MODULE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// A package read from its source: the exact bytes, their hash and the checked manifest.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,12 +94,21 @@ pub enum PackageError {
     NotFound,
     #[error("the package is not a regular file")]
     NotRegular,
-    #[error("the package is larger than {MAX_PACKAGE_BYTES} bytes")]
+    #[error(
+        "the package is larger than its limit ({MAX_PACKAGE_BYTES} bytes of TOML, {MAX_MODULE_BYTES} bytes of code)"
+    )]
     TooLarge,
     #[error("the package is not valid UTF-8 text")]
     Encoding,
     #[error("the package is not valid TOML: {reason}")]
     Syntax { reason: String },
+    #[error("the module does not carry a readable manifest: {0}")]
+    Section(#[from] SectionError),
+    #[error("the manifest says `{declared:?}` but the file is {kind:?}")]
+    RuntimeMismatch {
+        declared: Runtime,
+        kind: PackageKind,
+    },
     #[error("the package is refused: {0}")]
     Manifest(#[from] ManifestError),
     #[error("a plugin with this id is already installed")]
@@ -128,6 +140,36 @@ pub trait PluginPackages: Send + Sync {
     fn remove(&self, plugin: &PluginId) -> Result<(), PackageError>;
 }
 
+/// Why a code module cannot be run at all.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum ModuleError {
+    #[error("the module is not valid WebAssembly or breaks a limit")]
+    Invalid(#[source] Cause),
+    #[error("the module imports something; ABI 1 offers no imports")]
+    Imports,
+    #[error("the module lacks an export of the ABI or gives it the wrong type")]
+    Exports,
+    #[error("the module speaks ABI {found}")]
+    AbiVersion { found: i32 },
+}
+
+/// How a code plugin's reply broke the call protocol.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum ProtocolError {
+    /// A pointer or a length the guest gave does not lie inside its memory.
+    #[error("a buffer lies outside the guest's memory")]
+    OutsideMemory,
+    #[error("the reply is larger than {max} bytes")]
+    ReplyTooLarge { max: usize },
+    #[error("the reply is not a value of the ABI")]
+    Undecodable(#[source] Cause),
+    /// A view where effects were asked for, or the other way round.
+    #[error("the answer is not the kind the call asked for")]
+    WrongAnswer,
+    #[error("the reply carries more than {max} log lines")]
+    TooManyLogLines { max: usize },
+}
+
 /// Why a runtime could not produce a view or effects.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum RuntimeError {
@@ -139,6 +181,20 @@ pub enum RuntimeError {
     Trap,
     #[error("the plugin passed its deadline")]
     Deadline,
+    #[error("no runtime is composed for `{0:?}` packages")]
+    NoRuntime(Runtime),
+    #[error("the module is refused")]
+    Module(#[from] ModuleError),
+    #[error("the plugin passed its memory limit")]
+    Memory,
+    #[error("the plugin broke the call protocol")]
+    Malformed(#[from] ProtocolError),
+    /// The host could not hand the call to the guest because its snapshot is too large. The
+    /// plugin did nothing wrong, so this is not a fault.
+    #[error("the call is larger than a guest accepts")]
+    InputTooLarge,
+    #[error("too many plugins are running")]
+    Capacity,
     #[error("the view is invalid")]
     View(#[from] ViewError),
 }
@@ -157,7 +213,7 @@ pub trait PluginInstance: Send + Sync {
     ) -> Result<Effects, RuntimeError>;
 }
 
-/// Turns a package into an instance. A declarative interpreter and, later, a code runtime.
+/// Turns a package into an instance: the declarative interpreter or a code runtime.
 pub trait PluginRuntime: Send + Sync {
     fn instantiate(&self, package: &Package) -> Result<Box<dyn PluginInstance>, RuntimeError>;
 }

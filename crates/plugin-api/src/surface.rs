@@ -94,7 +94,7 @@ pub const EFFECT_REQUESTS: &[(&str, &[&str])] = &[
 pub const SETTINGS_KINDS: [&str; 5] = ["toggle", "choice", "multi-choice", "number", "text"];
 
 /// The runtimes a package may name.
-pub const RUNTIMES: [&str; 1] = ["declarative"];
+pub const RUNTIMES: [&str; 2] = ["declarative", "wasm"];
 
 /// The template filters.
 pub const FILTERS: [&str; 4] = ["round(n)", "percent", "hh-mm", "threshold(low, high)"];

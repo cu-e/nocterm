@@ -9,11 +9,15 @@
 //! to the host icon, the author words `Zone` and `Kind`, `API_VERSION`, manifest DTOs and their
 //! validation (ids, names, the clamp, the `[settings]` mapping onto `SettingsSchema`), grants
 //! bound to `(PluginId, sha256)`, the declarative template language and its interpreter
-//! (`DeclarativeRuntime`), and the `PluginPackages` and `PluginRuntime` ports with their errors.
+//! (`DeclarativeRuntime`), the code package format (`package_format`: kind detection and the
+//! bounded scan for the manifest section of a WebAssembly module), `Runtimes` (which picks the
+//! declarative or the injected code runtime by the manifest), and the `PluginPackages` and
+//! `PluginRuntime` ports with their errors.
 //! Does not own: file access, TOML parsing, hashing, the broker, rate limits, providers, views
 //! or any GPUI type.
 //! Ports used/provided: provides `PluginPackages` (implemented by `nocterm-plugin-packages`)
-//! and `PluginRuntime` (implemented here for declarative packages); uses none.
+//! and `PluginRuntime` (implemented here for declarative packages and by `nocterm-plugin-wasm`
+//! for code); uses none.
 //! Settings section: none; user plugin settings live in the host's records, not in
 //! `settings.toml`. Globals: none.
 //! Invariants: the table has unique kebab-case ids and an effect target exactly for effects;
@@ -39,7 +43,9 @@ mod grant;
 mod icon;
 mod identity;
 mod manifest;
+mod package_format;
 mod ports;
+mod runtimes;
 mod sanitize;
 mod snapshot;
 mod surface;
@@ -66,10 +72,12 @@ pub use manifest::{
     MAX_NAME, MAX_REASON, Manifest, ManifestDto, ManifestError, ManifestHeader, OptionalCapability,
     Runtime, SettingsDto, SettingsError,
 };
+pub use package_format::{MANIFEST_SECTION, PackageKind, SectionError, kind, manifest_section};
 pub use ports::{
-    Cause, MAX_PACKAGE_BYTES, Package, PackageError, PluginInstance, PluginPackages, PluginRuntime,
-    RuntimeError,
+    Cause, MAX_MODULE_BYTES, MAX_PACKAGE_BYTES, ModuleError, Package, PackageError, PluginInstance,
+    PluginPackages, PluginRuntime, ProtocolError, RuntimeError,
 };
+pub use runtimes::Runtimes;
 pub use sanitize::sanitize_display;
 pub use snapshot::{Observed, Snapshot};
 pub use surface::{

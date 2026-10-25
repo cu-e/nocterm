@@ -345,7 +345,8 @@
     "after-ms"
   ],
   "runtimes": [
-    "declarative"
+    "declarative",
+    "wasm"
   ],
   "settings_kinds": [
     "toggle",

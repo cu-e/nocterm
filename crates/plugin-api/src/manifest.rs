@@ -13,12 +13,12 @@ use alloc::{
     vec::Vec,
 };
 
-use nocterm_plugin_model::{IdError, PluginId, UserPlugin, UserPluginError};
+use nocterm_plugin_model::{ContributionId, IdError, PluginId, UserPlugin, UserPluginError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    API_VERSION, ApiVersion, CapabilityEntry, LimitError, VersionError, sanitize_display,
+    API_VERSION, ApiVersion, CapabilityEntry, LimitError, LocalId, VersionError, sanitize_display,
     template::ViewTemplate,
 };
 
@@ -48,6 +48,8 @@ pub enum Runtime {
     /// Views are templates the host interprets; the package has no code.
     #[default]
     Declarative,
+    /// The package is a WebAssembly module that draws its views and answers events in code.
+    Wasm,
 }
 
 /// The `api` key alone, read first, so a package written for a newer API is told so instead of
@@ -201,9 +203,17 @@ impl Manifest {
         match dto.runtime {
             Runtime::Declarative if host.effects_without_code => {}
             Runtime::Declarative => declaration.observation_only()?,
+            Runtime::Wasm => {}
         }
         let schema = settings::schema(&id, dto.settings.as_ref())?;
-        let built = contribution::build(&id, &dto.contributions, &declaration, &schema, host)?;
+        let built = contribution::build(
+            &id,
+            dto.runtime,
+            &dto.contributions,
+            &declaration,
+            &schema,
+            host,
+        )?;
         let description = sanitize_display(&dto.description, MAX_DESCRIPTION);
         let plugin = UserPlugin::new(id, &name, &description, built.contributions, schema)?;
         Ok(Self {
@@ -251,7 +261,18 @@ impl Manifest {
         self.reasons.get(capability).map(String::as_str)
     }
 
-    /// The checked view of a contribution, by its local name.
+    /// Whether the package declares a contribution with this local name, whatever its runtime.
+    pub fn has_contribution(&self, local: &LocalId) -> bool {
+        ContributionId::in_plugin(self.plugin.id(), local.as_str()).is_ok_and(|id| {
+            self.plugin
+                .contributions()
+                .iter()
+                .any(|contribution| *contribution.id() == id)
+        })
+    }
+
+    /// The checked view of a declarative contribution, by its local name. A code package has
+    /// none: its contributions draw in code.
     pub fn view(&self, local: &str) -> Option<&ViewTemplate> {
         self.views.get(local)
     }

@@ -4,6 +4,7 @@ mod effects;
 mod grant;
 mod identity;
 mod manifest;
+mod package_format;
 mod runtime;
 mod sanitize;
 mod support;

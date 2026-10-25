@@ -1,9 +1,9 @@
-use alloc::{string::ToString, vec::Vec};
+use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 
-use super::support::{manifest, snapshot, with_clock};
+use super::support::{EXAMPLE, dto, host, manifest, snapshot, with_clock};
 use crate::{
-    ContentHash, DeclarativeRuntime, Effects, Event, LocalId, NodeKind, Package, PluginRuntime,
-    RuntimeError,
+    ContentHash, DeclarativeRuntime, Effects, Event, LocalId, Manifest, NodeKind, Package,
+    PluginInstance, PluginRuntime, Runtime, RuntimeError, Runtimes, View,
 };
 
 fn package() -> Package {
@@ -48,5 +48,68 @@ fn an_unknown_contribution_is_a_runtime_error() {
         instance
             .on_event(&local, Event::SettingsChanged, &snapshot())
             .is_err()
+    );
+}
+
+struct Marker;
+
+impl PluginRuntime for Marker {
+    fn instantiate(&self, _: &Package) -> Result<Box<dyn PluginInstance>, RuntimeError> {
+        Ok(Box::new(Marked))
+    }
+}
+
+struct Marked;
+
+impl PluginInstance for Marked {
+    fn render(&self, _: &LocalId, _: &crate::Snapshot) -> Result<View, RuntimeError> {
+        Ok(View::default())
+    }
+
+    fn on_event(
+        &self,
+        _: &LocalId,
+        _: Event,
+        _: &crate::Snapshot,
+    ) -> Result<Effects, RuntimeError> {
+        Err(RuntimeError::Trap)
+    }
+}
+
+fn code_package() -> Package {
+    let text = EXAMPLE
+        .replace("api = \"0.1\"", "api = \"0.1\"\nruntime = \"wasm\"")
+        .replace(
+            "[contribution.view]\nnodes = [\n  { kind = \"row\" },\n  { kind = \"icon\", parent = 0, icon = \"puzzle\" },\n  { kind = \"text\", parent = 0, text = \"{clock.now|hh-mm} {settings.city}\" },\n]\n",
+            "",
+        );
+    let manifest = Manifest::validate(&dto(&text), &host()).unwrap();
+    assert_eq!(manifest.runtime(), Runtime::Wasm);
+    Package::new(ContentHash::new([4; 32]), manifest, Vec::from(*b"\0asm"))
+}
+
+#[test]
+fn a_package_runs_on_the_runtime_its_manifest_names() {
+    let runtimes = Runtimes::new().with_code(Arc::new(Marker));
+    let local = LocalId::parse("face").unwrap();
+    let declarative = runtimes.instantiate(&package()).unwrap();
+    assert_eq!(
+        declarative.on_event(&local, Event::SettingsChanged, &snapshot()),
+        Ok(Effects::default())
+    );
+    let code = runtimes.instantiate(&code_package()).unwrap();
+    assert_eq!(
+        code.on_event(&local, Event::SettingsChanged, &snapshot()),
+        Err(RuntimeError::Trap)
+    );
+}
+
+#[test]
+fn a_host_without_a_code_runtime_refuses_code_packages() {
+    let runtimes = Runtimes::new();
+    assert!(runtimes.instantiate(&package()).is_ok());
+    assert_eq!(
+        runtimes.instantiate(&code_package()).err(),
+        Some(RuntimeError::NoRuntime(Runtime::Wasm))
     );
 }

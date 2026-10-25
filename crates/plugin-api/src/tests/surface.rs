@@ -115,12 +115,11 @@ fn listed_names_are_the_names_the_types_use() {
         let kind: FieldKindName = serde_json::from_value(name.into()).unwrap();
         assert_eq!(kind_name(kind), name);
     }
-    for name in RUNTIMES {
-        assert_eq!(
-            serde_json::from_value::<Runtime>(name.into()).unwrap(),
-            Runtime::Declarative
-        );
-    }
+    let runtimes: Vec<Runtime> = RUNTIMES
+        .iter()
+        .map(|name| serde_json::from_value(serde_json::Value::from(*name)).unwrap())
+        .collect();
+    assert_eq!(runtimes, [Runtime::Declarative, Runtime::Wasm]);
     let events = [
         Event::Activated { key: String::new() },
         Event::Toggled {

@@ -64,7 +64,7 @@ Only a runtime that runs code returns effects; a declarative package cannot. The
 | Host errors | `not-granted`, `denied`, `rate-limited`, `unavailable` |
 | Settings field kinds | `toggle`, `choice`, `multi-choice`, `number`, `text` |
 | Workspace kinds | `local`, `remote`, `container`, `folder` |
-| Runtimes | `declarative` |
+| Runtimes | `declarative`, `wasm` |
 
 ## Limits
 

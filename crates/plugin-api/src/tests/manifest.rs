@@ -7,8 +7,8 @@ use proptest::prelude::*;
 
 use super::support::{EXAMPLE, dto, example, host, manifest};
 use crate::{
-    API_VERSION, ApiVersion, ContributionError, DeclareError, HostContext, Manifest, ManifestDto,
-    ManifestError, ManifestHeader, OptionalCapability, SettingsError,
+    API_VERSION, ApiVersion, ContributionError, DeclareError, HostContext, LocalId, Manifest,
+    ManifestDto, ManifestError, ManifestHeader, OptionalCapability, Runtime, SettingsError,
 };
 
 fn refused(change: impl FnOnce(&mut ManifestDto)) -> ManifestError {
@@ -68,7 +68,7 @@ fn unknown_keys_are_refused_within_the_declared_api() {
     assert!(toml::from_str::<ManifestDto>(&extra).is_err());
     let kind = EXAMPLE.replace("kind = \"widget\"", "kind = \"gadget\"");
     assert!(toml::from_str::<ManifestDto>(&kind).is_err());
-    let runtime = EXAMPLE.replace("api = \"0.1\"", "api = \"0.1\"\nruntime = \"wasm\"");
+    let runtime = EXAMPLE.replace("api = \"0.1\"", "api = \"0.1\"\nruntime = \"lua\"");
     assert!(toml::from_str::<ManifestDto>(&runtime).is_err());
 }
 
@@ -168,6 +168,97 @@ fn a_host_driving_a_stand_in_runtime_may_list_effects() {
     assert!(Manifest::validate(&dto, &stand_in).is_ok());
 }
 
+const CODE: &str = r#"
+api = "0.1"
+runtime = "wasm"
+publisher = "acme"
+id = "timer"
+name = "Acme Timer"
+capabilities = ["clock.now", "panels.set-open", "storage.set"]
+
+[[contribution]]
+local = "bar"
+kind = "widget"
+title = "Timer"
+
+[[contribution]]
+local = "panel"
+kind = "panel"
+title = "Timer Panel"
+"#;
+
+fn code_dto() -> ManifestDto {
+    dto(CODE)
+}
+
+#[test]
+fn a_code_package_may_ask_for_effects_and_has_no_templates() {
+    let manifest = Manifest::validate(&code_dto(), &host()).unwrap();
+    assert_eq!(manifest.runtime(), Runtime::Wasm);
+    assert_eq!(manifest.required().len(), 3);
+    assert!(manifest.views().next().is_none());
+    assert!(manifest.view("bar").is_none());
+    assert!(manifest.has_contribution(&LocalId::parse("bar").unwrap()));
+    assert!(manifest.has_contribution(&LocalId::parse("panel").unwrap()));
+    assert!(!manifest.has_contribution(&LocalId::parse("other").unwrap()));
+}
+
+#[test]
+fn a_declarative_package_has_a_view_per_contribution() {
+    let manifest = manifest();
+    assert!(manifest.has_contribution(&LocalId::parse("face").unwrap()));
+    assert!(!manifest.has_contribution(&LocalId::parse("bar").unwrap()));
+    let mut dto = example();
+    dto.contributions[0].view = None;
+    let error = Manifest::validate(&dto, &host()).unwrap_err();
+    assert!(matches!(
+        error,
+        ManifestError::Contribution {
+            source: ContributionError::NoView,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_code_package_cannot_give_a_contribution_a_template() {
+    let mut dto = code_dto();
+    dto.contributions[0].view = example().contributions[0].view.clone();
+    let error = Manifest::validate(&dto, &host()).unwrap_err();
+    assert!(matches!(
+        error,
+        ManifestError::Contribution {
+            source: ContributionError::ViewInCode,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_code_package_declares_each_contribution_once() {
+    let mut dto = code_dto();
+    dto.contributions[1].local = "bar".into();
+    let error = Manifest::validate(&dto, &host()).unwrap_err();
+    assert!(matches!(
+        error,
+        ManifestError::Contribution {
+            source: ContributionError::Duplicate,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn the_runtime_names_are_the_authors_words() {
+    assert_eq!(
+        dto(&CODE.replace("wasm", "declarative")).runtime,
+        Runtime::Declarative
+    );
+    assert_eq!(code_dto().runtime, Runtime::Wasm);
+    let unknown = CODE.replace("\"wasm\"", "\"lua\"");
+    assert!(toml::from_str::<ManifestDto>(&unknown).is_err());
+}
+
 #[test]
 fn capabilities_resolve_against_the_table() {
     let unknown = refused(|dto| dto.capabilities.push("sys.exec".into()));
@@ -222,7 +313,8 @@ fn reasons_are_sanitized_and_bounded() {
 #[test]
 fn templates_may_only_name_what_the_package_declares() {
     let undeclared = refused(|dto| {
-        dto.contributions[0].view.nodes[2].text = Some("{workspace.kind.connected}".into());
+        dto.contributions[0].view.as_mut().unwrap().nodes[2].text =
+            Some("{workspace.kind.connected}".into());
     });
     assert!(matches!(
         undeclared,
@@ -232,13 +324,15 @@ fn templates_may_only_name_what_the_package_declares() {
         }
     ));
     let mut dto = example();
-    dto.contributions[0].view.nodes[2].text = Some("{monitor.usage.cpu_percent|round(0)}".into());
+    dto.contributions[0].view.as_mut().unwrap().nodes[2].text =
+        Some("{monitor.usage.cpu_percent|round(0)}".into());
     assert!(
         Manifest::validate(&dto, &host()).is_ok(),
         "an optional capability is declared"
     );
     let missing = refused(|dto| {
-        dto.contributions[0].view.nodes[2].text = Some("{settings.nothing}".into());
+        dto.contributions[0].view.as_mut().unwrap().nodes[2].text =
+            Some("{settings.nothing}".into());
     });
     assert!(matches!(missing, ManifestError::Contribution { .. }));
 }
@@ -477,7 +571,7 @@ proptest! {
         let mut dto = example();
         dto.name = name;
         dto.contributions[0].title = title;
-        dto.contributions[0].view.nodes[2].text = Some(template);
+        dto.contributions[0].view.as_mut().unwrap().nodes[2].text = Some(template);
         let _ = Manifest::validate(&dto, &HostContext::default());
     }
 }

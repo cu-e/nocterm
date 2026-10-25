@@ -1,12 +1,16 @@
 //! The contributions of a package: clamped for the shell, with a checked view each.
 
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    string::String,
+    vec::Vec,
+};
 
 use nocterm_plugin_model::{ContributionId, IdError, PluginId, SettingsSchema, UserContribution};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{HostContext, ManifestError, declare::Declaration, is_plain, is_reserved};
+use super::{HostContext, ManifestError, Runtime, declare::Declaration, is_plain, is_reserved};
 use crate::{
     Kind, LimitError, LocalId, PluginIcon, Zone,
     template::{ViewDto, ViewTemplate, ViewTemplateError},
@@ -27,7 +31,9 @@ pub struct ContributionDto {
     pub zone: Option<Zone>,
     #[serde(default)]
     pub order: u16,
-    pub view: ViewDto,
+    /// The template of a declarative contribution. A code package draws in code and has none.
+    #[serde(default)]
+    pub view: Option<ViewDto>,
 }
 
 /// A contribution the host refuses.
@@ -47,6 +53,10 @@ pub enum ContributionError {
     Duplicate,
     #[error("its view")]
     View(#[from] ViewTemplateError),
+    #[error("a declarative package needs a `view` for it")]
+    NoView,
+    #[error("a code package draws in code and cannot give it a `view`")]
+    ViewInCode,
 }
 
 pub(super) struct Built {
@@ -56,6 +66,7 @@ pub(super) struct Built {
 
 pub(super) fn build(
     plugin: &PluginId,
+    runtime: Runtime,
     dtos: &[ContributionDto],
     declaration: &Declaration,
     schema: &SettingsSchema,
@@ -64,6 +75,7 @@ pub(super) fn build(
     let observing = declaration.observing();
     let mut contributions = Vec::with_capacity(dtos.len());
     let mut views = BTreeMap::new();
+    let mut locals = BTreeSet::new();
     for dto in dtos {
         let fail = |source: ContributionError| ManifestError::Contribution {
             local: dto.local.chars().take(32).collect(),
@@ -75,8 +87,15 @@ pub(super) fn build(
             return Err(fail(ContributionError::Title));
         }
         let id = ContributionId::in_plugin(plugin, local.as_str()).map_err(|e| fail(e.into()))?;
-        let view = ViewTemplate::compile(&dto.view, &observing, schema)
-            .map_err(|e| fail(ContributionError::View(e)))?;
+        let view = match (runtime, dto.view.as_ref()) {
+            (Runtime::Declarative, Some(view)) => Some(
+                ViewTemplate::compile(view, &observing, schema)
+                    .map_err(|e| fail(ContributionError::View(e)))?,
+            ),
+            (Runtime::Declarative, None) => return Err(fail(ContributionError::NoView)),
+            (Runtime::Wasm, Some(_)) => return Err(fail(ContributionError::ViewInCode)),
+            (Runtime::Wasm, None) => None,
+        };
         let clamped = UserContribution::clamp(
             id,
             kind.to_model(),
@@ -89,8 +108,11 @@ pub(super) fn build(
         if is_reserved(clamped.title(), host) {
             return Err(fail(ContributionError::Title));
         }
-        if views.insert(String::from(local.as_str()), view).is_some() {
+        if !locals.insert(String::from(local.as_str())) {
             return Err(fail(ContributionError::Duplicate));
+        }
+        if let Some(view) = view {
+            views.insert(String::from(local.as_str()), view);
         }
         contributions.push(clamped);
     }
