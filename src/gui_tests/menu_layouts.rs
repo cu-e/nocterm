@@ -200,8 +200,38 @@ pub(super) fn window_on_local_host(
     nocterm_store::SettingsHandle,
     Entity<Workspace>,
 ) {
+    let window = open_local_window(layouts, cx);
+    (
+        window.handle,
+        window.exec,
+        window.settings,
+        window.workspace,
+    )
+}
+
+/// What [`open_local_window`] opened, with the composed application it opened over.
+pub(super) struct LocalWindow {
+    pub(super) handle: AnyWindowHandle,
+    pub(super) exec: nocterm_session::testing::FakeExec,
+    pub(super) settings: nocterm_store::SettingsHandle,
+    pub(super) workspace: Entity<Workspace>,
+    /// The composed application, for the tests that read its user plugin shell.
+    #[cfg(feature = "user-plugins")]
+    pub(super) booted: crate::bootstrap::Booted,
+}
+
+pub(super) fn open_local_window(layouts: &str, cx: &mut TestAppContext) -> LocalWindow {
+    open_local_window_in(layouts, crate::shell_setup::UserPluginMode::default(), cx)
+}
+
+/// [`open_local_window`] with the user plugins composed in `mode`.
+pub(super) fn open_local_window_in(
+    layouts: &str,
+    mode: crate::shell_setup::UserPluginMode,
+    cx: &mut TestAppContext,
+) -> LocalWindow {
     use std::sync::Arc;
-    let (handle, exec, settings, workspace) = cx.update(|cx| {
+    let (handle, exec, settings, workspace, booted) = cx.update(|cx| {
         let document = nocterm_settings::SettingsDocument::from_table(
             layouts.parse().expect("the layouts are toml"),
         );
@@ -213,13 +243,15 @@ pub(super) fn window_on_local_host(
                 "/bin/bash".into(),
             )
         };
-        let booted = super::boot_with_ports(
+        let booted = super::boot_with_ports_and_probe(
             tempfile::tempdir().unwrap(),
             nocterm_store::SettingsConfig::in_memory(document),
             (transport, local),
             false,
             None,
             None,
+            super::unsupported_sandbox(),
+            mode,
             cx,
         );
         let (handle, workspace) = super::open_workspace(&booted, cx);
@@ -228,6 +260,7 @@ pub(super) fn window_on_local_host(
             cx.global::<super::FixtureLocalHost>().0.clone(),
             booted.settings_deps().settings().clone(),
             workspace,
+            booted,
         )
     });
     cx.update_window(handle, |_, window, cx| {
@@ -236,7 +269,16 @@ pub(super) fn window_on_local_host(
     })
     .unwrap();
     cx.run_until_parked();
-    (handle, exec, settings, workspace)
+    #[cfg(not(feature = "user-plugins"))]
+    drop(booted);
+    LocalWindow {
+        handle,
+        exec,
+        settings,
+        workspace,
+        #[cfg(feature = "user-plugins")]
+        booted,
+    }
 }
 
 #[gpui_kit::test]

@@ -3,8 +3,10 @@
 //! replace.
 use std::{fs, path::Path, sync::Arc};
 
-use gpui_kit::TestAppContext;
+use gpui_kit::{Entity, TestAppContext};
 use nocterm_core::clock::{WallClock, WallTime};
+use nocterm_plugin_host::PluginHost;
+use nocterm_plugin_model::{PluginId, SettingValue, SettingValues};
 use nocterm_plugins_ui::{InstallRequest, UserPluginError, UserPlugins as _};
 use nocterm_store::ShutdownCoordinator;
 use tempfile::TempDir;
@@ -29,6 +31,7 @@ fn clock_package(version_marker: &str) -> String {
 }
 
 struct Rig {
+    host: Entity<PluginHost>,
     plugins: HostPlugins,
     directory: TempDir,
 }
@@ -49,11 +52,10 @@ fn rig(cx: &mut TestAppContext) -> Rig {
             cx,
         )
     });
+    let host = shell.host().expect("the shell loads user plugins").clone();
     Rig {
-        plugins: HostPlugins::new(
-            shell.host().expect("the shell loads user plugins").clone(),
-            None,
-        ),
+        plugins: HostPlugins::new(host.clone(), None),
+        host,
         directory,
     }
 }
@@ -186,4 +188,202 @@ fn a_refusal_of_the_host_keeps_its_cause_for_the_section(cx: &mut TestAppContext
         std::error::Error::source(&error).is_some(),
         "the typed cause is kept, not flattened to text"
     );
+}
+
+/// Lets the persistence service write what the host handed it.
+fn saved(cx: &mut TestAppContext) {
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(5));
+    cx.run_until_parked();
+}
+
+impl Rig {
+    /// Installs the clock example and says which plugin it is.
+    fn installed(&self, cx: &mut TestAppContext) -> nocterm_plugin_model::PluginId {
+        let location = self.file("clock.toml", &clock_package("installed"));
+        cx.update(|cx| self.plugins.install(self.request(&location, None, cx), cx))
+            .expect("the package installs");
+        cx.update(|cx| self.plugins.rows(cx))[0].id.clone()
+    }
+
+    fn actions(&self, cx: &mut TestAppContext) -> Vec<String> {
+        cx.update(|cx| self.plugins.audit(cx))
+            .into_iter()
+            .map(|line| line.action)
+            .collect()
+    }
+
+    /// The user sets the clock's label, which the host stores with the plugin's data.
+    fn set_label(&self, id: &PluginId, label: &str, cx: &mut TestAppContext) {
+        let mut values = SettingValues::default();
+        values.insert("label", SettingValue::Text(label.into()));
+        self.host
+            .update(cx, |host, cx| host.replace_values(id, &values, cx))
+            .expect("the values are stored");
+        saved(cx);
+    }
+
+    /// The label the clock would show now.
+    fn label(&self, id: &PluginId, cx: &mut TestAppContext) -> Option<SettingValue> {
+        self.host
+            .read_with(cx, |host, _| host.values(id))
+            .and_then(|values| values.get("label").cloned())
+    }
+
+    fn row(&self, cx: &mut TestAppContext) -> nocterm_plugins_ui::UserPluginRow {
+        cx.update(|cx| self.plugins.rows(cx)).remove(0)
+    }
+}
+
+#[gpui_kit::test]
+fn an_installed_plugin_is_listed_with_what_the_host_knows_of_it(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+
+    let row = rig.row(cx);
+
+    assert_eq!(row.id, id);
+    assert_eq!(row.name, "Example Clock");
+    assert_eq!(row.publisher, "example");
+    assert_eq!(row.contributions, ["Time"]);
+    assert_eq!(row.granted, ["See the current time and your time zone."]);
+    assert_eq!(row.fingerprint.len(), 16);
+    assert!(matches!(row.state, nocterm_plugins_ui::RowState::Ready));
+    assert_eq!(rig.actions(cx), ["Installed"]);
+}
+
+#[gpui_kit::test]
+fn enabling_and_disabling_change_the_row_and_leave_audit_lines(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+    let enabled = rig.row(cx).enabled;
+
+    cx.update(|cx| rig.plugins.set_enabled(&id, !enabled, cx))
+        .unwrap();
+    assert_eq!(rig.row(cx).enabled, !enabled);
+    cx.update(|cx| rig.plugins.set_enabled(&id, enabled, cx))
+        .unwrap();
+    assert_eq!(rig.row(cx).enabled, enabled);
+
+    let actions = rig.actions(cx);
+    assert_eq!(actions.len(), 3, "{actions:?}");
+    assert!(actions.contains(&"Turned off".to_owned()), "{actions:?}");
+    assert!(actions.contains(&"Turned on".to_owned()), "{actions:?}");
+}
+
+#[gpui_kit::test]
+fn placement_is_granted_and_revoked_through_the_port(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+
+    cx.update(|cx| rig.plugins.set_placeable(&id, true, cx))
+        .unwrap();
+    assert!(rig.row(cx).placeable);
+    cx.update(|cx| rig.plugins.set_placeable(&id, false, cx))
+        .unwrap();
+    assert!(!rig.row(cx).placeable);
+
+    let actions = rig.actions(cx);
+    assert!(
+        actions.contains(&"Allowed in windows".to_owned()),
+        "{actions:?}"
+    );
+    assert!(
+        actions.contains(&"Revoked from windows".to_owned()),
+        "{actions:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn removing_a_plugin_keeps_its_data_for_a_later_install_unless_the_user_removes_it_too(
+    cx: &mut TestAppContext,
+) {
+    let rig = rig(cx);
+    let kept = SettingValue::Text("Kept".into());
+    for (with_data, expected) in [(false, Some(&kept)), (true, None)] {
+        let id = rig.installed(cx);
+        rig.set_label(&id, "Kept", cx);
+        assert_eq!(rig.label(&id, cx).as_ref(), Some(&kept));
+
+        cx.update(|cx| rig.plugins.remove(&id, with_data, cx))
+            .unwrap();
+        saved(cx);
+        assert!(cx.update(|cx| rig.plugins.rows(cx)).is_empty());
+
+        let again = rig.installed(cx);
+        assert_eq!(
+            rig.label(&again, cx)
+                .as_ref()
+                .filter(|label| **label == kept),
+            expected,
+            "removing with the data: {with_data}"
+        );
+        cx.update(|cx| rig.plugins.remove(&again, true, cx))
+            .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn removing_only_the_data_resets_the_values_and_leaves_the_plugin_installed(
+    cx: &mut TestAppContext,
+) {
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+    rig.set_label(&id, "Kept", cx);
+
+    cx.update(|cx| rig.plugins.remove_data(&id, cx)).unwrap();
+
+    assert_eq!(cx.update(|cx| rig.plugins.rows(cx)).len(), 1);
+    assert_ne!(
+        rig.label(&id, cx),
+        Some(SettingValue::Text("Kept".into())),
+        "the value the user set is gone"
+    );
+    assert!(rig.actions(cx).contains(&"Data removed".to_owned()));
+}
+
+#[gpui_kit::test]
+fn every_act_on_an_unknown_plugin_is_refused_with_its_cause(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let id = nocterm_plugin_model::PluginId::owned("user-example-nobody");
+    let refused = [
+        cx.update(|cx| rig.plugins.set_placeable(&id, true, cx)),
+        cx.update(|cx| rig.plugins.remove(&id, false, cx)),
+        cx.update(|cx| rig.plugins.remove(&id, true, cx)),
+        cx.update(|cx| rig.plugins.remove_data(&id, cx)),
+    ];
+
+    for outcome in refused {
+        let Err(error) = outcome else {
+            panic!("an unknown plugin cannot be acted on");
+        };
+        assert!(matches!(error, UserPluginError::Manage(_)), "{error:?}");
+        assert!(std::error::Error::source(&error).is_some());
+    }
+    assert!(rig.actions(cx).is_empty());
+}
+
+#[gpui_kit::test]
+fn a_change_is_announced_to_the_observer_until_it_is_dropped(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+    let seen = std::rc::Rc::new(std::cell::Cell::new(0));
+    let subscription = cx.update(|cx| {
+        let seen = seen.clone();
+        rig.plugins
+            .observe(cx, Box::new(move |_| seen.set(seen.get() + 1)))
+    });
+
+    cx.update(|cx| rig.plugins.set_placeable(&id, true, cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(seen.get() > 0, "the section learns that the list changed");
+
+    drop(subscription);
+    let before = seen.get();
+    cx.update(|cx| rig.plugins.set_placeable(&id, false, cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(seen.get(), before);
 }
