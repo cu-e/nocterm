@@ -6,7 +6,11 @@ use gpui_kit::{
 };
 use nocterm_plugin_model::{ContributionId, PluginId};
 use nocterm_plugins_ui::HeldBy;
-use nocterm_workspace::Workspace;
+use nocterm_window_layout::LayoutSettings;
+use nocterm_workspace::{
+    Workspace,
+    test_support::{Toggle, toggle_id},
+};
 
 use super::menu_layouts::{open_local_window, open_local_window_in};
 use crate::shell_setup::{UserPluginMode, UserShell};
@@ -31,6 +35,7 @@ right = [{ item = "workspace.notifications" }, { item = "user-example-clock.face
 
 struct Window {
     handle: AnyWindowHandle,
+    settings: nocterm_store::SettingsHandle,
     workspace: Entity<Workspace>,
     shell: UserShell,
 }
@@ -52,6 +57,7 @@ fn window_in(layouts: &str, mode: UserPluginMode, cx: &mut TestAppContext) -> Wi
     .unwrap();
     Window {
         handle: local.handle,
+        settings: local.settings,
         workspace: local.workspace,
         shell: local.booted.user_plugins().clone(),
     }
@@ -190,6 +196,70 @@ fn safe_mode_loads_no_plugin_although_the_user_allowed_them(cx: &mut TestAppCont
     assert_eq!(window.shell.held_by(), Some(HeldBy::SafeMode));
     assert!(!registered(&window, WIDGET, cx));
     assert!(!present(&window, "plugin-marker", cx));
+}
+
+/// Hides the first navigation panel from the context menu of its button, the way the user does.
+fn hide_the_first_panel(window: &Window, cx: &mut TestAppContext) {
+    cx.update_window(window.handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.right_click(toggle_id(Toggle::Navigation(0)), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window.handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.within("popup-menu").click(0usize, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_layout_edit_in_safe_mode_keeps_the_user_widget_and_panel_the_layout_names(
+    cx: &mut TestAppContext,
+) {
+    let window = window_in(&format!("{ALLOWED}{PLACED}"), UserPluginMode::SafeMode, cx);
+
+    hide_the_first_panel(&window, cx);
+
+    let stored = cx.update(|cx| window.settings.setting::<LayoutSettings>(cx).clone());
+    let preset = stored.presets.last().expect("the edit saved a layout");
+    assert_eq!(
+        preset.tray.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
+        ["files.explorer"],
+        "only the hidden panel waits in the tray"
+    );
+    let names = |wanted: &str| format!("{:?}", preset.bar).contains(wanted);
+    assert!(
+        names(WIDGET),
+        "the widget stays on the bar: {:?}",
+        preset.bar
+    );
+    assert!(
+        names(PANEL),
+        "the panel stays in its group: {:?}",
+        preset.bar
+    );
+}
+
+#[gpui_kit::test]
+fn the_same_edit_in_a_run_that_loads_plugins_moves_a_plugin_it_does_not_know_to_the_tray(
+    cx: &mut TestAppContext,
+) {
+    let window = window(cx);
+
+    hide_the_first_panel(&window, cx);
+
+    let stored = cx.update(|cx| window.settings.setting::<LayoutSettings>(cx).clone());
+    let tray: Vec<_> = stored
+        .presets
+        .last()
+        .unwrap()
+        .tray
+        .iter()
+        .map(|id| id.as_str())
+        .collect();
+    assert!(tray.contains(&WIDGET) && tray.contains(&PANEL), "{tray:?}");
 }
 
 #[gpui_kit::test]

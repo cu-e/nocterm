@@ -4,7 +4,7 @@ use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::{App, Context, Window};
 use nocterm_core::{Paths, clock::WallClock};
-use nocterm_plugin_model::{PluginCatalog, PluginSet};
+use nocterm_plugin_model::{PluginCatalog, PluginSet, UserAvailability};
 use nocterm_store::{SettingsHandle, ShutdownCoordinator};
 use nocterm_ui::{PluginSettingsDirectory, PluginSource, SettingsPageSpec, StaticPluginSource};
 use nocterm_workspace::{RegistrationError, Workspace};
@@ -28,9 +28,12 @@ impl UserShell {
         Self
     }
 
-    /// The system plugins only, so the set never changes.
+    /// The system plugins only, so the set never changes. A layout that names a user plugin
+    /// (written by a build that has them) keeps its entries when an edit rewrites it.
     pub(crate) fn source(&self, catalog: &Arc<PluginCatalog>) -> Rc<dyn PluginSource> {
-        Rc::new(StaticPluginSource::new(PluginSet::system(catalog.clone())))
+        Rc::new(StaticPluginSource::new(
+            PluginSet::system(catalog.clone()).with_availability(UserAvailability::Held),
+        ))
     }
 
     /// Nothing to tell about: there are no user plugins.

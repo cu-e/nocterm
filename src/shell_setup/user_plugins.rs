@@ -21,7 +21,7 @@ use nocterm_files::TransferCounts;
 use nocterm_monitor_ui::MonitorUsage;
 use nocterm_plugin_enablement::{PluginEnablement, UserPluginsChoice};
 use nocterm_plugin_host::PluginHost;
-use nocterm_plugin_model::{PluginCatalog, PluginSet};
+use nocterm_plugin_model::{PluginCatalog, PluginSet, UserAvailability};
 use nocterm_plugins_ui::{HeldBy, UserSession};
 use nocterm_store::{SettingsHandle, ShutdownCoordinator};
 use nocterm_ui::{
@@ -92,6 +92,12 @@ fn start_of(mode: UserPluginMode, settings: &SettingsHandle, cx: &App) -> Start 
     }
 }
 
+/// The set of a run that holds the user plugins: the system plugins, and the user ids a layout
+/// names are kept in it, not moved to the tray.
+fn held_set(catalog: &Arc<PluginCatalog>) -> PluginSet {
+    PluginSet::system(catalog.clone()).with_availability(UserAvailability::Held)
+}
+
 /// The user plugins of the run: the host and the plugin set it publishes, or nothing when the
 /// run holds them.
 #[derive(Clone)]
@@ -144,7 +150,12 @@ impl UserShell {
         };
         let host = cx.new(|_| PluginHost::new(ports));
         host.update(cx, |host, cx| host.restore(cx));
-        let base = PluginSet::system(catalog.clone());
+        let base = match dev {
+            Some(_) => {
+                PluginSet::system(catalog.clone()).with_availability(UserAvailability::Developer)
+            }
+            None => PluginSet::system(catalog.clone()),
+        };
         let source = PluginSetHandle::new(published(&base, &host, cx), cx);
         let follower = source.clone();
         cx.observe(&host, move |host, cx| {
@@ -187,9 +198,7 @@ impl UserShell {
     pub(crate) fn source(&self, catalog: &Arc<PluginCatalog>) -> Rc<dyn PluginSource> {
         match &self.state {
             ShellState::Loaded(loaded) => Rc::new(loaded.source.clone()),
-            ShellState::Held(_) => {
-                Rc::new(StaticPluginSource::new(PluginSet::system(catalog.clone())))
-            }
+            ShellState::Held(_) => Rc::new(StaticPluginSource::new(held_set(catalog))),
         }
     }
 
