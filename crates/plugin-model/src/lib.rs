@@ -52,7 +52,7 @@ pub use schema::{
     SettingValue, SettingValues, SettingsSchema, apply, bounded, resolve, sanitize_text,
     toggle_choice,
 };
-pub use set::{PluginSet, PluginSetError, SetOwner, UserEntry};
+pub use set::{PluginSet, PluginSetError, SetOwner, UserAvailability, UserEntry};
 pub use user::{PluginTier, UserContribution, UserPlugin, UserPluginError, user_label};
 pub use view::{ContributionRef, PluginRef};
 

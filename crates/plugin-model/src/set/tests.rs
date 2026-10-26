@@ -139,3 +139,29 @@ fn a_plugin_installed_twice_is_refused() {
         ))
     );
 }
+
+#[test]
+fn only_a_held_set_keeps_ids_of_the_user_tier_it_cannot_show() {
+    let user_id = ContributionId::new("user-acme-notes.notes");
+    let system_id = ContributionId::new("clock.time");
+
+    let installed = PluginSet::system(catalog());
+    assert_eq!(installed.availability(), UserAvailability::Installed);
+    assert!(!installed.keeps_unavailable(&user_id));
+
+    let held = installed.clone().with_availability(UserAvailability::Held);
+    assert!(held.keeps_unavailable(&user_id));
+    assert!(!held.keeps_unavailable(&system_id));
+
+    let developer = installed.with_availability(UserAvailability::Developer);
+    assert!(!developer.keeps_unavailable(&user_id));
+}
+
+#[test]
+fn installing_users_into_a_set_keeps_the_mode_of_the_run() {
+    let developer = PluginSet::system(catalog()).with_availability(UserAvailability::Developer);
+    let with_users = developer
+        .with_users(vec![user("acme", "notes", true, true)], 4)
+        .unwrap();
+    assert_eq!(with_users.availability(), UserAvailability::Developer);
+}

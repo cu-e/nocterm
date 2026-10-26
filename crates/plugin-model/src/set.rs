@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     ContributionId, ContributionRef, GroupSpec, Owner, PluginCatalog, PluginId, PluginRef,
-    UserPlugin,
+    USER_PREFIX, UserPlugin,
 };
 
 /// A user plugin with the flags the host keeps for it.
@@ -38,12 +38,27 @@ pub enum SetOwner<'a> {
     Plugin(PluginRef<'a>),
 }
 
+/// What a run does with user plugins, as far as the readers of the set need to know.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UserAvailability {
+    /// The installed plugins are the set's users.
+    #[default]
+    Installed,
+    /// The run knows no user plugin (safe mode, the switch is off, the build has none). Ids of the
+    /// user tier that a layout names are not unknown: they belong to plugins the run cannot show,
+    /// and a layout edit leaves them where they are.
+    Held,
+    /// A developer session: its one plugin is not installed, and its names say so.
+    Developer,
+}
+
 /// The system catalog, the installed user plugins and a revision.
 #[derive(Clone, Debug)]
 pub struct PluginSet {
     catalog: Arc<PluginCatalog>,
     users: Vec<UserEntry>,
     revision: u64,
+    availability: UserAvailability,
 }
 
 impl PluginSet {
@@ -53,7 +68,26 @@ impl PluginSet {
             catalog,
             users: Vec::new(),
             revision: 0,
+            availability: UserAvailability::Installed,
         }
+    }
+
+    /// The same set for a run with this availability of user plugins. It is kept by
+    /// [`PluginSet::with_users`].
+    #[must_use]
+    pub fn with_availability(mut self, availability: UserAvailability) -> Self {
+        self.availability = availability;
+        self
+    }
+
+    pub fn availability(&self) -> UserAvailability {
+        self.availability
+    }
+
+    /// Whether an id names a user plugin's contribution that this run cannot show because it
+    /// holds user plugins. A layout edit keeps such an id where the layout has it.
+    pub fn keeps_unavailable(&self, id: &ContributionId) -> bool {
+        self.availability == UserAvailability::Held && id.namespace().starts_with(USER_PREFIX)
     }
 
     /// The same system catalog with `users` installed, at `revision`.
@@ -68,6 +102,7 @@ impl PluginSet {
             catalog: self.catalog.clone(),
             users,
             revision,
+            availability: self.availability,
         })
     }
 
