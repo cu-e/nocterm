@@ -131,7 +131,7 @@ static OFF: SystemPlugin = SystemPlugin {
     settings_page: None,
 };
 
-fn catalog() -> Arc<PluginSet> {
+fn plugin_catalog() -> PluginCatalog {
     let groups = [
         GroupSpec {
             id: GroupId::new("navigation"),
@@ -144,9 +144,11 @@ fn catalog() -> Arc<PluginSet> {
             primary: false,
         },
     ];
-    Arc::new(PluginSet::from(
-        PluginCatalog::new(&groups, &[CORE], &[&TOOLS, &PLAIN, &OFF]).unwrap(),
-    ))
+    PluginCatalog::new(&groups, &[CORE], &[&TOOLS, &PLAIN, &OFF]).unwrap()
+}
+
+fn catalog() -> Arc<PluginSet> {
+    Arc::new(PluginSet::from(plugin_catalog()))
 }
 
 pub(super) struct Fixture {
@@ -187,7 +189,7 @@ pub(super) fn open_on_disk(directory: &std::path::Path, cx: &mut TestAppContext)
 fn prepared(mut document: SettingsDocument) -> SettingsDocument {
     document.register::<PluginEnablement>();
     document.update::<PluginEnablement>(|enablement| {
-        enablement.set_enabled(&PluginId::new("off"), false);
+        enablement.set_enabled(&plugin_catalog(), &PluginId::new("off"), false);
     });
     document
 }

@@ -122,16 +122,22 @@ impl PluginEnablement {
         self.user_plugins = allowed;
     }
 
-    /// Switches a plugin on or off in the stored list. The catalog decides later whether the
-    /// entry counts.
-    /// A user plugin id is ignored: user plugins are not stored in this section.
-    pub fn set_enabled(&mut self, id: &PluginId, enabled: bool) {
+    /// Switches a plugin on or off in the stored list.
+    ///
+    /// A user plugin id is ignored: user plugins are not stored in this section. When the list
+    /// holds [`MAX_DISABLED`] ids already, the ones `catalog` does not know are dropped first (they
+    /// have no effect in this build), so the id being switched off is never lost to the cap.
+    pub fn set_enabled(&mut self, catalog: &PluginCatalog, id: &PluginId, enabled: bool) {
         if id.is_user() {
             return;
         }
         if enabled {
             self.disabled.retain(|listed| listed != id);
         } else if !self.disabled.contains(id) {
+            if self.disabled.len() >= MAX_DISABLED {
+                self.disabled
+                    .retain(|listed| catalog.plugin(listed).is_some());
+            }
             self.disabled.push(id.clone());
         }
     }

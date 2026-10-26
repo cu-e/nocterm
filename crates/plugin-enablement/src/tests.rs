@@ -90,7 +90,7 @@ fn sanitizing_drops_user_plugin_ids() {
 fn a_user_plugin_is_never_added_to_the_list() {
     let mut section = PluginEnablement::default();
     let user = PluginId::user("acme", "clock").unwrap();
-    section.set_enabled(&user, false);
+    section.set_enabled(&catalog(), &user, false);
     assert!(section.disabled.is_empty());
     assert!(section.effective_disabled(&catalog()).is_empty());
 }
@@ -123,11 +123,28 @@ fn the_effective_set_ignores_required_unknown_and_core_ids() {
 fn switching_a_plugin_off_and_on_edits_the_list_once() {
     let mut section = PluginEnablement::default();
     let id = PluginId::new("optional");
-    section.set_enabled(&id, false);
-    section.set_enabled(&id, false);
+    section.set_enabled(&catalog(), &id, false);
+    section.set_enabled(&catalog(), &id, false);
     assert_eq!(section.disabled, ids(&["optional"]));
-    section.set_enabled(&id, true);
+    section.set_enabled(&catalog(), &id, true);
     assert!(section.disabled.is_empty());
+}
+
+#[test]
+fn switching_a_plugin_off_at_the_cap_makes_room_by_dropping_ids_this_build_lacks() {
+    let names: Vec<String> = (0..MAX_DISABLED).map(|n| format!("gone{n}")).collect();
+    let mut section = read(&format!("disabled = {names:?}"));
+    assert_eq!(section.disabled.len(), MAX_DISABLED);
+
+    section.set_enabled(&catalog(), &PluginId::new("optional"), false);
+    section.sanitize();
+
+    assert!(section.disabled.contains(&PluginId::new("optional")));
+    assert!(
+        section
+            .effective_disabled(&catalog())
+            .contains(&PluginId::new("optional"))
+    );
 }
 
 #[test]

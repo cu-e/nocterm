@@ -83,7 +83,10 @@ impl PluginToggles for AppPluginToggles {
             return Task::ready(Err(EnablementError::Required(plugin.clone())));
         }
         let id = plugin.clone();
-        self.store(cx, move |section| section.set_enabled(&id, enabled))
+        let catalog = self.catalog.clone();
+        self.store(cx, move |section| {
+            section.set_enabled(&catalog, &id, enabled)
+        })
     }
 
     fn observe(&self, cx: &mut App, on_change: Box<dyn FnMut(&mut App)>) -> Subscription {

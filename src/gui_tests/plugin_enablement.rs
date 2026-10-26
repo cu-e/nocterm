@@ -60,9 +60,10 @@ fn switching_the_monitor_off_while_it_samples_stops_the_sampling(cx: &mut TestAp
         "the sampler keeps running while on"
     );
 
+    let catalog = crate::shell_setup::plugin_catalog().expect("the application catalog is valid");
     let task = cx.update(|cx| {
-        settings.update::<PluginEnablement>(cx, |section| {
-            section.set_enabled(&PluginId::new("monitor"), false)
+        settings.update::<PluginEnablement>(cx, move |section| {
+            section.set_enabled(&catalog, &PluginId::new("monitor"), false)
         })
     });
     cx.run_until_parked();
