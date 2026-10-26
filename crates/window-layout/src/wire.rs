@@ -1,9 +1,9 @@
 //! The document shape of bar items and group entries.
 //!
 //! The in-memory enums name their variants for the code that edits them; the document is
-//! shorter: `{ item = "id" }`, `{ separator = true }` and `{ group = "id", ... }`, and a plain
-//! string for a panel in a group. These mirror types carry that shape and its schema, so the
-//! plugin model needs no `schemars` dependency.
+//! shorter: `{ item = "id" }`, `{ separator = true }`, `{ panel = "id" }` and
+//! `{ group = "id", ... }`, and a plain string for a panel in a group. These mirror types carry
+//! that shape and its schema, so the plugin model needs no `schemars` dependency.
 
 use nocterm_plugin_model::{ContributionId, GroupId, Side};
 use schemars::JsonSchema;
@@ -48,10 +48,19 @@ pub(crate) enum BarItemWire {
     },
     /// A divider; the value must be `true`.
     Separator { separator: bool },
+    /// A panel of its own.
+    Panel {
+        #[schemars(with = "String")]
+        panel: ContributionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        side: Option<SideName>,
+    },
     /// A panel group.
     Group {
         #[schemars(with = "String")]
         group: GroupId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         side: Option<SideName>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -76,13 +85,19 @@ impl From<BarItem> for BarItemWire {
         match item {
             BarItem::Item { id } => Self::Item { item: id },
             BarItem::Separator => Self::Separator { separator: true },
+            BarItem::Panel { id, side } => Self::Panel {
+                panel: id,
+                side: side.map(SideName::from),
+            },
             BarItem::Group {
                 id,
+                name,
                 side,
                 primary,
                 members,
             } => Self::Group {
                 group: id,
+                name,
                 side: side.map(SideName::from),
                 primary,
                 members,
@@ -101,13 +116,19 @@ impl TryFrom<BarItemWire> for BarItem {
             BarItemWire::Separator { separator: false } => {
                 Err("a separator is written `{ separator = true }`")
             }
+            BarItemWire::Panel { panel, side } => Ok(Self::Panel {
+                id: panel,
+                side: side.map(Side::from),
+            }),
             BarItemWire::Group {
                 group,
+                name,
                 side,
                 primary,
                 members,
             } => Ok(Self::Group {
                 id: group,
+                name,
                 side: side.map(Side::from),
                 primary,
                 members,

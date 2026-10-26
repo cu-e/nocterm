@@ -59,7 +59,8 @@ pub enum EditOp {
         subject: Subject,
         by: i32,
     },
-    /// Moves a widget or a group to the end of a zone.
+    /// Moves a widget, a group or a panel to the end of a zone; a panel that leaves its group
+    /// stands on its own there.
     ToZone {
         subject: Subject,
         zone: Zone,
@@ -74,8 +75,8 @@ pub enum EditOp {
     /// or at its end when `index` is past the last. `index` counts the entries as the editor
     /// shows them, the moved one included, so the same list is not shifted by its own entry.
     ///
-    /// A widget or a group goes to a zone, a panel to a group that is in the bar. A widget or a
-    /// panel that waits in the tray comes out of it.
+    /// A widget or a group goes to a zone, a panel to a group that is in the bar or to a zone,
+    /// where it stands on its own. A widget or a panel that waits in the tray comes out of it.
     MoveTo {
         subject: Subject,
         place: Slot,
@@ -113,10 +114,31 @@ pub enum EditOp {
         panel: ContributionId,
         open: bool,
     },
-    /// The side a group opens on; `None` follows its zone.
+    /// The side a group or a panel of its own (by [`solo_group_id`](crate::solo_group_id))
+    /// opens on; `None` follows its zone.
     SetSide {
         group: GroupId,
         side: Option<Side>,
+    },
+    /// Joins `panel` with the panel `target`: into `target`'s group after it, or, when `target`
+    /// stands on its own, into a new group in `target`'s place that holds both.
+    GroupWith {
+        panel: ContributionId,
+        target: ContributionId,
+    },
+    /// Puts a panel in a new group of its own: in its place when it stands on its own, else
+    /// right after the group it leaves.
+    NewGroup {
+        panel: ContributionId,
+    },
+    /// Breaks a group up: its panels stand on their own in its place. The primary group stays.
+    Ungroup {
+        group: GroupId,
+    },
+    /// Names a group; the name is trimmed and may not be empty.
+    RenameGroup {
+        group: GroupId,
+        name: String,
     },
     Rename {
         name: String,
@@ -171,6 +193,8 @@ pub enum EditError {
     Installed(ContributionId),
     #[error("the entry is not a separator")]
     NotASeparator,
+    #[error("the sidebar group cannot be broken up")]
+    PrimaryGroup,
     #[error("too many entries: {0}")]
     Full(Limit),
 }

@@ -52,7 +52,7 @@ pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginSet) -> LayoutPreset
 /// The contribution ids a bar entry names.
 fn ids_of(item: &BarItem) -> Vec<ContributionId> {
     match item {
-        BarItem::Item { id } => vec![id.clone()],
+        BarItem::Item { id } | BarItem::Panel { id, .. } => vec![id.clone()],
         BarItem::Separator => Vec::new(),
         BarItem::Group { members, .. } => members
             .iter()
@@ -88,22 +88,33 @@ fn zone_of(layout: &ResolvedLayout, zone: Zone) -> Vec<BarItem> {
     layout
         .zone(zone)
         .iter()
-        .map(|item| match item {
-            ResolvedItem::Widget(id) => BarItem::Item { id: id.clone() },
-            ResolvedItem::Separator => BarItem::Separator,
-            ResolvedItem::Group(group) => BarItem::Group {
-                id: group.id().clone(),
-                side: (group.side() != default_side(zone)).then_some(group.side()),
-                primary: group.is_primary(),
-                members: group
-                    .members()
-                    .iter()
-                    .map(|member| match member {
-                        ResolvedMember::Panel(id) => GroupEntry::Panel(id.clone()),
-                        ResolvedMember::Separator => GroupEntry::Separator,
-                    })
-                    .collect(),
-            },
+        .filter_map(|item| {
+            Some(match item {
+                ResolvedItem::Widget(id) => BarItem::Item { id: id.clone() },
+                ResolvedItem::Separator => BarItem::Separator,
+                ResolvedItem::Group(group) if group.is_solo() => BarItem::Panel {
+                    id: group.panels().next()?.clone(),
+                    side: (group.side() != default_side(zone)).then_some(group.side()),
+                },
+                ResolvedItem::Group(group) => group_entry(group, zone),
+            })
         })
         .collect()
+}
+
+fn group_entry(group: &crate::ResolvedGroup, zone: Zone) -> BarItem {
+    BarItem::Group {
+        id: group.id().clone(),
+        name: group.name().map(str::to_owned),
+        side: (group.side() != default_side(zone)).then_some(group.side()),
+        primary: group.is_primary(),
+        members: group
+            .members()
+            .iter()
+            .map(|member| match member {
+                ResolvedMember::Panel(id) => GroupEntry::Panel(id.clone()),
+                ResolvedMember::Separator => GroupEntry::Separator,
+            })
+            .collect(),
+    }
 }

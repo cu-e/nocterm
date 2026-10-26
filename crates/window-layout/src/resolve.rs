@@ -9,6 +9,7 @@ use nocterm_plugin_model::{
 
 use crate::{
     BarItem, GroupEntry, LayoutPreset, ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember,
+    solo_group_id,
 };
 
 pub(crate) const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
@@ -16,7 +17,9 @@ pub(crate) const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
 /// Arranges the catalog's contributions as `preset` asks.
 ///
 /// - Ids the catalog does not know, widgets named as panels and panels named as widgets are not
-///   placed; the preset itself is never changed. A user contribution is placed only once the
+///   placed; the preset itself is never changed. A panel named on its own in a zone is hosted as
+///   a group of one ([`solo_group_id`]); a group the catalog does not declare is a group the user
+///   made, kept while its id is well formed. A user contribution is placed only once the
 ///   user approved placing its package (`placeable`).
 /// - A contribution is placed once: the first mention wins.
 /// - Contributions that appear neither in the bar nor in the tray are placed where their hints
@@ -87,20 +90,43 @@ impl<'a> Arrangement<'a> {
                         self.items(zone).push(ResolvedItem::Widget(id.clone()));
                     }
                 }
+                BarItem::Panel { id, side } => {
+                    if self.claim(id, ContributionKind::Panel) {
+                        let width = panel_width(self.catalog, id);
+                        self.items(zone).push(ResolvedItem::Group(ResolvedGroup {
+                            id: solo_group_id(id),
+                            name: None,
+                            side: side.unwrap_or(default_side(zone)),
+                            primary: false,
+                            solo: true,
+                            width,
+                            members: vec![ResolvedMember::Panel(id.clone())],
+                        }));
+                    }
+                }
                 BarItem::Group {
-                    id, side, members, ..
+                    id,
+                    name,
+                    side,
+                    members,
+                    ..
                 } => {
-                    let Some(spec) = self.catalog.group(id.as_str()) else {
-                        continue;
-                    };
-                    if self.group(&spec.id).is_some() {
+                    let spec = self.catalog.group(id.as_str());
+                    if (spec.is_none() && id.check().is_err()) || self.group(id).is_some() {
                         continue;
                     }
                     let members = self.place_members(members);
+                    let width = match spec {
+                        Some(spec) => catalog_width(spec),
+                        None => first_width(self.catalog, &members),
+                    };
                     self.items(zone).push(ResolvedItem::Group(ResolvedGroup {
-                        id: spec.id.clone(),
+                        id: id.clone(),
+                        name: name.clone(),
                         side: side.unwrap_or(default_side(zone)),
-                        primary: spec.primary,
+                        primary: spec.is_some_and(|spec| spec.primary),
+                        solo: false,
+                        width,
                         members,
                     }));
                 }
@@ -175,8 +201,11 @@ impl<'a> Arrangement<'a> {
         }
         self.items(zone).push(ResolvedItem::Group(ResolvedGroup {
             id: spec.id.clone(),
+            name: None,
             side: default_side(zone),
             primary: spec.primary,
+            solo: false,
+            width: catalog_width(spec),
             members: vec![member],
         }));
     }
@@ -212,8 +241,11 @@ impl<'a> Arrangement<'a> {
                 0,
                 ResolvedItem::Group(ResolvedGroup {
                     id: spec.id.clone(),
+                    name: None,
                     side: default_side(Zone::Left),
                     primary: true,
+                    solo: false,
+                    width: catalog_width(spec),
                     members: Vec::new(),
                 }),
             );
@@ -289,6 +321,35 @@ pub(crate) fn hinted_group<'a>(
             .or_else(|| groups.iter().find(|spec| spec.primary))
     };
     named.or_else(by_width)
+}
+
+/// The width class of a group of the catalog: the sidebar's for the primary group, the
+/// assistant's for any other.
+fn catalog_width(spec: &GroupSpec) -> WidthClass {
+    if spec.primary {
+        WidthClass::Navigation
+    } else {
+        WidthClass::Assistant
+    }
+}
+
+/// The width class a panel asks for.
+fn panel_width(catalog: &PluginSet, id: &ContributionId) -> WidthClass {
+    catalog
+        .contribution(id)
+        .and_then(|contribution| contribution.panel())
+        .map_or(WidthClass::Navigation, |traits| traits.width)
+}
+
+/// The width class of a group the user made: its first panel's.
+fn first_width(catalog: &PluginSet, members: &[ResolvedMember]) -> WidthClass {
+    members
+        .iter()
+        .find_map(|member| match member {
+            ResolvedMember::Panel(id) => Some(panel_width(catalog, id)),
+            ResolvedMember::Separator => None,
+        })
+        .unwrap_or(WidthClass::Navigation)
 }
 
 pub(crate) fn default_side(zone: Zone) -> Side {

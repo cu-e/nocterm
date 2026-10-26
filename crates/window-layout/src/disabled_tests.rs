@@ -127,6 +127,7 @@ fn widget(name: &'static str) -> BarItem {
 
 fn navigation(members: Vec<GroupEntry>) -> BarItem {
     BarItem::Group {
+        name: None,
         id: GroupId::new("navigation"),
         side: None,
         primary: true,

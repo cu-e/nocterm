@@ -50,6 +50,7 @@ fn wanting_both(name: &str) -> LayoutPreset {
         id: id_of(name, "chip"),
     }];
     preset.bar.left = vec![BarItem::Group {
+        name: None,
         id: GroupId::new("navigation"),
         side: None,
         primary: true,
@@ -249,7 +250,7 @@ fn ids_in_bar(document: &LayoutSettings) -> Vec<nocterm_plugin_model::Contributi
         .into_iter()
         .flat_map(|zone| bar.zone(zone).to_vec())
         .flat_map(|item| match item {
-            BarItem::Item { id } => vec![id],
+            BarItem::Item { id } | BarItem::Panel { id, .. } => vec![id],
             BarItem::Group { members, .. } => members
                 .into_iter()
                 .filter_map(|member| match member {

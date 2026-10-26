@@ -7,8 +7,11 @@ use nocterm_plugin_model::{
 
 use super::{EditError, EditOp, Limit, Slot, Subject, settle::settle};
 use crate::{
-    BarItem, GroupEntry, LayoutPreset, LayoutSettings, MAX_GROUP_MEMBERS, MAX_ZONE_ITEMS, PresetId,
+    BarItem, GroupEntry, LayoutPreset, LayoutSettings, MAX_GROUP_MEMBERS, MAX_NAME_CHARS,
+    MAX_ZONE_ITEMS, NameError, PresetId,
+    name::same_name,
     resolve::{ZONES, hinted_group},
+    solo_group_id,
 };
 
 /// Applies an entry operation to the stored preset `id`.
@@ -67,6 +70,10 @@ impl<'a> Editing<'a> {
             EditOp::Forget { id } => self.forget(&id),
             EditOp::SetOpen { panel, open } => self.set_open(&panel, open),
             EditOp::SetSide { group, side } => self.set_side(&group, side),
+            EditOp::GroupWith { panel, target } => self.group_with(&panel, &target),
+            EditOp::NewGroup { panel } => self.new_group(&panel),
+            EditOp::Ungroup { group } => self.ungroup(&group),
+            EditOp::RenameGroup { group, name } => self.rename_group(&group, &name),
             // Handled before the entry operations are reached.
             EditOp::Rename { .. }
             | EditOp::Duplicate
@@ -126,7 +133,7 @@ impl<'a> Editing<'a> {
                     return None;
                 };
                 match members.remove(at) {
-                    GroupEntry::Panel(id) => Some(BarItem::Item { id }),
+                    GroupEntry::Panel(id) => Some(BarItem::Panel { id, side: None }),
                     GroupEntry::Separator => None,
                 }
             }
@@ -142,11 +149,32 @@ impl<'a> Editing<'a> {
             .ok_or_else(|| EditError::Unknown(id.to_string()))
     }
 
+    /// A group of the catalog, or one the user made that is in the bar.
     fn check_group(&self, id: &GroupId) -> Result<(), EditError> {
-        match self.catalog.group(id.as_str()) {
-            Some(_) => Ok(()),
-            None => Err(EditError::Unknown(id.to_string())),
+        if self.catalog.group(id.as_str()).is_some() || self.group_at(id).is_some() {
+            Ok(())
+        } else {
+            Err(EditError::Unknown(id.to_string()))
         }
+    }
+
+    /// What a contribution becomes as an entry of a zone: a widget, or a panel on its own that
+    /// keeps the side it had when `taken` was already one.
+    fn zone_entry(
+        &self,
+        id: &ContributionId,
+        taken: Option<BarItem>,
+    ) -> Result<BarItem, EditError> {
+        Ok(match self.contribution(id)?.kind() {
+            ContributionKind::Widget => BarItem::Item { id: id.clone() },
+            ContributionKind::Panel => match taken {
+                Some(panel @ BarItem::Panel { .. }) => panel,
+                _ => BarItem::Panel {
+                    id: id.clone(),
+                    side: None,
+                },
+            },
+        })
     }
 
     fn shift(&mut self, subject: &Subject, by: i32) -> Result<(), EditError> {
@@ -166,9 +194,7 @@ impl<'a> Editing<'a> {
         let spot = self.find(subject);
         match subject {
             Subject::Contribution(id) => {
-                if self.contribution(id)?.kind() != ContributionKind::Widget {
-                    return Err(EditError::WrongKind(subject.clone()));
-                }
+                self.contribution(id)?;
             }
             Subject::Group(id) => {
                 self.check_group(id)?;
@@ -185,7 +211,7 @@ impl<'a> Editing<'a> {
         let item = match subject {
             Subject::Contribution(id) => {
                 self.preset.tray.retain(|held| held != id);
-                BarItem::Item { id: id.clone() }
+                self.zone_entry(id, taken)?
             }
             Subject::Group(_) => taken.ok_or_else(|| EditError::NotPlaced(subject.clone()))?,
         };
@@ -203,7 +229,7 @@ impl<'a> Editing<'a> {
         if let Some(spot) = self.find(&subject) {
             self.take(spot);
         }
-        if self.group_at(group).is_none() {
+        if self.group_at(group).is_none() && self.catalog.group(group.as_str()).is_some() {
             let zone = spec.placement().zone;
             if self.zone(zone).len() >= MAX_ZONE_ITEMS {
                 return Err(EditError::Full(Limit::ZoneItems));
@@ -214,6 +240,7 @@ impl<'a> Editing<'a> {
                 .is_some_and(|g| g.primary);
             self.zone(zone).push(BarItem::Group {
                 id: group.clone(),
+                name: None,
                 side: None,
                 primary,
                 members: Vec::new(),
@@ -259,7 +286,8 @@ impl<'a> Editing<'a> {
         }
         match (place, subject) {
             (Slot::Zone(zone), Subject::Contribution(id)) => {
-                insert_at(self.zone(*zone), index, BarItem::Item { id: id.clone() });
+                let entry = self.zone_entry(id, taken)?;
+                insert_at(self.zone(*zone), index, entry);
             }
             (Slot::Zone(zone), Subject::Group(_)) => {
                 let group = taken.ok_or_else(|| EditError::NotPlaced(subject.clone()))?;
@@ -278,8 +306,8 @@ impl<'a> Editing<'a> {
         Ok(())
     }
 
-    /// Whether `subject` can land in `place`: a widget or a group in a zone, a panel in a group
-    /// of the bar.
+    /// Whether `subject` can land in `place`: a widget, a panel or a group in a zone, a panel in
+    /// a group of the bar.
     fn check_landing(
         &self,
         subject: &Subject,
@@ -288,9 +316,7 @@ impl<'a> Editing<'a> {
     ) -> Result<(), EditError> {
         match (subject, place) {
             (Subject::Contribution(id), Slot::Zone(_)) => {
-                if self.contribution(id)?.kind() != ContributionKind::Widget {
-                    return Err(EditError::WrongKind(subject.clone()));
-                }
+                self.contribution(id)?;
             }
             (Subject::Group(id), Slot::Zone(_)) => {
                 self.check_group(id)?;
@@ -440,10 +466,17 @@ impl<'a> Editing<'a> {
 
     fn set_open(&mut self, panel: &ContributionId, open: bool) -> Result<(), EditError> {
         let subject = Subject::Contribution(panel.clone());
-        let Some(Spot::Member(zone, group, _)) = self.find(&subject) else {
-            return Err(EditError::NotPlaced(subject));
+        let (zone, group) = match self.find(&subject) {
+            Some(Spot::Member(zone, group, _)) => (zone, group),
+            Some(Spot::Zone(zone, at))
+                if matches!(self.zone(zone).get(at), Some(BarItem::Panel { .. })) =>
+            {
+                (zone, at)
+            }
+            _ => return Err(EditError::NotPlaced(subject)),
         };
         let siblings: Vec<ContributionId> = match self.zone(zone).get(group) {
+            Some(BarItem::Panel { id, .. }) => vec![id.clone()],
             Some(BarItem::Group { members, .. }) => members
                 .iter()
                 .filter_map(|member| match member {
@@ -461,19 +494,189 @@ impl<'a> Editing<'a> {
     }
 
     fn set_side(&mut self, group: &GroupId, side: Option<Side>) -> Result<(), EditError> {
-        match self.group_mut(group) {
-            Some(BarItem::Group { side: held, .. }) => {
+        let solo = ZONES.iter().find_map(|zone| {
+            let at = self.preset.bar.zone(*zone).iter().position(
+                |item| matches!(item, BarItem::Panel { id, .. } if solo_group_id(id) == *group),
+            )?;
+            Some((*zone, at))
+        });
+        let entry = match solo {
+            Some((zone, at)) => self.zone(zone).get_mut(at),
+            None => self.group_mut(group),
+        };
+        match entry {
+            Some(BarItem::Group { side: held, .. } | BarItem::Panel { side: held, .. }) => {
                 *held = side;
                 Ok(())
             }
             _ => Err(EditError::NotPlaced(Subject::Group(group.clone()))),
         }
     }
+
+    /// The panel `id` of the catalog, which may be placed.
+    fn panel(&self, id: &ContributionId) -> Result<(), EditError> {
+        if self.contribution(id)?.kind() == ContributionKind::Panel {
+            Ok(())
+        } else {
+            Err(EditError::WrongKind(Subject::Contribution(id.clone())))
+        }
+    }
+
+    fn group_with(
+        &mut self,
+        panel: &ContributionId,
+        target: &ContributionId,
+    ) -> Result<(), EditError> {
+        self.panel(panel)?;
+        self.panel(target)?;
+        if panel == target {
+            return Ok(());
+        }
+        let aim = Subject::Contribution(target.clone());
+        match self.find(&aim) {
+            Some(Spot::Member(zone, group, at)) => {
+                let Some(BarItem::Group { id, .. }) = self.zone(zone).get(group) else {
+                    return Err(EditError::NotPlaced(aim));
+                };
+                let place = Slot::Group(id.clone());
+                self.move_to(&Subject::Contribution(panel.clone()), &place, at + 1)
+            }
+            Some(Spot::Zone(..)) => {
+                if let Some(spot) = self.find(&Subject::Contribution(panel.clone())) {
+                    self.take(spot);
+                }
+                self.preset.tray.retain(|held| held != panel);
+                let Some(Spot::Zone(zone, at)) = self.find(&aim) else {
+                    return Err(EditError::NotPlaced(aim));
+                };
+                let side = match self.zone(zone).get(at) {
+                    Some(BarItem::Panel { side, .. }) => *side,
+                    _ => None,
+                };
+                let group = self.made_group(
+                    side,
+                    vec![
+                        GroupEntry::Panel(target.clone()),
+                        GroupEntry::Panel(panel.clone()),
+                    ],
+                );
+                if let Some(entry) = self.zone(zone).get_mut(at) {
+                    *entry = group;
+                }
+                Ok(())
+            }
+            None => Err(EditError::NotPlaced(aim)),
+        }
+    }
+
+    fn new_group(&mut self, panel: &ContributionId) -> Result<(), EditError> {
+        self.panel(panel)?;
+        let subject = Subject::Contribution(panel.clone());
+        match self.find(&subject) {
+            Some(Spot::Zone(zone, at)) => {
+                let side = match self.zone(zone).get(at) {
+                    Some(BarItem::Panel { side, .. }) => *side,
+                    _ => return Err(EditError::WrongKind(subject)),
+                };
+                let group = self.made_group(side, vec![GroupEntry::Panel(panel.clone())]);
+                if let Some(entry) = self.zone(zone).get_mut(at) {
+                    *entry = group;
+                }
+            }
+            Some(spot @ Spot::Member(zone, group, _)) => {
+                if self.zone(zone).len() >= MAX_ZONE_ITEMS {
+                    return Err(EditError::Full(Limit::ZoneItems));
+                }
+                self.take(spot);
+                let made = self.made_group(None, vec![GroupEntry::Panel(panel.clone())]);
+                insert_at(self.zone(zone), group + 1, made);
+            }
+            None => return Err(EditError::NotPlaced(subject)),
+        }
+        Ok(())
+    }
+
+    fn ungroup(&mut self, group: &GroupId) -> Result<(), EditError> {
+        if self
+            .catalog
+            .group(group.as_str())
+            .is_some_and(|spec| spec.primary)
+        {
+            return Err(EditError::PrimaryGroup);
+        }
+        let subject = Subject::Group(group.clone());
+        let Some((zone, at)) = self.group_at(group) else {
+            return Err(EditError::NotPlaced(subject));
+        };
+        let BarItem::Group { side, members, .. } = self.zone(zone).remove(at) else {
+            return Err(EditError::NotPlaced(subject));
+        };
+        let panels: Vec<BarItem> = members
+            .into_iter()
+            .filter_map(|member| match member {
+                GroupEntry::Panel(id) => Some(BarItem::Panel { id, side }),
+                GroupEntry::Separator => None,
+            })
+            .collect();
+        let items = self.zone(zone);
+        if items.len() + panels.len() > MAX_ZONE_ITEMS {
+            return Err(EditError::Full(Limit::ZoneItems));
+        }
+        items.splice(at..at, panels);
+        Ok(())
+    }
+
+    fn rename_group(&mut self, group: &GroupId, name: &str) -> Result<(), EditError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(NameError::Empty.into());
+        }
+        if name.chars().count() > MAX_NAME_CHARS {
+            return Err(NameError::TooLong.into());
+        }
+        match self.group_mut(group) {
+            Some(BarItem::Group { name: held, .. }) => {
+                *held = Some(name.to_owned());
+                Ok(())
+            }
+            _ => Err(EditError::NotPlaced(Subject::Group(group.clone()))),
+        }
+    }
+
+    /// A new group the user made, with a fresh id and name, holding `members`.
+    fn made_group(&self, side: Option<Side>, members: Vec<GroupEntry>) -> BarItem {
+        let taken: Vec<(&GroupId, Option<&str>)> = ZONES
+            .iter()
+            .flat_map(|zone| self.preset.bar.zone(*zone))
+            .filter_map(|item| match item {
+                BarItem::Group { id, name, .. } => Some((id, name.as_deref())),
+                _ => None,
+            })
+            .collect();
+        let n = (1..)
+            .find(|n| {
+                let id = format!("group-{n}");
+                let name = format!("Group {n}");
+                !taken.iter().any(|(held, named)| {
+                    held.as_str() == id || named.is_some_and(|named| same_name(named, &name))
+                }) && self.catalog.group(&id).is_none()
+            })
+            .unwrap_or(1);
+        BarItem::Group {
+            id: GroupId::owned(format!("group-{n}")),
+            name: Some(format!("Group {n}")),
+            side,
+            primary: false,
+            members,
+        }
+    }
 }
 
 fn spot_in(zone: Zone, at: usize, item: &BarItem, subject: &Subject) -> Option<Spot> {
     match (item, subject) {
-        (BarItem::Item { id }, Subject::Contribution(wanted)) if id == wanted => {
+        (BarItem::Item { id } | BarItem::Panel { id, .. }, Subject::Contribution(wanted))
+            if id == wanted =>
+        {
             Some(Spot::Zone(zone, at))
         }
         (BarItem::Group { id, .. }, Subject::Group(wanted)) if id == wanted => {

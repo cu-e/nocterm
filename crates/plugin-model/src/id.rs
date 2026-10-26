@@ -141,6 +141,12 @@ impl GroupId {
         Self(Cow::Borrowed(id))
     }
 
+    /// An id built at run time, such as a group the user made. It is not checked until
+    /// [`check`](Self::check).
+    pub fn owned(id: impl Into<String>) -> Self {
+        Self(Cow::Owned(id.into()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

@@ -50,7 +50,7 @@ pub use edit::{EditError, EditOp, EditOutcome, EditTarget, Limit, Slot, Subject,
 pub use name::{MAX_NAME_CHARS, NameError, validate_name};
 pub use preset::{Bar, BarItem, GroupEntry, LayoutPreset, PresetId};
 pub use resolve::resolve;
-pub use resolved::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember};
+pub use resolved::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember, solo_group_id};
 pub use settings::{LayoutSettings, MAX_GROUP_MEMBERS, MAX_PRESETS, MAX_ZONE_ITEMS, select};
 pub use transition::{LayoutTransition, transition};
 
@@ -68,5 +68,7 @@ mod edit_tests;
 
 #[cfg(test)]
 mod edit_entry_tests;
+#[cfg(test)]
+mod edit_grouping_tests;
 #[cfg(test)]
 mod user_plugin_tests;

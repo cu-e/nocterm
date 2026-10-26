@@ -92,7 +92,8 @@ impl Bar {
 /// One entry of a zone.
 ///
 /// In the document an entry is a table with exactly one of the keys `item` (a widget id),
-/// `separator = true` or `group` (a group id, with optional `side`, `primary` and `members`).
+/// `separator = true`, `panel` (a panel id, with an optional `side`) or `group` (a group id,
+/// with optional `name`, `side`, `primary` and `members`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "BarItemWire", into = "BarItemWire")]
 #[schemars(with = "BarItemWire")]
@@ -101,10 +102,22 @@ pub enum BarItem {
     Item {
         id: ContributionId,
     },
+    /// A panel of its own: its toggle stands in the zone and it opens in a column of its own,
+    /// beside the other open panels.
+    Panel {
+        id: ContributionId,
+        /// The side of the content the panel opens on; `None` follows the zone.
+        side: Option<Side>,
+    },
     Separator,
     /// A panel group, drawn as the toggles of its members.
+    ///
+    /// The groups of the catalog keep their ids; any other well-formed id is a group the user
+    /// made.
     Group {
         id: GroupId,
+        /// The name the user gave the group; `None` keeps the catalog's title.
+        name: Option<String>,
         /// The side of the content the group opens on; `None` follows the zone.
         side: Option<Side>,
         /// Read and kept so a document round-trips, but not used: the catalog decides which

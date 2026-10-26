@@ -3,26 +3,29 @@
 
 use std::collections::HashSet;
 
-use nocterm_plugin_model::{ContributionId, PluginSet, Zone};
+use nocterm_plugin_model::{ContributionId, GroupId, PluginSet, Side, Zone};
 
 use crate::{Bar, BarItem, GroupEntry, resolve::ZONES};
 
 /// Appends to `settled` the entries of `stored` that `catalog` keeps as unavailable.
 ///
-/// A widget returns to its zone and a panel to its group, in their old order, after the entries
-/// that resolved. They go last so that the position an editor passes for a visible entry is
-/// still its position in the preset. A group that only such panels held is written back with
+/// A widget or a panel of its own returns to its zone and a panel to its group, in their old
+/// order, after the entries that resolved. They go last so that the position an editor passes
+/// for a visible entry is still its position in the preset. A group that only such panels held is written back with
 /// just them. Each id is kept once, the first mention.
 pub(super) fn keep_unavailable(settled: &mut Bar, stored: &Bar, catalog: &PluginSet) {
     let mut seen: HashSet<&ContributionId> = HashSet::new();
     for zone in ZONES {
         for item in stored.zone(zone) {
             match item {
-                BarItem::Item { id } if catalog.keeps_unavailable(id) && seen.insert(id) => {
-                    zone_mut(settled, zone).push(BarItem::Item { id: id.clone() });
+                BarItem::Item { id } | BarItem::Panel { id, .. }
+                    if catalog.keeps_unavailable(id) && seen.insert(id) =>
+                {
+                    zone_mut(settled, zone).push(item.clone());
                 }
                 BarItem::Group {
                     id,
+                    name,
                     side,
                     primary,
                     members,
@@ -39,7 +42,12 @@ pub(super) fn keep_unavailable(settled: &mut Bar, stored: &Bar, catalog: &Plugin
                         })
                         .collect();
                     if !kept.is_empty() {
-                        rejoin(settled, zone, id, (*side, *primary), kept);
+                        let look = Look {
+                            name: name.clone(),
+                            side: *side,
+                            primary: *primary,
+                        };
+                        rejoin(settled, zone, id, look, kept);
                     }
                 }
                 _ => {}
@@ -48,15 +56,16 @@ pub(super) fn keep_unavailable(settled: &mut Bar, stored: &Bar, catalog: &Plugin
     }
 }
 
+/// What a group written back keeps of the stored one.
+struct Look {
+    name: Option<String>,
+    side: Option<Side>,
+    primary: bool,
+}
+
 /// Puts `kept` at the end of the group `id` wherever it is in `bar`, or writes the group back
 /// into `zone` when nothing else kept it.
-fn rejoin(
-    bar: &mut Bar,
-    zone: Zone,
-    id: &nocterm_plugin_model::GroupId,
-    look: (Option<nocterm_plugin_model::Side>, bool),
-    kept: Vec<GroupEntry>,
-) {
+fn rejoin(bar: &mut Bar, zone: Zone, id: &GroupId, look: Look, kept: Vec<GroupEntry>) {
     for at in ZONES {
         for item in zone_mut(bar, at) {
             if let BarItem::Group {
@@ -71,8 +80,9 @@ fn rejoin(
     }
     zone_mut(bar, zone).push(BarItem::Group {
         id: id.clone(),
-        side: look.0,
-        primary: look.1,
+        name: look.name,
+        side: look.side,
+        primary: look.primary,
         members: kept,
     });
 }

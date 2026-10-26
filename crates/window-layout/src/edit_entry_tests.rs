@@ -189,14 +189,19 @@ fn widgets_change_zone_and_panels_change_group() {
         zone(&document, "p1", Zone::Right).last().unwrap(),
         "[assistant: shell.agent shell.snippets]"
     );
-    let refused = apply(
+    apply(
         &mut document,
         EditOp::ToZone {
             subject: item("shell.files"),
             zone: Zone::Left,
         },
+    )
+    .unwrap();
+    assert_eq!(
+        zone(&document, "p1", Zone::Left).last().unwrap(),
+        "(shell.files)",
+        "a panel sent to a zone leaves its group and stands on its own"
     );
-    assert_eq!(refused, Err(EditError::WrongKind(item("shell.files"))));
 }
 
 #[test]
@@ -572,10 +577,6 @@ fn a_drop_that_does_not_fit_the_kind_is_refused_and_copies_nothing() {
     let group = || Slot::Group(GroupId::new("navigation"));
 
     let widget_in_group = apply(&mut document, move_to(item("shell.terminal"), group(), 0));
-    let panel_in_zone = apply(
-        &mut document,
-        move_to(item("shell.files"), Slot::Zone(Zone::Right), 0),
-    );
     let group_in_group = apply(
         &mut document,
         move_to(Subject::Group(GroupId::new("assistant")), group(), 0),
@@ -584,10 +585,6 @@ fn a_drop_that_does_not_fit_the_kind_is_refused_and_copies_nothing() {
     assert_eq!(
         widget_in_group,
         Err(EditError::WrongKind(item("shell.terminal")))
-    );
-    assert_eq!(
-        panel_in_zone,
-        Err(EditError::WrongKind(item("shell.files")))
     );
     assert_eq!(
         group_in_group,

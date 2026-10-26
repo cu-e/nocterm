@@ -1,6 +1,6 @@
 //! The arrangement the shell draws: a preset checked against the catalog.
 
-use nocterm_plugin_model::{ContributionId, GroupId, Side, Zone};
+use nocterm_plugin_model::{ContributionId, GroupId, Side, WidthClass, Zone};
 
 /// A preset resolved against the catalog.
 ///
@@ -26,13 +26,26 @@ pub enum ResolvedItem {
     Group(ResolvedGroup),
 }
 
-/// A panel group in the bar.
+/// A panel group in the bar, or a panel that stands on its own and is hosted as a group of one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedGroup {
     pub(crate) id: GroupId,
+    /// The name the user gave the group.
+    pub(crate) name: Option<String>,
     pub(crate) side: Side,
     pub(crate) primary: bool,
+    /// The group stands for one panel of its own (`BarItem::Panel`); its id is
+    /// [`solo_group_id`] of the panel.
+    pub(crate) solo: bool,
+    /// The width class of the group's column.
+    pub(crate) width: WidthClass,
     pub(crate) members: Vec<ResolvedMember>,
+}
+
+/// The id of the group that hosts a panel of its own. It never passes [`GroupId::check`], so it
+/// cannot meet the id of a group in a document.
+pub fn solo_group_id(panel: &ContributionId) -> GroupId {
+    GroupId::owned(format!("panel:{panel}"))
 }
 
 /// One entry of a resolved group.
@@ -142,6 +155,21 @@ impl ResolvedGroup {
 
     pub fn is_primary(&self) -> bool {
         self.primary
+    }
+
+    /// Whether the group is one panel of its own rather than a group.
+    pub fn is_solo(&self) -> bool {
+        self.solo
+    }
+
+    /// The name the user gave the group, if any.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// The width class of the group's column.
+    pub fn width(&self) -> WidthClass {
+        self.width
     }
 
     pub fn members(&self) -> &[ResolvedMember] {

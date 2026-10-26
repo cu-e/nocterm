@@ -70,6 +70,7 @@ fn focus() -> LayoutPreset {
         bar: Bar {
             left: vec![
                 BarItem::Group {
+                    name: None,
                     id: GroupId::new("navigation"),
                     side: None,
                     primary: true,
@@ -89,6 +90,7 @@ fn focus() -> LayoutPreset {
             right: vec![
                 BarItem::Separator,
                 BarItem::Group {
+                    name: None,
                     id: GroupId::new("assistant"),
                     side: Some(Side::Left),
                     primary: false,
@@ -331,6 +333,7 @@ fn sanitize_limits_presets_zones_and_groups() {
     let mut preset = stored("p1", "Big");
     preset.bar.left = (0..80).map(|_| BarItem::Separator).collect();
     preset.bar.right = vec![BarItem::Group {
+        name: None,
         id: GroupId::new("navigation"),
         side: None,
         primary: false,
@@ -563,6 +566,7 @@ fn a_primary_flag_on_a_group_the_catalog_does_not_make_primary_is_reported_as_ig
     let catalog =
         PluginSet::from(PluginCatalog::new(&groups, &[], &[]).expect("a catalog with two groups"));
     let flagged = |group: &'static str| BarItem::Group {
+        name: None,
         id: GroupId::new(group),
         side: None,
         primary: true,

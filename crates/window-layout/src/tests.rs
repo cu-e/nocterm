@@ -130,6 +130,7 @@ fn widget_item(name: &'static str) -> BarItem {
 
 fn group_item(name: &'static str, members: Vec<GroupEntry>) -> BarItem {
     BarItem::Group {
+        name: None,
         id: GroupId::new(name),
         side: None,
         primary: name == "navigation",
@@ -144,7 +145,8 @@ fn panels(names: &[&'static str]) -> Vec<GroupEntry> {
         .collect()
 }
 
-/// A zone as short text: widgets by id, `|` for a separator, groups as `[id: members]`.
+/// A zone as short text: widgets by id, `|` for a separator, groups as `[id: members]` and a
+/// panel of its own as `(id)`.
 pub(crate) fn show(items: &[ResolvedItem]) -> Vec<String> {
     items
         .iter()
@@ -160,6 +162,9 @@ pub(crate) fn show(items: &[ResolvedItem]) -> Vec<String> {
                         ResolvedMember::Separator => "|".to_owned(),
                     })
                     .collect();
+                if group.is_solo() {
+                    return format!("({})", members.join(" "));
+                }
                 format!("[{}: {}]", group.id(), members.join(" "))
             }
         })
@@ -235,7 +240,7 @@ fn unknown_ids_are_not_placed_and_the_preset_keeps_them() {
         left: vec![
             widget_item("shell.missing"),
             group_item("navigation", panels(&["shell.files", "shell.gone"])),
-            group_item("nowhere", panels(&["shell.servers"])),
+            group_item("No where", panels(&["shell.servers"])),
         ],
         ..Bar::default()
     });
@@ -249,7 +254,73 @@ fn unknown_ids_are_not_placed_and_the_preset_keeps_them() {
     assert_eq!(
         show(layout.zone(Zone::Left))[0],
         "[navigation: shell.files shell.servers shell.snippets]",
-        "the files panel keeps its explicit place; the rest follow by their hints"
+        "the files panel keeps its explicit place; the group with a malformed id is not placed \
+         and the rest follow by their hints"
+    );
+}
+
+#[test]
+fn a_group_the_catalog_does_not_declare_is_the_users_and_keeps_its_name() {
+    let mut group = group_item("group-1", panels(&["shell.servers", "shell.agent"]));
+    if let BarItem::Group { name, .. } = &mut group {
+        *name = Some("Mine".to_owned());
+    }
+    let stored = preset(Bar {
+        right: vec![group],
+        ..Bar::default()
+    });
+
+    let layout = resolve(&stored, &catalog(), &NONE);
+
+    let mine = layout
+        .groups()
+        .find(|g| g.id().as_str() == "group-1")
+        .unwrap();
+    assert_eq!(mine.name(), Some("Mine"));
+    assert!(!mine.is_primary() && !mine.is_solo());
+    assert_eq!(mine.side(), Side::Right);
+    assert_eq!(
+        mine.width(),
+        WidthClass::Navigation,
+        "its first panel's class"
+    );
+    assert_eq!(layout.host_of(&id("shell.agent")), Some(mine.id()));
+}
+
+#[test]
+fn a_panel_of_its_own_is_hosted_alone_on_the_side_of_its_zone() {
+    let stored = preset(Bar {
+        left: vec![
+            BarItem::Panel {
+                id: id("shell.files"),
+                side: None,
+            },
+            BarItem::Panel {
+                id: id("shell.servers"),
+                side: Some(Side::Right),
+            },
+        ],
+        ..Bar::default()
+    });
+
+    let layout = resolve(&stored, &catalog(), &NONE);
+
+    assert_eq!(
+        show(layout.zone(Zone::Left))[..3],
+        [
+            "(shell.files)",
+            "(shell.servers)",
+            "[navigation: shell.snippets]"
+        ],
+        "the hints add the sidebar group after the panels the bar names"
+    );
+    let files = layout.group_of(&id("shell.files")).unwrap();
+    assert!(files.is_solo());
+    assert_eq!(files.id(), &solo_group_id(&id("shell.files")));
+    assert_eq!(files.side(), Side::Left);
+    assert_eq!(
+        layout.group_of(&id("shell.servers")).unwrap().side(),
+        Side::Right
     );
 }
 
@@ -489,12 +560,14 @@ fn the_primary_group_is_in_the_bar_even_without_members() {
 fn the_catalog_decides_which_group_is_primary_whatever_the_preset_flags() {
     let stored = preset(Bar {
         left: vec![BarItem::Group {
+            name: None,
             id: GroupId::new("assistant"),
             side: None,
             primary: true,
             members: panels(&["shell.agent"]),
         }],
         right: vec![BarItem::Group {
+            name: None,
             id: GroupId::new("navigation"),
             side: Some(Side::Left),
             primary: false,
@@ -541,6 +614,7 @@ fn a_group_other_than_the_primary_one_needs_a_panel() {
 fn a_group_takes_the_side_of_its_zone_unless_the_preset_says_otherwise() {
     let stored = preset(Bar {
         left: vec![BarItem::Group {
+            name: None,
             id: GroupId::new("navigation"),
             side: Some(Side::Right),
             primary: true,
