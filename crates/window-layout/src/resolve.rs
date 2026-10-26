@@ -67,12 +67,8 @@ impl<'a> Arrangement<'a> {
         }
     }
 
-    /// Whether the plugin that owns the contribution is disabled. Core contributions have no
-    /// plugin and are never disabled.
     fn is_disabled(&self, id: &ContributionId) -> bool {
-        self.catalog
-            .plugin_of(id)
-            .is_some_and(|plugin| self.disabled.contains(plugin.id()))
+        is_disabled(self.catalog, self.disabled, id)
     }
 
     fn items(&mut self, zone: Zone) -> &mut Vec<ResolvedItem> {
@@ -242,9 +238,7 @@ impl<'a> Arrangement<'a> {
                 contribution.kind() == ContributionKind::Panel
                     && catalog.is_placeable(contribution.id())
                     && !layout.is_placed(contribution.id())
-                    && !catalog
-                        .plugin_of(contribution.id())
-                        .is_some_and(|plugin| disabled.contains(plugin.id()))
+                    && !is_disabled(catalog, disabled, contribution.id())
             })
             .filter_map(|contribution| {
                 let spec = hinted_group(catalog, contribution)?;
@@ -264,6 +258,14 @@ impl<'a> Arrangement<'a> {
         }
         layout
     }
+}
+
+/// Whether the plugin that owns the contribution is disabled. Core contributions have no plugin
+/// and are never disabled.
+fn is_disabled(catalog: &PluginSet, disabled: &BTreeSet<PluginId>, id: &ContributionId) -> bool {
+    catalog
+        .plugin_of(id)
+        .is_some_and(|plugin| disabled.contains(plugin.id()))
 }
 
 /// The group a panel opens in: the one it names, else the primary group for a navigation panel
