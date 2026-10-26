@@ -260,6 +260,9 @@ crates = [
 ]
 # Packages whose resolved features must not hold the named feature in the default build.
 features = { nocterm-plugins-ui = "user" }
+# `auto-dispatch` with opt-level 3 overflowed the stack in the X0 spike; the crate selects
+# `portable-dispatch` and no member may bring the default back.
+banned_features = { wasmi = "auto-dispatch" }
 
 # M7: user settings never reach the system settings store (identifiers per package).
 [isolation.identifiers.nocterm-plugins-ui]

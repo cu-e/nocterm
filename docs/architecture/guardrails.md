@@ -149,6 +149,10 @@ exemption is a reviewed edit of the policy with a reason.
   it under `test_features` in the policy (empty today). The feature must not be enabled by any
   normal or build dependency edge of `nocterm` with `user-plugins` (the default build holds no such
   crate); development dependencies may enable it.
+- **Banned features.** A package listed under `banned_features` (`wasmi` with `auto-dispatch`,
+  which overflowed the stack at the optimization level the workspace builds it with) must resolve
+  without the feature in `cargo tree` over every member, every feature and every kind of edge, so
+  no member can switch it back on ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
 
 These rules protect against host-side regressions. They do not cover I/O reached through an
 allowlisted dependency's own API, nor a confused deputy; those are design-review items.

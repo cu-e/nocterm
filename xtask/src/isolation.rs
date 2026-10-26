@@ -53,6 +53,12 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
             &normal::tree(root, FEATURE)?,
         ));
     }
+    if !policy.compile_out.banned_features.is_empty() {
+        problems.extend(normal::banned_feature_problems(
+            &policy,
+            &normal::workspace_tree(root)?,
+        ));
+    }
     problems.extend(source::problems(&policy, &modules, &symbols, &gpui)?);
     if !problems.is_empty() {
         bail!(

@@ -74,6 +74,7 @@ allowed = ["nocterm", "nocterm-plugin-host", "nocterm-ui"]
 crates = ["nocterm-plugin-api", "nocterm-plugin-packages"]
 features = { nocterm-plugins-ui = "user" }
 test_features = { nocterm-plugin-api = "test-support" }
+banned_features = { wasmi = "auto-dispatch" }
 
 [isolation.identifiers.nocterm-plugins-ui]
 forbidden = ["SettingsHandle", "settings"]
@@ -364,6 +365,30 @@ nocterm-plugin-host v0.0.0 (/work/nocterm/crates/plugin-host)|test-support
             .next()
             .unwrap()
             .contains("nocterm-plugin-api enables test-only feature test-support"),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_banned_feature_anywhere_in_the_workspace_is_refused() {
+    let tree = "\
+nocterm-plugin-wasm v0.0.0 (/work/nocterm/crates/plugin-wasm)|
+wasmi v2.0.0|portable-dispatch,std,validate
+wasmi_core v2.0.0|std
+";
+    assert!(normal::banned_feature_problems(&policy(), tree).is_empty());
+
+    let tree = tree.replace(
+        "portable-dispatch,std",
+        "auto-dispatch,portable-dispatch,std",
+    );
+    let problems = normal::banned_feature_problems(&policy(), &tree);
+    assert!(
+        problems
+            .iter()
+            .next()
+            .unwrap()
+            .contains("wasmi resolves with the banned feature auto-dispatch"),
         "{problems:?}"
     );
 }

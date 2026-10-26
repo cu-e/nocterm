@@ -44,6 +44,11 @@ pub(super) struct CompileOut {
     /// normal (non-dev) closure of the app with the user-plugins feature.
     #[serde(default)]
     pub(super) test_features: BTreeMap<String, String>,
+    /// Packages whose named feature no build of the workspace may switch on, whoever asks for
+    /// it: `wasmi` with `auto-dispatch` overflowed the stack at the optimization level the
+    /// workspace builds it with.
+    #[serde(default)]
+    pub(super) banned_features: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
