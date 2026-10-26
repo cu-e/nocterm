@@ -249,10 +249,13 @@ table with exactly one of these keys:
 
 - `item = "<widget id>"` places a status bar widget, such as `monitor.summary`;
 - `separator = true` draws a divider; dividers never lead, trail or double up;
-- `group = "<group id>"` places a panel group (`navigation` or `assistant`) whose `members`
-  are panel ids, or `{ separator = true }` dividers between their toggles. Its optional
-  `side` (`"left"` or `"right"`) chooses the side of the content the group's panels open on;
-  without it the group follows its zone.
+- `panel = "<panel id>"` places a panel on its own: it opens in a column of its own and closes
+  no other panel. Its optional `side` works as a group's;
+- `group = "<group id>"` places a panel group (`navigation`, `assistant` or one you made, such
+  as `group-1`) whose `members` are panel ids, or `{ separator = true }` dividers between their
+  toggles. A group shows one of its panels at a time. Its optional `name` titles a group you
+  made, and its optional `side` (`"left"` or `"right"`) chooses the side of the content the
+  group's panels open on; without it the group follows its zone.
 
 The `navigation` group is always the sidebar; a `primary` key on a group is ignored (and
 logged). A contribution the layout does not mention is placed by its own hint when the hint
@@ -260,8 +263,10 @@ says to show it, and waits in the tray otherwise; the notifications are pinned a
 shown.
 
 Panel and widget ids are listed in [Plugins and their contributions](docs/reference/plugins.md).
-A panel belongs to the group the layout places it in, wherever its own hint says: the
-sidebar toggle and `Ctrl+Alt+B` act on the groups as the footer draws them. Editing the
+A panel belongs to the group the layout places it in, wherever its own hint says, or stands on
+its own: the sidebar toggle and `Ctrl+Alt+B` act on the groups as the footer draws them. The
+open panels and groups are laid out in the order the footer shows them, so the first one of the
+footer is the leftmost column on its side. Editing the
 selected layout in the file rearranges every open window at once and keeps the panels
 that are still placed; switching layouts shows exactly the panels the new layout opens.
 If the `[layouts]` table does not read (for example a wrong key type), the window shows
@@ -269,14 +274,18 @@ the Default layout and refuses to switch layouts, so that your table is never
 overwritten; fix the file and switching works again.
 
 You need not write the table by hand. **Settings → Appearance → Status bar and panels**
-shows the footer on one line, as it will look, and the panel groups: drag an item (in the
-preview or in the lists) to reorder it, to another zone, into or out of a panel group, or onto
-**Not in the bar** to take it off the footer; or select it and move it with the buttons, the
-**⋯** menu or with `Alt+←`/`→` (within its list), `Alt+↑`/`↓` (to another zone), `G` (to the next group), `|` (add a
+shows the footer on one line, as it will look, and you edit it there. Drag an item to reorder
+it, to another zone, onto a gap to make a panel stand on its own, onto a panel to put the two in
+one group, or onto **Not in the bar** to take it off the footer. Right-click an item, a group or
+a separator for its menu: move it, take a panel out of its group or start a new group with it,
+rename or ungroup a group, add separators, choose the side a centre group opens on or whether a
+panel opens with the layout, open the plugin's settings, or hide it. Click an item to select it
+and move it with `Alt+←`/`→`, `Alt+↑`/`↓` (to another zone), `G` (to the next group), `|` (add a
 separator) and `Delete` (take it off the footer into the tray); `Ctrl+Z` and `Ctrl+Shift+Z`
-(`Cmd` on macOS) undo and redo. Editing Default or Swapped sides saves a copy named Custom and
-selects it, so the built-in layouts never change. Layouts can be renamed, duplicated, deleted
-and reset there. Right-click the footer for **Hide**, **Customize Status Bar…** and **Layouts**.
+(`Cmd` on macOS) undo and redo. Editing the Default layout in use saves a copy named Custom and
+selects it, so the built-in layouts never change; a built-in layout that is not in use offers
+**Duplicate to edit**. Saved layouts can be renamed, duplicated, deleted and reset there.
+Right-click the footer for **Hide**, **Customize Status Bar…** and **Layouts**.
 Settings → Plugins has a "Customize in status bar…" button for each plugin. A layout that
 places an item of a plugin that is not installed keeps it there until the first edit, which
 moves it to the tray as "Not installed". The editor refuses to save while the `[layouts]` table does not read, and says so; fix the file first.
@@ -296,8 +305,7 @@ switches work again.
 The Clock plugin shows the local time as `HH:MM` in the status bar. Default does not place
 it; add it from Settings → Appearance → Status bar and panels (it waits in the tray) or put
 `{ item = "clock.time" }` in a zone of a saved layout. Switching the plugin off removes it
-from every window. Its settings, under Settings → Plugins → Clock and in the editor when the
-clock is selected, choose a 24-hour or 12-hour clock (`1:05 PM`), seconds (the clock then
+from every window. Its settings, under Settings → Plugins → Clock, choose a 24-hour or 12-hour clock (`1:05 PM`), seconds (the clock then
 updates every second) and a short date before the time (`Oct 24`); they are the `[clock]`
 section of `settings.toml` and apply at once in every window.
 

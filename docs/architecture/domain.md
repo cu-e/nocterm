@@ -410,7 +410,8 @@ plugin built on it, in a workspace of its own
 ([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)).
 
 `nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
-zones of the status bar, panel groups with their members and separators, the tray of
+zones of the status bar, panel groups with their members and separators (the catalog's,
+groups the user made and named, and panels that stand alone as groups of one), the tray of
 registered contributions that are not placed, and the panels that open with a layout.
 `resolve` arranges the catalog's contributions as a preset asks and places the rest by
 their hints; ids the catalog does not know are kept in the preset but never placed, a
@@ -429,5 +430,6 @@ use saves a copy named Custom and selects it, a pinned widget cannot leave the b
 never has what `resolve` would reshape. A `[layouts]` table that does not read is reported by
 `LayoutSettings::read_error` so no edit overwrites it. See
 [ADR 0083](../adr/0083-zoned-status-bar.md),
-[ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md) and
-[ADR 0087](../adr/0087-status-bar-and-panels-editor.md).
+[ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md),
+[ADR 0087](../adr/0087-status-bar-and-panels-editor.md) and
+[ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md).

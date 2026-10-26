@@ -47,15 +47,19 @@ no list. The application implements both ports; the section keeps no storage
 
 `nocterm-layout-ui` owns the editor of the status bar and the panels, one section of Appearance
 (`layout_section`): the layout shown, the selected item, undo and redo, rename and delete
-confirmation, the keys and the drags that move items (a drop names a place; the move itself is
-a rule of `nocterm-window-layout`) and the one-line preview of the bar. It writes every change as
-one checked update of `[layouts]` through `nocterm_workspace::edit_layouts`, which applies the
-pure rules of `nocterm-window-layout`, and shows the result of the write. It reads the plugin
-catalog and enablement, draws the settings of the selected item with a `PluginSettingsDirectory`
-it is given and holds no layout rule. The application places the section in the ordinary
-Appearance page with `SettingsPageSpec::with_sections` from `src/bootstrap/layout_editor.rs`,
-and `OpenLayoutSettings { select }` opens it with an item selected
-([ADR 0087](../adr/0087-status-bar-and-panels-editor.md)).
+confirmation, and the one-line preview of the bar, which is where the layout is edited. Chips,
+group pills, the gaps between entries and the tray take drops (a drop names a place; the move
+itself is a rule of `nocterm-window-layout`), every chip, pill and separator has a menu, and the
+keys act on the selected chip. It writes every change as one checked update of `[layouts]`
+through `nocterm_workspace::edit_layouts`, which applies the pure rules of
+`nocterm-window-layout`, and shows the result of the write. It reads the plugin catalog and
+enablement, draws no plugin settings (a chip's menu opens the plugin on the Plugins page), shows
+what the host knows of a user plugin in the chip's tooltip through `UserPluginFacts`, and holds
+no layout rule. The application places the section in the ordinary Appearance page with
+`SettingsPageSpec::with_sections` from `src/shell_setup/layout_editor.rs`, and
+`OpenLayoutSettings { select }` opens it with an item selected
+([ADR 0087](../adr/0087-status-bar-and-panels-editor.md),
+[ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md)).
 
 ## Terminal
 

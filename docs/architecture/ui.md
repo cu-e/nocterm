@@ -343,8 +343,9 @@ layout projection. Bootstrap registers both settings and layout with the same
 coordinator alongside snippets, connection state, agent documents and output
 recording.
 The workspace body lays out one column per shown panel group and the tabs —
-navigation, tabs, assistant, or mirrored by the Swapped layout; within a
-side the groups run from the window edge inward — with one resize state per
+navigation, tabs, assistant, or mirrored by the Swapped layout; the columns
+follow the order of their groups in the bar, and a panel that stands alone is a
+column of its own ([ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md)) — with one resize state per
 arrangement, and remembers widths per width class rather than per position: a hidden column kept in the resizable group
 would hold its stale width and stop its neighbours from growing. Expanded chat
 replaces central content while visible navigation retains its side and width.
