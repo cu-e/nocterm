@@ -10,6 +10,8 @@ use crate::{
     resolve::{ZONES, default_side},
 };
 
+use super::kept::keep_unavailable;
+
 /// A built-in as a preset with every entry written out. The id and name are left empty.
 ///
 /// Every plugin counts as enabled, so the entries of disabled plugins sit where their hints put
@@ -26,6 +28,8 @@ pub(super) fn written_out(built_in: BuiltIn, catalog: &PluginSet) -> LayoutPrese
 ///
 /// The id, name and contents are the same when the preset was already in this form. Ids the
 /// catalog does not know or may not place leave the bar for the tray, in bar order after the ones already there.
+/// The exception is a user plugin's id in a set that holds user plugins: the run cannot show it
+/// and does not know it, so it stays in the bar (see [`keep_unavailable`]).
 pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginSet) -> LayoutPreset {
     let layout = resolve(preset, catalog, &BTreeSet::new());
     let mut tray: Vec<ContributionId> = Vec::new();
@@ -34,13 +38,15 @@ pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginSet) -> LayoutPreset
         .iter()
         .flat_map(|zone| preset.bar.zone(*zone))
         .flat_map(ids_of)
-        .filter(|id| !catalog.is_placeable(id));
+        .filter(|id| !catalog.is_placeable(id) && !catalog.keeps_unavailable(id));
     for id in held.cloned().chain(unknown) {
         if !tray.contains(&id) {
             tray.push(id);
         }
     }
-    explicit(&layout, tray, preset.clone())
+    let mut settled = explicit(&layout, tray, preset.clone());
+    keep_unavailable(&mut settled.bar, &preset.bar, catalog);
+    settled
 }
 
 /// The contribution ids a bar entry names.

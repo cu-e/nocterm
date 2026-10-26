@@ -4,6 +4,7 @@
 //! before and after, so a caller can offer undo. It runs on the settings it is given, inside
 //! the store's ordered update, and leaves them untouched when it fails.
 
+mod kept;
 mod settle;
 mod structure;
 
