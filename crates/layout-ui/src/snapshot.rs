@@ -1,12 +1,12 @@
 //! What the editor shows of one layout, derived from the settings on each draw.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{ContributionId, GroupId, GroupSpec, PluginId, PluginSet, Side, Zone};
+use nocterm_plugin_model::{ContributionId, GroupId, GroupSpec, PluginId, PluginSet, Zone};
 use nocterm_window_layout::{
-    BarItem, BuiltIn, LayoutSettings, PresetId, ResolvedGroup, ResolvedItem, ResolvedLayout,
-    ResolvedMember, Slot, Subject, select,
+    BuiltIn, LayoutSettings, PresetId, ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember,
+    Slot, Subject, select,
 };
 
 /// A layout the picker offers.
@@ -49,8 +49,6 @@ pub(crate) struct Snapshot {
     unknown: Vec<ContributionId>,
     disabled: BTreeSet<PluginId>,
     groups: Vec<GroupSpec>,
-    /// The side a group was told to open on; a group that follows its zone is not listed.
-    sides: BTreeMap<GroupId, Side>,
 }
 
 impl Snapshot {
@@ -92,23 +90,6 @@ impl Snapshot {
                     .collect()
             })
             .unwrap_or_default();
-        let sides = settings
-            .preset(&shown)
-            .into_iter()
-            .flat_map(|preset| {
-                [Zone::Left, Zone::Center, Zone::Right]
-                    .into_iter()
-                    .flat_map(|zone| preset.bar.zone(zone))
-            })
-            .filter_map(|item| match item {
-                BarItem::Group {
-                    id,
-                    side: Some(side),
-                    ..
-                } => Some((id.clone(), *side)),
-                _ => None,
-            })
-            .collect();
         let choices = BuiltIn::ALL
             .into_iter()
             .map(|built_in| (built_in.id(), built_in.name().to_owned(), true))
@@ -136,7 +117,6 @@ impl Snapshot {
             unknown,
             disabled: enablement.effective_disabled(catalog.catalog()),
             groups: catalog.groups().to_vec(),
-            sides,
         }
     }
 
@@ -168,17 +148,34 @@ impl Snapshot {
         &self.unknown
     }
 
-    pub(crate) fn disabled(&self) -> &BTreeSet<PluginId> {
-        &self.disabled
+    /// The groups a panel can be put in: the groups of the bar in bar order, then the
+    /// catalog's groups the bar leaves out. A panel on its own is not a group to join.
+    pub(crate) fn group_choices(&self) -> Vec<(GroupId, String)> {
+        let placed = self
+            .layout
+            .groups()
+            .filter(|group| !group.is_solo())
+            .map(|group| (group.id().clone(), self.group_title(group)));
+        let unplaced = self
+            .groups
+            .iter()
+            .filter(|spec| self.zone_of_group(&spec.id).is_none())
+            .map(|spec| (spec.id.clone(), spec.title.to_owned()));
+        placed.chain(unplaced).collect()
     }
 
-    pub(crate) fn groups(&self) -> &[GroupSpec] {
-        &self.groups
-    }
-
-    /// The side a group was told to open on, or `None` while it follows its zone.
-    pub(crate) fn side_override(&self, group: &GroupId) -> Option<Side> {
-        self.sides.get(group).copied()
+    /// The name the user sees for a group: the one they gave it, else the catalog's title.
+    pub(crate) fn group_title(&self, group: &ResolvedGroup) -> String {
+        group
+            .name()
+            .map(str::to_owned)
+            .or_else(|| {
+                self.groups
+                    .iter()
+                    .find(|spec| spec.id == *group.id())
+                    .map(|spec| spec.title.to_owned())
+            })
+            .unwrap_or_else(|| "Group".to_owned())
     }
 
     /// Whether the controls act on this layout. A built-in can be edited only while it is the
@@ -255,6 +252,18 @@ impl Snapshot {
                             member: None,
                         });
                     }
+                    // A panel on its own is an entry of its zone.
+                    (ResolvedItem::Group(group), Subject::Contribution(wanted))
+                        if group.is_solo() && group.holds(wanted) =>
+                    {
+                        return Some(Found {
+                            zone,
+                            index,
+                            len,
+                            members: 0,
+                            member: None,
+                        });
+                    }
                     (ResolvedItem::Group(group), Subject::Contribution(wanted)) => {
                         let member = group.members().iter().position(
                             |member| matches!(member, ResolvedMember::Panel(id) if id == wanted),
@@ -278,6 +287,16 @@ impl Snapshot {
 
     pub(crate) fn group_of(&self, panel: &ContributionId) -> Option<&ResolvedGroup> {
         self.layout.group_of(panel)
+    }
+
+    /// The group `id` of the bar.
+    pub(crate) fn group(&self, id: &GroupId) -> Option<&ResolvedGroup> {
+        self.layout.groups().find(|group| group.id() == id)
+    }
+
+    /// Whether the panel opens when the layout is chosen.
+    pub(crate) fn opens_with_layout(&self, panel: &ContributionId) -> bool {
+        self.layout.open().contains(panel)
     }
 
     pub(crate) fn zone_of_group(&self, group: &GroupId) -> Option<Zone> {

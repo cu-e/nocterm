@@ -13,26 +13,33 @@ use gpui_kit::{
     component::{ActiveTheme as _, Icon, Sizable as _, h_flex},
     div,
     prelude::*,
+    px,
 };
-use nocterm_plugin_model::{ContributionKind, ContributionRef, GroupId, Zone};
+use nocterm_plugin_model::{ContributionId, ContributionKind, ContributionRef, GroupId, Zone};
 use nocterm_ui::{DragSource, IconName, contribution_icon};
 use nocterm_window_layout::{EditOp, Slot, Subject};
 
 use crate::{commands::Commands, snapshot::Snapshot};
 
-/// The hover group of a line of a list, which its insertion marker follows.
-pub(crate) const ROW: &str = "layout-drop-row";
 /// The hover group of a chip of the bar preview.
 pub(crate) const CHIP: &str = "layout-drop-chip";
-/// The hover group of a panel group's box in the bar preview.
-pub(crate) const BOX: &str = "layout-drop-box";
+/// The hover group of a group of the bar preview.
+pub(crate) const PILL: &str = "layout-drop-pill";
+/// The hover group of the gap in front of an entry of a zone.
+pub(crate) const GAP: &str = "layout-drop-gap";
+/// How wide the gap between the entries of a zone is.
+pub(crate) const GAP_WIDTH: f32 = 6.;
+/// How thick the line that marks a place is.
+const MARK: f32 = 2.;
+/// How tall a chip of the bar preview is.
+pub(crate) const CHIP_HEIGHT: f32 = 22.;
 
 /// What kind of thing is dragged, which decides where it may land.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     /// A status bar widget: lands in a zone.
     Widget,
-    /// A panel: lands in a group.
+    /// A panel: lands in a group, beside a panel on its own, or on its own in a zone.
     Panel,
     /// A panel group: lands in a zone.
     Group,
@@ -90,11 +97,13 @@ impl Dragged {
 }
 
 /// Where a drop on one element puts the dragged item. An element names a place for what goes
-/// into a zone, one for a panel that goes into a group, or the tray.
+/// into a zone, one for a panel that goes into a group, a panel on its own that a dropped panel
+/// makes a group with, or the tray.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Landing {
     zone: Option<(Zone, usize)>,
     group: Option<(GroupId, usize)>,
+    beside: Option<ContributionId>,
     tray: bool,
     /// The element is the whole zone, so it fills while a widget or a group is over it.
     zone_fills: bool,
@@ -116,6 +125,15 @@ impl Landing {
         Self {
             group: Some((group, index)),
             ..Self::default()
+        }
+    }
+
+    /// A panel dropped here makes a group with `panel`, which is on its own; anything else lands
+    /// at `zone` in front of it.
+    pub(crate) fn beside(panel: ContributionId, zone: Zone, index: usize) -> Self {
+        Self {
+            beside: Some(panel),
+            ..Self::in_zone(zone, index)
         }
     }
 
@@ -145,12 +163,22 @@ impl Landing {
     /// The edit a drop of `dragged` here asks for; `None` when it does not fit this place or
     /// would leave it where it is.
     pub(crate) fn op(&self, dragged: &Dragged) -> Option<EditOp> {
+        if let (Kind::Panel, Some(target), Subject::Contribution(panel)) =
+            (dragged.kind, &self.beside, &dragged.subject)
+        {
+            return (panel != target).then(|| EditOp::GroupWith {
+                panel: panel.clone(),
+                target: target.clone(),
+            });
+        }
+        let in_zone = self.zone.map(|(zone, index)| (Slot::Zone(zone), index));
         let wanted = match dragged.kind {
-            Kind::Widget | Kind::Group => self.zone.map(|(zone, index)| (Slot::Zone(zone), index)),
+            Kind::Widget | Kind::Group => in_zone,
             Kind::Panel => self
                 .group
                 .clone()
-                .map(|(group, index)| (Slot::Group(group), index)),
+                .map(|(group, index)| (Slot::Group(group), index))
+                .or(in_zone),
         };
         if let Some((place, index)) = wanted {
             return (!dragged.stays(&place, index)).then(|| EditOp::MoveTo {
@@ -162,17 +190,7 @@ impl Landing {
         let Subject::Contribution(id) = &dragged.subject else {
             return None;
         };
-        if self.tray && dragged.in_bar() {
-            return Some(EditOp::RemoveToTray { id: id.clone() });
-        }
-        // A panel out of the tray dropped on a zone goes to its own group, joining the zone.
-        match (self.zone, dragged.kind, dragged.in_bar()) {
-            (Some((zone, _)), Kind::Panel, false) => Some(EditOp::PlaceIn {
-                id: id.clone(),
-                zone,
-            }),
-            _ => None,
-        }
+        (self.tray && dragged.in_bar()).then(|| EditOp::RemoveToTray { id: id.clone() })
     }
 
     fn accepts(&self, value: &dyn Any) -> bool {
@@ -181,10 +199,20 @@ impl Landing {
             .is_some_and(|dragged| self.op(dragged).is_some())
     }
 
+    /// Whether a drop of `value` here goes in front of the element, which a line shows: it
+    /// fits, and the element as a whole does not take it.
+    fn marks(&self, value: &dyn Any) -> bool {
+        value
+            .downcast_ref::<Dragged>()
+            .is_some_and(|dragged| self.op(dragged).is_some() && !self.fills(dragged))
+    }
+
     /// Whether the element as a whole is where `dragged` would go, and so fills.
     fn fills(&self, dragged: &Dragged) -> bool {
         match dragged.kind {
-            Kind::Panel => self.group_fills || self.tray || (self.zone_fills && !dragged.in_bar()),
+            Kind::Panel => {
+                self.group_fills || self.tray || self.zone_fills || self.beside.is_some()
+            }
             Kind::Widget => self.zone_fills || self.tray,
             Kind::Group => self.zone_fills,
         }
@@ -238,36 +266,62 @@ pub(crate) fn target<E: InteractiveElement>(
     })
 }
 
-/// A line that shows where a drop would land. It follows the hover group `group`, which the
-/// element it is placed in must carry, and shows only for a drag that fits `landing`.
+/// A line in front of an element that shows where a drop would land. It follows the hover group
+/// `group`, which the element it is placed in must carry, and shows only for a drag that
+/// `landing` puts in front of the element rather than into it.
 pub(crate) fn marker(
     id: impl Into<ElementId>,
     group: &'static str,
-    vertical: bool,
     landing: Landing,
     cx: &App,
 ) -> AnyElement {
     let color = cx.theme().primary;
-    let line = div()
+    div()
         .id(id)
         .test_support()
         .absolute()
         .invisible()
         .cursor_default()
-        .can_drop(move |value, _, _| landing.accepts(value))
-        .group_drag_over::<Dragged>(group, move |style| style.visible().bg(color));
-    if vertical {
-        line.top_0()
-            .bottom_0()
-            .left(gpui_kit::px(-5.))
-            .w(gpui_kit::px(2.))
-    } else {
-        line.left_0()
-            .right_0()
-            .top(gpui_kit::px(-1.))
-            .h(gpui_kit::px(2.))
-    }
-    .into_any_element()
+        .top_0()
+        .bottom_0()
+        .left(px(-(GAP_WIDTH + MARK) / 2.))
+        .w(px(MARK))
+        .rounded_full()
+        .can_drop(move |value, _, _| landing.marks(value))
+        .group_drag_over::<Dragged>(group, move |style| style.visible().bg(color))
+        .into_any_element()
+}
+
+/// The room in front of an entry of a zone, or after its last one, that takes a drop at
+/// `landing`: a panel dropped here stands on its own rather than joining its neighbour.
+pub(crate) fn gap(
+    id: impl Into<ElementId>,
+    landing: Landing,
+    commands: Commands,
+    cx: &App,
+) -> AnyElement {
+    let color = cx.theme().primary;
+    let fits = landing.clone();
+    let line = div()
+        .absolute()
+        .invisible()
+        .top_0()
+        .bottom_0()
+        .left(px((GAP_WIDTH - MARK) / 2.))
+        .w(px(MARK))
+        .rounded_full()
+        .can_drop(move |value, _, _| fits.accepts(value))
+        .group_drag_over::<Dragged>(GAP, move |style| style.visible().bg(color));
+    let gap = div()
+        .id(id)
+        .test_support()
+        .group(GAP)
+        .relative()
+        .flex_none()
+        .w(px(GAP_WIDTH))
+        .h(px(CHIP_HEIGHT))
+        .child(line);
+    target(gap, landing, false, commands).into_any_element()
 }
 
 /// The ghost that follows the pointer: the item as a small chip.
@@ -310,16 +364,48 @@ mod tests {
     }
 
     #[test]
-    fn a_widget_lands_in_a_zone_and_a_panel_only_in_a_group() {
+    fn a_widget_lands_in_a_zone_and_a_panel_in_a_group_or_on_its_own_in_a_zone() {
         let widget = dragged(Kind::Widget, Some((Slot::Zone(Zone::Left), 0)));
         let panel = dragged(Kind::Panel, Some((Slot::Group(GroupId::new("g")), 0)));
         let zone = Landing::in_zone(Zone::Right, 2);
-        let group = Landing::in_group(GroupId::new("h"), 1);
+        let member = Landing::in_group(GroupId::new("h"), 1);
 
         assert!(zone.op(&widget).is_some());
-        assert!(zone.op(&panel).is_none());
-        assert!(group.op(&panel).is_some());
-        assert!(group.op(&widget).is_none());
+        assert!(matches!(
+            zone.op(&panel),
+            Some(EditOp::MoveTo {
+                place: Slot::Zone(Zone::Right),
+                index: 2,
+                ..
+            })
+        ));
+        assert!(matches!(
+            member.op(&panel),
+            Some(EditOp::MoveTo {
+                place: Slot::Group(_),
+                index: 1,
+                ..
+            })
+        ));
+        assert!(
+            member.op(&widget).is_none(),
+            "the group around it takes a widget"
+        );
+    }
+
+    #[test]
+    fn a_panel_dropped_on_a_panel_of_its_own_groups_with_it_and_a_widget_lands_in_front() {
+        let panel = dragged(Kind::Panel, Some((Slot::Zone(Zone::Left), 0)));
+        let widget = dragged(Kind::Widget, Some((Slot::Zone(Zone::Left), 0)));
+        let alone = Landing::beside(ContributionId::new("c.d"), Zone::Left, 3);
+
+        assert!(matches!(alone.op(&panel), Some(EditOp::GroupWith { .. })));
+        assert!(matches!(
+            alone.op(&widget),
+            Some(EditOp::MoveTo { index: 3, .. })
+        ));
+        let itself = Landing::beside(ContributionId::new("a.b"), Zone::Left, 0);
+        assert!(itself.op(&panel).is_none(), "not on itself");
     }
 
     #[test]
@@ -346,13 +432,14 @@ mod tests {
     }
 
     #[test]
-    fn a_panel_of_the_tray_dropped_on_a_zone_goes_to_its_own_group() {
+    fn a_panel_of_the_tray_dropped_on_a_zone_stands_there_on_its_own() {
         let waiting = dragged(Kind::Panel, None);
 
         assert!(matches!(
             Landing::zone_area(Zone::Center, 0).op(&waiting),
-            Some(EditOp::PlaceIn {
-                zone: Zone::Center,
+            Some(EditOp::MoveTo {
+                place: Slot::Zone(Zone::Center),
+                index: 0,
                 ..
             })
         ));

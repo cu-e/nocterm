@@ -1,6 +1,5 @@
-//! The editor lays itself out inside the width it is given: the bar stays inside its box, the
-//! zone columns, the tray and the inspector never overlap, at a Settings page's width and at a
-//! narrow one.
+//! The editor lays itself out inside the width it is given: the bar stays one line inside its
+//! box and the tray stays below it, at a Settings page's width and at a narrow one.
 
 use gpui_kit::{Bounds, Pixels, TestAppContext, test::TestWindowExt as _};
 
@@ -11,19 +10,6 @@ const WIDTHS: [f32; 3] = [1200., 660., 420.];
 
 /// The widths at which the whole bar of the default layout fits, in full, packed or as icons.
 const FITTING: [f32; 3] = [1200., 660., 580.];
-
-/// The rows of the lists that the default layout places.
-const ROWS: [&str; 9] = [
-    "layout-item:group:navigation",
-    "layout-item:shell.servers",
-    "layout-item:shell.files",
-    "layout-item:shell.notices",
-    "layout-item:shell.transfers",
-    "layout-item:tools.clock",
-    "layout-item:shell.terminal",
-    "layout-item:plain.note",
-    "layout-item:off.item",
-];
 
 fn overlap(a: Bounds<Pixels>, b: Bounds<Pixels>) -> bool {
     let slack = gpui_kit::px(0.5);
@@ -170,107 +156,16 @@ fn the_bar_preview_in_a_very_narrow_box_scrolls_instead_of_wrapping(cx: &mut Tes
 }
 
 #[gpui_kit::test]
-fn the_inspector_overlaps_neither_the_bar_nor_the_lists(cx: &mut TestAppContext) {
+fn the_tray_stays_below_the_bar_and_inside_the_editor(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.click("layout-item:tools.clock", cx);
-    for width in WIDTHS {
-        fixture.resize(width, cx);
-        let preview = bounds(&fixture, "layout-preview", cx);
-        let lists = bounds(&fixture, "layout-lists-column", cx);
-        let inspector = bounds(&fixture, "layout-inspector", cx);
-        let editor = bounds(&fixture, "layout-editor", cx);
-        assert!(
-            !overlap(inspector, preview),
-            "{width}: {inspector:?} / {preview:?}"
-        );
-        assert!(
-            !overlap(inspector, lists),
-            "{width}: {inspector:?} / {lists:?}"
-        );
-        assert!(!overlap(lists, preview), "{width}: {lists:?} / {preview:?}");
-        assert!(
-            inside(inspector, editor),
-            "{width}: {inspector:?} in {editor:?}"
-        );
-        assert!(inside(lists, editor), "{width}: {lists:?} in {editor:?}");
-    }
-}
-
-#[gpui_kit::test]
-fn the_inspector_sits_beside_the_lists_when_there_is_room_and_below_them_when_not(
-    cx: &mut TestAppContext,
-) {
-    let fixture = open(cx);
-    fixture.click("layout-item:tools.clock", cx);
-
-    fixture.resize(1200., cx);
-    let (lists, inspector) = (
-        bounds(&fixture, "layout-lists-column", cx),
-        bounds(&fixture, "layout-inspector", cx),
-    );
-    assert!(
-        lists.right() <= inspector.left(),
-        "{lists:?} / {inspector:?}"
-    );
-
-    fixture.resize(420., cx);
-    let (lists, inspector) = (
-        bounds(&fixture, "layout-lists-column", cx),
-        bounds(&fixture, "layout-inspector", cx),
-    );
-    assert!(
-        lists.bottom() <= inspector.top(),
-        "{lists:?} / {inspector:?}"
-    );
-}
-
-#[gpui_kit::test]
-fn the_zone_columns_do_not_overlap_and_keep_their_rows_inside(cx: &mut TestAppContext) {
-    let fixture = open(cx);
-    for width in WIDTHS {
-        fixture.resize(width, cx);
-        let columns = ["left", "center", "right"].map(|name| {
-            let id = format!("layout-zone:{name}");
-            (id.clone(), bounds(&fixture, &id, cx))
-        });
-        for (at, (name, one)) in columns.iter().enumerate() {
-            for (other, two) in columns.iter().skip(at + 1) {
-                assert!(
-                    !overlap(*one, *two),
-                    "{width}: {name} {one:?} / {other} {two:?}"
-                );
-            }
-        }
-        let lists = bounds(&fixture, "layout-lists-column", cx);
-        let mut rows = 0;
-        for id in ROWS {
-            if !fixture.has(id, cx) {
-                continue;
-            }
-            rows += 1;
-            let row = bounds(&fixture, id, cx);
-            let column = columns.iter().find(|(_, column)| inside(row, *column));
-            assert!(
-                column.is_some(),
-                "{width}: {id} {row:?} is in no column {columns:?}"
-            );
-            assert!(inside(row, lists), "{width}: {id} {row:?} in {lists:?}");
-        }
-        assert!(rows >= 8, "{width}: the rows were drawn");
-    }
-}
-
-#[gpui_kit::test]
-fn the_tray_stays_below_the_zone_columns_and_inside_the_editor(cx: &mut TestAppContext) {
-    let fixture = open(cx);
-    fixture.click("layout-item:tools.clock", cx);
-    fixture.click("layout-op-remove", cx);
+    fixture.drag("layout-preview:tools.clock", "layout-tray", cx);
     for width in WIDTHS {
         fixture.resize(width, cx);
         let tray = bounds(&fixture, "layout-tray", cx);
-        let zones = bounds(&fixture, "layout-zones", cx);
+        let preview = bounds(&fixture, "layout-preview", cx);
         let chip = bounds(&fixture, "layout-tray:tools.clock", cx);
-        assert!(!overlap(tray, zones), "{width}: {tray:?} / {zones:?}");
+        assert!(!overlap(tray, preview), "{width}: {tray:?} / {preview:?}");
+        assert!(preview.bottom() <= tray.top(), "{width}: below");
         assert!(inside(chip, tray), "{width}: {chip:?} in {tray:?}");
         assert!(inside(tray, bounds(&fixture, "layout-editor", cx)));
     }

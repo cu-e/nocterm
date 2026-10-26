@@ -1,5 +1,5 @@
-//! What the host knows about an installed user plugin, which the inspector shows beside the
-//! item: the facts are the host's own, never taken from the plugin's text.
+//! What the host knows about an installed user plugin, which the tooltip of its items shows:
+//! the facts are the host's own, never taken from the plugin's text.
 
 use std::rc::Rc;
 
@@ -17,7 +17,7 @@ pub struct UserFacts {
     pub capabilities: Vec<String>,
 }
 
-/// Where the inspector reads the facts of user plugins from.
+/// Where the editor reads the facts of user plugins from.
 pub trait UserPluginFacts: 'static {
     /// The facts of `plugin`, if it is installed.
     fn facts(&self, plugin: &PluginId, cx: &App) -> Option<UserFacts>;

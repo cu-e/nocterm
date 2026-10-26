@@ -3,17 +3,14 @@
 use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription,
-    TestSupportExt as _, Window,
-    component::{h_flex, v_flex},
+    App, Context, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, SharedString, Styled as _, Subscription, TestSupportExt as _, Window,
+    component::v_flex,
 };
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{ContributionKind, PluginSet, PluginTier, Zone};
+use nocterm_plugin_model::{ContributionKind, GroupId, PluginSet, Zone};
 use nocterm_store::SettingsHandle;
-use nocterm_ui::{
-    FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsForm, PluginSource, SettingsPage,
-};
+use nocterm_ui::{PluginSource, SettingsPage};
 use nocterm_window_layout::{
     EditError, EditOp, EditOutcome, LayoutSettings, PresetId, Subject, select,
 };
@@ -24,22 +21,20 @@ use crate::{
     dnd::{Dragged, Landing},
     fit::Fit,
     history::{History, Step},
-    inspector::Inspector,
     keys::KeyCommand,
     presets::Presets,
     preview::Preview,
-    rename::RenameDraft,
+    rename::{RenameDraft, Renamed},
     selection::Selection,
     snapshot::Snapshot,
     tray::Tray,
-    user_facts::{SharedFacts, UserFacts},
-    zones::Zones,
+    user_facts::SharedFacts,
 };
 
 /// What the section is asking the user about, apart from the layout itself.
 pub(crate) enum Mode {
     Idle,
-    /// A new name is being typed for the layout.
+    /// A new name is being typed for the layout or one of its groups.
     Renaming(RenameDraft),
     /// The layout shown is about to be deleted.
     ConfirmingDelete,
@@ -54,7 +49,7 @@ pub(crate) struct Notice {
 }
 
 /// The "Status bar and panels" section of Appearance: the arrangement of the status bar and the
-/// panel groups, edited in place, with the settings of the selected item beside it.
+/// panel groups, edited in place by dragging the items of the bar and through their menus.
 pub struct LayoutEditorSection {
     settings: SettingsHandle,
     /// Where the plugins come from, which changes while the page is open when the user installs
@@ -64,11 +59,8 @@ pub struct LayoutEditorSection {
     legacy_swapped: bool,
     selection: Selection,
     history: History,
-    plugin_settings: PluginSettingsDirectory,
     /// What the host knows of installed user plugins, when the application has any.
     facts: Option<SharedFacts>,
-    /// The form of the selected item, when its plugin declares settings for it.
-    form: Option<Entity<PluginSettingsForm>>,
     /// Writes sent and not yet settled.
     pending: usize,
     mode: Mode,
@@ -83,7 +75,6 @@ impl LayoutEditorSection {
     pub fn new(
         settings: SettingsHandle,
         source: Rc<dyn PluginSource>,
-        plugin_settings: PluginSettingsDirectory,
         facts: Option<SharedFacts>,
         legacy_swapped: bool,
         cx: &mut Context<Self>,
@@ -110,9 +101,7 @@ impl LayoutEditorSection {
             legacy_swapped,
             selection: Selection::default(),
             history,
-            plugin_settings,
             facts,
-            form: None,
             pending: 0,
             mode: Mode::Idle,
             notice: None,
@@ -130,38 +119,6 @@ impl LayoutEditorSection {
             self.selection.shown(),
             &self.catalog,
         )
-    }
-
-    pub(crate) fn catalog_arc(&self) -> Arc<PluginSet> {
-        self.catalog.clone()
-    }
-
-    /// The host's facts about the plugin of the selected item, when it is a user plugin.
-    pub(crate) fn user_facts(&self, cx: &App) -> Option<UserFacts> {
-        let Some(Subject::Contribution(id)) = self.selection.item() else {
-            return None;
-        };
-        let plugin = self.catalog.plugin_of(id)?;
-        if plugin.tier() != PluginTier::User {
-            return None;
-        }
-        self.facts.as_ref()?.facts(plugin.id(), cx)
-    }
-
-    pub(crate) fn fit(&self) -> Fit {
-        self.fit.clone()
-    }
-
-    pub(crate) fn focus_handle_ref(&self) -> &FocusHandle {
-        &self.focus
-    }
-
-    pub(crate) fn item(&self) -> Option<&Subject> {
-        self.selection.item()
-    }
-
-    pub(crate) fn form(&self) -> Option<&Entity<PluginSettingsForm>> {
-        self.form.as_ref()
     }
 
     pub(crate) fn mode(&self) -> &Mode {
@@ -191,53 +148,22 @@ impl LayoutEditorSection {
         )
     }
 
-    /// Selects an item of the layout, or nothing, and shows the settings it has.
+    /// Selects an item of the layout, or nothing, for the keys of the editor.
     pub(crate) fn pick(
         &mut self,
         item: Option<Subject>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.flush_form(cx);
         self.selection.pick(item);
-        self.form = self.form_for_item(window, cx);
         window.focus(&self.focus, cx);
         cx.notify();
     }
 
-    fn form_for_item(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<PluginSettingsForm>> {
-        let Some(Subject::Contribution(id)) = self.selection.item() else {
-            return None;
-        };
-        let plugin = self.catalog.plugin_of(id)?;
-        let (schema, source) = self.plugin_settings.get(plugin.id(), cx)?;
-        schema.for_contribution(id).next()?;
-        let frame = match plugin.tier() {
-            PluginTier::System => FormFrame::Host,
-            PluginTier::User => FormFrame::Plugin {
-                name: plugin.name().to_owned().into(),
-            },
-        };
-        let (plugin, scope) = (plugin.id().clone(), FormScope::Contribution(id.clone()));
-        Some(cx.new(|cx| PluginSettingsForm::new(source, plugin, schema, scope, frame, window, cx)))
-    }
-
-    fn flush_form(&self, cx: &mut Context<Self>) {
-        if let Some(form) = &self.form {
-            form.update(cx, |form, cx| form.flush(cx));
-        }
-    }
-
     /// Shows another layout in the editor. It does not change the layout in use.
     pub(crate) fn show(&mut self, id: PresetId, window: &mut Window, cx: &mut Context<Self>) {
-        self.flush_form(cx);
         let in_use = self.in_use(cx);
         self.selection.show(id, &in_use);
-        self.form = None;
         self.mode = Mode::Idle;
         self.notice = None;
         window.focus(&self.focus, cx);
@@ -337,7 +263,10 @@ impl LayoutEditorSection {
             EditOp::Reset => Some(Notice::undoable(format!("Reset \u{201c}{name}\u{201d}."))),
             _ => None,
         };
-        if matches!(op, EditOp::Rename { .. } | EditOp::Delete) {
+        if matches!(
+            op,
+            EditOp::Rename { .. } | EditOp::RenameGroup { .. } | EditOp::Delete
+        ) {
             self.mode = Mode::Idle;
         }
     }
@@ -355,7 +284,9 @@ impl LayoutEditorSection {
             refusal => refusal.to_string().into(),
         };
         match (op, &mut self.mode) {
-            (EditOp::Rename { .. }, Mode::Renaming(draft)) => draft.refuse(text),
+            (EditOp::Rename { .. } | EditOp::RenameGroup { .. }, Mode::Renaming(draft)) => {
+                draft.refuse(text)
+            }
             _ => self.notice = Some(Notice::failed(text)),
         }
     }
@@ -368,7 +299,6 @@ impl LayoutEditorSection {
             && self.catalog.contribution(id).is_none()
         {
             self.selection.clear();
-            self.form = None;
         }
         cx.notify();
     }
@@ -397,11 +327,28 @@ impl LayoutEditorSection {
         }
         self.notice = None;
         self.mode = Mode::Renaming(RenameDraft::new(
-            snapshot.shown().clone(),
+            Renamed::Layout(snapshot.shown().clone()),
             snapshot.name().to_owned(),
             window,
             cx,
         ));
+        cx.notify();
+    }
+
+    /// Asks for a new name of the group `id` of the layout shown.
+    pub(crate) fn begin_group_rename(
+        &mut self,
+        id: GroupId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(cx);
+        let Some(group) = snapshot.group(&id).filter(|_| snapshot.editable()) else {
+            return;
+        };
+        let name = snapshot.group_title(group);
+        self.notice = None;
+        self.mode = Mode::Renaming(RenameDraft::new(Renamed::Group(id), name, window, cx));
         cx.notify();
     }
 
@@ -410,8 +357,8 @@ impl LayoutEditorSection {
         let Mode::Renaming(draft) = &mut self.mode else {
             return;
         };
-        if let Some(name) = draft.checked(&settings, cx) {
-            self.edit(EditOp::Rename { name }, cx);
+        if let Some(op) = draft.checked(&settings, cx) {
+            self.edit(op, cx);
         }
         cx.notify();
     }
@@ -502,15 +449,15 @@ impl LayoutEditorSection {
                 if self.catalog.contribution(panel)?.kind() != ContributionKind::Panel {
                     return None;
                 }
-                let groups = &snapshot.groups();
+                let groups = snapshot.group_choices();
                 let current = snapshot.group_of(panel).map(|group| group.id().clone());
                 let at = groups
                     .iter()
-                    .position(|group| Some(&group.id) == current.as_ref());
-                let next = groups.get(at.map_or(0, |at| (at + 1) % groups.len()))?;
+                    .position(|(group, _)| Some(group) == current.as_ref());
+                let (next, _) = groups.get(at.map_or(0, |at| (at + 1) % groups.len()))?;
                 Some(EditOp::ToGroup {
                     panel: panel.clone(),
-                    group: next.id.clone(),
+                    group: next.clone(),
                 })
             }
             KeyCommand::Separator => {
@@ -525,15 +472,20 @@ impl LayoutEditorSection {
         }
     }
 
-    /// What moves between zones when `subject` is asked to: a widget, or the group of a panel.
+    /// What moves between zones when `subject` is asked to: a widget, a panel on its own, or the
+    /// group of a panel.
     fn movable(&self, subject: &Subject, snapshot: &Snapshot) -> Option<Subject> {
         match subject {
             Subject::Group(_) => Some(subject.clone()),
             Subject::Contribution(id) => match self.catalog.contribution(id)?.kind() {
                 ContributionKind::Widget => Some(subject.clone()),
-                ContributionKind::Panel => snapshot
-                    .group_of(id)
-                    .map(|group| Subject::Group(group.id().clone())),
+                ContributionKind::Panel => snapshot.group_of(id).map(|group| {
+                    if group.is_solo() {
+                        subject.clone()
+                    } else {
+                        Subject::Group(group.id().clone())
+                    }
+                }),
             },
         }
     }
@@ -570,12 +522,7 @@ impl Notice {
 }
 
 impl SettingsPage for LayoutEditorSection {
-    fn flush(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.flush_form(cx);
-    }
-
-    fn on_deactivate(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.flush_form(cx);
+    fn on_deactivate(&mut self, _: &mut Window, _: &mut Context<Self>) {
         self.mode = Mode::Idle;
     }
 
@@ -605,65 +552,26 @@ impl Focusable for LayoutEditorSection {
     }
 }
 
-/// The narrowest the lists are drawn: two zone columns side by side.
-const LISTS_MIN_REMS: f32 = 24.;
-
 impl Render for LayoutEditorSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = Rc::new(self.snapshot(cx));
         let commands = Commands::new(cx.weak_entity());
-        let selected = self.item().cloned();
-        let catalog = self.catalog_arc();
-        let inspector = Inspector::new(
-            snapshot.clone(),
-            catalog.clone(),
-            selected.clone(),
-            self.form().cloned(),
-            self.user_facts(cx),
-            commands.clone(),
-        );
-        // The bar has the full width on its own line. Below it the lists and the inspector sit
-        // side by side while each has its minimum width, and wrap into one column when not.
         v_flex()
             .id("layout-editor")
             .test_support()
             .w_full()
             .min_w_0()
-            .gap_4()
+            .gap_3()
             .child(Presets::new(self, snapshot.clone(), commands.clone()))
             .child(Preview::new(
                 snapshot.clone(),
-                catalog.clone(),
-                selected.clone(),
-                self.fit(),
+                self.catalog.clone(),
+                self.selection.item().cloned(),
+                self.facts.clone(),
+                self.fit.clone(),
+                self.focus.clone(),
                 commands.clone(),
             ))
-            .child(
-                h_flex()
-                    .id("layout-body")
-                    .test_support()
-                    .w_full()
-                    .flex_wrap()
-                    .gap_x_4()
-                    .gap_y_4()
-                    .items_start()
-                    .child(
-                        v_flex()
-                            .id("layout-lists-column")
-                            .test_support()
-                            .flex_1()
-                            .min_w(gpui_kit::rems(LISTS_MIN_REMS))
-                            .gap_4()
-                            .child(Zones::new(
-                                snapshot.clone(),
-                                catalog.clone(),
-                                selected.clone(),
-                                self.focus_handle_ref().clone(),
-                                commands.clone(),
-                            ))
-                            .child(Tray::new(snapshot, catalog, selected, commands)),
-                    )
-                    .child(inspector),
-            )
+            .child(Tray::new(snapshot, self.catalog.clone(), commands))
     }
 }

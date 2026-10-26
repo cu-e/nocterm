@@ -56,16 +56,10 @@ pub(crate) fn install_guest_pages(
     let directory = plugins
         .user()
         .directory(plugin_settings(monitor, ui.settings()));
-    let page = plugins_page(plugins, directory.clone(), ui.settings(), cx);
+    let page = plugins_page(plugins, directory, ui.settings(), cx);
     let facts = plugins.user().facts();
-    let sections = super::layout_editor::appearance_sections(
-        &plugins.source(),
-        directory,
-        facts,
-        layout,
-        ui,
-        cx,
-    );
+    let sections =
+        super::layout_editor::appearance_sections(&plugins.source(), facts, layout, ui, cx);
     crate::settings_pages::guest_pages(
         keymap,
         monitor,

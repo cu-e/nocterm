@@ -1,17 +1,25 @@
-//! The name being typed for a layout.
+//! The name being typed for a layout or a group.
 
 use gpui_kit::{
     AppContext as _, Context, Entity, Focusable as _, SharedString, Subscription, Window,
     component::input::{InputEvent, InputState},
 };
-use nocterm_window_layout::{LayoutSettings, PresetId, validate_name};
+use nocterm_plugin_model::GroupId;
+use nocterm_window_layout::{EditOp, LayoutSettings, PresetId, validate_name};
 
 use crate::section::LayoutEditorSection;
 
-/// A single-line input holding the new name of a layout, with the reason the last name was
-/// refused.
+/// What is being renamed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Renamed {
+    Layout(PresetId),
+    Group(GroupId),
+}
+
+/// A single-line input holding the new name of a layout or a group, with the reason the last
+/// name was refused.
 pub(crate) struct RenameDraft {
-    preset: PresetId,
+    renamed: Renamed,
     input: Entity<InputState>,
     error: Option<SharedString>,
     _subscription: Subscription,
@@ -19,7 +27,7 @@ pub(crate) struct RenameDraft {
 
 impl RenameDraft {
     pub(crate) fn new(
-        preset: PresetId,
+        renamed: Renamed,
         name: String,
         window: &mut Window,
         cx: &mut Context<LayoutEditorSection>,
@@ -37,11 +45,15 @@ impl RenameDraft {
             );
         window.focus(&input.read(cx).focus_handle(cx), cx);
         Self {
-            preset,
+            renamed,
             input,
             error: None,
             _subscription: subscription,
         }
+    }
+
+    pub(crate) fn renamed(&self) -> &Renamed {
+        &self.renamed
     }
 
     pub(crate) fn input(&self) -> &Entity<InputState> {
@@ -60,20 +72,27 @@ impl RenameDraft {
         self.error = None;
     }
 
-    /// The name typed, if the settings accept it for the layout; otherwise the reason is kept
-    /// beside the input.
+    /// The edit that gives the name typed, if it is accepted; otherwise the reason is kept
+    /// beside the input. A layout's name is checked against the others here, a group's by the
+    /// edit.
     pub(crate) fn checked(
         &mut self,
         settings: &LayoutSettings,
         cx: &gpui_kit::App,
-    ) -> Option<String> {
+    ) -> Option<EditOp> {
         let typed = self.input.read(cx).value().to_string();
-        match validate_name(settings, Some(&self.preset), &typed) {
-            Ok(name) => Some(name),
-            Err(reason) => {
-                self.refuse(reason.to_string());
-                None
-            }
+        match &self.renamed {
+            Renamed::Layout(preset) => match validate_name(settings, Some(preset), &typed) {
+                Ok(name) => Some(EditOp::Rename { name }),
+                Err(reason) => {
+                    self.refuse(reason.to_string());
+                    None
+                }
+            },
+            Renamed::Group(group) => Some(EditOp::RenameGroup {
+                group: group.clone(),
+                name: typed,
+            }),
         }
     }
 }

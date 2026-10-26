@@ -11,12 +11,12 @@ use gpui_kit::{Pixels, px};
 use nocterm_plugin_model::{PluginSet, Zone};
 use nocterm_window_layout::{ResolvedItem, ResolvedMember};
 
-use crate::snapshot::Snapshot;
+use crate::{dnd, snapshot::Snapshot};
 
 /// What a chip shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Density {
-    /// The icon and the sample text of a widget, the title of a group.
+    /// The icon and the sample text of a widget.
     Full,
     /// The icon only; the text is a tooltip.
     Compact,
@@ -68,22 +68,20 @@ const CHAR: f32 = 7.;
 const ICON: f32 = 16.;
 /// A chip's border and the padding on both sides.
 const CHIP_FRAME: f32 = 14.;
-/// The gap inside a chip and in a group's box.
+/// The gap between the icon and the text of a chip.
 const INNER_GAP: f32 = 4.;
-/// A group's border and padding.
-const BOX_FRAME: f32 = 10.;
-/// The gap between entries of a zone.
-const ENTRY_GAP: f32 = 8.;
+/// The padding of a group around its panels, border included, and the gap between them.
+pub(crate) const PILL_PADDING: f32 = 2.;
+/// A separator and the room on both sides of it.
+const SEPARATOR: f32 = 5.;
 /// The gap between zones.
-const ZONE_GAP: f32 = 16.;
-/// The box's border and padding.
-const BOX_PADDING: f32 = 26.;
-/// The tag that marks a disabled chip.
-const TAG: f32 = 64.;
-/// A zone with nothing in it draws a placeholder.
-const EMPTY: f32 = 80.;
-/// The padding on both sides of a zone.
-const ZONE_PAD: f32 = 8.;
+const ZONE_GAP: f32 = 12.;
+/// The padding of the preview's box.
+const BOX_PADDING: f32 = 16.;
+/// The border of a zone, which shows while something is dragged over it.
+const ZONE_BORDER: f32 = 2.;
+/// The narrowest a zone is drawn, so that one with nothing in it still takes a drop.
+pub(crate) const EMPTY: f32 = 48.;
 
 impl Fit {
     /// Remembers the width of the box. Returns whether it changed, which asks for another draw.
@@ -138,55 +136,45 @@ fn needed(snapshot: &Snapshot, catalog: &PluginSet, density: Density, spread: Sp
 
 fn zone_width(snapshot: &Snapshot, catalog: &PluginSet, zone: Zone, density: Density) -> f32 {
     let items = snapshot.layout().zone(zone);
-    if items.is_empty() {
-        return EMPTY;
-    }
-    let widths: Vec<f32> = items
+    let entries: f32 = items
         .iter()
         .map(|item| match item {
             ResolvedItem::Widget(id) => {
                 let text = catalog.contribution(id).map_or(0, |spec| {
                     spec.preview().unwrap_or(spec.title()).chars().count()
                 });
-                chip(density, Some(text), snapshot.is_disabled(id, catalog))
+                chip(density, Some(text))
             }
-            ResolvedItem::Separator => 1.,
+            ResolvedItem::Separator => SEPARATOR,
+            ResolvedItem::Group(group) if group.is_solo() => chip(density, None),
             ResolvedItem::Group(group) => {
-                let title = snapshot
-                    .groups()
-                    .iter()
-                    .find(|spec| spec.id == *group.id())
-                    .map_or(0, |spec| spec.title.chars().count());
-                let members: f32 = group
+                let members: Vec<f32> = group
                     .members()
                     .iter()
                     .map(|member| match member {
-                        ResolvedMember::Panel(_) => chip(density, None, false) + INNER_GAP,
-                        ResolvedMember::Separator => 1. + INNER_GAP,
+                        ResolvedMember::Panel(_) => chip(density, None),
+                        ResolvedMember::Separator => SEPARATOR,
                     })
-                    .sum();
-                let title = match density {
-                    Density::Full => title as f32 * CHAR + INNER_GAP,
-                    Density::Compact => 0.,
-                };
-                BOX_FRAME + title + members
+                    .collect();
+                if members.is_empty() {
+                    let title = snapshot.group_title(group).chars().count() as f32 * CHAR;
+                    2. * PILL_PADDING + title + CHIP_FRAME
+                } else {
+                    // The border, and a gap that takes a drop around every member.
+                    2. + members.iter().sum::<f32>() + (members.len() + 1) as f32 * dnd::GAP_WIDTH
+                }
             }
         })
-        .collect();
-    let gaps = widths.len().saturating_sub(1) as f32 * ENTRY_GAP;
-    ZONE_PAD + widths.iter().sum::<f32>() + gaps
+        .sum();
+    let gaps = (items.len() + 1) as f32 * dnd::GAP_WIDTH;
+    (ZONE_BORDER + entries + gaps).max(EMPTY)
 }
 
 /// One chip: an icon, and the text of a widget when the density shows it.
-fn chip(density: Density, text: Option<usize>, disabled: bool) -> f32 {
+fn chip(density: Density, text: Option<usize>) -> f32 {
     let label = match (density, text) {
         (Density::Full, Some(chars)) => INNER_GAP + chars as f32 * CHAR,
         _ => 0.,
     };
-    let tag = if disabled && density == Density::Full {
-        TAG
-    } else {
-        0.
-    };
-    CHIP_FRAME + ICON + label + tag
+    CHIP_FRAME + ICON + label
 }

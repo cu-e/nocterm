@@ -4,26 +4,25 @@
 use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::{
-    Anchor, AnyElement, App, IntoElement, RenderOnce, SharedString, TestSupportExt as _, Window,
+    AnyElement, App, IntoElement, RenderOnce, SharedString, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Icon, Sizable as _, StyledExt as _,
+        ActiveTheme as _, Disableable as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        menu::DropdownMenu as _,
-        v_flex,
+        menu::ContextMenuExt as _,
     },
     div,
     prelude::*,
+    px,
 };
 use nocterm_plugin_model::{ContributionId, ContributionRef, PluginSet};
-use nocterm_ui::{IconName, contribution_icon, form};
+use nocterm_ui::{IconName, contribution_icon};
 use nocterm_window_layout::{EditOp, Subject};
 
 use crate::{
     commands::Commands,
-    dnd::{self, Dragged, Landing},
+    dnd::{self, CHIP_HEIGHT, Dragged, Landing},
     menu::ItemMenu,
-    parts::{action, tag},
     snapshot::Snapshot,
 };
 
@@ -31,137 +30,111 @@ use crate::{
 pub(crate) struct Tray {
     snapshot: Rc<Snapshot>,
     catalog: Arc<PluginSet>,
-    selected: Option<Subject>,
     commands: Commands,
 }
 
 impl Tray {
-    pub(crate) fn new(
-        snapshot: Rc<Snapshot>,
-        catalog: Arc<PluginSet>,
-        selected: Option<Subject>,
-        commands: Commands,
-    ) -> Self {
+    pub(crate) fn new(snapshot: Rc<Snapshot>, catalog: Arc<PluginSet>, commands: Commands) -> Self {
         Self {
             snapshot,
             catalog,
-            selected,
             commands,
         }
     }
 
+    /// A contribution that waits out of the bar: a click puts it back where its hints say, a
+    /// drag puts it anywhere.
     fn entry(&self, contribution: ContributionRef<'_>, cx: &App) -> AnyElement {
         let id = contribution.id().clone();
         let subject = Subject::Contribution(id.clone());
-        let selected = self.selected.as_ref() == Some(&subject);
         let disabled = self.snapshot.is_disabled(&id, &self.catalog);
-        let (pick, add) = (self.commands.clone(), self.commands.clone());
-        let restore = id.clone();
+        let editable = self.snapshot.editable();
+        let add = self.commands.clone();
         let menu = ItemMenu::new(
             &subject,
             &self.snapshot,
             &self.catalog,
             self.commands.clone(),
         );
-        let more = Button::new(SharedString::from(format!("layout-more:{id}")))
-            .ghost()
-            .xsmall()
-            .icon(IconName::Ellipsis)
-            .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, window, cx| {
-                menu.popup(popup, window, cx)
-            });
         let theme = cx.theme();
+        let name: SharedString = if disabled {
+            format!("{} (disabled)", contribution.title()).into()
+        } else {
+            contribution.title().to_owned().into()
+        };
         let chip = h_flex()
             .id(SharedString::from(format!("layout-tray:{id}")))
-            .aria_label(contribution.title())
+            .aria_label(name)
             .test_support()
+            .flex_none()
+            .h(px(CHIP_HEIGHT))
             .gap_1()
-            .px_2()
-            .py_1()
+            .px_1p5()
             .items_center()
             .rounded(theme.radius)
-            .border_1()
-            .border_color(if selected {
-                theme.primary
-            } else {
-                theme.border
+            .bg(theme.secondary)
+            .when(editable, |chip| {
+                chip.cursor_pointer()
+                    .hover(|style| style.bg(theme.secondary_hover))
+                    .on_click(move |_, window, cx| {
+                        let id = id.clone();
+                        add.run(window, cx, move |section, _, cx| {
+                            section.edit(EditOp::Restore { id }, cx);
+                        });
+                    })
             })
-            .cursor_pointer()
             .when(disabled, |chip| chip.opacity(0.5))
-            .on_click(move |_, window, cx| {
-                let subject = subject.clone();
-                pick.run(window, cx, move |section, window, cx| {
-                    section.pick(Some(subject), window, cx);
-                });
-            })
             .child(Icon::new(contribution_icon(contribution.icon())).small())
-            .child(div().text_sm().child(contribution.title().to_owned()))
-            .when(disabled, |chip| {
-                chip.child(tag(format!("layout-tray-disabled:{id}"), "Disabled", cx))
-            });
-        let chip = if self.snapshot.editable() {
+            .child(div().text_xs().child(contribution.title().to_owned()));
+        let chip = if editable {
             dnd::source(chip, Dragged::contribution(contribution, &self.snapshot))
         } else {
             chip
         };
-        h_flex()
-            .gap_1()
-            .items_center()
-            .child(chip)
-            .child(action(
-                SharedString::from(format!("layout-tray-add:{id}")),
-                "Add",
-                self.snapshot.editable(),
-                move |window, cx| {
-                    let id = restore.clone();
-                    add.run(window, cx, move |section, _, cx| {
-                        section.edit(EditOp::Restore { id }, cx);
-                    });
-                },
-            ))
-            .child(more)
+        chip.context_menu(move |popup, window, cx| menu.popup(popup, window, cx))
             .into_any_element()
     }
 
     fn unknown(&self, id: &ContributionId, cx: &App) -> AnyElement {
         let (commands, forget) = (self.commands.clone(), id.clone());
         let text = format!("Not installed: {id}");
+        let theme = cx.theme();
         h_flex()
+            .id(SharedString::from(format!("layout-unknown:{id}")))
+            .aria_label(text.clone())
+            .test_support()
+            .flex_none()
+            .h(px(CHIP_HEIGHT))
             .gap_1()
+            .pl_1p5()
             .items_center()
+            .rounded(theme.radius)
+            .border_1()
+            .border_dashed()
+            .border_color(theme.border)
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(text)
             .child(
-                div()
-                    .id(SharedString::from(format!("layout-unknown:{id}")))
-                    .aria_label(text.clone())
-                    .test_support()
-                    .px_2()
-                    .py_1()
-                    .rounded(cx.theme().radius)
-                    .border_1()
-                    .border_dashed()
-                    .border_color(cx.theme().border)
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(text),
+                Button::new(SharedString::from(format!("layout-forget:{id}")))
+                    .xsmall()
+                    .ghost()
+                    .icon(IconName::Close)
+                    .tooltip("Forget")
+                    .disabled(!self.snapshot.editable())
+                    .on_click(move |_, window, cx| {
+                        let id = forget.clone();
+                        commands.run(window, cx, move |section, _, cx| {
+                            section.edit(EditOp::Forget { id }, cx);
+                        });
+                    }),
             )
-            .child(action(
-                SharedString::from(format!("layout-forget:{id}")),
-                "Forget",
-                self.snapshot.editable(),
-                move |window, cx| {
-                    let id = forget.clone();
-                    commands.run(window, cx, move |section, _, cx| {
-                        section.edit(EditOp::Forget { id }, cx);
-                    });
-                },
-            ))
             .into_any_element()
     }
 }
 
 impl RenderOnce for Tray {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let empty = self.snapshot.tray().is_empty() && self.snapshot.unknown().is_empty();
         let entries: Vec<AnyElement> = self
             .snapshot
             .tray()
@@ -176,28 +149,27 @@ impl RenderOnce for Tray {
             )
             .collect();
         let theme = cx.theme();
-        let tray = v_flex()
+        let tray = h_flex()
             .id("layout-tray")
             .test_support()
             .w_full()
-            .min_h_20()
-            .gap_2()
-            .p_2()
-            .rounded(theme.radius)
+            .flex_wrap()
+            .gap_1p5()
+            .items_center()
+            .min_h(px(CHIP_HEIGHT + 12.))
+            .px_2()
+            .py_1()
+            .rounded(theme.radius_lg)
             .border_1()
             .border_dashed()
             .border_color(theme.border)
             .child(
                 div()
                     .text_xs()
-                    .font_semibold()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("NOT IN THE BAR"),
+                    .text_color(theme.muted_foreground)
+                    .child("Not in the bar"),
             )
-            .when(empty, |tray| {
-                tray.child(form::note("Everything is in the bar.", cx))
-            })
-            .child(h_flex().flex_wrap().gap_x_4().gap_y_2().children(entries));
+            .children(entries);
         if self.snapshot.editable() {
             dnd::target(tray, Landing::tray(), true, self.commands).into_any_element()
         } else {

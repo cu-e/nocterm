@@ -80,6 +80,24 @@ fn shown(handle: AnyWindowHandle, id: &str, cx: &mut TestAppContext) -> bool {
     .unwrap()
 }
 
+/// Whether the chip `id` of the bar preview is drawn selected.
+fn selected(handle: AnyWindowHandle, id: &str, cx: &mut TestAppContext) -> bool {
+    cx.update_window(handle, |_, window, _| {
+        window
+            .try_find(format!("layout-preview:{id}"))
+            .and_then(|chip| chip.selected())
+            .unwrap_or(false)
+    })
+    .unwrap()
+}
+
+fn keys(handle: AnyWindowHandle, keys: &str, cx: &mut TestAppContext) {
+    cx.simulate_keystrokes(handle, keys);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+
 fn first_contribution_of(plugin: &str) -> String {
     let catalog = crate::shell_setup::plugin_catalog().expect("the application catalog");
     let plugin = catalog
@@ -109,7 +127,7 @@ fn the_action_selects_the_item_it_names(cx: &mut TestAppContext) {
         },
         cx,
     );
-    assert!(shown(handle, &format!("layout-inspector:{id}"), cx));
+    assert!(selected(handle, &id, cx));
 }
 
 #[gpui_kit::test]
@@ -165,7 +183,7 @@ fn a_plugin_links_from_the_plugins_page_to_its_item_in_the_editor(cx: &mut TestA
         .unwrap();
     assert_eq!(selected_page(&workspace, cx), "appearance");
     let id = first_contribution_of("monitor");
-    assert!(shown(handle, &format!("layout-inspector:{id}"), cx));
+    assert!(selected(handle, &id, cx));
 }
 
 #[gpui_kit::test]
@@ -181,7 +199,8 @@ fn the_first_edit_of_the_default_layout_changes_the_footer_of_the_window(cx: &mu
     );
     assert!(shown(handle, FOOTER_MONITOR, cx), "the default footer");
 
-    click(handle, "layout-op-remove", cx);
+    click(handle, &format!("layout-preview:{id}"), cx);
+    keys(handle, "delete", cx);
 
     assert_eq!(saved_layouts(&settings, cx), 1);
     assert!(
@@ -197,11 +216,12 @@ fn duplicating_a_layout_after_an_undo_leaves_the_layout_in_use_alone(cx: &mut Te
     dispatch(
         handle,
         OpenLayoutSettings {
-            select: Some(id.into()),
+            select: Some(id.clone().into()),
         },
         cx,
     );
-    click(handle, "layout-op-remove", cx);
+    click(handle, &format!("layout-preview:{id}"), cx);
+    keys(handle, "delete", cx);
     click(handle, "layout-undo", cx);
     assert!(
         shown(handle, FOOTER_MONITOR, cx),
@@ -210,7 +230,7 @@ fn duplicating_a_layout_after_an_undo_leaves_the_layout_in_use_alone(cx: &mut Te
 
     // The layout in use is Default again, and the first edit left its old id behind.
     click(handle, "layout-choice:swapped", cx);
-    click(handle, "layout-duplicate", cx);
+    click(handle, "layout-duplicate-to-edit", cx);
 
     let in_use = cx.update(|cx| select(settings.setting::<LayoutSettings>(cx), false));
     assert_eq!(in_use, BuiltIn::Default.id(), "the copy did not take over");
@@ -222,16 +242,16 @@ fn duplicating_a_layout_after_an_undo_leaves_the_layout_in_use_alone(cx: &mut Te
 }
 
 #[gpui_kit::test]
-fn the_monitor_form_writes_its_own_setting_and_not_a_layout(cx: &mut TestAppContext) {
-    let (handle, _, settings) = window_with_settings(cx);
-    let id = first_contribution_of("monitor");
+fn the_monitor_settings_are_on_the_plugins_page_and_write_no_layout(cx: &mut TestAppContext) {
+    let (handle, workspace, settings) = window_with_settings(cx);
     dispatch(
         handle,
-        OpenLayoutSettings {
-            select: Some(id.into()),
+        OpenPlugins {
+            plugin: Some("monitor".into()),
         },
         cx,
     );
+    assert_eq!(selected_page(&workspace, cx), "plugins");
     let before = cx.update(|cx| {
         settings
             .setting::<nocterm_monitor::MonitorSettings>(cx)
@@ -255,20 +275,17 @@ fn the_monitor_form_writes_its_own_setting_and_not_a_layout(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
-fn the_clock_form_in_the_inspector_writes_the_clock_section_and_not_a_layout(
-    cx: &mut TestAppContext,
-) {
+fn the_clock_settings_are_on_the_plugins_page_and_write_no_layout(cx: &mut TestAppContext) {
     use nocterm_workspace::clock::{ClockFormat, ClockSettings};
 
     let (handle, _, settings) = window_with_settings(cx);
     dispatch(
         handle,
-        OpenLayoutSettings {
-            select: Some("clock.time".into()),
+        OpenPlugins {
+            plugin: Some("clock".into()),
         },
         cx,
     );
-    assert!(shown(handle, "layout-inspector:clock.time", cx));
 
     click(handle, "plugin-setting:clock:format:hour12", cx);
     click(handle, "plugin-setting:clock:seconds:", cx);

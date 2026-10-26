@@ -1,6 +1,6 @@
 //! Choosing, duplicating, renaming and deleting layouts.
 
-use gpui_kit::TestAppContext;
+use gpui_kit::{TestAppContext, test::TestWindowExt as _};
 use nocterm_window_layout::{LayoutPreset, LayoutSettings, PresetId};
 
 use super::{open, open_with};
@@ -36,12 +36,14 @@ fn showing_another_layout_does_not_switch_the_one_in_use(cx: &mut TestAppContext
 fn a_built_in_layout_not_in_use_is_read_only_until_it_is_duplicated(cx: &mut TestAppContext) {
     let fixture = open_with(two_saved(), cx);
     fixture.click("layout-choice:swapped", cx);
-    fixture.click("layout-item:shell.transfers", cx);
+    fixture.click("layout-preview:shell.transfers", cx);
+    fixture.keys("alt-left delete", cx);
 
-    assert!(fixture.has("layout-read-only", cx));
+    assert_eq!(fixture.stored(cx), two_saved(), "the keys change nothing");
+    assert!(!fixture.has("layout-duplicate", cx));
     assert!(
-        !fixture.has("layout-op-earlier", cx),
-        "no controls to change it"
+        !fixture.has("layout-preview-gap:right:0", cx),
+        "nothing to drop on"
     );
 
     fixture.click("layout-duplicate-to-edit", cx);
@@ -54,9 +56,10 @@ fn a_built_in_layout_not_in_use_is_read_only_until_it_is_duplicated(cx: &mut Tes
         "the layout in use is the same"
     );
     assert!(
-        !fixture.has("layout-read-only", cx),
+        fixture.has("layout-preview-gap:right:0", cx),
         "the copy is shown and editable"
     );
+    assert!(fixture.has("layout-duplicate", cx));
 }
 
 #[gpui_kit::test]
@@ -137,8 +140,8 @@ fn deleting_a_layout_asks_first_and_can_be_undone(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn resetting_a_layout_arranges_it_by_the_hints_again_and_can_be_undone(cx: &mut TestAppContext) {
     let fixture = open_with(two_saved(), cx);
-    fixture.click("layout-item:shell.transfers", cx);
-    fixture.click("layout-op-earlier", cx);
+    fixture.click("layout-preview:shell.transfers", cx);
+    fixture.keys("alt-left", cx);
     let moved = fixture.stored(cx);
     assert_ne!(moved.presets[0].bar, LayoutPreset::default().bar);
 
@@ -162,13 +165,31 @@ fn resetting_a_layout_arranges_it_by_the_hints_again_and_can_be_undone(cx: &mut 
 }
 
 #[gpui_kit::test]
-fn a_built_in_layout_cannot_be_renamed_or_deleted(cx: &mut TestAppContext) {
+fn a_built_in_layout_offers_no_rename_reset_or_delete(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.click("layout-rename", cx);
-    fixture.click("layout-delete", cx);
-    fixture.click("layout-reset", cx);
 
-    assert!(fixture.stored(cx).presets.is_empty(), "nothing was written");
-    assert!(!fixture.has("layout-rename-row", cx));
-    assert!(!fixture.has("layout-delete-confirm", cx));
+    assert!(fixture.has("layout-duplicate", cx));
+    for tool in ["layout-rename", "layout-reset", "layout-delete"] {
+        assert!(!fixture.has(tool, cx), "{tool}");
+    }
+}
+
+#[gpui_kit::test]
+fn renaming_takes_the_line_of_tools_so_the_bar_stays_where_it_is(cx: &mut TestAppContext) {
+    let fixture = open_with(two_saved(), cx);
+    let at = |cx: &mut TestAppContext| {
+        let mut y = None;
+        fixture.frame(cx, |window, _| {
+            y = window
+                .try_find("layout-preview")
+                .map(|preview| f32::from(preview.bounds().origin.y));
+        });
+        y.expect("the preview is drawn")
+    };
+    let before = at(cx);
+
+    fixture.click("layout-rename", cx);
+    assert!(fixture.has("layout-rename-row", cx));
+    assert!(!fixture.has("layout-duplicate", cx), "the tools give way");
+    assert!((at(cx) - before).abs() < 0.5);
 }

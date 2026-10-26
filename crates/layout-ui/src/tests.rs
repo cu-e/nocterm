@@ -1,5 +1,5 @@
-//! The editor edits the layouts through the store: moves, presets, history and the settings of
-//! the selected item.
+//! The editor edits the layouts through the store: drags, menus and keys in the bar preview,
+//! presets and history.
 
 use std::{borrow::Cow, rc::Rc, sync::Arc};
 
@@ -14,7 +14,7 @@ use nocterm_plugin_model::{
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsHandle;
-use nocterm_ui::{FakePluginSettings, PluginSettingsDirectory, StaticPluginSource};
+use nocterm_ui::StaticPluginSource;
 use nocterm_window_layout::LayoutSettings;
 
 use crate::section::LayoutEditorSection;
@@ -22,8 +22,8 @@ use crate::section::LayoutEditorSection;
 mod dnd;
 mod editing;
 mod geometry;
+mod grouping;
 mod history;
-mod inspector;
 mod menu;
 mod presets;
 
@@ -154,7 +154,6 @@ fn catalog() -> Arc<PluginSet> {
 pub(super) struct Fixture {
     pub(super) window: AnyWindowHandle,
     pub(super) settings: SettingsHandle,
-    pub(super) tools: FakePluginSettings,
 }
 
 pub(super) fn open(cx: &mut TestAppContext) -> Fixture {
@@ -195,53 +194,25 @@ fn prepared(mut document: SettingsDocument) -> SettingsDocument {
 }
 
 fn open_config(config: nocterm_store::SettingsConfig, cx: &mut TestAppContext) -> Fixture {
-    let plugins = Plugins {
-        set: catalog(),
-        user: None,
-        facts: None,
-    };
-    open_plugins(config, plugins, cx)
-}
-
-/// The plugins an editor is opened over, besides the system `tools` plugin it can always edit.
-pub(super) struct Plugins {
-    pub(super) set: Arc<PluginSet>,
-    /// The settings of the installed user plugins.
-    pub(super) user: Option<Rc<dyn nocterm_ui::UserPluginSettings>>,
-    pub(super) facts: Option<Rc<dyn crate::UserPluginFacts>>,
-}
-
-pub(super) fn open_plugins(
-    config: nocterm_store::SettingsConfig,
-    plugins: Plugins,
-    cx: &mut TestAppContext,
-) -> Fixture {
-    let (window, _section, settings, tools) = cx.update(|cx| {
+    let (window, settings) = cx.update(|cx| {
         gpui_kit::init(cx);
         let settings = config.install(cx);
         nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
         settings.register::<LayoutSettings>(cx);
         settings.register::<PluginEnablement>(cx);
-        let tools = FakePluginSettings::new(&TOOLS.settings, cx);
-        let mut directory =
-            PluginSettingsDirectory::new().with_system(&TOOLS, Rc::new(tools.clone()));
-        if let Some(user) = plugins.user {
-            directory = directory.with_user(user);
-        }
-        let (window, section) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+        let (window, _) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
             cx.new(|cx| {
                 LayoutEditorSection::new(
                     settings.clone(),
-                    Rc::new(StaticPluginSource::new(plugins.set)),
-                    directory,
-                    plugins.facts,
+                    Rc::new(StaticPluginSource::new(catalog())),
+                    None,
                     false,
                     cx,
                 )
             })
         })
         .unwrap();
-        (window, section, settings, tools)
+        (window, settings)
     });
     cx.update_window(window, |_, window, _| window.activate_window())
         .unwrap();
@@ -250,11 +221,7 @@ pub(super) fn open_plugins(
         gpui_kit::size(gpui_kit::px(1200.), gpui_kit::px(2400.)),
     );
     cx.run_until_parked();
-    Fixture {
-        window,
-        settings,
-        tools,
-    }
+    Fixture { window, settings }
 }
 
 impl Fixture {
@@ -276,13 +243,15 @@ impl Fixture {
     }
 
     /// Drags the element `from` onto the element `to` and lets the writes it caused settle.
-    pub(super) fn drag(&self, from: &'static str, to: &'static str, cx: &mut TestAppContext) {
+    pub(super) fn drag(&self, from: &str, to: &str, cx: &mut TestAppContext) {
+        let (from, to) = (from.to_owned(), to.to_owned());
         self.frame(cx, |window, cx| window.drag_to(from, to, cx));
         cx.run_until_parked();
     }
 
     /// Clicks the element `id` in the frame drawn now and lets the writes it caused settle.
-    pub(super) fn click(&self, id: &'static str, cx: &mut TestAppContext) {
+    pub(super) fn click(&self, id: &str, cx: &mut TestAppContext) {
+        let id = id.to_owned();
         self.frame(cx, |window, cx| window.click(id, cx));
         cx.run_until_parked();
     }
@@ -311,11 +280,11 @@ impl Fixture {
     }
 
     /// The accessible label of the element `id` in the frame drawn now.
-    pub(super) fn label(&self, id: &'static str, cx: &mut TestAppContext) -> Option<String> {
+    pub(super) fn label(&self, id: &str, cx: &mut TestAppContext) -> Option<String> {
         let mut found = None;
         self.frame(cx, |window, _| {
             found = window
-                .try_find(id)
+                .try_find(id.to_owned())
                 .and_then(|element| element.label().map(str::to_owned));
         });
         found
@@ -336,24 +305,67 @@ impl Fixture {
     }
 
     /// Whether an element with `id` is in the frame drawn now.
-    pub(super) fn has(&self, id: &'static str, cx: &mut TestAppContext) -> bool {
+    pub(super) fn has(&self, id: &str, cx: &mut TestAppContext) -> bool {
         let mut found = false;
-        self.frame(cx, |window, _| found = window.try_find(id).is_some());
+        self.frame(cx, |window, _| {
+            found = window.try_find(id.to_owned()).is_some()
+        });
         found
     }
 
-    /// The ids among `ids` that are in the frame, from top to bottom.
-    pub(super) fn top_to_bottom(&self, ids: &[&str], cx: &mut TestAppContext) -> Vec<String> {
+    /// The items among `ids` that the bar preview shows, from left to right. An id `group:g`
+    /// names the group `g`.
+    pub(super) fn left_to_right(&self, ids: &[&str], cx: &mut TestAppContext) -> Vec<String> {
         let mut found = Vec::new();
         self.frame(cx, |window, _| {
             for id in ids {
-                if let Some(element) = window.try_find(format!("layout-item:{id}")) {
-                    found.push((f32::from(element.bounds().origin.y), (*id).to_owned()));
+                if let Some(element) = window.try_find(preview_id(id)) {
+                    found.push((f32::from(element.bounds().origin.x), (*id).to_owned()));
                 }
             }
         });
         found.sort_by(|a, b| a.0.total_cmp(&b.0));
         found.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// Whether the preview shows the item `id` (or `group:g`) selected.
+    pub(super) fn is_selected(&self, id: &str, cx: &mut TestAppContext) -> bool {
+        let mut selected = false;
+        self.frame(cx, |window, _| {
+            selected = window
+                .try_find(preview_id(id))
+                .and_then(|element| element.selected())
+                .unwrap_or(false);
+        });
+        selected
+    }
+
+    /// Opens the menu of the element `id` and chooses the entry `label` on its first level,
+    /// then lets the writes it caused settle.
+    pub(super) fn choose(&self, id: &str, label: &str, cx: &mut TestAppContext) {
+        let id = id.to_owned();
+        self.frame(cx, |window, cx| window.right_click(id, cx));
+        cx.run_until_parked();
+        let label = label.to_owned();
+        self.frame(cx, |window, cx| {
+            let mut menu = window.within("popup-menu");
+            let at = (0usize..64)
+                .find(|at| {
+                    menu.try_find(*at)
+                        .is_some_and(|entry| entry.label() == Some(label.as_str()))
+                })
+                .unwrap_or_else(|| panic!("the menu has no entry \u{201c}{label}\u{201d}"));
+            menu.click(at, cx);
+        });
+        cx.run_until_parked();
+    }
+}
+
+/// The element of the bar preview that draws `id`, or the group `g` for `group:g`.
+pub(super) fn preview_id(id: &str) -> String {
+    match id.strip_prefix("group:") {
+        Some(group) => format!("layout-preview-group:{group}"),
+        None => format!("layout-preview:{id}"),
     }
 }
 

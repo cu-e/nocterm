@@ -1,11 +1,13 @@
-//! The layouts to choose from, what can be done to the one shown, and undo.
+//! The layouts to choose from and one line of tools under them: what can be done to the layout
+//! shown, what just happened to it, and undo. Renaming and confirming a delete take that line
+//! for themselves, so the bar below never moves.
 
 use std::rc::Rc;
 
 use gpui_kit::{
     AnyElement, App, Entity, IntoElement, RenderOnce, SharedString, TestSupportExt as _, Window,
     component::{
-        Selectable as _, Sizable as _,
+        ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::{Input, InputState},
@@ -13,25 +15,45 @@ use gpui_kit::{
     },
     div,
     prelude::*,
+    rems,
 };
-use nocterm_ui::form;
+use nocterm_ui::IconName;
 use nocterm_window_layout::EditOp;
 
 use crate::{
     commands::Commands,
     parts::action,
+    rename::Renamed,
     section::{LayoutEditorSection, Mode},
     snapshot::Snapshot,
 };
 
-/// The row of layouts with Duplicate, Rename, Reset and Delete, the history buttons and the lines that
-/// ask or tell something.
+/// The height of the line of tools, whatever it holds.
+const TOOLS_HEIGHT_REMS: f32 = 2.;
+
+/// What the line of tools shows.
+enum Line {
+    Tools,
+    Renaming {
+        what: &'static str,
+        input: Entity<InputState>,
+        error: Option<SharedString>,
+    },
+    ConfirmingDelete,
+}
+
+/// A line about what just happened.
+struct NoticeLine {
+    text: SharedString,
+    failed: bool,
+    undoable: bool,
+}
+
 #[derive(IntoElement)]
 pub(crate) struct Presets {
     snapshot: Rc<Snapshot>,
-    rename: Option<(Entity<InputState>, Option<SharedString>)>,
-    confirming_delete: bool,
-    notice: Option<(SharedString, bool, bool)>,
+    line: Line,
+    notice: Option<NoticeLine>,
     can_undo: bool,
     can_redo: bool,
     commands: Commands,
@@ -43,21 +65,25 @@ impl Presets {
         snapshot: Rc<Snapshot>,
         commands: Commands,
     ) -> Self {
-        let (rename, confirming_delete) = match section.mode() {
-            Mode::Idle => (None, false),
-            Mode::Renaming(draft) => (Some((draft.input().clone(), draft.error().cloned())), false),
-            Mode::ConfirmingDelete => (None, true),
+        let line = match section.mode() {
+            Mode::Idle => Line::Tools,
+            Mode::Renaming(draft) => Line::Renaming {
+                what: match draft.renamed() {
+                    Renamed::Layout(_) => "Layout name",
+                    Renamed::Group(_) => "Group name",
+                },
+                input: draft.input().clone(),
+                error: draft.error().cloned(),
+            },
+            Mode::ConfirmingDelete => Line::ConfirmingDelete,
         };
         Self {
             snapshot,
-            rename,
-            confirming_delete,
-            notice: section.notice().map(|notice| {
-                (
-                    notice.text().clone(),
-                    notice.is_failure(),
-                    notice.offers_undo(),
-                )
+            line,
+            notice: section.notice().map(|notice| NoticeLine {
+                text: notice.text().clone(),
+                failed: notice.is_failure(),
+                undoable: notice.offers_undo(),
             }),
             can_undo: section.can_undo(),
             can_redo: section.can_redo(),
@@ -93,20 +119,31 @@ impl Presets {
             .into_any_element()
     }
 
-    fn tools(&self) -> AnyElement {
-        let saved = !self.snapshot.built_in();
+    /// Duplicate, and for a saved layout Rename, Reset and Delete; then what just happened, and
+    /// the history. A built-in that is not in use cannot be changed, so its copy is offered.
+    fn tools(&self, cx: &App) -> AnyElement {
         let commands = &self.commands;
         let duplicate = {
             let commands = commands.clone();
-            action("layout-duplicate", "Duplicate", true, move |window, cx| {
+            let run = move |window: &mut Window, cx: &mut App| {
                 commands.run(window, cx, |section, _, cx| {
                     section.edit(EditOp::Duplicate, cx)
                 });
-            })
+            };
+            if self.snapshot.editable() {
+                action("layout-duplicate", "Duplicate", true, run)
+            } else {
+                Button::new("layout-duplicate-to-edit")
+                    .small()
+                    .primary()
+                    .label("Duplicate to edit")
+                    .on_click(move |_, window, cx| run(window, cx))
+            }
         };
+        let saved = !self.snapshot.built_in();
         let rename = {
             let commands = commands.clone();
-            action("layout-rename", "Rename", saved, move |window, cx| {
+            action("layout-rename", "Rename", true, move |window, cx| {
                 commands.run(window, cx, |section, window, cx| {
                     section.begin_rename(window, cx);
                 });
@@ -114,108 +151,117 @@ impl Presets {
         };
         let reset = {
             let commands = commands.clone();
-            action("layout-reset", "Reset", saved, move |window, cx| {
+            action("layout-reset", "Reset", true, move |window, cx| {
                 commands.run(window, cx, |section, _, cx| section.edit(EditOp::Reset, cx));
             })
         };
         let delete = {
             let commands = commands.clone();
-            action("layout-delete", "Delete", saved, move |window, cx| {
+            action("layout-delete", "Delete", true, move |window, cx| {
                 commands.run(window, cx, |section, _, cx| section.ask_delete(cx));
             })
         };
         let undo = {
             let commands = commands.clone();
-            action("layout-undo", "Undo", self.can_undo, move |window, cx| {
+            history("layout-undo", "Undo", self.can_undo, move |window, cx| {
                 commands.run(window, cx, |section, _, cx| section.undo(cx));
             })
         };
         let redo = {
             let commands = commands.clone();
-            action("layout-redo", "Redo", self.can_redo, move |window, cx| {
+            history("layout-redo", "Redo", self.can_redo, move |window, cx| {
                 commands.run(window, cx, |section, _, cx| section.redo(cx));
             })
         };
         h_flex()
             .gap_2()
-            .flex_wrap()
             .child(duplicate)
-            .child(rename)
-            .child(reset)
-            .child(delete)
-            .child(div().flex_1())
+            .when(saved, |row| row.child(rename).child(reset).child(delete))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .children(self.notice.as_ref().map(|notice| self.notice(notice, cx))),
+            )
             .child(undo)
             .child(redo)
             .into_any_element()
     }
 
-    fn rename_row(
+    fn renaming(
         &self,
+        what: &'static str,
         input: &Entity<InputState>,
         error: Option<&SharedString>,
         cx: &App,
     ) -> AnyElement {
         let (save, cancel) = (self.commands.clone(), self.commands.clone());
-        v_flex()
+        h_flex()
             .id("layout-rename-row")
             .test_support()
-            .gap_1()
+            .gap_2()
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(div().flex_1().child(Input::new(input).small()))
-                    .child(action(
-                        "layout-rename-save",
-                        "Save",
-                        true,
-                        move |window, cx| {
-                            save.run(window, cx, |section, window, cx| {
-                                section.commit_rename(window, cx);
-                            });
-                        },
-                    ))
-                    .child(action(
-                        "layout-rename-cancel",
-                        "Cancel",
-                        true,
-                        move |window, cx| {
-                            cancel.run(window, cx, |section, window, cx| {
-                                section.cancel_rename(window, cx);
-                            });
-                        },
-                    )),
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(what),
             )
+            .child(div().w(rems(16.)).child(Input::new(input).small()))
+            .child(action(
+                "layout-rename-save",
+                "Save",
+                true,
+                move |window, cx| {
+                    save.run(window, cx, |section, window, cx| {
+                        section.commit_rename(window, cx);
+                    });
+                },
+            ))
+            .child(action(
+                "layout-rename-cancel",
+                "Cancel",
+                true,
+                move |window, cx| {
+                    cancel.run(window, cx, |section, window, cx| {
+                        section.cancel_rename(window, cx);
+                    });
+                },
+            ))
             .children(error.map(|error| {
                 div()
                     .id("layout-rename-error")
                     .aria_label(error.clone())
                     .test_support()
-                    .child(form::error_text(error.clone(), cx))
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(cx.theme().danger)
+                    .child(error.clone())
             }))
             .into_any_element()
     }
 
-    fn confirm_row(&self) -> AnyElement {
+    fn confirming_delete(&self) -> AnyElement {
         let (delete, cancel) = (self.commands.clone(), self.commands.clone());
         h_flex()
             .id("layout-delete-confirm")
             .aria_label("Delete this layout?")
             .test_support()
             .gap_2()
-            .items_center()
             .child(
                 div()
                     .text_sm()
                     .child(format!("Delete \u{201c}{}\u{201d}?", self.snapshot.name())),
             )
-            .child(action(
-                "layout-delete-confirmed",
-                "Delete layout",
-                true,
-                move |window, cx| {
-                    delete.run(window, cx, |section, _, cx| section.confirm_delete(cx));
-                },
-            ))
+            .child(
+                Button::new("layout-delete-confirmed")
+                    .small()
+                    .danger()
+                    .label("Delete layout")
+                    .on_click(move |_, window, cx| {
+                        delete.run(window, cx, |section, _, cx| section.confirm_delete(cx));
+                    }),
+            )
             .child(action(
                 "layout-delete-cancel",
                 "Keep it",
@@ -227,90 +273,87 @@ impl Presets {
             .into_any_element()
     }
 
-    fn notice_row(
-        &self,
-        text: &SharedString,
-        failed: bool,
-        undoable: bool,
-        cx: &App,
-    ) -> AnyElement {
+    /// What just happened, on the line of tools: the text, Undo when the change can be undone,
+    /// and a way to dismiss it.
+    fn notice(&self, notice: &NoticeLine, cx: &App) -> AnyElement {
         let (undo, dismiss) = (self.commands.clone(), self.commands.clone());
+        let theme = cx.theme();
         h_flex()
             .id("layout-notice")
-            .aria_label(text.clone())
+            .aria_label(notice.text.clone())
             .test_support()
-            .gap_2()
-            .items_center()
-            .child(if failed {
-                form::error_text(text.clone(), cx)
-            } else {
-                form::note(text.clone(), cx)
+            .min_w_0()
+            .gap_1()
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(if notice.failed {
+                        theme.danger
+                    } else {
+                        theme.muted_foreground
+                    })
+                    .child(notice.text.clone()),
+            )
+            .when(notice.undoable && self.can_undo, |row| {
+                row.child(
+                    Button::new("layout-notice-undo")
+                        .xsmall()
+                        .link()
+                        .label("Undo")
+                        .on_click(move |_, window, cx| {
+                            undo.run(window, cx, |section, _, cx| section.undo(cx));
+                        }),
+                )
             })
-            .when(undoable && self.can_undo, |row| {
-                row.child(action(
-                    "layout-notice-undo",
-                    "Undo",
-                    true,
-                    move |window, cx| {
-                        undo.run(window, cx, |section, _, cx| section.undo(cx));
-                    },
-                ))
-            })
-            .child(action(
-                "layout-notice-dismiss",
-                "Dismiss",
-                true,
-                move |window, cx| {
-                    dismiss.run(window, cx, |section, _, cx| section.dismiss_notice(cx));
-                },
-            ))
-            .into_any_element()
-    }
-
-    /// Built-in layouts that are not in use cannot be edited; the copy can.
-    fn read_only(&self, cx: &App) -> AnyElement {
-        let commands = self.commands.clone();
-        h_flex()
-            .id("layout-read-only")
-            .aria_label("Duplicate to edit")
-            .test_support()
-            .gap_2()
-            .items_center()
-            .child(form::note(
-                format!(
-                    "\u{201c}{}\u{201d} is built in and is not the layout in use, so it cannot be changed.",
-                    self.snapshot.name()
-                ),
-                cx,
-            ))
-            .child(action(
-                "layout-duplicate-to-edit",
-                "Duplicate to edit",
-                true,
-                move |window, cx| {
-                    commands.run(window, cx, |section, _, cx| section.edit(EditOp::Duplicate, cx));
-                },
-            ))
+            .child(
+                Button::new("layout-notice-dismiss")
+                    .xsmall()
+                    .ghost()
+                    .icon(IconName::Close)
+                    .on_click(move |_, window, cx| {
+                        dismiss.run(window, cx, |section, _, cx| section.dismiss_notice(cx));
+                    }),
+            )
             .into_any_element()
     }
 }
 
+/// A quiet button of the history.
+fn history(
+    id: &'static str,
+    label: &'static str,
+    enabled: bool,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> Button {
+    Button::new(id)
+        .small()
+        .ghost()
+        .label(label)
+        .disabled(!enabled)
+        .on_click(move |_, window, cx| on_click(window, cx))
+}
+
 impl RenderOnce for Presets {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let mut column = v_flex().id("layout-presets").test_support().gap_2();
-        column = column.child(self.choices()).child(self.tools());
-        if let Some((input, error)) = &self.rename {
-            column = column.child(self.rename_row(input, error.as_ref(), cx));
-        }
-        if self.confirming_delete {
-            column = column.child(self.confirm_row());
-        }
-        if let Some((text, failed, undoable)) = &self.notice {
-            column = column.child(self.notice_row(text, *failed, *undoable, cx));
-        }
-        if !self.snapshot.editable() {
-            column = column.child(self.read_only(cx));
-        }
-        column
+        let line = match &self.line {
+            Line::Tools => self.tools(cx),
+            Line::Renaming { what, input, error } => self.renaming(what, input, error.as_ref(), cx),
+            Line::ConfirmingDelete => self.confirming_delete(),
+        };
+        v_flex()
+            .id("layout-presets")
+            .test_support()
+            .gap_2()
+            .child(self.choices())
+            .child(
+                h_flex()
+                    .id("layout-tools")
+                    .test_support()
+                    .h(rems(TOOLS_HEIGHT_REMS))
+                    .items_center()
+                    .child(div().flex_1().min_w_0().child(line)),
+            )
     }
 }

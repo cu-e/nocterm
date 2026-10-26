@@ -15,30 +15,30 @@ const ORIGINAL: [&str; 4] = [
 #[gpui_kit::test]
 fn undo_puts_an_item_back_and_redo_moves_it_again(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.click("layout-item:shell.transfers", cx);
-    fixture.click("layout-op-earlier", cx);
-    let moved = fixture.top_to_bottom(&RIGHT, cx);
+    fixture.click("layout-preview:shell.transfers", cx);
+    fixture.keys("alt-left", cx);
+    let moved = fixture.left_to_right(&RIGHT, cx);
     assert_ne!(moved, ORIGINAL);
 
     fixture.click("layout-undo", cx);
-    assert_eq!(fixture.top_to_bottom(&RIGHT, cx), ORIGINAL);
+    assert_eq!(fixture.left_to_right(&RIGHT, cx), ORIGINAL);
 
     fixture.click("layout-redo", cx);
-    assert_eq!(fixture.top_to_bottom(&RIGHT, cx), moved);
+    assert_eq!(fixture.left_to_right(&RIGHT, cx), moved);
 }
 
 #[gpui_kit::test]
 fn the_keyboard_undoes_and_redoes(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.click("layout-item:shell.transfers", cx);
+    fixture.click("layout-preview:shell.transfers", cx);
     fixture.keys("alt-right", cx);
-    let moved = fixture.top_to_bottom(&RIGHT, cx);
+    let moved = fixture.left_to_right(&RIGHT, cx);
 
     fixture.keys("ctrl-z", cx);
-    assert_eq!(fixture.top_to_bottom(&RIGHT, cx), ORIGINAL);
+    assert_eq!(fixture.left_to_right(&RIGHT, cx), ORIGINAL);
 
     fixture.keys("ctrl-shift-z", cx);
-    assert_eq!(fixture.top_to_bottom(&RIGHT, cx), moved);
+    assert_eq!(fixture.left_to_right(&RIGHT, cx), moved);
 }
 
 #[gpui_kit::test]
@@ -53,8 +53,8 @@ fn there_is_nothing_to_undo_before_an_edit(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_change_from_elsewhere_ends_the_history(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.click("layout-item:shell.transfers", cx);
-    fixture.click("layout-op-earlier", cx);
+    fixture.click("layout-preview:shell.transfers", cx);
+    fixture.keys("alt-left", cx);
 
     // Another window renames the layout the editor just saved.
     cx.update(|cx| {
@@ -80,11 +80,11 @@ fn two_undos_pressed_before_the_first_is_stored_take_back_one_step_and_lose_none
 ) {
     let directory = tempfile::tempdir().unwrap();
     let fixture = open_on_disk(directory.path(), cx);
-    fixture.click("layout-item:shell.transfers", cx);
-    fixture.click("layout-op-earlier", cx);
+    fixture.click("layout-preview:shell.transfers", cx);
+    fixture.keys("alt-left", cx);
     let first = fixture.wait_for(cx, |stored| stored.presets.len() == 1);
-    fixture.click("layout-item:shell.terminal", cx);
-    fixture.click("layout-op-earlier", cx);
+    fixture.click("layout-preview:shell.terminal", cx);
+    fixture.keys("alt-left", cx);
     let second = fixture.wait_for(cx, |stored| stored != &first);
 
     // Both presses arrive while the file is still being written.
@@ -108,19 +108,19 @@ fn two_undos_pressed_before_the_first_is_stored_take_back_one_step_and_lose_none
 #[gpui_kit::test]
 fn an_undo_pressed_right_after_a_move_leaves_the_move_alone(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.click("layout-item:shell.terminal", cx);
-    fixture.click("layout-op-earlier", cx);
-    let first = fixture.top_to_bottom(&RIGHT, cx);
-    fixture.click("layout-item:shell.transfers", cx);
+    fixture.click("layout-preview:shell.terminal", cx);
+    fixture.keys("alt-left", cx);
+    let first = fixture.left_to_right(&RIGHT, cx);
+    fixture.click("layout-preview:shell.transfers", cx);
 
     // The undo would restore the layouts from before the first move, and lose the second.
     fixture.keys("alt-right ctrl-z", cx);
-    let second = fixture.top_to_bottom(&RIGHT, cx);
+    let second = fixture.left_to_right(&RIGHT, cx);
     assert_ne!(second, first);
     assert_ne!(second, ORIGINAL, "the second move is still there");
 
     fixture.keys("ctrl-z", cx);
-    assert_eq!(fixture.top_to_bottom(&RIGHT, cx), first);
+    assert_eq!(fixture.left_to_right(&RIGHT, cx), first);
     fixture.keys("ctrl-z", cx);
-    assert_eq!(fixture.top_to_bottom(&RIGHT, cx), ORIGINAL);
+    assert_eq!(fixture.left_to_right(&RIGHT, cx), ORIGINAL);
 }
