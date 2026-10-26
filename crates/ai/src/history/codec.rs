@@ -1,6 +1,6 @@
-//! CPU-only version-one transcript encoding and bounded loading.
+//! CPU-only versioned transcript encoding and bounded loading.
 use super::{
-    HistoryCodecError, PreparedBudget, SavedChat, SharedChat, VERSION, check_size, preflight, wire,
+    HistoryCodecError, PreparedBudget, SavedChat, SharedChat, check_size, preflight, wire,
 };
 
 pub fn structural_bytes(bytes: &[u8]) -> Result<usize, HistoryCodecError> {
@@ -10,11 +10,8 @@ pub fn decode(bytes: &[u8], id: &str) -> Result<SavedChat, HistoryCodecError> {
     validate_id(id)?;
     check_size(bytes.len())?;
     let resident = preflight::check(bytes)?;
-    let mut chat: SavedChat = serde_json::from_slice(bytes)?;
-    if chat.version != VERSION {
-        return Err(HistoryCodecError::UnsupportedVersion(chat.version));
-    }
-    if chat.id != id {
+    let mut chat = super::incoming::decode_bytes(bytes, id)?;
+    if chat.header.id != id {
         return Err(HistoryCodecError::IdentityMismatch);
     }
     let mut prepared = PreparedBudget::new(&chat)?;
@@ -25,10 +22,8 @@ pub fn decode(bytes: &[u8], id: &str) -> Result<SavedChat, HistoryCodecError> {
 /// Validate an already decoded construction input without trimming its contents.
 /// Unlike the persistence view, this retains every entry and full image payload.
 pub fn prepare(chat: SavedChat) -> Result<SavedChat, HistoryCodecError> {
-    validate_id(&chat.id)?;
-    if chat.version != VERSION {
-        return Err(HistoryCodecError::UnsupportedVersion(chat.version));
-    }
+    validate_id(&chat.header.id)?;
+    super::header::resolve_scope(chat.version, Some(chat.header.scope))?;
     if chat.archived_draft {
         return Err(HistoryCodecError::ArchivedPatch);
     }
@@ -38,7 +33,7 @@ pub fn prepare(chat: SavedChat) -> Result<SavedChat, HistoryCodecError> {
         return Err(HistoryCodecError::CollectionLimit);
     }
     let bytes = serde_json::to_vec(&chat)?;
-    decode(&bytes, &chat.id)
+    decode(&bytes, &chat.header.id)
 }
 pub fn encode(chat: &SavedChat) -> Result<Vec<u8>, HistoryCodecError> {
     if chat.archived_draft {
@@ -73,16 +68,14 @@ fn encode_value(
     chat: &SavedChat,
     value: &impl serde::Serialize,
 ) -> Result<Vec<u8>, HistoryCodecError> {
-    validate_id(&chat.id)?;
-    if chat.version != VERSION {
-        return Err(HistoryCodecError::UnsupportedVersion(chat.version));
-    }
+    validate_id(&chat.header.id)?;
+    super::header::resolve_scope(chat.version, Some(chat.header.scope))?;
     let bytes = serde_json::to_vec(value)?;
     check_size(bytes.len())?;
     preflight::check(&bytes)?;
     Ok(bytes)
 }
-fn validate_id(id: &str) -> Result<(), HistoryCodecError> {
+pub(super) fn validate_id(id: &str) -> Result<(), HistoryCodecError> {
     if uuid::Uuid::parse_str(id).is_err() {
         return Err(HistoryCodecError::InvalidId(id.into()));
     }

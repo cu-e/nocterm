@@ -16,18 +16,22 @@
 //! persistence worker lifecycle.
 //! Ports used: SettingsHandle, RemoteFs, SnapshotWriter, ShutdownCoordinator,
 //! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
-//! Ports provided: ConnectionDirectory. Settings section: none.
+//! Ports provided: ConnectionDirectory, checked original-workspace parent
+//! SessionSpec resolution for app composition and the core `connections.servers`
+//! contribution (`plugin::CORE`). Settings section: none.
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
 //! Connections aliases the actual service entity; windows/actions use supplied installation.
 //! Raw facts/jobs belong to the supplied actual service entity. Original Item
 //! capability receipts retain session authority independently of window projection.
+//! Workspace recovery compares original profile, destination and ordered resolved
+//! route before opening; it never supplies authentication from project metadata.
 
 mod installed;
 mod session_intents;
 pub use installed::{Installed, install};
-pub use session_intents::{connect, spec_for_profile};
+pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;
 mod directory;
 mod editor;
@@ -36,6 +40,7 @@ mod geo;
 mod menu;
 pub mod os;
 mod panel;
+pub mod plugin;
 mod prepared;
 mod probe_sources;
 pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
@@ -44,7 +49,7 @@ pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
 mod test_support;
 
 use gpui_kit::{Context, Window, prelude::*};
-use nocterm_workspace::Workspace;
+use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};
 
 pub use editor::{ConnectionEditor, open_editor};
 pub use menu::NewTabMenu;
@@ -65,12 +70,14 @@ gpui_kit::actions!(
 
 /// Adds the connections panel, the new-tab menu and the commands to a
 /// workspace.
+///
+/// The menu and the commands are registered even when the workspace refuses the panel.
 pub fn register(
     installed: &Installed,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Result<(), RegistrationError> {
     workspace.set_connection_directory(std::rc::Rc::new(directory::Directory::new(
         installed.clone(),
     )));
@@ -84,7 +91,7 @@ pub fn register(
     // Facts feed cached panels and the recent servers on the empty screen.
     cx.observe(installed.facts(), |workspace, _, cx| {
         cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
-        if workspace.items().next().is_none() && !workspace.local_terminal_is_visible(cx) {
+        if workspace.items(cx).next().is_none() && !workspace.local_terminal_is_visible(cx) {
             cx.notify();
         }
     })
@@ -112,17 +119,24 @@ pub fn register(
     .detach();
     let handle = cx.entity().downgrade();
 
-    let panel = cx.new(|cx| ConnectionsPanel::new(installed.clone(), handle.clone(), window, cx));
-    workspace.add_panel(panel, cx);
-
     let menu = cx.new(|cx| NewTabMenu::new(installed.clone(), handle, window, cx));
     workspace.set_new_tab_menu(menu, cx);
 
     workspace.register_action(|workspace, _: &ToggleServers, window, cx| {
-        workspace.toggle_panel_of::<ConnectionsPanel>(window, cx);
+        workspace.toggle_panel(&plugin::SERVERS.id, window, cx);
     });
     let editors = installed.clone();
     workspace.register_action(move |_, _: &NewConnection, window, cx| {
         open_editor(editors.clone(), None, cx.entity().downgrade(), window, cx);
     });
+
+    let installed = installed.clone();
+    workspace.register_panel(
+        PanelRegistration::new(&plugin::SERVERS, move |_, window, cx| {
+            let owner = cx.entity().downgrade();
+            cx.new(|cx| ConnectionsPanel::new(installed.clone(), owner, window, cx))
+        }),
+        window,
+        cx,
+    )
 }

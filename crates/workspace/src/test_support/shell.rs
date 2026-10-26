@@ -1,0 +1,58 @@
+//! Semantic names for the shell's status bar toggles.
+//!
+//! Tests name an element through these helpers and not through its element id,
+//! so a change of the production ids only changes this file.
+use crate::Workspace;
+use gpui_kit::{App, Context, ElementId, SharedString};
+use nocterm_ui::IconName;
+
+/// A status bar toggle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Toggle {
+    /// The nth navigation panel.
+    Navigation(usize),
+    LocalTerminal,
+    /// The first panel of the group beside the sidebar's.
+    SidePanel,
+}
+
+/// The element id of a status bar toggle.
+pub fn toggle_id(toggle: Toggle) -> ElementId {
+    match toggle {
+        Toggle::Navigation(ix) => ("sidebar-panel", ix).into(),
+        Toggle::LocalTerminal => {
+            (ElementId::from("status-item"), "workspace.local-terminal").into()
+        }
+        Toggle::SidePanel => (ElementId::from("panel-group-toggle"), "assistant:0").into(),
+    }
+}
+
+/// The tooltip and icon a status bar toggle is drawn with; `None` while it is not drawn.
+pub fn toggle_presentation(
+    workspace: &Workspace,
+    toggle: Toggle,
+    cx: &App,
+) -> Option<(SharedString, IconName)> {
+    let looks = workspace.toggle_looks(cx);
+    let look = match toggle {
+        Toggle::Navigation(ix) => looks.navigation.get(ix).cloned(),
+        Toggle::LocalTerminal => looks.local_terminal,
+        Toggle::SidePanel => looks.side_panel,
+    }?;
+    Some((look.tooltip, look.icon))
+}
+
+/// Selects a layout as the window menu does, and lets the window follow at once.
+pub fn select_layout(
+    workspace: &mut Workspace,
+    id: &str,
+    window: &mut gpui_kit::Window,
+    cx: &mut Context<Workspace>,
+) {
+    crate::workspace::switch_layout_now(
+        workspace,
+        nocterm_window_layout::PresetId::from_owned(id.to_owned()),
+        window,
+        cx,
+    );
+}

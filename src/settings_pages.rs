@@ -1,26 +1,82 @@
 //! App-owned checked settings catalogs and native action routing.
+use nocterm_plugin_model::PluginCatalog;
 use nocterm_settings_ui::{
     Installed, SettingsCatalog, SettingsCatalogError, SettingsPageRegistration,
 };
-use nocterm_ui::{SettingsPageSpec, ThemeUi};
+use nocterm_ui::{EmbeddedPageSpec, SettingsPageSpec, ThemeUi};
 use nocterm_workspace::{
     ChangeColorScheme, ChangeTheme, DefaultSessionSettings, OpenAiSettings, OpenKeymap,
-    OpenSSHSettings, OpenVault, Workspace,
+    OpenLayoutSettings, OpenPluginPage, OpenPlugins, OpenSSHSettings, OpenVault, Workspace,
 };
+use std::sync::Arc;
+
+/// The id of the page that lists the plugins; pages of single plugins nest under it.
+const PLUGINS_PAGE: &str = "plugins";
+
+/// The id of the page whose sections other features supply, and the key of the editor section.
+const APPEARANCE_PAGE: &str = "appearance";
+const LAYOUT_SECTION: &str = "layout";
+
+/// The lazy pages after the builtin ones, in navigation order, with the plugin catalog the
+/// Plugins page and the plugin page links read, and the sections guests add to Appearance.
+pub(crate) struct GuestPages {
+    pages: Vec<SettingsPageRegistration>,
+    plugins: Arc<PluginCatalog>,
+    appearance: Vec<EmbeddedPageSpec>,
+}
+impl GuestPages {
+    pub(crate) fn new(pages: Vec<SettingsPageRegistration>, plugins: Arc<PluginCatalog>) -> Self {
+        Self {
+            pages,
+            plugins,
+            appearance: Vec::new(),
+        }
+    }
+    /// Sections shown below Appearance in the ordinary Settings window.
+    pub(crate) fn with_appearance_sections(mut self, sections: Vec<EmbeddedPageSpec>) -> Self {
+        self.appearance = sections;
+        self
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct SettingsPages {
     installed: Installed,
     ordinary: SettingsCatalog,
     startup: Option<SettingsCatalog>,
+    plugins: Arc<PluginCatalog>,
 }
 impl SettingsPages {
+    /// Gather page registrations from the exact feature installations retained by Booted.
+    pub(crate) fn from_installations(
+        settings: nocterm_store::SettingsHandle,
+        themes: ThemeUi,
+        terminal: &nocterm_terminal::Installed,
+        agent: &nocterm_agent::Installed,
+        sandbox_probe: std::sync::Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
+        guests: GuestPages,
+        vault: Option<&nocterm_vault_ui::Installed>,
+    ) -> Result<Self, SettingsCatalogError> {
+        Self::compose(
+            Installed::new(settings.clone()),
+            themes,
+            nocterm_terminal::settings_pages(terminal),
+            nocterm_agent_settings_ui::settings_page(
+                settings,
+                agent.agents().clone(),
+                sandbox_probe,
+            ),
+            guests,
+            vault.map(nocterm_vault_ui::settings_page),
+        )
+    }
+
     pub(crate) fn compose(
         installed: Installed,
         themes: ThemeUi,
         terminal: [SettingsPageSpec; 3],
         ai: SettingsPageSpec,
-        guests: [SettingsPageSpec; 3],
+        guests: GuestPages,
         vault: Option<SettingsPageSpec>,
     ) -> Result<Self, SettingsCatalogError> {
         let [terminal, local, ssh] = terminal;
@@ -31,23 +87,37 @@ impl SettingsPages {
             ssh,
             ai,
         ];
-        let guests = guests.into_iter().chain(vault.clone()).collect();
         Self::new(installed, builtins, guests, vault)
     }
     pub(crate) fn new(
         installed: Installed,
         builtins: [SettingsPageSpec; 5],
-        guests: Vec<SettingsPageSpec>,
+        guests: GuestPages,
         startup_vault: Option<SettingsPageSpec>,
     ) -> Result<Self, SettingsCatalogError> {
-        let ordinary = catalog(builtins.clone(), guests)?;
-        let startup = startup_vault
+        let GuestPages {
+            pages,
+            plugins,
+            appearance,
+        } = guests;
+        let vault = startup_vault.clone().map(SettingsPageRegistration::lazy);
+        let mut ordinary_builtins = builtins.clone();
+        if !appearance.is_empty() {
+            let [first, ..] = &mut ordinary_builtins;
+            *first = first.clone().with_sections(appearance);
+        }
+        let ordinary = catalog(
+            ordinary_builtins,
+            pages.into_iter().chain(vault.clone()).collect(),
+        )?;
+        let startup = vault
             .map(|vault| catalog(builtins, vec![vault]))
             .transpose()?;
         Ok(Self {
             installed,
             ordinary,
             startup,
+            plugins,
         })
     }
     pub(crate) fn installed(&self) -> Installed {
@@ -64,6 +134,13 @@ impl SettingsPages {
         register_appearance_commands(workspace, themes, self.installed.settings().clone());
         nocterm_settings_ui::register(workspace, self.ordinary.clone(), self.installed.clone());
         open_on::<DefaultSessionSettings>(workspace, "ssh", &self.ordinary, self.installed.clone());
+        open_on_anchor::<OpenLayoutSettings>(
+            workspace,
+            APPEARANCE_PAGE,
+            layout_anchor,
+            &self.ordinary,
+            self.installed.clone(),
+        );
         open_on::<OpenAiSettings>(workspace, "ai", &self.ordinary, self.installed.clone());
         open_on::<OpenSSHSettings>(workspace, "ssh", &self.ordinary, self.installed.clone());
         open_on::<OpenKeymap>(workspace, "keymap", &self.ordinary, self.installed.clone());
@@ -73,6 +150,14 @@ impl SettingsPages {
             &self.ordinary,
             self.installed.clone(),
         );
+        open_on_anchor::<OpenPlugins>(
+            workspace,
+            PLUGINS_PAGE,
+            |action| action.plugin.clone(),
+            &self.ordinary,
+            self.installed.clone(),
+        );
+        self.register_plugin_pages(workspace);
         open_on::<nocterm_files::OpenExplorerSettings>(
             workspace,
             "explorer",
@@ -83,18 +168,74 @@ impl SettingsPages {
             open_on::<OpenVault>(workspace, "vault", &self.ordinary, self.installed.clone());
         }
     }
+    /// The gear of a plugin opens the page the plugin names, enabled or not.
+    fn register_plugin_pages(&self, workspace: &mut Workspace) {
+        let (plugins, pages, installed) = (
+            self.plugins.clone(),
+            self.ordinary.clone(),
+            self.installed.clone(),
+        );
+        workspace.register_action(move |_, action: &OpenPluginPage, window, cx| {
+            let Some(page) = plugins
+                .plugins()
+                .find(|plugin| plugin.id.as_str() == action.plugin.as_ref())
+                .and_then(|plugin| plugin.settings_page)
+            else {
+                return;
+            };
+            defer_open(page, None, &pages, &installed, window, cx);
+        });
+    }
+}
+/// The anchor of the editor section, with the item the action names selected inside it.
+fn layout_anchor(action: &OpenLayoutSettings) -> Option<gpui_kit::SharedString> {
+    Some(match &action.select {
+        Some(id) => format!("{LAYOUT_SECTION}/{id}").into(),
+        None => LAYOUT_SECTION.into(),
+    })
+}
+/// Lazy pages are composed from the same feature installations as the window. The page of a
+/// single plugin nests under Plugins, anchored at the plugin's id; Plugins comes after the
+/// other guests, and the Vault page after it.
+pub(crate) fn guest_pages(
+    keymap: nocterm_keymap::KeymapHandle,
+    monitor: &nocterm_monitor_ui::Installed,
+    files: &nocterm_files::Installed,
+    projects: Option<&nocterm_projects::Installed>,
+    plugins_page: SettingsPageSpec,
+    plugins: Arc<PluginCatalog>,
+) -> GuestPages {
+    let nested = |spec, plugin: &'static nocterm_plugin_model::SystemPlugin| {
+        SettingsPageRegistration::lazy(spec).under(PLUGINS_PAGE, plugin.id.as_str())
+    };
+    let mut pages = vec![
+        SettingsPageRegistration::lazy(nocterm_keymap_ui::settings_page(keymap)),
+        nested(
+            nocterm_monitor_ui::settings_page(monitor),
+            &nocterm_monitor_ui::plugin::PLUGIN,
+        ),
+        SettingsPageRegistration::lazy(nocterm_files::settings_page(files)),
+    ];
+    pages.extend(projects.map(|projects| {
+        nested(
+            nocterm_projects::settings_page(projects),
+            &nocterm_projects::plugin::PLUGIN,
+        )
+    }));
+    pages.push(SettingsPageRegistration::lazy(plugins_page));
+    GuestPages::new(pages, plugins)
 }
 fn catalog(
     builtins: [SettingsPageSpec; 5],
-    guests: Vec<SettingsPageSpec>,
+    guests: Vec<SettingsPageRegistration>,
 ) -> Result<SettingsCatalog, SettingsCatalogError> {
     SettingsCatalog::new(
         builtins
             .into_iter()
             .map(SettingsPageRegistration::eager)
-            .chain(guests.into_iter().map(SettingsPageRegistration::lazy))
+            .chain(guests)
             .collect(),
-        "appearance",
+        APPEARANCE_PAGE,
     )
 }
 fn open_on<A: gpui_kit::Action>(
@@ -103,15 +244,45 @@ fn open_on<A: gpui_kit::Action>(
     pages: &SettingsCatalog,
     installed: Installed,
 ) {
+    open_on_anchor::<A>(workspace, id, |_| None, pages, installed);
+}
+/// Like `open_on`, and asks the page to reveal the anchor the action names.
+fn open_on_anchor<A: gpui_kit::Action>(
+    workspace: &mut Workspace,
+    id: &'static str,
+    anchor: fn(&A) -> Option<gpui_kit::SharedString>,
+    pages: &SettingsCatalog,
+    installed: Installed,
+) {
     let pages = pages.clone();
-    workspace.register_action(move |_, _: &A, window, cx| {
-        let workspace = cx.entity().downgrade();
-        let pages = pages.clone();
-        let installed = installed.clone();
-        window.defer(cx, move |window, cx| {
-            let _ = workspace.update(cx, |workspace, cx| {
-                nocterm_settings_ui::open_page(workspace, id, &pages, installed, window, cx)
-            });
+    workspace.register_action(move |_, action: &A, window, cx| {
+        let anchor = anchor(action);
+        defer_open(id, anchor.as_deref(), &pages, &installed, window, cx);
+    });
+}
+/// Opens the page after the current update, revealing `anchor` when it is given.
+fn defer_open(
+    id: &'static str,
+    anchor: Option<&str>,
+    pages: &SettingsCatalog,
+    installed: &Installed,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::Context<Workspace>,
+) {
+    let workspace = cx.entity().downgrade();
+    let (pages, installed) = (pages.clone(), installed.clone());
+    let anchor = anchor.map(str::to_owned);
+    window.defer(cx, move |window, cx| {
+        let _ = workspace.update(cx, |workspace, cx| {
+            nocterm_settings_ui::open_page_at(
+                workspace,
+                id,
+                anchor.as_deref(),
+                &pages,
+                installed,
+                window,
+                cx,
+            )
         });
     });
 }

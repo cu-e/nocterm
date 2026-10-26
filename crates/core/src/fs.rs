@@ -1,7 +1,11 @@
-//! Exclusive private-file creation and staged atomic publication.
+//! Exclusive private-file creation, staged atomic publication and bounded reads.
 //!
-//! These helpers replace the final path without following its symlink. Parent
+//! These helpers replace or open the final path without following its symlink. Parent
 //! directories must be trusted: this is not a pinned-directory traversal API.
+
+mod bounded;
+
+pub use bounded::{BoundedReadError, read_regular_bounded};
 
 use std::{
     fs::{self, File, OpenOptions, Permissions},

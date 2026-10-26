@@ -65,6 +65,9 @@ fn fixture_deps() -> Deps {
     let local = Arc::new(nocterm_session::testing::InMemoryFs::default());
     Deps {
         local: local.clone(),
+        directories: Arc::new(nocterm_explorer::testing::MemoryDirectoryReaders::new(
+            local.clone(),
+        )),
         mutations: local,
         transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
         opener: Arc::new(nocterm_session::testing::FakeExec::default()),
@@ -76,6 +79,9 @@ fn fixture_deps_at(root: &std::path::Path) -> (Deps, Arc<nocterm_session::testin
     seed_fixture_tree(&local, root);
     let deps = Deps {
         local: local.clone(),
+        directories: Arc::new(nocterm_explorer::testing::MemoryDirectoryReaders::new(
+            local.clone(),
+        )),
         mutations: local.clone(),
         transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
         opener: Arc::new(nocterm_session::testing::FakeExec::default()),
@@ -188,6 +194,21 @@ fn native_bytes(local: &dyn nocterm_session::local_fs::LocalFs, path: &std::path
     source.close().unwrap();
     result
 }
+/// Registers the files panel as the Explorer contribution.
+fn add_explorer(
+    workspace: &mut Workspace,
+    panel: Entity<FilesPanel>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .register_panel(
+            nocterm_workspace::PanelRegistration::with_entity(&crate::plugin::EXPLORER, panel),
+            window,
+            cx,
+        )
+        .unwrap();
+}
 fn panel_fixture(
     cx: &mut TestAppContext,
     fs: Arc<dyn RemoteFs>,
@@ -265,8 +286,11 @@ fn panel_fixture_with_settings(
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    let deps =
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                    let deps = nocterm_workspace::test_support::deps_for_core(
+                        &[crate::plugin::CORE],
+                        &[],
+                        cx,
+                    );
                     Workspace::new(deps, window, cx)
                 })
             })
@@ -284,7 +308,7 @@ fn panel_fixture_with_settings(
                 workspace.update(cx, |workspace, cx| {
                     workspace.add_item(item.clone(), window, cx)
                 });
-                let session = workspace.read(cx).active_session(cx);
+                let session = workspace.read(cx).explorer_source(cx);
                 let panel = cx.new(|cx| {
                     FilesPanel::new(installed.clone(), workspace.clone(), session, window, cx)
                 });
@@ -558,7 +582,7 @@ fn local_directory_buttons_sync_only_local_context_and_report_busy_shell(cx: &mu
                 busy: false,
             });
             workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(panel.clone(), cx);
+                add_explorer(workspace, panel.clone(), window, cx);
                 workspace.set_local_terminal(shell.clone(), window, cx);
             });
             panel.update(cx, |panel, cx| panel.navigate_local(first.clone(), cx));
@@ -684,6 +708,8 @@ fn pointer_click(
 mod listing_ui;
 #[path = "operations_ui_tests.rs"]
 mod operations_ui;
+#[path = "plugin_tests.rs"]
+mod plugin;
 #[path = "transfer_ui_tests.rs"]
 mod transfer_ui;
 

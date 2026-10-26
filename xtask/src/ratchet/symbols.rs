@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use syn::{Item, Path, Type};
 
 #[derive(Clone)]
-pub(super) struct Symbols {
+pub(crate) struct Symbols {
     names: BTreeSet<String>,
     module_scopes: BTreeSet<String>,
     structs: BTreeMap<String, Vec<syn::ItemStruct>>,
@@ -21,7 +21,7 @@ pub(super) struct Alias {
 }
 
 impl Symbols {
-    pub(super) fn new(modules: &[Module]) -> Self {
+    pub(crate) fn new(modules: &[Module]) -> Self {
         let mut symbols = Self {
             names: BTreeSet::new(),
             structs: BTreeMap::new(),
@@ -296,7 +296,7 @@ impl Symbols {
         self.members.insert(name, members);
     }
 
-    pub(super) fn resolve_candidates(
+    pub(crate) fn resolve_candidates(
         &self,
         module: &str,
         path: &Path,

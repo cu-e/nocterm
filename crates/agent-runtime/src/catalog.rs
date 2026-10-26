@@ -1,15 +1,26 @@
-//! Take-once history and bounded construction seeds, without filesystem access.
+//! Installation-wide catalog payload reservations and immutable scoped snapshots.
 use super::{AgentStorage, HistoryReader, Runtime};
 use gpui::{Context, Task};
 use nocterm_ai::{
-    history::{ChatSummary, HistoryGate, SavedChat},
-    storage::{AgentStorageError, ChatRepository},
+    execution_origin::ChatKey,
+    history::{ChatSummary, ContextId, HistoryGate, SavedChat},
+    storage::{AgentStorageError, ChatRepository, require_chat_scope},
 };
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+const MAX_CATALOG_SNAPSHOTS: usize = 32;
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum CatalogLoadError {
+    #[error("All 32 installation catalog payload slots are retained or loading.")]
+    Capacity,
+    #[error("Agent history is shutting down.")]
+    Closed,
+    #[error("Agent history load generation is exhausted.")]
+    GenerationExhausted,
+}
 
 /// Optional prepared history for hosts that already have bounded decoded records.
 /// Production leaves this absent and loads the lightweight catalog lazily.
-#[derive(Clone)]
 pub struct PreparedHistory(Vec<SavedChat>);
 impl PreparedHistory {
     pub fn new(chats: Vec<SavedChat>) -> Result<Self, AgentStorageError> {
@@ -20,7 +31,8 @@ impl PreparedHistory {
         let mut ids = std::collections::HashSet::new();
         let mut prepared = Vec::with_capacity(chats.len());
         for chat in chats {
-            if !ids.insert(chat.id.clone()) {
+            require_chat_scope(ContextId::General, chat.header.scope)?;
+            if !ids.insert(chat.header.id.clone()) {
                 return Err(nocterm_ai::history::HistoryCodecError::IdentityMismatch.into());
             }
             let chat = nocterm_ai::history::prepare(chat)?;
@@ -36,67 +48,252 @@ impl PreparedHistory {
         &self.0
     }
 }
+/// Immutable light metadata for one captured context and load generation.
+#[derive(Clone)]
+pub struct CatalogSnapshot {
+    payload: Arc<CatalogPayload>,
+}
+struct CatalogPayload {
+    scope: ContextId,
+    generation: u64,
+    rows: Vec<ChatSummary>,
+    error: Option<AgentStorageError>,
+}
+impl CatalogSnapshot {
+    pub fn scope(&self) -> ContextId {
+        self.payload.scope
+    }
+    pub fn generation(&self) -> u64 {
+        self.payload.generation
+    }
+    pub fn rows(&self) -> &[ChatSummary] {
+        &self.payload.rows
+    }
+    pub fn error(&self) -> Option<&AgentStorageError> {
+        self.payload.error.as_ref()
+    }
+    pub fn row(&self, index: usize) -> Option<CatalogRow> {
+        (index < self.rows().len()).then(|| CatalogRow {
+            snapshot: self.clone(),
+            index,
+        })
+    }
+}
+/// A row retains its original accounted payload; no metadata strings are copied.
+#[derive(Clone)]
+pub struct CatalogRow {
+    snapshot: CatalogSnapshot,
+    index: usize,
+}
+impl CatalogRow {
+    pub fn scope(&self) -> ContextId {
+        self.snapshot.scope()
+    }
+    pub fn generation(&self) -> u64 {
+        self.snapshot.generation()
+    }
+    pub fn summary(&self) -> &ChatSummary {
+        // Only CatalogSnapshot::row constructs this immutable validated index.
+        &self.snapshot.rows()[self.index]
+    }
+}
+#[derive(Default)]
+struct ScopeCatalog {
+    snapshot: Option<CatalogSnapshot>,
+    generation: u64,
+    loading: Option<Task<()>>,
+}
 pub(super) struct Catalog {
     saved: Option<Vec<SavedChat>>,
-    rows: Option<Vec<ChatSummary>>,
+    scopes: std::collections::HashMap<ContextId, ScopeCatalog>,
     gate: HistoryGate,
-    loading: Option<Task<()>>,
     repository: Arc<dyn ChatRepository>,
     closing: bool,
+    payloads: Vec<Weak<CatalogPayload>>,
+    sequence: u64,
 }
 impl Catalog {
     pub(super) fn new(storage: &mut AgentStorage, cx: &mut Context<Runtime>) -> Self {
         let mut catalog = Self {
             saved: storage.take_history().map(|history| history.0),
-            rows: None,
+            scopes: Default::default(),
             gate: HistoryGate::default(),
-            loading: None,
             repository: storage.chats(),
             closing: false,
+            payloads: Vec::new(),
+            sequence: 0,
         };
-        if catalog.saved.is_none() {
-            catalog.reload(cx)
+        if let Some(chats) = &catalog.saved {
+            let payload = Arc::new(CatalogPayload {
+                scope: ContextId::General,
+                generation: 1,
+                rows: chats.iter().map(ChatSummary::from_chat).collect(),
+                error: None,
+            });
+            catalog.payloads.push(Arc::downgrade(&payload));
+            catalog.sequence = 1;
+            catalog.scopes.insert(
+                ContextId::General,
+                ScopeCatalog {
+                    snapshot: Some(CatalogSnapshot { payload }),
+                    generation: 1,
+                    loading: None,
+                },
+            );
+        } else {
+            let _ = catalog.reload(ContextId::General, cx);
         }
         catalog
     }
-    pub(super) fn reload(&mut self, cx: &mut Context<Runtime>) {
+    fn reserve(&mut self, scope: ContextId) -> Result<u64, CatalogLoadError> {
         if self.closing {
-            return;
+            return Err(CatalogLoadError::Closed);
         }
+        let generation = self
+            .sequence
+            .checked_add(1)
+            .ok_or(CatalogLoadError::GenerationExhausted)?;
+        self.payloads.retain(|payload| payload.strong_count() > 0);
+        let pending = self
+            .scopes
+            .iter()
+            .filter(|(key, entry)| **key != scope && entry.loading.is_some())
+            .count();
+        if self.payloads.len() + pending >= MAX_CATALOG_SNAPSHOTS {
+            let victim = self
+                .scopes
+                .iter()
+                .filter(|(key, entry)| {
+                    **key != scope
+                        && entry.loading.is_none()
+                        && entry
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| Arc::strong_count(&snapshot.payload) == 1)
+                })
+                .min_by_key(|(_, entry)| entry.generation)
+                .map(|(key, _)| *key);
+            let Some(victim) = victim else {
+                return Err(CatalogLoadError::Capacity);
+            };
+            self.scopes.remove(&victim);
+            self.payloads.retain(|payload| payload.strong_count() > 0);
+        }
+        self.sequence = generation;
+        Ok(generation)
+    }
+    pub(super) fn ensure(
+        &mut self,
+        scope: ContextId,
+        cx: &mut Context<Runtime>,
+    ) -> Result<(), CatalogLoadError> {
+        if self.closing {
+            return Err(CatalogLoadError::Closed);
+        }
+        if self.scopes.contains_key(&scope) {
+            return Ok(());
+        }
+        self.reload(scope, cx)
+    }
+    pub(super) fn reload(
+        &mut self,
+        scope: ContextId,
+        cx: &mut Context<Runtime>,
+    ) -> Result<(), CatalogLoadError> {
+        let generation = self.reserve(scope)?;
+        let entry = self.scopes.entry(scope).or_default();
+        entry.generation = generation;
         let repository = self.repository.clone();
         let loading = cx
             .background_executor()
-            .spawn(async move { repository.catalog().await });
-        self.loading = Some(cx.spawn(async move |runtime, cx| {
+            .spawn(async move { repository.catalog(scope).await });
+        entry.loading = Some(cx.spawn(async move |runtime, cx| {
             let rows = loading.await;
             let _ = runtime.update(cx, |runtime, cx| {
-                runtime.chats.loaded(rows);
+                runtime.chats.loaded(scope, generation, rows);
                 cx.notify();
             });
         }));
+        Ok(())
     }
-    pub(super) fn complete(&mut self, rows: Result<Vec<ChatSummary>, AgentStorageError>) {
+    pub(super) fn complete(
+        &mut self,
+        scope: ContextId,
+        generation: u64,
+        rows: Result<Vec<ChatSummary>, AgentStorageError>,
+    ) {
         if self.closing {
             return;
         }
-        self.rows = Some(rows.unwrap_or_else(|error| {
-            tracing::warn!(%error,"could not load agent catalog");
-            Vec::new()
-        }));
-        self.loading.take();
+        let Some(entry) = self.scopes.get_mut(&scope) else {
+            return;
+        };
+        if entry.generation != generation {
+            return;
+        }
+        let (mut rows, error): (Vec<ChatSummary>, _) = match rows {
+            Ok(rows) => (
+                rows.into_iter()
+                    .filter(|row| {
+                        require_chat_scope(scope, row.scope).is_ok() && row.validate().is_ok()
+                    })
+                    .take(nocterm_ai::history::MAX_RESTORED)
+                    .collect(),
+                None,
+            ),
+            Err(error) => {
+                tracing::warn!(%error, "could not load agent catalog");
+                (Vec::new(), Some(error))
+            }
+        };
+        if scope == ContextId::General
+            && let Some(prepared) = &self.saved
+        {
+            for chat in prepared {
+                rows.retain(|row| row.id != chat.header.id);
+                rows.push(ChatSummary::from_chat(chat));
+            }
+            rows.sort_by_key(|row| std::cmp::Reverse((row.pinned, row.updated)));
+            rows.truncate(nocterm_ai::history::MAX_RESTORED);
+        }
+        let payload = Arc::new(CatalogPayload {
+            scope,
+            generation,
+            rows,
+            error,
+        });
+        self.payloads.retain(|payload| payload.strong_count() > 0);
+        self.payloads.push(Arc::downgrade(&payload));
+        entry.snapshot = Some(CatalogSnapshot { payload });
+        entry.loading.take();
     }
-    pub(super) fn take_saved(&mut self) -> Option<Vec<SavedChat>> {
-        self.saved.take()
+    pub(super) fn invalidate(&mut self, scope: ContextId) {
+        self.scopes.remove(&scope);
     }
-    pub(super) fn take_rows(&mut self) -> Option<Vec<ChatSummary>> {
-        self.rows.take()
+    pub(super) fn snapshot(&self, scope: ContextId) -> Option<CatalogSnapshot> {
+        self.scopes.get(&scope)?.snapshot.clone()
     }
-    pub(super) fn reader(&self) -> HistoryReader {
-        HistoryReader::new(self.repository.clone(), self.gate.clone())
+    pub(super) fn take_prepared(&mut self, key: &ChatKey) -> Option<SavedChat> {
+        if key.scope() != ContextId::General {
+            return None;
+        }
+        let records = self.saved.as_mut()?;
+        let index = records.iter().position(|chat| chat.header.id == key.id())?;
+        Some(records.remove(index))
+    }
+    pub(super) fn prepared_bytes(&self) -> usize {
+        self.saved
+            .as_ref()
+            .map_or(0, |saved| saved.iter().map(SavedChat::resident_bytes).sum())
+    }
+    pub(super) fn reader(&self, scope: ContextId) -> HistoryReader {
+        HistoryReader::new(self.repository.clone(), self.gate.clone(), scope)
     }
     pub(super) fn stop(&mut self) {
         self.closing = true;
-        self.loading.take();
+        for entry in self.scopes.values_mut() {
+            entry.loading.take();
+        }
     }
 }
 

@@ -28,3 +28,13 @@ mod parse;
 pub use engine::{Action, Engine, detect};
 pub use error::{ContainersError, ListingEntity, ListingError};
 pub use model::{Container, Group, Image, Snapshot, State};
+
+/// Decode a bounded container listing acquired by a host adapter.
+pub fn decode_containers(output: &str) -> Result<Vec<Container>, ListingError> {
+    parse::containers(output)
+}
+
+/// Decode a bounded image listing acquired by a host adapter.
+pub fn decode_images(output: &str) -> Result<Vec<Image>, ListingError> {
+    parse::images(output)
+}

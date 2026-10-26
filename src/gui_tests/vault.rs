@@ -30,8 +30,8 @@ fn vault_action_opens_the_vault_page_in_the_single_settings_item(cx: &mut TestAp
     })
     .unwrap();
     cx.run_until_parked();
-    let original = workspace.read_with(cx, |w, _| {
-        w.find_item::<nocterm_settings_ui::SettingsView>()
+    let original = workspace.read_with(cx, |w, cx| {
+        w.find_item::<nocterm_settings_ui::SettingsView>(cx)
             .unwrap()
             .entity_id()
     });
@@ -54,8 +54,8 @@ fn vault_action_opens_the_vault_page_in_the_single_settings_item(cx: &mut TestAp
     })
     .unwrap();
     assert_eq!(
-        workspace.read_with(cx, |w, _| w
-            .find_item::<nocterm_settings_ui::SettingsView>()
+        workspace.read_with(cx, |w, cx| w
+            .find_item::<nocterm_settings_ui::SettingsView>(cx)
             .unwrap()
             .entity_id()),
         original
@@ -79,7 +79,7 @@ fn prompt_on_startup_opens_vault_page_on_launch(cx: &mut TestAppContext) {
         assert!(
             workspace
                 .read(cx)
-                .find_item::<nocterm_settings_ui::SettingsView>()
+                .find_item::<nocterm_settings_ui::SettingsView>(cx)
                 .is_some()
         );
     })

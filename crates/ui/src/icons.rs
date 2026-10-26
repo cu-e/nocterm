@@ -73,10 +73,21 @@ gpui_kit::assets::icon_assets!(
         Square,
         ScrollText,
         Play,
+        // Icons only a user plugin contribution may show (`Icon::user_allowed`).
+        Box,
+        Gem,
+        Hexagon,
+        Puzzle,
+        Shapes,
     ]
 );
 
-/// The application's asset source: agent brand marks and nocterm's icons
+/// Where nocterm's own mark, a monochrome glyph tinted by its text colour, is
+/// served. It is twice as wide as it is tall.
+pub const APP_MARK: &str = "icons/brand/nocterm.svg";
+const APP_MARK_SVG: &[u8] = include_bytes!("../assets/icons/nocterm.svg");
+
+/// The application's asset source: nocterm's mark, agent brand marks and its icons
 /// over the component library's defaults.
 #[derive(Clone, Debug, Default)]
 pub struct Assets {
@@ -108,6 +119,9 @@ pub fn agent_icon(mark: Option<&'static str>, tint: Option<u32>) -> gpui_kit::co
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if path == APP_MARK {
+            return Ok(Some(Cow::Borrowed(APP_MARK_SVG)));
+        }
         if let Some((_, data)) = self.marks.iter().find(|(name, _)| *name == path) {
             return Ok(Some(Cow::Borrowed(data)));
         }
@@ -118,15 +132,35 @@ impl AssetSource for Assets {
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut paths: Vec<SharedString> = self
-            .marks
-            .iter()
-            .map(|(name, _)| *name)
+        let mut paths: Vec<SharedString> = std::iter::once(APP_MARK)
+            .chain(self.marks.iter().map(|(name, _)| *name))
             .filter(|name| name.starts_with(path))
             .map(Into::into)
             .collect();
         paths.extend(ExtraIcons.list(path)?);
         paths.extend(gpui_kit::assets::Assets.list(path)?);
         Ok(paths)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_app_mark_is_served_and_listed() {
+        let assets = Assets::default();
+        let mark = assets
+            .load(APP_MARK)
+            .unwrap()
+            .expect("the mark is embedded");
+        assert!(std::str::from_utf8(&mark).unwrap().starts_with("<svg"));
+        assert!(
+            assets
+                .list("icons/brand/")
+                .unwrap()
+                .iter()
+                .any(|path| path == APP_MARK)
+        );
     }
 }

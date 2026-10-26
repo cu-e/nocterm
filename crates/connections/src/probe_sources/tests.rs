@@ -90,7 +90,11 @@ impl Scene {
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     Workspace::new(
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx)),
+                        nocterm_workspace::test_support::deps_for_core(
+                            &[crate::plugin::CORE],
+                            &[],
+                            cx,
+                        ),
                         window,
                         cx,
                     )

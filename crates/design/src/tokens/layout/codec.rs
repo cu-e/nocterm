@@ -36,6 +36,7 @@ struct Fields {
     button_height: Option<f32>,
     button_padding: Option<f32>,
     local_terminal_height: Option<f32>,
+    status_bar_center_max: Option<f32>,
 }
 const NAMES: &[&str] = &[
     "agent_panel_width",
@@ -56,11 +57,12 @@ const NAMES: &[&str] = &[
     "button_height",
     "button_padding",
     "local_terminal_height",
+    "status_bar_center_max",
 ];
 
 impl Serialize for Layout {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("Layout", 18)?;
+        let mut state = serializer.serialize_struct("Layout", 19)?;
         state.serialize_field("agent_panel_width", &self.agent_panel.width)?;
         state.serialize_field("agent_panel_min_width", &self.agent_panel.min_width)?;
         state.serialize_field("agent_panel_max_width", &self.agent_panel.max_width)?;
@@ -82,6 +84,7 @@ impl Serialize for Layout {
         state.serialize_field("button_height", &self.button_height)?;
         state.serialize_field("button_padding", &self.button_padding)?;
         state.serialize_field("local_terminal_height", &self.local_terminal_height)?;
+        state.serialize_field("status_bar_center_max", &self.status_bar_center_max)?;
         state.end()
     }
 }
@@ -214,6 +217,12 @@ impl Fields {
                 }
                 self.local_terminal_height = Some(map.next_value()?);
             }
+            "status_bar_center_max" => {
+                if self.status_bar_center_max.is_some() {
+                    return Err(de::Error::duplicate_field("status_bar_center_max"));
+                }
+                self.status_bar_center_max = Some(map.next_value()?);
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -246,6 +255,8 @@ impl Fields {
         let button_padding = required::<_, E>(self.button_padding, "button_padding")?;
         let local_terminal_height =
             required::<_, E>(self.local_terminal_height, "local_terminal_height")?;
+        let status_bar_center_max =
+            required::<_, E>(self.status_bar_center_max, "status_bar_center_max")?;
         Ok(Layout {
             agent_panel: WidthBounds {
                 width: agent_panel_width,
@@ -269,6 +280,7 @@ impl Fields {
             button_height,
             button_padding,
             local_terminal_height,
+            status_bar_center_max,
         })
     }
 }
@@ -293,7 +305,7 @@ impl<'de> Visitor<'de> for TokenVisitor {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
         let mut fields = Fields::default();
-        let expected = "struct Layout with 18 elements";
+        let expected = "struct Layout with 19 elements";
         fields.agent_panel.width = Some(next(&mut sequence, 0, &expected)?);
         fields.agent_panel.min_width = Some(next(&mut sequence, 1, &expected)?);
         fields.agent_panel.max_width = Some(next(&mut sequence, 2, &expected)?);
@@ -312,6 +324,7 @@ impl<'de> Visitor<'de> for TokenVisitor {
         fields.button_height = Some(next(&mut sequence, 15, &expected)?);
         fields.button_padding = Some(next(&mut sequence, 16, &expected)?);
         fields.local_terminal_height = Some(next(&mut sequence, 17, &expected)?);
+        fields.status_bar_center_max = Some(next(&mut sequence, 18, &expected)?);
         fields.finish()
     }
 }

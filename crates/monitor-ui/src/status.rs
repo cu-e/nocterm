@@ -1,7 +1,7 @@
 //! The compact summary at the start of the footer, which opens the details.
 
 use gpui_kit::{
-    Anchor, AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Hsla, Window,
+    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Hsla, Window,
     component::{
         ActiveTheme as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -13,7 +13,9 @@ use gpui_kit::{
     px,
 };
 use nocterm_monitor::{MonitorMetric, Snapshot, format};
-use nocterm_ui::IconName;
+use nocterm_plugin_model::Zone;
+use nocterm_ui::{IconName, zone_anchor};
+use nocterm_workspace::ZoneAware;
 
 use crate::{
     details::DetailsView,
@@ -25,6 +27,7 @@ pub(crate) struct MonitorStatus {
     monitor: Entity<HostMonitor>,
     details: Entity<DetailsView>,
     focus: FocusHandle,
+    zone: Zone,
 }
 
 impl MonitorStatus {
@@ -35,6 +38,16 @@ impl MonitorStatus {
             monitor,
             details,
             focus: cx.focus_handle(),
+            zone: Zone::Left,
+        }
+    }
+}
+
+impl ZoneAware for MonitorStatus {
+    fn set_zone(&mut self, zone: Zone, cx: &mut Context<Self>) {
+        if self.zone != zone {
+            self.zone = zone;
+            cx.notify();
         }
     }
 }
@@ -52,8 +65,13 @@ impl Render for MonitorStatus {
             Status::Failed(error) => error.clone(),
             Status::Running | Status::Off => "Host resources".to_owned(),
         };
-        let tooltip = match monitor.host() {
-            Some(host) => format!("{} — {tooltip}", host.label()),
+        let tooltip = if monitor.container() {
+            format!("{tooltip}. CPU: 100% is one CPU; memory uses own cgroup accounting.")
+        } else {
+            tooltip
+        };
+        let tooltip = match monitor.label() {
+            Some(label) => format!("{label} — {tooltip}"),
             None => tooltip,
         };
         let stale = !matches!(monitor.status(), Status::Running);
@@ -70,7 +88,7 @@ impl Render for MonitorStatus {
         let details = self.details.clone();
         let model = self.monitor.downgrade();
         Popover::new("host-monitor-details")
-            .anchor(Anchor::BottomLeft)
+            .anchor(zone_anchor(self.zone))
             .trigger(button)
             .track_focus(&self.focus)
             .open(open)
@@ -107,7 +125,33 @@ fn summary(
         .into_any_element()
 }
 
+fn container_item(metric: MonitorMetric, snapshot: &Snapshot, muted: Hsla) -> Option<AnyElement> {
+    let container = snapshot.container.as_ref()?;
+    let (icon, label, value) = match metric {
+        MonitorMetric::Cpu => (IconName::Cpu, "1 CPU", snapshot.cpu.map(format::percent)),
+        MonitorMetric::Memory if container.memory_limit.is_none() => (
+            IconName::MemoryStick,
+            "",
+            container.memory_current.map(format::bytes),
+        ),
+        _ => return None,
+    };
+    Some(
+        h_flex()
+            .gap_1()
+            .child(Icon::new(icon).xsmall().text_color(muted))
+            .when(!label.is_empty(), |row| {
+                row.child(div().text_color(muted).child(label))
+            })
+            .child(value.unwrap_or_else(|| "—".into()))
+            .into_any_element(),
+    )
+}
+
 fn item(metric: MonitorMetric, snapshot: &Snapshot, muted: Hsla, cx: &App) -> AnyElement {
+    if let Some(item) = container_item(metric, snapshot, muted) {
+        return item;
+    }
     let theme = cx.theme();
     let icon = |name: IconName| Icon::new(name).xsmall().text_color(muted);
     let text = |label: &'static str| div().text_color(muted).child(label);

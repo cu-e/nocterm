@@ -15,10 +15,16 @@ nocterm-design.workspace = true
 nocterm-explorer.workspace = true
 nocterm-terminal-model.workspace = true
 nocterm-monitor.workspace = true
+nocterm-plugin-abi.workspace = true
+nocterm-plugin-api.workspace = true
+nocterm-plugin-enablement.workspace = true
+nocterm-project-providers.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
 nocterm-ui.workspace = true
 nocterm-vault.workspace = true
+nocterm-workspace.workspace = true
+nocterm-window-layout.workspace = true
 
 anyhow.workspace = true
 serde.workspace = true

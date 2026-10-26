@@ -5,6 +5,7 @@
 "nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
 "nocterm_connections::os::Os" = "Detected operating-system facts value."
 "nocterm_files::local::LocalEntry" = "Filesystem listing row returned by the adapter."
+"nocterm_layout_ui::user_facts::UserFacts" = "What the host knows of one installed user plugin, copied by value to the inspector."
 "nocterm_explorer::settings::ExplorerSettings" = "Serialized settings section."
 "nocterm_explorer::settings::IndexingSettings" = "Serialized settings values."
 "nocterm_explorer::settings::OpenRule" = "Serialized opener rule."
@@ -12,6 +13,20 @@
 "nocterm_explorer::settings::Opener" = "Serialized opener description."
 "nocterm_monitor::settings::MonitorSettings" = "Serialized settings section."
 "nocterm_vault::settings::VaultSettings" = "Serialized settings section."
+"nocterm_plugin_host::data::PluginDataDoc" = "Serialized plugin data document."
+"nocterm_plugin_host::host::Call" = "One contribution of one plugin in one window, passed by value to a call."
+"nocterm_plugin_host::host::HostPorts" = "Composition dependencies, moved into the host constructor."
+"nocterm_plugin_host::records::AuditEntry" = "Serialized audit line."
+"nocterm_plugin_host::records::PluginRecord" = "Serialized record of one installed plugin."
+"nocterm_plugin_host::records::RecordsDoc" = "Serialized records document."
+"nocterm_plugin_host::registry::PluginSummary" = "One row of the plugins list, copied by value."
+"nocterm_plugins_ui::user::port::AuditLine" = "One audit line the application hands to the User section, copied by value."
+"nocterm_plugins_ui::user::port::Candidate" = "A checked package offered to the consent dialog, copied by value."
+"nocterm_plugins_ui::user::port::CapabilityLine" = "One capability of a candidate as the dialog words it."
+"nocterm_plugins_ui::user::port::FieldLine" = "One settings field of a candidate listed in the dialog."
+"nocterm_plugins_ui::user::port::InstallRequest" = "The user's answer to the consent, passed to the application."
+"nocterm_plugins_ui::user::port::Replaced" = "The installed version a candidate would replace."
+"nocterm_plugins_ui::user::port::UserPluginRow" = "One installed user plugin listed in the User section, copied by value."
 "nocterm_workspace_ports::connections::ConnectionSummary" = "Saved connection facts listed to consumers."
 "nocterm_workspace_ports::session::SessionContext" = "Remote session facts behind a tab."
 "nocterm_workspace_ports::terminal::FactSessionSnapshot" = "Connection-facts source and its identity, copied by value."
@@ -20,3 +35,235 @@
 "nocterm_workspace_ports::terminal::TerminalInfo" = "Terminal state facts returned by a terminal port."
 "nocterm_workspace_ports::terminal::TerminalText" = "Text read from a terminal and its bounds."
 "nocterm_workspace_ports::terminal::TextRequest" = "Bounds of a terminal text read."
+
+# Isolation of the plugin crates (docs/architecture/guardrails.md, ADR 0089). A row applies as
+# soon as its package exists. Every list is closed: a new crate, dependency or exemption is a
+# reviewed edit of this file, with a reason where a table asks for one.
+[isolation]
+# Vendored GUI library package: the closure of a `gpui` row may also hold its closure.
+gpui = "gpui-pre"
+# Package whose default-feature closure must not contain a user-plugin-only crate.
+app = "nocterm"
+# Crates that build the plugin (guest) side of the code ABI. The application never reaches them,
+# with or without the user-plugins feature; they have no row because their `export!` macro
+# writes the symbols and the manifest section of a guest module.
+guest_only = ["nocterm-plugin-sdk"]
+
+# Named lists of external crates (package names) that a row may reach transitively.
+[isolation.external]
+base = [
+    "proc-macro2",
+    "quote",
+    "serde",
+    "serde_core",
+    "serde_derive",
+    "syn",
+    "thiserror",
+    "thiserror-impl",
+    "unicode-ident",
+]
+# The closure of nocterm-core as `cargo metadata` resolves it for every target (59 crates).
+core = [
+    "bitflags",
+    "bumpalo",
+    "cfg-if",
+    "cfg_aliases",
+    "directories",
+    "dirs-sys",
+    "equivalent",
+    "errno",
+    "fastrand",
+    "futures",
+    "futures-channel",
+    "futures-core",
+    "futures-executor",
+    "futures-io",
+    "futures-macro",
+    "futures-sink",
+    "futures-task",
+    "futures-util",
+    "getrandom",
+    "hashbrown",
+    "indexmap",
+    "js-sys",
+    "libc",
+    "libredox",
+    "linux-raw-sys",
+    "memchr",
+    "nix",
+    "once_cell",
+    "option-ext",
+    "pin-project-lite",
+    "r-efi",
+    "rand_core",
+    "redox_users",
+    "rustix",
+    "rustversion",
+    "serde_spanned",
+    "slab",
+    "tempfile",
+    "toml",
+    "toml_datetime",
+    "toml_edit",
+    "toml_parser",
+    "toml_writer",
+    "wasm-bindgen",
+    "wasm-bindgen-macro",
+    "wasm-bindgen-macro-support",
+    "wasm-bindgen-shared",
+    "windows-link",
+    "windows-sys",
+    "winnow",
+]
+# The closure of postcard with only its `alloc` feature (guest ABI encoding). `embedded-io` is in
+# the metadata resolve through postcard's weak `embedded-io-*?/alloc` feature; cargo does not
+# compile it.
+postcard = [
+    "cobs",
+    "embedded-io",
+    "postcard",
+]
+sha2 = [
+    "block-buffer",
+    "cpufeatures",
+    "crypto-common",
+    "digest",
+    "generic-array",
+    "sha2",
+    "subtle",
+    "typenum",
+    "version_check",
+]
+# The closure of wasmi with `std`, `validate` and `portable-dispatch` and no `wat` (the code
+# runtime). The `wasmi` row also reaches `postcard` through the ABI crate.
+wasmi = [
+    "bitflags",
+    "equivalent",
+    "foldhash",
+    "hashbrown",
+    "indexmap",
+    "libm",
+    "lock_api",
+    "scopeguard",
+    "spin",
+    "string-interner",
+    "wasmi",
+    "wasmi_collections",
+    "wasmi_core",
+    "wasmi_ir",
+    "wasmparser",
+]
+
+# Crates inside a list that offer file-system, process or operating-system access. A crate can
+# name only its direct dependencies, and no isolated row lists these directly: they are linked
+# only through nocterm-core's reviewed `fs` helpers.
+[isolation.reviewed]
+nix = "Reached through nocterm-core (feature user); not a direct dependency of any row."
+rustix = "Reached through tempfile in nocterm-core's atomic publication; not a direct dependency."
+linux-raw-sys = "Dependency of rustix."
+errno = "Dependency of rustix."
+libc = "Reached through nocterm-core and directories; not a direct dependency."
+libredox = "Reached through directories on Redox; not a direct dependency."
+redox_users = "Reached through directories on Redox; not a direct dependency."
+windows-sys = "Reached through nocterm-core on Windows; not a direct dependency."
+
+# One row per isolated package. `kind`: no-std (domain, no std, I2), std (I2b applies) or gpui
+# (std plus the gpui receiver rule I3). `closure` is the full transitive nocterm-* closure,
+# `direct` the direct external dependencies and `external` the lists above that bound the
+# external closure.
+[isolation.crates.nocterm-plugin-model]
+kind = "no-std"
+closure = []
+direct = ["serde", "thiserror"]
+external = ["base"]
+
+[isolation.crates.nocterm-plugin-api]
+kind = "no-std"
+closure = ["nocterm-plugin-model"]
+direct = ["serde", "thiserror"]
+external = ["base"]
+
+[isolation.crates.nocterm-plugin-abi]
+kind = "no-std"
+closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
+direct = ["postcard", "serde", "thiserror"]
+external = ["base", "postcard"]
+
+[isolation.crates.nocterm-plugin-wasm]
+kind = "std"
+closure = ["nocterm-plugin-abi", "nocterm-plugin-api", "nocterm-plugin-model"]
+direct = ["wasmi"]
+external = ["base", "postcard", "wasmi"]
+
+[isolation.crates.nocterm-plugin-packages]
+kind = "std"
+closure = ["nocterm-plugin-api", "nocterm-plugin-model", "nocterm-core"]
+direct = ["sha2", "thiserror", "toml"]
+external = ["base", "core", "sha2"]
+
+[isolation.crates.nocterm-plugin-ports]
+kind = "gpui"
+closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
+direct = ["gpui-pre"]
+external = ["base"]
+
+[isolation.crates.nocterm-plugin-view]
+kind = "gpui"
+closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
+direct = ["gpui-pre"]
+external = ["base"]
+
+[isolation.crates.nocterm-plugin-host]
+kind = "gpui"
+closure = ["nocterm-plugin-ports", "nocterm-plugin-api", "nocterm-plugin-model"]
+direct = ["gpui-pre", "serde", "serde_json", "thiserror", "tracing"]
+external = ["base"]
+
+# Modules (or whole packages) that may reach file-system, process, environment or dependency
+# I/O paths (I2b), each with a reason. Keys are module paths (`nocterm_plugin_packages::store`)
+# or package crate names (`nocterm_plugin_packages`).
+[isolation.io_exceptions]
+nocterm_plugin_packages = "Bounded file I/O is the adapter's job: nocterm_core::fs calls plus std::fs metadata and removal under the package root (design review row 17)."
+
+# Method names of the gpui receiver types (App, Window, Context, AsyncApp, AsyncWindowContext)
+# that gpui crates may name (I3), each with a reason. The list starts empty and grows per PR.
+[isolation.gpui_allowed]
+new = "AppContext::new makes an entity from a context; the plugin crates write `new` only for constructors of their own types and make no entity through a context."
+background_executor = "nocterm-plugin-host reads the executor clock for rate limits, gesture lifetimes and cadence, so tests can drive time."
+defer = "nocterm-plugin-host applies queued effects after the current entity update ends, never inside it."
+notify = "nocterm-plugin-host tells observers (the application's plugin source) that its installed set, enablement or placement changed."
+spawn = "nocterm-plugin-host awaits the records write task only to log its failure."
+update = "nocterm-plugin-host re-enters its own entity from the deferred apply through a weak handle."
+weak_entity = "nocterm-plugin-host holds a weak handle to itself for the deferred apply."
+
+[isolation.providers]
+# Direct dependents of nocterm-plugin-ports (I5).
+allowed = [
+    "nocterm",
+    "nocterm-files",
+    "nocterm-monitor-ui",
+    "nocterm-plugin-host",
+    "nocterm-ui",
+    "nocterm-workspace",
+]
+
+# User-plugin-only crates, absent from the default-feature closure of the app (section 5.13).
+[isolation.compile_out]
+crates = [
+    "nocterm-plugin-abi",
+    "nocterm-plugin-api",
+    "nocterm-plugin-host",
+    "nocterm-plugin-packages",
+    "nocterm-plugin-ports",
+    "nocterm-plugin-view",
+    "nocterm-plugin-wasm",
+]
+# Packages whose resolved features must not hold the named feature in the default build.
+features = { nocterm-plugins-ui = "user" }
+# `auto-dispatch` with opt-level 3 overflowed the stack in the X0 spike; the crate selects
+# `portable-dispatch` and no member may bring the default back.
+banned_features = { wasmi = "auto-dispatch" }
+
+# M7: user settings never reach the system settings store (identifiers per package).
+[isolation.identifiers.nocterm-plugins-ui]
+forbidden = ["SettingsHandle", "SettingsPageContext", "contextual", "settings"]

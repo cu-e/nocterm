@@ -11,17 +11,31 @@ layer = "feature"
 
 [dependencies]
 nocterm-monitor.workspace = true
+nocterm-plugin-model.workspace = true
+nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
 nocterm-session.workspace = true
 nocterm-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
+nocterm-plugin-api = { workspace = true, optional = true }
+nocterm-plugin-ports = { workspace = true, optional = true }
 gpui-kit.workspace = true
+
+[features]
+# The monitor's reading, offered to user plugins that were granted `monitor.usage`.
+user-plugins = ["dep:nocterm-plugin-api", "dep:nocterm-plugin-ports"]
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+nocterm-containers.workspace = true
+serde_json.workspace = true
+nocterm-workspace = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true
+nocterm-plugin-enablement.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 futures.workspace = true

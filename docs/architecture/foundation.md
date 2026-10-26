@@ -21,6 +21,10 @@ PersistError retains owned boxed TOML parse/serialization errors; standard sourc
 traversal exposes the original concrete codec error directly. Serialization refusal
 leaves the previous configuration untouched, including comment-preserving saves.
 See [private file publication](../adr/0015-private-file-publication.md).
+`nocterm-core::clock` holds the wall-clock contract: `WallClock::now` returns a
+`WallTime` (UTC seconds and the local offset) that does only integer arithmetic for the
+local time of day and calendar date, so the layer has no time-zone library. `FixedClock` is behind
+`test-support`. See [ADR 0088](../adr/0088-wall-clock-contract-and-the-clock-plugin.md).
 `nocterm-settings` owns the settings mechanism, not their schema: the
 `SettingsSection` trait, a document that reads each top-level table on its own
 (a broken table falls back to its defaults and is reported, the others keep

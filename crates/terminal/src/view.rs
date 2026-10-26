@@ -62,6 +62,7 @@ pub struct TerminalView {
     find: Option<FindField>,
     notice_messages: [Option<String>; 3],
     _subscriptions: Vec<Subscription>,
+    capabilities: nocterm_workspace::TerminalCapabilities,
 }
 
 struct SecretField {
@@ -117,6 +118,20 @@ impl TerminalView {
         let focus_handle = cx.focus_handle();
         let settings = terminal.read(cx).installed().settings().clone();
         let weak = cx.entity().downgrade();
+        let origin = if terminal.read(cx).installed().is_container() {
+            crate::access::AccessOrigin::WorkspaceResource
+        } else if terminal.read(cx).is_command() {
+            crate::access::AccessOrigin::GeneralCommand
+        } else {
+            crate::access::AccessOrigin::GeneralConnection
+        };
+        let capabilities = crate::access::Access::capabilities(
+            std::rc::Rc::new(crate::access::Access::new(
+                cx.weak_entity(),
+                terminal.downgrade(),
+            )),
+            origin,
+        );
 
         let subscriptions = vec![
             cx.subscribe_in(&terminal, window, Self::on_terminal_event),
@@ -157,6 +172,7 @@ impl TerminalView {
             find: None,
             notice_messages: Default::default(),
             _subscriptions: subscriptions,
+            capabilities,
         }
     }
 

@@ -1,4 +1,4 @@
-use super::*;
+use crate::history::SavedChat;
 use crate::model::content::Content;
 use crate::{history::SavedPrompt, thread::Entry};
 fn chat() -> SavedChat {
@@ -26,4 +26,24 @@ fn cached_structural_estimates_cover_preflight_and_pending_only_rows() {
     let estimated = super::super::size::structural_size(&wire).unwrap();
     assert!(estimated >= preflight, "{estimated} < {preflight}");
     assert!(estimated >= bytes.len());
+}
+#[test]
+fn catalog_metadata_admission_rejects_unbounded_display_fields_and_invalid_identity() {
+    let row = crate::history::ChatSummary::from_chat(&chat());
+    row.validate().unwrap();
+    for field in ["agent_id", "title", "name", "model"] {
+        let mut changed = serde_json::to_value(&row).unwrap();
+        changed[field] = serde_json::json!("界".repeat(513));
+        let changed: crate::history::ChatSummary = serde_json::from_value(changed).unwrap();
+        assert!(matches!(
+            changed.validate(),
+            Err(crate::history::HistoryCodecError::HeaderLimit)
+        ));
+    }
+    let mut changed = row;
+    changed.id = "invalid".into();
+    assert!(matches!(
+        changed.validate(),
+        Err(crate::history::HistoryCodecError::InvalidId(_))
+    ));
 }

@@ -12,13 +12,52 @@ and synchronous quit capture for layout, settings, snippets, connection state an
 settings that the runtime, panel and settings page read; `nocterm-snippets-store` owns
 checked snippet publication over the shared persistence driver.
 `nocterm-workspace-ports` declares the terminal contracts, `SessionContext` and
-`ConnectionSummary` with GPUI core alone; the workspace re-exports them and keeps
+`ConnectionSummary` with GPUI core alone; the workspace re-exports those ordinary
+terminal contracts and keeps
 `ConnectionDirectory`, which opens connections into a workspace
 ([ADR 0062](../adr/0062-terminal-contracts-below-the-workspace.md)).
+ProjectTerminalOpen/Resolve/Session/Target and ContextSelectionError/ProjectConnectionError
+also live in workspace-ports, imported directly without shell reexports. Targets retain
+a captured GPUI destination and validator; workspace privately owns typed placement
+and admission. Parent capture checks the actual view and advertised session epoch
+([ADR0079](../adr/0079-project-terminal-contracts-below-shell.md)).
 `nocterm-agent-chat` owns agent chats without views: `AgentThread`, the
-`ChatRoster` of a window's chats and their lifecycle, and the `ChatWorkspace` and
+`ChatRoster` of a window's selected and retained context chats and their lifecycle,
+and the `ChatWorkspace` and
 `SignInTerminal` ports the window shell implements
 ([ADR 0063](../adr/0063-agent-chats-below-the-panel.md)).
+
+`nocterm-project-service` owns the durable workspace catalog and the
+open-window registry used to focus an already opened workspace. It uses
+`Persisted` and the shared shutdown coordinator. Catalog bindings identify the
+original committed definition so an old callback cannot open a changed folder
+([ADR 0067](../adr/0067-project-tabs-with-inner-surfaces.md)).
+Preparation jobs retain their original source, operation and prepared result
+independently of the creation view. A failed catalog publication can retry saving
+without creating another resource. Process execution stays behind the supplied
+preparation contract, including checked language/version selections; registry search
+uses a separate narrow port and picker-local cache rather than preparation jobs.
+Independent environment operations retain exact source authority, serialize tool
+changes across workspace directories sharing an environment, and join the existing
+shutdown admission/drain. They never invoke owned-container cleanup or modify the
+catalog. Observed versions and progress are not persisted as catalog facts
+([ADR 0075](../adr/0075-observed-workspace-environment-management.md)).
+Explicit removal operations retain the original definition, binding and captured
+resource source. Bounded per-resource admission ignores project folders and profile
+aliases. Container acknowledgment precedes checked durable catalog removal;
+resource failure retains metadata, while publication failure retains the known
+effect and permits metadata-only retry. Both admission and queued application
+check the original binding. Jobs survive dropped view receivers, freeze on shared
+shutdown and never begin late publication after cancellation
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
+Provider terminal resolution stays in app composition rather
+than introducing a service dependency on UI
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
+
+`ProjectCreationSource` distinguishes genuine terminal receipts from explicitly
+injected terminal-free local authority. The local constructor fixes HostLocator::Local;
+remote creation always retains its original ExpectedSession. Receipt absence grants
+no terminal capture authority ([ADR 0073](../adr/0073-terminal-free-local-workspace-creation.md)).
 
 ## Agents
 
@@ -32,8 +71,9 @@ registers a `SessionClient` and applies the `SessionEvent`s the runtime emits,
 synchronously and in order, while the runtime reads only a `ClientState`. The
 host injects the service-layer `SettingsHandle` into runtime dependencies. Workspace re-exports the narrow terminal ports
 of `nocterm-workspace-ports` and exposes `ConnectionDirectory` seams so the agent feature never imports other
-features. The right panel lives outside the tab dock and remains available with
-no tabs; maximize uses the working area while preserving the footer.
+features. The assistant group lives outside the tab dock and remains available with
+no tabs; expansion replaces central content while preserving visible navigation
+and the footer, without changing remembered docked widths.
 `ConnectionDirectory` methods take the workspace as a weak handle and are called
 outside workspace updates, because opening a connection updates the workspace.
 
@@ -44,6 +84,12 @@ bounds hydration and archive search, including payloads awaiting GUI delivery;
 inactive, clean documents can be evicted under a conservative 64 MiB resident
 budget. Collection limits and a structural preflight also bound allocation from
 small JSON elements, independently of the 32 MiB file limit.
+
+Workspace chat scope selects document ownership, history and the original tool
+seat. All scopes use the existing local ACP connector, workdir preparation,
+terminal sign-in and configured sandbox settings. A workspace scope does not
+install another agent process or change provider authentication
+([ADR 0069](../adr/0069-workspace-chat-launch-boundary.md)).
 
 The client supplies a saved session's directory before connection startup.
 Background startup schedules the injected `WorkdirResolver`; its adapter prepares
@@ -180,15 +226,49 @@ through foundation `SharedError`; standard sources reach the concrete storage
 error and its native cause. Publication rejects edits without replacing diagnostic
 identity, profile authority or the malformed source file.
 
-Agent runtime installation exposes `RuntimeHandle`, retaining one private Runtime
-entity behind named typed commands, immutable projections and actual observation.
-Taking saved chats and catalog is one atomic drain. Runtime registers AiSettings on
-its supplied settings handle before its first registry read. Settings observation
-uses a weak runtime; the feature installation owns that subscription. Shutdown
-capture retains only the runtime handle and returns the existing App-free work.
-No runtime global selects the recipient of a deferred operation. Service signatures use only neutral
-records, and physical history stays version one. See
-[ADR0052](../adr/0052-retained-agent-installation.md).
+Agent runtime installation exposes immutable scope-bound `RuntimeHandle` views
+of one private Runtime entity. History readers capture the original context before
+async work, while favorites, settings and usage remain installation services.
+Catalog snapshots retain their scope and load generation; stale results cannot
+replace newer ones. The catalog owner reserves at most32 live metadata payloads,
+including pending requests and caller-retained old snapshot generations. Unretained
+completed entries can be evicted, and capacity refusal leaves the current snapshot
+untouched before I/O. The one shared HistoryGate is independent of that metadata
+budget ([ADR0066](../adr/0066-scoped-chat-storage.md)).
+
+Archive rows retain an index into their original accounted CatalogSnapshot instead
+of copying a complete summary per roster. Prepared General records transfer one
+at a time through the original document claim. A single installation history
+admission counts live histories across contexts/windows, remaining prepared bodies
+and distinct immutable active/latest writer snapshots. Shared subparts may be
+conservatively counted more than once. Shown chats remain protected and each chat
+owns its durability/lease/error eviction gates. Capacity refuses before hydration
+mutates its requester. New live output retains existing per-chat limits; the
+admission budget does not claim a hard total-heap limit. Store's borrowed
+retained-values observer supplies ownership facts without a second writer map.
+
+ChatRoster retains original context collections, releases quiet hidden archive
+entities and drops empty inactive collections. A committed outer surface selects
+one projection; retained threads keep immutable original dependencies. Accepted
+archived forks complete in their original collection while another context is
+visible. Global AI disable captures and releases all retained collections.
+
+Chat factories reserve `(ContextId, chat UUID)` before constructing an entity.
+Noncloneable claims bind the original registry, window and incarnation; dropping a
+pending claim rolls back only that reservation. Duplicate opens return the original
+window, deletes seal only their scoped key, and restart requires the exact previous
+owner. Immutable ChatDocument identity, writer keys and completion checks retain the
+same scope. Imported General documents retain their original transcript format
+through edits and restart; new chats and forks use v2. Catalog rows declare a
+typed transcript version separately from the rebuildable cache schema. Activation
+and bridge registration check the original scoped chat owner. Every scope then
+uses the same existing local connector and preparation; terminal tools stay attached to their original workspace membership.
+Runtime registers AiSettings on its supplied settings handle before its first
+registry read. Settings observation uses a weak runtime; the feature installation
+owns that subscription. Shutdown capture returns existing App-free work, and no
+runtime global selects a deferred operation's recipient. Service signatures use
+only neutral records ([ADR0052](../adr/0052-retained-agent-installation.md),
+[ADR0066](../adr/0066-scoped-chat-storage.md)).
 
 SettingsHandle supplies additive edit_checked and update_checked operations over the
 same Persisted worker. Checked callbacks run at the actual ordered document base;
@@ -212,3 +292,26 @@ expected-record conflict and final capture semantics. It has no native I/O, UUID
 generation, view, settings policy or shutdown hook. Composition supplies its snapshot
 writer and registers the same participant once. See
 [ADR0055](../adr/0055-snippet-storage-boundaries.md).
+
+## User plugin host
+
+`nocterm-plugin-ports` declares `Observe<C>`, `Apply<C>` and `Surface`, and `PluginProviders`, the
+immutable record of one window's providers that only the application's composition builds.
+`nocterm-plugin-host` owns the `PluginHost` entity: grants, the sampling cadence, the effect
+queue with gesture tokens, rate limits and the apply-time re-check, fault counting, the caps on
+enabled plugins and renders, and the `PluginRecords` and `PluginData` ports with their documents.
+Neither does I/O; the application implements the two storage ports over the shared persistence
+service. For a developer session (`nocterm plugin dev`) the host also offers `SessionRecords` and
+`SessionData`, in-memory implementations of the same two ports: composing them leaves the host no
+path to a file, so the records and data of a session are unsaved by construction. The application
+also keeps the session's `settings.toml` edits in memory; everything else (connections, snippets, the
+vault, saved workspaces, installed themes, layout sizes, keymap, recordings) saves as usual
+([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)). The application constructs the host in one
+place, `UserShell::install`, which a held run (`--safe-mode`, or `[plugins] user_plugins` not set)
+leaves without a host, runtime, records, data or package store
+([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)). A provider lives in the crate
+whose state it reads, behind that crate's `user-plugins` feature, and is passive: it answers from
+what the user's own UI already holds (never reading an entity that may be updating) and never
+starts a sampler, watch or connection
+([ADR 0090](../adr/0090-user-plugin-host-and-passive-providers.md)). The isolation rules for both
+crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).

@@ -19,6 +19,7 @@ futures.workspace = true
 tracing.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.28", features = ["signal", "fs", "event"] }

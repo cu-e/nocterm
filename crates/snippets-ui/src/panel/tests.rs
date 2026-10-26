@@ -25,7 +25,7 @@ fn fixture(
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     let deps =
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                        nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx);
                     Workspace::new(deps, window, cx)
                 })
             })
@@ -38,8 +38,20 @@ fn fixture(
             let panel =
                 cx.new(|cx| SnippetsPanel::new(installed.clone(), workspace.clone(), window, cx));
             workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(panel.clone(), cx);
-                workspace.activate_panel_of::<SnippetsPanel>(window, cx);
+                // Test seam: the fixture needs the entity for assertions, so the factory
+                // returns a panel built earlier. Production factories create their own.
+                let existing = panel.clone();
+                workspace
+                    .register_panel(
+                        nocterm_workspace::PanelRegistration::new(
+                            &crate::plugin::LIBRARY,
+                            move |_, _, _| existing.clone(),
+                        ),
+                        window,
+                        cx,
+                    )
+                    .unwrap();
+                workspace.open_panel(&crate::plugin::LIBRARY.id, window, cx);
             });
             panel
         })

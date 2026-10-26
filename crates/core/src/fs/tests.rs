@@ -124,3 +124,90 @@ fn default_snapshots_and_streams_are_private_but_explicit_modes_are_retained() {
         0o644
     );
 }
+
+#[test]
+fn bounded_read_returns_a_regular_file_up_to_its_cap() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("package.toml");
+    fs::write(&path, b"exactly 7").unwrap();
+    assert_eq!(read_regular_bounded(&path, 9).unwrap(), b"exactly 7");
+    assert_eq!(read_regular_bounded(&path, 4096).unwrap(), b"exactly 7");
+    assert!(matches!(
+        read_regular_bounded(&path, 8).unwrap_err(),
+        BoundedReadError::TooLarge { cap: 8, .. }
+    ));
+    let empty = directory.path().join("empty");
+    fs::write(&empty, b"").unwrap();
+    assert!(read_regular_bounded(&empty, 0).unwrap().is_empty());
+}
+
+#[test]
+fn bounded_read_reports_a_missing_file_with_its_kind() {
+    let directory = tempfile::tempdir().unwrap();
+    let error = read_regular_bounded(&directory.path().join("absent"), 16).unwrap_err();
+    assert_eq!(error.io_kind(), Some(io::ErrorKind::NotFound));
+}
+
+#[test]
+fn bounded_read_refuses_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        read_regular_bounded(directory.path(), 16).unwrap_err(),
+        BoundedReadError::NotRegular { .. } | BoundedReadError::Io { .. }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_read_refuses_a_final_symlink_to_a_file_or_a_dangling_one() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("target");
+    fs::write(&target, b"secret").unwrap();
+    let link = directory.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(matches!(
+        read_regular_bounded(&link, 64).unwrap_err(),
+        BoundedReadError::NotRegular { .. }
+    ));
+    fs::remove_file(&target).unwrap();
+    assert!(matches!(
+        read_regular_bounded(&link, 64).unwrap_err(),
+        BoundedReadError::NotRegular { .. }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_read_follows_links_in_parent_directories_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let real = directory.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("file"), b"content").unwrap();
+    let alias = directory.path().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    assert_eq!(
+        read_regular_bounded(&alias.join("file"), 64).unwrap(),
+        b"content"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_read_refuses_a_fifo_without_blocking() {
+    let directory = tempfile::tempdir().unwrap();
+    let fifo = directory.path().join("pipe");
+    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+    assert!(matches!(
+        read_regular_bounded(&fifo, 64).unwrap_err(),
+        BoundedReadError::NotRegular { .. }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_read_refuses_devices_whose_size_is_unbounded() {
+    assert!(matches!(
+        read_regular_bounded(Path::new("/dev/zero"), 64).unwrap_err(),
+        BoundedReadError::NotRegular { .. }
+    ));
+}

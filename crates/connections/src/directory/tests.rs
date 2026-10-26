@@ -81,7 +81,7 @@ async fn empty_center_reconnect_uses_normal_directory_and_current_profile(
     let (handle, workspace, opened, installed) = crate::test_support::workspace(cx);
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            crate::register(&installed, workspace, window, cx)
+            crate::register(&installed, workspace, window, cx).unwrap();
         });
     })
     .unwrap();
@@ -311,7 +311,7 @@ async fn a_second_workspace_keeps_shared_installation_after_first_window_closes(
     ] {
         cx.update_window(handle, |_, window, cx| {
             workspace.update(cx, |workspace, cx| {
-                crate::register(&installed, workspace, window, cx)
+                crate::register(&installed, workspace, window, cx).unwrap();
             })
         })
         .unwrap();

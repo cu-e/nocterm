@@ -111,6 +111,67 @@ cross-cluster methods and methods without direct field access. The survey is syn
 keys types by name; it refuses a matrix for an ambiguous name and is a planning
 aid, not a check.
 
+## Isolation of the plugin crates
+
+The user plugin crates (`nocterm-plugin-model`, `-api`, `-abi`, `-wasm`, `-packages`, `-ports`,
+`-view` and `-host`) are checked by `cargo xtask architecture` against
+[`xtask/architecture-policy.toml`](../../xtask/architecture-policy.toml) ([ADR 0089](../adr/0089-user-plugin-contract.md),
+[ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
+A row applies as soon as its package exists, every list is closed, and a new dependency or
+exemption is a reviewed edit of the policy with a reason.
+
+- **I1, dependency closure.** From `cargo metadata` with `--features nocterm/user-plugins`, normal and
+  build dependencies, the transitive `nocterm-*` closure of a crate must equal its row and the
+  external closure must lie in its named list (for gpui crates, that list plus the closure of the
+  vendored gpui).
+- **I2, no std.** `nocterm-plugin-model`, `nocterm-plugin-api` and `nocterm-plugin-abi` are `#![no_std]` with
+  `extern crate alloc`; `std` appears only as `#[cfg(test)] extern crate std;`.
+- **I2b, no I/O paths.** In std-based isolated crates, resolved `std::fs`, `net`, `process`, `env`,
+  `os` and stdin paths, and I/O dependency crates, are rejected through the same import, alias and
+  re-export resolver as the domain ratchet. Allowance is zero; a module exception needs a reason.
+- **I3, gpui receivers.** An identifier equal to a method of `App`, `Window`, `Context`, `AsyncApp`
+  or `AsyncWindowContext` (inherent methods and methods of the traits implemented for them) in an
+  isolated gpui crate fails unless it is listed with a reason.
+- **I4, structural bans.** No `build.rs`, `include!` family, `#[path]` module, `macro_rules!`, proc
+  macro other than serde and thiserror derives, `extern crate` other than the two forms above,
+  `unsafe`, inline or global assembly, symbol attributes (`no_mangle`, `export_name`, `link_name`,
+  `link_section`), or serde attribute taking a path string.
+- **I5, providers.** The dependents of the provider port are a closed list.
+- **Compile-out.** With default features the resolved closure of `nocterm` holds no user-plugin
+  crate.
+- **Guest-only crates.** A crate listed under `guest_only` (the plugin SDK, whose `export!` macro
+  writes the symbols and manifest section of a guest module) has no row, because I4 would reject
+  that macro. Instead it must be absent from the `nocterm` closure, with and without
+  `user-plugins`; development dependencies do not count. The rule also fails when the application
+  or a listed crate is not a workspace package
+  ([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)).
+- **Test hooks.** A crate that offers a test-only constructor behind a `test-support` feature lists
+  it under `test_features` in the policy (empty today). The feature must not be enabled by any
+  normal or build dependency edge of `nocterm` with `user-plugins` (the default build holds no such
+  crate); development dependencies may enable it.
+- **Banned features.** A package listed under `banned_features` (`wasmi` with `auto-dispatch`,
+  which overflowed the stack at the optimization level the workspace builds it with) must resolve
+  without the feature in `cargo tree` over every member, every feature and every kind of edge, so
+  no member can switch it back on ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
+
+These rules protect against host-side regressions. They do not cover I/O reached through an
+allowlisted dependency's own API, nor a confused deputy; those are design-review items.
+
+## Plugin API compatibility
+
+`python3 scripts/check-plugin-api-compat.py` compares `crates/plugin-api/api-surface.json` with
+the file at the highest `v*` release tag (`--base REF` overrides it) and runs in the CI job
+`plugin-api-compat`, with its own regression cases in `scripts/test-plugin-api-compat.py`. It
+fails on a removed or narrowed contract entry (capability, result field, manifest table or key,
+vocabulary value, effect request field, limit), on a gesture, a tighter rate or a lower live cap,
+on an optional key made required or a new required key, and on a lower `api_version`. Any other
+change except wording needs a higher `api_version`; entries the base marked deprecated may be
+removed on a higher major version. A base without the file passes with a notice
+([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)).
+
+`scripts/test-release-pipeline.cjs` also fails when a package or release workflow step builds
+with `user-plugins`.
+
 ## History and maintained documentation
 
 CI runs [`check-architecture-history.py`](../../scripts/check-architecture-history.py)

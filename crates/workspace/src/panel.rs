@@ -16,6 +16,14 @@ pub trait Panel: Render + Focusable {
         let _ = cx;
         None
     }
+
+    /// What the panel needs from the user right now, such as a permission to grant; `None`
+    /// when nothing. The shell reads it again whenever the panel notifies. Only the side panel's
+    /// toggle shows it so far, whether or not the panel is open.
+    fn attention(&self, cx: &App) -> Option<SharedString> {
+        let _ = cx;
+        None
+    }
 }
 
 /// A [`Panel`] of any type, as the workspace holds it.

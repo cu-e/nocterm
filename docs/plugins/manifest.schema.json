@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nocterm user plugin manifest",
+  "description": "The TOML a user plugin package carries. Unknown keys are refused by the host.",
+  "$ref": "#/$defs/manifest",
+  "$defs": {
+    "contribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "icon": {
+          "enum": [
+            "box",
+            "gem",
+            "hexagon",
+            "plug",
+            "puzzle",
+            "shapes"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "widget",
+            "panel"
+          ]
+        },
+        "local": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "title": {
+          "type": "string"
+        },
+        "view": {
+          "$ref": "#/$defs/contribution.view"
+        },
+        "zone": {
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "local",
+        "title"
+      ]
+    },
+    "contribution.view": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contribution.view.nodes"
+          }
+        },
+        "refresh": {}
+      },
+      "required": [
+        "nodes"
+      ]
+    },
+    "contribution.view.nodes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "each": {
+          "type": "string"
+        },
+        "icon": {
+          "enum": [
+            "box",
+            "gem",
+            "hexagon",
+            "plug",
+            "puzzle",
+            "shapes"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "row",
+            "column",
+            "text",
+            "icon",
+            "meter",
+            "badge",
+            "button",
+            "toggle",
+            "list",
+            "divider",
+            "spacer"
+          ]
+        },
+        "parent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "text": {
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "default",
+            "muted",
+            "success",
+            "caution"
+          ]
+        },
+        "tone_when": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contribution": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contribution"
+          }
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "optional_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "reasons": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "runtime": {
+          "enum": [
+            "declarative",
+            "wasm"
+          ]
+        },
+        "settings": {
+          "$ref": "#/$defs/settings"
+        }
+      },
+      "required": [
+        "api",
+        "id",
+        "name",
+        "publisher"
+      ]
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/settings.group"
+          }
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "settings.group": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contribution": {
+          "type": "string"
+        },
+        "field": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/settings.group.field"
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "settings.group.field": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {},
+        "help": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "toggle",
+            "choice",
+            "multi-choice",
+            "number",
+            "text"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "max_chosen": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "max_len": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "min": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/settings.group.field.options"
+          }
+        },
+        "ordered": {
+          "type": "boolean"
+        },
+        "placeholder": {
+          "type": "string"
+        },
+        "renamed_from": {
+          "type": "string"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "label"
+      ]
+    },
+    "settings.group.field.options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "help": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label"
+      ]
+    }
+  }
+}

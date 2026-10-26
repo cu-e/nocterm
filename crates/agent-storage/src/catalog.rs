@@ -1,90 +1,93 @@
-//! Rebuildable bounded sidecars. The transcript remains the source of truth.
-use crate::loading;
-use nocterm_ai::history::{ChatSummary, FileStamp, MAX_FILE_BYTES, MAX_RESTORED, SavedChat};
-use std::{
-    fs,
-    io::{BufReader, Read as _},
-    path::{Path, PathBuf},
-    time::UNIX_EPOCH,
+//! Per-scope discovery verifies transcript authority before consulting sidecars.
+use crate::{
+    input::Input,
+    namespace::{Partition, Root},
+    publication,
 };
-const MAX_METADATA_BYTES: u64 = 16 * 1024;
-fn cache_path(dir: &Path, id: &str) -> PathBuf {
-    dir.join(format!("{id}.meta"))
-}
-fn stamp(metadata: &fs::Metadata) -> FileStamp {
-    FileStamp {
-        bytes: metadata.len(),
-        modified_nanos: metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |time| time.as_nanos()),
-    }
-}
-pub(super) fn update_cache(dir: &Path, chat: &SavedChat, queued: bool) {
-    let Ok(path) = loading::file(dir, &chat.id) else {
+use nocterm_ai::{
+    history::{self, ChatSummary, ContextId, MAX_RESTORED, SavedChat},
+    storage::{AgentStorageError, require_chat_scope},
+};
+const MAX_METADATA_BYTES: usize = 16 * 1024;
+
+pub(super) fn update_cache(partition: &Partition, chat: &SavedChat, queued: bool) {
+    let Ok(input) = Input::open(partition, &chat.header.id, "json") else {
         return;
     };
-    let Ok(metadata) = fs::metadata(path) else {
-        return;
-    };
-    write_cache(
-        dir,
-        &ChatSummary::from_chat(chat).with_stamp(stamp(&metadata), queued),
-    );
+    let summary = ChatSummary::from_chat(chat).with_stamp(input.stamp(), queued);
+    write_cache(partition, &summary);
 }
-fn write_cache(dir: &Path, summary: &ChatSummary) {
+fn write_cache(partition: &Partition, summary: &ChatSummary) {
     if let Ok(bytes) = serde_json::to_vec(summary) {
-        let _ = nocterm_core::fs::write_private_atomic(&cache_path(dir, &summary.id), &bytes);
+        let _ = publication::publish(partition, &summary.id, "meta", &bytes);
     }
 }
-pub(super) fn delete_cache(dir: &Path, id: &str) {
-    let _ = fs::remove_file(cache_path(dir, id));
+fn cached(partition: &Partition, id: &str) -> Option<ChatSummary> {
+    let input = Input::open(partition, id, "meta").ok()?;
+    if input.stamp().bytes > MAX_METADATA_BYTES as u64 {
+        return None;
+    }
+    serde_json::from_slice(&input.prefix().ok()?).ok()
 }
-pub(super) fn load_catalog(dir: &Path) -> Vec<ChatSummary> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
+fn summary(partition: &Partition, id: &str) -> Result<Option<ChatSummary>, AgentStorageError> {
+    let input = Input::open(partition, id, "json")?;
+    let stamp = input.stamp();
+    let summary = if partition.is_legacy() {
+        // Arbitrary valid v1 field order and fallback titles cannot be proved
+        // from a bounded prefix. Keep this compatibility scan; do not rewrite it.
+        let bytes = input.all()?;
+        if bytes.starts_with(b"{\"version\":2,") {
+            return Err(history::HistoryCodecError::InvalidHeader.into());
+        }
+        history::decode_summary(&bytes, id, stamp)?
+    } else {
+        let header = history::decode_catalog_header(&input.prefix()?, id)?;
+        require_chat_scope(partition.scope(), header.scope())?;
+        header.summary(stamp)
     };
-    let mut rows = Vec::new();
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
-        if path.extension().is_none_or(|ext| ext != "json") || loading::file(dir, id).is_err() {
-            continue;
-        }
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
-            continue;
-        }
-        let file_stamp = stamp(&metadata);
-        let cached = fs::File::open(cache_path(dir, id))
-            .ok()
-            .and_then(|file| {
-                serde_json::from_reader::<_, ChatSummary>(BufReader::new(
-                    file.take(MAX_METADATA_BYTES),
-                ))
-                .ok()
-            })
-            .filter(|row| row.matches_stamp(id, file_stamp));
-        let summary = cached.or_else(|| {
-            let bytes = loading::read(&path, id).ok()?;
-            nocterm_ai::history::decode_summary(&bytes, id, file_stamp)
-                .ok()?
-                .inspect(|row| write_cache(dir, row))
-        });
-        if let Some(row) = summary.filter(|row| row.has_content || row.name.is_some() || row.pinned)
-        {
-            rows.push(row);
-            rows.sort_by_key(|row| std::cmp::Reverse((row.pinned, row.updated)));
-            rows.truncate(MAX_RESTORED);
+    if let Some(summary) = &summary {
+        require_chat_scope(partition.scope(), summary.scope)?;
+        if cached(partition, id).as_ref() != Some(summary) {
+            write_cache(partition, summary);
         }
     }
-    rows
+    Ok(summary)
 }
-#[cfg(test)]
-#[path = "catalog_tests.rs"]
-mod tests;
+pub(super) fn load(root: &Root, scope: ContextId) -> Result<Vec<ChatSummary>, AgentStorageError> {
+    let Some(directory) = root.open(false)? else {
+        return Ok(Vec::new());
+    };
+    let scoped = Partition::scoped(&directory, scope, false)?;
+    let mut rows = Vec::new();
+    if let Some(partition) = &scoped {
+        scan(partition, None, &mut rows)?;
+    }
+    if scope == ContextId::General {
+        scan(&Partition::legacy(directory), scoped.as_ref(), &mut rows)?;
+    }
+    Ok(rows)
+}
+fn scan(
+    partition: &Partition,
+    preferred: Option<&Partition>,
+    rows: &mut Vec<ChatSummary>,
+) -> Result<(), AgentStorageError> {
+    let mut entries = partition.directory().entries()?;
+    while let Some(name) = entries.next()? {
+        let Some(id) = Partition::id(&name) else {
+            continue;
+        };
+        if let Some(preferred) = preferred
+            && preferred.exists(id)?
+        {
+            continue;
+        }
+        let Ok(Some(row)) = summary(partition, id) else {
+            continue;
+        };
+        rows.push(row);
+        rows.sort_by_key(|row| std::cmp::Reverse((row.pinned, row.updated)));
+        rows.truncate(MAX_RESTORED);
+    }
+    Ok(())
+}

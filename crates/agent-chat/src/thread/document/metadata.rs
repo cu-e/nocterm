@@ -9,17 +9,32 @@ use std::{path::PathBuf, sync::Arc};
 #[derive(Clone)]
 pub(super) struct Identity {
     agent: String,
-    id: String,
+    key: nocterm_ai::execution_origin::ChatKey,
+    wire_version: u32,
 }
 impl Identity {
-    pub(super) fn new(agent: String, id: String) -> Self {
-        Self { agent, id }
+    pub(super) fn new(
+        agent: String,
+        key: nocterm_ai::execution_origin::ChatKey,
+        wire_version: u32,
+    ) -> Self {
+        Self {
+            agent,
+            key,
+            wire_version,
+        }
+    }
+    pub(super) fn wire_version(&self) -> u32 {
+        self.wire_version
     }
     pub(super) fn agent(&self) -> &str {
         &self.agent
     }
+    pub(super) fn key(&self) -> &nocterm_ai::execution_origin::ChatKey {
+        &self.key
+    }
     pub(super) fn id(&self) -> &str {
-        &self.id
+        self.key.id()
     }
 }
 #[derive(Clone)]

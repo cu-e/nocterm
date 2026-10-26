@@ -8,16 +8,24 @@ use std::rc::Rc;
 pub(super) struct WorkspacePorts {
     factory: Factory,
     directory: Option<Rc<dyn ConnectionDirectory>>,
+    chat_connections: Option<Rc<dyn crate::ChatConnectionOpen>>,
 }
 impl Default for WorkspacePorts {
     fn default() -> Self {
         Self {
             factory: Rc::new(NoFactory),
             directory: None,
+            chat_connections: None,
         }
     }
 }
 impl WorkspacePorts {
+    pub(super) fn set_chat_connections(&mut self, opener: Rc<dyn crate::ChatConnectionOpen>) {
+        self.chat_connections = Some(opener);
+    }
+    pub(super) fn chat_connections(&self) -> Option<Rc<dyn crate::ChatConnectionOpen>> {
+        self.chat_connections.clone()
+    }
     pub(super) fn factory(&self) -> Factory {
         self.factory.clone()
     }

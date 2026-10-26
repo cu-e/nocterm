@@ -6,8 +6,60 @@ Features depend on shared contracts and never on other features or the SSH
 adapter. Feature crates use the service, UI, domain and foundation
 layers: `nocterm-terminal`, `nocterm-connections`, `nocterm-settings-ui`,
 `nocterm-files`, `nocterm-snippets-ui`, `nocterm-monitor-ui`,
-`nocterm-containers-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
+`nocterm-containers-ui`, `nocterm-plugins-ui`, `nocterm-layout-ui`, `nocterm-vault-ui`, `nocterm-keymap-ui`,
 `nocterm-agent` and `nocterm-agent-settings-ui`.
+
+## System plugins and core contributions
+
+A feature crate that owns a sidebar panel or a status bar widget declares it in a `plugin`
+module: `pub static PLUGIN: SystemPlugin` for a feature packaged as a system plugin
+(snippets, containers, workspaces, monitor, and the required AI agents plugin), or `pub const CORE: &[SystemContribution]`
+for a core function (connections and files). Its `register` places the contribution with
+`Workspace::register_panel` or `register_widget` under that id and returns
+`Result<(), RegistrationError>`; bootstrap reports a refusal and continues. Actions reach a
+panel by id (`toggle_panel`, `open_panel`), so nothing outside the workspace holds the panel
+entity. The application lists every plugin once in `src/shell_setup.rs`. See
+[ADR 0082](../adr/0082-system-plugins-and-core-contributions.md).
+
+`nocterm-plugins-ui` owns the Plugins settings page: the plugin list with its chips and, for
+the selected plugin, the Enabled switch, the contributions, the settings form and the link to
+the page the plugin names (`settings_page`; one link per plugin that names one, nested or
+top-level like AI). It reads
+the plugin catalog, switches plugins through the `PluginToggles` port named for that need
+(the application implements it over `[plugins]`) and draws the settings of a plugin from
+the `PluginSettingsDirectory` it is given. It keeps no storage and knows no plugin by name.
+The application registers the page as a lazy guest page, and registers the pages that
+plugins keep (Monitor, Workspaces) nested under it with `SettingsPageRegistration::under`:
+they are not navigation entries, the Plugins entry is highlighted while one is shown and a
+back link returns to the plugin's row. `nocterm-settings-ui` refuses a missing or nested
+parent. `OpenPlugins` and `OpenPluginPage` open the page and a plugin's page
+([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)). The detail of a plugin with
+contributions also links to the editor with its first item selected.
+
+With the cargo feature `user` (the application's `user-plugins` turns it on) the page also holds
+the User section (`UserPluginsSection`). It states whether this run loaded the user plugins
+(`UserSession::{Loaded, Held(HeldBy)}`, with `HeldBy::{SafeMode, NotAllowed}`), shows the "Allow
+user plugins" switch, which stores the choice for the next start through the narrow
+`UserPluginsSwitch` port, and, in a loaded run, the install button, consent, list, detail,
+removal questions and audit log through the `UserPlugins` port. A held run shows the reason and
+no list. The application implements both ports; the section keeps no storage
+([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)).
+
+`nocterm-layout-ui` owns the editor of the status bar and the panels, one section of Appearance
+(`layout_section`): the layout shown, the selected item, undo and redo, rename and delete
+confirmation, and the one-line preview of the bar, which is where the layout is edited. Chips,
+group pills, the gaps between entries and the tray take drops (a drop names a place; the move
+itself is a rule of `nocterm-window-layout`), every chip, pill and separator has a menu, and the
+keys act on the selected chip. It writes every change as one checked update of `[layouts]`
+through `nocterm_workspace::edit_layouts`, which applies the pure rules of
+`nocterm-window-layout`, and shows the result of the write. It reads the plugin catalog and
+enablement, draws no plugin settings (a chip's menu opens the plugin on the Plugins page), shows
+what the host knows of a user plugin in the chip's tooltip through `UserPluginFacts`, and holds
+no layout rule. The application places the section in the ordinary Appearance page with
+`SettingsPageSpec::with_sections` from `src/shell_setup/layout_editor.rs`, and
+`OpenLayoutSettings { select }` opens it with an item selected
+([ADR 0087](../adr/0087-status-bar-and-panels-editor.md),
+[ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md)).
 
 ## Terminal
 
@@ -156,7 +208,8 @@ best effort within GPUI's shutdown deadline. UI's `SettingsPage`/`SettingsPageSp
 root inject the lazy Vault page without feature-to-feature dependencies; the
 Vault page has Overview, Credentials, Security and Options tabs, and switching
 tabs, deactivation and closure clear typed master passwords. `nocterm-files`
-contributes an Explorer Panel which follows `ActiveSessionChanged`. The remote
+contributes an Explorer panel (left zone) and a transfers widget (right zone) as core
+contributions, placed by their hints (ADR 0083); the panel follows `ActiveSessionChanged`. The remote
 half uses home/listing requests; both halves own their navigation, selection and
 background tasks in private `LocalPane`/`RemotePane` entities. Local I/O is delegated
 to injected session filesystem capabilities. Request tasks are dropped when
@@ -167,7 +220,7 @@ through Workspace's `LocalTerminal` contract, without Files depending on Termina
 
 Explorer receives explicit `Deps` through `install` and `register`; application
 composition retains `Installed` and supplies it to each workspace. Transfers and
-its status view retain the supplied TransferService port, so Show Transfers also works before
+its status widget retain the supplied TransferService port, so Show Transfers also works before
 Explorer is opened. The coordinator handles transfer intents and queue snapshots;
 pane entities own their views and emit typed intents without mutating siblings.
 Local home discovery, listing, completion, statistics and mutations run through
@@ -176,8 +229,11 @@ presentation of navigation through a public query, rather than exposing pane sta
 Configured local program dispatch uses the injected `ProgramOpener`; the local adapter
 owns process spawning and child reaping.
 
-Explorer location editors own native input and asynchronous, bounded directory
-completion. Suggestions use a viewport-constrained popup anchored below the input,
+Explorer uses the shared `nocterm-ui` directory input and navigation controls;
+the workspace creation picker uses the same completion implementation. Read-only
+sources are supplied explicitly through the Explorer domain contracts
+([ADR 0072](../adr/0072-shared-directory-selection.md)).
+Suggestions use a viewport-constrained popup anchored below the input,
 flipping above it when needed, so minimum-height split panes retain usable rows.
 Tab and Shift+Tab complete directories from one cached listing; Up and Down
 cycle the plain-text popup without descending into a single match.
@@ -249,14 +305,103 @@ and control ownership from [ADR0050](../adr/0050-retained-snippet-installation.m
 
 ## Monitor
 
-`nocterm-monitor-ui` follows the active session (a
-session with exec is remote; anything else is this computer when allowed),
-keeps a sampler per recently seen host and runs exactly one script: the status
+`nocterm-monitor-ui` consumes the workspace's dedicated `MonitorSource` projection.
+The selected inner workspace session takes precedence; missing or unsupported
+workspace authority never falls back to the unrelated outer session or local runner.
+Ordinary local contexts retain the injected local policy. Cache identity includes
+the original surface and checked resource; watch generations reject stale detection
+and readings across switches or reconnects. It keeps bounded samplers and runs
+exactly one script: the status
 bar's metrics at the slow interval while the details are closed, and the union
-with the details' metrics at the fast interval while they are open. It adds a
-leading footer view through the workspace and supplies its Settings page as a
-`SettingsPageSpec`. Local host execution is an optional `HostExec` supplied at
-installation and retained by its model; active remote execution keeps precedence.
+with the details' metrics at the fast interval while they are open. It declares a
+status widget for the left zone of the bar in its system plugin and supplies its Settings page as a
+`SettingsPageSpec`, nested under Plugins. The page keeps whether monitoring runs, the refresh
+intervals and the details metrics; the metrics the status bar shows are a field of the plugin's
+settings schema and are edited on the Plugins page. Local host execution is an optional `HostExec` supplied at
+installation and retained by its model. Container monitoring selects pure
+own-cgroup collection through its already scoped executor, with CPU explicitly
+relative to one CPU and memory current/optional limit. Host-only readings remain
+absent; unobservable limits never become a host memory percentage
+([ADR 0077](../adr/0077-selected-workspace-monitoring.md)).
+
+## Workspaces
+
+Workspace removal uses a compact native confirmation. Folder and unknown-provider
+locations remove metadata only. Docker/Podman locations offer mutually exclusive
+Keep (default), Stop and Delete choices with their consequences. Stop/Delete retain
+the original unscoped host and terminal epoch, require a live matching capability,
+and affect other workspaces sharing that container. Busy controls prevent duplicate
+submits and dismissal; errors stay inline. Known completed effects remain visible
+when catalog publication fails, and Retry removal publishes metadata only. Images,
+volumes, bind-mounted host folders and chat history are retained; Delete loses the
+container writable layer. The feature never closes or retargets open surfaces
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
+
+`nocterm-projects` presents the saved workspace library and a branching creation
+wizard. Its private navigation owner projects Connection, Project and conditional
+Tools steps without duplicating retained input entities or setup mode. Connection
+validates only resource selection, Project validates name/directory/repository,
+and Tools appears only for new containers. Next and Back do not prepare resources;
+final Create retains full validation and the existing preparation/publication
+lifecycle. Step changes move focus and Back preserves drafts. The body fits normal
+720p windows; only small windows use body scrolling, with actions fixed outside.
+Direct
+connection uses the shared directory picker when the captured source exposes a
+filesystem. Existing container selection combines independently acquired Docker
+and Podman results; creation selects the engine, image and supported tools.
+The form retains its original host authority while another tab is selected.
+Without a selected server, an injected local executor enables all three modes on
+This computer without opening a terminal. Active remote workspaces and selected
+disconnected or stale remote terminals refuse creation instead of falling back to
+local capabilities. Container rows preserve full engine/ID selection independently
+of truncated names, image labels and status summaries.
+An independent `ContainerPicker` owns captured inventory discovery, filtering and
+exact selection. Search matches names, full IDs, images and engine without I/O or
+changing a filtered-out selection. The fixed shared header retains the original
+server. Image sources use a single full-width bounded result viewport.
+
+Projects retains Workspace for outer ProjectView admission, Panel/action
+registration, focused source capture, General Item enumeration and connection
+directory projections. Its ProjectTerminal contracts and context errors are
+imported directly from workspace-ports; container Engine/Image/Container remain
+domain DTOs ([ADR0079](../adr/0079-project-terminal-contracts-below-shell.md)).
+
+Projects retains its supplied `SettingsHandle` and provides the lazy Workspaces
+settings page. Shared checked text receipts edit the domain-owned
+`WorkspacesSettings` section. A creation window snapshots the container directory
+default and resolves empty Attach/Create paths to it; saved locations and existing
+drafts are unchanged by later setting publications.
+
+Independent ImagePicker and LanguageChooser entities own image and version drafts.
+Immediate local filtering shares no failure state with debounced registry search.
+Search retains the source and engine, invalidates obsolete generations and uses a
+bounded 16-entry, 90-second cache; recognizable rate limits impose a 60-second
+cooldown without automatic retry. Complete manual references remain usable.
+Language rows preserve custom version drafts across enablement, render the Rust
+mark with theme foreground and project checked selections into preparation. The
+shared chooser also serves explicit existing-environment tool changes. Custom
+images are checked against their actual platform before installation. Image and
+inventory lists have their own bounds within the relevant step
+([ADR 0074](../adr/0074-captured-host-image-search-and-language-versions.md)).
+
+Workspace settings retains exact original surface/session authority and separately
+projects observed environment facts, installed versions and tool-change status.
+Metadata Save does not install languages. Disconnected remote targets remain
+descriptive until ordinary connection recovery; a scoped executor is never treated
+as an original host executor. Library rows show the server caption without an OS
+icon and project a compact Docker/Podman badge from the checked locator. The whole row
+uses the Containers hover treatment; settings and removal actions appear only
+while that row is hovered. Footer progress
+shows observed layer bytes or an indeterminate phase, independently of action labels
+([ADR 0075](../adr/0075-observed-workspace-environment-management.md)).
+
+Preparation is separate from durable catalog publication. The view presents
+progress and typed failures without owning process execution or a second writer.
+Saved locations resolve through an explicitly supplied provider registry; an
+unknown provider keeps its workspace and history but cannot acquire a terminal.
+Container locations expose no host filesystem fallback. Inner terminals retain
+the normal terminal lifecycle and their original workspace surface
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
 
 ## Containers
 

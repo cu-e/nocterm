@@ -4,6 +4,7 @@ use nocterm_ai::model::content::Content;
 use nocterm_ai::model::controls::{ConfigCategory, ConfigChoice, ConfigOption};
 use nocterm_ai::model::ids::SessionId;
 use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
+use nocterm_workspace::test_support::{Toggle, toggle_id};
 
 #[gpui_kit::test]
 fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut TestAppContext) {
@@ -38,7 +39,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
         [nocterm_ai::thread::Entry::User(_), nocterm_ai::thread::Entry::Agent(answer)] if answer == "answer"
     ));
     // The terminal context sent with the prompt is not part of the chat.
-    let text = String::from_utf8(f.repository.encoded(&saved[0].id).unwrap()).unwrap();
+    let text = String::from_utf8(f.repository.encoded(&saved[0].header.id).unwrap()).unwrap();
     assert!(
         !text.contains(nocterm_ai::context::TERMINAL_RULES),
         "{text}"
@@ -71,7 +72,7 @@ fn chats_are_saved_restored_into_a_new_panel_and_resume_their_session(cx: &mut T
 
     // Opening it reopens the agent's session instead of starting another.
     let sessions = f.commands.sessions.load(Ordering::SeqCst);
-    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     assert_eq!(
         *f.commands.restores.lock().unwrap(),
@@ -190,15 +191,15 @@ fn history_searches_pins_renames_and_forks_chats(cx: &mut TestAppContext) {
     })
     .unwrap();
     let saved = f.repository.chats();
-    assert_eq!(saved[0].name.as_deref(), Some("Disks"));
-    assert!(saved[0].pinned);
+    assert_eq!(saved[0].header.name.as_deref(), Some("Disks"));
+    assert!(saved[0].header.pinned);
 
     // A fork starts with the chat's messages, in a copy of its session.
     cx.update_window(f.handle, |_, window, cx| {
         f.panel.update(cx, |panel, cx| {
             panel.fork_thread(nginx.entity_id(), window, cx);
             let fork = panel.current().unwrap();
-            activate_thread(&fork, &f.installation.installed, cx)
+            activate_thread(&fork, cx)
         })
     })
     .unwrap();
@@ -412,21 +413,23 @@ fn second_history_window(
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut workspace = Workspace::new(
-                    nocterm_workspace::Deps::new(f.installation.layout.clone()),
+                    crate::panel::tests::deps(f.installation.layout.clone()),
                     window,
                     cx,
                 );
                 let owner = cx.entity().downgrade();
+                let source = workspace.general_surface_source(cx);
                 let view = cx.new(|cx| {
                     AgentPanel::new(
-                        f._directory.host(owner, f.installation.installed.clone()),
+                        f._directory
+                            .host(owner, f.installation.installed.clone(), source),
                         window,
                         cx,
                     )
                 });
-                workspace.set_right_panel(view.clone(), window, cx);
-                workspace.set_right_panel_available(true, window, cx);
-                workspace.toggle_right_panel(window, cx);
+                crate::panel::tests::host_panel(&mut workspace, &view, window, cx);
+                workspace.set_panel_available(&crate::plugin::CHATS.id, true, window, cx);
+                workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
                 panel = Some(view);
                 workspace
             })
@@ -525,7 +528,12 @@ fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut T
         "rendered width adoption must not echo a scalar change"
     );
     cx.update_window(other, |_, window, cx| {
-        window.dispatch_action(Box::new(nocterm_workspace::SwapSides), cx);
+        window.dispatch_action(
+            Box::new(nocterm_workspace::SwitchLayout {
+                id: "swapped".into(),
+            }),
+            cx,
+        );
         window.render_frame(cx);
         window.click("agent-history", cx);
         window.render_frame(cx);
@@ -698,7 +706,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
 fn toggle_workspace_panel(f: &Fixture, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("toggle-right-panel", cx);
+        window.click(toggle_id(Toggle::SidePanel), cx);
         window.render_frame(cx);
     })
     .unwrap();

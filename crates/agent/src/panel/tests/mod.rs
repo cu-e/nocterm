@@ -34,14 +34,7 @@ use std::{
     },
 };
 
-fn activate_thread(
-    thread: &Entity<crate::thread::AgentThread>,
-    installed: &crate::Installed,
-    cx: &mut App,
-) {
-    installed
-        .runtime()
-        .register_document(crate::thread::client(thread), cx);
+fn activate_thread(thread: &Entity<crate::thread::AgentThread>, cx: &mut App) {
     thread.update(cx, |thread, cx| thread.request_activation(cx));
 }
 
@@ -60,238 +53,9 @@ fn shutdown_runtime(installed: &crate::Installed, cx: &mut TestAppContext) {
 mod builders;
 mod config_responses;
 mod process_commands;
+mod scripted_agent;
+use scripted_agent::{Bridge, Commands, Connector};
 
-#[derive(Default)]
-struct Commands {
-    sessions: AtomicU64,
-    new_dirs: Mutex<Vec<std::path::PathBuf>>,
-    restore_dirs: Mutex<Vec<std::path::PathBuf>>,
-    session_gate: Mutex<Option<oneshot::Receiver<()>>>,
-    close_gate: Mutex<Option<oneshot::Receiver<()>>>,
-    closed: Mutex<Vec<SessionId>>,
-    shutdown_failure: AtomicBool,
-    auth_required: AtomicBool,
-    authentications: AtomicUsize,
-    authentication_failure: AtomicBool,
-    shutdowns: AtomicUsize,
-    cancels: AtomicUsize,
-    prompts: Mutex<Vec<PromptRequest>>,
-    pending: Mutex<Option<oneshot::Sender<PromptOutcome>>>,
-    /// Each reopened session, and whether it was forked.
-    restores: Mutex<Vec<(SessionId, bool)>>,
-    restore_errors: Mutex<std::collections::VecDeque<AgentError>>,
-    /// The MCP servers each new session was given.
-    servers: Mutex<Vec<Vec<ExternalToolEndpoint>>>,
-    /// The configuration options every session reports.
-    config: config_responses::ConfigResponses,
-}
-impl AgentCommands for Commands {
-    fn new_session(
-        &self,
-        request: SessionOpen,
-    ) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
-        self.new_dirs
-            .lock()
-            .unwrap()
-            .push(request.working_directory.clone());
-        self.servers.lock().unwrap().push(request.endpoints);
-        let gate = self.session_gate.lock().unwrap().take();
-        let id = self.sessions.fetch_add(1, Ordering::SeqCst);
-        let auth_required = self.auth_required.load(Ordering::SeqCst);
-        let config = self.config.options();
-        let modes = self.config.modes();
-        async move {
-            if let Some(gate) = gate {
-                let _ = gate.await;
-            }
-            if auth_required {
-                Err(AgentError::AuthRequired("Sign in to continue".into()))
-            } else {
-                Ok(opened(format!("s{id}"), config, modes))
-            }
-        }
-        .boxed()
-    }
-    fn restore_session(
-        &self,
-        request: nocterm_ai::model::session::RestoreSession,
-    ) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
-        self.restore_dirs
-            .lock()
-            .unwrap()
-            .push(request.working_directory.clone());
-        self.restores
-            .lock()
-            .unwrap()
-            .push((request.session.clone(), request.fork));
-        if let Some(error) = self.restore_errors.lock().unwrap().pop_front() {
-            return async move { Err(error) }.boxed();
-        }
-        let session = if request.fork {
-            SessionId::new(format!("fork-of-{}", request.session))
-        } else {
-            request.session
-        };
-        let config = self.config.options();
-        let modes = self.config.modes();
-        async move { Ok(opened(session, config, modes)) }.boxed()
-    }
-    fn prompt(&self, r: PromptRequest) -> BoxFuture<'static, Result<PromptOutcome, AgentError>> {
-        self.prompts.lock().unwrap().push(r);
-        if self.auth_required.load(Ordering::SeqCst) {
-            return async { Err(AgentError::AuthRequired("Sign in to continue".into())) }.boxed();
-        }
-        let (tx, rx) = oneshot::channel();
-        *self.pending.lock().unwrap() = Some(tx);
-        async move { rx.await.map_err(|_| AgentError::Io("closed".into())) }.boxed()
-    }
-    fn cancel(&self, _: SessionId) {
-        self.cancels.fetch_add(1, Ordering::SeqCst);
-    }
-    fn set_mode(&self, _: SetMode) -> BoxFuture<'static, Result<(), AgentError>> {
-        async { Ok(()) }.boxed()
-    }
-    fn set_config_option(
-        &self,
-        request: SetConfigOption,
-    ) -> BoxFuture<'static, Result<Vec<ConfigOption>, AgentError>> {
-        let options = self.config.choose(request);
-        async move { Ok(options) }.boxed()
-    }
-    fn authenticate(&self, _: AuthMethodId) -> BoxFuture<'static, Result<(), AgentError>> {
-        self.authentications.fetch_add(1, Ordering::SeqCst);
-        let failed = self.authentication_failure.load(Ordering::SeqCst);
-        if !failed {
-            self.auth_required.store(false, Ordering::SeqCst);
-        }
-        async move {
-            if failed {
-                Err(AgentError::Io("Sign-in failed".into()))
-            } else {
-                Ok(())
-            }
-        }
-        .boxed()
-    }
-    fn close_session(
-        &self,
-        session: SessionId,
-    ) -> BoxFuture<'static, Result<nocterm_ai::CloseSessionOutcome, AgentError>> {
-        self.closed.lock().unwrap().push(session);
-        let gate = self.close_gate.lock().unwrap().take();
-        async move {
-            if let Some(gate) = gate {
-                let _ = gate.await;
-            }
-            Ok(nocterm_ai::CloseSessionOutcome::Closed)
-        }
-        .boxed()
-    }
-    fn shutdown_gracefully(&self) -> BoxFuture<'static, Result<(), AgentError>> {
-        self.shutdown();
-        let failed = self.shutdown_failure.load(Ordering::SeqCst);
-        async move {
-            if failed {
-                Err(AgentError::Io("Process tree still alive".into()))
-            } else {
-                Ok(())
-            }
-        }
-        .boxed()
-    }
-    fn shutdown(&self) {
-        self.shutdowns.fetch_add(1, Ordering::SeqCst);
-    }
-}
-struct Connector {
-    distinct_process_handles: AtomicBool,
-    commands: Arc<Commands>,
-    events: async_channel::Receiver<AgentEvent>,
-    connects: AtomicUsize,
-    roots: Mutex<
-        Vec<(
-            std::path::PathBuf,
-            Option<nocterm_ai::sandbox::SandboxPolicy>,
-        )>,
-    >,
-    event_senders: Mutex<Vec<async_channel::Sender<AgentEvent>>>,
-    info: Mutex<AgentInfo>,
-}
-impl Connector {
-    fn use_distinct_process_handles(&self) {
-        self.distinct_process_handles.store(true, Ordering::SeqCst);
-    }
-    fn report_auth_methods(&self, methods: Vec<AuthMethod>) {
-        self.info.lock().unwrap().auth_methods = methods;
-    }
-    fn support_images(&self) {
-        self.info.lock().unwrap().capabilities.image_prompts = true;
-    }
-}
-impl AgentConnector for Connector {
-    fn connect(
-        &self,
-        request: ConnectRequest,
-    ) -> BoxFuture<'static, Result<AgentConnection, AgentError>> {
-        self.roots
-            .lock()
-            .unwrap()
-            .push((request.working_directory, request.sandbox));
-        self.connects.fetch_add(1, Ordering::SeqCst);
-        let commands: Arc<dyn AgentCommands> =
-            if self.distinct_process_handles.load(Ordering::SeqCst) {
-                Arc::new(process_commands::ProcessCommands::new(
-                    self.commands.clone(),
-                ))
-            } else {
-                self.commands.clone()
-            };
-        let info = self.info.lock().unwrap().clone();
-        let (sender, events) = async_channel::bounded(256);
-        self.event_senders.lock().unwrap().push(sender);
-        async move {
-            Ok(AgentConnection {
-                commands,
-                events,
-                info,
-            })
-        }
-        .boxed()
-    }
-}
-struct Bridge {
-    next: AtomicU64,
-    revoked: Arc<Mutex<Vec<u64>>>,
-    stops: AtomicUsize,
-    calls: async_channel::Receiver<BridgeCall>,
-    rejections: async_channel::Receiver<nocterm_ai::BridgeRejection>,
-}
-impl ToolBridge for Bridge {
-    fn register(
-        &self,
-    ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
-        let id = self.next.fetch_add(1, Ordering::SeqCst);
-        let revoked = self.revoked.clone();
-        Ok(BridgeRegistration::new(
-            id,
-            nocterm_ai::BridgeLaunch {
-                program: "/fake/nocterm".into(),
-                args: vec!["agent-bridge".into()],
-                env: vec![("NOCTERM_BRIDGE_TOKEN".into(), "test-token".into())],
-            },
-            Arc::new(move |id| revoked.lock().unwrap().push(id)),
-        ))
-    }
-    fn calls(&self) -> async_channel::Receiver<BridgeCall> {
-        self.calls.clone()
-    }
-    fn rejections(&self) -> async_channel::Receiver<nocterm_ai::BridgeRejection> {
-        self.rejections.clone()
-    }
-    fn stop(&self) {
-        self.stops.fetch_add(1, Ordering::SeqCst);
-    }
-}
 mod terminal_fixture;
 use terminal_fixture::{Access, FakeTerminal, SignIn};
 
@@ -307,16 +71,23 @@ impl HostEnvironment {
         &self,
         workspace: gpui_kit::WeakEntity<Workspace>,
         installed: crate::Installed,
+        source: nocterm_workspace::ProjectSurfaceReceipt,
     ) -> crate::chat_host::ChatHost {
-        crate::chat_host::ChatHost::new(workspace, installed)
+        crate::chat_host::ChatHost::new(workspace, installed, source).unwrap()
     }
     /// What chats hosted by `workspace` receive.
     fn deps(
         &self,
         workspace: gpui_kit::WeakEntity<Workspace>,
         installed: crate::Installed,
+        cx: &App,
     ) -> crate::chat_deps::ChatDeps {
-        self.host(workspace, installed).deps().clone()
+        let source = workspace
+            .upgrade()
+            .unwrap()
+            .read(cx)
+            .general_surface_source(cx);
+        self.host(workspace, installed, source).deps().clone()
     }
 }
 
@@ -438,43 +209,13 @@ fn fixture_with_width(
                 cx,
             );
             registration.unwrap();
-            let mut panel = None;
             installed
                 .runtime()
                 .inject_events(connector.events.clone(), cx);
-            let mut terminal = None;
-            let (handle, workspace) =
-                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                    cx.new(|cx| {
-                        let mut workspace = Workspace::new(
-                            nocterm_workspace::Deps::new(layout.clone()),
-                            window,
-                            cx,
-                        );
-                        let item = cx.new(|cx| FakeTerminal::new(access.clone(), cx));
-                        terminal = Some(item.entity_id());
-                        workspace.add_item(item, window, cx);
-                        let owner = cx.entity().downgrade();
-                        let view = cx.new(|cx| {
-                            AgentPanel::new(directory.host(owner, installed.clone()), window, cx)
-                        });
-                        workspace.set_right_panel(view.clone(), window, cx);
-                        workspace.set_right_panel_available(true, window, cx);
-                        workspace.toggle_right_panel(window, cx);
-                        panel = Some(view);
-                        workspace
-                    })
-                })
-                .unwrap();
+            let (handle, workspace, panel, terminal) =
+                open_host(&directory, &installed, &layout, &access, cx);
             (
-                handle,
-                workspace,
-                panel.unwrap(),
-                terminal.unwrap(),
-                ui,
-                shutdown,
-                layout,
-                installed,
+                handle, workspace, panel, terminal, ui, shutdown, layout, installed,
             )
         });
     Fixture {
@@ -518,6 +259,63 @@ fn fixture_services(f: &Fixture) -> AgentServices {
         shared_dirs: Vec::new(),
     }
 }
+/// Opens a window whose workspace holds a terminal and the registered agent panel, shown.
+fn open_host(
+    directory: &HostEnvironment,
+    installed: &crate::Installed,
+    layout: &nocterm_ui::LayoutHandle,
+    access: &Rc<Access>,
+    cx: &mut App,
+) -> (
+    AnyWindowHandle,
+    Entity<Workspace>,
+    Entity<AgentPanel>,
+    gpui_kit::EntityId,
+) {
+    let mut panel = None;
+    let mut terminal = None;
+    let (handle, workspace) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        cx.new(|cx| {
+            let mut workspace = Workspace::new(deps(layout.clone()), window, cx);
+            let item = cx.new(|cx| FakeTerminal::new(access.clone(), cx));
+            terminal = Some(item.entity_id());
+            workspace.add_item(item, window, cx);
+            let owner = cx.entity().downgrade();
+            let source = workspace.general_surface_source(cx);
+            let view = cx.new(|cx| {
+                AgentPanel::new(directory.host(owner, installed.clone(), source), window, cx)
+            });
+            host_panel(&mut workspace, &view, window, cx);
+            workspace.set_panel_available(&crate::plugin::CHATS.id, true, window, cx);
+            workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
+            panel = Some(view);
+            workspace
+        })
+    })
+    .unwrap();
+    (handle, workspace, panel.unwrap(), terminal.unwrap())
+}
+/// Dependencies whose plugin catalog lists the agent, over `layout`.
+fn deps(layout: nocterm_ui::LayoutHandle) -> nocterm_workspace::Deps {
+    nocterm_workspace::test_support::deps_over(layout, &[], &[&crate::plugin::PLUGIN])
+}
+/// Registers `view` as the agent panel the way installation does, before the host offers it.
+fn host_panel(
+    workspace: &mut Workspace,
+    view: &Entity<AgentPanel>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .register_panel(
+            nocterm_workspace::PanelRegistration::with_entity(&crate::plugin::CHATS, view.clone())
+                .expandable(),
+            window,
+            cx,
+        )
+        .unwrap();
+    workspace.set_panel_available(&crate::plugin::CHATS.id, false, window, cx);
+}
 /// Simulates a fresh host through public shutdown, installation and view creation.
 fn install_fixture(
     f: &mut Fixture,
@@ -542,23 +340,23 @@ fn install_fixture(
             runtime.inject_events(f.connector.events.clone(), cx)
         };
     });
-    let panel = cx
-        .update_window(f.handle, |_, window, cx| {
-            let panel = cx.new(|cx| {
-                AgentPanel::new(
-                    f._directory
-                        .host(f.workspace.downgrade(), f.installation.installed.clone()),
-                    window,
-                    cx,
-                )
-            });
-            f.workspace.update(cx, |workspace, cx| {
-                workspace.set_right_panel(panel.clone(), window, cx)
-            });
-            panel
-        })
-        .unwrap();
+    let (handle, workspace, panel, terminal) = cx.update(|cx| {
+        let host = open_host(
+            &f._directory,
+            &f.installation.installed,
+            &f.installation.layout,
+            &f.access,
+            cx,
+        );
+        let old = f.handle;
+        cx.update_window(old, |_, window, _| window.remove_window())
+            .unwrap();
+        host
+    });
+    f.handle = handle;
+    f.workspace = workspace;
     f.panel = panel;
+    f.terminal = terminal;
 }
 /// Supplies bounded prepared records to the real take-once catalog owner.
 fn reinstall_history(
@@ -653,8 +451,10 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 }
 
 mod approvals;
+mod authentication;
 mod bridge_outcomes;
 mod composer;
+mod context_rosters;
 mod durable_config;
 mod hermes;
 mod history;
@@ -667,9 +467,11 @@ mod provider_fixtures;
 mod provider_permissions;
 mod queue_remove;
 mod reconnect;
+mod registration;
 mod resources;
 mod restoration;
 mod routing;
+mod seat_binding;
 mod servers;
 mod tool_corpus;
 mod tool_input;
@@ -735,7 +537,7 @@ fn restore_entries(
     chat.entries = entries;
     chat.times.clear();
     f.repository.seed_chat(&chat).unwrap();
-    thread.restore_content(chat);
+    thread.restore_content(chat, cx).unwrap();
     thread.preview_config(cx);
     for row in 0..thread.history_entries().len() {
         thread.mark_dirty(row);
@@ -750,7 +552,7 @@ fn restore_pending_history(
     let mut chat = restored_projection(thread, cx);
     chat.pending_history = true;
     f.repository.seed_chat(&chat).unwrap();
-    thread.restore_content(chat);
+    thread.restore_content(chat, cx).unwrap();
     thread.preview_config(cx);
     cx.notify();
 }

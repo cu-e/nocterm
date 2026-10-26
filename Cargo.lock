@@ -1176,6 +1176,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
+name = "cobs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "cocoa"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2068,6 +2077,18 @@ dependencies = [
  "vswhom",
  "winreg 0.55.0",
 ]
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "encoding_rs"
@@ -4395,6 +4416,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "leb128fmt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+
+[[package]]
 name = "lebe"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4919,6 +4946,7 @@ name = "nocterm"
 version = "3.1.0"
 dependencies = [
  "anyhow",
+ "async-io",
  "futures",
  "gpui-kit",
  "nocterm-acp",
@@ -4932,17 +4960,39 @@ dependencies = [
  "nocterm-connections",
  "nocterm-connections-io",
  "nocterm-connections-model",
+ "nocterm-containers",
  "nocterm-containers-ui",
  "nocterm-core",
  "nocterm-design",
  "nocterm-device-unlock",
+ "nocterm-directory-io",
+ "nocterm-explorer",
  "nocterm-files",
  "nocterm-image-codec",
  "nocterm-keymap",
  "nocterm-keymap-ui",
+ "nocterm-layout-ui",
  "nocterm-local",
  "nocterm-localfs",
+ "nocterm-monitor",
  "nocterm-monitor-ui",
+ "nocterm-plugin-api",
+ "nocterm-plugin-enablement",
+ "nocterm-plugin-host",
+ "nocterm-plugin-model",
+ "nocterm-plugin-packages",
+ "nocterm-plugin-ports",
+ "nocterm-plugin-view",
+ "nocterm-plugin-wasm",
+ "nocterm-plugins-ui",
+ "nocterm-project-container-fs",
+ "nocterm-project-environment",
+ "nocterm-project-model",
+ "nocterm-project-providers",
+ "nocterm-project-runtime",
+ "nocterm-project-service",
+ "nocterm-project-storage",
+ "nocterm-projects",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-settings-ui",
@@ -4962,13 +5012,17 @@ dependencies = [
  "nocterm-vault",
  "nocterm-vault-store",
  "nocterm-vault-ui",
+ "nocterm-window-layout",
  "nocterm-workspace",
+ "nocterm-workspace-ports",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wat",
  "winresource",
 ]
 
@@ -5009,14 +5063,18 @@ dependencies = [
  "nocterm-agent-providers",
  "nocterm-agent-runtime",
  "nocterm-ai",
+ "nocterm-plugin-model",
+ "nocterm-project-model",
  "nocterm-session",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
+ "nocterm-workspace-ports",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -5029,6 +5087,7 @@ dependencies = [
  "nocterm-agent-directory",
  "nocterm-agent-runtime",
  "nocterm-ai",
+ "nocterm-core",
  "nocterm-session",
  "nocterm-store",
  "nocterm-workspace-ports",
@@ -5095,6 +5154,7 @@ dependencies = [
  "futures",
  "nocterm-ai",
  "nocterm-core",
+ "nocterm-session",
  "serde_json",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
@@ -5120,6 +5180,8 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "nocterm-core",
+ "nocterm-project-model",
+ "nocterm-session",
  "nocterm-settings",
  "regex",
  "schemars 1.2.2",
@@ -5140,10 +5202,13 @@ dependencies = [
  "gpui-kit",
  "nocterm-connections-model",
  "nocterm-connections-store",
+ "nocterm-plugin-model",
+ "nocterm-project-model",
  "nocterm-session",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
+ "nocterm-workspace-ports",
  "serde_json",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
@@ -5203,6 +5268,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "nocterm-session",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
 ]
@@ -5214,6 +5280,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "nocterm-containers",
+ "nocterm-plugin-model",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
@@ -5267,12 +5334,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-directory-io"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-explorer",
+ "nocterm-session",
+]
+
+[[package]]
 name = "nocterm-explorer"
 version = "0.0.0"
 dependencies = [
+ "futures",
+ "nocterm-session",
  "nocterm-settings",
  "schemars 1.2.2",
  "serde",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
 ]
 
@@ -5284,6 +5363,10 @@ dependencies = [
  "futures",
  "gpui-kit",
  "nocterm-explorer",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "nocterm-plugin-ports",
+ "nocterm-project-model",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
@@ -5328,10 +5411,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-layout-ui"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "nocterm-plugin-enablement",
+ "nocterm-plugin-model",
+ "nocterm-settings",
+ "nocterm-store",
+ "nocterm-ui",
+ "nocterm-window-layout",
+ "nocterm-workspace",
+ "tempfile",
+]
+
+[[package]]
 name = "nocterm-local"
 version = "0.0.0"
 dependencies = [
  "async-channel",
+ "chrono",
  "futures",
  "nix 0.28.0",
  "nocterm-core",
@@ -5377,14 +5476,263 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "gpui-kit",
+ "nocterm-containers",
  "nocterm-monitor",
+ "nocterm-plugin-api",
+ "nocterm-plugin-enablement",
+ "nocterm-plugin-model",
+ "nocterm-plugin-ports",
+ "nocterm-project-model",
+ "nocterm-project-providers",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",
+ "serde_json",
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-plugin-abi"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "postcard",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-plugin-api"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-model",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-plugin-enablement"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-model",
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-plugin-host"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "nocterm-plugin-ports",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
+name = "nocterm-plugin-model"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-plugin-packages"
+version = "0.0.0"
+dependencies = [
+ "nocterm-core",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "proptest",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-plugin-ports"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+]
+
+[[package]]
+name = "nocterm-plugin-sdk"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-abi",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "nocterm-plugin-view"
+version = "0.0.0"
+dependencies = [
+ "gpui-pre",
+ "nocterm-plugin-api",
+]
+
+[[package]]
+name = "nocterm-plugin-wasm"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-abi",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "serde_json",
+ "wasmi",
+ "wat",
+]
+
+[[package]]
+name = "nocterm-plugins-ui"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "nocterm-core",
+ "nocterm-plugin-model",
+ "nocterm-settings",
+ "nocterm-store",
+ "nocterm-ui",
+ "nocterm-workspace",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-project-container-fs"
+version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "async-io",
+ "futures",
+ "getrandom 0.4.3",
+ "nocterm-containers",
+ "nocterm-project-model",
+ "nocterm-project-providers",
+ "nocterm-session",
+]
+
+[[package]]
+name = "nocterm-project-environment"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-connections-model",
+ "nocterm-project-providers",
+ "nocterm-session",
+ "serde_json",
+]
+
+[[package]]
+name = "nocterm-project-model"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-core",
+ "nocterm-session",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-project-providers"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-containers",
+ "nocterm-core",
+ "nocterm-project-model",
+ "nocterm-session",
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-project-runtime"
+version = "0.0.0"
+dependencies = [
+ "async-io",
+ "futures",
+ "getrandom 0.4.3",
+ "nocterm-containers",
+ "nocterm-project-model",
+ "nocterm-project-providers",
+ "nocterm-session",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nocterm-project-service"
+version = "0.0.0"
+dependencies = [
+ "event-listener",
+ "futures",
+ "gpui-pre",
+ "nocterm-containers",
+ "nocterm-core",
+ "nocterm-project-model",
+ "nocterm-project-providers",
+ "nocterm-session",
+ "nocterm-store",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-project-storage"
+version = "0.0.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "nocterm-core",
+ "nocterm-project-model",
+ "rustix 1.1.5",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "nocterm-projects"
+version = "0.0.0"
+dependencies = [
+ "async-channel",
+ "gpui-kit",
+ "nocterm-containers",
+ "nocterm-explorer",
+ "nocterm-plugin-model",
+ "nocterm-project-model",
+ "nocterm-project-providers",
+ "nocterm-project-service",
+ "nocterm-session",
+ "nocterm-store",
+ "nocterm-ui",
+ "nocterm-workspace",
+ "nocterm-workspace-ports",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]
@@ -5461,6 +5809,7 @@ name = "nocterm-snippets-ui"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
+ "nocterm-plugin-model",
  "nocterm-session",
  "nocterm-snippets",
  "nocterm-snippets-store",
@@ -5513,6 +5862,8 @@ dependencies = [
  "encoding_rs",
  "futures",
  "gpui-kit",
+ "nocterm-project-model",
+ "nocterm-project-providers",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
@@ -5522,6 +5873,7 @@ dependencies = [
  "nocterm-ui",
  "nocterm-vt",
  "nocterm-workspace",
+ "nocterm-workspace-ports",
  "regex",
  "tempfile",
  "thiserror 2.0.21",
@@ -5609,6 +5961,10 @@ dependencies = [
  "image",
  "nocterm-core",
  "nocterm-design",
+ "nocterm-explorer",
+ "nocterm-plugin-api",
+ "nocterm-plugin-model",
+ "nocterm-plugin-ports",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
@@ -5694,17 +6050,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-window-layout"
+version = "0.0.0"
+dependencies = [
+ "nocterm-plugin-model",
+ "nocterm-settings",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "nocterm-workspace"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
+ "nocterm-core",
  "nocterm-keymap",
+ "nocterm-plugin-api",
+ "nocterm-plugin-enablement",
+ "nocterm-plugin-model",
+ "nocterm-plugin-ports",
+ "nocterm-project-model",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-store",
  "nocterm-ui",
+ "nocterm-window-layout",
  "nocterm-workspace-ports",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
  "tracing",
 ]
 
@@ -5713,6 +6093,8 @@ name = "nocterm-workspace-ports"
 version = "0.0.0"
 dependencies = [
  "gpui-pre",
+ "nocterm-core",
+ "nocterm-project-model",
  "nocterm-session",
  "thiserror 2.0.21",
 ]
@@ -6902,6 +7284,18 @@ dependencies = [
  "pollster 0.2.5",
  "static_assertions",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "postcard"
+version = "1.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
+dependencies = [
+ "cobs",
+ "embedded-io 0.4.0",
+ "embedded-io 0.6.1",
+ "serde",
 ]
 
 [[package]]
@@ -8746,6 +9140,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "string-interner"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
+dependencies = [
+ "hashbrown 0.15.5",
+ "serde",
+]
+
+[[package]]
 name = "string_cache"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10108,6 +10512,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-encoder"
+version = "0.262.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4495a6f85dd94c411c749303efcbc5defade0b0cbdbc0541495241ab917a9b5a"
+dependencies = [
+ "leb128fmt",
+ "wasmparser 0.262.0",
+]
+
+[[package]]
 name = "wasm-streams"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10130,6 +10544,89 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "wasmi"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78693fcdd618e0fc34af59c6b8efa9ac5d58c68df940beff4bedddb6acfe7c27"
+dependencies = [
+ "spin 0.9.9",
+ "wasmi_collections",
+ "wasmi_core",
+ "wasmi_ir",
+ "wasmparser 0.228.0",
+]
+
+[[package]]
+name = "wasmi_collections"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a8be2aa467cf2d29e96ff759472c36eeb44a3c81c67fc9cb76c9a24c519c557"
+dependencies = [
+ "string-interner",
+]
+
+[[package]]
+name = "wasmi_core"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69372d5fda3ea3d1e0aa6603c7888110e0187e88ea17cd8fc2e2df0a0e1f37fa"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "wasmi_ir"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f17b774caa13c618c7244f1ee51fe23c5e7b8538a471fa46d9949779758aed6"
+dependencies = [
+ "wasmi_core",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.228.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4abf1132c1fdf747d56bbc1bb52152400c70f336870f968b85e89ea422198ae3"
+dependencies = [
+ "bitflags 2.13.2",
+ "indexmap 2.14.2",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.262.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "974d643b125b272607e2fff8012ea14a8328acd7621e4bafa7afb32500052b1b"
+dependencies = [
+ "bitflags 2.13.2",
+ "indexmap 2.14.2",
+ "semver",
+]
+
+[[package]]
+name = "wast"
+version = "262.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30612a0c29249b5f185888a107e8a519d920226b7d07f9d351fd094e9f75eb23"
+dependencies = [
+ "bumpalo",
+ "leb128fmt",
+ "memchr",
+ "unicode-width",
+ "wasm-encoder",
+]
+
+[[package]]
+name = "wat"
+version = "1.262.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e228027f2b07bbaf946980ebbe2437fca73be6f54c40c2a8d4f42f277075f8d1"
+dependencies = [
+ "wast",
 ]
 
 [[package]]
@@ -11300,11 +11797,17 @@ dependencies = [
  "nocterm-design",
  "nocterm-explorer",
  "nocterm-monitor",
+ "nocterm-plugin-abi",
+ "nocterm-plugin-api",
+ "nocterm-plugin-enablement",
+ "nocterm-project-providers",
  "nocterm-session",
  "nocterm-settings",
  "nocterm-terminal-model",
  "nocterm-ui",
  "nocterm-vault",
+ "nocterm-window-layout",
+ "nocterm-workspace",
  "proc-macro2",
  "schemars 1.2.2",
  "serde",

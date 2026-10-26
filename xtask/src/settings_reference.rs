@@ -9,11 +9,15 @@ use anyhow::bail;
 use nocterm_ai::AiSettings;
 use nocterm_explorer::ExplorerSettings;
 use nocterm_monitor::MonitorSettings;
+use nocterm_plugin_enablement::PluginEnablement;
+use nocterm_project_providers::WorkspacesSettings;
 use nocterm_session::{LocalShellSettings, LoggingOptions, SshSettings};
 use nocterm_settings::SettingsSection;
 use nocterm_terminal_model::TerminalSettings;
 use nocterm_ui::AppearanceSettings;
 use nocterm_vault::VaultSettings;
+use nocterm_window_layout::LayoutSettings;
+use nocterm_workspace::clock::ClockSettings;
 use schemars::schema_for;
 
 /// A section's key, its type's name and its reference rows.
@@ -41,13 +45,17 @@ fn sections() -> anyhow::Result<Vec<Section>> {
     let mut sections = vec![
         section::<AiSettings>()?,
         section::<AppearanceSettings>()?,
+        section::<ClockSettings>()?,
         section::<ExplorerSettings>()?,
+        section::<LayoutSettings>()?,
         section::<LocalShellSettings>()?,
         section::<LoggingOptions>()?,
         section::<MonitorSettings>()?,
+        section::<PluginEnablement>()?,
         section::<SshSettings>()?,
         section::<TerminalSettings>()?,
         section::<VaultSettings>()?,
+        section::<WorkspacesSettings>()?,
     ];
     sections.sort_by_key(|section| section.key);
     Ok(sections)

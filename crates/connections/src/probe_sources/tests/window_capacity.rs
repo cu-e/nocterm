@@ -49,7 +49,7 @@ fn fully_registered_items_changes_scan_after_workspace_update_has_returned(
     let scene = Scene::new(false, cx);
     cx.update_window(scene.window, |_, window, cx| {
         scene.workspace.update(cx, |workspace, cx| {
-            crate::register(&scene.installed, workspace, window, cx)
+            crate::register(&scene.installed, workspace, window, cx).unwrap();
         })
     })
     .unwrap();

@@ -1,8 +1,8 @@
 # Existing architectural debt, measured from production Rust AST.
 # Entries may only shrink; reductions must lower this inventory.
 [complexity_expects]
-nocterm = 4
-nocterm-acp = 6
+nocterm = 3
+nocterm-acp = 5
 nocterm-agent = 9
 nocterm-ai = 1
 nocterm-connections = 5
@@ -40,11 +40,7 @@ nocterm-ui = 4
 "nocterm_agent::panel::entries::tool_input::Section" = 3
 "nocterm_agent::panel::entries::tool_input::Source" = 5
 "nocterm_agent::panel::entries::tool_output::Output" = 2
-"nocterm_agent_runtime::client::ClientState" = 9
 "nocterm_agent_runtime::lease::ReleasedLease" = 5
-"nocterm_files::path_input::Navigate" = 2
-"nocterm_files::path_input::completion::Candidate" = 2
-"nocterm_files::path_input::completion::Query" = 3
 "nocterm_files::row::ExplorerRow" = 5
 "nocterm_files::statistics::Policy" = 1
 "nocterm_files::statistics::Statistics" = 8
@@ -60,5 +56,3 @@ nocterm-ui = 4
 [string_errors]
 
 [struct_fields]
-"nocterm_ai::history::SavedChat" = 20
-"nocterm_ai::history::wire::Wire" = 18

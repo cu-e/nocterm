@@ -7,6 +7,35 @@ use nocterm_connections_model::{
 };
 use nocterm_session::Target;
 use nocterm_workspace::{SessionSpec, Workspace};
+
+/// Resolve the original saved workspace server without opening a connection.
+/// Profile grouping is insufficient: its destination and ordered route must
+/// still match the saved workspace exactly before any authentication or I/O.
+pub fn resolve_parent_spec(
+    host: &nocterm_project_model::HostLocator,
+    profiles: &Profiles,
+) -> Result<SessionSpec, nocterm_workspace_ports::ProjectConnectionError> {
+    use nocterm_project_model::HostLocator;
+    use nocterm_workspace_ports::ProjectConnectionError;
+    let HostLocator::Ssh {
+        profile,
+        target,
+        via,
+    } = host
+    else {
+        return Err(ProjectConnectionError::UnsupportedHost);
+    };
+    let saved = profiles
+        .iter()
+        .find(|saved| saved.id.to_string() == *profile)
+        .ok_or(ProjectConnectionError::MissingProfile)?;
+    let spec = spec_for_profile(saved, profiles).map_err(ProjectConnectionError::invalid_route)?;
+    if spec.target != *target || spec.address().via != *via {
+        return Err(ProjectConnectionError::ChangedTargetOrRoute);
+    }
+    Ok(spec)
+}
+
 /// The session to open for `profile`, with its jump hosts resolved against
 /// `profiles`. Fails when a jump host is gone, loops back, or the route is too long.
 pub fn spec_for_profile(

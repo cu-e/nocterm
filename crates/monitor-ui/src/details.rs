@@ -1,6 +1,7 @@
 //! The popup with everything the details setting asks for.
 
 use crate::MonitorSettings;
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, Hsla, SharedString, Window,
     component::{
@@ -43,7 +44,7 @@ impl Render for DetailsView {
             .and_then(|sampler| sampler.snapshot().host.as_ref())
             .map(|host| host.hostname.clone())
             .filter(|name| !name.is_empty())
-            .or_else(|| monitor.host().map(|host| host.label()))
+            .or_else(|| monitor.label())
             .unwrap_or_default();
         body = body.child(header(title, monitor, settings, cx));
         match monitor.sampler() {
@@ -63,6 +64,7 @@ impl Render for DetailsView {
         }
         v_flex()
             .id("host-monitor-details")
+            .test_support()
             .w(rems(26.))
             .max_h(rems(36.))
             .overflow_y_scroll()
@@ -153,8 +155,15 @@ fn header(
         .into_any_element()
 }
 
-/// Whether any frame arrived yet: every script reports the host or its uptime.
+/// Whether a supported metric is ready; host scripts also report identity or uptime.
 fn has_readings(snapshot: &Snapshot) -> bool {
+    if snapshot
+        .container
+        .as_ref()
+        .is_some_and(|container| container.memory_current.is_some() || snapshot.cpu.is_some())
+    {
+        return true;
+    }
     snapshot.host.is_some() || snapshot.uptime.is_some()
 }
 
@@ -217,6 +226,9 @@ fn block(
     cx: &App,
 ) -> AnyElement {
     v_flex()
+        .id(format!("host-monitor-section-{title}"))
+        .aria_label(title)
+        .test_support()
         .gap_1()
         .child(
             h_flex()
@@ -239,6 +251,46 @@ fn strong(text: String) -> impl IntoElement {
     div().text_sm().font_semibold().child(text)
 }
 
+fn memory_section(
+    snapshot: &Snapshot,
+    history: &History,
+    span: f64,
+    cx: &App,
+) -> Option<AnyElement> {
+    let theme = cx.theme();
+    if let Some(container) = snapshot
+        .container
+        .as_ref()
+        .filter(|container| container.memory_limit.is_none())
+    {
+        return Some(block(
+            "Memory",
+            strong(format::bytes(container.memory_current?)),
+            muted_line("Limit is unlimited or not visible", cx),
+            cx,
+        ));
+    }
+    let memory = snapshot.memory?;
+    Some(block(
+        "Memory",
+        strong(format!(
+            "{} / {}",
+            format::bytes(memory.used),
+            format::bytes(memory.total)
+        )),
+        v_flex()
+            .gap_1()
+            .child(graph::meter(memory.percent(), theme.chart_2, cx))
+            .child(graph::sparkline(
+                vec![Line::new(&history.memory, theme.chart_2)],
+                span,
+                Some(100.0),
+                cx,
+            )),
+        cx,
+    ))
+}
+
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn section(
     metric: MonitorMetric,
@@ -252,12 +304,20 @@ fn section(
         MonitorMetric::Cpu => {
             let cpu = snapshot.cpu?;
             block(
-                "CPU",
+                if snapshot.container.is_some() {
+                    "CPU (one CPU)"
+                } else {
+                    "CPU"
+                },
                 strong(format::percent(cpu)),
                 graph::sparkline(
                     vec![Line::new(&history.cpu, theme.chart_1)],
                     span,
-                    Some(100.0),
+                    if snapshot.container.is_some() {
+                        None
+                    } else {
+                        Some(100.0)
+                    },
                     cx,
                 ),
                 cx,
@@ -272,27 +332,7 @@ fn section(
                 cx,
             )
         }
-        MonitorMetric::Memory => {
-            let memory = snapshot.memory?;
-            block(
-                "Memory",
-                strong(format!(
-                    "{} / {}",
-                    format::bytes(memory.used),
-                    format::bytes(memory.total)
-                )),
-                v_flex()
-                    .gap_1()
-                    .child(graph::meter(memory.percent(), theme.chart_2, cx))
-                    .child(graph::sparkline(
-                        vec![Line::new(&history.memory, theme.chart_2)],
-                        span,
-                        Some(100.0),
-                        cx,
-                    )),
-                cx,
-            )
-        }
+        MonitorMetric::Memory => memory_section(snapshot, history, span, cx)?,
         MonitorMetric::Swap => {
             let swap = snapshot.swap.filter(|swap| swap.total > 0)?;
             block(

@@ -85,6 +85,28 @@ assert.equal(unknownHistoryBase.status, 1, 'unknown push ancestry must fail befo
 assert.match(unknownHistoryBase.stdout, /::error::/);
 assert.equal(unknownHistoryBase.stderr, '', 'unknown ancestry must not run Git or Python');
 assert.ok(ci.jobs['ci-passed'].needs.includes('integration-history'));
+assert.ok(ci.jobs['ci-passed'].needs.includes('plugin-api-compat'));
+const compat = ci.jobs['plugin-api-compat'];
+assert.equal(compat.steps[0].with['fetch-depth'], 0, 'the release tags are needed to find the base');
+assert.ok(compat.steps.some(step => /check-plugin-api-compat\.py/.test(step.run ?? '')));
+// User plugins stay out of release builds until the external security review is done. A feature
+// can be switched on by name, by `--all-features`, or by a value the step passes through `env` or
+// `with`; the default features are checked by the xtask isolation rule (compile-out).
+const FEATURE_ON = /user-plugins|--all-features/;
+const settings = holder => Object.values(holder ?? {}).map(String).join('\n');
+for (const [name, file] of [['package', pkg], ['release', release]]) {
+  assert.doesNotMatch(settings(file.env), FEATURE_ON, `${name}.yml env must not enable user plugins`);
+  for (const [jobName, job] of Object.entries(file.jobs)) {
+    assert.doesNotMatch(settings(job.env), FEATURE_ON, `${name}.yml ${jobName} env must not enable user plugins`);
+    for (const step of job.steps ?? []) {
+      const text = [step.run ?? '', settings(step.env), settings(step.with)].join('\n');
+      assert.doesNotMatch(text, FEATURE_ON, `${name}.yml ${jobName} must not build user plugins`);
+    }
+  }
+}
+for (const script of ['package-linux.sh', 'prepare-release-pr.sh']) {
+  assert.doesNotMatch(read(`scripts/${script}`), FEATURE_ON, `${script} must not build user plugins`);
+}
 const prHistory = ci.jobs.conventions.steps.find(step => step.name === 'Check architectural baseline and vendor commit separation');
 assert.equal(prHistory.env.HEAD, '${{ inputs.ref || github.event.pull_request.head.sha }}');
 assert.deepEqual(release.jobs['release-validation'].needs,

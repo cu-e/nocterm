@@ -21,14 +21,18 @@ gpui_kit::actions!(
         PreviousTab,
         /// Show or hide the sidebar.
         ToggleSidebar,
-        /// Put the sidebar and the AI panel on each other's side.
-        SwapSides,
         /// Show or hide the AI panel.
         ToggleRightPanel,
         /// Expand or restore the AI panel in the workspace body.
         ToggleRightPanelMaximized,
         /// Open AI settings.
         OpenAiSettings,
+        /// Switch to the next window layout, wrapping around.
+        NextLayout,
+        /// Switch to the previous window layout, wrapping around.
+        PreviousLayout,
+        /// Search and pick a window layout.
+        PickLayout,
         /// Show the next sidebar panel, wrapping around.
         NextPanel,
         /// Open the settings.
@@ -113,3 +117,41 @@ gpui_kit::actions!(
         Quit,
     ]
 );
+
+/// Show or hide the panel of the contribution with this id. Only the window menu sends it.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct TogglePanel {
+    pub id: gpui_kit::SharedString,
+}
+
+/// Switch to the window layout with this id. Only the window menu sends it.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct SwitchLayout {
+    pub id: gpui_kit::SharedString,
+}
+
+/// Open Settings on the Plugins page, with this plugin selected when one is named. It has no
+/// default binding.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct OpenPlugins {
+    pub plugin: Option<gpui_kit::SharedString>,
+}
+
+/// Open Settings on the "Status bar and panels" section of Appearance, with the contribution or
+/// panel group with this id selected when one is named. It has no default binding.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct OpenLayoutSettings {
+    pub select: Option<gpui_kit::SharedString>,
+}
+
+/// Open the Settings page the named plugin keeps for itself (its `settings_page`), whether or
+/// not the plugin is enabled. It has no default binding.
+#[derive(Clone, Debug, PartialEq, gpui_kit::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct OpenPluginPage {
+    pub plugin: gpui_kit::SharedString,
+}

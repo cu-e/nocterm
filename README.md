@@ -194,7 +194,7 @@ and layout overrides always apply.
 `known_hosts` stores accepted keys. In the state directory, `servers.toml` keeps
 detected systems and countries, `flags/` the downloaded flags, `agents.toml`
 model favorites and the last agent used, `agent-chats/` saved AI chats and
-`layout.json` the widths of resizable columns and which side the sidebar is on.
+`layout.json` the widths of resizable columns.
 `keymap.toml` in the configuration directory holds your key binding changes. `vault.bin` stores encrypted credentials and
 uses a sibling `.lock` file for concurrent-writer protection; profiles contain
 only opaque credential IDs. Existing OpenSSH known hosts are also read.
@@ -207,10 +207,114 @@ The window has the sidebar (Servers, Explorer) on one side of the tabs and the
 AI panel on the other; both resize by dragging their edge and keep their width.
 `Ctrl+Shift+C` shows Servers and `Ctrl+Shift+E` the Explorer; pressing it again,
 or clicking the shown panel's button in the footer, hides the sidebar.
-`Ctrl+Alt+B` shows or hides the AI panel and `Ctrl+E` swaps the two sides (`Cmd`
-instead of `Ctrl` on macOS). In a focused terminal `Ctrl+Shift+C` copies, and the
-terminal no longer receives `Ctrl+E` and `Ctrl+J`; rebind them in Settings →
-Keymap if the shell needs them.
+`Ctrl+Alt+B` shows or hides the AI panel (`Cmd` instead of `Ctrl` on macOS).
+**Window → Layouts** chooses the arrangement of the footer and the panels, for every
+open window: Default, Swapped sides (the sidebar and the AI panel on each other's
+side) or a layout saved in the `[layouts]` section of `settings.toml`. **Window →
+Panels** shows or hides a panel. The command palette also has Next Layout, Previous
+Layout and Pick Layout. In a
+focused terminal `Ctrl+Shift+C` copies, and the terminal no longer receives
+`Ctrl+J`; rebind it in Settings → Keymap if the shell needs it.
+
+A saved layout is an entry of `layouts.presets` in `settings.toml`; `layouts.active`
+holds the id of the selected one (`default`, `swapped` or a preset id):
+
+```toml
+[layouts]
+active = "p1"
+
+[[layouts.presets]]
+id = "p1"
+name = "Reading"
+open = ["files.explorer"]      # panels shown when the layout is selected
+tray = ["snippets.library"]    # registered, but kept off the footer and the menu
+[layouts.presets.bar]
+left = [
+  { group = "navigation", members = ["connections.servers", { separator = true }, "files.explorer"] },
+  { item = "monitor.summary" },
+]
+center = [{ item = "workspace.notifications" }]
+right = [{ group = "assistant", side = "right", members = ["agent.chats"] }]
+```
+
+The footer has a `left`, a `center` and a `right` zone, each a list of entries drawn in
+order. `center` is optional: its entries stay at the middle of the footer and give way first
+when the window is narrow (the notification line is cut before any toggle), while with an
+empty `center` the footer is one row from the left zone to the right one.
+When even then the entries do not fit, the least important move into a **»** menu at the end of
+the footer: widgets first, then the terminal toggle, then panel toggles. The notification line
+and a toggle that asks for you stay in place; the menu lists what is hidden and does what the
+entries would. Popups of widgets open toward the inside of the window. An entry is a
+table with exactly one of these keys:
+
+- `item = "<widget id>"` places a status bar widget, such as `monitor.summary`;
+- `separator = true` draws a divider; dividers never lead, trail or double up;
+- `panel = "<panel id>"` places a panel on its own: it opens in a column of its own and closes
+  no other panel. Its optional `side` works as a group's;
+- `group = "<group id>"` places a panel group (`navigation`, `assistant` or one you made, such
+  as `group-1`) whose `members` are panel ids, or `{ separator = true }` dividers between their
+  toggles. A group shows one of its panels at a time. Its optional `name` titles a group you
+  made, and its optional `side` (`"left"` or `"right"`) chooses the side of the content the
+  group's panels open on; without it the group follows its zone.
+
+The `navigation` group is always the sidebar; a `primary` key on a group is ignored (and
+logged). A contribution the layout does not mention is placed by its own hint when the hint
+says to show it, and waits in the tray otherwise; the notifications are pinned and always
+shown.
+
+Panel and widget ids are listed in [Plugins and their contributions](docs/reference/plugins.md).
+A panel belongs to the group the layout places it in, wherever its own hint says, or stands on
+its own: the sidebar toggle and `Ctrl+Alt+B` act on the groups as the footer draws them. The
+open panels and groups are laid out in the order the footer shows them, so the first one of the
+footer is the leftmost column on its side. Editing the
+selected layout in the file rearranges every open window at once and keeps the panels
+that are still placed; switching layouts shows exactly the panels the new layout opens.
+If the `[layouts]` table does not read (for example a wrong key type), the window shows
+the Default layout and refuses to switch layouts, so that your table is never
+overwritten; fix the file and switching works again.
+
+You need not write the table by hand. **Settings → Appearance → Status bar and panels**
+shows the footer on one line, as it will look, and you edit it there. Drag an item to reorder
+it, to another zone, onto a gap to make a panel stand on its own, onto a panel to put the two in
+one group, or onto **Not in the bar** to take it off the footer. Right-click an item, a group or
+a separator for its menu: move it, take a panel out of its group or start a new group with it,
+rename or ungroup a group, add separators, choose the side a centre group opens on or whether a
+panel opens with the layout, open the plugin's settings, or hide it. Click an item to select it
+and move it with `Alt+←`/`→`, `Alt+↑`/`↓` (to another zone), `G` (to the next group), `|` (add a
+separator) and `Delete` (take it off the footer into the tray); `Ctrl+Z` and `Ctrl+Shift+Z`
+(`Cmd` on macOS) undo and redo. Editing the Default layout in use saves a copy named Custom and
+selects it, so the built-in layouts never change; a built-in layout that is not in use offers
+**Duplicate to edit**. Saved layouts can be renamed, duplicated, deleted and reset there.
+Right-click the footer for **Hide**, **Customize Status Bar…** and **Layouts**.
+Settings → Plugins has a "Customize in status bar…" button for each plugin. A layout that
+places an item of a plugin that is not installed keeps it there until the first edit, which
+moves it to the tray as "Not installed". The editor refuses to save while the `[layouts]` table does not read, and says so; fix the file first.
+
+Settings → Plugins lists the built-in plugins. A switch turns a plugin off for every window:
+its panels and widgets disappear from the window and the layout keeps their place for when it
+returns. The AI Agents plugin is required and stays on. Select a plugin to change its
+settings, or open its own page with the "settings…" button (AI Agents, Monitor and
+Workspaces have one). The status bar metrics of Monitor are under Plugins → Monitor; the
+Monitor page keeps the refresh intervals and the details. The switches are the `disabled`
+key of the `[plugins]` section of `settings.toml` (see the
+[settings reference](docs/reference/settings.md)), and **Window → Panels** omits the panels
+of a disabled plugin. If that table does not read, every plugin stays on and the page
+refuses to switch one, so that your table is never overwritten; fix the file and the
+switches work again.
+
+The Clock plugin shows the local time as `HH:MM` in the status bar. Default does not place
+it; add it from Settings → Appearance → Status bar and panels (it waits in the tray) or put
+`{ item = "clock.time" }` in a zone of a saved layout. Switching the plugin off removes it
+from every window. Its settings, under Settings → Plugins → Clock, choose a 24-hour or 12-hour clock (`1:05 PM`), seconds (the clock then
+updates every second) and a short date before the time (`Oct 24`); they are the `[clock]`
+section of `settings.toml` and apply at once in every window.
+
+User plugins (preview) are installed from a file and run inside the window under the capabilities
+you allow. They are in builds made with `cargo build --features user-plugins`; release builds do not
+have them yet. Such a build loads none until you turn on Settings → Plugins → User plugins →
+Allow user plugins (the `user_plugins` key of the `[plugins]` section) and restart, and
+`nocterm --safe-mode` starts without any of them, whatever the setting says, to recover from a
+plugin that misbehaves. The [guide](docs/plugins/README.md) is for authors.
 
 Settings → Keymap lists every command with its shortcuts and description. Search
 matches words in any of them and shortcuts in any modifier order; Find by keys
@@ -226,6 +330,8 @@ keymap and Cargo manifests:
 - [Settings](docs/reference/settings.md)
 - [Design tokens](docs/reference/design-tokens.md)
 - [Actions and shortcuts](docs/reference/actions.md)
+- [Plugins and their contributions](docs/reference/plugins.md)
+- [User plugins (preview)](docs/plugins/README.md): the [guide](docs/plugins/guide.md), the [reference](docs/plugins/reference.md) and the [manifest schema](docs/plugins/manifest.schema.json)
 - [Architecture](docs/ARCHITECTURE.md)
 
 ## Development
@@ -299,3 +405,85 @@ their folders.
 Local agents are not sandboxed and may read your user files. Nocterm excludes
 SSH/vault credential fields from context; terminal-output filtering cannot
 recognize every secret. See [AI setup, tools and privacy](docs/AI_AGENTS.md).
+
+The Workspaces button beside Containers opens saved folders for the current
+connection and other servers. Each workspace has its own terminal tabs and chat
+history, using ordinary local or SSH sessions and the server’s normal permissions.
+
+With no server selected, the sidebar shows **This computer**. You can create a
+workspace there without opening a terminal first. A selected disconnected server
+must be reconnected before creating a workspace on it.
+
+Workspace creation offers three modes on this computer or the selected server:
+
+- **Direct connection** selects a required project directory on the connected
+  computer or server. Available file access provides folder suggestions and
+  Home, Up and Refresh controls.
+- **Existing container** lists Docker and Podman containers available to the
+  current user on that host, including stopped containers. Select the
+  container and optionally choose a project directory.
+- **New container** selects Docker or Podman and an image. Compatible Linux
+  images can install Python, Rust, Bun, Node.js and Java together; Python
+  is selected initially. Each language offers its actual default or a custom numeric
+  version: Python minor/exact, Rust exact, Bun exact, Node.js major/exact, Java major.
+  Python, Node.js and Java default to distribution packages; Rust uses Stable and
+  Bun uses Latest stable. Requested versions install inside the new container,
+  according to its detected distribution, architecture and libc. Unsupported
+  combinations fail explicitly; for example, Alpine uses distribution Node.js
+  rather than the glibc archives used for pinned Node.js versions.
+
+The creation window follows **Connection → Project → Tools**. Connection chooses
+the mode and resource; Project contains the name, directory and optional Git
+repository. Tools appears only for a new container. Back keeps your entries;
+preparation starts only after **Create workspace** on the final step.
+The server stays in the shared header while you move between steps. Existing
+containers can be searched by name, ID, image or engine. Custom image results use
+separate local and registry sources with a full-width list.
+
+**Settings → Workspaces** controls the default container project directory,
+initially `/home`. Leaving the directory empty uses the default captured when
+that creation window opened. An explicit directory takes precedence. Changing
+this setting affects future creation windows and preserves saved workspaces.
+
+Workspace settings show the actual environment and installed versions when its
+connection is available. **Install / update** changes only selected languages;
+unchecked languages remain installed. Saving the workspace name or directory
+does not install tools. Managed versions use the current user's workspace tool
+directory and become available in new workspace terminals. Existing terminals
+keep their current environment. Native package installation needs existing root
+permissions; Nocterm does not invoke sudo or edit your shell startup files.
+Cancellation can leave completed package or language changes in place.
+An existing Arch environment needs an initialized, current package database;
+Nocterm asks an administrator to complete `pacman -Syu` when it is missing.
+Initial package synchronization is performed inside a newly created Arch container.
+
+Creation shows its current phase beside the action buttons. Download byte counts
+are shown when the engine reports them; progress remains indeterminate when a
+reliable total is unavailable.
+
+Custom image entry immediately filters local repositories and tags. After a brief
+pause it also searches Docker Hub with Docker, or configured registries with Podman,
+using that host's existing engine configuration. Search lists repositories, not tags;
+enter a full reference such as `debian:13` for a particular tag. Search never pulls
+an image. Local images and manual references remain available when registry search
+fails or is rate limited.
+
+A Git repository is optional. Cloning uses an empty destination and does not
+overwrite existing project files. An empty container directory uses the configured
+default described above.
+Closing a workspace or removing its saved entry leaves containers and project
+files intact. Container workspace paths are entered manually. Once connected,
+Explorer browses and transfers files inside the selected container, using its
+configured user and normal permissions. This needs Linux `/proc` and compatible
+standard shell/file utilities, available in ordinary Ubuntu, Debian and Alpine
+images; minimal images without them report unavailable file access. No SSH server
+or helper is installed in the container. Folder rename and cross-filesystem rename
+are unsupported by this adapter; ordinary file rename never overwrites an existing
+entry. Server files remain available through the server's own connection.
+
+The footer monitor follows the selected workspace's active environment. Folder
+workspaces use their own server connection; container workspaces use their own
+Linux cgroup CPU and memory accounting. Container CPU is shown relative to one
+CPU, so it can exceed 100%. Memory without an observable limit shows bytes in use
+without a percentage. Host-only metrics stay unavailable in containers. An
+unavailable workspace never redirects monitoring to this computer.

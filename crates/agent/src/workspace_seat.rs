@@ -1,51 +1,81 @@
-//! The [`ChatWorkspace`] seat over the panel's workspace.
+//! An immutable original surface and exact document, independent of visible tabs.
 use gpui_kit::{App, EntityId, Subscription, WeakEntity, Window};
-use nocterm_agent_chat::seat::ChatWorkspace;
-use nocterm_workspace::{ConnectionSummary, ExpectedSession, TerminalEntry, Workspace};
+use nocterm_agent_chat::seat::{ChatWorkspace, Seat};
+use nocterm_ai::{
+    execution_origin::ChatKey,
+    history::ContextId,
+    storage::{AgentStorageError, require_chat_scope},
+};
+use nocterm_workspace::{
+    ConnectionSummary, ExpectedSession, ProjectSurfaceReceipt, TerminalEntry, Workspace,
+};
+use std::rc::Rc;
 
-/// The workspace a panel is attached to, held weakly.
-pub(crate) struct WorkspaceSeat(WeakEntity<Workspace>);
-
+pub(crate) struct WorkspaceSeat {
+    workspace: WeakEntity<Workspace>,
+    source: ProjectSurfaceReceipt,
+    key: Option<ChatKey>,
+}
 impl WorkspaceSeat {
-    pub(crate) fn new(workspace: WeakEntity<Workspace>) -> Self {
-        Self(workspace)
+    pub(crate) fn new(workspace: WeakEntity<Workspace>, source: ProjectSurfaceReceipt) -> Self {
+        Self {
+            workspace,
+            source,
+            key: None,
+        }
+    }
+    fn permits(&self, workspace: &Workspace, item: EntityId, cx: &App) -> bool {
+        workspace
+            .context_terminals(self.source, cx)
+            .is_ok_and(|entries| entries.iter().any(|entry| entry.item == item))
     }
 }
-
-/// The connection `item` currently runs, as the workspace places it.
-fn current(workspace: &Workspace, item: EntityId, cx: &App) -> Option<ExpectedSession> {
-    workspace
-        .terminals(cx)
-        .into_iter()
-        .find(|entry| entry.item == item)
-        .and_then(|entry| entry.capabilities.state().info(cx))
-        .map(|info| info.expected)
-}
-
 impl ChatWorkspace for WorkspaceSeat {
+    fn for_chat(&self, key: &ChatKey) -> Result<Seat, AgentStorageError> {
+        require_chat_scope(self.source.context(), key.scope())?;
+        if self.key.as_ref().is_some_and(|original| original != key) {
+            return Err(nocterm_ai::history::HistoryCodecError::IdentityMismatch.into());
+        }
+        Ok(Rc::new(Self {
+            workspace: self.workspace.clone(),
+            source: self.source,
+            key: Some(key.clone()),
+        }))
+    }
     fn id(&self) -> EntityId {
-        self.0.entity_id()
+        self.workspace.entity_id()
     }
     fn is_open(&self) -> bool {
-        self.0.upgrade().is_some()
+        self.workspace.upgrade().is_some()
     }
     fn terminals(&self, cx: &App) -> Option<Vec<TerminalEntry>> {
-        Some(self.0.upgrade()?.read(cx).terminals(cx))
+        let workspace = self.workspace.upgrade()?;
+        let workspace = workspace.read(cx);
+        workspace.context_terminals(self.source, cx).ok()
     }
     fn connections(&self, cx: &App) -> Vec<ConnectionSummary> {
-        self.0
+        if self.terminals(cx).is_none() {
+            return Vec::new();
+        }
+        self.workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).connection_directory())
             .map(|directory| directory.connections(cx))
             .unwrap_or_default()
     }
     fn opens_connections(&self, cx: &App) -> bool {
-        self.0
-            .upgrade()
-            .is_some_and(|workspace| workspace.read(cx).connection_directory().is_some())
+        self.terminals(cx).is_some()
+            && self.workspace.upgrade().is_some_and(|workspace| {
+                let workspace = workspace.read(cx);
+                if self.source.context() == ContextId::General {
+                    workspace.connection_directory().is_some()
+                } else {
+                    workspace.chat_connection_opener().is_some()
+                }
+            })
     }
     fn observe(&self, changed: Box<dyn Fn(&mut App)>, cx: &mut App) -> Option<Subscription> {
-        let workspace = self.0.upgrade()?;
+        let workspace = self.workspace.upgrade()?;
         Some(cx.subscribe(&workspace, move |_, _, cx| changed(cx)))
     }
     fn open_background(
@@ -54,17 +84,32 @@ impl ChatWorkspace for WorkspaceSeat {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EntityId> {
-        let directory = self.0.upgrade()?.read(cx).connection_directory()?;
-        directory.open_background(profile, &self.0, window, cx)
+        let owner = self.workspace.upgrade()?;
+        if self.source.context() == ContextId::General {
+            let directory = owner.read(cx).connection_directory()?;
+            return directory.open_background(profile, &self.workspace, window, cx);
+        }
+        let opener = owner.read(cx).chat_connection_opener()?;
+        match opener.open(profile, self.source, &self.workspace, window, cx) {
+            Ok(item) => Some(item),
+            Err(error) => {
+                tracing::warn!(%error, "could not open chat's original workspace server");
+                None
+            }
+        }
     }
     fn show_background(&self, item: EntityId, window: &mut Window, cx: &mut App) {
-        let _ = self.0.update(cx, |workspace, cx| {
-            workspace.show_background_session(item, window, cx)
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            if self.permits(workspace, item, cx) {
+                let _ = workspace.show_context_background(self.source, item, window, cx);
+            }
         });
     }
     fn close_background(&self, item: EntityId, window: &mut Window, cx: &mut App) {
-        let _ = self.0.update(cx, |workspace, cx| {
-            workspace.close_background_session(item, window, cx)
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            if self.permits(workspace, item, cx) {
+                let _ = workspace.close_context_background(self.source, item, window, cx);
+            }
         });
     }
     fn close_if_original(
@@ -74,13 +119,33 @@ impl ChatWorkspace for WorkspaceSeat {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        self.0
+        self.workspace
             .update(cx, |workspace, cx| {
-                if !workspace.is_background(item) || current(workspace, item, cx) != expected {
+                if !self.permits(workspace, item, cx) {
                     return false;
                 }
-                workspace.close_background_session(item, window, cx);
-                true
+                let entry = workspace
+                    .context_terminals(self.source, cx)
+                    .ok()
+                    .and_then(|entries| {
+                        entries
+                            .into_iter()
+                            .find(|entry| entry.item == item && entry.background)
+                    });
+                let Some(entry) = entry else {
+                    return false;
+                };
+                let current = entry
+                    .capabilities
+                    .state()
+                    .info(cx)
+                    .map(|info| info.expected);
+                if current != expected {
+                    return false;
+                }
+                workspace
+                    .close_context_background(self.source, item, window, cx)
+                    .is_ok()
             })
             .unwrap_or(false)
     }

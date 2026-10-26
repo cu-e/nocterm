@@ -14,7 +14,7 @@ use nocterm_settings::{SettingsDocument, SettingsFile};
 use nocterm_ssh::{SshConfig, SshTransport};
 use nocterm_store::SettingsConfig;
 
-use crate::{AGENT_BRIDGE, agent_auth, bootstrap};
+use crate::{AGENT_BRIDGE, agent_auth, bootstrap, shell_setup::UserPluginMode};
 
 pub(crate) struct PreparedApp {
     paths: Paths,
@@ -22,17 +22,18 @@ pub(crate) struct PreparedApp {
     tokens: DesignTokens,
     settings: SettingsConfig,
     themes: bootstrap::Themes,
-    transport: SshTransport,
+    hosts: bootstrap::HostServices,
     files: nocterm_files::Deps,
-    local: nocterm_terminal::LocalSessions,
+    local_fs: Arc<dyn nocterm_session::local_fs::LocalFs>,
+    user_plugins: UserPluginMode,
 }
 impl PreparedApp {
-    pub(crate) fn load() -> anyhow::Result<Self> {
+    pub(crate) fn load(user_plugins: UserPluginMode) -> anyhow::Result<Self> {
         // Linux reports a replaced running binary as "<path> (deleted)".
         let executable = std::env::current_exe().context("locating the nocterm executable")?;
         let paths = Paths::discover()?;
         let tokens = load_tokens(&paths);
-        let settings = load_settings(&paths);
+        let settings = load_settings(&paths, &user_plugins);
         let dirs = nocterm_themes::ThemeDirs {
             user: paths.user_themes_dir(),
             installed: paths.installed_themes_dir(),
@@ -47,6 +48,22 @@ impl PreparedApp {
         let catalog = library.scan();
         let transport =
             SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
+        let local_fs = Arc::new(
+            nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
+        );
+        let local = local_sessions();
+        let local_host = local
+            .is_available()
+            .then(|| Arc::new(nocterm_local::LocalExec) as Arc<dyn nocterm_session::HostExec>);
+        let activation = Arc::new(nocterm_project_environment::NativeWorkspaceSessions);
+        let environment = Arc::new(
+            nocterm_project_environment::NativeWorkspaceEnvironment::new(Arc::new(
+                nocterm_project_runtime::NativeEnvironmentCommands,
+            )),
+        );
+        let preparation = Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
+            environment.clone(),
+        ));
         Ok(Self {
             paths,
             executable,
@@ -57,9 +74,24 @@ impl PreparedApp {
                 catalog,
                 registry,
             },
-            transport,
-            files: files_dependencies()?,
-            local: local_sessions(),
+            hosts: bootstrap::HostServices {
+                transport: Arc::new(transport),
+                local,
+                local_host,
+                image_search: Arc::new(nocterm_project_runtime::NativeImageSearch),
+                environment,
+                preparation,
+                container_sessions: Arc::new(
+                    nocterm_project_container_fs::NativeContainerSessions::new(activation.clone()),
+                ),
+                workspace_sessions: activation,
+                container_actions: Arc::new(
+                    nocterm_project_runtime::NativeWorkspaceContainerActions,
+                ),
+            },
+            files: files_dependencies(local_fs.clone())?,
+            local_fs,
+            user_plugins,
         })
     }
 
@@ -69,16 +101,18 @@ impl PreparedApp {
         ));
         let chats = Arc::new(nocterm_agent_storage::FileChatRepository::new(
             self.paths.state_dir().join("agent-chats"),
+            self.local_fs.clone(),
         ));
         let paths = self.paths.clone();
         let loading = cx.background_executor().spawn(async move {
             let connections = crate::connection_setup::native(&paths);
+            let projects = crate::project_setup::PreparedProjectSetup::native(&paths);
             let storage = nocterm_agent_runtime::AgentStorage::prepare(state, chats).await;
-            (storage, connections)
+            (storage, connections, projects)
         });
         cx.spawn(async move |cx| {
-            let (storage, connections) = loading.await;
-            cx.update(|cx| self.finish(storage, connections, cx));
+            let (storage, connections, projects) = loading.await;
+            cx.update(|cx| self.finish(storage, connections, projects, cx));
         })
         .detach();
     }
@@ -87,6 +121,7 @@ impl PreparedApp {
         self,
         storage: nocterm_agent_runtime::AgentStorage,
         connections: nocterm_connections::PreparedConnections,
+        projects: crate::project_setup::PreparedProjectSetup,
         cx: &mut App,
     ) {
         let agent = agent_services(&self.paths, self.executable, storage);
@@ -96,10 +131,6 @@ impl PreparedApp {
         });
         let codec = Arc::new(nocterm_image_codec::NativeImageCodec);
         let images = nocterm_agent::ImageDeps::new(codec.clone(), codec);
-        let local_host = self
-            .local
-            .is_available()
-            .then(|| Arc::new(nocterm_local::LocalExec) as Arc<dyn nocterm_session::HostExec>);
         let booted = bootstrap::bootstrap(
             bootstrap::Services {
                 images,
@@ -107,9 +138,7 @@ impl PreparedApp {
                 settings: self.settings,
                 paths: self.paths,
                 persist: true,
-                transport: Arc::new(self.transport),
-                local: self.local,
-                local_host,
+                hosts: self.hosts,
                 terminal_auth_factory: Some(agent_auth::opener),
                 files: self.files,
                 themes: Some(self.themes),
@@ -117,13 +146,15 @@ impl PreparedApp {
                 sandbox_probe: Arc::new(nocterm_acp::NativeSandboxProbe),
                 vault,
                 connections,
+                projects,
+                user_plugins: self.user_plugins,
             },
             cx,
         );
         let booted = match booted {
             Ok(booted) => booted,
             Err(error) => {
-                tracing::error!(%error, "could not compose settings pages");
+                tracing::error!(?error, "could not compose the application");
                 cx.quit();
                 return;
             }
@@ -143,9 +174,9 @@ impl PreparedApp {
     }
 }
 
-fn files_dependencies() -> anyhow::Result<nocterm_files::Deps> {
-    let local_fs =
-        Arc::new(nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?);
+fn files_dependencies(
+    local_fs: Arc<nocterm_localfs::LocalFilesystem>,
+) -> anyhow::Result<nocterm_files::Deps> {
     let transfers = nocterm_transfer_runtime::TransferRuntime::start(
         nocterm_transfer_runtime::TransferRuntimeDeps::new(
             local_fs.clone(),
@@ -153,11 +184,15 @@ fn files_dependencies() -> anyhow::Result<nocterm_files::Deps> {
         ),
     )
     .context("starting transfers")?;
+    let directories = Arc::new(nocterm_directory_io::DirectoryReaders::new(
+        local_fs.clone(),
+    ));
     Ok(nocterm_files::Deps::new(
         local_fs.clone(),
         local_fs,
         transfers,
         Arc::new(nocterm_local::LocalProgramOpener::default()),
+        directories,
     ))
 }
 
@@ -218,11 +253,13 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
     })
 }
 
-/// Invalid sections keep their source; malformed files disable writes for this run.
-fn load_settings(paths: &Paths) -> SettingsConfig {
+/// Invalid sections keep their source; malformed files disable writes for this run. A
+/// developer session reads the file and never writes it.
+fn load_settings(paths: &Paths, mode: &UserPluginMode) -> SettingsConfig {
     let file = SettingsFile::new(paths.settings_file());
     match file.load() {
-        Ok(document) => SettingsConfig::new(document, file),
+        Ok(document) if mode.saves_settings() => SettingsConfig::new(document, file),
+        Ok(document) => SettingsConfig::in_memory(document),
         Err(error) => {
             tracing::error!(%error, "could not read the settings; changes will not be saved");
             SettingsConfig::in_memory(SettingsDocument::default())
@@ -239,3 +276,6 @@ fn ssh_config(paths: &Paths) -> SshConfig {
         use_agent: true,
     }
 }
+
+#[cfg(test)]
+mod tests;

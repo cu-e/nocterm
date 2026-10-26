@@ -11,6 +11,7 @@ layer = "feature"
 
 [dependencies]
 nocterm-containers.workspace = true
+nocterm-plugin-model.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
@@ -24,3 +25,4 @@ workspace = true
 nocterm-store.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true
+nocterm-workspace = { workspace = true, features = ["test-support"] }

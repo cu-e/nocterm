@@ -211,7 +211,7 @@ fn command_routing_prefers_focus_and_rejects_unsupported_commands(cx: &mut TestA
             window.focus(&workspace.focus_handle(cx), cx);
             assert_eq!(
                 workspace.command_item(window, cx).unwrap().item_id(),
-                workspace.active_item().unwrap().item_id(),
+                workspace.active_item(cx).unwrap().item_id(),
                 "focus outside Item containers falls back to the active central pane"
             );
         });

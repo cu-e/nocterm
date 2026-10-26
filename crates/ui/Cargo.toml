@@ -11,6 +11,10 @@ layer = "ui"
 
 [dependencies]
 nocterm-terminal-model.workspace = true
+nocterm-explorer.workspace = true
+nocterm-plugin-model.workspace = true
+nocterm-plugin-api = { workspace = true, optional = true }
+nocterm-plugin-ports = { workspace = true, optional = true }
 
 futures.workspace = true
 nocterm-core.workspace = true
@@ -29,7 +33,14 @@ serde.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 
+[features]
+test-support = []
+# Notices a user plugin posts and the ones it still has (docs/architecture/guardrails.md).
+user-plugins = ["dep:nocterm-plugin-api", "dep:nocterm-plugin-ports"]
+
 [dev-dependencies]
+nocterm-explorer = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 toml.workspace = true

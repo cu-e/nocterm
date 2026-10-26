@@ -1,15 +1,15 @@
 //! The window's frame around the tabs: the title bar, the body's columns,
-//! the sidebar and the footer.
+//! the sidebar and the footer, which hosts the status bar.
 //!
 //! In the floating layout ([`FloatingCards`]) every column is a card on the
 //! canvas, and the title bar and footer sit on the canvas between them. The
 //! dock draws its own tab groups as cards, so the content column only frames
 //! what it shows when no tab is open.
 use gpui_kit::{
-    Action as _, Anchor, AnyElement, AnyView, App, Context, Entity, Hsla, MouseButton,
+    Anchor, AnyElement, AnyView, App, Context, ElementId, Entity, Hsla, MouseButton,
     StyleRefinement, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _, TitleBar,
+        ActiveTheme as _, Sizable as _, StyledExt as _, TitleBar,
         button::{Button, ButtonVariants as _},
         floating::FloatingCards,
         h_flex, h_resizable,
@@ -18,21 +18,29 @@ use gpui_kit::{
     },
     div,
     prelude::*,
+    px, svg,
 };
+use nocterm_plugin_model::{PanelChrome, Side, WidthClass};
 use nocterm_ui::IconName;
 
 use super::{
-    MenuBuilder, NewTabMenu, Workspace,
+    ContextSelectionReceipt, MenuBuilder, NewTabMenu, Workspace,
     layout::{Body, Column},
-    panels::Sidebar,
-    right_panel::RightPanelSlot,
-    tabs::Tabs,
+    panel_groups::{GroupKey, HostedPanel, PanelGroups},
+    shell_layout::ShellLayout,
+    surface::SurfaceFrame,
 };
 use crate::NewTab;
 use std::rc::Rc;
 
 mod empty_state;
 mod menus;
+mod status_bar;
+mod toggle_look;
+
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use status_bar::ToggleLooks;
+pub(super) use status_bar::{WidgetFactory, ZoneHook};
 
 struct NewTabControl {
     entry: Option<NewTabMenu>,
@@ -41,29 +49,32 @@ struct NewTabControl {
 
 /// Ephemeral immutable regions; Chrome cannot mutate another state owner.
 pub(super) struct Regions<'a> {
-    tabs: &'a Tabs,
-    sidebar: &'a Sidebar,
-    right: &'a RightPanelSlot,
+    tabs: SurfaceFrame,
+    selection: ContextSelectionReceipt,
+    groups: &'a PanelGroups,
     directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+    shell: &'a ShellLayout,
 }
 impl<'a> Regions<'a> {
     pub(super) fn new(
-        tabs: &'a Tabs,
-        sidebar: &'a Sidebar,
-        right: &'a RightPanelSlot,
+        tabs: SurfaceFrame,
+        selection: ContextSelectionReceipt,
+        groups: &'a PanelGroups,
         directory: Option<Rc<dyn crate::ConnectionDirectory>>,
+        shell: &'a ShellLayout,
     ) -> Self {
         Self {
             tabs,
-            sidebar,
-            right,
+            selection,
+            groups,
             directory,
+            shell,
         }
     }
 }
 
 pub(super) struct Chrome {
-    status: Vec<(StatusSide, AnyView)>,
+    status: status_bar::StatusBar,
     menus: menus::WindowMenus,
     new_tab: NewTabControl,
 }
@@ -71,7 +82,7 @@ pub(super) struct Chrome {
 impl Chrome {
     pub(super) fn new(menu_focus: gpui_kit::FocusHandle) -> Self {
         Self {
-            status: Vec::new(),
+            status: status_bar::StatusBar::new(),
             menus: menus::WindowMenus::new(menu_focus),
             new_tab: NewTabControl {
                 entry: None,
@@ -79,14 +90,11 @@ impl Chrome {
             },
         }
     }
-    pub(super) fn add_status(&mut self, side: StatusSide, view: AnyView) {
-        self.status.push((side, view));
+    pub(super) fn status_bar(&self) -> &status_bar::StatusBar {
+        &self.status
     }
-    pub(super) fn status_views(&self, side: StatusSide) -> impl Iterator<Item = AnyView> + '_ {
-        self.status
-            .iter()
-            .filter(move |(at, _)| *at == side)
-            .map(|(_, view)| view.clone())
+    pub(super) fn status_bar_mut(&mut self) -> &mut status_bar::StatusBar {
+        &mut self.status
     }
     pub(super) fn install_new_tab(&mut self, view: AnyView, focus: gpui_kit::FocusHandle) {
         self.new_tab.install(view, focus);
@@ -102,6 +110,14 @@ impl Chrome {
     }
     pub(super) fn menu_builder(&self) -> Option<MenuBuilder> {
         self.menus.builder()
+    }
+    pub(super) fn stale_menu_selection(
+        &self,
+        selection: ContextSelectionReceipt,
+        window: &Window,
+        cx: &App,
+    ) -> bool {
+        self.menus.stale_selection(selection, window, cx)
     }
     pub(super) fn command_target(
         &self,
@@ -121,9 +137,10 @@ impl Chrome {
         &mut self,
         menus: Vec<gpui_kit::OwnedMenu>,
         target: Option<gpui_kit::EntityId>,
+        selection: ContextSelectionReceipt,
         cx: &mut App,
     ) {
-        self.menus.refresh(menus, target, cx);
+        self.menus.refresh(menus, target, selection, cx);
     }
     pub(super) fn prepare_closed_menu(&mut self, cx: &App) -> bool {
         self.menus.clear_closed_target(cx)
@@ -143,13 +160,6 @@ fn tile(cards: Option<FloatingCards>, content: impl IntoElement) -> AnyElement {
         Some(cards) => cards.card(content).into_any_element(),
         None => content.into_any_element(),
     }
-}
-
-/// Which end of the footer a feature's status view sits at.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum StatusSide {
-    Leading,
-    Trailing,
 }
 
 impl Chrome {
@@ -176,7 +186,7 @@ impl Chrome {
             .into_any_element()
     }
 
-    /// The sidebar, the tabs and the side panel, in the user's order.
+    /// One column per shown panel group and the tabs, in the user's order.
     fn render_columns(
         &self,
         body_state: &mut Body,
@@ -185,49 +195,67 @@ impl Chrome {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
-        if regions.right.maximized() {
-            return tile(
-                cards,
-                Workspace::forward_commands(div(), cx)
-                    .id("workspace-right-panel")
-                    .test_support()
-                    .size_full()
-                    .when_some(regions.right.view(), |body, panel| {
-                        body.child(cached(panel))
-                    }),
-            );
-        }
         let widths = body_state.widths(window, cx);
-        let arrangement =
-            body_state.arrangement(regions.sidebar.visible(), regions.right.open(), cx);
-        let state = body_state.state(arrangement, cx);
+        let arrangement = body_state.arrangement(regions.groups);
+        let state = body_state.state(&arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {
-            body = body.child(match column {
-                Column::Sidebar => resizable_panel()
-                    .size(widths.sidebar)
-                    .size_range(widths.sidebar_range.clone())
-                    .child(tile(
-                        cards,
-                        self.render_sidebar(regions.sidebar, arrangement.swapped, cx),
-                    )),
+            body = body.child(match *column {
+                Column::Group { group, class, side } => {
+                    let width = widths.of(class);
+                    resizable_panel()
+                        // Only the navigation column has always been fixed in the group.
+                        .when(class == WidthClass::Navigation, |panel| panel.flex_none())
+                        .map(|panel| {
+                            if arrangement.expanded() == Some(group) {
+                                panel.size_range(px(0.)..gpui_kit::Pixels::MAX)
+                            } else {
+                                panel.size(width.size).size_range(width.range.clone())
+                            }
+                        })
+                        .child(self.render_group(regions.groups, group, side, cards, cx))
+                }
                 Column::Content => resizable_panel().child(self.render_content(regions, cards, cx)),
-                Column::SidePanel => resizable_panel()
-                    .size(widths.right_panel)
-                    .size_range(widths.right_panel_range.clone())
-                    .child(tile(
-                        cards,
-                        Workspace::forward_commands(div(), cx)
-                            .id("workspace-right-panel")
-                            .test_support()
-                            .size_full()
-                            .when_some(regions.right.view(), |body, panel| {
-                                body.child(cached(panel))
-                            }),
-                    )),
             });
         }
         body.into_any_element()
+    }
+
+    fn render_group(
+        &self,
+        groups: &PanelGroups,
+        group: GroupKey,
+        side: Side,
+        cards: Option<FloatingCards>,
+        cx: &mut Context<Workspace>,
+    ) -> AnyElement {
+        let panel = groups.selected(group);
+        let column = ElementId::from("panel-group-column");
+        let column: ElementId = (column, groups.id(group).to_string()).into();
+        match panel.map_or(PanelChrome::Titled, HostedPanel::chrome) {
+            PanelChrome::Titled => tile(
+                cards,
+                self.render_titled_group(column, panel, side == Side::Right, cx),
+            ),
+            PanelChrome::OwnHeader => tile(cards, self.render_own_header_group(column, panel, cx)),
+        }
+    }
+
+    /// A column whose panel draws its own header.
+    fn render_own_header_group(
+        &self,
+        column: ElementId,
+        panel: Option<&HostedPanel>,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
+        Workspace::forward_commands(div(), cx)
+            .id(column)
+            .test_support()
+            .size_full()
+            .min_w_0()
+            .when_some(panel.map(HostedPanel::view), |body, view| {
+                body.child(cached(view))
+            })
     }
 
     /// The open tabs, or an invitation to open one.
@@ -237,20 +265,26 @@ impl Chrome {
         cards: Option<FloatingCards>,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
-        if regions.tabs.has_visible_tabs(cx) {
+        if regions.tabs.visible() {
             // The dock frames each of its tab groups itself.
             return div()
+                .id("workspace-content")
+                .test_support()
                 .size_full()
-                .child(regions.tabs.dock_view())
+                .child(regions.tabs.view())
                 .into_any_element();
         }
         tile(
             cards,
-            self.render_empty_state(regions.directory.clone(), cx),
+            self.render_empty_state(regions.directory.clone(), regions.selection, cx),
         )
     }
 
-    pub(super) fn render_title_bar(&self, cx: &mut Context<Workspace>) -> impl IntoElement {
+    pub(super) fn render_title_bar(
+        &self,
+        selection: ContextSelectionReceipt,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
         let cards = FloatingCards::get(cx);
         TitleBar::new()
             // On the canvas, the title bar is part of the backdrop.
@@ -261,6 +295,16 @@ impl Chrome {
                     .min_w_0()
                     .gap_1()
                     .pr_2()
+                    .child(
+                        svg()
+                            .path(nocterm_ui::APP_MARK)
+                            .id("workspace-app-mark")
+                            .test_support()
+                            .flex_none()
+                            .w(px(18.))
+                            .h(px(9.))
+                            .text_color(cx.theme().foreground),
+                    )
                     .when_some(self.menu_bar().as_ref(), |bar, menu| {
                         bar.child(
                             div()
@@ -287,22 +331,25 @@ impl Chrome {
                         )
                     })
                     .child(div().flex_1())
-                    .child(self.new_tab.render(cx)),
+                    .child(self.new_tab.render(selection, cx)),
             )
     }
 
-    fn render_sidebar(
+    /// A column under the workspace's own upper-case title.
+    fn render_titled_group(
         &self,
-        panels: &Sidebar,
+        column: ElementId,
+        panel: Option<&HostedPanel>,
         on_right: bool,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         let sidebar = Workspace::forward_commands(v_flex(), cx);
         let theme = cx.theme();
-        let panel = panels.active();
         let floating = FloatingCards::get(cx).is_some();
 
         sidebar
+            .id(column)
+            .test_support()
             .size_full()
             .text_color(theme.sidebar_foreground)
             // A card brings its own fill and outline.
@@ -340,72 +387,20 @@ impl Chrome {
         regions: &Regions<'_>,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
-        let footer = Workspace::forward_commands(div(), cx);
-        let theme = cx.theme();
-        let floating = FloatingCards::get(cx).is_some();
-        footer
-            .id("workspace-footer")
-            .w_full()
-            .flex_shrink_0()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
-                    // On the canvas the gap above already separates the footer.
-                    .when(!floating, |footer| {
-                        footer.border_t_1().border_color(theme.sidebar_border)
-                    })
-                    .children(regions.sidebar.entries().enumerate().map(|(ix, panel)| {
-                        Button::new(("sidebar-panel", ix))
-                            .ghost()
-                            .small()
-                            .icon(panel.icon(cx))
-                            .tooltip(panel.title(cx))
-                            .when_some(panel.badge(cx), Button::label)
-                            .selected(regions.sidebar.showing(ix))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                // The shown panel's button hides the sidebar.
-                                this.toggle_sidebar_panel(ix, window, cx);
-                            }))
-                    }))
-                    .children(self.status_views(StatusSide::Leading))
-                    .child(div().flex_1())
-                    .child(nocterm_ui::notice::NoticeBar::new())
-                    .children(self.status_views(StatusSide::Trailing))
-                    .child(
-                        Button::new("toggle-local-terminal")
-                            .ghost()
-                            .small()
-                            .icon(IconName::SquareTerminal)
-                            .tooltip("Local Terminal")
-                            .selected(regions.tabs.local_visible(cx))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_local_terminal(window, cx)
-                            })),
-                    )
-                    .when(regions.right.available(), |footer| {
-                        footer.child(
-                            Button::new("toggle-right-panel")
-                                .ghost()
-                                .small()
-                                .icon(if regions.right.attention() {
-                                    IconName::ShieldCheck
-                                } else {
-                                    IconName::PanelRight
-                                })
-                                .tooltip(if regions.right.attention() {
-                                    "AI Agents: permission required"
-                                } else {
-                                    "AI Agents"
-                                })
-                                .selected(regions.right.open())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_right_panel(window, cx)
-                                })),
-                        )
-                    }),
-            )
+        let inputs = self.bar_inputs(regions, cx);
+        let menu = status_bar::BarMenu::new(
+            inputs.pointed().clone(),
+            inputs.entries(),
+            regions.shell.set(),
+            regions.shell.choices(),
+            cx.weak_entity(),
+        );
+        status_bar::footer(inputs, menu, cx)
+    }
+
+    /// What the status bar draws for the window as it is now.
+    pub(super) fn bar_inputs(&self, regions: &Regions<'_>, cx: &App) -> status_bar::BarInputs {
+        status_bar::BarInputs::new(regions, &self.status, cx)
     }
 }
 
@@ -418,7 +413,11 @@ impl NewTabControl {
         self.open = open;
         changed
     }
-    fn render(&self, cx: &mut Context<Workspace>) -> impl IntoElement {
+    fn render(
+        &self,
+        selection: ContextSelectionReceipt,
+        cx: &mut Context<Workspace>,
+    ) -> impl IntoElement {
         let button = Button::new("new-tab")
             .ghost()
             .small()
@@ -427,7 +426,11 @@ impl NewTabControl {
 
         match &self.entry {
             None => button
-                .on_click(|_, window, cx| window.dispatch_action(NewTab.boxed_clone(), cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if this.accepts_context_selection(selection, cx) {
+                        this.on_new_tab(&NewTab, window, cx);
+                    }
+                }))
                 .into_any_element(),
             Some(NewTabMenu { view, focus }) => {
                 let menu = view.clone();
@@ -438,7 +441,11 @@ impl NewTabControl {
                     .track_focus(focus)
                     .open(self.open)
                     .on_open_change(move |open, _, cx| {
-                        let _ = workspace.update(cx, |this, cx| this.show_new_tab_menu(*open, cx));
+                        let _ = workspace.update(cx, |this, cx| {
+                            if this.accepts_context_selection(selection, cx) {
+                                this.show_new_tab_menu(*open, cx);
+                            }
+                        });
                     })
                     .content(move |_, _, _| menu.clone())
                     .into_any_element()

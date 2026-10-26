@@ -14,7 +14,7 @@ async fn http_and_socks_tunnels_preserve_target_host_keys_and_sftp() {
     for socks in [false, true] {
         let listener = AsyncListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_port = listener.local_addr().unwrap().port();
-        let target_port = server.port;
+        let target_port = server.port();
         let relay = tokio::spawn(async move {
             let (mut incoming, _) = listener.accept().await.unwrap();
             if socks {

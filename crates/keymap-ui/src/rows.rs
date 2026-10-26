@@ -59,6 +59,9 @@ pub(crate) fn rows(keymap: &KeymapHandle, cx: &App) -> Vec<Row> {
         .iter()
         .copied()
         .filter(|name| offered(name))
+        // A command that cannot be built without arguments is sent by a menu; a binding to it
+        // would be skipped when the keymap loads.
+        .filter(|name| cx.build_action(name, None).is_ok())
         .filter(|name| !bindings.iter().any(|binding| binding.action == *name))
         .collect();
     unbound.sort_unstable();
@@ -101,9 +104,9 @@ mod tests {
 
     fn row(keys: Option<&str>) -> Row {
         Row {
-            action: "workspace::SwapSides".into(),
-            label: "Workspace: Swap Sides".into(),
-            description: "Put the sidebar and the AI panel on each other's side".into(),
+            action: "workspace::ToggleSidebar".into(),
+            label: "Workspace: Toggle Sidebar".into(),
+            description: "Show or hide the sidebar".into(),
             keystrokes: keys.map(str::to_owned),
             context: Some("Workspace".into()),
             source: Some(Source::Default),
@@ -114,11 +117,11 @@ mod tests {
     #[test]
     fn search_matches_words_anywhere_and_shortcuts_in_any_order() {
         let bound = row(Some("ctrl-shift-e"));
-        assert!(matches(&bound, "swap"));
-        assert!(matches(&bound, "SIDEBAR panel"));
+        assert!(matches(&bound, "toggle"));
+        assert!(matches(&bound, "SIDEBAR hide"));
         assert!(matches(&bound, "shift-ctrl-e"));
         assert!(matches(&bound, "ctrl-shift"));
-        assert!(!matches(&bound, "swap terminal"));
+        assert!(!matches(&bound, "toggle terminal"));
         assert!(matches(&row(None), "unbound"));
     }
 

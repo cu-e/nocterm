@@ -7,27 +7,27 @@
 | Key | Type / choices | Default | Description |
 | --- | --- | --- | --- |
 | `dark.canvas` | ["string","null"] | `null` | The window's backdrop behind floating cards: the gaps between them and the title and status bars. Unset: a shade darker than `background`. |
-| `dark.terminal.background` | ["string","null"] | `"#181818"` | Terminal background. Unset: the interface background. |
-| `dark.terminal.black` | "string" | `"#000000"` | ANSI colour 0. |
-| `dark.terminal.blue` | "string" | `"#2472c8"` | ANSI colour 4. |
-| `dark.terminal.bright_black` | "string" | `"#666666"` | ANSI colour 8. |
-| `dark.terminal.bright_blue` | "string" | `"#3b8eea"` | ANSI colour 12. |
-| `dark.terminal.bright_cyan` | "string" | `"#29b8db"` | ANSI colour 14. |
-| `dark.terminal.bright_green` | "string" | `"#23d18b"` | ANSI colour 10. |
-| `dark.terminal.bright_magenta` | "string" | `"#d670d6"` | ANSI colour 13. |
-| `dark.terminal.bright_red` | "string" | `"#f14c4c"` | ANSI colour 9. |
-| `dark.terminal.bright_white` | "string" | `"#ffffff"` | ANSI colour 15. |
-| `dark.terminal.bright_yellow` | "string" | `"#f5f543"` | ANSI colour 11. |
-| `dark.terminal.cursor` | ["string","null"] | `null` | Cursor colour. Unset: the terminal foreground. |
-| `dark.terminal.cyan` | "string" | `"#11a8cd"` | ANSI colour 6. |
-| `dark.terminal.foreground` | ["string","null"] | `null` | Default text colour. Unset: the interface foreground. |
-| `dark.terminal.green` | "string" | `"#0dbc79"` | ANSI colour 2. |
-| `dark.terminal.magenta` | "string" | `"#bc3fbc"` | ANSI colour 5. |
-| `dark.terminal.red` | "string" | `"#cd3131"` | ANSI colour 1. |
-| `dark.terminal.selection` | ["string","null"] | `null` | Selection highlight. Unset: the interface selection colour. |
-| `dark.terminal.white` | "string" | `"#e5e5e5"` | ANSI colour 7. |
-| `dark.terminal.yellow` | "string" | `"#e5e510"` | ANSI colour 3. |
-| `dark.ui` | "object" | `{"tab.active.background":"#272727"}` |  |
+| `dark.terminal.background` | ["string","null"] | `"#1f1f21"` | Terminal background. Unset: the interface background. |
+| `dark.terminal.black` | "string" | `"#2a2a2d"` | ANSI colour 0. |
+| `dark.terminal.blue` | "string" | `"#6fa2ff"` | ANSI colour 4. |
+| `dark.terminal.bright_black` | "string" | `"#5f5e5a"` | ANSI colour 8. |
+| `dark.terminal.bright_blue` | "string" | `"#9fc0ff"` | ANSI colour 12. |
+| `dark.terminal.bright_cyan` | "string" | `"#b6e3da"` | ANSI colour 14. |
+| `dark.terminal.bright_green` | "string" | `"#8edcab"` | ANSI colour 10. |
+| `dark.terminal.bright_magenta` | "string" | `"#d4ccff"` | ANSI colour 13. |
+| `dark.terminal.bright_red` | "string" | `"#ff8a85"` | ANSI colour 9. |
+| `dark.terminal.bright_white` | "string" | `"#efeeea"` | ANSI colour 15. |
+| `dark.terminal.bright_yellow` | "string" | `"#f7dc85"` | ANSI colour 11. |
+| `dark.terminal.cursor` | ["string","null"] | `"#b4a7ff"` | Cursor colour. Unset: the terminal foreground. |
+| `dark.terminal.cyan` | "string" | `"#8fd0c4"` | ANSI colour 6. |
+| `dark.terminal.foreground` | ["string","null"] | `"#efeeea"` | Default text colour. Unset: the interface foreground. |
+| `dark.terminal.green` | "string" | `"#5fc98a"` | ANSI colour 2. |
+| `dark.terminal.magenta` | "string" | `"#b4a7ff"` | ANSI colour 5. |
+| `dark.terminal.red` | "string" | `"#ff5a5a"` | ANSI colour 1. |
+| `dark.terminal.selection` | ["string","null"] | `"#b4a7ff52"` | Selection highlight. Unset: the interface selection colour. |
+| `dark.terminal.white` | "string" | `"#a8a7a2"` | ANSI colour 7. |
+| `dark.terminal.yellow` | "string" | `"#f2c94c"` | ANSI colour 3. |
+| `dark.ui` | "object" | `{"accent.background":"#2a2a2d","accent.foreground":"#efeeea","background":"#1f1f21","base.blue":"#6fa2ff","base.cyan":"#8fd0c4","base.green":"#5fc98a","base.magenta":"#b4a7ff","base.red":"#ff5a5a","base.yellow":"#f2c94c","border":"#39393d","caret":"#b4a7ff","danger.background":"#ff5a5a","drop_target.background":"#b4a7ff33","foreground":"#efeeea","info.background":"#6fa2ff","input.border":"#2f2f32","link":"#b4a7ff","link.hover":"#b4a7ff","list.active.background":"#2a2a2d","list.active.border":"#b4a7ff","list.head.background":"#1f1f21","list.hover.background":"#2a2a2d","muted.background":"#2a2a2d","muted.foreground":"#a8a7a2","popover.background":"#2a2a2d","popover.foreground":"#efeeea","primary.background":"#b4a7ff","primary.foreground":"#1f1f21","ring":"#b4a7ff","scrollbar.background":"#00000000","scrollbar.thumb.background":"#a8a7a240","scrollbar.thumb.hover.background":"#a8a7a266","secondary.active.background":"#353538","secondary.background":"#2a2a2d","secondary.foreground":"#efeeea","secondary.hover.background":"#2a2a2d","selection.background":"#b4a7ff52","sidebar.accent.background":"#2a2a2d","sidebar.background":"#1f1f21","sidebar.border":"#39393d","sidebar.foreground":"#efeeea","sidebar.primary.background":"#2a2a2d","status_bar.background":"#1f1f21","status_bar.border":"#39393d","success.background":"#5fc98a","tab.active.background":"#2a2a2d","tab.active.foreground":"#efeeea","tab.background":"#1f1f21","tab.foreground":"#a8a7a2","tab_bar.background":"#1f1f21","tab_bar.segmented.background":"#2a2a2d","title_bar.background":"#1f1f21","title_bar.border":"#39393d","warning.background":"#f2c94c","window.border":"#39393d"}` |  |
 | `layout.agent_panel_max_width` | "number" | `64.0` | Maximum AI panel width, in rem. |
 | `layout.agent_panel_min_width` | "number" | `18.0` | Minimum AI panel width, in rem. |
 | `layout.agent_panel_width` | "number" | `26.0` | Initial width of the AI panel, in rem. |
@@ -41,33 +41,34 @@
 | `layout.local_terminal_height` | "number" | `15.0` | Initial height of the independent local terminal dock, in rem. |
 | `layout.picker_width` | "number" | `22.0` | Width of the "new tab" picker. |
 | `layout.settings_width` | "number" | `45.0` | Maximum width of the settings form and its footer. |
-| `layout.sidebar_max_width` | "number" | `32.0` | Widest the sidebar can be dragged. |
+| `layout.sidebar_max_width` | "number" | `64.0` | Widest the sidebar can be dragged. |
 | `layout.sidebar_min_width` | "number" | `12.0` | Narrowest the sidebar can be dragged. |
 | `layout.sidebar_width` | "number" | `17.0` | Initial width of the left sidebar. |
+| `layout.status_bar_center_max` | "number" | `40.0` | Widest the centre of the status bar grows, in rem. |
 | `layout.tab_max_width` | "number" | `14.0` | Width past which a session tab ellipsizes its title. |
 | `layout.terminal_padding` | "number" | `0.5` | Space between the terminal grid and the edge of its pane. |
 | `light.canvas` | ["string","null"] | `null` | The window's backdrop behind floating cards: the gaps between them and the title and status bars. Unset: a shade darker than `background`. |
-| `light.terminal.background` | ["string","null"] | `null` | Terminal background. Unset: the interface background. |
-| `light.terminal.black` | "string" | `"#000000"` | ANSI colour 0. |
-| `light.terminal.blue` | "string" | `"#0451a5"` | ANSI colour 4. |
-| `light.terminal.bright_black` | "string" | `"#666666"` | ANSI colour 8. |
-| `light.terminal.bright_blue` | "string" | `"#0451a5"` | ANSI colour 12. |
-| `light.terminal.bright_cyan` | "string" | `"#0598bc"` | ANSI colour 14. |
-| `light.terminal.bright_green` | "string" | `"#14ce14"` | ANSI colour 10. |
-| `light.terminal.bright_magenta` | "string" | `"#bc05bc"` | ANSI colour 13. |
-| `light.terminal.bright_red` | "string" | `"#cd3131"` | ANSI colour 9. |
-| `light.terminal.bright_white` | "string" | `"#a5a5a5"` | ANSI colour 15. |
-| `light.terminal.bright_yellow` | "string" | `"#b5ba00"` | ANSI colour 11. |
-| `light.terminal.cursor` | ["string","null"] | `null` | Cursor colour. Unset: the terminal foreground. |
-| `light.terminal.cyan` | "string" | `"#0598bc"` | ANSI colour 6. |
-| `light.terminal.foreground` | ["string","null"] | `null` | Default text colour. Unset: the interface foreground. |
-| `light.terminal.green` | "string" | `"#107c10"` | ANSI colour 2. |
-| `light.terminal.magenta` | "string" | `"#bc05bc"` | ANSI colour 5. |
-| `light.terminal.red` | "string" | `"#cd3131"` | ANSI colour 1. |
-| `light.terminal.selection` | ["string","null"] | `null` | Selection highlight. Unset: the interface selection colour. |
-| `light.terminal.white` | "string" | `"#555555"` | ANSI colour 7. |
-| `light.terminal.yellow` | "string" | `"#949800"` | ANSI colour 3. |
-| `light.ui` | "object" | `{}` |  |
+| `light.terminal.background` | ["string","null"] | `"#f3f1ec"` | Terminal background. Unset: the interface background. |
+| `light.terminal.black` | "string" | `"#161616"` | ANSI colour 0. |
+| `light.terminal.blue` | "string" | `"#2f5fc4"` | ANSI colour 4. |
+| `light.terminal.bright_black` | "string" | `"#57544e"` | ANSI colour 8. |
+| `light.terminal.bright_blue` | "string" | `"#4c78d6"` | ANSI colour 12. |
+| `light.terminal.bright_cyan` | "string" | `"#2c8a7d"` | ANSI colour 14. |
+| `light.terminal.bright_green` | "string" | `"#3f9a64"` | ANSI colour 10. |
+| `light.terminal.bright_magenta` | "string" | `"#7464ea"` | ANSI colour 13. |
+| `light.terminal.bright_red` | "string" | `"#e04556"` | ANSI colour 9. |
+| `light.terminal.bright_white` | "string" | `"#7c7972"` | ANSI colour 15. |
+| `light.terminal.bright_yellow` | "string" | `"#a88318"` | ANSI colour 11. |
+| `light.terminal.cursor` | ["string","null"] | `"#5642e0"` | Cursor colour. Unset: the terminal foreground. |
+| `light.terminal.cyan` | "string" | `"#1f6e64"` | ANSI colour 6. |
+| `light.terminal.foreground` | ["string","null"] | `"#161616"` | Default text colour. Unset: the interface foreground. |
+| `light.terminal.green` | "string" | `"#2f7d4f"` | ANSI colour 2. |
+| `light.terminal.magenta` | "string" | `"#5642e0"` | ANSI colour 5. |
+| `light.terminal.red` | "string" | `"#cf2539"` | ANSI colour 1. |
+| `light.terminal.selection` | ["string","null"] | `"#5642e03d"` | Selection highlight. Unset: the interface selection colour. |
+| `light.terminal.white` | "string" | `"#a9a59c"` | ANSI colour 7. |
+| `light.terminal.yellow` | "string" | `"#8a6a0c"` | ANSI colour 3. |
+| `light.ui` | "object" | `{"accent.background":"#e9e6df","accent.foreground":"#161616","background":"#f3f1ec","base.blue":"#2f5fc4","base.cyan":"#1f6e64","base.green":"#2f7d4f","base.magenta":"#5642e0","base.red":"#cf2539","base.yellow":"#8a6a0c","border":"#d5d1c7","caret":"#5642e0","danger.background":"#cf2539","drop_target.background":"#5642e033","foreground":"#161616","info.background":"#2f5fc4","input.border":"#e1ddd4","link":"#5642e0","link.hover":"#5642e0","list.active.background":"#e9e6df","list.active.border":"#5642e0","list.head.background":"#f3f1ec","list.hover.background":"#e9e6df","muted.background":"#e9e6df","muted.foreground":"#57544e","popover.background":"#e9e6df","popover.foreground":"#161616","primary.background":"#5642e0","primary.foreground":"#f3f1ec","ring":"#5642e0","scrollbar.background":"#00000000","scrollbar.thumb.background":"#57544e40","scrollbar.thumb.hover.background":"#57544e66","secondary.active.background":"#ddd9d0","secondary.background":"#e9e6df","secondary.foreground":"#161616","secondary.hover.background":"#e9e6df","selection.background":"#5642e03d","sidebar.accent.background":"#e9e6df","sidebar.background":"#f3f1ec","sidebar.border":"#d5d1c7","sidebar.foreground":"#161616","sidebar.primary.background":"#e9e6df","status_bar.background":"#f3f1ec","status_bar.border":"#d5d1c7","success.background":"#2f7d4f","tab.active.background":"#e9e6df","tab.active.foreground":"#161616","tab.background":"#f3f1ec","tab.foreground":"#57544e","tab_bar.background":"#f3f1ec","tab_bar.segmented.background":"#e9e6df","title_bar.background":"#f3f1ec","title_bar.border":"#d5d1c7","warning.background":"#8a6a0c","window.border":"#d5d1c7"}` |  |
 | `name` | "string" | `"Nocterm Default"` | Display name of this token set. |
 | `shape.radius` | ["number","null"] | `null` | Corner radius of controls, in pixels. Unset: 6. |
 | `shape.radius_lg` | ["number","null"] | `null` | Corner radius of dialogs, popovers and notifications, in pixels. Unset: 8. |

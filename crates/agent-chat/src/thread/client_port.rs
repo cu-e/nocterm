@@ -25,24 +25,38 @@ impl SessionClient for ThreadClient {
     fn state(&self, cx: &App) -> Option<ClientState> {
         let thread = self.0.upgrade()?;
         let thread = thread.read(cx);
-        Some(ClientState {
-            chat_id: thread.state.chat_id().to_owned(),
-            workdir: thread
-                .session
-                .restore()
-                .as_ref()
-                .filter(|restore| {
-                    !thread.state.entries().is_empty() && restore.workdir.is_absolute()
-                })
-                .map(|restore| restore.workdir.clone()),
-            agent_id: thread.state.agent_id().to_owned(),
-            session: thread.session().clone(),
-            busy: thread.session_busy(),
-            leased: thread.session.leased(),
-            activation_pending: thread.session.queued(),
-            closing: thread.session.closing(),
-            shown: thread.session.shown(),
-        })
+        let resume = thread
+            .session
+            .restore()
+            .as_ref()
+            .filter(|restore| !thread.state.entries().is_empty() && restore.workdir.is_absolute())
+            .map(|restore| restore.workdir.clone());
+        let origin =
+            nocterm_ai::execution_origin::ExecutionOrigin::new(thread.state.key().clone(), resume);
+        Some(ClientState::new(
+            origin,
+            thread.state.agent_id().to_owned(),
+            thread.session().clone(),
+            thread.session_busy(),
+            thread.session.leased(),
+            thread.session.queued(),
+            thread.session.closing(),
+            thread.session.shown(),
+        ))
+    }
+    fn history_usage(&self, cx: &App) -> Option<nocterm_agent_runtime::HistoryUsage> {
+        let thread = self.0.upgrade()?;
+        let thread = thread.read(cx);
+        Some(nocterm_agent_runtime::HistoryUsage::new(
+            thread.resident_history_bytes(),
+            thread.document().updated(),
+            thread.session.shown(),
+        ))
+    }
+    fn evict_history(&self, cx: &mut App) -> bool {
+        self.0
+            .upgrade()
+            .is_some_and(|thread| thread.update(cx, |thread, cx| thread.evict_history(cx)))
     }
     fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
         self.0.upgrade()?.read(cx).flush_snapshot(cx)

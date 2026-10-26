@@ -7,7 +7,7 @@ fn show_library(
     cx: &mut gpui_kit::App,
 ) {
     workspace.update(cx, |workspace, cx| {
-        workspace.activate_panel_of::<nocterm_snippets_ui::SnippetsPanel>(window, cx)
+        workspace.open_panel(&nocterm_snippets_ui::plugin::LIBRARY.id, window, cx)
     });
     window.render_frame(cx);
 }

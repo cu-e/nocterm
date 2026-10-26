@@ -30,6 +30,9 @@
 | `appearance.layout` | "floating", "classic" | `"floating"` | How the window's regions are framed. |
 | `appearance.light_theme` | ["string","null"] | `null` | Imported light theme name. Unset uses Nocterm Default. |
 | `appearance.mode` | "light", "dark", "system" | `"system"` | Which palette the interface uses. |
+| `clock.date` | "boolean" | `false` | Whether a short date (`Oct 24`) comes before the time. |
+| `clock.format` | "hour24", "hour12" | `"hour24"` | How the clock shows the hour. |
+| `clock.seconds` | "boolean" | `false` | Whether the time includes seconds. The clock then updates every second instead of every minute. |
 | `explorer.indexing.excluded` | "array" | `[".cache",".git","node_modules",".cargo",".rustup",".npm",".gradle",".m2",".venv","__pycache__",".var","snap"]` | Folders with these names are never entered while counting, wherever they are. The folder being shown is always counted. |
 | `explorer.indexing.local` | "boolean" | `true` | Count the files and the size of local folders. |
 | `explorer.indexing.max_local_entries` | "integer"; 1000–10000000 | `1000000` | Stop counting a local folder after this many entries. |
@@ -42,6 +45,8 @@
 | `explorer.open.remote.args` | "array" | `[]` | Arguments, passed one by one without shell parsing. `{file}` stands for the file; without it the file is added last. |
 | `explorer.open.remote.program` | "string" | `"nano"` | The executable, such as `nvim` or `code`. Empty uses the default. |
 | `explorer.open.rules` | "array" | `[]` | Programs for particular file types. The first rule naming a file's extension with a program for that side wins; with none, the defaults above are used. |
+| `layouts.active` | "string" | `null` | The selected layout, a preset id or a built-in id (`default`, `swapped`). Unset or unknown selects `default`, or `swapped` if the earlier swap-sides choice is still in force. |
+| `layouts.presets` | "array" | `[]` | The saved presets, in the order the user keeps them. |
 | `local.args` | "array" | `[]` | Individual executable arguments, without shell parsing. |
 | `local.cwd` | ["string","null"] | `null` | Initial directory. Empty means the user's home directory. |
 | `local.env` | "object" | `{}` | Additional environment variables; never put passwords here. |
@@ -57,6 +62,8 @@
 | `monitor.interval_secs` | "integer"; 1–3600 | `30` | Seconds between updates while the details are closed. Only what the status bar shows is collected then. |
 | `monitor.local` | "boolean" | `true` | Watch this computer while no remote session is active. |
 | `monitor.status_bar` | "array" | `["cpu","memory"]` | What the status bar shows, in this order. |
+| `plugins.disabled` | "array" | `[]` | Ids of the disabled system plugins. A disabled plugin's panels and widgets are not shown in any window; its settings stay available. Required plugins cannot be disabled. |
+| `plugins.user_plugins` | "boolean" | `false` | Whether a build with the `user-plugins` feature loads user plugins at the start. Off by default and read only by such builds, once, at the start: a change applies at the next start. Release builds are made without the feature, so the switch does nothing there. Left out of the file while off. |
 | `ssh.connect_timeout_secs` | "integer"; 1–600 | `15` | Seconds to wait for a host to answer before giving up. |
 | `ssh.keepalive_interval_secs` | "integer"; 0–3600 | `30` | Seconds between keep-alive probes on an idle connection. 0 turns them off. |
 | `ssh.launch.args` | "array" | `[]` | Individual executable arguments, without shell parsing. |
@@ -80,3 +87,4 @@
 | `terminal.term` | "string" | `"xterm-256color"` | Terminal type announced to the remote host (its `TERM` variable). |
 | `vault.auto_lock_minutes` | "integer"; 1–1440 | `15` | Lock after this many minutes without vault use (1–1440). |
 | `vault.prompt_on_startup` | "boolean" | `false` | Prompt for the master password when Nocterm starts. |
+| `workspaces.container_directory` | "string" | `"/home"` | Absolute POSIX project directory used when a container directory is left empty. |

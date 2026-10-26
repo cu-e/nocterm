@@ -12,8 +12,7 @@ fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
 }
 
 fn saved_value(f: &Fixture, id: &str) -> serde_json::Value {
-    let bytes = f.repository.encoded(id).unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    disk_value(&f.repository, id)
 }
 
 pub(super) fn type_draft(f: &Fixture, text: &str, cx: &mut TestAppContext) {
@@ -28,8 +27,15 @@ pub(super) fn disk_value(
     repository: &nocterm_ai::testing::InMemoryAgentRepository,
     id: &str,
 ) -> serde_json::Value {
-    let bytes = repository.encoded(id).unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    // Assert public decoded document facts across both wire formats. The codec
+    // tests separately own byte framing and authoritative-envelope validation.
+    let chat = repository.transcript(id).unwrap();
+    let mut value = serde_json::to_value(chat).unwrap();
+    if value["version"] == 2 {
+        value["chat"].take()
+    } else {
+        value
+    }
 }
 
 mod saving;
@@ -97,14 +103,12 @@ fn shutdown_flushes_the_latest_draft_before_a_debounce_can_run(cx: &mut TestAppC
 #[gpui_kit::test]
 fn restored_history_reopens_the_unsent_text_without_inserting_a_message(cx: &mut TestAppContext) {
     let mut f = fixture(cx);
-    let chat = nocterm_ai::history::SavedChat::for_identity(
+    let mut chat = nocterm_ai::history::SavedChat::for_identity(
         "codex".into(),
         "00000000-0000-4000-8000-00000000006a".into(),
         1,
     );
-    let mut value = serde_json::to_value(chat).unwrap();
-    value["draft"] = serde_json::json!("restored\ntext");
-    let chat = serde_json::from_value(value).unwrap();
+    chat.draft = Some("restored\ntext".into());
     reinstall_history(&mut f, vec![chat], cx);
     let panel = f.panel.clone();
     cx.run_until_parked();
@@ -163,7 +167,7 @@ fn clearing_a_draft_is_reversible_for_the_same_chat_id(cx: &mut TestAppContext) 
             assert!(chats.is_empty());
         } else {
             assert_eq!(chats.len(), 1);
-            assert_eq!(chats[0].id, id);
+            assert_eq!(chats[0].header.id, id);
             assert_eq!(saved_value(&f, &id)["draft"], text);
         }
     }
@@ -364,12 +368,64 @@ fn hiding_the_panel_flushes_its_latest_text_without_waiting_for_the_timer(cx: &m
     });
     set_input(&f, "before hide", cx);
     cx.update_window(f.handle, |_, window, cx| {
-        f.workspace
-            .update(cx, |workspace, cx| workspace.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
     assert_eq!(saved_value(&f, &id)["draft"], "before hide");
+}
+
+#[gpui_kit::test]
+fn each_close_flushes_the_draft_once_and_nothing_else_writes_it(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let id = cx.update(|cx| {
+        f.panel
+            .read(cx)
+            .current()
+            .unwrap()
+            .read(cx)
+            .document()
+            .chat_id()
+            .to_owned()
+    });
+    let toggle = |cx: &mut TestAppContext| {
+        cx.update_window(f.handle, |_, window, cx| {
+            f.workspace.update(cx, |workspace, cx| {
+                workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    set_input(&f, "before hide", cx);
+    let before = persistence::save_count(&f, &id);
+
+    toggle(cx);
+    let hidden = persistence::save_count(&f, &id);
+    for _ in 0..2 {
+        cx.update_window(f.handle, |_, window, cx| {
+            f.workspace
+                .update(cx, |workspace, cx| workspace.toggle_sidebar(window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        persistence::save_count(&f, &id),
+        hidden,
+        "toggling the sidebar while the panel is closed writes nothing"
+    );
+    toggle(cx);
+
+    assert_eq!(hidden, before + 1, "closing flushes once");
+    assert_eq!(
+        persistence::save_count(&f, &id),
+        hidden,
+        "showing writes nothing"
+    );
 }
 
 #[gpui_kit::test]

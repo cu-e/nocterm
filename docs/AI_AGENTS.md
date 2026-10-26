@@ -2,11 +2,11 @@
 
 The AI panel sits to the right of the workspace and stays available when no
 terminal tabs are open. Open it from the footer, Window → AI Agents, or
-Ctrl+Alt+B (Cmd+Alt+B on macOS). Ctrl+E (Cmd+E) moves it to the left of the
-tabs and the sidebar to the right, and back; on the left, the history column
-opens on the panel's left too. Settings remains available from Session →
-Preferences → Settings and Ctrl+, (Cmd+, on macOS). The footer no longer has a
-Settings button.
+Ctrl+Alt+B (Cmd+Alt+B on macOS). Window → Layouts → Swapped sides
+moves it to the left of the tabs and the sidebar to the right, and Default moves
+them back; on the left, the history column opens on the panel's left too. Settings remains
+available from Session → Preferences → Settings and Ctrl+, (Cmd+, on macOS).
+The footer no longer has a Settings button.
 
 Create a chat with Claude, Codex, Hermes, or a custom ACP executable; the
 built-in agents show their brand marks in the menu, the panel header, chat
@@ -19,9 +19,11 @@ starts a new chat with the agent the last chat was started with (remembered in
 shortcut beside that agent. A chat the panel shows connects at once, so its
 model and options can be chosen before the first message
 (`[ai.sessions] warm_start = false` connects on the first message instead);
-the tool listener starts only when needed. The panel can occupy the
-window's working area; its maximize control keeps the footer and does not change
-the operating system's fullscreen state. Chats are saved and come back after a
+the tool listener starts only when needed. Expanding the panel replaces the
+central workspace area while keeping navigation and the footer accessible.
+Navigation can be switched, hidden or shown while chat stays expanded. Restoring
+chat keeps its previous docked width and the navigation width. The control does
+not change the operating system's fullscreen state. Chats are saved and come back after a
 restart (see [Chats and history](#chats-and-history)). Model favorites are
 stored separately in `agents.toml` under the state directory.
 

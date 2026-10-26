@@ -105,6 +105,17 @@ impl LocalDirectory for DirectoryCapability {
     fn open_source(&self, name: &OsStr) -> LocalResult<Box<dyn LocalSource>> {
         crate::source::open_relative(self, name)
     }
+    fn remove_file(&self, name: &OsStr) -> LocalResult<()> {
+        check_name(name)?;
+        #[cfg(unix)]
+        {
+            unix::remove_file(self, name)
+        }
+        #[cfg(not(unix))]
+        {
+            portable::remove_file(self, name)
+        }
+    }
     fn stage(&self) -> LocalResult<Box<dyn LocalStage>> {
         crate::stage::create(self.clone())
     }

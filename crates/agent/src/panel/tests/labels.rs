@@ -98,8 +98,8 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     });
     cx.run_until_parked();
     let saved = f.repository.chats();
-    assert_eq!(saved[0].name.as_deref(), Some(long.as_str()));
-    assert_eq!(saved[0].title.as_deref(), Some(agent_title));
+    assert_eq!(saved[0].header.name.as_deref(), Some(long.as_str()));
+    assert_eq!(saved[0].header.title.as_deref(), Some(agent_title));
     assert!(matches!(&saved[0].entries[0], Entry::User(parts)
         if matches!(&parts[0], Content::Text(text) if text.text == prompt)));
 

@@ -675,10 +675,6 @@ fn rendered_chat_dispatches_joined_reconnect_inputs_in_acceptance_order(cx: &mut
         window.click("new-agent-codex", cx);
         window.render_frame(cx);
         let thread = f.panel.read(cx).current().unwrap();
-        {
-            let runtime = f.installation.installed.runtime();
-            runtime.register_document(crate::thread::client(&thread), cx);
-        };
         thread.update(cx, |thread, cx| thread.request_activation(cx));
     })
     .unwrap();

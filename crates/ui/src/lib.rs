@@ -7,10 +7,16 @@
 //! terminal styling accepts supplied settings; ThemeUi retains the original policy
 //! and paints Design changes without resolving back into Design.
 //!
-//! Owns: Appearance views, theme projections, shared controls and checked text receipts and layout.
+//! Owns: Appearance views, theme projections, shared controls, directory editing/selection,
+//! checked text receipts, layout, the searchable choice picker, the icons and column widths of
+//! plugin contributions, the `PluginSource` the shell and its editors read the plugins of both tiers from, and the settings form of a plugin (`PluginSettingsForm`, its
+//! `PluginSettingsSource` port, the system `SectionBinding` and the `PluginSettingsDirectory`).
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).
-//! Ports used: `Persisted`, `ShutdownCoordinator`. Ports provided: UI helpers,
-//! explicit settings-based terminal styling, SettingsTextField and the installed settings handle.
+//! Ports used: `Persisted`, `ShutdownCoordinator`, read-only `DirectoryRead`. Ports provided: UI helpers,
+//! explicit settings-based terminal styling, behind `user-plugins` the `PluginNotices` provider of
+//! `notifications.post` and `notifications.own` for user plugins, SettingsTextField, the installed settings handle and
+//! `PluginSettingsSource` (named for the form's need; `SectionBinding` implements it over an
+//! owner's own settings section).
 //! Settings section: appearance. Terminal styling uses the terminal-model domain schema.
 //! Globals: Design, Notices.
 //! Imported themes use one retained ThemeUi projection over ThemesHandle and SettingsHandle.
@@ -20,13 +26,17 @@
 //! Text errors stay typed until display; close/deactivation synchronously admit distinct literals.
 
 mod animations;
+mod contribution;
 mod design;
+pub mod directory;
 mod drag_preview;
+mod embedded_pages;
 mod floating;
 pub mod form;
 mod icons;
 mod layout;
 pub mod notice;
+mod plugin_source;
 mod sections;
 mod session_options;
 mod settings_page;
@@ -39,11 +49,14 @@ mod theme;
 mod themes;
 
 pub use animations::thinking_indicator;
+pub use contribution::{contribution_icon, width_range, zone_anchor};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
-pub use icons::{Assets, IconName, agent_icon};
+pub use embedded_pages::{EmbeddedPageSpec, EmbeddedPages, SectionedPage};
+pub use icons::{APP_MARK, Assets, IconName, agent_icon};
 pub use layout::{LayoutHandle, LayoutMemory};
 pub use nocterm_store::StoreError as SettingsError;
+pub use plugin_source::{PluginSetHandle, PluginSource, StaticPluginSource};
 pub use sections::{
     AppearanceMode, AppearanceSettings, CARD_GAP_RANGE, CARD_RADIUS_RANGE, UiLayout,
 };
@@ -69,6 +82,7 @@ pub fn init(
         tracing::warn!(%name, "design tokens name a colour the component theme does not have");
     }
 
+    directory::install_bindings(cx);
     cx.set_global(Design::new(tokens));
     settings.register::<crate::AppearanceSettings>(cx);
     settings.register::<crate::TerminalSettings>(cx);
@@ -102,8 +116,18 @@ pub mod settings_input;
 pub use settings_field::FieldPresentation;
 
 mod appearance_page;
+mod choice_picker;
 pub use appearance_page::appearance_settings_page;
 pub use appearance_page::commands::{open_scheme_picker, open_theme_picker};
+pub use choice_picker::{PickerOption, open_choice_picker};
+
+mod plugin_settings;
+#[cfg(any(test, feature = "test-support"))]
+pub use plugin_settings::FakePluginSettings;
+pub use plugin_settings::{
+    FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsError, PluginSettingsForm,
+    PluginSettingsSource, SchemaRef, SectionBinding, UserPluginSettings,
+};
 
 #[cfg(test)]
 mod settings_initialization_tests;

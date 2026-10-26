@@ -7,6 +7,7 @@ pub struct Reading {
     /// Seconds on the host's monotonic clock when the frame was taken; the
     /// time base for rates.
     pub clock: Option<f64>,
+    pub container: Option<crate::ContainerCounters>,
     pub host: Option<HostInfo>,
     pub cpu: Option<CpuTimes>,
     /// One entry per core, in the host's order.

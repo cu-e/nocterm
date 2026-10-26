@@ -1,32 +1,138 @@
-//! Installation and explicit erased handoffs; state transitions belong to owners.
+//! Explicit installations and typed handoffs to the original tab owner.
 use super::*;
+use crate::ContextSelectionError;
+use crate::plugin::LOCAL_TERMINAL;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
-use chrome::StatusSide;
 use nocterm_session::{HostAddress, ShellLaunch};
+use registration::{PanelRegistration, PanelSource, RegistrationError, WidgetRegistration};
+use shell_layout::LayoutChange;
+use surface::admission::SurfaceItemAdmission;
+
 impl Workspace {
-    /// Installs what turns requests into tabs.
+    pub fn add_general_background_from<T: Item>(
+        &mut self,
+        target: ContextSelectionReceipt,
+        item: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<EntityId, crate::ContextSelectionError> {
+        let id = item.entity_id();
+        self.surfaces.outer().update(cx, |surface, cx| {
+            surface
+                .admit_background(target.surface(), item, window, cx)
+                .map(|_| id)
+        })
+    }
+    pub fn validate_context_source(
+        &self,
+        source: ProjectSurfaceReceipt,
+        window: &Window,
+        cx: &App,
+    ) -> Result<(), ContextSelectionError> {
+        self.surfaces.window().check_window(window)?;
+        self.surfaces.window().resolve(source, cx)?;
+        if !self.surfaces.window().registered(source, cx) {
+            return Err(ContextSelectionError::StaleSurface);
+        }
+        Ok(())
+    }
+    pub fn add_context_background_from<T: Item>(
+        &mut self,
+        source: ProjectSurfaceReceipt,
+        item: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<EntityId, ContextSelectionError> {
+        if self
+            .surfaces
+            .window()
+            .foreign_item(source, item.entity_id(), cx)
+        {
+            return Err(ContextSelectionError::StaleSurface);
+        }
+        if let Err(error) = self.validate_context_source(source, window, cx) {
+            if self
+                .surfaces
+                .window()
+                .resolve(source, cx)
+                .ok()
+                .is_none_or(|surface| !surface.read(cx).contains_item(item.entity_id()))
+            {
+                ItemHandle::close(&item, window, cx);
+            }
+            return Err(error);
+        }
+        let id = item.entity_id();
+        let surface = self.surfaces.window().resolve(source, cx)?;
+        surface.update(cx, |surface, cx| {
+            surface
+                .admit_background(source, item, window, cx)
+                .map(|_| id)
+        })
+    }
+    pub fn set_chat_connection_opener(&mut self, opener: Rc<dyn crate::ChatConnectionOpen>) {
+        self.ports.set_chat_connections(opener);
+    }
+    pub fn chat_connection_opener(&self) -> Option<Rc<dyn crate::ChatConnectionOpen>> {
+        self.ports.chat_connections()
+    }
+    pub fn show_context_background(
+        &mut self,
+        source: ProjectSurfaceReceipt,
+        item: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, crate::ContextSelectionError> {
+        self.surfaces.window().check_window(window)?;
+        let surface = self.surfaces.window().resolve(source, cx)?;
+        let focus = self.context_source(cx) == source;
+        Ok(surface.update(cx, |surface, cx| {
+            surface.promote_background(item, focus, window, cx)
+        }))
+    }
+    pub fn close_context_background(
+        &mut self,
+        source: ProjectSurfaceReceipt,
+        item: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), crate::ContextSelectionError> {
+        self.surfaces.window().check_window(window)?;
+        let surface = self.surfaces.window().resolve(source, cx)?;
+        surface.update(cx, |surface, cx| {
+            surface.close_background_at(source, item, window, cx)
+        });
+        Ok(())
+    }
+    pub fn add_project_workspace<T: Item>(
+        &mut self,
+        item: Entity<T>,
+        project: ProjectSurface,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, crate::ContextSelectionError> {
+        let project = project.bind(window, cx);
+        let selection = self.surfaces.outer().read(cx).selection();
+        let admission = SurfaceItemAdmission::workspace(selection, project);
+        self.surfaces.outer().update(cx, |surface, cx| {
+            surface.admit_item(admission, item, None, window, cx)
+        })
+    }
     pub fn set_session_factory(&mut self, factory: impl SessionFactory) {
         self.ports.install(factory);
     }
-
-    /// Installs only what turns a [`SessionSpec`] into a tab, keeping the
-    /// rest of the current factory.
     pub fn set_session_opener(
         &mut self,
         opener: impl Fn(&mut Workspace, SessionSpec, &mut Window, &mut Context<Workspace>) + 'static,
     ) {
         self.ports.override_session(opener);
     }
-
-    /// Installs only what turns a [`ProgramSpec`] into a tab.
     pub fn set_program_opener(
         &mut self,
         opener: impl Fn(&mut Workspace, ProgramSpec, &mut Window, &mut Context<Workspace>) + 'static,
     ) {
         self.ports.override_program(opener);
     }
-
-    /// Installs only what opens a local shell.
     pub fn set_local_terminal_opener(
         &mut self,
         opener: impl Fn(&mut Workspace, LocalTerminalTarget, &mut Window, &mut Context<Workspace>)
@@ -34,25 +140,48 @@ impl Workspace {
     ) {
         self.ports.override_local(opener);
     }
-
-    /// Opens a session in a new tab.
+    pub fn add_general_item_from<T: Item>(
+        &mut self,
+        target: ContextSelectionReceipt,
+        item: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, ContextSelectionError> {
+        let admission = SurfaceItemAdmission::general(target);
+        self.surfaces.outer().update(cx, |surface, cx| {
+            surface.admit_item(admission, item, None, window, cx)
+        })
+    }
+    pub fn add_general_local_terminal_from<T: crate::LocalTerminal>(
+        &mut self,
+        target: ContextSelectionReceipt,
+        item: Entity<T>,
+        destination: LocalTerminalTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<bool, ContextSelectionError> {
+        let admission = SurfaceItemAdmission::general_local(target, destination);
+        let local =
+            Some(Box::new(item.clone()) as Box<dyn crate::local_terminal::LocalTerminalHandle>);
+        self.surfaces.outer().update(cx, |surface, cx| {
+            surface.admit_item(admission, item, local, window, cx)
+        })
+    }
     pub fn open_session(&mut self, spec: SessionSpec, window: &mut Window, cx: &mut Context<Self>) {
         self.show_new_tab_menu(false, cx);
         self.factory().open_session(self, spec, window, cx);
     }
-
-    /// Opens a program in a new tab, grouped with the active tab when that
-    /// is a session on the same host, as a container's log is with the
-    /// session it was opened from.
     pub fn open_program(&mut self, spec: ProgramSpec, window: &mut Window, cx: &mut Context<Self>) {
-        let parent = self.tabs.program_parent(&spec.host.key);
-        let opened_from = self.tabs.len();
+        let parent = self
+            .surfaces
+            .outer()
+            .read(cx)
+            .tabs()
+            .program_parent(&spec.host.key);
+        let opened_from = self.surfaces.outer().read(cx).tabs().len();
         self.factory().open_program(self, spec, window, cx);
         self.group_program(parent, opened_from, window, cx);
     }
-}
-
-impl Workspace {
     pub fn open_background_session(
         &mut self,
         spec: SessionSpec,
@@ -61,200 +190,13 @@ impl Workspace {
     ) -> Option<EntityId> {
         self.factory().open_background(self, spec, window, cx)
     }
-
-    pub fn add_background_item<T: crate::Item>(
-        &mut self,
-        item: gpui_kit::Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> EntityId {
-        let id = item.entity_id();
-        if self.background.contains(id) || self.tabs.contains(id) {
-            return id;
-        }
-        let subscription = cx.subscribe_in(&item, window, move |this, _, event, window, cx| {
-            if !this.background.contains(id) {
-                return;
-            }
-            match event {
-                crate::ItemEvent::Changed => cx.emit(super::WorkspaceEvent::ItemsChanged),
-                crate::ItemEvent::CloseRequested => this.close_background_session(id, window, cx),
-            }
-        });
-        if self.background.insert(item, subscription) {
-            cx.emit(super::WorkspaceEvent::ItemsChanged);
-            cx.notify();
-        }
-        id
-    }
-
-    pub fn show_background_session(
-        &mut self,
-        id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(record) = self.background.take(id) else {
-            return false;
-        };
-        let target = self.tabs.active_location(cx).filter(|(placement, _)| {
-            *placement == gpui_kit::component::dock::DockPlacement::Center
-        });
-        let bindings = super::bindings::WorkspaceBindings::new(cx.weak_entity());
-        let prepared = record.into_tab(&bindings, self.tabs.header_origin(), window, cx);
-        self.register_prepared(
-            prepared,
-            gpui_kit::component::dock::DockPlacement::Center,
-            target.map(|(_, node)| node),
-            window,
-            cx,
-        );
-        true
-    }
-
-    pub fn close_background_session(
-        &mut self,
-        id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(record) = self.background.take(id) {
-            record.close(window, cx);
-            cx.emit(super::WorkspaceEvent::ItemsChanged);
-            cx.notify();
-        }
-    }
-}
-impl Workspace {
     pub(crate) fn new_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.factory()
             .open_local(self, LocalTerminalTarget::Bottom, window, cx);
     }
-    pub(crate) fn new_local_terminal_from(
-        &mut self,
-        id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.tab_location(id, cx).is_none() {
-            return;
-        }
-        self.factory()
-            .open_local(self, LocalTerminalTarget::Beside(id), window, cx);
-    }
-    pub fn set_local_terminal<T: crate::LocalTerminal>(
-        &mut self,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ids: Vec<_> = self.tabs.local_ids();
-        for id in ids {
-            self.close_item_by_id(id, window, cx);
-        }
-        self.add_local_terminal(item, window, cx);
-    }
-    pub fn add_local_terminal<T: crate::LocalTerminal>(
-        &mut self,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.add_local_terminal_at(item, LocalTerminalTarget::Bottom, window, cx);
-    }
-    /// Registers an owned new shell in the requested live pane.
-    /// A stale anchor closes the new shell once and returns false. An already
-    /// registered Item returns false without changing or closing that Item.
-    pub fn add_local_terminal_at<T: crate::LocalTerminal>(
-        &mut self,
-        item: Entity<T>,
-        target: LocalTerminalTarget,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.is_background(item.entity_id()) || self.tabs.contains(item.entity_id()) {
-            return false;
-        }
-        let destination = match target {
-            LocalTerminalTarget::Bottom => self.tabs.local_destination(cx),
-            LocalTerminalTarget::Beside(anchor) => {
-                let Some(destination) = self.tab_location(anchor, cx) else {
-                    ItemHandle::close(&item, window, cx);
-                    return false;
-                };
-                Some(destination)
-            }
-        };
-        let placement = destination.map_or(DockPlacement::Bottom, |(placement, _)| placement);
-        self.tabs.ensure_region_open(placement, window, cx);
-        let local: Box<dyn crate::local_terminal::LocalTerminalHandle> = Box::new(item.clone());
-        self.register_item(
-            item,
-            Some(local),
-            placement,
-            destination.map(|(_, node)| node),
-            window,
-            cx,
-        );
-        true
-    }
-}
-impl Workspace {
-    pub fn add_item<T: Item>(
-        &mut self,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let target = self
-            .tabs
-            .active_location(cx)
-            .filter(|(placement, _)| *placement == DockPlacement::Center);
-        self.register_item(
-            item,
-            None,
-            DockPlacement::Center,
-            target.map(|(_, node)| node),
-            window,
-            cx,
-        );
-    }
-    fn register_item<T: Item>(
-        &mut self,
-        item: Entity<T>,
-        local: Option<Box<dyn crate::local_terminal::LocalTerminalHandle>>,
-        placement: DockPlacement,
-        target: Option<gpui_kit::component::dock::NodeId>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.is_background(item.entity_id()) || self.tabs.contains(item.entity_id()) {
-            return;
-        }
-        let bindings = bindings::WorkspaceBindings::new(cx.weak_entity());
-        let prepared = bindings.prepare(item, local, self.tabs.header_origin(), window, cx);
-        self.register_prepared(prepared, placement, target, window, cx);
-    }
-    fn register_prepared(
-        &mut self,
-        prepared: bindings::PreparedTab,
-        placement: DockPlacement,
-        target: Option<gpui_kit::component::dock::NodeId>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(id) = self.tabs.register(prepared, placement, target, window, cx) {
-            self.activate_item_by_id(id, window, cx);
-            cx.emit(WorkspaceEvent::ItemsChanged);
-        }
-    }
     pub fn set_connection_directory(&mut self, directory: Rc<dyn crate::ConnectionDirectory>) {
         self.ports.set_directory(directory);
     }
-    /// Opens a new tab running `program` with `args` in `directory` on the
-    /// host of a connected session to `host`, by the same route. It signs in as that session
-    /// did; a saved profile's credentials are reused, otherwise the user is
-    /// asked again.
     pub fn open_on_host(
         &mut self,
         host: &HostAddress,
@@ -267,11 +209,18 @@ impl Workspace {
     ) -> Result<(), crate::OpenOnHostError> {
         // Published snapshots choose the tab, the active one first; only the
         // chosen tabs are asked how they were opened.
-        let spec = self.tabs.session_spec_for(host, cx).ok_or_else(|| {
-            crate::OpenOnHostError::NoConnectedSession {
+        if !self.general_context(cx) {
+            return Err(crate::OpenOnHostError::ProtectedContext);
+        }
+        let spec = self
+            .surfaces
+            .outer()
+            .read(cx)
+            .tabs()
+            .session_spec_for(host, cx)
+            .ok_or_else(|| crate::OpenOnHostError::NoConnectedSession {
                 target: host.target.clone(),
-            }
-        })?;
+            })?;
         let env = spec
             .launch
             .as_ref()
@@ -293,67 +242,88 @@ impl Workspace {
         self.open_session(spec, window, cx);
         Ok(())
     }
-}
-impl Workspace {
-    /// Adds a sidebar panel, after the ones already there.
-    pub fn add_panel<T: Panel>(&mut self, panel: Entity<T>, cx: &mut Context<Self>) {
-        // A panel's title, icon and badge sit in the workspace's chrome; the
-        // rest of the panel redraws itself, so only a change to them counts.
-        let chrome = |panel: &Entity<T>, cx: &gpui_kit::App| {
-            let panel = panel.read(cx);
-            (panel.title(cx), panel.icon(cx), panel.badge(cx))
-        };
-        let metadata = chrome(&panel, cx);
-        let subscription = cx.observe(&panel, move |this, panel, cx| {
-            if this
-                .sidebar
-                .metadata_changed(panel.entity_id(), chrome(&panel, cx))
-            {
-                cx.notify();
-            }
-        });
-        self.sidebar
-            .register(Box::new(panel), metadata, subscription);
-        cx.notify();
-    }
-}
-impl Workspace {
-    pub fn set_right_panel<T: crate::RightPanel>(
+    /// Registers the panel of a contribution of the plugin catalog and creates it now, unless
+    /// the user disabled its plugin: then the panel is created when the plugin is enabled.
+    ///
+    /// The panel joins the group and the position the window's layout gives it, and starts
+    /// available.
+    pub fn register_panel<T: Panel>(
         &mut self,
-        panel: Entity<T>,
+        registration: PanelRegistration<T>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let subscription =
-            cx.subscribe_in(&panel, window, |this, _, event, window, cx| match event {
-                crate::RightPanelEvent::ToggleMaximized => {
-                    this.set_right_panel_maximized(!this.right_panel.maximized(), cx)
+    ) -> Result<(), RegistrationError> {
+        self.layout_settings_changed(window, cx);
+        let set = self.shell.set().clone();
+        let traits = self.registrations.admit_panel(
+            &set,
+            registration.id(),
+            registration.expandable_requested(),
+            registration.is_eager(),
+        )?;
+        let id = registration.id().clone();
+        let opened = id.clone();
+        match registration.into_source(traits.chrome, window, cx) {
+            PanelSource::Hosted(panel) => {
+                self.panels.register(id, Some(panel), self.shell.current());
+            }
+            PanelSource::Factory(factory) => {
+                // The panel's slot exists while the factory reads the workspace.
+                self.panels.register(id.clone(), None, self.shell.current());
+                if self.shell.is_enabled(&id) {
+                    let panel = factory(&*self, window, cx);
+                    self.panels.fill(&id, panel);
                 }
-                crate::RightPanelEvent::Close => this.close_right_panel(window, cx),
-                crate::RightPanelEvent::Widen(delta) => this.widen_right_panel(*delta, window, cx),
-            });
-        let left = self.sides_swapped(cx);
-        self.right_panel
-            .install(Box::new(panel), subscription, left, cx);
+                self.registrations.keep_factory(id, factory);
+            }
+        }
+        if self.shell.claim_open(&opened)
+            && let Some(transition) = self.panels.reveal_panel(&opened)
+            && transition.visibility_changed().is_some()
+        {
+            cx.emit(WorkspaceEvent::PanelVisibilityChanged);
+        }
+        self.sync_panel_sides(cx);
         cx.notify();
+        Ok(())
     }
-}
-impl Workspace {
-    /// A feature-owned compact status view, visible even while the sidebar is hidden.
-    pub fn add_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
-        self.chrome.add_status(StatusSide::Trailing, view.into());
+    /// Registers the status bar widget of a contribution of the plugin catalog. Its view is
+    /// created now if the window's arrangement places the widget, and when it first does
+    /// otherwise.
+    pub fn register_widget(
+        &mut self,
+        registration: WidgetRegistration,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), RegistrationError> {
+        self.layout_settings_changed(window, cx);
+        let set = self.shell.set().clone();
+        self.registrations.admit_widget(&set, registration.id())?;
+        let id = registration.id().clone();
+        let (factory, zone_hook) = registration.into_parts();
+        self.chrome.status_bar_mut().add(id, factory, zone_hook);
+        self.sync_status_widgets(window, cx);
         cx.notify();
+        Ok(())
     }
-
-    /// A feature-owned status view at the start of the footer, after the
-    /// sidebar's panel buttons: room for what describes the active host.
-    pub fn add_leading_status_view<V: Render>(&mut self, view: Entity<V>, cx: &mut Context<Self>) {
-        self.chrome.add_status(StatusSide::Leading, view.into());
-        cx.notify();
+    /// Creates the views of the widgets the arrangement places and drops those it does not.
+    pub(super) fn sync_status_widgets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pending = self.chrome.status_bar().pending(self.shell.current());
+        for (id, factory) in pending {
+            let view = factory(&*self, window, cx);
+            self.chrome.status_bar_mut().fill(&id, view);
+        }
+        self.chrome
+            .status_bar_mut()
+            .release_unplaced(self.shell.current());
+        self.chrome
+            .status_bar_mut()
+            .follow_zones(self.shell.current(), cx);
     }
-}
-impl Workspace {
-    /// Supplies window-specific menus to the toolkit's standard menu bar.
+    /// Tells the expandable panels which side of the content their groups are on.
+    pub(super) fn sync_panel_sides(&self, cx: &mut Context<Self>) {
+        self.panels.set_docked_left(cx);
+    }
     pub fn set_menu_builder(
         &mut self,
         builder: impl Fn(&Workspace, &Window, &App) -> Vec<Menu> + 'static,
@@ -363,7 +333,6 @@ impl Workspace {
         self.chrome.install_menu_builder(Rc::new(builder));
         self.reload_menu_bar(window, cx);
     }
-
     fn reload_menu_bar(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(builder) = self.chrome.menu_builder() else {
             return;
@@ -373,12 +342,160 @@ impl Workspace {
             .into_iter()
             .map(Menu::owned)
             .collect();
-        self.chrome.refresh_menus(menus, target, cx);
+        self.chrome
+            .refresh_menus(menus, target, self.command_selection(window, cx), cx);
     }
-
     pub(super) fn prepare_menu(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.chrome.prepare_closed_menu(cx) {
             self.reload_menu_bar(window, cx);
         }
+    }
+    pub fn add_background_item<T: crate::Item>(
+        &mut self,
+        item: gpui_kit::Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> EntityId {
+        let id = item.entity_id();
+        let selection = self.surfaces.outer().read(cx).selection();
+        self.add_general_background_from(selection, item, window, cx)
+            .unwrap_or(id)
+    }
+    pub fn show_background_session(
+        &mut self,
+        id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.surfaces.outer().update(cx, |surface, cx| {
+            surface.promote_background(id, true, window, cx)
+        })
+    }
+    pub fn close_background_session(
+        &mut self,
+        id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.surfaces.outer().update(cx, |surface, cx| {
+            surface.close_background_at(surface.source(), id, window, cx)
+        })
+    }
+    pub fn set_local_terminal<T: crate::LocalTerminal>(
+        &mut self,
+        item: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let source = self.general_surface_source(cx);
+        if self.general_item(item.entity_id(), cx).is_some()
+            || self
+                .surfaces
+                .window()
+                .foreign_item(source, item.entity_id(), cx)
+        {
+            return;
+        }
+        if self.validate_context_source(source, window, cx).is_err() {
+            ItemHandle::close(&item, window, cx);
+            return;
+        }
+        let ids = self.surfaces.outer().read(cx).tabs().local_ids();
+        for id in ids {
+            self.close_tabs(id, TabCloseScope::Current, window, cx);
+        }
+        self.add_local_terminal(item, window, cx);
+    }
+    pub fn add_local_terminal<T: crate::LocalTerminal>(
+        &mut self,
+        item: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_local_terminal_at(item, LocalTerminalTarget::Bottom, window, cx);
+    }
+    pub fn add_local_terminal_at<T: crate::LocalTerminal>(
+        &mut self,
+        item: Entity<T>,
+        target: LocalTerminalTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let selection = self.surfaces.outer().read(cx).selection();
+        self.add_general_local_terminal_from(selection, item, target, window, cx)
+            .unwrap_or(false)
+    }
+    pub fn add_item<T: Item>(
+        &mut self,
+        item: Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selection = self.surfaces.outer().read(cx).selection();
+        let _ = self.add_general_item_from(selection, item, window, cx);
+    }
+    // ── Following the layout settings ────────────────────────────────────────
+
+    /// Creates the panels of the plugins that are enabled and have none, and releases those of
+    /// the plugins that are disabled. A disabled panel that shows closes first, and its entity
+    /// drops once the change is applied; a panel that is enabled again starts closed.
+    fn apply_enablement(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ids: Vec<_> = self.panels.registered_ids().cloned().collect();
+        for id in ids {
+            if self.shell.is_enabled(&id) {
+                self.create_panel(&id, window, cx);
+                continue;
+            }
+            let Some((transition, panel)) = self.panels.release(&id, window, cx) else {
+                continue;
+            };
+            if let Some(transition) = transition {
+                self.apply_panel_transition(transition, window, cx);
+            }
+            cx.defer(move |_| drop(panel));
+        }
+    }
+
+    /// Runs the factory of a registered panel that has none.
+    fn create_panel(
+        &mut self,
+        id: &nocterm_plugin_model::ContributionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.panels.lacks_panel(id) {
+            return;
+        }
+        let Some(factory) = self.registrations.factory(id) else {
+            return;
+        };
+        let panel = factory(&*self, window, cx);
+        self.panels.fill(id, panel);
+    }
+
+    /// Applies the layout the settings select now: the groups take the new membership, a switch
+    /// to a saved layout shows the panels it names, and panels the layout no longer places
+    /// close.
+    pub(super) fn layout_settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let change = self.shell.refresh(cx);
+        if change == LayoutChange::Unchanged {
+            return;
+        }
+        let open = match &change {
+            LayoutChange::Opened(open) => Some(open.as_slice()),
+            _ => None,
+        };
+        self.apply_enablement(window, cx);
+        for transition in self.panels.follow(self.shell.current(), open, window, cx) {
+            self.apply_panel_transition(transition, window, cx);
+        }
+        if let Some(open) = open
+            && open.contains(&LOCAL_TERMINAL.id) != self.local_terminal_is_visible(cx)
+        {
+            self.toggle_local_terminal(window, cx);
+        }
+        self.sync_panel_sides(cx);
+        self.sync_status_widgets(window, cx);
+        cx.notify();
     }
 }

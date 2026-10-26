@@ -1,0 +1,25 @@
+[package]
+name = "nocterm-plugin-ports"
+description = "The ports user plugins reach the application through: observation and effect traits, and the immutable record of a window's providers."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "service"
+
+[features]
+# In-memory providers for tests of the host and of provider crates.
+test-support = []
+
+[dependencies]
+nocterm-plugin-api.workspace = true
+nocterm-plugin-model.workspace = true
+gpui.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

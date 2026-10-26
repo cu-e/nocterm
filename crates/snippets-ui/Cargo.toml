@@ -12,6 +12,7 @@ layer = "feature"
 [dependencies]
 nocterm-snippets.workspace = true
 nocterm-snippets-store.workspace = true
+nocterm-plugin-model.workspace = true
 nocterm-store.workspace = true
 thiserror.workspace = true
 nocterm-ui.workspace = true
@@ -26,3 +27,4 @@ uuid.workspace = true
 nocterm-snippets = { workspace = true, features = ["test-support"] }
 nocterm-session.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
+nocterm-workspace = { workspace = true, features = ["test-support"] }

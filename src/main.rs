@@ -14,9 +14,15 @@ mod application;
 mod bootstrap;
 mod connection_setup;
 mod keymap;
+#[cfg(feature = "user-plugins")]
+mod plugin_command;
+mod project_setup;
 mod settings_pages;
+mod shell_setup;
 mod startup;
 
+#[cfg(test)]
+mod agent_history_tests;
 #[cfg(test)]
 mod gui_tests;
 
@@ -35,7 +41,27 @@ const APP_ID: &str = "dev.nocterm.Nocterm";
 /// The subcommand agents run to reach a chat's terminal tools.
 const AGENT_BRIDGE: &str = "agent-bridge";
 
+/// Which user plugins this run opens. `nocterm plugin check` leaves the process here;
+/// `nocterm plugin dev <file>` starts a developer session and `nocterm --safe-mode` loads none.
+#[cfg(feature = "user-plugins")]
+fn user_plugin_mode() -> shell_setup::UserPluginMode {
+    match plugin_command::from_args(std::env::args_os().skip(1)) {
+        plugin_command::Command::Exit(status) => std::process::exit(status),
+        plugin_command::Command::Dev(file) => shell_setup::UserPluginMode::Dev(file),
+        plugin_command::Command::Start { safe_mode: true } => shell_setup::UserPluginMode::SafeMode,
+        plugin_command::Command::Start { safe_mode: false } => {
+            shell_setup::UserPluginMode::Installed
+        }
+    }
+}
+
+#[cfg(not(feature = "user-plugins"))]
+fn user_plugin_mode() -> shell_setup::UserPluginMode {
+    shell_setup::UserPluginMode::default()
+}
+
 fn main() -> anyhow::Result<()> {
+    let user_plugins = user_plugin_mode();
     #[cfg(target_os = "linux")]
     if std::env::args_os()
         .nth(1)
@@ -57,12 +83,13 @@ fn main() -> anyhow::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    let prepared = startup::PreparedApp::load()?;
+    let prepared = startup::PreparedApp::load(user_plugins)?;
     gpui_kit::application()
         .with_assets(nocterm_ui::Assets::with_marks(
             nocterm_agent_providers::catalog()
                 .marks()
-                .map(|mark| (mark.asset(), mark.svg())),
+                .map(|mark| (mark.asset(), mark.svg()))
+                .chain(nocterm_projects::marks()),
         ))
         .run(move |cx| prepared.install_when_ready(cx));
     Ok(())

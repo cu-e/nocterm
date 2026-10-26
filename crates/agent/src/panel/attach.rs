@@ -10,7 +10,7 @@ use std::rc::Rc;
 use gpui_kit::{
     AnyElement, Context, Entity, SharedString, TestSupportExt as _,
     component::{
-        ActiveTheme as _, Selectable as _, Sizable as _, StyledExt as _,
+        ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
         h_flex, v_flex,
     },
@@ -18,6 +18,7 @@ use gpui_kit::{
     prelude::*,
     px,
 };
+use nocterm_agent_chat::seat::Seat;
 use nocterm_ui::IconName;
 use nocterm_workspace::{ConnectionDirectory, ConnectionSummary, TerminalEntry, TerminalStatus};
 
@@ -79,12 +80,23 @@ impl AttachmentMenuRenderer {
         let (Some(thread), Some(workspace)) = (thread, workspace.upgrade()) else {
             return div().into_any_element();
         };
-        let directory = workspace.read(cx).connection_directory();
-        let summaries = directory
-            .as_ref()
-            .map(|directory| directory.connections(cx))
-            .unwrap_or_default();
-        let terminals = workspace.read(cx).terminals(cx);
+        let seat = thread.read(cx).workspace_seat().clone();
+        let summaries = seat.connections(cx);
+        let terminals = seat.terminals(cx).unwrap_or_default();
+        let opening = if thread.read(cx).document().key().scope()
+            == nocterm_ai::history::ContextId::General
+        {
+            workspace
+                .read(cx)
+                .connection_directory()
+                .map(|directory| SavedServerOpen::General {
+                    directory,
+                    workspace: workspace.downgrade(),
+                })
+        } else {
+            seat.opens_connections(cx)
+                .then(|| SavedServerOpen::Workspace(seat.clone()))
+        };
         let mut menu = v_flex()
             .w_full()
             .gap(px(2.))
@@ -97,13 +109,11 @@ impl AttachmentMenuRenderer {
                 entry,
                 &summaries,
                 &thread,
-                workspace.downgrade(),
+                seat.clone(),
                 cx,
             ));
         }
-        if let Some(directory) = directory
-            && !summaries.is_empty()
-        {
+        if !summaries.is_empty() {
             menu = menu.child(heading("Saved servers", cx));
             for row in servers::server_rows(&summaries) {
                 menu = menu.child(match row {
@@ -115,15 +125,7 @@ impl AttachmentMenuRenderer {
                                     && info.status != TerminalStatus::Closed
                             })
                         });
-                        Self::server_row(
-                            summary,
-                            nested,
-                            online,
-                            &thread,
-                            &directory,
-                            workspace.downgrade(),
-                            cx,
-                        )
+                        Self::server_row(summary, nested, online, &thread, opening.clone(), cx)
                     }
                 });
             }
@@ -138,7 +140,7 @@ impl AttachmentMenuRenderer {
         entry: &TerminalEntry,
         summaries: &[ConnectionSummary],
         thread: &Entity<AgentThread>,
-        workspace: gpui_kit::WeakEntity<nocterm_workspace::Workspace>,
+        seat: Seat,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let origin = thread.entity_id();
@@ -182,7 +184,7 @@ impl AttachmentMenuRenderer {
         });
         let mut line = h_flex().w_full().gap_1().child(row);
         if entry.background {
-            let workspace = workspace.clone();
+            let seat = seat.clone();
             line = line.child(
                 Button::new(SharedString::from(format!("show-background-{item:?}")))
                     .custom(menu_variant(cx))
@@ -191,12 +193,8 @@ impl AttachmentMenuRenderer {
                     .tooltip("Opened by an agent in the background. Show it in a tab.")
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.close_menus(cx);
-                        let workspace = workspace.clone();
-                        window.defer(cx, move |window, cx| {
-                            let _ = workspace.update(cx, |workspace, cx| {
-                                workspace.show_background_session(item, window, cx)
-                            });
-                        });
+                        let seat = seat.clone();
+                        window.defer(cx, move |window, cx| seat.show_background(item, window, cx));
                         cx.notify();
                     })),
             );
@@ -242,8 +240,7 @@ impl AttachmentMenuRenderer {
         nested: bool,
         online: bool,
         thread: &Entity<AgentThread>,
-        directory: &Rc<dyn ConnectionDirectory>,
-        workspace: gpui_kit::WeakEntity<nocterm_workspace::Workspace>,
+        opening: Option<SavedServerOpen>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let origin = thread.entity_id();
@@ -256,8 +253,7 @@ impl AttachmentMenuRenderer {
         let covering = covering(thread.read(cx), summary, &attachment);
         let selected = explicit || covering.is_some();
         let id = summary.id.to_string();
-        let directory = directory.clone();
-        let workspace = workspace.clone();
+
         // Indented with padding, not margin: a margin beside a full width
         // pushed the open button past the menu's edge.
         let line = h_flex()
@@ -301,18 +297,20 @@ impl AttachmentMenuRenderer {
                     .custom(menu_variant(cx))
                     .small()
                     .flex_shrink_0()
+                    .disabled(opening.is_none())
                     .icon(IconName::ArrowUpRight)
                     .accessibility_label(format!("Open {} in a new tab", summary.name))
                     .tooltip("Open in a new tab")
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.close_menus(cx);
-                        let directory = directory.clone();
-                        let workspace = workspace.clone();
+                        let opening = opening.clone();
                         let id = id.clone();
                         // Opening updates the workspace, which may be
                         // rendering this panel: do it once that is over.
                         window.defer(cx, move |window, cx| {
-                            directory.open(&id, &workspace, window, cx);
+                            if let Some(opening) = opening {
+                                opening.open(&id, window, cx);
+                            }
                         });
                         cx.notify();
                     })),
@@ -326,3 +324,30 @@ impl AttachmentMenuRenderer {
 }
 
 pub(super) struct AttachmentMenuRenderer;
+
+/// The arrow retains the original destination; General keeps its recent-use path.
+#[derive(Clone)]
+enum SavedServerOpen {
+    General {
+        directory: Rc<dyn ConnectionDirectory>,
+        workspace: gpui_kit::WeakEntity<nocterm_workspace::Workspace>,
+    },
+    Workspace(Seat),
+}
+impl SavedServerOpen {
+    fn open(&self, profile: &str, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+        match self {
+            Self::General {
+                directory,
+                workspace,
+            } => {
+                directory.open(profile, workspace, window, cx);
+            }
+            Self::Workspace(seat) => {
+                if let Some(item) = seat.open_background(profile, window, cx) {
+                    seat.show_background(item, window, cx);
+                }
+            }
+        }
+    }
+}

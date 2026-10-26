@@ -218,7 +218,7 @@ impl AgentThread {
         self.session.restore_descriptor()
     }
 
-    pub fn restarted(
+    pub(crate) fn restarted(
         data: RestartData,
         deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
@@ -250,15 +250,12 @@ impl AgentThread {
             return self.state.existing_offer();
         }
         if self.is_archived() {
-            let snapshot = self
-                .archive
-                .draft_patch(self.state.chat_id(), self.state.agent_id())
-                .map(|metadata| {
-                    Arc::new(nocterm_ai::history::SharedChat {
-                        metadata,
-                        queue: Vec::new(),
-                    })
-                })?;
+            let snapshot = self.archive.draft_patch().map(|metadata| {
+                Arc::new(nocterm_ai::history::SharedChat {
+                    metadata,
+                    queue: Vec::new(),
+                })
+            })?;
             return self.state.capture_patch(snapshot);
         }
         let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
@@ -275,15 +272,12 @@ impl AgentThread {
             return Some(snapshot);
         }
         if self.is_archived() {
-            return self
-                .archive
-                .draft_patch(self.state.chat_id(), self.state.agent_id())
-                .map(|metadata| {
-                    Arc::new(nocterm_ai::history::SharedChat {
-                        metadata,
-                        queue: Vec::new(),
-                    })
-                });
+            return self.archive.draft_patch().map(|metadata| {
+                Arc::new(nocterm_ai::history::SharedChat {
+                    metadata,
+                    queue: Vec::new(),
+                })
+            });
         }
         self.shared_snapshot(cx).or_else(|| {
             self.state.history_present().then(|| {
@@ -326,10 +320,17 @@ impl AgentThread {
         cx.notify();
     }
 
-    pub fn evict_history(&mut self, cx: &Context<Self>) -> bool {
+    pub fn can_release_archive(&self) -> bool {
+        self.archive.can_release()
+            && self.state.clean()
+            && !self.state.draft_changed()
+            && !self.session.leased()
+            && !self.session_busy()
+    }
+    pub fn evict_history(&mut self, cx: &mut Context<Self>) -> bool {
         let gate = archive::EvictionGate::new(
             !self.session.leased(),
-            !self.session_busy(),
+            !self.session_busy() && !self.session.shown(),
             self.state.desired_revision() == self.state.published_revision(),
             !self.state.draft_changed(),
             self.state.persistence_error().is_none(),
@@ -344,6 +345,7 @@ impl AgentThread {
         self.state.evict_clean();
         self.composer = Default::default();
         self.tools.clear_displays();
+        cx.notify();
         true
     }
 
@@ -384,6 +386,16 @@ impl AgentThread {
                 .deps
                 .runtime()
                 .document_is_current(self.state.chat_id(), cx.entity_id(), cx);
+        let result = if current {
+            result.and_then(|chat| {
+                self.deps
+                    .runtime()
+                    .admit_history(cx.entity_id(), chat.resident_bytes(), cx)?;
+                Ok(chat)
+            })
+        } else {
+            result
+        };
         match self.archive.accept(load_id, current, result, permit) {
             archive::LoadOutcome::Stale => return,
             archive::LoadOutcome::Failed(error) => {
@@ -441,26 +453,43 @@ impl AgentThread {
     }
 
     /// A restored document connects when shown with warm start enabled.
-    pub fn restored(
+    pub(crate) fn restored(
         chat: nocterm_ai::history::SavedChat,
         deps: crate::chat_deps::ChatDeps,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut thread = Self::from_document(
             super::document::ChatDocument::new(
-                chat.agent_id.clone(),
-                chat.id.clone(),
-                chat.updated,
+                chat.header.agent_id.clone(),
+                nocterm_ai::execution_origin::ChatKey::new(
+                    chat.header.scope,
+                    chat.header.id.clone(),
+                ),
+                chat.header.updated,
             ),
             deps,
             cx,
         );
-        thread.restore_content(chat);
+        thread.restore_content_with_overlay(chat, None);
         thread.preview_config(cx);
         thread
     }
-    pub fn restore_content(&mut self, chat: nocterm_ai::history::SavedChat) {
+    pub fn restore_content(
+        &mut self,
+        chat: nocterm_ai::history::SavedChat,
+        cx: &mut Context<Self>,
+    ) -> Result<(), nocterm_ai::storage::AgentStorageError> {
+        self.deps.require_scope(chat.header.scope)?;
+        chat.validate_identity()?;
+        if chat.header.id != self.state.chat_id() {
+            return Err(nocterm_ai::history::HistoryCodecError::IdentityMismatch.into());
+        }
+        let chat = nocterm_ai::history::prepare(chat)?;
+        self.deps
+            .runtime()
+            .admit_history(cx.entity_id(), chat.resident_bytes(), cx)?;
         self.restore_content_with_overlay(chat, None);
+        Ok(())
     }
     pub(super) fn restore_content_with_overlay(
         &mut self,
@@ -526,8 +555,8 @@ impl AgentThread {
         state.truncate(len);
         chat.entries = state.entries;
         chat.times = state.times;
-        chat.title = self.state.transcript().title.clone();
-        chat.name = Some(format!("{} (fork)", self.title()));
+        chat.header.title = self.state.transcript().title.clone();
+        chat.header.name = Some(format!("{} (fork)", self.title()));
         chat.model = self.model();
         chat.config = self.config.choices().clone();
         chat.mode = self.config.mode_choice().map(ToString::to_string);
@@ -552,7 +581,11 @@ impl AgentThread {
         }
     }
     /// The chat `fork` made, connected only when work is submitted.
-    pub fn forked(fork: Fork, deps: crate::chat_deps::ChatDeps, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn forked(
+        fork: Fork,
+        deps: crate::chat_deps::ChatDeps,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let pending_history =
             fork.chat.pending_history || (fork.restore.is_none() && !fork.chat.entries.is_empty());
         let mut thread = Self::restored(fork.chat, deps, cx);

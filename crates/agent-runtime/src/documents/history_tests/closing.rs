@@ -11,7 +11,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-struct BlockedCommands {
+pub(super) struct BlockedCommands {
     closes: AtomicUsize,
     shutdowns: AtomicUsize,
     slow_shutdown: bool,
@@ -20,7 +20,7 @@ struct BlockedCommands {
     shutdown_gate: Mutex<Option<oneshot::Receiver<()>>>,
 }
 impl BlockedCommands {
-    fn new(slow_shutdown: bool) -> Arc<Self> {
+    pub(super) fn new(slow_shutdown: bool) -> Arc<Self> {
         Arc::new(Self {
             closes: AtomicUsize::new(0),
             shutdowns: AtomicUsize::new(0),
@@ -94,7 +94,20 @@ fn connected_client(
     commands: Arc<dyn AgentCommands>,
     cx: &mut TestAppContext,
 ) -> Rc<ProbeClient> {
-    let client = ProbeClient::new(cx, snapshot());
+    // Separate documents may share a native command owner; duplicate document
+    // ownership itself is now refused before constructing a replacement.
+    let mut chat = snapshot().metadata.clone();
+    chat.header.id = format!(
+        "00000000-0000-0000-0000-{:012x}",
+        connector.requests().len() + 1
+    );
+    let client = ProbeClient::new(
+        cx,
+        Arc::new(SharedChat {
+            metadata: chat,
+            queue: Vec::new(),
+        }),
+    );
     connector.push(Ok(nocterm_ai::AgentConnection {
         commands,
         events: async_channel::unbounded().1,
@@ -106,20 +119,22 @@ fn connected_client(
         },
     }));
     runtime.update(cx, |runtime, cx| {
-        runtime.register_document(client.clone(), cx);
-        runtime.connect(
-            client.clone(),
-            client.chat.borrow().id.clone(),
-            AgentLaunch {
-                id: "codex".into(),
-                name: "test".into(),
-                command: "unused".into(),
-                args: Vec::new(),
-                env: Default::default(),
-                inherit_env: Vec::new(),
-            },
-            cx,
-        );
+        ownership::register(runtime, client.clone(), cx).unwrap();
+        runtime
+            .connect(
+                client.clone(),
+                client.chat.borrow().header.id.clone(),
+                AgentLaunch {
+                    id: "codex".into(),
+                    name: "test".into(),
+                    command: "unused".into(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                    inherit_env: Vec::new(),
+                },
+                cx,
+            )
+            .unwrap();
     });
     cx.run_until_parked();
     client

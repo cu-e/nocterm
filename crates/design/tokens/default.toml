@@ -53,12 +53,13 @@ agent_panel_min_width = 18.0   # minimum AI panel width
 agent_panel_max_width = 64.0   # maximum AI panel width
 sidebar_width     = 17.0         # initial width of the left sidebar
 sidebar_min_width = 12.0         # the sidebar cannot be dragged narrower …
-sidebar_max_width = 32.0         # … or wider than this
+sidebar_max_width = 64.0         # … or wider than this
 tab_max_width     = 14.0         # a session tab ellipsizes past this width
 terminal_padding  = 0.5          # space between the terminal grid and its pane
 picker_width      = 22.0         # the "new tab" picker
 dialog_width      = 30.0         # the connection editor
 local_terminal_height = 15.0     # initial height of the bottom local shell
+status_bar_center_max = 40.0     # the centre of the status bar grows no wider than this
 settings_width    = 45.0         # the settings form and its footer
 connection_editor_width = 45.0  # connection editor, including section navigation
 connection_editor_height = 32.0 # maximum connection editor form height
@@ -68,71 +69,180 @@ button_height = 1.75            # default button height
 button_padding = 0.5            # default horizontal button padding
 
 
-# ── Light palette ─────────────────────────────────────────────────────────────
+# ── Light palette: Noct Day ───────────────────────────────────────────────────
 
 [light]
 # The backdrop behind floating cards (`appearance.layout = "floating"`).
-# canvas = "#ececec"             # unset: a shade darker than the background
+# canvas = "#ece9e2"             # unset: a shade darker than the background
 
 # Interface colours, in the component theme's own vocabulary
 # (`background`, `primary.background`, `sidebar.background`, `title_bar.border`, …).
-# Empty: the standard light theme.
+# Unset names keep the standard light theme.
 [light.ui]
+"background"                       = "#f3f1ec"
+"foreground"                       = "#161616"
+"border"                           = "#d5d1c7"
+"window.border"                    = "#d5d1c7"
+"sidebar.border"                   = "#d5d1c7"
+"title_bar.border"                 = "#d5d1c7"
+"status_bar.border"                = "#d5d1c7"
+"input.border"                     = "#e1ddd4"
+"ring"                             = "#5642e0"
+"list.active.border"               = "#5642e0"
+"muted.background"                 = "#e9e6df"
+"muted.foreground"                 = "#57544e"
+"tab.foreground"                   = "#57544e"
+"secondary.background"             = "#e9e6df"
+"tab_bar.segmented.background"     = "#e9e6df"
+"secondary.hover.background"       = "#e9e6df"
+"secondary.active.background"      = "#ddd9d0"
+"secondary.foreground"             = "#161616"
+"popover.foreground"               = "#161616"
+"sidebar.foreground"               = "#161616"
+"accent.foreground"                = "#161616"
+"tab.active.foreground"            = "#161616"
+"accent.background"                = "#e9e6df"
+"list.hover.background"            = "#e9e6df"
+"sidebar.accent.background"        = "#e9e6df"
+"list.active.background"           = "#e9e6df"
+"sidebar.primary.background"       = "#e9e6df"
+"popover.background"               = "#e9e6df"
+"sidebar.background"               = "#f3f1ec"
+"list.head.background"             = "#f3f1ec"
+"title_bar.background"             = "#f3f1ec"
+"status_bar.background"            = "#f3f1ec"
+"tab_bar.background"               = "#f3f1ec"
+"tab.background"                   = "#f3f1ec"
+"tab.active.background"            = "#e9e6df"
+"scrollbar.background"             = "#00000000"
+"scrollbar.thumb.background"       = "#57544e40"
+"scrollbar.thumb.hover.background" = "#57544e66"
+"link"                             = "#5642e0"
+"link.hover"                       = "#5642e0"
+"drop_target.background"           = "#5642e033"
+"primary.background"               = "#5642e0"
+"primary.foreground"               = "#f3f1ec"
+"caret"                            = "#5642e0"
+"selection.background"             = "#5642e03d"
+"danger.background"                = "#cf2539"
+"success.background"               = "#2f7d4f"
+"warning.background"               = "#8a6a0c"
+"info.background"                  = "#2f5fc4"
+"base.red"                         = "#cf2539"
+"base.green"                       = "#2f7d4f"
+"base.yellow"                      = "#8a6a0c"
+"base.blue"                        = "#2f5fc4"
+"base.magenta"                     = "#5642e0"
+"base.cyan"                        = "#1f6e64"
 
 [light.terminal]
-# background = "#ffffff"         # unset: the interface background
-# foreground = "#1f2328"         # unset: the interface foreground
-# cursor     = "#1f2328"         # unset: the terminal foreground
-# selection  = "#0969da40"       # unset: the interface selection colour
+background = "#f3f1ec"
+foreground = "#161616"
+cursor     = "#5642e0"
+selection  = "#5642e03d"
 
-black          = "#000000"
-red            = "#cd3131"
-green          = "#107c10"
-yellow         = "#949800"
-blue           = "#0451a5"
-magenta        = "#bc05bc"
-cyan           = "#0598bc"
-white          = "#555555"
+black          = "#161616"
+red            = "#cf2539"
+green          = "#2f7d4f"
+yellow         = "#8a6a0c"
+blue           = "#2f5fc4"
+magenta        = "#5642e0"
+cyan           = "#1f6e64"
+white          = "#a9a59c"
 
-bright_black   = "#666666"
-bright_red     = "#cd3131"
-bright_green   = "#14ce14"
-bright_yellow  = "#b5ba00"
-bright_blue    = "#0451a5"
-bright_magenta = "#bc05bc"
-bright_cyan    = "#0598bc"
-bright_white   = "#a5a5a5"
+bright_black   = "#57544e"
+bright_red     = "#e04556"
+bright_green   = "#3f9a64"
+bright_yellow  = "#a88318"
+bright_blue    = "#4c78d6"
+bright_magenta = "#7464ea"
+bright_cyan    = "#2c8a7d"
+bright_white   = "#7c7972"
 
 
-# ── Dark palette ──────────────────────────────────────────────────────────────
+# ── Dark palette: Noct Night ──────────────────────────────────────────────────
 
 [dark]
-# canvas = "#0e0e0e"             # unset: a shade darker than the background
+# canvas = "#19191b"             # unset: a shade darker than the background
 
-# Standard dark theme with a lighter active tab.
+# Unset names keep the standard dark theme.
 [dark.ui]
-"tab.active.background" = "#272727"
+"background"                       = "#1f1f21"
+"foreground"                       = "#efeeea"
+"border"                           = "#39393d"
+"window.border"                    = "#39393d"
+"sidebar.border"                   = "#39393d"
+"title_bar.border"                 = "#39393d"
+"status_bar.border"                = "#39393d"
+"input.border"                     = "#2f2f32"
+"ring"                             = "#b4a7ff"
+"list.active.border"               = "#b4a7ff"
+"muted.background"                 = "#2a2a2d"
+"muted.foreground"                 = "#a8a7a2"
+"tab.foreground"                   = "#a8a7a2"
+"secondary.background"             = "#2a2a2d"
+"tab_bar.segmented.background"     = "#2a2a2d"
+"secondary.hover.background"       = "#2a2a2d"
+"secondary.active.background"      = "#353538"
+"secondary.foreground"             = "#efeeea"
+"popover.foreground"               = "#efeeea"
+"sidebar.foreground"               = "#efeeea"
+"accent.foreground"                = "#efeeea"
+"tab.active.foreground"            = "#efeeea"
+"accent.background"                = "#2a2a2d"
+"list.hover.background"            = "#2a2a2d"
+"sidebar.accent.background"        = "#2a2a2d"
+"list.active.background"           = "#2a2a2d"
+"sidebar.primary.background"       = "#2a2a2d"
+"popover.background"               = "#2a2a2d"
+"sidebar.background"               = "#1f1f21"
+"list.head.background"             = "#1f1f21"
+"title_bar.background"             = "#1f1f21"
+"status_bar.background"            = "#1f1f21"
+"tab_bar.background"               = "#1f1f21"
+"tab.background"                   = "#1f1f21"
+"tab.active.background"            = "#2a2a2d"
+"scrollbar.background"             = "#00000000"
+"scrollbar.thumb.background"       = "#a8a7a240"
+"scrollbar.thumb.hover.background" = "#a8a7a266"
+"link"                             = "#b4a7ff"
+"link.hover"                       = "#b4a7ff"
+"drop_target.background"           = "#b4a7ff33"
+"primary.background"               = "#b4a7ff"
+"primary.foreground"               = "#1f1f21"
+"caret"                            = "#b4a7ff"
+"selection.background"             = "#b4a7ff52"
+"danger.background"                = "#ff5a5a"
+"success.background"               = "#5fc98a"
+"warning.background"               = "#f2c94c"
+"info.background"                  = "#6fa2ff"
+"base.red"                         = "#ff5a5a"
+"base.green"                       = "#5fc98a"
+"base.yellow"                      = "#f2c94c"
+"base.blue"                        = "#6fa2ff"
+"base.magenta"                     = "#b4a7ff"
+"base.cyan"                        = "#8fd0c4"
 
 [dark.terminal]
-background = "#181818"
-# foreground = "#e5e5e5"
-# cursor     = "#e5e5e5"
-# selection  = "#3b8eea40"
+background = "#1f1f21"
+foreground = "#efeeea"
+cursor     = "#b4a7ff"
+selection  = "#b4a7ff52"
 
-black          = "#000000"
-red            = "#cd3131"
-green          = "#0dbc79"
-yellow         = "#e5e510"
-blue           = "#2472c8"
-magenta        = "#bc3fbc"
-cyan           = "#11a8cd"
-white          = "#e5e5e5"
+black          = "#2a2a2d"
+red            = "#ff5a5a"
+green          = "#5fc98a"
+yellow         = "#f2c94c"
+blue           = "#6fa2ff"
+magenta        = "#b4a7ff"
+cyan           = "#8fd0c4"
+white          = "#a8a7a2"
 
-bright_black   = "#666666"
-bright_red     = "#f14c4c"
-bright_green   = "#23d18b"
-bright_yellow  = "#f5f543"
-bright_blue    = "#3b8eea"
-bright_magenta = "#d670d6"
-bright_cyan    = "#29b8db"
-bright_white   = "#ffffff"
+bright_black   = "#5f5e5a"
+bright_red     = "#ff8a85"
+bright_green   = "#8edcab"
+bright_yellow  = "#f7dc85"
+bright_blue    = "#9fc0ff"
+bright_magenta = "#d4ccff"
+bright_cyan    = "#b6e3da"
+bright_white   = "#efeeea"

@@ -24,6 +24,7 @@ nocterm-connections.workspace = true
 nocterm-connections-model.workspace = true
 nocterm-connections-io.workspace = true
 nocterm-containers-ui.workspace = true
+nocterm-containers.workspace = true
 nocterm-snippets-ui.workspace = true
 nocterm-snippets.workspace = true
 nocterm-snippets-store.workspace = true
@@ -33,9 +34,20 @@ nocterm-design.workspace = true
 nocterm-files.workspace = true
 nocterm-keymap.workspace = true
 nocterm-keymap-ui.workspace = true
+nocterm-layout-ui.workspace = true
 nocterm-local.workspace = true
 nocterm-localfs.workspace = true
 nocterm-monitor-ui.workspace = true
+nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
+nocterm-project-runtime.workspace = true
+nocterm-project-environment.workspace = true
+nocterm-project-container-fs.workspace = true
+nocterm-directory-io.workspace = true
+nocterm-explorer.workspace = true
+nocterm-project-service.workspace = true
+nocterm-project-storage.workspace = true
+nocterm-projects.workspace = true
 nocterm-session.workspace = true
 nocterm-settings.workspace = true
 nocterm-store.workspace = true
@@ -50,15 +62,43 @@ nocterm-theme-service.workspace = true
 nocterm-vault-ui.workspace = true
 nocterm-vault.workspace = true
 nocterm-vault-store.workspace = true
+nocterm-plugin-enablement.workspace = true
+nocterm-plugin-model.workspace = true
+nocterm-plugin-api = { workspace = true, optional = true }
+nocterm-plugin-host = { workspace = true, optional = true }
+nocterm-plugin-packages = { workspace = true, optional = true }
+nocterm-plugin-ports = { workspace = true, optional = true }
+nocterm-plugin-view = { workspace = true, optional = true }
+nocterm-plugin-wasm = { workspace = true, optional = true }
+nocterm-plugins-ui.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
+nocterm-workspace-ports.workspace = true
 
 anyhow.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
+thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[features]
+# The user-plugin track: compiled out of default and release builds until it ships
+# (docs/architecture/guardrails.md, "Isolation of plugin crates").
+user-plugins = [
+    "dep:nocterm-plugin-api",
+    "dep:nocterm-plugin-host",
+    "dep:nocterm-plugin-packages",
+    "dep:nocterm-plugin-ports",
+    "dep:nocterm-plugin-view",
+    "dep:nocterm-plugin-wasm",
+    "nocterm-plugins-ui/user",
+    "nocterm-workspace/user-plugins",
+    "nocterm-monitor-ui/user-plugins",
+    "nocterm-files/user-plugins",
+    "nocterm-ui/user-plugins",
+]
 
 [lints]
 workspace = true
@@ -124,6 +164,10 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+async-io.workspace = true
+nocterm-monitor.workspace = true
+nocterm-window-layout.workspace = true
+nocterm-project-providers = { workspace = true, features = ["test-support"] }
 uuid.workspace = true
 nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-snippets = { workspace = true, features = ["test-support"] }
@@ -131,15 +175,19 @@ nocterm-connections-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-workspace = { workspace = true, features = ["test-support"] }
+nocterm-project-model = { workspace = true, features = ["test-support"] }
 nocterm-transfers = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
+# Writes the guest modules that the plugin check tests run (user-plugins builds only).
+wat.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 
 [workspace]
 members = ["crates/*", "xtask"]
-exclude = ["vendor/alacritty_terminal", "vendor/gpui-component", "vendor/gpui-base", "vendor/gpui-pre", "vendor/gpui-pre-windows", "vendor/gpui-pre-wgpu", "vendor/tid-rs"]
+exclude = ["vendor/alacritty_terminal", "vendor/gpui-component", "vendor/gpui-base", "vendor/gpui-pre", "vendor/gpui-pre-windows", "vendor/gpui-pre-wgpu", "vendor/tid-rs", "examples/plugins/focus-timer"]
 resolver = "3"
 
 [patch.crates-io]
@@ -159,6 +207,15 @@ license-file = "LICENSE"
 nocterm-terminal-model = { path = "crates/terminal-model" }
 nocterm-explorer = { path = "crates/explorer" }
 nocterm-ai = { path = "crates/ai" }
+nocterm-project-model = { path = "crates/project-model" }
+nocterm-project-providers = { path = "crates/project-providers" }
+nocterm-project-runtime = { path = "crates/project-runtime" }
+nocterm-project-environment = { path = "crates/project-environment" }
+nocterm-project-container-fs = { path = "crates/project-container-fs" }
+nocterm-directory-io = { path = "crates/directory-io" }
+nocterm-project-storage = { path = "crates/project-storage" }
+nocterm-project-service = { path = "crates/project-service" }
+nocterm-projects = { path = "crates/projects" }
 nocterm-agent-providers = { path = "crates/agent-providers" }
 nocterm-agent-directory = { path = "crates/agent-directory" }
 nocterm-agent-settings-ui = { path = "crates/agent-settings-ui" }
@@ -188,10 +245,21 @@ nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
 nocterm-keymap = { path = "crates/keymap" }
 nocterm-keymap-ui = { path = "crates/keymap-ui" }
+nocterm-layout-ui = { path = "crates/layout-ui" }
 nocterm-local = { path = "crates/local" }
 nocterm-localfs = { path = "crates/localfs" }
 nocterm-monitor = { path = "crates/monitor" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
+nocterm-plugin-abi = { path = "crates/plugin-abi" }
+nocterm-plugin-wasm = { path = "crates/plugin-wasm" }
+nocterm-plugin-api = { path = "crates/plugin-api" }
+nocterm-plugin-enablement = { path = "crates/plugin-enablement" }
+nocterm-plugin-host = { path = "crates/plugin-host" }
+nocterm-plugin-packages = { path = "crates/plugin-packages" }
+nocterm-plugin-ports = { path = "crates/plugin-ports" }
+nocterm-plugin-view = { path = "crates/plugin-view" }
+nocterm-plugin-model = { path = "crates/plugin-model" }
+nocterm-plugins-ui = { path = "crates/plugins-ui" }
 nocterm-session = { path = "crates/session" }
 nocterm-settings = { path = "crates/settings" }
 nocterm-store = { path = "crates/store" }
@@ -205,6 +273,7 @@ nocterm-themes-registry = { path = "crates/themes-registry" }
 nocterm-theme-service = { path = "crates/theme-service" }
 nocterm-ui = { path = "crates/ui" }
 nocterm-vt = { path = "crates/vt" }
+nocterm-window-layout = { path = "crates/window-layout" }
 nocterm-workspace = { path = "crates/workspace" }
 nocterm-vault = { path = "crates/vault" }
 nocterm-vault-store = { path = "crates/vault-store" }
@@ -255,6 +324,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 toml = "1"
 toml_edit = "0.25"
 tracing = "0.1"
+# Writes the guest modules the wasm tests run. Dev only: the host reads binary modules.
+wat = "1.262"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
@@ -294,6 +365,13 @@ rustybuzz = { opt-level = 3 }
 taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 vte = { opt-level = 3 }
+# The code runtime of user plugins interprets guest code, which is unusably slow unoptimised.
+wasmi = { opt-level = 3 }
+wasmi_collections = { opt-level = 3 }
+wasmi_core = { opt-level = 3 }
+wasmi_ir = { opt-level = 3 }
+wasmparser = { opt-level = 3 }
+postcard = { opt-level = 3 }
 
 [profile.release]
 codegen-units = 1

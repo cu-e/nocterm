@@ -2,7 +2,7 @@
 
 # Actions and default key bindings
 
-Derived from `actions!` declarations and `assets/keymap.toml`.
+Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keymap.toml`.
 
 | Action | Description | Bindings |
 | --- | --- | --- |
@@ -19,6 +19,8 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
 | `monitor::OpenMonitorSettings` | Open the host monitor's settings. |  |
+| `projects::NewProject` | Create a workspace on the current server or this computer. |  |
+| `projects::ToggleProjects` | Show saved workspaces for the current connection. |  |
 | `snippets::NewSnippet` | Create a snippet in a focused editor. |  |
 | `snippets::ToggleSnippets` | Show the snippet library in the sidebar, or hide it. |  |
 | `terminal::Copy` | Copy the selected text. | `ctrl-shift-c` (linux, windows; Terminal); `cmd-c` (macos; Terminal) |
@@ -58,14 +60,20 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `workspace::MoveTabRight` | Move the active tab one position to the right in its pane. | `ctrl-alt-right` (linux, windows; Workspace); `cmd-alt-right` (macos; Workspace) |
 | `workspace::NewTab` | Open the menu of connections to start a new tab from. | `ctrl-shift-t` (linux, windows; Workspace); `cmd-t` (macos; Workspace) |
 | `workspace::NewWindow` | Open another application window. | `ctrl-alt-n` (linux, windows; Workspace); `cmd-shift-n` (macos; Workspace) |
+| `workspace::NextLayout` | Switch to the next window layout, wrapping around. |  |
 | `workspace::NextPane` | Focus the next pane in layout order. | `ctrl-alt-pagedown` (linux, windows; Workspace); `cmd-alt-pagedown` (macos; Workspace) |
 | `workspace::NextPanel` | Show the next sidebar panel, wrapping around. |  |
 | `workspace::NextTab` | Switch to the tab on the right, wrapping around. | `ctrl-pagedown` (linux, windows; Workspace); `ctrl-tab` (linux, windows; Workspace); `cmd-shift-]` (macos; Workspace); `ctrl-tab` (macos; Workspace) |
 | `workspace::OpenAiSettings` | Open AI settings. |  |
 | `workspace::OpenKeymap` | Open the keymap: every command and its shortcuts. |  |
+| `workspace::OpenLayoutSettings` | Open Settings on the "Status bar and panels" section of Appearance, with the contribution or panel group with this id selected when one is named. It has no default binding. |  |
+| `workspace::OpenPluginPage` | Open the Settings page the named plugin keeps for itself (its `settings_page`), whether or not the plugin is enabled. It has no default binding. |  |
+| `workspace::OpenPlugins` | Open Settings on the Plugins page, with this plugin selected when one is named. It has no default binding. |  |
 | `workspace::OpenSSHSettings` | Open SSH settings. |  |
 | `workspace::OpenSettings` | Open the settings. | `ctrl-,` (linux, windows; Workspace); `cmd-,` (macos; Workspace) |
 | `workspace::OpenVault` | Open the encrypted credential vault. |  |
+| `workspace::PickLayout` | Search and pick a window layout. |  |
+| `workspace::PreviousLayout` | Switch to the previous window layout, wrapping around. |  |
 | `workspace::PreviousPane` | Focus the preceding pane in layout order. | `ctrl-alt-pageup` (linux, windows; Workspace); `cmd-alt-pageup` (macos; Workspace) |
 | `workspace::PreviousTab` | Switch to the tab on the left, wrapping around. | `ctrl-pageup` (linux, windows; Workspace); `ctrl-shift-tab` (linux, windows; Workspace); `cmd-shift-[` (macos; Workspace); `ctrl-shift-tab` (macos; Workspace) |
 | `workspace::ProfilesDirectory` | Open the directory containing connection profiles. |  |
@@ -80,9 +88,10 @@ Derived from `actions!` declarations and `assets/keymap.toml`.
 | `workspace::SplitUp` | Move the active tab into a new pane above. | `ctrl-alt-shift-up` (linux, windows; Workspace); `cmd-alt-shift-up` (macos; Workspace) |
 | `workspace::StartRecording` | Start recording terminal output. |  |
 | `workspace::StopRecording` | Stop recording terminal output. |  |
-| `workspace::SwapSides` | Put the sidebar and the AI panel on each other's side. | `ctrl-e` (linux, windows; Workspace); `cmd-e` (macos; Workspace) |
+| `workspace::SwitchLayout` | Switch to the window layout with this id. Only the window menu sends it. |  |
 | `workspace::ToggleCommandPalette` | Search and run any command. | `ctrl-shift-p` (linux, windows; Workspace); `cmd-shift-p` (macos; Workspace) |
 | `workspace::ToggleLocalTerminal` | Show or hide the local terminal without ending its process. | `ctrl-`` (linux, windows; Workspace); `ctrl-j` (linux, windows; Workspace); `cmd-`` (macos; Workspace); `cmd-j` (macos; Workspace) |
+| `workspace::TogglePanel` | Show or hide the panel of the contribution with this id. Only the window menu sends it. |  |
 | `workspace::ToggleRightPanel` | Show or hide the AI panel. | `ctrl-alt-b` (linux, windows; Workspace); `cmd-alt-b` (macos; Workspace) |
 | `workspace::ToggleRightPanelMaximized` | Expand or restore the AI panel in the workspace body. |  |
 | `workspace::ToggleSidebar` | Show or hide the sidebar. | `ctrl-shift-b` (linux, windows; Workspace); `cmd-b` (macos; Workspace) |

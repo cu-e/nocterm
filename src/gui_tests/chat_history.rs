@@ -68,7 +68,7 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert!(!workspace.read(cx).right_panel_is_available()));
+    cx.update(|cx| assert!(!agent_panel_is_available(&workspace, cx)));
     let final_work = cx.update(|cx| booted.agent_installation().runtime().capture_shutdown(cx));
     final_work.await.unwrap();
     assert_eq!(

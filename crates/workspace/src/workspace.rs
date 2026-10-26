@@ -1,4 +1,4 @@
-use std::{cell::Cell, path::PathBuf, rc::Rc};
+use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc};
 
 use gpui_kit::{
     Action, AnyView, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
@@ -10,26 +10,56 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
+use nocterm_plugin_model::PluginSet;
 use nocterm_session::{Auth, HostAddress, Target};
+use nocterm_ui::{PluginSource, StaticPluginSource};
 
 mod background;
 mod bindings;
 mod chrome;
 mod composition;
+mod contexts;
+pub use contexts::{ContextSelectionReceipt, ContextWindowReceipt, ProjectSurfaceReceipt};
 mod docking;
+mod general_target;
 mod groups;
+pub use general_target::GeneralTerminalTarget;
 mod interaction;
 mod layout;
 mod local_dock;
 mod openers;
+mod project_surface;
+mod project_terminal;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use project_terminal::project_terminal_selection;
+pub use project_terminal::{admit_project_terminal, validate_project_terminal_target};
 mod queries;
+pub use project_surface::{ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory};
+pub(crate) mod surface;
+mod surfaces;
 mod tabs;
 pub use openers::SessionFactory;
 mod actions;
-mod panels;
+mod panel_groups;
+use panel_groups::GroupKey;
 mod ports;
-mod right_panel;
+mod registration;
+pub use registration::{
+    ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
+    ZoneAware,
+};
+mod layout_edit;
+mod layout_switch;
+mod panel_menu;
+#[cfg(feature = "user-plugins")]
+pub(crate) mod plugin_panels;
 mod sessions;
+mod shell_layout;
+pub use layout_edit::{LayoutEditError, edit_layouts, legacy_layout_swapped};
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use layout_switch::switch as switch_layout_now;
+pub use layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts};
+pub use panel_menu::PanelEntry;
 
 use crate::{
     CloseTab, Item, ItemEvent, ItemHandle, NewTab, NextPanel, NextTab, PreviousTab, SessionContext,
@@ -75,6 +105,10 @@ impl SessionSpec {
 pub enum WorkspaceEvent {
     /// Terminal membership or metadata changed.
     ItemsChanged,
+    /// One retained surface became visible; active projections now belong to it.
+    ContextChanged,
+    /// A retained surface changed while hidden; active projections stay unchanged.
+    SurfaceItemsChanged(ProjectSurfaceReceipt),
     /// Another tab became active, or the last one closed.
     ActiveItemChanged,
     /// The session behind the active tab is a different one, or changed
@@ -84,8 +118,8 @@ pub enum WorkspaceEvent {
     LocalDirectoryChanged,
     /// Saved server descriptors or discovered facts changed.
     ConnectionsChanged,
-    /// The independent side panel was opened or closed.
-    RightPanelVisibilityChanged,
+    /// A panel group was shown or hidden.
+    PanelVisibilityChanged,
 }
 
 /// Close commands use the clicked tab's pane and its current visual order.
@@ -160,41 +194,94 @@ impl TabPane {
 #[derive(Clone)]
 pub struct Deps {
     layout: nocterm_ui::LayoutHandle,
+    source: Rc<dyn PluginSource>,
+    settings: Option<nocterm_store::SettingsHandle>,
+    clock: Option<Arc<dyn nocterm_core::clock::WallClock>>,
 }
 
 impl Deps {
+    /// Dependencies whose catalog lists the shell's own contributions and groups only, so a
+    /// panel or widget of any other plugin is refused until the application supplies its
+    /// plugins with [`Deps::with_plugin_source`].
     pub fn new(layout: nocterm_ui::LayoutHandle) -> Self {
-        Self { layout }
+        let catalog = crate::plugin::catalog(&[], &[])
+            .expect("the shell's own contributions form a valid catalog");
+        Self {
+            layout,
+            source: Rc::new(StaticPluginSource::new(PluginSet::from(catalog))),
+            settings: None,
+            clock: None,
+        }
+    }
+
+    /// Registers panels and widgets against the plugins `source` lists, which may change while
+    /// the windows are open: user plugins come and go.
+    pub fn with_plugin_source(mut self, source: Rc<dyn PluginSource>) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// Reads and writes the selected layout and the saved layouts through `settings`, which the
+    /// windows of the application share. Without it each window keeps its own in-memory
+    /// settings, which is how tests compose a window.
+    pub fn with_settings(mut self, settings: nocterm_store::SettingsHandle) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    /// Reads the time of the Clock plugin's widget from `clock`. Without it no window has the
+    /// widget, so a window composed for a test needs none.
+    pub fn with_clock(mut self, clock: Arc<dyn nocterm_core::clock::WallClock>) -> Self {
+        self.clock = Some(clock);
+        self
     }
 }
 
 pub struct Workspace {
     focus_handle: FocusHandle,
-    tabs: tabs::Tabs,
+    surfaces: surfaces::WindowSurfaces,
     chrome: chrome::Chrome,
-    background: background::BackgroundSessions,
-    sidebar: panels::Sidebar,
-    right_panel: right_panel::RightPanelSlot,
+    panels: panel_groups::PanelGroups,
     body: layout::Body,
+    shell: shell_layout::ShellLayout,
     ports: ports::WorkspacePorts,
     actions: actions::ActionRegistry,
+    registrations: registration::Registrations,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
 
 impl Workspace {
     pub fn new(deps: Deps, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let settings = deps.settings.unwrap_or_else(|| {
+            nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx)
+        });
+        let mut shell =
+            shell_layout::ShellLayout::new(&deps.layout, settings.clone(), deps.source.clone(), cx);
+        let workspace = cx.weak_entity();
+        let window_handle = window.window_handle();
+        shell.follow(cx, move |cx| {
+            let workspace = workspace.clone();
+            let _ = window_handle.update(cx, move |_, window, cx| {
+                let _ = workspace.update(cx, |this, cx| this.layout_settings_changed(window, cx));
+            });
+        });
         let mut this = Self {
             focus_handle: cx.focus_handle(),
-            tabs: tabs::Tabs::new(window, cx),
+            surfaces: surfaces::WindowSurfaces::new(window, cx),
             chrome: chrome::Chrome::new(cx.focus_handle()),
-            background: background::BackgroundSessions::default(),
-            sidebar: panels::Sidebar::default(),
-            right_panel: right_panel::RightPanelSlot::default(),
-            body: layout::Body::new(deps.layout),
+            panels: panel_groups::PanelGroups::new(),
+            body: layout::Body::new(deps.layout.clone()),
+            shell,
             ports: ports::WorkspacePorts::default(),
             actions: actions::ActionRegistry::default(),
+            registrations: registration::Registrations::new(),
         };
+        if let Some(clock) = deps.clock
+            && let Err(error) = crate::clock::register(clock, settings, &mut this, window, cx)
+        {
+            tracing::error!(%error, "the clock widget was not registered");
+        }
         this.register_action::<crate::EditCopy>(|_, _, window, cx| {
             window.dispatch_action(Box::new(gpui_kit::component::input::Copy), cx)
         });
@@ -246,18 +333,19 @@ impl Workspace {
     }
 
     fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.context_selection_receipt(cx);
         let workspace = cx.weak_entity();
         window.defer(cx, move |_, cx| {
             let _ = workspace.update(cx, |this, cx| {
-                this.show_new_tab_menu(!this.chrome.new_tab_open(), cx);
+                if this.accepts_context_selection(selection, cx) {
+                    this.show_new_tab_menu(!this.chrome.new_tab_open(), cx);
+                }
             });
         });
     }
 
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.command_item(window, cx).map(|item| item.item_id()) {
-            self.close_item_by_id(id, window, cx);
-        }
+        self.close_active_tabs(TabCloseScope::Current, window, cx);
     }
 
     fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -277,7 +365,7 @@ impl Workspace {
     }
 
     fn on_next_panel(&mut self, _: &NextPanel, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(next) = self.sidebar.next() {
+        if let Some(next) = self.panels.next(GroupKey::NAVIGATION) {
             self.activate_panel(next, window, cx);
         }
     }
@@ -296,17 +384,21 @@ impl Render for Workspace {
         let root = self.actions.bind(&self.focus_handle, cx);
 
         let regions = chrome::Regions::new(
-            &self.tabs,
-            &self.sidebar,
-            &self.right_panel,
+            self.surfaces.frame(cx),
+            self.context_selection_receipt(cx),
+            &self.panels,
             self.ports.directory(),
+            &self.shell,
         );
         let body = self
             .chrome
             .render_body(&mut self.body, &regions, window, cx);
-        root.child(self.chrome.render_title_bar(cx))
-            .child(div().flex_1().min_h_0().child(body))
-            .child(self.chrome.render_footer(&regions, cx))
+        root.child(
+            self.chrome
+                .render_title_bar(self.context_selection_receipt(cx), cx),
+        )
+        .child(div().flex_1().min_h_0().child(body))
+        .child(self.chrome.render_footer(&regions, cx))
     }
 }
 
@@ -315,4 +407,28 @@ impl Render for Workspace {
 mod tests;
 
 #[cfg(test)]
+mod clock_tests;
+#[cfg(test)]
+mod enablement_tests;
+#[cfg(test)]
+mod focus_transition_tests;
+#[cfg(test)]
+mod layout_switch_tests;
+#[cfg(test)]
 mod native_terminal_tab_tests;
+#[cfg(test)]
+mod panel_availability_tests;
+#[cfg(test)]
+mod panel_chrome_tests;
+#[cfg(test)]
+mod panel_menu_tests;
+#[cfg(test)]
+mod status_bar_centre_tests;
+#[cfg(test)]
+mod status_bar_menu_tests;
+#[cfg(test)]
+mod status_bar_overflow_tests;
+#[cfg(test)]
+mod status_bar_zone_tests;
+#[cfg(test)]
+mod user_plugin_tests;

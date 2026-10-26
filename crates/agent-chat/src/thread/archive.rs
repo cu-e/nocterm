@@ -1,11 +1,13 @@
 //! Owns hydration generations, queued intentions, draft overlays and delivery permits.
 pub(in crate::thread) mod load_operation;
+mod summary;
 use gpui::App;
 use nocterm_ai::{
     history::{ChatSummary, HistoryPermit, SavedChat},
     session::Ticket,
     storage::AgentStorageError,
 };
+use summary::ArchivedSummary;
 
 /// Runs once the saved chat is hydrated, outside the thread's update.
 pub type AfterHydration = Box<dyn FnOnce(&mut App)>;
@@ -25,7 +27,7 @@ pub(super) struct LoadId(u64);
 enum ArchivePhase {
     Resident,
     Archived {
-        summary: ChatSummary,
+        summary: ArchivedSummary,
         loading: Option<LoadId>,
     },
 }
@@ -118,10 +120,10 @@ impl Default for Archive {
     }
 }
 impl Archive {
-    pub(super) fn archived(summary: ChatSummary) -> Self {
+    pub(super) fn archived(summary: impl Into<ArchivedSummary>) -> Self {
         Self {
             phase: ArchivePhase::Archived {
-                summary,
+                summary: summary.into(),
                 loading: None,
             },
             ..Self::default()
@@ -132,6 +134,12 @@ impl Archive {
             ArchivePhase::Resident => None,
             ArchivePhase::Archived { summary, .. } => Some(summary),
         }
+    }
+    pub(super) fn can_release(&self) -> bool {
+        matches!(self.phase, ArchivePhase::Archived { loading: None, .. })
+            && self.pending.is_empty()
+            && self.draft_overlay.is_none()
+            && self.permit.is_none()
     }
     pub(super) fn is_archived(&self) -> bool {
         self.summary().is_some()
@@ -164,15 +172,18 @@ impl Archive {
         self.draft_overlay = Some(DraftOverlay::new(text, updated));
         true
     }
-    pub(super) fn draft_patch(&self, id: &str, agent: &str) -> Option<SavedChat> {
-        self.is_archived().then_some(())?;
+    pub(super) fn draft_patch(&self) -> Option<SavedChat> {
+        let summary = self.summary()?;
         self.draft_overlay.as_ref().map(|overlay| {
-            SavedChat::archive_draft(
-                id.to_owned(),
-                agent.to_owned(),
+            let mut chat = SavedChat::archive_draft_in_scope(
+                summary.id.clone(),
+                summary.agent_id.clone(),
                 overlay.text.clone(),
                 overlay.updated,
-            )
+                summary.scope,
+            );
+            chat.version = summary.transcript_version().wire();
+            chat
         })
     }
     pub(super) fn accept(
@@ -219,7 +230,7 @@ impl Archive {
             return false;
         }
         self.phase = ArchivePhase::Archived {
-            summary,
+            summary: summary.into(),
             loading: None,
         };
         self.resident_bytes = 0;

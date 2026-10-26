@@ -6,8 +6,49 @@ Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
+
+## Workspace folders
+
+`nocterm-project-model` owns stable workspace/context identities, checked names,
+ordinary host folders, provider resource envelopes and the versioned catalog.
+Provider references have independent schema versions and bounded inert data;
+unknown providers retain their references and history without acquiring a session.
+Import provenance grants no execution authority. Existing catalogs migrate to
+ordinary host folders without changing identity.
+
+`nocterm-project-providers` owns checked built-in container locations and the
+host-backed preparation contracts. Container identity includes the original host,
+ordered jump route, Docker/Podman engine, full container ID and folder. Actual
+command execution belongs to the runtime adapter. Pure exact-container request
+construction preserves arguments, stdin and explicit workspace-cwd choice without I/O. Checked ephemeral language/version
+selections reject incompatible version syntax and duplicate languages before I/O.
+`WorkspaceEnvironment` separately admits observed platform capabilities and explicit
+tool changes against a checked host or already scoped executor. Neutral environment
+facts and transfer progress remain ephemeral; `WorkspaceSessionFactory` activates
+managed paths independently of container routing
+([ADR 0075](../adr/0075-observed-workspace-environment-management.md)).
+`EnvironmentCommands` and its factory preserve original bounded command authority
+across scopes and observations. The separate `CreatedWorkspaceEnvironment` requires
+an actual owned receipt; ordinary installation accepts no fresh-creation flag.
+`WorkspaceCommandActivation` supplies managed exports before container wrapping;
+all implementations are explicitly composed adapters
+([ADR 0080](../adr/0080-project-adapter-ownership.md)).
+The separate `ImageSearch` port accepts the captured host executor, engine,
+checked query and cancellation without expanding the preparation contract; registry DTOs
+and typed rate-limit cooldowns do not enter the catalog. Workspace identity selects chat
+history independently of visible tabs and provider availability
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
+The same provider domain owns `[workspaces]` defaults. Its container directory is
+a structurally validated absolute POSIX path with `/home` as the initial policy;
+it neither creates directories nor rewrites saved workspace locations.
+
+`WorkspaceContainerActions` is a separate explicit Stop/Delete contract. A checked
+source pairs the saved container location with a matching original host and ordered
+route; its resource key ignores folder and saved profile aliases. Keep requires no
+provider call. Typed failures retain native causes and acknowledged stop effects
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
 
 ## Connection formats and rules
 
@@ -140,6 +181,11 @@ exec channel of the live connection and `nocterm-local` as a child process.
 splits its output into frames, parses them into raw counters and turns
 successive readings into loads, rates and bounded histories. It knows neither
 GPUI nor the workspace.
+The Linux container platform instead builds own-cgroup v1/v2 CPU/memory recipes.
+It resolves process membership and controller mounts, parses bounded facts and
+derives CPU as percent of one CPU. Memory retains an optional observed limit;
+missing host-only facts stay absent. This reuses the watch's supplied executor and
+frame stream, adding no native filesystem or process acquisition to the domain.
 
 `ProgramOpener` is a distinct pure session contract for external local editors. Its
 validated request preserves literal arguments and native cwd; success acknowledges
@@ -206,12 +252,20 @@ agent and `catalog()`, which the application injects.
 
 ## Agent history
 
-`nocterm-ai` owns pure version-one transcript codecs, structural/collection
-validation, catalog summary rules and the `ChatRepository`/`AgentStateRepository`
-contracts. Filesystem history/preferences implementation belongs to
+`nocterm-ai` owns pure transcript codecs, structural/collection validation,
+catalog summary rules and the `ChatRepository`/`AgentStateRepository` contracts.
+Version one remains byte-stable and belongs to General. Version two requires an
+explicit `ContextId` and a canonical envelope whose authoritative catalog header
+fits within a 16 KiB prefix. Its bounded display metadata and content/title
+projection precede the payload; full hydration validates their agreement.
+Prefix-only discovery can offer that declared header even when a damaged or
+disagreeing payload cannot hydrate. Repository catalog, load and delete calls
+capture their expected scope; saving derives it from the document. Filesystem history/preferences implementation belongs to
 `nocterm-agent-storage`; the domain exports no forwarding filesystem facade.
 SavedChat and SharedChat hold neutral `nocterm_ai::model` records whose serialization
-is the version-one transcript JSON; no agent protocol SDK type appears in the domain
+preserves the version-one transcript JSON. SharedChat also supplies a conservative
+structural ownership cost for full retained media and its separate shared queue
+without allocating an encoded transcript buffer; no agent protocol SDK type appears in the domain
 ([ADR0058](../adr/0058-neutral-agent-protocol-boundary.md)).
 Chat identity allocation and wall-clock observations are supplied through the
 ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
@@ -258,9 +312,13 @@ output-size contracts. Native decoding and PNG encoding belong to an adapter.
 
 `nocterm-terminal-model` owns the terminal display settings schema, ranges and
 sanitization without GPUI, emulation or native sessions. `nocterm-explorer` owns
-Explorer indexing settings, ordered opener matching and literal argument substitution;
-filesystem traversal and native program requests stay in the Files feature and its
-injected adapters. Monitor and Vault schemas belong to their existing domain crates.
+Explorer indexing settings, ordered opener matching, literal argument substitution,
+pure directory completion rules and read-only directory contracts. Local paths
+retain native identity and remote paths use POSIX semantics. Filesystem traversal
+and native program requests stay in injected adapters; Files owns their browser
+presentation. Shared directory selection is described in
+[ADR 0072](../adr/0072-shared-directory-selection.md).
+Monitor and Vault schemas belong to their existing domain crates.
 These schemas retain their established serialized names and public schema identities.
 The foundation settings schema builder supplies ordered property/default machinery;
 policy descriptions, constraints and defaults remain with each domain owner.
@@ -271,3 +329,107 @@ The snippet domain also declares blocking SnippetRepository and supplied Snippet
 capabilities. Storage errors retain the original native source behind a typed read/write
 operation; no native paths, entropy acquisition or I/O enters the domain. Record and
 library serialization, validation and exact expected-record mutations remain pure.
+
+## Plugins and contributions
+
+`nocterm-plugin-model` owns what a plugin is and what the window shell can host:
+ids (their syntax is checked by the catalog), the `SystemPlugin` and `SystemContribution` descriptors that feature
+crates declare, placement hints (zone, order, group, automatic placement), group specs,
+icons and width classes, and the checked `PluginCatalog`. Core contributions are
+functions that are not plugins and are never disabled (the shell's, and those of connections
+and files); every other contribution belongs to a system plugin. The catalog refuses malformed or repeated ids, contributions outside
+their plugin's namespace, undeclared groups, a group hint on a widget, a set of groups
+without exactly one primary group, panel traits on a widget (or missing on a panel) and
+repeated order values in a zone, with typed errors. It has no GPUI types, no
+I/O and no internal dependencies. See [ADR 0082](../adr/0082-system-plugins-and-core-contributions.md).
+
+Its `schema` module is the declarative settings schema of a plugin: groups of fields of five
+kinds (toggle, choice, multi-choice, bounded number and single-line text), with no colour,
+secret or multi-line kind. `SettingsSchema::validate` bounds the counts and lengths, checks
+that keys, options, ranges and defaults are well formed and that a group names one of the
+plugin's own contributions; the catalog calls it and refuses a plugin with a schema but no
+`settings_section`. `apply` turns a `FieldEdit` (set a value, toggle one option, or step a number) into the
+new value of a field from the value current at write time, so quick edits compose, with a
+typed `FieldError` whose text is meant for the field. Text is stripped of control
+characters, line breaks and every `Default_Ignorable_Code_Point`, keeps at most two
+nonspacing or enclosing marks per base character, and is data: never interpreted or
+masked. `bounded` applies the same rules to values read from a stored document. The schema
+performs no I/O and knows nothing of storage. A plugin may also name the full settings page it keeps
+(`settings_page`), which the application registers nested under the Plugins page or, for a
+destination of its own such as the AI page, at the top level. See
+[ADR 0085](../adr/0085-one-plugin-model-with-separate-trust-tiers.md) and
+[ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md).
+
+`nocterm-plugin-enablement` owns the `[plugins]` settings section: the ids of the plugins
+switched off. The list is sanitized (valid ids once each, at most 64; ids this build does not
+know are kept, so a returning plugin finds its state) and `effective_disabled` returns
+the ids that are really off, never a required plugin and never a core contribution.
+`read_error` reports a table that does not read, so a writer can refuse instead of
+replacing it. The section also holds the `user_plugins` switch: whether a build with the
+`user-plugins` feature loads user plugins at the start (off by default, left out of the file
+while off; [ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)). It
+reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types and no I/O
+([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).
+
+`nocterm-plugin-model` is `#![no_std]` with `alloc`, so I/O is unreachable by construction. It also
+knows the user tier: `user-` plugin ids, borrowed `PluginRef` and `ContributionRef` views over system and user plugins, the clamp that
+bounds where a user plugin may place a contribution, and the `renamed_from` and `resolve` rules
+that move a stored setting value to its renamed key. Its schema carries a `version`.
+
+`nocterm-plugin-api` owns the contract of user plugins: the capability table with its field types,
+`Snapshot`, `View` (a flat arena), `Effects` and `Event`, `sanitize_display`, the manifest and its
+validation onto `SettingsSchema`, grants bound to `(PluginId, ContentHash)`, the template language
+with `DeclarativeRuntime`, and the `PluginPackages` and `PluginRuntime` ports. It is `no_std`,
+reads no file and runs no guest code; `crates/plugin-api/api-surface.json` is generated from it by
+`cargo xtask docs`, and so are the manifest reference and `docs/plugins/manifest.schema.json`
+from its typed manifest keys (`MANIFEST_KEYS`). A CI job holds the surface compatible with the
+latest release tag ([guardrails](guardrails.md#plugin-api-compatibility)). It also owns the code-package format rules (kind detection from the module
+magic and a bounded scan for the manifest's custom section) and `Runtimes`, which picks the
+declarative interpreter or the injected code runtime by the manifest's `runtime`. See
+[ADR 0089](../adr/0089-user-plugin-contract.md) and the
+[isolation rules](guardrails.md#isolation-of-the-plugin-crates).
+
+`nocterm-plugin-abi` owns the guest ABI of code plugins: the export names, the `ABI_VERSION`, the
+resource limits, the call and reply wire types and their bounded postcard encoding. It is
+`no_std`, reads no file and runs no code, so the SDK can use it on the guest side. Its wire types
+embed the public types of `nocterm-plugin-api` (views, effects, events, errors, capability
+values) and mirror only observations and setting values, so the golden file is what pins their
+bytes.
+`crates/plugin-abi/abi-golden.json` records its exports and canonical encodings and is kept fresh by
+`cargo xtask docs` ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
+
+`nocterm-plugin-sdk` is the guest side of that ABI: the `Plugin` trait, `Cx` (the snapshot of one
+call), a `ViewBuilder`, typed observation markers, effect constructors, the `export!` macro and,
+behind the `testing` feature, `testing::Host`, which drives the real dispatch and encoding
+natively and applies the host's rules to what comes back. It is `no_std` with `alloc`. The only
+`unsafe` code is the expansion of `export!` in the author's crate, and only for `wasm32`. It has no
+isolation row, because the structural bans would reject that macro; instead the policy lists it
+as guest-only, and it must stay out of the closure of `nocterm`
+([guardrails](guardrails.md#isolation-of-the-plugin-crates)). `examples/plugins/focus-timer` is a
+plugin built on it, in a workspace of its own
+([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)).
+
+`nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
+zones of the status bar, panel groups with their members and separators (the catalog's,
+groups the user made and named, and panels that stand alone as groups of one), the tray of
+registered contributions that are not placed, and the panels that open with a layout.
+`resolve` arranges the catalog's contributions as a preset asks and places the rest by
+their hints; ids the catalog does not know are kept in the preset but never placed, a
+contribution is placed once, separators never lead, trail or double, exactly one group
+is primary (the catalog's; a preset's own `primary` flag is ignored) and a pinned widget is always placed. The built-in Default is the empty
+preset and Swapped is its resolution with every group on the other side; neither is
+stored. It also owns the `[layouts]` settings section: stored presets with `p<n>` ids and
+checked names, `select`, which falls back to the earlier swapped flag without writing,
+and `transition`, which tells a window whether a change of the document is a switch, an
+edit or nothing. `resolve` also takes the disabled ids: they stay in the document but are
+not rendered, not appended, not opened and listed by `ResolvedLayout::disabled()`, and
+separators collapse around them. It reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types
+and no I/O. It also owns the pure rules of an edit: `edit(settings, legacy_swapped, catalog, target, op)`
+returns the new settings and the preset to show, or a typed `EditError`. Editing a built-in layout in
+use saves a copy named Custom and selects it, a pinned widget cannot leave the bar, and the result
+never has what `resolve` would reshape. A `[layouts]` table that does not read is reported by
+`LayoutSettings::read_error` so no edit overwrites it. See
+[ADR 0083](../adr/0083-zoned-status-bar.md),
+[ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md),
+[ADR 0087](../adr/0087-status-bar-and-panels-editor.md) and
+[ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md).

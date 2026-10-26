@@ -6,15 +6,19 @@
 use std::sync::Arc;
 
 use gpui_kit::{App, Context, Window};
-use nocterm_core::Paths;
+use nocterm_core::{Paths, clock::WallClock};
 use nocterm_design::DesignTokens;
 use nocterm_session::Transport;
-use nocterm_settings_ui::SettingsCatalogError;
 use nocterm_store::SettingsConfig;
 use nocterm_vault::VaultAccess;
 use nocterm_vault_store::VaultService;
 use nocterm_workspace::Workspace;
 use std::rc::Rc;
+
+use crate::shell_setup::{GuestInputs, Plugins, UserPluginMode, install_guest_pages};
+
+mod error;
+pub(crate) use error::BootstrapError;
 
 /// What differs between the application and its tests.
 pub(crate) struct Services {
@@ -24,11 +28,7 @@ pub(crate) struct Services {
     /// Whether connections, snippets, layout, recordings and the keymap are
     /// read from and written to `paths`; tests keep them in memory.
     pub(crate) persist: bool,
-    pub(crate) transport: Arc<dyn Transport>,
-    /// Whether local shells run on this machine.
-    pub(crate) local: nocterm_terminal::LocalSessions,
-    /// Local host execution, supplied once independently of session creation.
-    pub(crate) local_host: Option<Arc<dyn nocterm_session::HostExec>>,
+    pub(crate) hosts: HostServices,
     pub(crate) terminal_auth_factory:
         Option<fn(nocterm_terminal::Installed) -> nocterm_agent::TerminalAuthOpener>,
     pub(crate) files: nocterm_files::Deps,
@@ -39,6 +39,49 @@ pub(crate) struct Services {
     pub(crate) images: nocterm_agent::ImageDeps,
     pub(crate) vault: Option<VaultSetup>,
     pub(crate) connections: nocterm_connections::PreparedConnections,
+    pub(crate) projects: crate::project_setup::PreparedProjectSetup,
+    /// Which user plugins this run opens. The services are at the field limit: a new way to
+    /// start extends this enum, not the struct.
+    pub(crate) user_plugins: UserPluginMode,
+}
+
+/// Native connection capabilities supplied once for terminal composition.
+pub(crate) struct HostServices {
+    pub(crate) transport: Arc<dyn Transport>,
+    pub(crate) local: nocterm_terminal::LocalSessions,
+    pub(crate) local_host: Option<Arc<dyn nocterm_session::HostExec>>,
+    pub(crate) image_search: Arc<dyn nocterm_project_providers::ImageSearch>,
+    pub(crate) environment: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
+    pub(crate) preparation: Arc<dyn nocterm_project_providers::ProjectPreparation>,
+    pub(crate) container_sessions: Arc<dyn nocterm_project_providers::ContainerSessionFactory>,
+    pub(crate) workspace_sessions: Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>,
+    pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
+}
+
+struct ProjectResources {
+    settings: nocterm_store::SettingsHandle,
+    directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
+    image_search: Arc<dyn nocterm_project_providers::ImageSearch>,
+    environment: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
+    preparation: Arc<dyn nocterm_project_providers::ProjectPreparation>,
+    container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
+}
+
+impl ProjectResources {
+    fn new(
+        hosts: &HostServices,
+        settings: nocterm_store::SettingsHandle,
+        directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
+    ) -> Self {
+        Self {
+            settings,
+            directories,
+            image_search: hosts.image_search.clone(),
+            environment: hosts.environment.clone(),
+            preparation: hosts.preparation.clone(),
+            container_actions: hosts.container_actions.clone(),
+        }
+    }
 }
 
 pub(crate) struct Themes {
@@ -67,7 +110,9 @@ pub(crate) struct Booted {
     workspace: nocterm_workspace::Deps,
     connections: Option<nocterm_connections::Installed>,
     snippets: Option<nocterm_snippets_ui::Installed>,
+    projects: Option<nocterm_projects::Installed>,
     themes: nocterm_ui::ThemeUi,
+    user_plugins: crate::shell_setup::UserShell,
     /// The vault, when it opened; credentials and its settings depend on it.
     vault: Option<Rc<nocterm_vault_ui::Installed>>,
 }
@@ -83,6 +128,10 @@ impl Booted {
     #[cfg(test)]
     pub(crate) fn keymap(&self) -> nocterm_keymap::KeymapHandle {
         self.keymap.clone()
+    }
+    #[cfg(all(test, feature = "user-plugins"))]
+    pub(crate) fn user_plugins(&self) -> &crate::shell_setup::UserShell {
+        &self.user_plugins
     }
     #[cfg(test)]
     pub(crate) fn agent_installation(&self) -> &nocterm_agent::Installed {
@@ -102,25 +151,114 @@ impl Booted {
 }
 
 /// Composes services and feature dependencies in dependency order.
-pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, SettingsCatalogError> {
+pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, BootstrapError> {
     let Services {
         tokens,
         settings,
         paths,
         persist,
-        transport,
-        local,
-        local_host,
+        hosts,
         terminal_auth_factory,
         files,
         themes,
-        mut agent,
+        agent,
         sandbox_probe,
         images,
         vault,
         connections,
+        projects,
+        user_plugins: mode,
     } = services;
     let stored = persist.then_some(&paths);
+    let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
+    let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
+    let local_host = hosts.local_host.clone();
+    let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
+    let connections = install_connections(connections, &ui, &shutdown, cx);
+    let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
+    let projects = install_projects(
+        projects,
+        &terminal,
+        connections.as_ref(),
+        resources,
+        &shutdown,
+        cx,
+    )
+    .map(|projects| projects.with_local_host(local_host.clone()));
+    let terminal_auth = terminal_auth_factory.map(|factory| factory(terminal.clone()));
+    let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
+    let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
+    let files = install_files(files, &ui, &shutdown, cx);
+    let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
+    let keymap = crate::keymap::load(user_keymap, cx);
+    let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);
+    let plugins = Plugins::install(&paths, &shutdown, clock.clone(), mode, ui.settings(), cx)?;
+    let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
+    let inputs = GuestInputs::new(
+        &monitor,
+        &ui,
+        keymap.clone(),
+        &files,
+        projects.as_ref(),
+        &layout,
+    );
+    let guests = install_guest_pages(inputs, &plugins, cx);
+    let settings_ui = crate::settings_pages::SettingsPages::from_installations(
+        ui.settings().clone(),
+        themes.clone(),
+        &terminal,
+        &agent,
+        sandbox_probe,
+        guests,
+        vault.as_deref(),
+    )?;
+    let booted = Booted {
+        #[cfg(test)]
+        keymap,
+        local_host,
+        terminal,
+        settings_ui,
+        monitor,
+        agent,
+        connections,
+        snippets,
+        projects,
+        vault,
+        files,
+        user_plugins: plugins.user().clone(),
+        workspace: workspace_deps(layout, &plugins, ui.settings().clone(), clock),
+        themes,
+    };
+    crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
+    Ok(booted)
+}
+
+/// The shared dependencies every window's workspace is made from.
+fn workspace_deps(
+    layout: nocterm_ui::LayoutHandle,
+    plugins: &Plugins,
+    settings: nocterm_store::SettingsHandle,
+    clock: Arc<dyn WallClock>,
+) -> nocterm_workspace::Deps {
+    nocterm_workspace::Deps::new(layout)
+        .with_plugin_source(plugins.source())
+        .with_settings(settings)
+        .with_clock(clock)
+}
+
+/// Establish shared settings, appearance and durable layout before feature installation.
+fn install_interface(
+    tokens: DesignTokens,
+    settings: SettingsConfig,
+    themes: Option<Themes>,
+    stored: Option<&Paths>,
+    cx: &mut App,
+) -> (
+    nocterm_ui::UiReady,
+    nocterm_store::ShutdownCoordinator,
+    nocterm_ui::ThemeUi,
+    nocterm_ui::LayoutHandle,
+) {
     gpui_kit::init(cx);
     let base = tokens.clone();
     let settings = settings.install(cx);
@@ -133,53 +271,32 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Sett
         &shutdown,
         cx,
     );
-    let terminal_deps = terminal_dependencies(transport, local, stored, &shutdown);
-    let connections = install_connections(connections, &ui, &shutdown, cx);
-    let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
-    if let Some(factory) = terminal_auth_factory {
-        agent.terminal_auth = Some(factory(terminal.clone()));
-    }
-    let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
-    let (agent, registration) =
-        nocterm_agent::init(agent, images, layout.clone(), &ui, &shutdown, cx);
-    report_store_registration("agent", registration);
-    let files = install_files(files, &ui, &shutdown, cx);
-    let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
-    let keymap = crate::keymap::load(user_keymap, cx);
-    let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
-    let settings_ui = crate::settings_pages::SettingsPages::compose(
-        nocterm_settings_ui::Installed::new(ui.settings().clone()),
-        themes.clone(),
-        nocterm_terminal::settings_pages(&terminal),
-        nocterm_agent_settings_ui::settings_page(
-            ui.settings().clone(),
-            agent.agents().clone(),
-            sandbox_probe,
+    (ui, shutdown, themes, layout)
+}
+
+/// Saved workspaces retain the original terminal installation and shutdown owner.
+fn install_projects(
+    projects: crate::project_setup::PreparedProjectSetup,
+    terminal: &nocterm_terminal::Installed,
+    connections: Option<&nocterm_connections::Installed>,
+    resources: ProjectResources,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Option<nocterm_projects::Installed> {
+    match projects.install(terminal, connections, resources.settings, shutdown, cx) {
+        Ok(projects) => Some(
+            projects
+                .with_directory_readers(resources.directories)
+                .with_preparation(resources.preparation)
+                .with_image_search(resources.image_search)
+                .with_environment(resources.environment)
+                .with_container_actions(resources.container_actions),
         ),
-        [
-            nocterm_keymap_ui::settings_page(keymap.clone()),
-            nocterm_monitor_ui::settings_page(&monitor),
-            nocterm_files::settings_page(&files),
-        ],
-        vault.as_deref().map(nocterm_vault_ui::settings_page),
-    )?;
-    let booted = Booted {
-        #[cfg(test)]
-        keymap,
-        local_host,
-        terminal,
-        settings_ui,
-        monitor,
-        agent,
-        connections,
-        snippets,
-        vault,
-        files,
-        workspace: nocterm_workspace::Deps::new(layout),
-        themes,
-    };
-    crate::application::register(paths, booted.clone(), ui.settings().clone(), cx);
-    Ok(booted)
+        Err(error) => {
+            tracing::error!(%error, "workspace installation failed");
+            None
+        }
+    }
 }
 
 /// Saved connections, or none when their store could not register for shutdown.
@@ -281,12 +398,13 @@ fn install_snippets(
 
 /// Compose one registry and native session capabilities for all windows.
 fn terminal_dependencies(
-    transport: Arc<dyn nocterm_session::Transport>,
-    local: nocterm_terminal::LocalSessions,
+    hosts: HostServices,
     stored: Option<&nocterm_core::Paths>,
     shutdown: &nocterm_store::ShutdownCoordinator,
 ) -> nocterm_terminal::Deps {
-    let deps = nocterm_terminal::Deps::new(transport, local);
+    let deps = nocterm_terminal::Deps::new(hosts.transport, hosts.local)
+        .with_container_sessions(hosts.container_sessions)
+        .with_workspace_sessions(hosts.workspace_sessions);
     let Some(paths) = stored else {
         return deps;
     };
@@ -296,6 +414,25 @@ fn terminal_dependencies(
     let registry = Arc::new(nocterm_store::RecordingRegistry::new(log_factory));
     report_store_registration("recording", registry.register(shutdown));
     deps.with_recording(registry)
+}
+
+/// Installs the agent feature; a supplied terminal sign-in opener replaces the one in `agent`.
+fn install_agent(
+    mut agent: nocterm_agent::AgentServices,
+    terminal_auth: Option<nocterm_agent::TerminalAuthOpener>,
+    images: nocterm_agent::ImageDeps,
+    layout: &nocterm_ui::LayoutHandle,
+    ui: &nocterm_ui::UiReady,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> nocterm_agent::Installed {
+    if terminal_auth.is_some() {
+        agent.terminal_auth = terminal_auth;
+    }
+    let (agent, registration) =
+        nocterm_agent::init(agent, images, layout.clone(), ui, shutdown, cx);
+    report_store_registration("agent", registration);
+    agent
 }
 
 /// Freeze transfer admission during synchronous capture, then drain without App.
@@ -323,6 +460,13 @@ fn register_transfer_shutdown(
             Box::pin(async move { drain.await.map_err(nocterm_store::StoreError::backend) })
         }),
     );
+}
+
+/// A feature the workspace refused to place stays installed without its panel or widget.
+fn report_registration(owner: &str, result: Result<(), nocterm_workspace::RegistrationError>) {
+    if let Err(error) = result {
+        tracing::error!(owner, %error, "shell registration failed");
+    }
 }
 
 /// Reports registration failures consistently while retaining installation order.
@@ -416,20 +560,49 @@ pub(crate) fn build_workspace(
     let vault = booted.vault().map(Rc::as_ref);
     nocterm_terminal::register(&booted.terminal, workspace);
     if let Some(connections) = &booted.connections {
-        nocterm_connections::register(connections, workspace, window, cx);
+        report_registration(
+            "connections",
+            nocterm_connections::register(connections, workspace, window, cx),
+        );
+        workspace.set_chat_connection_opener(crate::project_setup::chat_connection_opener(
+            &booted.terminal,
+            connections,
+        ));
     }
     booted
         .settings_ui
         .register(workspace, booted.themes().clone());
-    nocterm_files::register(&booted.files, workspace, window, cx);
-    // The last panel's switcher sits just before the monitor.
+    report_registration(
+        "files",
+        nocterm_files::register(&booted.files, workspace, window, cx),
+    );
     if let Some(snippets) = &booted.snippets {
-        nocterm_snippets_ui::register(workspace, snippets, window, cx);
+        report_registration(
+            "snippets",
+            nocterm_snippets_ui::register(workspace, snippets, window, cx),
+        );
     }
-    nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx);
-    nocterm_monitor_ui::register(&booted.monitor, workspace, window, cx);
-    nocterm_agent::register(workspace, booted.agent.clone(), window, cx);
+    report_registration(
+        "containers",
+        nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx),
+    );
+    if let Some(projects) = &booted.projects {
+        report_registration(
+            "projects",
+            nocterm_projects::register(workspace, projects, window, cx),
+        );
+    }
+    let user = booted.user_plugins.window(&booted.files);
+    report_registration(
+        "monitor",
+        user.register_monitor(&booted.monitor, workspace, window, cx),
+    );
+    report_registration(
+        "agent",
+        nocterm_agent::register(workspace, booted.agent.clone(), window, cx),
+    );
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
+    user.attach(workspace, window, cx);
     if let Some(vault) = vault
         && vault
             .settings()
@@ -449,238 +622,6 @@ pub(crate) fn build_workspace(
 }
 
 #[cfg(test)]
-mod observation_tests {
-    use super::*;
-
-    #[gpui_kit::test]
-    fn configured_observations_use_supplied_disk_cache(cx: &mut gpui_kit::TestAppContext) {
-        let directory = tempfile::tempdir().unwrap();
-        let paths = Paths::rooted_at(directory.path());
-        let id = nocterm_connections_model::test_support::profile_id_for("src/bootstrap.rs:1");
-        std::fs::create_dir_all(paths.state_dir().join("flags")).unwrap();
-        std::fs::write(
-            paths.state_dir().join("servers.toml"),
-            format!("[server.\"{id}\"]\ncountry = \"xx\"\n"),
-        )
-        .unwrap();
-        std::fs::write(paths.state_dir().join("flags/xx.svg"), b"<svg/>").unwrap();
-        let prepared = crate::connection_setup::native(&paths);
-        let installed = cx.update(|cx| {
-            gpui_kit::init(cx);
-            let ready = nocterm_ui::init(
-                DesignTokens::builtin(),
-                SettingsConfig::in_memory(Default::default()).install(cx),
-                cx,
-            );
-            nocterm_connections::install(
-                prepared,
-                &ready,
-                &nocterm_store::ShutdownCoordinator::default(),
-                cx,
-            )
-            .unwrap()
-        });
-        cx.run_until_parked();
-        assert!(cx.read(|cx| installed.flag("xx", cx).is_some()));
-    }
-
-    #[gpui_kit::test]
-    fn memory_observations_ignore_even_an_existing_native_cache(cx: &mut gpui_kit::TestAppContext) {
-        let directory = tempfile::tempdir().unwrap();
-        let paths = Paths::rooted_at(directory.path());
-        let id = nocterm_connections_model::test_support::profile_id_for("src/bootstrap.rs:2");
-        std::fs::create_dir_all(paths.state_dir().join("flags")).unwrap();
-        std::fs::write(
-            paths.state_dir().join("servers.toml"),
-            format!("[server.\"{id}\"]\ncountry = \"xx\"\n"),
-        )
-        .unwrap();
-        std::fs::write(paths.state_dir().join("flags/xx.svg"), b"<svg/>").unwrap();
-        let installed = cx.update(|cx| {
-            gpui_kit::init(cx);
-            let ready = nocterm_ui::init(
-                DesignTokens::builtin(),
-                SettingsConfig::in_memory(Default::default()).install(cx),
-                cx,
-            );
-            // The observations are deliberately composed with no configured
-            // paths, although old observations are present in the fixture.
-            nocterm_connections::install(
-                crate::connection_setup::memory(),
-                &ready,
-                &nocterm_store::ShutdownCoordinator::default(),
-                cx,
-            )
-            .unwrap()
-        });
-        cx.run_until_parked();
-        assert!(cx.read(|cx| installed.flag("xx", cx).is_none()));
-    }
-}
-
+mod credential_tests;
 #[cfg(test)]
-mod credential_tests {
-    use super::*;
-    use futures::executor::block_on;
-    use gpui_kit::AppContext as _;
-    use nocterm_session::{
-        Auth, CredentialStore as _, Event, Prompt, Reply, Secret, SecretRequest, Target,
-        testing::ScriptedTransport,
-    };
-
-    fn history_profile(target: Target) -> nocterm_connections_model::profiles::Profile {
-        nocterm_connections_model::profiles::Profile {
-            id: nocterm_connections_model::profiles::ProfileId::from_bytes([7; 16]),
-            name: "History".into(),
-            description: String::new(),
-            options: Default::default(),
-            target,
-            auth: Auth::Password,
-            credential: None,
-            launch: None,
-            icon: None,
-            icon_color: None,
-            country: None,
-            group: None,
-            jump_hosts: Vec::new(),
-        }
-    }
-    fn association_fixture(
-        profile: nocterm_connections_model::profiles::Profile,
-        file: std::path::PathBuf,
-        cx: &mut gpui_kit::TestAppContext,
-    ) -> (
-        gpui_kit::Entity<nocterm_terminal::Terminal>,
-        Arc<dyn VaultAccess>,
-        gpui_kit::Entity<nocterm_connections::Connections>,
-        nocterm_session::SessionDriver,
-    ) {
-        let mut profiles = nocterm_connections_model::profiles::Profiles::default();
-        profiles.upsert(profile.clone());
-        let transport = Arc::new(ScriptedTransport::default());
-        let driver = transport.queue(None, None);
-        let (terminal, service, connections) = cx.update(|cx| {
-            gpui_kit::init(cx);
-            let ready = nocterm_ui::init(
-                DesignTokens::builtin(),
-                SettingsConfig::in_memory(Default::default()).install(cx),
-                cx,
-            );
-            let connections = cx.new(|_| {
-                nocterm_connections::Connections::with_backends(
-                    profiles,
-                    Default::default(),
-                    Arc::new(|_| {
-                        Box::pin(async {
-                            Err(nocterm_store::StoreError::backend(std::io::Error::new(
-                                std::io::ErrorKind::PermissionDenied,
-                                "history refused",
-                            )))
-                        })
-                    }),
-                    Arc::new(|_| Box::pin(async { Ok(()) })),
-                )
-            });
-            let opened = open_vault(
-                VaultSetup {
-                    file,
-                    device_unlock: false,
-                },
-                &ready,
-                Some(connections.clone()),
-                cx,
-            )
-            .unwrap();
-            let service = opened.installed.service().clone();
-            let installed = nocterm_terminal::install(
-                nocterm_terminal::Deps::new(
-                    transport,
-                    nocterm_terminal::LocalSessions::disabled("/bin/bash".into()),
-                )
-                .with_credentials(opened.credentials),
-                &ready,
-                cx,
-            );
-            let terminal = cx.new(|cx| {
-                nocterm_terminal::Terminal::new(
-                    installed,
-                    nocterm_workspace::SessionSpec {
-                        profile: Some(profile.id.to_string().into()),
-                        options: Default::default(),
-                        title: "History".into(),
-                        target: profile.target.clone(),
-                        auth: Auth::Password,
-                        launch: None,
-                        credential: None,
-                        jumps: Vec::new(),
-                    },
-                    cx,
-                )
-            });
-            (terminal, service, connections)
-        });
-        (terminal, service, connections, driver)
-    }
-    #[gpui_kit::test]
-    async fn actual_connection_callback_refusal_keeps_the_authenticated_vault_credential(
-        cx: &mut gpui_kit::TestAppContext,
-    ) {
-        cx.executor().allow_parking();
-        let directory = tempfile::tempdir().unwrap();
-        let target = Target::new("user", "host", 22);
-        let profile = history_profile(target.clone());
-        let (terminal, service, connections, driver) =
-            association_fixture(profile.clone(), directory.path().join("vault"), cx);
-        block_on(service.create(Secret::new("long master password"))).unwrap();
-        let request = SecretRequest::Password {
-            target,
-            retry: false,
-        };
-        let (reply, answer) = Reply::channel();
-        assert!(block_on(driver.emit(Event::Prompt(Prompt::Secret {
-            request: request.clone(),
-            reply,
-            hop: None
-        }))));
-        cx.run_until_parked();
-        cx.update(|cx| {
-            terminal.update(cx, |terminal, cx| {
-                terminal.answer_secret_and_remember(Secret::new("account password"), true, cx)
-            })
-        });
-        assert_eq!(
-            block_on(answer).unwrap().unwrap().expose(),
-            "account password"
-        );
-        assert!(block_on(service.list()).unwrap().is_empty());
-        assert!(block_on(driver.emit(Event::Connected)));
-        terminal
-            .condition::<nocterm_terminal::TerminalEvent>(cx, |terminal, _| {
-                terminal
-                    .credential_message()
-                    .is_some_and(|message| message.contains("history refused"))
-            })
-            .await;
-        let id = cx.update(|cx| terminal.read(cx).spec().credential.unwrap());
-        let credentials = nocterm_vault_ui::VaultCredentials::new(service);
-        assert_eq!(
-            block_on(credentials.get(id, &request)).unwrap().expose(),
-            "account password"
-        );
-        assert!(cx.update(|cx| {
-            terminal
-                .read(cx)
-                .credential_message()
-                .unwrap()
-                .contains("history refused")
-        }));
-        assert!(connections.read_with(cx, |connections, cx| {
-            connections
-                .profiles(cx)
-                .get(profile.id)
-                .unwrap()
-                .credential
-                .is_none()
-        }));
-    }
-}
+mod observation_tests;

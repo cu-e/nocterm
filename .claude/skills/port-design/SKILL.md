@@ -1,6 +1,6 @@
 ---
 name: port-design
-description: Design a narrow port (trait or handle) between a consumer and a capability — named for the consumer's need, with a typed error, a shared fake and injection in bootstrap. Use when code needs I/O, another feature, or a service it must not depend on directly.
+description: Design a narrow port (trait or handle) between a consumer and a capability — named for the consumer's need, with a typed error, a shared fake and injection in bootstrap. Use when code needs I/O, another feature, or a service it must not depend on directly. Not for contributions shown by the window shell, plugin settings or capabilities exposed to user plugins (plugin-api).
 user-invocable: false
 ---
 

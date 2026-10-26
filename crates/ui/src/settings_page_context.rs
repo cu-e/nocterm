@@ -1,5 +1,5 @@
 //! A settings Item shares diagnostic presentation without sharing its mutable view.
-use gpui_kit::{App, AppContext as _, Entity, SharedString, Subscription, Task};
+use gpui_kit::{App, AppContext as _, Entity, ScrollHandle, SharedString, Subscription, Task};
 use nocterm_store::{SettingsHandle, StoreError};
 
 struct FeedbackState {
@@ -40,10 +40,24 @@ impl SettingsPageFeedback {
 pub struct SettingsPageContext {
     settings: SettingsHandle,
     feedback: SettingsPageFeedback,
+    scroll: ScrollHandle,
 }
 impl SettingsPageContext {
     pub fn new(settings: SettingsHandle, feedback: SettingsPageFeedback) -> Self {
-        Self { settings, feedback }
+        Self {
+            settings,
+            feedback,
+            scroll: ScrollHandle::new(),
+        }
+    }
+    /// The context with the handle of the scroll the host shows the page in.
+    pub fn with_scroll(mut self, scroll: ScrollHandle) -> Self {
+        self.scroll = scroll;
+        self
+    }
+    /// The scroll of the host that shows the page, which a part of the page can scroll to.
+    pub fn scroll(&self) -> &ScrollHandle {
+        &self.scroll
     }
     pub fn settings(&self) -> &SettingsHandle {
         &self.settings

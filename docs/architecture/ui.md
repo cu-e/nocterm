@@ -60,6 +60,32 @@ shutdown captures already accepted edits through the existing service. A draft n
 flushed before native quit is not an accepted snapshot. No coordinator phase or quit
 handler is added ([ADR 0054](../adr/0054-checked-settings-text-receipts.md)).
 
+### Plugin settings form
+
+`PluginSettingsForm` draws the settings schema of one plugin (`nocterm-plugin-model`) with
+one control per field kind: a switch, a row of buttons or a searchable list for a choice,
+a checkbox per option, a stepper for a bounded number and a single-line input for text.
+`FormScope` selects the whole plugin or the groups of one contribution, and `FormFrame`
+draws it as part of a host page or labelled with a plugin's name. An empty scope says
+"This item has no settings".
+
+The form never computes a number or a list from its own copy. Each control sends a
+`FieldEdit` to a `PluginSettingsSource`, a port named for the form's need: a switch and a
+choice send the value shown, while an option toggle, a step and text are applied by the
+source to the value current at write time. The source reports a typed
+`PluginSettingsError`; the form
+shows its text under the field and shows what the source holds, including changes made
+elsewhere. Text is sent once per 600 ms pause, on Enter or blur, and on `flush`, and is
+never overwritten while it waits to be sent. Text values are displayed literally in an
+ordinary unmasked input.
+
+`SectionBinding<S>` is the system source: the owner supplies `read` and `write` functions
+over its own `SettingsSection`, and every write runs inside the store's checked update, so
+it is ordered with the owner's own writes and a refused edit changes nothing.
+`PluginSettingsDirectory` maps a system plugin to its schema and source. The
+`test-support` feature supplies `FakePluginSettings`
+([ADR 0085](../adr/0085-one-plugin-model-with-separate-trust-tiers.md)).
+
 ## Rendering
 
 Windows incremental painting stays inside the vendored GPUI renderer. Exact
@@ -93,25 +119,117 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 
 ## Workspace
 
-`Workspace` coordinates nine private owners: focus, `Tabs`, `Chrome`, background
-sessions, sidebar, independent side panel, body, installed ports and registered
-actions. `Chrome` owns window menus, the new-tab popover and status views; the
-sidebar and side-panel owners control their own visibility and subscriptions.
+`Workspace` coordinates eight private owners besides its focus handle: `WindowSurfaces`,
+`Chrome`, `PanelGroups`, body, `ShellLayout`, installed ports, registered actions and the
+registrations of the plugin catalog.
+`Chrome` owns window menus, the new-tab popover and the status bar; `PanelGroups`
+owns the navigation and assistant groups: their visibility, selected panel,
+attention, expansion and panel subscriptions (ADR 0081). The members of a group and their
+order come from the resolved layout; a panel the layout leaves in the tray stays openable
+by id but is outside next-panel and the toggle numbering. Panels and widgets register
+under the ids of the plugin catalog carried by `Deps`: the workspace checks the id and
+its kind, creates the view from the owner's factory (which may read the workspace) and
+places it by the descriptor
+(ADR 0082). `nocterm-ui` maps a descriptor's `Icon` and `WidthClass` onto its icon
+names and column widths. `ShellLayout` also follows `[plugins]`: it re-resolves the layout against the plugins
+that are off, and each window creates a plugin's panels and widgets only while it is
+enabled and drops them when it is switched off (ADR 0086). `ShellLayout` reads the `[layouts]` settings through the
+`SettingsHandle` in `Deps`, keeps the document it last saw and resolves the selected
+layout against the catalog; each window observes the handle and, by the `transition`
+of the two documents, either re-sides its groups and opens the panels a switched-to
+layout names, or only rearranges (ADR 0084). The
+`StatusBar` keeps widget factories and creates a widget's view when the layout first
+places it. A group's side comes from its zone, a pinned widget the layout omits goes
+to the end of the right zone, and an omitted panel that asks for attention is drawn at
+the inner end of the right zone (ADR 0083). A right click on the footer opens a context menu
+(`status_bar/menu.rs`): Hide for the item under the pointer, unless it is pinned, Customize Status Bar…
+(`OpenLayoutSettings`, naming the item) and a Layouts submenu. Hide is the same checked edit
+(`edit_layouts`, `RemoveToTray`) the editor uses, and a refused write is shown as a notice (ADR 0087).
+The Clock plugin (`clock::PLUGIN`, widget `clock.time`, right zone, `auto: Tray`) is declared
+here beside the shell: `Deps::with_clock` supplies a `WallClock`, `Workspace::new` registers the
+widget when one is given, and `ClockView` re-reads it when its text can change (each second with seconds on, else at
+the minute boundary and at least every five seconds, so a suspend or a time-zone change shows
+within seconds) only while a layout places the widget and the plugin is
+enabled. The plugin owns the `[clock]` section (`ClockSettings`: 24/12-hour, seconds, short date)
+and its schema; `clock::plugin_settings` binds them for the Plugins page and the editor, and every
+window's view follows a change ([ADR 0088](../adr/0088-wall-clock-contract-and-the-clock-plugin.md)).
 Immutable observations expose tab identities and native pane order without giving
 callers mutable native entities. Transitions commit membership and subscriptions
 before the shell emits events or changes focus (ADR 0026).
 
-`nocterm-workspace` owns window
-layout, tabs and sidebar switches through a native DockArea/DockSkin. The
-toolkit owns the single pane tree and drag previews; an adapter exposes Items as
-dock Panels. Presentation aliases are separate from Item/session titles. Shared
+`WindowSurfaces` retains the outer connection dock. Each workspace is an outer
+`ProjectView` Item containing its own `ProjectSurface` with ordinary terminal tabs,
+splits and background sessions. Both docks use the existing tab engine. Window
+settings, sidebar and right-panel visibility keep their window owners
+([ADR 0067](../adr/0067-project-tabs-with-inner-surfaces.md)).
+
+The active outer Item supplies the visible chat ContextId; switching inner tabs
+keeps the same workspace history. Source receipts identify the original native
+window, outer Item and inner surface. `SurfaceSelection` owns source and selection receipts plus presentation lifecycle;
+`SurfaceState` owns initial terminal issuance, the starting folder and monitoring identity.
+Selection generations prevent a delayed menu
+or focus callback from acting after switching tabs. Hidden sessions keep running
+and their events update their original surface.
+
+`nocterm-workspace-ports::ProjectTerminalOpen` captures the connected parent once. Its private terminal
+provider retains the complete resolved location, original SessionSpec and
+installation. Opening an inner tab uses the normal local/SSH terminal lifecycle;
+ordinary folders change the initial directory and container locations adapt the
+launch and execution capabilities. Shell options, credentials, proxy and ordered
+jump hosts stay on that source. New tabs and reconnect work independently of the
+original parent tab.
+
+The project terminal contracts and typed context refusals live in workspace-ports
+without workspace reexports. A private ProjectTerminalPlacement retains original
+surface authority; the typed validation/admission bridge keeps native selection
+and Item cleanup in the shell. Providers validate before creating terminal Items
+([ADR0079](../adr/0079-project-terminal-contracts-below-shell.md)).
+
+`ExplorerSource` exposes ordinary session file access and the workspace's initial
+folder. Local folders use the existing local pane; SSH folders use the remote
+pane. Navigation and file operations follow normal host permissions.
+Container and unavailable provider locations do not expose a host folder through
+this projection. The neutral terminal resolver dispatches explicitly registered
+provider IDs, binds the resource before opening and refuses missing providers
+([ADR 0071](../adr/0071-provider-workspace-locations.md)).
+
+Shared directory controls in `nocterm-ui` receive read-only directory contracts
+from `nocterm-explorer`. Explorer and workspace creation share native input,
+completion and navigation controls while keeping their own listing acceptance
+and view lifetimes. Source and request generations reject stale results
+([ADR 0072](../adr/0072-shared-directory-selection.md)).
+
+Saved workspace lookup includes ordinary central, local and background terminals.
+When no matching connected parent exists, `ProjectTerminalResolve` supplies an
+ordinary terminal provider from saved server metadata. Profile destination and
+ordered jump route must still match. Authentication happens inside the workspace's
+first terminal; no separate server tab or parent-connection waiter is created.
+Opening callbacks check the current definition and surface membership. Hidden
+workspaces do not steal focus. The header and sidebar identify the server using
+its configured name and icon, while the outer tab identifies the workspace
+([ADR 0070](../adr/0070-original-workspace-connection-recovery.md)).
+
+Chat attachment menus and tool resolution use the same original terminal seat.
+Saved-server metadata is available in both General and workspace chats; active
+terminals remain limited to that seat's surface. `ChatConnectionOpen` opens an
+explicitly selected server in the original surface through the app's ordinary
+terminal composition. It checks the live source before creating a terminal,
+retains the saved credentials and ordered jump route, and does not select a hidden
+workspace. Closed surfaces and foreign windows refuse the operation.
+
+`nocterm-workspace` owns window layout, tabs and sidebar switches through native
+DockArea/DockSkin instances. The toolkit owns one pane tree per retained surface
+and drag previews; an adapter exposes Items as dock Panels. Presentation aliases
+are separate from Item/session titles. Shared
 actions operate the same dock for keyboard split/reorder/focus. Tab context-menu
-closures snapshot the clicked Item and resolve its current pane order at execution;
+closures capture the original surface/selection and clicked Item, reject stale
+selections and resolve that surface's current pane order at execution;
 closing adjacent/other tabs cannot cross pane boundaries. The full-width workspace
-footer owns section switches and status views. Removing the last bottom Item also
+footer is drawn from the resolved layout (ADR 0083): panel toggles, the notice bar, the local terminal toggle and status widgets in three zones. A bar with an empty centre is one flat row, with the right zone pushed to the end. A bar with a centre is three slots: the outer two share the width the centre leaves, so the centre stays at the window's midpoint (up to `layout.status_bar_center_max`) while nothing is cut. Toggles and separators never shrink, and an outer slot never gives up the room they need: the centre and the notice line truncate first, and only then does the right slot clip, from its outer end, so a toggle that asks for the user stays visible. Widgets keep their size like toggles: one that does not fit moves whole into the menu. Where the row would still be too wide, the entries that do not fit move into a `»` menu at the end of the bar (`status_bar/overflow.rs`), widgets first, then the local terminal toggle, then panel toggles (the open ones last); the notice line and a toggle that asks for attention are never moved. `BarOverflow` keeps the widths the row measured, shared by the row, the inputs of each frame and the click handlers, and a pure planner (`overflow/plan.rs`) chooses what to hide, so the bar is drawn whole until it has been measured and settles one frame after its width or its entries change. The menu rows are the toggles' own actions and the widgets' own views; a popup a widget opens from its row (the host monitor's details) is drawn outside the menu's box, and the menu stays open while that popup has the focus, so a press inside it does not close the menu under it. A widget registered with `WidgetRegistration::zone_aware` implements `ZoneAware` and is told the zone that places it, on creation and when a layout moves it, so its popover can open toward the inside of the window (`nocterm_ui::zone_anchor`); the notice list does the same through `NoticeBar::anchor`. Removing the last bottom Item also
 removes its Dock instead of merely emptying the tab list. Hiding the local dock
 uses native dock visibility, preserving its pane tree, sizes, tab order,
-selections, groups and running processes. Every user tab shares one Item registry
+selections, groups and running processes. Within a surface every tab shares one
+Item registry
 and the same close, split, grouping, rename and keyboard operations. Close scopes
 resolve the clicked tab's current native pane; Close All affects its dock placement.
 `LocalTerminal` directory synchronization returns `LocalDirectoryError`, distinguishing
@@ -132,7 +250,7 @@ placement tree.
 Zoom permits tab reordering and grouping: same-group reorders retain zoom, while
 accepted topology changes clear it to reveal their result. Hiding Bottom leaves
 local tabs moved to Center visible. A region's last tab can be dragged to another
-open visible region; the final visible workspace tab and explicit locks remain
+open visible region; the final visible tab of a surface and explicit locks remain
 protected. Empty noncentral regions disappear after moves without closing Items. An `Item` supplies tab content, focus and an
 optional `SessionContext`; a `Panel` supplies sidebar content. Features register
 actions rather than making the shell depend on them. `SessionSpec` and a session
@@ -182,6 +300,15 @@ module: `Host::resolve` picks the session's own connection when it can run
 programs and this computer otherwise, and `follow_active_session` reports tab
 switches and reconnects.
 
+The resource monitor uses a separate consumer projection, `MonitorSource`, because
+outer connection tabs do not identify a selected workspace's inner environment.
+The original surface entity owns inert checked target metadata; its live inner
+session supplies authority. `Workspace::monitor_source` distinguishes selected,
+unavailable and genuinely local contexts. Monitoring never resolves an unavailable
+project through another surface or the local runner. Shared `Host::resolve` and
+ordinary active-session consumers keep their existing semantics
+([ADR 0077](../adr/0077-selected-workspace-monitoring.md)).
+
 ## Command palette
 
 The command palette (`workspace::command_palette`, Ctrl+Shift+P, Cmd+Shift+P on
@@ -215,18 +342,23 @@ Settings also uses `nocterm-store`, with durable publication rather than optimis
 layout projection. Bootstrap registers both settings and layout with the same
 coordinator alongside snippets, connection state, agent documents and output
 recording.
-The workspace body lays out only its visible columns —
-sidebar, tabs, side panel, or mirrored when `SwapSides` put the side panel on
-the left — with one resize state per arrangement, and remembers widths per
-column rather than per position: a hidden column kept in the resizable group
-would hold its stale width and stop its neighbours from growing. The side panel
-learns its side through `RightPanel::set_docked_left`; the agent panel puts its
-history column on the outer side and remembers that column's width. A side
+The workspace body lays out one column per shown panel group and the tabs —
+navigation, tabs, assistant, or mirrored by the Swapped layout; the columns
+follow the order of their groups in the bar, and a panel that stands alone is a
+column of its own ([ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md)) — with one resize state per
+arrangement, and remembers widths per width class rather than per position: a hidden column kept in the resizable group
+would hold its stale width and stop its neighbours from growing. Expanded chat
+replaces central content while visible navigation retains its side and width.
+Hidden, docked and expanded panel presentations have separate resize states;
+expanded measurements never overwrite remembered docked widths. Navigation controls
+preserve expansion, and closing navigation focuses the visible chat.
+An expandable panel learns its side through `ExpandablePanel::set_side`; the agent
+panel puts its history column on the outer side and remembers that column's width. A side
 panel that opens a column of its own asks the workspace to widen it with
-`RightPanelEvent::Widen`. Sidebar panels are shown and hidden by their feature's
-action (`files::ToggleExplorer`, `connections::ToggleServers`,
-`containers::ToggleContainers`) through
-`Workspace::toggle_panel_of`, so the workspace binds no feature's panel.
+`PanelRequest::Widen`. Panels are shown and hidden by their feature's action
+(`files::ToggleExplorer`, `connections::ToggleServers`, `containers::ToggleContainers`)
+through `Workspace::toggle_panel` with the contribution's id, so the workspace binds no
+feature's panel. `ToggleRightPanel` is the remaining legacy action; it acts on the assistant group.
 
 ## Key bindings
 
@@ -269,3 +401,7 @@ agent resolution and credential policy remain in the AI domain and Agent page.
 `SettingsPageSpec` supports the same plain lazy guest factories and contextual builtin
 factories. The latter receive only their original SettingsHandle and per-Item save
 feedback. The additive flush operation leaves existing guest lifecycle contracts intact.
+`SettingsPage::reveal(anchor, window, cx)` lets a page bring forward the part an anchor
+names (a plugin id on the Plugins page, `layout/<id>` for an item in the editor of Appearance); the default returns `false` and the host
+`SettingsPageHandle::reveal` forwards it to a constructed page
+([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).

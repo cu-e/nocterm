@@ -661,5 +661,13 @@
     "path": "upstream/tree-sitter-typescript-0.23.2-LICENSE",
     "url": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE",
     "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559"
+  },
+  {
+    "packages": [],
+    "path": "supplemental/devicon/LICENSE",
+    "url": "https://raw.githubusercontent.com/devicons/devicon/54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08/LICENSE",
+    "sha256": "121194741d4a915b9f5890fdd6dd95121f9b1f816517c792358d72d7c838d664",
+    "component": "devicon-language-icons",
+    "version": "54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08"
   }
 ]

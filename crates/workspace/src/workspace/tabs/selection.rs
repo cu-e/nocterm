@@ -3,6 +3,27 @@ use super::*;
 use gpui_kit::component::{Placement, dock::InsertTarget};
 
 impl Tabs {
+    pub(in crate::workspace) fn selection_at(
+        &self,
+        placement: DockPlacement,
+        node: Option<NodeId>,
+        cx: &App,
+    ) -> Option<EntityId> {
+        let pane = node
+            .and_then(|node| self.topology.pane(placement, node, cx))
+            .or_else(|| self.topology.panes(placement, cx).into_iter().next())?;
+        self.item_for_panel(pane.active_panel()?).map(TabEntry::id)
+    }
+    pub(in crate::workspace) fn retain_selection(
+        &self,
+        id: EntityId,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(panel) = self.panel_of(id) {
+            self.topology.select(panel, window, cx);
+        }
+    }
     pub(in crate::workspace) fn activate(
         &mut self,
         id: EntityId,

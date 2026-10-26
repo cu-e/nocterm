@@ -1,28 +1,68 @@
 //! The window shell and the seams features plug into.
 //!
-//! Owns: tab membership and cached session context, native dock placement,
-//! window menus and chrome, sidebar and independent side-panel visibility,
-//! background-session membership, and per-column layout projections.
-//! Does not own: session connections, feature views, filesystem capabilities,
-//! persistence workers, or external-program launch.
+//! Owns: the permanent outer connection dock and inner project docks,
+//! tab membership and cached session context, one authoritative native dock per surface,
+//! window menus and chrome, panel groups (the sidebar and the independent side panel),
+//! registration of panels and widgets under the ids of the plugin catalog (the shell's own
+//! `plugin::{CORE, GROUPS}` and the id queries), the resolved shell layout (`ShellLayout`
+//! follows the app-wide `[layouts]` settings of `nocterm-window-layout`, resolves the selected
+//! built-in or saved preset against the catalog and writes only the selection; the status bar
+//! and the panel groups take their members, order and sides from it on every change; it also
+//! follows the app-wide `[plugins]` settings, creating the panels and widgets of a plugin only
+//! while it is enabled, in every window, and saying so when a disabled panel is asked to open),
+//! the Clock plugin (`clock::PLUGIN`, `ClockView`: the local time from the `WallClock` of
+//! `Deps::with_clock`, written as its own `[clock]` section says and created only while a
+//! layout places it and the plugin is enabled),
+//! the rules under which a user plugin's panel opens or closes (`plugin_panels`,
+//! `PanelGroups::open_for_plugin`: only a registered, enabled, approved panel, never replacing a
+//! panel that shows, nothing while a panel asks for the user, focus left where it is),
+//! per-surface background membership, and per-column layout projections.
+//! Does not own: session connections, feature views, native filesystem implementations,
+//! persistence workers, project definitions or connection authentication,
+//! or external-program launch.
 //! Ports used: `SessionFactory`, `ConnectionDirectory`, `Item`, `Panel`,
-//! `RightPanel`, `LocalTerminal`; layout arrives as an explicit `LayoutHandle`.
+//! `LocalTerminal`, `ProjectTerminalOpen`, `ProjectTerminalResolve`,
+//! `ChatConnectionOpen`; project terminal contracts/refusals live in workspace-ports
+//! without shell reexports. Private placement and typed terminal admission remain here.
+//! Layout, the checked plugin catalog and the optional `WallClock` arrive as explicit `Deps`.
 //! Ports provided: workspace actions, settings pages, host and terminal access,
-//! file drag contracts, immutable tab/session observations and separate state, text,
+//! file drag contracts, immutable tab/session and selected monitor-source observations,
+//! plus, behind `user-plugins`, the `ShellCapabilities` provider for user plugins: the
+//! `workspace.kind` observation (a state kept from the window's own events, never read from the
+//! shell on request), the `panels.set-open` effect and the `Surface` check of whether a panel may
+//! be shown (both read the workspace when they apply, and the window's rules decide), and the
+//! withdrawal of a user contribution (a built-in one is refused),
+//! plus separate state, text,
 //! input, live-command, execution, prompt, reconnect and user-paste ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
-//! Settings section: none. Globals: none.
+//! Settings section: owns `[clock]` (`ClockSettings`); reads `[layouts]` (owned by
+//! `nocterm-window-layout`) and `[plugins]` (owned by `nocterm-plugin-enablement`) through the
+//! injected settings handle; a table that does not read is never overwritten. Globals: none.
 //! Host resolution uses an explicitly supplied optional local executor; it owns no runner.
-//! Invariants: one native dock is the placement authority; each registered tab
+//! Invariants: each surface has one native placement authority; each tab
 //! owns its feature handle and subscriptions; cached session identity preserves
 //! its filesystem and executor Arcs; local command focus leaves central session
 //! context available. Owners commit transitions before the shell emits events
-//! and applies focus. All application windows share the bootstrapped layout handle.
+//! and applies focus. Live source receipts survive hiding; deferred UI selection
+//! receipts expire after ABA. The window retains all ordinary connection tabs;
+//! each project is one outer Item containing its original inner `ProjectSurface`.
+//! A bounded weak directory routes original sources without mirroring membership
+//! or pane order. UI targets validate the native window and actual outer visibility;
+//! window and inner selection generations both expire stale callbacks.
+//! `ProjectTerminalOpen` captures an original ordinary connection configuration;
+//! folder terminals use normal authentication, filesystem access and reconnect.
+//! Nested surfaces follow ADR0067. All application windows share the
+//! bootstrapped layout handle.
 //! The optional test-support feature shares the original session Item fixture
 //! with private connected/generation transitions and supplied filesystem ports.
 //! Background promotion retains the same Item entity; close detaches subscriptions
 //! before calling the feature's close hook. Local directory synchronization reports typed
 //! capability refusals and preserves encoding causes through its LocalTerminal port.
+//! SurfaceSelection owns original source, expiring selection receipts and presentation lifecycle.
+//! SurfaceState owns initial opening issuance, the starting folder and monitoring metadata.
+//! SurfaceContent owns foreground and off-dock membership and returns tab effects;
+//! the surface entity applies events and focus. Background promotion transfers the
+//! original TabEntry together with its subscriptions into the native dock.
 //!
 //! Features contribute tabs through [`Item`], sidebar views through [`Panel`],
 //! commands through [`Workspace::register_action`], and session opening through
@@ -31,16 +71,25 @@
 //! Terminal operations report typed refusals and program opening retains launch validation causes.
 
 mod actions;
+pub mod clock;
 pub mod command_palette;
 mod connection_directory;
+mod context_ports;
+pub use context_ports::{ChatConnectionOpen, ChatConnectionOpenError};
 mod dock_item;
 mod file_drag;
 pub mod host;
+#[cfg(feature = "user-plugins")]
+mod host_capabilities;
+#[cfg(feature = "user-plugins")]
+pub use host_capabilities::{ShellCapabilities, WithdrawRefused};
 mod item;
 mod local_terminal;
 mod open_on_host;
 mod panel;
-mod right_panel;
+pub mod plugin;
+mod provider_registry;
+pub use provider_registry::ProjectProviderRegistry;
 mod tab_groups;
 pub use open_on_host::OpenOnHostError;
 mod workspace;
@@ -51,19 +100,24 @@ pub use file_drag::{FileDrag, RemoteFileDrag};
 pub use host::{Host, HostKey, ProgramSpec, ShellSyntax};
 pub use item::{Item, ItemEvent, ItemHandle, TabState};
 pub use local_terminal::{LocalDirectoryError, LocalTerminal, LocalTerminalTarget};
+use nocterm_workspace_ports::ContextSelectionError;
 pub use panel::{Panel, PanelHandle};
-pub use right_panel::{RightPanel, RightPanelEvent};
 // The terminal and connection contracts live below the shell (ADR 0062).
 pub use nocterm_workspace_ports::{
-    ConnectionFactSession, ConnectionSummary, ExpectedSession, FactSessionSnapshot,
-    LiveCommandLease, LiveCommands, RemoteReconnect, SessionContext, SignInPrompt, SignInPrompts,
-    TerminalCapabilities, TerminalCapability, TerminalEntry, TerminalError, TerminalExecution,
-    TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText, TerminalTextSource,
-    TextRequest, UserPromptToken, UserTerminalPaste,
+    ConnectionFactSession, ConnectionSummary, ExpectedSession, ExplorerSource, FactSessionSnapshot,
+    LiveCommandLease, LiveCommands, ProjectCreationSource, ProjectParentCapture,
+    ProjectParentDescriptor, ProjectParentError, RemoteReconnect, SessionContext, SignInPrompt,
+    SignInPrompts, TerminalCapabilities, TerminalCapability, TerminalEntry, TerminalError,
+    TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
+    TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
 };
 pub use workspace::{
-    Deps, SessionFactory, SessionSpec, TabCloseScope, TabPane, TabSnapshot, Workspace,
-    WorkspaceEvent,
+    ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,
+    LayoutChoice, LayoutEditError, LayoutSwitchError, MalformedLayouts, PanelEntry,
+    PanelRegistration, PanelRequest, ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory,
+    ProjectSurfaceReceipt, RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane,
+    TabSnapshot, WidgetRegistration, Workspace, WorkspaceEvent, ZoneAware, admit_project_terminal,
+    edit_layouts, legacy_layout_swapped, validate_project_terminal_target,
 };
 
 /// The key context of the workspace, for keymap entries.
@@ -71,3 +125,5 @@ pub const KEY_CONTEXT: &str = "Workspace";
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+
+pub use nocterm_workspace_ports::MonitorSource;

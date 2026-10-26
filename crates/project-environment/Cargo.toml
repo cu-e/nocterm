@@ -1,0 +1,23 @@
+[package]
+name = "nocterm-project-environment"
+description = "Observed workspace tool installation and managed session activation."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "adapter"
+
+[dependencies]
+nocterm-connections-model.workspace = true
+nocterm-project-providers.workspace = true
+nocterm-session.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

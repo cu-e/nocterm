@@ -151,7 +151,7 @@ fn measure(directory: &Path) -> Result<BTreeMap<&'static str, Counts>, String> {
             std::fs::read(path).map_err(|_| format!("Cannot read corpus chat at index {index}"))?;
         let chat: SavedChat = serde_json::from_slice(&bytes)
             .map_err(|_| format!("Invalid JSON/history schema at corpus index {index}"))?;
-        let counts = counts.entry(provider(&chat.agent_id)).or_default();
+        let counts = counts.entry(provider(&chat.header.agent_id)).or_default();
         counts.chats += 1;
         for entry in &chat.entries {
             let Entry::Tool(call) = entry else {

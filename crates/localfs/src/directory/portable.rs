@@ -72,3 +72,13 @@ pub(super) fn metadata(
 pub(super) fn target_is_directory(directory: &DirectoryCapability, name: &OsStr) -> bool {
     std::fs::metadata(directory.path.join(name)).is_ok_and(|metadata| metadata.is_dir())
 }
+pub(super) fn remove_file(directory: &DirectoryCapability, name: &OsStr) -> LocalResult<()> {
+    strict(directory.path())?;
+    let path = directory.path.join(name);
+    if metadata(directory, name)?.is_some_and(|metadata| {
+        metadata.kind == nocterm_session::EntryKind::Directory && !metadata.is_symlink
+    }) {
+        return Err(LocalFsError::NotRegular(path));
+    }
+    std::fs::remove_file(&path).map_err(|error| LocalFsError::from_io(path, error))
+}

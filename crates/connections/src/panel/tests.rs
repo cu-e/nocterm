@@ -2,6 +2,22 @@ use super::*;
 use futures::FutureExt as _;
 use gpui_kit::{TestAppContext, test::TestWindowExt as _};
 
+/// Registers the connections panel as the Servers contribution.
+fn add_servers(
+    workspace: &mut Workspace,
+    panel: Entity<ConnectionsPanel>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .register_panel(
+            nocterm_workspace::PanelRegistration::with_entity(&crate::plugin::SERVERS, panel),
+            window,
+            cx,
+        )
+        .unwrap();
+}
+
 mod drag;
 mod rename;
 mod reorder;
@@ -55,7 +71,9 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         });
         let panel = cx
             .new(|cx| ConnectionsPanel::new(installed.clone(), workspace.downgrade(), window, cx));
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel, cx));
+        workspace.update(cx, |workspace, cx| {
+            add_servers(workspace, panel, window, cx)
+        });
         window.render_frame(cx);
         window.click("group-Personal", cx);
         window.render_frame(cx);
@@ -265,7 +283,9 @@ fn setup_with_writer(
             let panel = cx.new(|cx| {
                 ConnectionsPanel::new(installed.clone(), workspace.downgrade(), window, cx)
             });
-            workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+            workspace.update(cx, |workspace, cx| {
+                add_servers(workspace, panel.clone(), window, cx)
+            });
             window.render_frame(cx);
             panel
         })

@@ -1,12 +1,16 @@
 //! Agent chats without views: one [`thread::AgentThread`] per chat and the
-//! [`roster::ChatRoster`] of a window's chats.
+//! [`roster::ChatRoster`] of a window's selected and retained context chats.
 //! Command jobs privately assemble their owned runner; snapshots and sign-in waits expose
 //! immutable facts.
 //!
 //! Owns: AgentThread coordination, private Composer/ChatConfig/ChatDocument owners, private
 //! SessionDriver and ToolRuntime owners, the session-scoped ApprovalInbox for provider
 //! requests, bridge cards, card tokens and terminal grants, ChatRoster membership and chat
-//! lifecycle (new, restart, fork, restore, removal admission, resident history budget).
+//! lifecycle (new, restart, fork, restore and removal admission).
+//! Runtime owns installation-wide history admission. Catalog archives retain an accounted
+//! row reference; quiet hidden archives release their entities and references.
+//! ChatDeps binds an immutable runtime scope and exact per-chat original seat; every entity factory
+//! acquires a scoped document claim and binds the seat before constructing an entity. ChatDocument identity retains its ChatKey.
 //! ThreadNotice owns status/error presentation facts; ThreadBindings retains the
 //! window/subscriptions. Finite operations return named completions and original-authority
 //! polling projections. Archive owns lazy hydration generations, typed pending intentions
@@ -48,8 +52,10 @@ use nocterm_agent_runtime as runtime;
 pub use runtime::TerminalAuthRequest;
 
 /// Why a terminal sign-in did not succeed.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum TerminalAuthError {
+    #[error("Authentication terminal could not be opened.")]
+    Opening(#[source] nocterm_core::SharedCause),
     /// The user closed the sign-in terminal.
     #[error("Authentication canceled.")]
     Canceled,

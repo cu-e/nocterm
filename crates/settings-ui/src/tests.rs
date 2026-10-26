@@ -193,7 +193,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
         window.render_frame(cx);
         assert_eq!(creations.get(), 0, "guest must be lazy");
         window.within("settings-pages").click(1usize, cx);
-        let settings = workspace.read(cx).find_item::<SettingsView>().unwrap();
+        let settings = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "terminal");
         workspace.update(cx, |workspace, cx| {
             open_page(
@@ -205,7 +205,7 @@ fn guest_pages_are_lazy_reused_and_told_when_hidden_or_closed(cx: &mut TestAppCo
                 cx,
             )
         });
-        assert_eq!(workspace.read(cx).items().count(), 1);
+        assert_eq!(workspace.read(cx).items(cx).count(), 1);
         assert_eq!(creations.get(), 1);
         window.render_frame(cx);
         window.input("guest master draft", cx);
@@ -265,8 +265,8 @@ fn open_settings_reuses_one_tab(cx: &mut TestAppContext) {
     }
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(workspace.read(cx).items().count(), 1);
-        let settings = workspace.read(cx).find_item::<SettingsView>().unwrap();
+        assert_eq!(workspace.read(cx).items(cx).count(), 1);
+        let settings = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
         assert!(settings.read(cx).focus_handle(cx).is_focused(window));
     })
     .unwrap();
@@ -477,7 +477,7 @@ fn supplied_order_and_lazy_default_drive_navigation_without_creating_hidden_page
     assert_eq!(&*events.borrow(), &["last eager", "first eager", "default"]);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let view = workspace.read(cx).find_item::<SettingsView>().unwrap();
+        let view = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
         assert_eq!(view.read(cx).selected_page_id(), "default");
         window.within("settings-pages").click(3usize, cx);
         assert_eq!(view.read(cx).selected_page_id(), "first eager");
@@ -522,10 +522,244 @@ fn same_and_unknown_page_opens_preserve_selection_and_do_not_flush(cx: &mut Test
             workspace.update(cx, |workspace, cx| {
                 open_page(workspace, id, &pages, fixture.installed.clone(), window, cx)
             });
-            let view = workspace.read(cx).find_item::<SettingsView>().unwrap();
+            let view = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
             assert_eq!(view.read(cx).selected_page_id(), "guest");
         }
         assert!(events.borrow().is_empty());
+    })
+    .unwrap();
+}
+
+#[test]
+fn nested_pages_need_a_top_level_parent_and_cannot_be_the_default() {
+    use SettingsCatalogError::{MissingDefault, NestedParent, UnknownParent};
+    let created = Rc::new(Cell::new(0));
+    let top = |id| SettingsPageRegistration::lazy(descriptor(id, created.clone()));
+    let nested = |id, parent| top(id).under(parent, "anchor");
+    assert_eq!(
+        SettingsCatalog::new(vec![top("one"), nested("child", "absent")], "one").err(),
+        Some(UnknownParent {
+            id: "child",
+            parent: "absent"
+        })
+    );
+    assert_eq!(
+        SettingsCatalog::new(
+            vec![top("one"), nested("child", "one"), nested("deep", "child")],
+            "one"
+        )
+        .err(),
+        Some(NestedParent {
+            id: "deep",
+            parent: "child"
+        })
+    );
+    assert_eq!(
+        SettingsCatalog::new(vec![top("one"), nested("child", "one")], "child").err(),
+        Some(MissingDefault { id: "child" })
+    );
+    let catalog = SettingsCatalog::new(vec![nested("child", "one"), top("one")], "one").unwrap();
+    let pages: Vec<_> = catalog
+        .pages()
+        .iter()
+        .map(|page| (page.id(), page.nested_under()))
+        .collect();
+    assert_eq!(pages, [("child", Some(("one", "anchor"))), ("one", None)]);
+}
+
+struct AnchoredPage {
+    focus: FocusHandle,
+    id: &'static str,
+    revealed: Rc<RefCell<Vec<(&'static str, String)>>>,
+}
+impl Focusable for AnchoredPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl Render for AnchoredPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+impl SettingsPage for AnchoredPage {
+    fn reveal(&mut self, anchor: &str, _: &mut Window, _: &mut Context<Self>) -> bool {
+        self.revealed
+            .borrow_mut()
+            .push((self.id, anchor.to_owned()));
+        true
+    }
+}
+
+#[gpui_kit::test]
+fn a_nested_page_opens_at_an_anchor_hides_from_the_list_and_leads_back_to_its_parent(
+    cx: &mut TestAppContext,
+) {
+    let revealed = Rc::new(RefCell::new(Vec::new()));
+    let anchored = |id: &'static str| {
+        let revealed = revealed.clone();
+        SettingsPageSpec::new(id, id, move |_, cx| {
+            let revealed = revealed.clone();
+            cx.new(|cx| AnchoredPage {
+                focus: cx.focus_handle(),
+                id,
+                revealed,
+            })
+        })
+    };
+    let (handle, workspace, fixture) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+        let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+            cx.new(|cx| Workspace::new(deps, window, cx))
+        })
+        .unwrap();
+        (handle, workspace, fixture)
+    });
+    let catalog = SettingsCatalog::new(
+        fixture
+            .pages
+            .pages()
+            .iter()
+            .cloned()
+            .chain([
+                SettingsPageRegistration::lazy(anchored("plugins")),
+                SettingsPageRegistration::lazy(anchored("monitor")).under("plugins", "monitor"),
+            ])
+            .collect(),
+        "appearance",
+    )
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        let open = |id: &str, anchor: Option<&str>, window: &mut Window, cx: &mut App| {
+            workspace.update(cx, |workspace, cx| {
+                open_page_at(
+                    workspace,
+                    id,
+                    anchor,
+                    &catalog,
+                    fixture.installed.clone(),
+                    window,
+                    cx,
+                );
+            });
+            window.render_frame(cx);
+        };
+        open("plugins", None, window, cx);
+        assert!(revealed.borrow().is_empty(), "open_page reveals nothing");
+        assert!(window.within("settings-pages").try_find(5usize).is_some());
+        assert!(
+            window.within("settings-pages").try_find(6usize).is_none(),
+            "the nested page is not an entry of the list"
+        );
+        assert!(window.try_find("settings-back").is_none());
+
+        open("plugins", Some("monitor"), window, cx);
+        assert_eq!(*revealed.borrow(), [("plugins", "monitor".to_owned())]);
+        revealed.borrow_mut().clear();
+
+        open("monitor", None, window, cx);
+        let settings = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
+        assert_eq!(settings.read(cx).selected_page_id(), "monitor");
+        assert!(revealed.borrow().is_empty());
+        window.click("settings-back", cx);
+        assert_eq!(settings.read(cx).selected_page_id(), "plugins");
+        assert_eq!(*revealed.borrow(), [("plugins", "monitor".to_owned())]);
+        window.render_frame(cx);
+        assert!(window.try_find("settings-back").is_none());
+    })
+    .unwrap();
+}
+
+struct TallPage(FocusHandle);
+impl Focusable for TallPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.0.clone()
+    }
+}
+impl Render for TallPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().h(gpui_kit::px(900.)).child("tall")
+    }
+}
+impl SettingsPage for TallPage {}
+
+#[gpui_kit::test]
+fn opening_a_page_at_a_section_scrolls_the_page_to_it(cx: &mut TestAppContext) {
+    let (handle, workspace, fixture) = cx.update(|cx| {
+        let fixture = host_fixture(cx);
+        let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+        let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
+            cx.new(|cx| Workspace::new(deps, window, cx))
+        })
+        .unwrap();
+        (handle, workspace, fixture)
+    });
+    let sectioned = SettingsPageSpec::new("appearance", "Appearance", |_, cx| {
+        cx.new(|cx| TallPage(cx.focus_handle()))
+    })
+    .with_sections(vec![nocterm_ui::EmbeddedPageSpec::new(
+        "layout",
+        "Layout",
+        |_, cx| cx.new(|cx| TallPage(cx.focus_handle())),
+    )]);
+    let catalog = SettingsCatalog::new(
+        std::iter::once(SettingsPageRegistration::eager(sectioned))
+            .chain(
+                fixture
+                    .pages
+                    .pages()
+                    .iter()
+                    .filter(|page| page.id() != "appearance")
+                    .cloned(),
+            )
+            .collect(),
+        "appearance",
+    )
+    .unwrap();
+    let section_offset = |window: &mut Window, cx: &mut App| {
+        window.render_frame(cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        let view = window.find("settings-view").bounds().origin.y;
+        window.find("settings-section:layout").bounds().origin.y - view
+    };
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            open_page_at(
+                workspace,
+                "appearance",
+                None,
+                &catalog,
+                fixture.installed.clone(),
+                window,
+                cx,
+            );
+        });
+        let before = section_offset(window, cx);
+        assert!(
+            before > gpui_kit::px(800.),
+            "the section starts below the page"
+        );
+        workspace.update(cx, |workspace, cx| {
+            open_page_at(
+                workspace,
+                "appearance",
+                Some("layout"),
+                &catalog,
+                fixture.installed.clone(),
+                window,
+                cx,
+            );
+        });
+        for _ in 0..3 {
+            section_offset(window, cx);
+        }
+        let after = section_offset(window, cx);
+        assert!(
+            after < gpui_kit::px(100.),
+            "the section was scrolled to the top: {after:?}"
+        );
     })
     .unwrap();
 }

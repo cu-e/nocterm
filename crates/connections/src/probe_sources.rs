@@ -142,8 +142,8 @@ impl ProbeSource {
         };
         let projected: Vec<_> = workspace
             .read(cx)
-            .items()
-            .filter_map(|item| ProjectedSource::read(item, connections, cx))
+            .items(cx)
+            .filter_map(|item| ProjectedSource::read(item.as_ref(), connections, cx))
             .collect();
         let present: HashSet<_> = projected.iter().map(|row| row.expected.item()).collect();
         self.leases.retain(|id, slot| {

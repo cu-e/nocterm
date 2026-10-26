@@ -45,8 +45,10 @@ fn fixture_with_store(
             .with(settings)
             .with(nocterm_session::LocalShellSettings::default()),
     );
-    cx.update_window(window, |_, _, cx| {
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+    cx.update_window(window, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| {
             panel.navigate_local(directory.path().into(), cx)
         });

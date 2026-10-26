@@ -97,23 +97,7 @@ impl Terminal {
     }
 
     pub fn new_local(deps: Installed, cx: &mut Context<Self>) -> Self {
-        Self::new_kind(
-            deps,
-            SessionSpec {
-                profile: None,
-                options: Default::default(),
-                title: "Local terminal".into(),
-                target: nocterm_session::Target::new("local", "localhost", 22),
-                auth: nocterm_session::Auth::Auto,
-                launch: None,
-                credential: None,
-                jumps: Vec::new(),
-            },
-            true,
-            None,
-            None,
-            cx,
-        )
+        Self::new_kind(deps, local_spec(), true, None, None, cx)
     }
 
     pub fn new_local_command(
@@ -144,7 +128,7 @@ impl Terminal {
         )
     }
 
-    fn new_kind(
+    pub(crate) fn new_kind(
         deps: Installed,
         spec: SessionSpec,
         local: bool,
@@ -575,7 +559,22 @@ pub(crate) fn emulator_options(settings: &TerminalSettings) -> EmulatorOptions {
     }
 }
 
-fn shell_launch(settings: &nocterm_session::ShellSettings) -> nocterm_session::ShellLaunch {
+pub(crate) fn local_spec() -> SessionSpec {
+    SessionSpec {
+        profile: None,
+        options: Default::default(),
+        title: "Local terminal".into(),
+        target: nocterm_session::Target::new("local", "localhost", 22),
+        auth: nocterm_session::Auth::Auto,
+        launch: None,
+        credential: None,
+        jumps: Vec::new(),
+    }
+}
+
+pub(crate) fn shell_launch(
+    settings: &nocterm_session::ShellSettings,
+) -> nocterm_session::ShellLaunch {
     nocterm_session::ShellLaunch {
         program: settings.program.clone(),
         args: settings.args.clone(),

@@ -12,6 +12,7 @@ pub struct TerminalCapabilities {
     prompts: Option<Rc<dyn SignInPrompts>>,
     reconnect: Option<Rc<dyn RemoteReconnect>>,
     paste: Option<Rc<dyn UserTerminalPaste>>,
+    project_parent: Option<Rc<dyn crate::ProjectParentCapture>>,
 }
 impl TerminalCapabilities {
     pub fn new(state: Rc<dyn TerminalState>) -> Self {
@@ -25,6 +26,7 @@ impl TerminalCapabilities {
             prompts: None,
             reconnect: None,
             paste: None,
+            project_parent: None,
         }
     }
     pub fn with_fact_session(mut self, port: Rc<dyn ConnectionFactSession>) -> Self {
@@ -85,5 +87,12 @@ impl TerminalCapabilities {
     }
     pub fn paste(&self) -> Option<&Rc<dyn UserTerminalPaste>> {
         self.paste.as_ref()
+    }
+    pub fn with_project_parent(mut self, port: Rc<dyn crate::ProjectParentCapture>) -> Self {
+        self.project_parent = Some(port);
+        self
+    }
+    pub fn project_parent(&self) -> Option<&Rc<dyn crate::ProjectParentCapture>> {
+        self.project_parent.as_ref()
     }
 }

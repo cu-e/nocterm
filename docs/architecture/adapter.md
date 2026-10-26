@@ -5,9 +5,75 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-environment`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
+
+## Workspace catalog
+
+`nocterm-project-storage` reads and publishes workspace folder definitions through
+the existing private atomic-file primitive and supplies identity/time metadata.
+The app injects it into the catalog service; it owns no background writer.
+
+`nocterm-project-runtime` executes built-in workspace preparation through a
+captured host executor. Docker and Podman inventories have independent outcomes;
+all later commands retain the chosen engine and full container ID. Preparation
+passes the actual owned creation receipt and original bounded command context to
+its injected creation installer, then clones Git. Command scopes and observations
+retain the original timer, cancellation and progress. Recovery alone creates its
+existing deliberate fresh uncancelled context.
+
+`nocterm-project-environment` supports fresh creation installation and explicit
+existing-environment changes through separate contracts. It probes the actual OS,
+architecture, libc, account and prerequisites rather than inferring them from the
+host or image reference. Distribution defaults remain explicit; managed Python,
+Rust, Bun, official Node archives and checksum-verified Adoptium JDKs retain their
+user-owned paths in fresh workspace shells. Installer version values travel as
+positional arguments. Unsupported platform/version combinations fail explicitly;
+existing environments are preserved after partial installation or cancellation.
+Only the actual owned creation path permits initializing an empty Arch package
+database with a full synchronization/update. Existing-environment management reports
+the missing administrator prerequisite instead. Environment-owned workspace session
+and request activation exports fixed managed paths without sourcing a mutable fragment.
+
+Runtime's bounded pull-output decoding emits observed transfer values
+or phase-only progress when totals are unavailable.
+`NativeWorkspaceContainerActions` separately implements explicitly confirmed lifecycle
+actions. Bounded inspection validates the original full ID. Stop is idempotent for
+an already stopped container; Delete stops a running one before exact-ID `rm`,
+without force, volume removal, images, pruning or name fallback. Failures retain
+possible partial effects; no resource recreation attempts to roll them back
+([ADR 0078](../adr/0078-explicit-workspace-container-removal.md)).
+The separate registry-search adapter uses Docker Hub search or Podman configured
+registries through that same captured executor, bounds results/bytes/time, cancels
+obsolete work and returns typed quota cooldowns without pulling images. Custom
+container creation uses the chosen engine’s cached image reference or ID and pulls
+only when missing; curated images retain their explicit pull. Rollback checks the
+exact resource identity, project label and a fresh creation-attempt label. A lost create response triggers bounded reconciliation on
+the original executor; unresolved outcomes retain a typed, recoverable attempt
+reference. Automatic rollback never deletes ordinary folders or attached containers.
+
+`nocterm-project-container-fs` wraps normal host transport with scoped execution and
+no host filesystem projection
+([ADR 0071](../adr/0071-provider-workspace-locations.md)). Its process-backed
+`RemoteFs` adapter uses that same original executor and exact engine/resource for
+container files. It passes paths as arguments to fixed recipes, probes required
+utilities, bounds queues/commands and streams file contents. Upload publication
+retains an identity-checked private same-parent stage; Create collisions preserve
+the sealed stage for a name retry. Downloads compare the opened descriptor with
+the admitted regular file. Container filesystem commands run from `/` independently
+of the workspace directory. Unsupported images have no host fallback and install
+no helper or SSH daemon. The adapter's path-race and mutation limits are recorded
+in [ADR 0076](../adr/0076-container-filesystem-capability.md). The three project adapters
+have no dependencies on one another, including development dependencies; app owns
+real cross-adapter composition tests
+([ADR 0080](../adr/0080-project-adapter-ownership.md)).
+
+`nocterm-directory-io` projects supplied local and remote filesystem capabilities
+into read-only home and directory listing operations. It reuses existing traversal,
+limits and typed errors, opens no connection and never substitutes local access
+for a missing remote source
+([ADR 0072](../adr/0072-shared-directory-selection.md)).
 
 ## SSH and local sessions
 
@@ -16,7 +82,31 @@ that contract using russh and lazily opened SFTP channels on a dedicated Tokio
 runtime.
 `nocterm-local` adapts portable-pty to
 the same session events and launch contract. Integration supplies bounded OSC 7
-cwd and prompt markers without parsing rendered prompt text.
+cwd and prompt markers without parsing rendered prompt text. It also implements the
+foundation `WallClock` as `SystemClock`, which reads the system time and the local time zone
+in effect at that instant ([ADR 0088](../adr/0088-wall-clock-contract-and-the-clock-plugin.md)).
+
+## User plugin packages
+
+`nocterm-plugin-packages` implements the `PluginPackages` port of `nocterm-plugin-api`. It reads a
+package file (a TOML file of at most 256 KiB, or a code package below) without following links through
+`nocterm_core::fs::read_regular_bounded`, hashes the exact bytes it then parses, validates the
+manifest, publishes a package privately and atomically as one file per validated `user-`
+plugin id (`<root>/<id>.toml`), re-hashes it at load and removes it. Its I/O is limited to those `nocterm_core::fs`
+calls and metadata and removal under the package root ([ADR 0089](../adr/0089-user-plugin-contract.md)).
+A code package is one `.wasm` module, at most 2 MiB, that carries the manifest in its custom
+section `nocterm.manifest`; the store keeps `<id>.wasm` or `<id>.toml` per plugin and the hash
+covers the whole file ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
+`SessionStore` is the store of a developer session: it reads a file with the same bounded read but
+publishes, loads (re-checking the hash) and removes packages in memory, so no package directory is
+ever created.
+
+`nocterm-plugin-wasm` implements the `PluginRuntime` port on wasmi for code packages. It reads no
+file: the bytes come from the package port. It validates and compiles a module when a plugin is
+instantiated, caches at most 16 compiled modules, runs each call under a fuel budget and a memory
+limit, allows at most 16 live instances, bounds every read of guest memory, and maps a trap, a
+missed deadline or a memory fault to a `RuntimeError` that the host counts. Guests import
+nothing; their log lines go to an injected `GuestLog`. The crate has no thread and no global.
 
 ## Bounded I/O
 
@@ -125,8 +215,28 @@ common shutdown coordinator; the adapter introduces no quit hook or separate bud
 `AgentStateRepository`. It owns bounded transcript reads, private atomic JSON/TOML
 publication, catalog scanning and rebuildable metadata sidecars. The transcript
 is authoritative: a sidecar failure cannot revoke a successful publication.
-An archived-draft update merges only its draft and timestamp into the original
-transcript under the service's shared serial gate.
+Version-two documents and their rebuildable sidecars live under
+`scoped-v2/general/<chat-id>` or `scoped-v2/projects/<project-id>/<chat-id>`;
+legacy flat discovery cannot enter Project history. The captured scope and UUID
+select one bucket, so identical chat IDs in different scopes are independent.
+Discovery verifies the transcript's bounded authoritative v2 header before using
+any sidecar metadata, then applies the 200-row limit within that scope. Ordinary
+v2 catalog reads and overwrite checks read at most the 16 KiB prefix rather than
+the full transcript. Arbitrarily ordered valid General v1 files keep their
+bounded full scan, including late metadata and first-user fallback titles; no
+sidecar is trusted to avoid that compatibility cost and no migration rewrites
+v1 bytes. A scoped General document takes precedence over a legacy duplicate,
+including when damaged; deletion validates both and removes legacy first so a
+failed removal cannot resurrect its stale fallback.
+
+The app supplies `LocalFs`; generated descendants, reads, private staging,
+publication and removal use retained `LocalDirectory` capabilities. The configured
+private storage root has trusted ancestry and alone may be canonicalized. Project
+buckets require supplied held identity, with typed refusal on a portable path
+implementation. General retains that adapter's documented active-ancestor race
+limitation. Generated links and final source links are refused. An archived-draft
+update merges only its draft and timestamp into the original scoped transcript
+under the service's shared serial gate.
 
 The app injects these repositories; service and feature crates have no adapter
 dependency. Repository futures run filesystem work when polled on the background

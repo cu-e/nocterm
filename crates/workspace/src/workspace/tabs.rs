@@ -1,13 +1,13 @@
 //! Registered tabs, cached session metadata and concrete lifecycle transitions.
-use super::bindings::PreparedTab;
 use super::docking::{DockPane, TAB_PLACEMENTS};
 use super::*;
 use gpui_kit::component::dock::{DockAreaState, NodeId};
 mod groups;
 mod lifecycle;
 mod local;
+pub(super) mod project_skin;
 mod selection;
-mod topology;
+pub(super) mod topology;
 
 pub(super) struct TabEntry {
     handle: Rc<dyn ItemHandle>,
@@ -17,6 +17,7 @@ pub(super) struct TabEntry {
     cwd: Option<PathBuf>,
     subscription: Subscription,
     focus_subscription: Subscription,
+    project: Option<project_surface::ProjectPresentation>,
 }
 impl TabEntry {
     pub(super) fn new(
@@ -36,10 +37,28 @@ impl TabEntry {
             cwd,
             subscription,
             focus_subscription,
+            project: None,
         }
     }
-    fn id(&self) -> EntityId {
+    pub(super) fn with_project(
+        mut self,
+        project: Option<project_surface::ProjectPresentation>,
+    ) -> Self {
+        self.project = project;
+        self
+    }
+    pub(super) fn id(&self) -> EntityId {
         self.handle.item_id()
+    }
+    pub(super) fn handle(&self) -> Rc<dyn ItemHandle> {
+        self.handle.clone()
+    }
+    pub(super) fn refresh(&mut self, session: Option<SessionContext>, cx: &mut App) {
+        self.session = session;
+        self.dock_item.update(cx, |_, cx| cx.notify());
+    }
+    pub(super) fn close(self, window: &mut Window, cx: &mut App) {
+        self.detach().handle.close(window, cx);
     }
     fn panel(&self) -> PanelId {
         PanelId::from(self.dock_item.entity_id())
@@ -103,14 +122,14 @@ pub(super) struct Tabs {
     local: local::LocalDockState,
 }
 impl Tabs {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+    pub(super) fn new(topology: topology::DockTopology) -> Self {
         Self {
             entries: Vec::new(),
             groups: Default::default(),
             active_central_id: None,
             announced_session: None,
             last_command_id: None,
-            topology: topology::DockTopology::new(window, cx),
+            topology,
             local: Default::default(),
         }
     }
@@ -139,14 +158,50 @@ impl Tabs {
     pub(super) fn contains(&self, id: EntityId) -> bool {
         self.entry(id).is_some()
     }
-    pub(super) fn central_items(&self) -> impl Iterator<Item = &dyn ItemHandle> {
+    pub(super) fn active_item(&self) -> Option<&dyn ItemHandle> {
+        self.active_entry().map(|entry| entry.handle.as_ref())
+    }
+    pub(super) fn item_handle(&self, id: EntityId) -> Option<Rc<dyn ItemHandle>> {
+        self.entries
+            .iter()
+            .find(|entry| entry.handle.item_id() == id)
+            .map(|entry| entry.handle.clone())
+    }
+    pub(super) fn central_handles(&self) -> Vec<Rc<dyn ItemHandle>> {
         self.entries
             .iter()
             .filter(|entry| entry.local.is_none())
-            .map(|entry| entry.handle.as_ref())
+            .map(|entry| entry.handle.clone())
+            .collect()
     }
-    pub(super) fn active_item(&self) -> Option<&dyn ItemHandle> {
-        self.active_entry().map(|entry| entry.handle.as_ref())
+    pub(super) fn active_handle(&self) -> Option<Rc<dyn ItemHandle>> {
+        self.active_entry().map(|entry| entry.handle.clone())
+    }
+    pub(super) fn active_project(&self) -> Option<crate::ProjectSurface> {
+        self.active_entry()?
+            .project
+            .as_ref()
+            .map(project_surface::ProjectPresentation::surface)
+    }
+    pub(super) fn project(&self, item: EntityId) -> Option<crate::ProjectSurface> {
+        self.entry(item)?
+            .project
+            .as_ref()
+            .map(project_surface::ProjectPresentation::surface)
+    }
+    pub(super) fn project_item(
+        &self,
+        project: nocterm_project_model::ProjectId,
+    ) -> Option<EntityId> {
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry
+                    .project
+                    .as_ref()
+                    .is_some_and(|view| view.surface().project() == project)
+            })
+            .map(TabEntry::id)
     }
     pub(super) fn find<T: Item>(&self) -> Option<Entity<T>> {
         self.entries
@@ -177,6 +232,15 @@ impl Tabs {
         self.item_location(id, cx).is_some_and(|(placement, _)| {
             placement == DockPlacement::Center || self.topology.region_open(placement, cx)
         })
+    }
+    pub(super) fn item_displayed(&self, id: EntityId, cx: &App) -> bool {
+        self.item_visible(id, cx)
+            && self
+                .item_location(id, cx)
+                .is_some_and(|(_, node)| self.zoomed(cx).is_none_or(|zoomed| zoomed == node))
+            && self
+                .pane_for_item(id, cx)
+                .is_some_and(|pane| pane.active_panel() == self.panel_of(id))
     }
     fn pane_for_item(&self, id: EntityId, cx: &App) -> Option<DockPane> {
         let (placement, node) = self.item_location(id, cx)?;
@@ -331,6 +395,10 @@ impl Tabs {
     pub(super) fn foreground_terminals(&self, cx: &App) -> Vec<crate::TerminalEntry> {
         self.entries
             .iter()
+            // Registered project Items own inner terminals and advertise no
+            // outer terminal capability. Skip their cached membership before
+            // touching the view, including while that ProjectView is updated.
+            .filter(|entry| entry.project.is_none())
             .filter_map(|entry| {
                 Some(crate::TerminalEntry {
                     item: entry.id(),

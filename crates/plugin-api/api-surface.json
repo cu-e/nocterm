@@ -1,0 +1,588 @@
+{
+  "api_version": "0.1",
+  "capabilities": [
+    {
+      "consent": "See the current time and your time zone.",
+      "deprecated": null,
+      "doc": "The wall-clock time to the minute and the UTC offset of the user.",
+      "excluded": "A timer finer than a minute.",
+      "family": "observe",
+      "fields": {
+        "unix_minutes": "number",
+        "utc_offset_seconds": "number"
+      },
+      "gesture": false,
+      "id": "clock.now",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": true,
+      "since": "0.1",
+      "target": null
+    },
+    {
+      "consent": "See what kind of workspace a window shows and whether it is connected.",
+      "deprecated": null,
+      "doc": "Whether the window shows a local, remote, container or folder workspace, and whether it is connected.",
+      "excluded": "Title, host, user, path and tab count.",
+      "family": "observe",
+      "fields": {
+        "connected": "bool",
+        "kind": "text"
+      },
+      "gesture": false,
+      "id": "workspace.kind",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": true,
+      "since": "0.1",
+      "target": null
+    },
+    {
+      "consent": "See how busy this computer is.",
+      "deprecated": null,
+      "doc": "Processor and memory use in percent, or unavailable when no built-in sampler runs.",
+      "excluded": "Processes and host names.",
+      "family": "observe",
+      "fields": {
+        "cpu_percent": "number",
+        "memory_percent": "number"
+      },
+      "gesture": false,
+      "id": "monitor.usage",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": true,
+      "since": "0.1",
+      "target": null
+    },
+    {
+      "consent": "See how many file transfers are running or failed.",
+      "deprecated": null,
+      "doc": "How many transfers run and how many failed.",
+      "excluded": "File names, paths and rates.",
+      "family": "observe",
+      "fields": {
+        "active": "number",
+        "failed": "number"
+      },
+      "gesture": false,
+      "id": "transfers.counts",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": true,
+      "since": "0.1",
+      "target": null
+    },
+    {
+      "consent": "See the notices this plugin posted.",
+      "deprecated": null,
+      "doc": "The notices this plugin posted that are still shown.",
+      "excluded": "Notices of the host and of other plugins.",
+      "family": "observe",
+      "fields": null,
+      "gesture": false,
+      "id": "notifications.own",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": false,
+      "since": "0.1",
+      "target": null
+    },
+    {
+      "consent": "Show notices in the status bar.",
+      "deprecated": null,
+      "doc": "Posts an informational or caution notice of up to 200 characters.",
+      "excluded": "Actions, links and the error level.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "notifications.post",
+      "live_cap": 3,
+      "rate": {
+        "per_ms": 10000,
+        "uses": 1
+      },
+      "session_derived": false,
+      "since": "0.1",
+      "target": "host-presentation"
+    },
+    {
+      "consent": "Open or close its own panels when you click it.",
+      "deprecated": null,
+      "doc": "Opens or closes one of the plugin's own panels after a click.",
+      "excluded": "Other contributions and moving focus.",
+      "family": "effect",
+      "fields": null,
+      "gesture": true,
+      "id": "panels.set-open",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-contribution"
+    },
+    {
+      "consent": "Show a number on its own panel or widget.",
+      "deprecated": null,
+      "doc": "Sets or clears a number badge on one of the plugin's own contributions.",
+      "excluded": "Attention requests.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "panels.set-badge",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-contribution"
+    },
+    {
+      "consent": "Keep a small amount of its own data.",
+      "deprecated": null,
+      "doc": "Stores a value under a key in the plugin's own data, up to 64 KiB in total.",
+      "excluded": "Data of other plugins.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "storage.set",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-data"
+    },
+    {
+      "consent": "Remove its own stored data.",
+      "deprecated": null,
+      "doc": "Removes a key from the plugin's own data.",
+      "excluded": "Data of other plugins.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "storage.remove",
+      "live_cap": null,
+      "rate": null,
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-data"
+    }
+  ],
+  "effect_requests": {
+    "notifications.post": {
+      "notice_key": {
+        "required": false,
+        "type": "text"
+      },
+      "text": {
+        "required": true,
+        "type": "text"
+      },
+      "tone": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "notice_tones"
+      }
+    },
+    "panels.set-badge": {
+      "badge": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "local": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "panels.set-open": {
+      "local": {
+        "required": true,
+        "type": "text"
+      },
+      "open": {
+        "required": true,
+        "type": "bool"
+      }
+    },
+    "storage.remove": {
+      "key": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "storage.set": {
+      "key": {
+        "required": true,
+        "type": "text"
+      },
+      "value": {
+        "required": true,
+        "type": "text"
+      }
+    }
+  },
+  "events": [
+    "activated",
+    "toggled",
+    "visibility-changed",
+    "settings-changed"
+  ],
+  "filters": [
+    "round(n)",
+    "percent",
+    "hh-mm",
+    "threshold(low, high)"
+  ],
+  "host_errors": [
+    "not-granted",
+    "denied",
+    "rate-limited",
+    "unavailable"
+  ],
+  "icons": [
+    "box",
+    "gem",
+    "hexagon",
+    "plug",
+    "puzzle",
+    "shapes"
+  ],
+  "kinds": [
+    "widget",
+    "panel"
+  ],
+  "limits": {
+    "badge-chars": 8,
+    "button-chars": 48,
+    "capabilities-per-package": 16,
+    "contributions-per-package": 8,
+    "description-chars": 160,
+    "effect-key-chars": 32,
+    "effects-per-call": 8,
+    "list-items": 100,
+    "live-notices": 3,
+    "min-refresh-ms": 250,
+    "name-chars": 48,
+    "node-key-chars": 32,
+    "nodes-per-view": 256,
+    "notice-chars": 200,
+    "package-bytes": 262144,
+    "placeholders-per-view": 64,
+    "reason-chars": 160,
+    "round-decimals": 2,
+    "setting-fields": 32,
+    "setting-groups": 8,
+    "setting-help-chars": 160,
+    "setting-key-chars": 32,
+    "setting-label-chars": 48,
+    "setting-options": 16,
+    "setting-text-chars": 256,
+    "storage-key-chars": 64,
+    "storage-total-bytes": 65536,
+    "storage-value-bytes": 4096,
+    "template-chars": 512,
+    "text-chars": 200,
+    "view-depth": 8
+  },
+  "manifest": {
+    "contribution": {
+      "icon": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "icons"
+      },
+      "kind": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "kinds"
+      },
+      "local": {
+        "required": true,
+        "type": "text"
+      },
+      "order": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "title": {
+        "required": true,
+        "type": "text"
+      },
+      "view": {
+        "required": false,
+        "type": "table"
+      },
+      "zone": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "zones"
+      }
+    },
+    "contribution.view": {
+      "nodes": {
+        "required": true,
+        "type": "table-list"
+      },
+      "refresh": {
+        "required": false,
+        "type": "any"
+      }
+    },
+    "contribution.view.nodes": {
+      "each": {
+        "required": false,
+        "type": "text"
+      },
+      "icon": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "icons"
+      },
+      "key": {
+        "required": false,
+        "type": "text"
+      },
+      "kind": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "node_kinds"
+      },
+      "parent": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "text": {
+        "required": false,
+        "type": "text"
+      },
+      "tone": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "tones"
+      },
+      "tone_when": {
+        "required": false,
+        "type": "text"
+      },
+      "value": {
+        "required": false,
+        "type": "text"
+      }
+    },
+    "manifest": {
+      "api": {
+        "required": true,
+        "type": "text"
+      },
+      "capabilities": {
+        "required": false,
+        "type": "text-list"
+      },
+      "contribution": {
+        "required": false,
+        "type": "table-list"
+      },
+      "description": {
+        "required": false,
+        "type": "text"
+      },
+      "id": {
+        "required": true,
+        "type": "text"
+      },
+      "name": {
+        "required": true,
+        "type": "text"
+      },
+      "optional_capabilities": {
+        "required": false,
+        "type": "text-list"
+      },
+      "publisher": {
+        "required": true,
+        "type": "text"
+      },
+      "reasons": {
+        "required": false,
+        "type": "text-map"
+      },
+      "runtime": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "runtimes"
+      },
+      "settings": {
+        "required": false,
+        "type": "table"
+      }
+    },
+    "settings": {
+      "group": {
+        "required": false,
+        "type": "table-list"
+      },
+      "version": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      }
+    },
+    "settings.group": {
+      "contribution": {
+        "required": false,
+        "type": "text"
+      },
+      "field": {
+        "required": false,
+        "type": "table-list"
+      },
+      "title": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "settings.group.field": {
+      "default": {
+        "required": false,
+        "type": "any"
+      },
+      "help": {
+        "required": false,
+        "type": "text"
+      },
+      "key": {
+        "required": true,
+        "type": "text"
+      },
+      "kind": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "settings_kinds"
+      },
+      "label": {
+        "required": true,
+        "type": "text"
+      },
+      "max": {
+        "max": 2147483647,
+        "min": -2147483648,
+        "required": false,
+        "type": "integer"
+      },
+      "max_chosen": {
+        "max": 255,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "max_len": {
+        "max": 65535,
+        "min": 0,
+        "required": false,
+        "type": "integer"
+      },
+      "min": {
+        "max": 2147483647,
+        "min": -2147483648,
+        "required": false,
+        "type": "integer"
+      },
+      "options": {
+        "required": false,
+        "type": "table-list"
+      },
+      "ordered": {
+        "required": false,
+        "type": "bool"
+      },
+      "placeholder": {
+        "required": false,
+        "type": "text"
+      },
+      "renamed_from": {
+        "required": false,
+        "type": "text"
+      },
+      "step": {
+        "max": 2147483647,
+        "min": 1,
+        "required": false,
+        "type": "integer"
+      },
+      "unit": {
+        "required": false,
+        "type": "text"
+      }
+    },
+    "settings.group.field.options": {
+      "help": {
+        "required": false,
+        "type": "text"
+      },
+      "key": {
+        "required": true,
+        "type": "text"
+      },
+      "label": {
+        "required": true,
+        "type": "text"
+      }
+    }
+  },
+  "node_kinds": [
+    "row",
+    "column",
+    "text",
+    "icon",
+    "meter",
+    "badge",
+    "button",
+    "toggle",
+    "list",
+    "divider",
+    "spacer"
+  ],
+  "notice_tones": [
+    "info",
+    "caution"
+  ],
+  "refreshes": [
+    "next-second",
+    "next-minute",
+    "after-ms"
+  ],
+  "runtimes": [
+    "declarative",
+    "wasm"
+  ],
+  "settings_kinds": [
+    "toggle",
+    "choice",
+    "multi-choice",
+    "number",
+    "text"
+  ],
+  "tones": [
+    "default",
+    "muted",
+    "success",
+    "caution"
+  ],
+  "workspace_kinds": [
+    "local",
+    "remote",
+    "container",
+    "folder"
+  ],
+  "zones": [
+    "left",
+    "center",
+    "right"
+  ]
+}

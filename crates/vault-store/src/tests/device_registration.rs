@@ -357,6 +357,7 @@ fn worker_lock_during_native_prompt_rejects_success_and_queued_credentials() {
 #[test]
 fn vault_replacement_during_native_prompt_refuses_stale_decrypted_state() {
     use futures::executor::block_on;
+    use nocterm_core::fs::{AtomicPublication, write_private_atomic};
     use std::{sync::mpsc, time::Duration};
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("vault.bin");
@@ -372,14 +373,20 @@ fn vault_replacement_during_native_prompt_refuses_stale_decrypted_state() {
             .unwrap();
     block_on(service.create(Secret::new("long master password"))).unwrap();
     block_on(service.enable_device_unlock()).unwrap();
-    service.lock();
-    let unlock = service.unlock_with_device();
-    ready.recv_timeout(Duration::from_secs(5)).unwrap();
-    let mut other = Vault::new(&path);
+    // Complete password derivation and staging before the native prompt's watchdog starts.
+    let replacement_path = temp.path().join("replacement.bin");
+    write_private_atomic(&replacement_path, &fs::read(&path).unwrap()).unwrap();
+    let mut other = Vault::new(&replacement_path);
     other.unlock(Secret::new("long master password")).unwrap();
     other
         .change_password(Secret::new("replacement master password"))
         .unwrap();
+    let publication =
+        AtomicPublication::stage_private(&path, &fs::read(&replacement_path).unwrap()).unwrap();
+    service.lock();
+    let unlock = service.unlock_with_device();
+    ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    publication.publish().unwrap();
     resume.send(()).unwrap();
     assert!(matches!(block_on(unlock), Err(VaultError::Conflict)));
     assert!(!service.is_unlocked());

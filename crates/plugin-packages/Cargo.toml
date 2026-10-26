@@ -1,0 +1,25 @@
+[package]
+name = "nocterm-plugin-packages"
+description = "Reads, hashes, stores and removes user plugin packages: bounded no-follow reads, TOML parsing, SHA-256 and private publication."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "adapter"
+
+[dependencies]
+nocterm-core.workspace = true
+nocterm-plugin-api.workspace = true
+nocterm-plugin-model.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+tempfile.workspace = true
+
+[lints]
+workspace = true

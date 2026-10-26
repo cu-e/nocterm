@@ -9,6 +9,13 @@ use nocterm_workspace::{
 use std::sync::Arc;
 
 use crate::{Status, Terminal, TerminalView, credentials::describe};
+mod project_parent;
+
+pub(crate) enum AccessOrigin {
+    GeneralConnection,
+    GeneralCommand,
+    WorkspaceResource,
+}
 
 pub(crate) struct Access {
     owner: WeakEntity<TerminalView>,
@@ -16,6 +23,26 @@ pub(crate) struct Access {
 }
 
 impl Access {
+    pub(crate) fn capabilities(
+        access: std::rc::Rc<Self>,
+        origin: AccessOrigin,
+    ) -> nocterm_workspace::TerminalCapabilities {
+        let base = nocterm_workspace::TerminalCapabilities::new(access.clone())
+            .with_text(access.clone())
+            .with_input(access.clone())
+            .with_live(access.clone())
+            .with_execution(access.clone())
+            .with_paste(access.clone());
+        let base = base
+            .with_fact_session(access.clone())
+            .with_prompts(access.clone())
+            .with_reconnect(access.clone());
+        if matches!(origin, AccessOrigin::GeneralConnection) {
+            base.with_project_parent(std::rc::Rc::new(project_parent::ParentCapture::new(access)))
+        } else {
+            base
+        }
+    }
     pub(crate) fn new(owner: WeakEntity<TerminalView>, terminal: WeakEntity<Terminal>) -> Self {
         Self { owner, terminal }
     }

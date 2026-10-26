@@ -4,6 +4,7 @@ description: Pipeline stage 3. Verifies an implementation - runs build, lint and
 model: sonnet
 skills:
   - behavior-tests
+  - plugin-api
   - gate
 ---
 

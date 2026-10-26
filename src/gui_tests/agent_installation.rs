@@ -25,7 +25,7 @@ fn configured_and_malformed_ai_policy_are_registered_before_first_window(cx: &mu
             );
             assert_eq!(settings.section_errors(cx).is_empty(), !malformed);
             let (_, workspace) = open_workspace(&booted, cx);
-            assert_eq!(workspace.read(cx).right_panel_is_available(), enabled);
+            assert_eq!(agent_panel_is_available(&workspace, cx), enabled);
         });
     }
 }
@@ -80,8 +80,8 @@ fn surviving_and_new_windows_keep_original_agent_installation_after_first_closes
             .clone()
             .downcast::<Workspace>()
             .unwrap();
-        assert!(workspace.read(cx).right_panel_is_available());
-        assert!(second_workspace.read(cx).right_panel_is_available());
+        assert!(agent_panel_is_available(&workspace, cx));
+        assert!(agent_panel_is_available(&second_workspace, cx));
         assert_eq!(
             booted
                 .agent_installation()

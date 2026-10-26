@@ -6,7 +6,9 @@ use gpui_kit::{
 use std::cell::Cell;
 
 /// A window with a footer, like the workspace's.
-struct Probe;
+struct Probe {
+    anchor: Option<gpui_kit::Anchor>,
+}
 impl gpui_kit::Render for Probe {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui_kit::IntoElement {
         div()
@@ -18,13 +20,21 @@ impl gpui_kit::Render for Probe {
                 div()
                     .flex()
                     .flex_row()
-                    .child(div().flex_1())
-                    .child(NoticeBar::new()),
+                    .when(self.anchor.is_none(), |row| row.child(div().flex_1()))
+                    .child(match self.anchor {
+                        Some(anchor) => NoticeBar::new().anchor(anchor),
+                        None => NoticeBar::new(),
+                    }),
             )
     }
 }
 
 pub(super) fn window(cx: &mut TestAppContext) -> AnyWindowHandle {
+    window_anchored(cx, None)
+}
+
+/// A window whose notice bar is at the start of the footer with `anchor`, or at its end.
+fn window_anchored(cx: &mut TestAppContext, anchor: Option<gpui_kit::Anchor>) -> AnyWindowHandle {
     let handle = cx.update(|cx| {
         gpui_kit::init(cx);
         crate::init(
@@ -35,9 +45,11 @@ pub(super) fn window(cx: &mut TestAppContext) -> AnyWindowHandle {
             .install(cx),
             cx,
         );
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Probe))
-            .unwrap()
-            .0
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|_| Probe { anchor })
+        })
+        .unwrap()
+        .0
     });
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
@@ -189,8 +201,10 @@ fn remove_and_run_action_target_one_key_and_one_window(cx: &mut TestAppContext) 
     let first = window(cx);
     let second = cx
         .update(|cx| {
-            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Probe))
-                .map(|(handle, _)| handle)
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|_| Probe { anchor: None })
+            })
+            .map(|(handle, _)| handle)
         })
         .unwrap();
     let ran = Rc::new(Cell::new(0));
@@ -219,4 +233,37 @@ fn remove_and_run_action_target_one_key_and_one_window(cx: &mut TestAppContext) 
         assert_eq!(count(window, cx), 0);
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_list_opens_from_the_corner_the_bar_is_anchored_to(cx: &mut TestAppContext) {
+    let edges = |cx: &mut TestAppContext, anchor| {
+        let handle = window_anchored(cx, anchor);
+        cx.update_window(handle, |_, window, cx| {
+            info(window, cx, "anchored", "Saved", "Done");
+            window.render_frame(cx);
+            window.click("notice-toggle", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let (bell, list) = (
+                window.find("notice-toggle").bounds(),
+                window.find("notice-list").bounds(),
+            );
+            (bell, list)
+        })
+        .unwrap()
+    };
+    let (bell, list) = edges(cx, None);
+    assert!(
+        list.right() <= bell.right() + gpui_kit::px(1.) && list.left() < bell.left(),
+        "by default the list grows leftwards from the bell: {list:?} under {bell:?}"
+    );
+    let (bell, list) = edges(cx, Some(gpui_kit::Anchor::BottomLeft));
+    assert!(
+        list.left() >= bell.left() - gpui_kit::px(1.) && list.right() > bell.right(),
+        "anchored left the list grows rightwards from the bell: {list:?} under {bell:?}"
+    );
 }

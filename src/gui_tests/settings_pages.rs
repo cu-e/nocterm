@@ -31,6 +31,7 @@ fn init_with_probe(
         None,
         None,
         probe,
+        crate::shell_setup::UserPluginMode::default(),
         cx,
     );
     SettingsFixture {
@@ -480,7 +481,7 @@ fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppCon
             "the actual AI page probes during eager construction"
         );
         cx.update(|cx| {
-            let settings = workspace.read(cx).find_item::<SettingsView>().unwrap();
+            let settings = workspace.read(cx).find_item::<SettingsView>(cx).unwrap();
             assert_eq!(settings.read(cx).selected_page_id(), "appearance");
         });
         cx.update_window(handle, |_, window, cx| {
@@ -498,7 +499,7 @@ fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppCon
                 }
             );
             assert_eq!(probe.calls(), 1);
-            assert_eq!(workspace.read(cx).items().count(), 1);
+            assert_eq!(workspace.read(cx).items(cx).count(), 1);
         })
         .unwrap();
     }
@@ -506,6 +507,8 @@ fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppCon
 
 mod appearance;
 mod dependencies;
+mod layout_editor;
+mod plugins;
 
 mod text;
 

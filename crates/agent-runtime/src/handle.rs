@@ -8,19 +8,35 @@ use nocterm_ai::model::auth::AuthMethod;
 use nocterm_ai::model::controls::ConfigOption;
 use nocterm_ai::{
     AgentLaunch, BridgeRegistration,
-    history::{ChatSummary, SavedChat, SharedChat},
+    execution_origin::ChatKey,
+    history::{ContextId, SavedChat, SharedChat},
 };
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct RuntimeHandle {
     runtime: Entity<Runtime>,
+    scope: ContextId,
 }
 impl RuntimeHandle {
     pub fn new(services: RuntimeServices, cx: &mut App) -> Self {
         Self {
             runtime: cx.new(|cx| Runtime::new(services, cx)),
+            scope: ContextId::General,
         }
+    }
+    /// An immutable view of the same installation service, captured before work starts.
+    pub fn for_scope(&self, scope: ContextId) -> Self {
+        Self {
+            runtime: self.runtime.clone(),
+            scope,
+        }
+    }
+    pub fn scope(&self) -> ContextId {
+        self.scope
+    }
+    pub fn catalog_snapshot(&self, cx: &App) -> Option<crate::CatalogSnapshot> {
+        self.runtime.read(cx).catalog_snapshot(self.scope)
     }
     pub fn observe(
         &self,
@@ -47,13 +63,15 @@ impl RuntimeHandle {
         self.runtime.read(cx).favorites_error(cx)
     }
     pub fn history_reader(&self, cx: &App) -> HistoryReader {
-        self.runtime.read(cx).history_reader()
+        self.runtime.read(cx).scoped_history_reader(self.scope)
     }
     pub fn limits<'a>(&self, agent: &str, cx: &'a App) -> Option<&'a nocterm_ai::usage::Limits> {
         self.runtime.read(cx).limits(agent)
     }
     pub fn document_is_current(&self, chat_id: &str, owner: EntityId, cx: &App) -> bool {
-        self.runtime.read(cx).document_is_current(chat_id, owner)
+        self.runtime
+            .read(cx)
+            .scoped_document_is_current(&ChatKey::new(self.scope, chat_id.to_owned()), owner)
     }
     pub fn terminal_auth_request(
         &self,
@@ -63,10 +81,52 @@ impl RuntimeHandle {
     ) -> Option<TerminalAuthRequest> {
         self.runtime.read(cx).terminal_auth_request(key, method)
     }
-    pub fn take_history(&self, cx: &mut App) -> (Option<Vec<SavedChat>>, Option<Vec<ChatSummary>>) {
-        self.runtime.update(cx, |runtime, _| {
-            (runtime.take_saved_chats(), runtime.take_saved_catalog())
-        })
+    /// Admit before a hydrated body mutates its original registered owner.
+    /// All other contexts/windows and immutable writer generations are included.
+    pub fn admit_history(
+        &self,
+        requester: EntityId,
+        bytes: usize,
+        cx: &mut App,
+    ) -> Result<(), nocterm_ai::storage::AgentStorageError> {
+        let residency =
+            self.runtime
+                .read(cx)
+                .chats
+                .history_residency(self.scope, Some(requester), cx)?;
+        residency.admit(Some(requester), bytes, cx).map(|_| ())
+    }
+    pub fn trim_history(
+        &self,
+        cx: &mut App,
+    ) -> Result<Vec<ChatKey>, nocterm_ai::storage::AgentStorageError> {
+        let residency = self
+            .runtime
+            .read(cx)
+            .chats
+            .history_residency(self.scope, None, cx)?;
+        residency.admit(None, 0, cx)
+    }
+    /// Admission for a new decoded document is bound to its exact reservation.
+    pub fn admit_claimed_history(
+        &self,
+        claim: &crate::DocumentClaim,
+        bytes: usize,
+        cx: &mut App,
+    ) -> Result<(), crate::ChatOpenError> {
+        nocterm_ai::storage::require_chat_scope(self.scope, claim.key().scope())?;
+        let residency = self.runtime.read(cx).chats.claim_residency(claim, cx)?;
+        residency.admit(None, bytes, cx)?;
+        Ok(())
+    }
+    pub fn take_prepared_chat(
+        &self,
+        claim: &crate::DocumentClaim,
+        cx: &mut App,
+    ) -> Result<Option<SavedChat>, crate::ChatOpenError> {
+        nocterm_ai::storage::require_chat_scope(self.scope, claim.key().scope())?;
+        self.runtime
+            .update(cx, |runtime, _| runtime.take_prepared_chat(claim))
     }
     pub fn toggle_favorite(&self, agent: &str, option: &str, value: &str, cx: &mut App) {
         self.runtime.update(cx, |runtime, cx| {
@@ -97,21 +157,66 @@ impl RuntimeHandle {
         self.runtime
             .update(cx, |runtime, cx| runtime.refresh_limits(agent, cx))
     }
-    pub fn register_document(&self, client: Client, cx: &mut App) {
+    pub fn claim_document(
+        &self,
+        id: String,
+        window: EntityId,
+        cx: &mut App,
+    ) -> Result<crate::DocumentClaimOutcome, crate::ChatOpenError> {
         self.runtime
-            .update(cx, |runtime, cx| runtime.register_document(client, cx))
+            .read(cx)
+            .claim_document(ChatKey::new(self.scope, id), window, None)
     }
-    pub fn unregister_document(&self, id: EntityId, cx: &mut App) {
+    pub fn replace_document(
+        &self,
+        id: String,
+        expected_owner: EntityId,
+        window: EntityId,
+        cx: &mut App,
+    ) -> Result<crate::DocumentClaimOutcome, crate::ChatOpenError> {
+        self.runtime.read(cx).claim_document(
+            ChatKey::new(self.scope, id),
+            window,
+            Some(expected_owner),
+        )
+    }
+    pub fn commit_document(
+        &self,
+        claim: crate::DocumentClaim,
+        client: Client,
+        cx: &mut App,
+    ) -> Result<(), crate::ChatOpenError> {
+        nocterm_ai::storage::require_chat_scope(self.scope, claim.key().scope())?;
         self.runtime
-            .update(cx, |runtime, cx| runtime.unregister_document(id, cx))
+            .update(cx, |runtime, cx| runtime.commit_document(claim, client, cx))
     }
-    pub fn request_activation(&self, client: Client, cx: &mut App) {
-        self.runtime
-            .update(cx, |runtime, cx| runtime.request_activation(client, cx))
-    }
-    pub fn connect(&self, client: Client, chat_id: String, launch: AgentLaunch, cx: &mut App) {
+    pub fn unregister_document(
+        &self,
+        id: EntityId,
+        cx: &mut App,
+    ) -> Result<(), nocterm_ai::storage::AgentStorageError> {
         self.runtime.update(cx, |runtime, cx| {
-            runtime.connect(client, chat_id, launch, cx)
+            runtime.unregister_scoped_document(self.scope, id, cx)
+        })
+    }
+    pub fn request_activation(
+        &self,
+        client: Client,
+        cx: &mut App,
+    ) -> Result<(), crate::AgentActivationError> {
+        self.runtime.update(cx, |runtime, cx| {
+            runtime.request_scoped_activation(self.scope, client, cx)
+        })
+    }
+    pub fn connect(
+        &self,
+        client: Client,
+        chat_id: String,
+        launch: AgentLaunch,
+        cx: &mut App,
+    ) -> Result<(), crate::AgentActivationError> {
+        self.runtime.update(cx, |runtime, cx| {
+            runtime.connect_scoped(self.scope, client, chat_id, launch, cx)
         })
     }
     pub fn register_bridge(
@@ -119,8 +224,9 @@ impl RuntimeHandle {
         client: &Client,
         cx: &mut App,
     ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
-        self.runtime
-            .update(cx, |runtime, cx| runtime.register_bridge(client, cx))
+        self.runtime.update(cx, |runtime, cx| {
+            runtime.register_scoped_bridge(self.scope, client, cx)
+        })
     }
     pub fn save_chat(
         &self,
@@ -130,7 +236,7 @@ impl RuntimeHandle {
         cx: &mut App,
     ) -> Result<bool, AgentPersistenceError> {
         self.runtime.update(cx, |runtime, cx| {
-            runtime.save_chat(chat, owner, revision, cx)
+            runtime.scoped_save_chat(self.scope, chat, owner, revision, cx)
         })
     }
     pub fn capture_and_detach_document(
@@ -139,16 +245,28 @@ impl RuntimeHandle {
         cx: &mut App,
     ) -> Result<bool, AgentPersistenceError> {
         self.runtime.update(cx, |runtime, cx| {
-            runtime.capture_and_detach_document(id, cx)
+            runtime.capture_scoped_document(self.scope, id, cx)
         })
     }
     pub fn delete_chat(&self, id: String, cx: &mut App) {
+        self.runtime.update(cx, |runtime, cx| {
+            runtime.scoped_delete_chat(ChatKey::new(self.scope, id), cx)
+        })
+    }
+    /// Request the captured context once; an existing load or snapshot is retained.
+    pub fn ensure_history(&self, cx: &mut App) -> Result<(), crate::CatalogLoadError> {
         self.runtime
-            .update(cx, |runtime, cx| runtime.delete_chat(id, cx))
+            .update(cx, |runtime, cx| runtime.chats.ensure(self.scope, cx))
+    }
+    pub fn try_reload_history(&self, cx: &mut App) -> Result<(), crate::CatalogLoadError> {
+        self.runtime.update(cx, |runtime, cx| {
+            runtime.try_scoped_reload_history(self.scope, cx)
+        })
     }
     pub fn reload_history(&self, cx: &mut App) {
-        self.runtime
-            .update(cx, |runtime, cx| runtime.reload_history(cx))
+        self.runtime.update(cx, |runtime, cx| {
+            runtime.scoped_reload_history(self.scope, cx)
+        })
     }
     pub fn settings_changed(&self, cx: &mut App) {
         self.runtime

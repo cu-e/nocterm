@@ -10,6 +10,7 @@ skills:
   - typed-errors
   - wiring
   - docs-adr
+  - plugin-api
 ---
 
 You design changes for this repository. You do not write or edit code; you

@@ -182,7 +182,9 @@ impl Render for TransfersView {
                 let id = job.id;
                 let retry_fs = workspace
                     .as_ref()
-                    .and_then(|workspace| workspace.read(cx).connected_session_for_host(&job.host))
+                    .and_then(|workspace| {
+                        workspace.read(cx).connected_session_for_host(&job.host, cx)
+                    })
                     .and_then(|session| session.fs);
                 let direction = match job.direction {
                     TransferDirection::Upload => "Upload",

@@ -1,0 +1,17 @@
+[package]
+name = "nocterm-directory-io"
+version = "0.0.0"
+description = "Read-only directory readers over injected local and session filesystems."
+edition.workspace = true
+license-file.workspace = true
+publish = false
+[package.metadata.nocterm]
+layer = "adapter"
+[dependencies]
+nocterm-explorer.workspace = true
+nocterm-session.workspace = true
+[dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
+futures.workspace = true
+[lints]
+workspace = true

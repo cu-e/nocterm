@@ -50,7 +50,7 @@ fn titlebar_find_and_settings_keep_their_field_focus(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let settings = workspace
             .read(cx)
-            .find_item::<nocterm_settings_ui::SettingsView>()
+            .find_item::<nocterm_settings_ui::SettingsView>(cx)
             .unwrap();
         assert!(settings.read(cx).focus_handle(cx).is_focused(window));
     })
@@ -112,6 +112,23 @@ fn titlebar_about_and_new_window_use_application_actions(cx: &mut TestAppContext
         assert_eq!(cx.windows(), vec![first]);
         assert!(workspace.read(cx).active_session(cx).unwrap().connected);
     });
+}
+
+#[gpui_kit::test]
+fn titlebar_opens_with_the_app_mark_before_its_menus(cx: &mut TestAppContext) {
+    let (handle, _, _, _) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let mark = window.find("workspace-app-mark").bounds();
+        let first_menu = window
+            .within("app-menu-bar")
+            .within(0usize)
+            .find("menu")
+            .bounds();
+        assert!(mark.size.width > gpui_kit::px(0.));
+        assert!(mark.right() <= first_menu.left());
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -274,29 +291,52 @@ fn titlebar_close_window_retires_connected_session_and_releases_its_models(
     );
 }
 
-#[gpui_kit::test]
-fn new_windows_and_surviving_windows_share_the_bootstrapped_layout(cx: &mut TestAppContext) {
-    let (first, workspace, _, _) = fixture(cx);
-    cx.update_window(first, |_, window, cx| {
-        workspace.update(cx, |workspace, cx| workspace.swap_sides(cx));
-        assert!(workspace.read(cx).sides_swapped(cx));
-        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx);
+/// The id of the layout the window shows.
+fn selected_layout(workspace: &Entity<Workspace>, cx: &gpui_kit::App) -> String {
+    workspace
+        .read(cx)
+        .layouts()
+        .into_iter()
+        .find(|choice| choice.is_selected())
+        .map(|choice| choice.id().as_str().to_owned())
+        .expect("one layout is selected")
+}
+
+/// Chooses a layout from a window, as the Window menu does.
+fn choose_layout(window: AnyWindowHandle, id: &str, cx: &mut TestAppContext) {
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_action(
+            Box::new(nocterm_workspace::SwitchLayout {
+                id: id.to_owned().into(),
+            }),
+            cx,
+        )
     })
     .unwrap();
     cx.run_until_parked();
-    let second = cx.update(|cx| {
-        *cx.windows()
-            .iter()
-            .find(|window| **window != first)
-            .unwrap()
-    });
-    cx.update_window(second, |_, window, cx| {
-        let second_workspace = window_workspace(window, cx);
-        assert!(second_workspace.read(cx).sides_swapped(cx));
-        second_workspace.update(cx, |workspace, cx| workspace.swap_sides(cx));
-        assert!(!workspace.read(cx).sides_swapped(cx));
+}
+
+fn other_window(cx: &mut TestAppContext, than: AnyWindowHandle) -> AnyWindowHandle {
+    cx.update(|cx| *cx.windows().iter().find(|window| **window != than).unwrap())
+}
+
+#[gpui_kit::test]
+fn new_windows_and_surviving_windows_share_the_bootstrapped_layout(cx: &mut TestAppContext) {
+    let (first, workspace, _, _) = fixture(cx);
+    choose_layout(first, "swapped", cx);
+    cx.update(|cx| assert_eq!(selected_layout(&workspace, cx), "swapped"));
+    cx.update_window(first, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx)
     })
     .unwrap();
+    cx.run_until_parked();
+    let second = other_window(cx, first);
+    let second_workspace = cx
+        .update_window(second, |_, window, cx| window_workspace(window, cx))
+        .unwrap();
+    cx.update(|cx| assert_eq!(selected_layout(&second_workspace, cx), "swapped"));
+    choose_layout(second, "default", cx);
+    cx.update(|cx| assert_eq!(selected_layout(&workspace, cx), "default"));
     cx.update_window(first, |_, window, cx| {
         window.dispatch_action(Box::new(nocterm_workspace::CloseWindow), cx)
     })
@@ -310,25 +350,17 @@ fn new_windows_and_surviving_windows_share_the_bootstrapped_layout(cx: &mut Test
             "the closed window releases its shell and subscriptions"
         )
     });
+    choose_layout(second, "swapped", cx);
     cx.update_window(second, |_, window, cx| {
-        let workspace = window_workspace(window, cx);
-        workspace.update(cx, |workspace, cx| workspace.swap_sides(cx));
-        assert!(workspace.read(cx).sides_swapped(cx));
-        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx);
+        window.dispatch_action(Box::new(nocterm_workspace::NewWindow), cx)
     })
     .unwrap();
     cx.run_until_parked();
-    let third = cx.update(|cx| {
-        *cx.windows()
-            .iter()
-            .find(|window| **window != second)
-            .unwrap()
-    });
-    cx.update_window(third, |_, window, cx| {
-        let workspace = window_workspace(window, cx);
-        assert!(workspace.read(cx).sides_swapped(cx));
-    })
-    .unwrap();
+    let third = other_window(cx, second);
+    let third_workspace = cx
+        .update_window(third, |_, window, cx| window_workspace(window, cx))
+        .unwrap();
+    cx.update(|cx| assert_eq!(selected_layout(&third_workspace, cx), "swapped"));
 }
 
 #[gpui_kit::test]

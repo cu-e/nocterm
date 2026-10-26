@@ -7,17 +7,19 @@ use std::{
 };
 use syn::{Attribute, Item, Meta, Token, UseTree, punctuated::Punctuated};
 
-pub(super) struct Module {
-    pub(super) name: String,
-    pub(super) package: String,
-    pub(super) layer: String,
-    pub(super) file: PathBuf,
-    pub(super) items: Vec<Item>,
-    pub(super) imports: BTreeMap<String, Vec<String>>,
-    pub(super) io_crates: BTreeMap<String, String>,
+pub(crate) struct Module {
+    pub(crate) name: String,
+    pub(crate) package: String,
+    pub(crate) layer: String,
+    pub(crate) file: PathBuf,
+    pub(crate) items: Vec<Item>,
+    pub(crate) imports: BTreeMap<String, Vec<String>>,
+    pub(crate) io_crates: BTreeMap<String, String>,
+    /// Inner attributes of the file (`#![no_std]`); empty for inline modules.
+    pub(crate) inner_attributes: Vec<Attribute>,
 }
 
-pub(super) fn load(root: &Path) -> anyhow::Result<Vec<Module>> {
+pub(crate) fn load(root: &Path) -> anyhow::Result<Vec<Module>> {
     let metadata = crate::metadata(root)?;
     let mut modules = Vec::new();
     for package in metadata.packages {
@@ -101,6 +103,7 @@ impl Loader<'_> {
             super::bindings::check(&parsed.items)?;
             self.items(
                 parsed.items,
+                parsed.attrs,
                 file,
                 directory,
                 file.parent().context("source directory")?,
@@ -113,6 +116,7 @@ impl Loader<'_> {
     fn items(
         &mut self,
         items: Vec<Item>,
+        inner_attributes: Vec<Attribute>,
         file: &Path,
         directory: &Path,
         attribute_directory: &Path,
@@ -135,6 +139,7 @@ impl Loader<'_> {
                 let inline_directory = directory.join(module.ident.to_string());
                 self.items(
                     items.clone(),
+                    Vec::new(),
                     file,
                     &inline_directory,
                     &inline_directory,
@@ -158,6 +163,7 @@ impl Loader<'_> {
             items,
             imports,
             io_crates: self.io_crates.clone(),
+            inner_attributes,
         });
         Ok(())
     }
@@ -190,7 +196,7 @@ fn module_path(
     }
 }
 
-pub(super) fn attributes(item: &Item) -> &[Attribute] {
+pub(crate) fn attributes(item: &Item) -> &[Attribute] {
     match item {
         Item::Const(i) => &i.attrs,
         Item::Enum(i) => &i.attrs,
@@ -245,7 +251,7 @@ fn requires_test(meta: &Meta) -> bool {
     }
 }
 
-pub(super) fn imports(items: &[Item]) -> BTreeMap<String, Vec<String>> {
+pub(crate) fn imports(items: &[Item]) -> BTreeMap<String, Vec<String>> {
     let mut names = BTreeMap::new();
     for item in items {
         if test_only(attributes(item)) {
@@ -270,7 +276,7 @@ pub(super) fn imports(items: &[Item]) -> BTreeMap<String, Vec<String>> {
     names
 }
 
-pub(super) fn flatten(
+pub(crate) fn flatten(
     tree: &UseTree,
     prefix: &[String],
     names: &mut BTreeMap<String, Vec<String>>,
