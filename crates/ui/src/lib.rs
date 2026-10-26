@@ -53,7 +53,7 @@ pub use contribution::{contribution_icon, width_range, zone_anchor};
 pub use design::{ActiveDesign, Design};
 pub use drag_preview::{DragPreview, DragSource};
 pub use embedded_pages::{EmbeddedPageSpec, EmbeddedPages, SectionedPage};
-pub use icons::{Assets, IconName, agent_icon};
+pub use icons::{APP_MARK, Assets, IconName, agent_icon};
 pub use layout::{LayoutHandle, LayoutMemory};
 pub use nocterm_store::StoreError as SettingsError;
 pub use plugin_source::{PluginSetHandle, PluginSource, StaticPluginSource};

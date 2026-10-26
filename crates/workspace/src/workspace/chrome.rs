@@ -18,7 +18,7 @@ use gpui_kit::{
     },
     div,
     prelude::*,
-    px,
+    px, svg,
 };
 use nocterm_plugin_model::{PanelChrome, Side, WidthClass};
 use nocterm_ui::IconName;
@@ -293,6 +293,16 @@ impl Chrome {
                     .min_w_0()
                     .gap_1()
                     .pr_2()
+                    .child(
+                        svg()
+                            .path(nocterm_ui::APP_MARK)
+                            .id("workspace-app-mark")
+                            .test_support()
+                            .flex_none()
+                            .w(px(18.))
+                            .h(px(9.))
+                            .text_color(cx.theme().foreground),
+                    )
                     .when_some(self.menu_bar().as_ref(), |bar, menu| {
                         bar.child(
                             div()

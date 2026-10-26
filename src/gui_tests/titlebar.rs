@@ -115,6 +115,23 @@ fn titlebar_about_and_new_window_use_application_actions(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+fn titlebar_opens_with_the_app_mark_before_its_menus(cx: &mut TestAppContext) {
+    let (handle, _, _, _) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let mark = window.find("workspace-app-mark").bounds();
+        let first_menu = window
+            .within("app-menu-bar")
+            .within(0usize)
+            .find("menu")
+            .bounds();
+        assert!(mark.size.width > gpui_kit::px(0.));
+        assert!(mark.right() <= first_menu.left());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn titlebar_commands_follow_bottom_screen_focus_while_find_remains_open(cx: &mut TestAppContext) {
     let (handle, workspace, central, transport) = fixture_with_theme_option(cx, false, None, true);

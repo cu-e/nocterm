@@ -254,7 +254,9 @@ impl DesignTokens {
     /// on top, key by key.
     pub fn with_overrides(overrides: &str) -> Result<Self, TokenError> {
         let mut source: toml::Table = toml::from_str(BUILTIN).map_err(Box::new)?;
-        let overrides: toml::Table = toml::from_str(overrides).map_err(Box::new)?;
+        let mut overrides: toml::Table = toml::from_str(overrides).map_err(Box::new)?;
+        flatten_ui(&mut source);
+        flatten_ui(&mut overrides);
         merge(&mut source, overrides);
 
         let tokens: Self = source.try_into().map_err(Box::new)?;
@@ -416,6 +418,36 @@ fn within(token: &'static str, value: f32, min: f32, max: f32) -> Result<(), Tok
     Ok(())
 }
 
+/// Spells every interface colour name of both palettes flat (`"primary.background"`),
+/// so that a nested override replaces a quoted built-in colour and the other way round.
+fn flatten_ui(tokens: &mut toml::Table) {
+    fn flatten(prefix: &str, table: toml::Table, flat: &mut toml::Table) {
+        for (name, value) in table {
+            let path = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}.{name}")
+            };
+            match value {
+                toml::Value::Table(group) => flatten(&path, group, flat),
+                value => {
+                    flat.insert(path, value);
+                }
+            }
+        }
+    }
+    for appearance in ["light", "dark"] {
+        let Some(toml::Value::Table(palette)) = tokens.get_mut(appearance) else {
+            continue;
+        };
+        if let Some(toml::Value::Table(ui)) = palette.get_mut("ui") {
+            let mut flat = toml::Table::new();
+            flatten("", std::mem::take(ui), &mut flat);
+            *ui = flat;
+        }
+    }
+}
+
 /// Layers `overlay` over `base`: tables merge key by key, anything else replaces.
 fn merge(base: &mut toml::Table, overlay: toml::Table) {
     for (key, value) in overlay {
@@ -441,7 +473,20 @@ mod tests {
         let tokens = DesignTokens::builtin();
 
         assert_eq!(tokens.name, "Nocterm Default");
-        assert!(tokens.light.ui.is_empty());
+        // The built-in palettes are Noct Day and Noct Night.
+        let background = |ui: &UiColors| {
+            ui.iter()
+                .find(|(name, _)| *name == "background")
+                .map(|(_, color)| color)
+        };
+        assert_eq!(
+            background(&tokens.light.ui),
+            Some(Color::rgb(0xf3, 0xf1, 0xec))
+        );
+        assert_eq!(
+            background(&tokens.dark.ui),
+            Some(Color::rgb(0x1f, 0x1f, 0x21))
+        );
         assert_eq!(tokens.typography.ui_font, None);
     }
 
@@ -494,17 +539,24 @@ mod tests {
         )
         .unwrap();
 
-        let names: Vec<&str> = tokens.dark.ui.iter().map(|(name, _)| name).collect();
+        let color = |name: &str| {
+            tokens
+                .dark
+                .ui
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, color)| color)
+        };
+        assert_eq!(color("background"), Some(Color::rgb(0x10, 0x10, 0x10)));
         assert_eq!(
-            names,
-            [
-                "background",
-                "link.hover",
-                "primary.background",
-                "tab.active.background",
-                "tab.active.foreground"
-            ]
+            color("primary.background"),
+            Some(Color::rgb(0x33, 0x66, 0xff))
         );
+        assert_eq!(
+            color("tab.active.foreground"),
+            Some(Color::rgb(0xff, 0xff, 0xff))
+        );
+        assert_eq!(color("link.hover"), Some(Color::rgb(0x99, 0xaa, 0xff)));
     }
 
     #[test]
