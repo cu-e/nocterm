@@ -11,16 +11,28 @@ use nocterm_ui::IconName;
 use super::{Arrangement, Column};
 use crate::workspace::panel_groups::GroupKey;
 use crate::workspace::tests::test_plugin::{fixture_with_test_plugin, register_built};
-use nocterm_plugin_model::Side;
+use nocterm_plugin_model::{Side, WidthClass};
 
 fn side_panel(element_id: &'static str, title: &'static str, icon: IconName) -> TestPanelBuilder {
     TestPanel::builder(element_id).title(title).icon(icon)
 }
 
+fn class_of(group: GroupKey) -> WidthClass {
+    if group == GroupKey::NAVIGATION {
+        WidthClass::Navigation
+    } else {
+        WidthClass::Assistant
+    }
+}
+
+fn shown_on(group: GroupKey, side: Side) -> (GroupKey, Side, WidthClass) {
+    (group, side, class_of(group))
+}
+
 fn group_column(group: GroupKey, side: Side) -> Column {
     Column::Group {
         group,
-        class: group.width_class(),
+        class: class_of(group),
         side,
     }
 }
@@ -30,13 +42,13 @@ fn hidden_columns_leave_the_group_and_swapping_mirrors_it() {
     let arrangement = |navigation: bool, assistant: bool, swapped: bool| {
         let side = |side: Side| side.swapped_if(swapped);
         let shown = [
-            navigation.then_some((GroupKey::Navigation, side(Side::Left))),
-            assistant.then_some((GroupKey::Assistant, side(Side::Right))),
+            navigation.then_some(shown_on(GroupKey::NAVIGATION, side(Side::Left))),
+            assistant.then_some(shown_on(GroupKey::ASSISTANT, side(Side::Right))),
         ];
         Arrangement::new(shown.into_iter().flatten(), None)
     };
-    let navigation = |side| group_column(GroupKey::Navigation, side);
-    let assistant = |side| group_column(GroupKey::Assistant, side);
+    let navigation = |side| group_column(GroupKey::NAVIGATION, side);
+    let assistant = |side| group_column(GroupKey::ASSISTANT, side);
     assert_eq!(
         arrangement(true, false, false).columns(),
         [navigation(Side::Left), Column::Content]
@@ -52,11 +64,11 @@ fn hidden_columns_leave_the_group_and_swapping_mirrors_it() {
     for swapped in [false, true] {
         let side = |side: Side| side.swapped_if(swapped);
         let shown = |navigation: bool| {
-            let navigation = navigation.then_some((GroupKey::Navigation, side(Side::Left)));
-            let assistant = Some((GroupKey::Assistant, side(Side::Right)));
+            let navigation = navigation.then_some(shown_on(GroupKey::NAVIGATION, side(Side::Left)));
+            let assistant = Some(shown_on(GroupKey::ASSISTANT, side(Side::Right)));
             Arrangement::new(
                 navigation.into_iter().chain(assistant),
-                Some(GroupKey::Assistant),
+                Some(GroupKey::ASSISTANT),
             )
         };
         let expected = if swapped {
@@ -70,28 +82,28 @@ fn hidden_columns_leave_the_group_and_swapping_mirrors_it() {
 }
 
 #[test]
-fn groups_on_one_side_run_from_the_window_edge_inward() {
+fn groups_on_one_side_keep_the_order_of_the_bar() {
     let shown = [
-        (GroupKey::Navigation, Side::Right),
-        (GroupKey::Assistant, Side::Right),
+        shown_on(GroupKey::NAVIGATION, Side::Right),
+        shown_on(GroupKey::ASSISTANT, Side::Right),
     ];
     assert_eq!(
         Arrangement::new(shown, None).columns(),
         [
             Column::Content,
-            group_column(GroupKey::Assistant, Side::Right),
-            group_column(GroupKey::Navigation, Side::Right),
+            group_column(GroupKey::NAVIGATION, Side::Right),
+            group_column(GroupKey::ASSISTANT, Side::Right),
         ]
     );
     let shown = [
-        (GroupKey::Navigation, Side::Left),
-        (GroupKey::Assistant, Side::Left),
+        shown_on(GroupKey::NAVIGATION, Side::Left),
+        shown_on(GroupKey::ASSISTANT, Side::Left),
     ];
     assert_eq!(
         Arrangement::new(shown, None).columns(),
         [
-            group_column(GroupKey::Navigation, Side::Left),
-            group_column(GroupKey::Assistant, Side::Left),
+            group_column(GroupKey::NAVIGATION, Side::Left),
+            group_column(GroupKey::ASSISTANT, Side::Left),
             Column::Content,
         ]
     );
@@ -413,10 +425,10 @@ fn expanded_resize_receipts_cannot_overwrite_remembered_docked_widths(cx: &mut T
             let side = |side: Side| side.swapped_if(swapped);
             let expanded = Arrangement::new(
                 [
-                    (GroupKey::Navigation, side(Side::Left)),
-                    (GroupKey::Assistant, side(Side::Right)),
+                    shown_on(GroupKey::NAVIGATION, side(Side::Left)),
+                    shown_on(GroupKey::ASSISTANT, side(Side::Right)),
                 ],
-                Some(GroupKey::Assistant),
+                Some(GroupKey::ASSISTANT),
             );
             body.resized(&expanded, vec![px(350.), px(1050.)], cx);
         }
@@ -435,8 +447,8 @@ fn a_docked_receipt_arriving_after_the_side_panel_expanded_is_dropped(cx: &mut T
         layout.set("workspace.right_panel", px(420.), cx).unwrap();
         let docked = Arrangement::new(
             [
-                (GroupKey::Navigation, Side::Left),
-                (GroupKey::Assistant, Side::Right),
+                shown_on(GroupKey::NAVIGATION, Side::Left),
+                shown_on(GroupKey::ASSISTANT, Side::Right),
             ],
             None,
         );

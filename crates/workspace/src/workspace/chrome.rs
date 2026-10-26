@@ -196,7 +196,7 @@ impl Chrome {
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let widths = body_state.widths(window, cx);
-        let arrangement = body_state.arrangement(regions.groups, regions.shell);
+        let arrangement = body_state.arrangement(regions.groups);
         let state = body_state.state(&arrangement, cx);
         let mut body = h_resizable("workspace-body").with_state(&state);
         for column in arrangement.columns() {
@@ -230,24 +230,26 @@ impl Chrome {
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
         let panel = groups.selected(group);
+        let column = ElementId::from("panel-group-column");
+        let column: ElementId = (column, groups.id(group).to_string()).into();
         match panel.map_or(PanelChrome::Titled, HostedPanel::chrome) {
             PanelChrome::Titled => tile(
                 cards,
-                self.render_titled_group(group, panel, side == Side::Right, cx),
+                self.render_titled_group(column, panel, side == Side::Right, cx),
             ),
-            PanelChrome::OwnHeader => tile(cards, self.render_own_header_group(group, panel, cx)),
+            PanelChrome::OwnHeader => tile(cards, self.render_own_header_group(column, panel, cx)),
         }
     }
 
     /// A column whose panel draws its own header.
     fn render_own_header_group(
         &self,
-        group: GroupKey,
+        column: ElementId,
         panel: Option<&HostedPanel>,
         cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         Workspace::forward_commands(div(), cx)
-            .id((ElementId::from("panel-group-column"), group.id()))
+            .id(column)
             .test_support()
             .size_full()
             .min_w_0()
@@ -336,7 +338,7 @@ impl Chrome {
     /// A column under the workspace's own upper-case title.
     fn render_titled_group(
         &self,
-        group: GroupKey,
+        column: ElementId,
         panel: Option<&HostedPanel>,
         on_right: bool,
         cx: &mut Context<Workspace>,
@@ -346,7 +348,7 @@ impl Chrome {
         let floating = FloatingCards::get(cx).is_some();
 
         sidebar
-            .id((ElementId::from("panel-group-column"), group.id()))
+            .id(column)
             .test_support()
             .size_full()
             .text_color(theme.sidebar_foreground)

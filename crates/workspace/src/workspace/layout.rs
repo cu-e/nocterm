@@ -18,7 +18,6 @@ use nocterm_ui::{LayoutHandle, width_range};
 use super::{
     Workspace,
     panel_groups::{GroupKey, PanelGroups},
-    shell_layout::ShellLayout,
 };
 
 const SIDEBAR: &str = "workspace.sidebar";
@@ -45,25 +44,20 @@ pub(super) struct Arrangement {
 }
 
 impl Arrangement {
-    /// `shown` lists the shown groups in bar order with their sides. Within a side the bar
-    /// runs from the window edge inward, so the right side is laid out in reverse.
+    /// `shown` lists the shown groups in bar order with their sides and classes of width.
+    /// Each side keeps the bar's order from left to right, so the columns mirror the bar.
     pub(super) fn new(
-        shown: impl IntoIterator<Item = (GroupKey, Side)>,
+        shown: impl IntoIterator<Item = (GroupKey, Side, WidthClass)>,
         expanded: Option<GroupKey>,
     ) -> Self {
         let (mut left, mut right) = (Vec::new(), Vec::new());
-        for (group, side) in shown {
-            let column = Column::Group {
-                group,
-                class: group.width_class(),
-                side,
-            };
+        for (group, side, class) in shown {
+            let column = Column::Group { group, class, side };
             match side {
                 Side::Left => left.push(column),
                 Side::Right => right.push(column),
             }
         }
-        right.reverse();
         let content = expanded.is_none().then_some(Column::Content);
         Self {
             columns: left.into_iter().chain(content).chain(right).collect(),
@@ -91,8 +85,8 @@ pub(super) struct Body {
 
 impl Body {
     /// The columns of the groups that are shown now, on the sides the arrangement gives them.
-    pub(super) fn arrangement(&self, groups: &PanelGroups, shell: &ShellLayout) -> Arrangement {
-        Arrangement::new(shell.columns(groups.shown()), groups.expanded())
+    pub(super) fn arrangement(&self, groups: &PanelGroups) -> Arrangement {
+        Arrangement::new(groups.columns(), groups.expanded())
     }
 
     pub(super) fn new(layout: LayoutHandle) -> Self {

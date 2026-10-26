@@ -192,12 +192,12 @@ impl Workspace {
         }
     }
     pub fn activate_panel(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(transition) = self.panels.activate(GroupKey::Navigation, ix, cx) {
+        if let Some(transition) = self.panels.activate(GroupKey::NAVIGATION, ix, cx) {
             self.apply_panel_transition(transition, window, cx);
         }
     }
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(transition) = self.panels.toggle(GroupKey::Navigation, window, cx) {
+        if let Some(transition) = self.panels.toggle(GroupKey::NAVIGATION, window, cx) {
             self.apply_panel_transition(transition, window, cx);
         }
     }
@@ -343,7 +343,7 @@ impl Workspace {
         if self.panels.is_expanded(group) || !self.panels.is_shown(group) {
             return;
         }
-        let arrangement = self.body.arrangement(&self.panels, &self.shell);
+        let arrangement = self.body.arrangement(&self.panels);
         self.body
             .widen_group(&arrangement, group, delta, window, cx);
         cx.notify();

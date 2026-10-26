@@ -1,7 +1,7 @@
 //! One group of panels that exclude each other: which member is selected, whether the group
 //! is shown and whether it fills the body.
 
-use super::{GroupKey, PanelKey};
+use super::{GroupKey, PanelKey, key::GroupPlace};
 
 /// The state of one group. It knows nothing about the panels themselves; the owner checks
 /// availability and expandability before it asks for a transition.
@@ -9,6 +9,7 @@ use super::{GroupKey, PanelKey};
 /// Invariants: `expanded` implies `shown` and a selected member; `selected` is a member.
 pub(super) struct PanelGroup {
     key: GroupKey,
+    place: GroupPlace,
     members: Vec<PanelKey>,
     shown: bool,
     selected: Option<PanelKey>,
@@ -17,17 +18,24 @@ pub(super) struct PanelGroup {
 
 impl PanelGroup {
     /// A primary group starts shown, even while it has no member.
-    pub(super) fn new(key: GroupKey) -> Self {
+    pub(super) fn new(key: GroupKey, place: GroupPlace) -> Self {
         Self {
             key,
+            shown: place.primary(),
+            place,
             members: Vec::new(),
-            shown: key.primary(),
             selected: None,
             expanded: false,
         }
     }
     pub(super) fn key(&self) -> GroupKey {
         self.key
+    }
+    pub(super) fn place(&self) -> &GroupPlace {
+        &self.place
+    }
+    pub(super) fn set_place(&mut self, place: GroupPlace) {
+        self.place = place;
     }
     pub(super) fn members(&self) -> &[PanelKey] {
         &self.members
@@ -54,7 +62,7 @@ impl PanelGroup {
         }
         self.selected = self.members.first().copied();
         self.expanded = false;
-        if self.selected.is_none() && !self.key.primary() {
+        if self.selected.is_none() && !self.place.primary() {
             self.shown = false;
         }
     }

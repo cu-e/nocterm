@@ -322,8 +322,7 @@ impl Workspace {
     }
     /// Tells the expandable panels which side of the content their groups are on.
     pub(super) fn sync_panel_sides(&self, cx: &mut Context<Self>) {
-        self.panels
-            .set_docked_left(|group| self.shell.side(group), cx);
+        self.panels.set_docked_left(cx);
     }
     pub fn set_menu_builder(
         &mut self,

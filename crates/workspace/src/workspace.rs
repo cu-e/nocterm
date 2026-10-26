@@ -365,7 +365,7 @@ impl Workspace {
     }
 
     fn on_next_panel(&mut self, _: &NextPanel, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(next) = self.panels.next(GroupKey::Navigation) {
+        if let Some(next) = self.panels.next(GroupKey::NAVIGATION) {
             self.activate_panel(next, window, cx);
         }
     }

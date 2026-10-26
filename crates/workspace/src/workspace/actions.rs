@@ -1,5 +1,5 @@
 //! Typed action registrations and native command categories for the window shell.
-use super::{TabCloseScope, Workspace, layout_switch, panel_groups::GroupKey};
+use super::{TabCloseScope, Workspace, layout_switch};
 use crate::KEY_CONTEXT;
 use gpui_kit::{
     Action, Context, Div, FocusHandle, Window,
@@ -85,14 +85,15 @@ impl ActionRegistry {
             )
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanel, window, cx| {
-                    if let Some(transition) = this.panels.toggle(GroupKey::Assistant, window, cx) {
+                    let assistant = this.panels.assistant();
+                    if let Some(transition) = this.panels.toggle(assistant, window, cx) {
                         this.apply_panel_transition(transition, window, cx);
                     }
                 }),
             )
             .on_action(
                 cx.listener(|this, _: &crate::ToggleRightPanelMaximized, _, cx| {
-                    this.toggle_group_expanded(GroupKey::Assistant, cx)
+                    this.toggle_group_expanded(this.panels.assistant(), cx)
                 }),
             )
     }

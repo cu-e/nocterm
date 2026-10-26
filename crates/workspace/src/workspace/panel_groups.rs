@@ -1,75 +1,31 @@
 //! The window's side panels, held as groups of panels that exclude each other.
 //!
 //! Every placed panel belongs to exactly one group; opening a member closes its sibling in
-//! the group, and groups are independent of each other. Today's two groups are the
-//! navigation sidebar (several panels, one shown at a time) and the assistant (one
-//! expandable side panel). [`PanelGroups`] owns their state and every transition between
-//! states, and returns a [`PanelTransition`] for the workspace to apply to focus and events.
+//! the group, and groups are independent of each other. The catalog declares the navigation
+//! sidebar (several panels, one shown at a time) and the assistant (one expandable side
+//! panel); the layout adds the groups the user made and a group of one for each panel it
+//! places on its own, so such a panel opens beside the others. [`PanelGroups`] owns their
+//! state and every transition between states, and returns a [`PanelTransition`] for the
+//! workspace to apply to focus and events.
 
 use std::collections::HashMap;
 
 use gpui_kit::{App, EntityId, Window};
-use nocterm_plugin_model::{ContributionId, GroupSpec, Side, WidthClass};
+use nocterm_plugin_model::{ContributionId, GroupId, Side, WidthClass};
 use nocterm_window_layout::ResolvedLayout;
 
 use crate::plugin::GROUPS;
 
 mod group;
 mod hosted;
+mod key;
 mod transition;
 
 use group::PanelGroup;
 pub(super) use hosted::{ExpandableHandle, HostedPanel, Presentation};
+pub(super) use key::GroupKey;
+use key::GroupPlace;
 pub(super) use transition::{PanelFocus, PanelTransition};
-
-/// The groups of today's shell. Declaration order is the order of `PanelGroups::groups`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum GroupKey {
-    /// The sidebar: the primary group, shown even while it has no panel.
-    Navigation,
-    /// The independent side panel, hidden until its panel is available and opened.
-    Assistant,
-}
-
-impl GroupKey {
-    const ALL: [Self; 2] = [Self::Navigation, Self::Assistant];
-
-    fn index(self) -> usize {
-        match self {
-            Self::Navigation => 0,
-            Self::Assistant => 1,
-        }
-    }
-    /// The shell's declaration of the group; `GROUPS` lists the groups in `ALL` order.
-    fn spec(self) -> &'static GroupSpec {
-        &GROUPS[self.index()]
-    }
-    /// Stable name used for the group's column.
-    pub(super) fn id(self) -> &'static str {
-        self.spec().id.as_str()
-    }
-    /// The group the shell declares under this id.
-    pub(super) fn named(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|key| key.id() == id)
-    }
-    /// The side of the content the group opens on when no layout places it.
-    pub(super) fn side(self) -> Side {
-        match self {
-            Self::Navigation => Side::Left,
-            Self::Assistant => Side::Right,
-        }
-    }
-    pub(super) fn width_class(self) -> WidthClass {
-        match self {
-            Self::Navigation => WidthClass::Navigation,
-            Self::Assistant => WidthClass::Assistant,
-        }
-    }
-    /// The primary group is visible from the start and never needs a member to be shown.
-    pub(super) fn primary(self) -> bool {
-        self.spec().primary
-    }
-}
 
 /// A permanent index into the panel slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,13 +63,17 @@ pub(super) struct PanelGroups {
 impl PanelGroups {
     pub(super) fn new() -> Self {
         Self {
-            groups: GroupKey::ALL.into_iter().map(PanelGroup::new).collect(),
+            groups: GROUPS
+                .iter()
+                .enumerate()
+                .map(|(ix, spec)| PanelGroup::new(GroupKey::at(ix), GroupPlace::of_catalog(spec)))
+                .collect(),
             slots: Vec::new(),
             ids: HashMap::new(),
         }
     }
 
-    // `groups` holds one entry per `GroupKey`, in declaration order, from `new`.
+    // A key indexes `groups`, which never shrinks: `new` and `adopt` make every key.
     fn group(&self, key: GroupKey) -> &PanelGroup {
         &self.groups[key.index()]
     }
@@ -155,25 +115,66 @@ impl PanelGroups {
     /// leaves out that its hints host there, in registration order. A group keeps its selected
     /// member while the layout still holds it, and otherwise selects its first.
     pub(super) fn adopt(&mut self, layout: &ResolvedLayout) {
+        self.place_groups(layout);
         for (id, key) in &self.ids {
-            let home = layout
-                .host_of(id)
-                .and_then(|group| GroupKey::named(group.as_str()));
+            let home = layout.host_of(id).and_then(|group| self.named(group));
             if let Some(slot) = self.slots.get_mut(key.index()) {
                 slot.home = home;
                 slot.placed = layout.group_of(id).is_some();
             }
         }
-        for key in GroupKey::ALL {
+        for key in self.keys() {
             let members = self.members_in_layout_order(key, layout);
             self.group_mut(key).arrange(members);
         }
     }
 
+    /// Takes where each group goes from the layout, making a group for each id it has not seen.
+    /// A catalog group the bar leaves out returns to its own side.
+    fn place_groups(&mut self, layout: &ResolvedLayout) {
+        let mut placed = vec![false; self.groups.len()];
+        for (order, resolved) in layout.groups().enumerate() {
+            let place = GroupPlace::placed(resolved, order);
+            let key = match self.named(resolved.id()) {
+                Some(key) => {
+                    self.group_mut(key).set_place(place);
+                    key
+                }
+                None => {
+                    let key = GroupKey::at(self.groups.len());
+                    self.groups.push(PanelGroup::new(key, place));
+                    placed.push(false);
+                    key
+                }
+            };
+            placed[key.index()] = true;
+        }
+        for (group, placed) in self.groups.iter_mut().zip(placed) {
+            if placed {
+                continue;
+            }
+            let place = GROUPS
+                .get(group.key().index())
+                .map_or_else(|| group.place().unplaced(), GroupPlace::of_catalog);
+            group.set_place(place);
+        }
+    }
+
+    fn keys(&self) -> impl Iterator<Item = GroupKey> + use<> {
+        (0..self.groups.len()).map(GroupKey::at)
+    }
+    /// The group with this id.
+    fn named(&self, id: &GroupId) -> Option<GroupKey> {
+        self.groups
+            .iter()
+            .find(|group| group.place().id() == id)
+            .map(PanelGroup::key)
+    }
+
     fn members_in_layout_order(&self, key: GroupKey, layout: &ResolvedLayout) -> Vec<PanelKey> {
         let placed = layout
             .groups()
-            .filter(|group| group.id().as_str() == key.id())
+            .filter(|group| group.id() == self.group(key).place().id())
             .flat_map(|group| group.panels())
             .filter_map(|id| self.ids.get(id).copied());
         let mut left_out: Vec<PanelKey> = self
@@ -278,12 +279,40 @@ impl PanelGroups {
     pub(super) fn is_expanded(&self, key: GroupKey) -> bool {
         self.group(key).is_expanded()
     }
-    /// The shown groups in bar order.
-    pub(super) fn shown(&self) -> impl Iterator<Item = GroupKey> + '_ {
+    /// The group's id, which also names its column.
+    pub(super) fn id(&self, key: GroupKey) -> &GroupId {
+        self.group(key).place().id()
+    }
+    /// Whether the group is the sidebar: visible from the start and never in need of a member
+    /// to be shown.
+    pub(super) fn is_primary(&self, key: GroupKey) -> bool {
+        self.group(key).place().primary()
+    }
+    /// The columns of the shown groups that have a member, in bar order, with their sides and
+    /// classes of width. Groups the bar does not place come last.
+    pub(super) fn columns(&self) -> Vec<(GroupKey, Side, WidthClass)> {
+        let mut shown: Vec<&PanelGroup> = self
+            .groups
+            .iter()
+            .filter(|group| group.is_shown() && !group.members().is_empty())
+            .collect();
+        shown.sort_by_key(|group| group.place().order().unwrap_or(usize::MAX));
+        shown
+            .into_iter()
+            .map(|group| (group.key(), group.place().side(), group.place().width()))
+            .collect()
+    }
+    /// The group `ToggleRightPanel` acts on: the assistant while it has a member, else the
+    /// first group of the assistant's width that has one, as when the user took the
+    /// assistant's panel out of its group.
+    pub(super) fn assistant(&self) -> GroupKey {
+        let holds_assistant = |group: &&PanelGroup| {
+            !group.members().is_empty() && group.place().width() == WidthClass::Assistant
+        };
         self.groups
             .iter()
-            .filter(|group| group.is_shown())
-            .map(PanelGroup::key)
+            .find(holds_assistant)
+            .map_or(GroupKey::ASSISTANT, PanelGroup::key)
     }
     /// The group that fills the body, if any.
     pub(super) fn expanded(&self) -> Option<GroupKey> {
@@ -344,7 +373,7 @@ impl PanelGroups {
         window: &Window,
         cx: &mut App,
     ) -> Option<PanelTransition> {
-        if key.primary() {
+        if self.is_primary(key) {
             let held_focus = self.holds_focus(key, window, cx);
             let shown = self.group_mut(key).toggle();
             let focus = if shown || !held_focus {
@@ -442,9 +471,9 @@ impl PanelGroups {
     }
 
     /// Tells every expandable panel which side of the content its group is on.
-    pub(super) fn set_docked_left(&self, side_of: impl Fn(GroupKey) -> Side, cx: &mut App) {
+    pub(super) fn set_docked_left(&self, cx: &mut App) {
         for group in &self.groups {
-            let left = side_of(group.key()) == Side::Left;
+            let left = group.place().side() == Side::Left;
             for member in group.members() {
                 if let Some(panel) = self.slot(Some(*member)).and_then(|s| s.panel.as_ref()) {
                     panel.set_docked_left(left, cx);
@@ -532,7 +561,7 @@ impl PanelGroups {
         cx: &mut App,
     ) -> Vec<PanelTransition> {
         let mut transitions = Vec::new();
-        for key in GroupKey::ALL {
+        for key in self.keys() {
             let wanted = open
                 .iter()
                 .filter_map(|id| self.offered(id).map(|(group, ix, _)| (group, ix)))

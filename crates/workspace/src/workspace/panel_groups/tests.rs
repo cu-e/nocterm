@@ -71,19 +71,16 @@ fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mu
 }
 
 #[test]
-fn the_shells_group_declarations_name_the_group_keys_in_order() {
-    use super::GroupKey;
-    let declared: Vec<_> = crate::plugin::GROUPS
-        .iter()
-        .map(|spec| spec.id.as_str())
-        .collect();
-    let keys: Vec<_> = GroupKey::ALL.iter().map(|key| key.id()).collect();
-    assert_eq!(declared, keys);
+fn the_shells_group_declarations_come_first_and_only_the_sidebar_is_primary() {
+    use super::{GroupKey, PanelGroups};
+    let groups = PanelGroups::new();
+    let declared: Vec<_> = crate::plugin::GROUPS.iter().map(|spec| &spec.id).collect();
     assert_eq!(
-        GroupKey::ALL.map(GroupKey::primary),
-        [true, false],
-        "only the sidebar is primary"
+        declared,
+        [GroupKey::NAVIGATION, GroupKey::ASSISTANT].map(|key| groups.id(key))
     );
+    assert!(groups.is_primary(GroupKey::NAVIGATION));
+    assert!(!groups.is_primary(GroupKey::ASSISTANT));
 }
 
 /// Transitions of the owner itself, driven the way the workspace drives them.
@@ -99,7 +96,7 @@ mod owner {
     };
     use nocterm_plugin_model::{ContributionId, GroupId, Side, SystemContribution};
     use nocterm_window_layout::{
-        Bar, BarItem, BuiltIn, GroupEntry, LayoutPreset, ResolvedLayout, resolve,
+        Bar, BarItem, BuiltIn, GroupEntry, LayoutPreset, ResolvedLayout, resolve, solo_group_id,
     };
 
     /// The default arrangement of the test catalog: `PANEL_A`, `PANEL_B` and `CORE_PANEL` in the
@@ -180,12 +177,12 @@ mod owner {
             let (mut groups, [_, second, _]) = shell(window, cx);
             assert!(groups.panel_is_open(&id(PANEL_A)));
             assert!(!groups.panel_is_open(&id(PANEL_B)));
-            let transition = groups.activate(GroupKey::Navigation, 1, cx).unwrap();
+            let transition = groups.activate(GroupKey::NAVIGATION, 1, cx).unwrap();
             assert_eq!(transition.visibility_changed(), None);
             assert_eq!(focused_panel(transition), second.focus_handle(cx));
             assert!(!groups.panel_is_open(&id(PANEL_A)));
             assert!(groups.panel_is_open(&id(PANEL_B)));
-            assert!(groups.activate(GroupKey::Navigation, 2, cx).is_none());
+            assert!(groups.activate(GroupKey::NAVIGATION, 2, cx).is_none());
         });
     }
 
@@ -193,19 +190,19 @@ mod owner {
     fn an_empty_sidebar_is_shown_and_toggles_without_panels(cx: &mut TestAppContext) {
         with_window(cx, |window, cx| {
             let mut groups = PanelGroups::new();
-            assert!(groups.is_shown(GroupKey::Navigation));
-            assert!(groups.selected(GroupKey::Navigation).is_none());
-            assert_eq!(groups.next(GroupKey::Navigation), None);
-            let hide = groups.toggle(GroupKey::Navigation, window, cx).unwrap();
-            assert_eq!(hide.visibility_changed(), Some(GroupKey::Navigation));
+            assert!(groups.is_shown(GroupKey::NAVIGATION));
+            assert!(groups.selected(GroupKey::NAVIGATION).is_none());
+            assert_eq!(groups.next(GroupKey::NAVIGATION), None);
+            let hide = groups.toggle(GroupKey::NAVIGATION, window, cx).unwrap();
+            assert_eq!(hide.visibility_changed(), Some(GroupKey::NAVIGATION));
             assert_eq!(
                 focus_of(hide),
                 "preserve",
                 "an empty sidebar holds no focus"
             );
-            let show = groups.toggle(GroupKey::Navigation, window, cx).unwrap();
+            let show = groups.toggle(GroupKey::NAVIGATION, window, cx).unwrap();
             assert_eq!(focus_of(show), "preserve");
-            assert!(groups.is_shown(GroupKey::Navigation));
+            assert!(groups.is_shown(GroupKey::NAVIGATION));
         });
     }
 
@@ -213,11 +210,11 @@ mod owner {
     fn next_wraps_while_shown_and_reveals_the_current_panel_while_hidden(cx: &mut TestAppContext) {
         with_window(cx, |window, cx| {
             let (mut groups, _) = shell(window, cx);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(1));
-            groups.activate(GroupKey::Navigation, 1, cx);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(0));
-            groups.toggle(GroupKey::Navigation, window, cx);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(1));
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(1));
+            groups.activate(GroupKey::NAVIGATION, 1, cx);
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(0));
+            groups.toggle(GroupKey::NAVIGATION, window, cx);
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(1));
         });
     }
 
@@ -226,7 +223,7 @@ mod owner {
         with_window(cx, |window, cx| {
             let (mut groups, [_, _, assistant]) = shell(window, cx);
             assert!(!groups.panel_is_available(&assistant_id()));
-            assert!(groups.toggle(GroupKey::Assistant, window, cx).is_none());
+            assert!(groups.toggle(GroupKey::ASSISTANT, window, cx).is_none());
             let offered = groups
                 .set_panel_available(&assistant_id(), true, window, cx)
                 .unwrap();
@@ -237,10 +234,10 @@ mod owner {
                     .is_none(),
                 "offering it again changes nothing"
             );
-            let opened = groups.toggle(GroupKey::Assistant, window, cx).unwrap();
-            assert_eq!(opened.visibility_changed(), Some(GroupKey::Assistant));
+            let opened = groups.toggle(GroupKey::ASSISTANT, window, cx).unwrap();
+            assert_eq!(opened.visibility_changed(), Some(GroupKey::ASSISTANT));
             assert_eq!(focused_panel(opened), assistant.focus_handle(cx));
-            assert!(groups.is_shown(GroupKey::Assistant));
+            assert!(groups.is_shown(GroupKey::ASSISTANT));
         });
     }
 
@@ -249,14 +246,14 @@ mod owner {
         with_window(cx, |window, cx| {
             let (mut groups, _) = shell(window, cx);
             groups.set_panel_available(&assistant_id(), true, window, cx);
-            groups.toggle(GroupKey::Assistant, window, cx);
-            groups.toggle(GroupKey::Navigation, window, cx);
-            assert!(!groups.is_shown(GroupKey::Navigation));
-            assert!(groups.is_shown(GroupKey::Assistant));
-            groups.toggle(GroupKey::Navigation, window, cx);
-            groups.toggle(GroupKey::Assistant, window, cx);
-            assert!(groups.is_shown(GroupKey::Navigation));
-            assert!(!groups.is_shown(GroupKey::Assistant));
+            groups.toggle(GroupKey::ASSISTANT, window, cx);
+            groups.toggle(GroupKey::NAVIGATION, window, cx);
+            assert!(!groups.is_shown(GroupKey::NAVIGATION));
+            assert!(groups.is_shown(GroupKey::ASSISTANT));
+            groups.toggle(GroupKey::NAVIGATION, window, cx);
+            groups.toggle(GroupKey::ASSISTANT, window, cx);
+            assert!(groups.is_shown(GroupKey::NAVIGATION));
+            assert!(!groups.is_shown(GroupKey::ASSISTANT));
         });
     }
 
@@ -266,20 +263,20 @@ mod owner {
             let (mut groups, [first, _, assistant]) = shell(window, cx);
             groups.set_panel_available(&assistant_id(), true, window, cx);
             assert!(
-                !groups.set_expanded(GroupKey::Assistant, true, cx),
+                !groups.set_expanded(GroupKey::ASSISTANT, true, cx),
                 "hidden"
             );
             assert!(
-                !groups.set_expanded(GroupKey::Navigation, true, cx),
+                !groups.set_expanded(GroupKey::NAVIGATION, true, cx),
                 "a titled panel cannot expand"
             );
-            groups.toggle(GroupKey::Assistant, window, cx);
-            assert!(groups.set_expanded(GroupKey::Assistant, true, cx));
-            assert!(!groups.set_expanded(GroupKey::Assistant, true, cx));
-            assert_eq!(groups.expanded(), Some(GroupKey::Assistant));
+            groups.toggle(GroupKey::ASSISTANT, window, cx);
+            assert!(groups.set_expanded(GroupKey::ASSISTANT, true, cx));
+            assert!(!groups.set_expanded(GroupKey::ASSISTANT, true, cx));
+            assert_eq!(groups.expanded(), Some(GroupKey::ASSISTANT));
             assert!(assistant.read(cx).maximized());
             assert!(!first.read(cx).maximized());
-            assert!(groups.set_expanded(GroupKey::Assistant, false, cx));
+            assert!(groups.set_expanded(GroupKey::ASSISTANT, false, cx));
             assert!(!assistant.read(cx).maximized());
             assert_eq!(groups.expanded(), None);
         });
@@ -292,9 +289,9 @@ mod owner {
         with_window(cx, |window, cx| {
             let (mut groups, _) = shell(window, cx);
             groups.set_panel_available(&assistant_id(), true, window, cx);
-            groups.toggle(GroupKey::Assistant, window, cx);
-            groups.set_expanded(GroupKey::Assistant, true, cx);
-            let hide = groups.toggle(GroupKey::Navigation, window, cx).unwrap();
+            groups.toggle(GroupKey::ASSISTANT, window, cx);
+            groups.set_expanded(GroupKey::ASSISTANT, true, cx);
+            let hide = groups.toggle(GroupKey::NAVIGATION, window, cx).unwrap();
             assert_eq!(focus_of(hide), "preserve");
         });
     }
@@ -306,15 +303,15 @@ mod owner {
         with_window(cx, |window, cx| {
             let (mut groups, [_, _, assistant]) = shell(window, cx);
             groups.set_panel_available(&assistant_id(), true, window, cx);
-            groups.toggle(GroupKey::Assistant, window, cx);
-            groups.set_expanded(GroupKey::Assistant, true, cx);
-            let closed = groups.close(GroupKey::Assistant, window, cx);
-            assert_eq!(closed.visibility_changed(), Some(GroupKey::Assistant));
+            groups.toggle(GroupKey::ASSISTANT, window, cx);
+            groups.set_expanded(GroupKey::ASSISTANT, true, cx);
+            let closed = groups.close(GroupKey::ASSISTANT, window, cx);
+            assert_eq!(closed.visibility_changed(), Some(GroupKey::ASSISTANT));
             assert_eq!(focus_of(closed), "preserve");
-            assert!(!groups.is_shown(GroupKey::Assistant));
-            assert!(!groups.is_expanded(GroupKey::Assistant));
+            assert!(!groups.is_shown(GroupKey::ASSISTANT));
+            assert!(!groups.is_expanded(GroupKey::ASSISTANT));
             assert!(!assistant.read(cx).maximized());
-            let again = groups.close(GroupKey::Assistant, window, cx);
+            let again = groups.close(GroupKey::ASSISTANT, window, cx);
             assert_eq!(again.visibility_changed(), None);
         });
     }
@@ -324,14 +321,14 @@ mod owner {
         with_window(cx, |window, cx| {
             let (mut groups, _) = shell(window, cx);
             groups.set_panel_available(&assistant_id(), true, window, cx);
-            groups.toggle(GroupKey::Assistant, window, cx);
-            groups.set_expanded(GroupKey::Assistant, true, cx);
+            groups.toggle(GroupKey::ASSISTANT, window, cx);
+            groups.set_expanded(GroupKey::ASSISTANT, true, cx);
             let withdrawn = groups
                 .set_panel_available(&assistant_id(), false, window, cx)
                 .unwrap();
-            assert_eq!(withdrawn.visibility_changed(), Some(GroupKey::Assistant));
+            assert_eq!(withdrawn.visibility_changed(), Some(GroupKey::ASSISTANT));
             assert!(!groups.panel_is_available(&assistant_id()));
-            assert!(!groups.is_shown(GroupKey::Assistant));
+            assert!(!groups.is_shown(GroupKey::ASSISTANT));
             assert_eq!(groups.expanded(), None);
             assert!(
                 groups
@@ -344,12 +341,13 @@ mod owner {
     #[gpui_kit::test]
     fn only_expandable_panels_learn_which_side_they_are_on(cx: &mut TestAppContext) {
         with_window(cx, |window, cx| {
-            let (groups, [first, _, assistant]) = shell(window, cx);
-            groups.set_docked_left(|_| Side::Left, cx);
-            assert!(assistant.read(cx).docked_left());
-            assert!(!first.read(cx).docked_left());
-            groups.set_docked_left(|_| Side::Right, cx);
+            let (mut groups, [first, _, assistant]) = shell(window, cx);
+            groups.set_docked_left(cx);
             assert!(!assistant.read(cx).docked_left());
+            groups.adopt(&layout().swapped());
+            groups.set_docked_left(cx);
+            assert!(assistant.read(cx).docked_left());
+            assert!(!first.read(cx).docked_left(), "a plain panel is not told");
         });
     }
 
@@ -383,12 +381,12 @@ mod owner {
             assert_eq!(position(&groups, PANEL_A), Some(0));
             assert_eq!(position(&groups, PANEL_B), Some(1));
             assert_eq!(position(&groups, CORE_PANEL), Some(2));
-            groups.activate(GroupKey::Navigation, 0, cx);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(1));
-            groups.activate(GroupKey::Navigation, 1, cx);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(2));
-            groups.activate(GroupKey::Navigation, 2, cx);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(0));
+            groups.activate(GroupKey::NAVIGATION, 0, cx);
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(1));
+            groups.activate(GroupKey::NAVIGATION, 1, cx);
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(2));
+            groups.activate(GroupKey::NAVIGATION, 2, cx);
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(0));
         });
     }
 
@@ -401,16 +399,69 @@ mod owner {
                 groups.register(id(contribution), Some(hosted), &layout);
             }
             let (host, ..) = groups.offered(&id(TRAY_PANEL)).expect("offered");
-            assert_eq!(host, GroupKey::Navigation, "hosted where its hints name");
-            groups.activate(GroupKey::Navigation, 1, cx);
+            assert_eq!(host, GroupKey::NAVIGATION, "hosted where its hints name");
+            groups.activate(GroupKey::NAVIGATION, 1, cx);
             assert_eq!(
-                groups.next(GroupKey::Navigation),
+                groups.next(GroupKey::NAVIGATION),
                 Some(0),
                 "not the tray panel"
             );
             assert!(groups.open_panel(&id(TRAY_PANEL), cx).is_some());
             assert!(groups.panel_is_open(&id(TRAY_PANEL)));
-            assert_eq!(groups.next(GroupKey::Navigation), Some(0));
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(0));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_panel_on_its_own_opens_beside_the_sidebar_in_the_order_of_the_bar(
+        cx: &mut TestAppContext,
+    ) {
+        with_window(cx, |window, cx| {
+            let (mut groups, _) = shell(window, cx);
+            let alone = LayoutPreset {
+                bar: Bar {
+                    left: vec![
+                        BarItem::Panel {
+                            id: id(PANEL_B),
+                            side: None,
+                        },
+                        BarItem::Group {
+                            id: GroupId::new("navigation"),
+                            name: None,
+                            side: None,
+                            primary: true,
+                            members: vec![GroupEntry::Panel(id(PANEL_A))],
+                        },
+                    ],
+                    ..Bar::default()
+                },
+                ..BuiltIn::preset()
+            };
+            let catalog = nocterm_plugin_model::PluginSet::from(
+                crate::plugin::catalog(&[TEST_CORE], &[&TEST_PLUGIN]).expect("valid"),
+            );
+            groups.adopt(&resolve(&alone, &catalog, &BTreeSet::new()));
+
+            groups.open_panel(&id(PANEL_A), cx);
+            groups.open_panel(&id(PANEL_B), cx);
+
+            assert!(groups.panel_is_open(&id(PANEL_A)));
+            assert!(
+                groups.panel_is_open(&id(PANEL_B)),
+                "neither closes the other"
+            );
+            let columns: Vec<_> = groups
+                .columns()
+                .into_iter()
+                .map(|(key, side, _)| (groups.id(key).to_string(), side))
+                .collect();
+            assert_eq!(
+                columns,
+                [
+                    (solo_group_id(&id(PANEL_B)).to_string(), Side::Left),
+                    ("navigation".to_owned(), Side::Left),
+                ]
+            );
         });
     }
 
@@ -423,6 +474,7 @@ mod owner {
                 bar: Bar {
                     right: vec![BarItem::Group {
                         id: GroupId::new("assistant"),
+                        name: None,
                         side: None,
                         primary: false,
                         members: vec![
@@ -439,12 +491,12 @@ mod owner {
             );
             groups.adopt(&resolve(&moved, &catalog, &BTreeSet::new()));
             let (host, ix, _) = groups.offered(&id(PANEL_B)).expect("offered");
-            assert_eq!((host, ix), (GroupKey::Assistant, 0));
+            assert_eq!((host, ix), (GroupKey::ASSISTANT, 0));
             let (host, ix, _) = groups.offered(&assistant_id()).expect("offered");
-            assert_eq!((host, ix), (GroupKey::Assistant, 1));
+            assert_eq!((host, ix), (GroupKey::ASSISTANT, 1));
             assert_eq!(
                 groups.group_holding(second.entity_id()),
-                Some(GroupKey::Assistant),
+                Some(GroupKey::ASSISTANT),
                 "requests from the panel reach its new group"
             );
         });
@@ -465,10 +517,10 @@ mod owner {
                 .map(|id| groups.offered(id).map(|(_, ix, _)| ix))
                 .collect();
             assert_eq!(offered, [Some(0), None, Some(2)]);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(2));
-            groups.activate(GroupKey::Navigation, 2, cx);
-            assert_eq!(groups.next(GroupKey::Navigation), Some(0));
-            assert!(groups.activate(GroupKey::Navigation, 1, cx).is_none());
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(2));
+            groups.activate(GroupKey::NAVIGATION, 2, cx);
+            assert_eq!(groups.next(GroupKey::NAVIGATION), Some(0));
+            assert!(groups.activate(GroupKey::NAVIGATION, 1, cx).is_none());
             assert!(groups.toggle_panel(&ids[1], window, cx).is_none());
             assert!(groups.open_panel(&ids[1], cx).is_none());
             assert!(groups.panel_is_open(&ids[2]));
@@ -483,7 +535,7 @@ mod owner {
             groups.register(panel.clone(), None, &layout);
             assert!(groups.offered(&panel).is_none());
             assert!(!groups.panel_is_available(&panel));
-            assert_eq!(groups.next(GroupKey::Navigation), None);
+            assert_eq!(groups.next(GroupKey::NAVIGATION), None);
             assert!(groups.open_panel(&panel, cx).is_none());
             let (_, hosted) = navigation(cx, "late");
             assert!(groups.fill(&panel, hosted));

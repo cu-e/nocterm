@@ -15,17 +15,16 @@ use std::{
 
 use gpui_kit::{App, Subscription, Task};
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{ContributionId, PluginId, PluginSet, Side};
+use nocterm_plugin_model::{ContributionId, PluginId, PluginSet};
 use nocterm_store::{SettingsHandle, StoreError};
 use nocterm_ui::{LayoutHandle, PluginSource};
 use nocterm_window_layout::{
     BuiltIn, EditOp, EditOutcome, EditTarget, LayoutSettings, LayoutTransition, PresetId,
-    ResolvedGroup, ResolvedLayout, select, transition,
+    ResolvedLayout, select, transition,
 };
 
 use super::layout_edit::{LayoutEditError, edit_layouts};
 use super::layout_switch::{LayoutChoice, LayoutSwitchError, MalformedLayouts, Removed};
-use super::panel_groups::GroupKey;
 
 /// What a change of the layout settings asks of the window.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -269,34 +268,5 @@ impl ShellLayout {
         self.seen
             .preset(&self.selected)
             .map(|_| self.resolved.open())
-    }
-
-    /// The side of the content a group opens on. A group the arrangement does not place opens
-    /// where its panels hint.
-    pub(super) fn side(&self, group: GroupKey) -> Side {
-        self.resolved
-            .groups()
-            .find(|placed| placed.id().as_str() == group.id())
-            .map(ResolvedGroup::side)
-            .unwrap_or_else(|| group.side())
-    }
-
-    /// The shown groups with their sides, in bar order: groups the arrangement places come
-    /// first, in its order.
-    pub(super) fn columns(
-        &self,
-        shown: impl IntoIterator<Item = GroupKey>,
-    ) -> Vec<(GroupKey, Side)> {
-        let mut shown: Vec<_> = shown.into_iter().collect();
-        shown.sort_by_key(|group| {
-            self.resolved
-                .groups()
-                .position(|placed| placed.id().as_str() == group.id())
-                .unwrap_or(usize::MAX)
-        });
-        shown
-            .into_iter()
-            .map(|group| (group, self.side(group)))
-            .collect()
     }
 }

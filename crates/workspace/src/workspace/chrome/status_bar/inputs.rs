@@ -1,7 +1,7 @@
 //! What the status bar draws, resolved against the window's state.
 
-use gpui_kit::{AnyView, App, SharedString};
-use nocterm_plugin_model::{ContributionId, PluginSet, Zone};
+use gpui_kit::{AnyView, App, ElementId, SharedString};
+use nocterm_plugin_model::{ContributionId, GroupId, PluginSet, Zone};
 use nocterm_window_layout::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember};
 
 use super::{BarOverflow, Pointed, StatusBar};
@@ -10,7 +10,7 @@ use crate::{
     plugin::{LOCAL_TERMINAL, NOTIFICATIONS},
     workspace::{
         chrome::{Regions, toggle_look::ToggleLook},
-        panel_groups::{GroupKey, PanelGroups},
+        panel_groups::PanelGroups,
     },
 };
 
@@ -18,8 +18,12 @@ use crate::{
 #[derive(Clone, Debug)]
 pub(in crate::workspace) struct PanelToggle {
     id: ContributionId,
-    group: GroupKey,
-    ix: usize,
+    /// Names the toggle's element: the sidebar's toggles by position, any other by its group's
+    /// id and position.
+    element: ElementId,
+    /// Whether the panel is in the sidebar, which tests tell apart from other groups.
+    #[cfg(any(test, feature = "test-support"))]
+    primary: bool,
     look: ToggleLook,
     badge: Option<SharedString>,
     selected: bool,
@@ -31,14 +35,10 @@ impl PanelToggle {
     pub(in crate::workspace) fn id(&self) -> &ContributionId {
         &self.id
     }
-    pub(in crate::workspace) fn group(&self) -> GroupKey {
-        self.group
-    }
-    /// The panel's position in its group, which names the toggle's element. A group lists the
-    /// panels the layout places in layout order and the tray after them, so the placed toggles
-    /// are numbered from 0 without gaps.
-    pub(in crate::workspace) fn ix(&self) -> usize {
-        self.ix
+    /// The toggle's element. A group lists the panels the layout places in layout order and
+    /// the tray after them, so the placed toggles of a group are numbered from 0 without gaps.
+    pub(in crate::workspace) fn element(&self) -> &ElementId {
+        &self.element
     }
     pub(in crate::workspace) fn look(&self) -> &ToggleLook {
         &self.look
@@ -238,7 +238,7 @@ impl BarInputs {
         };
         ToggleLooks {
             navigation: panels()
-                .filter(|toggle| toggle.group.primary())
+                .filter(|toggle| toggle.primary)
                 .map(|toggle| toggle.look.clone())
                 .collect(),
             local_terminal: entries().find_map(|entry| match entry {
@@ -246,7 +246,7 @@ impl BarInputs {
                 _ => None,
             }),
             side_panel: panels()
-                .find(|toggle| !toggle.group.primary())
+                .find(|toggle| !toggle.primary)
                 .map(|toggle| toggle.look.clone()),
         }
     }
@@ -314,10 +314,12 @@ impl Resolver<'_> {
     fn toggle(&self, id: &ContributionId) -> Option<BarEntry> {
         let (group, ix, panel) = self.groups.offered(id)?;
         let contribution = self.set.contribution(id)?;
+        let primary = self.groups.is_primary(group);
         Some(BarEntry::Panel(PanelToggle {
             id: id.clone(),
-            group,
-            ix,
+            element: toggle_id(primary, self.groups.id(group), ix),
+            #[cfg(any(test, feature = "test-support"))]
+            primary,
             look: match self.set.plugin_of(id).filter(|_| contribution.is_user()) {
                 Some(plugin) => {
                     let label = self.set.user_label(plugin.name(), contribution.title());
@@ -344,6 +346,19 @@ impl Resolver<'_> {
             })
             .filter_map(|id| self.toggle(id))
             .collect()
+    }
+}
+
+/// The sidebar's toggles keep their position as id; any other group names its own.
+fn toggle_id(primary: bool, group: &GroupId, ix: usize) -> ElementId {
+    if primary {
+        ("sidebar-panel", ix).into()
+    } else {
+        (
+            ElementId::from("panel-group-toggle"),
+            format!("{group}:{ix}"),
+        )
+            .into()
     }
 }
 

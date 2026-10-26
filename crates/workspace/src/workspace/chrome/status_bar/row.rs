@@ -24,9 +24,7 @@ use super::{
     inputs::{PanelToggle, Shrink, USER_WIDGET_MAX_WIDTH},
     overflow::{Frame, OverflowButton, SEPARATOR_WIDTH, SLOT_GAP, TOGGLE_WIDTH},
 };
-use crate::{
-    ContextSelectionReceipt, Workspace, plugin::LOCAL_TERMINAL, workspace::panel_groups::GroupKey,
-};
+use crate::{ContextSelectionReceipt, Workspace, plugin::LOCAL_TERMINAL};
 
 /// What a fixed entry needs of its slot: its measure once it has been drawn.
 fn fixed_width(entry: &BarEntry, inputs: &BarInputs) -> Pixels {
@@ -313,7 +311,7 @@ impl StatusBarRow {
     fn panel_toggle(&self, toggle: &PanelToggle) -> AnyElement {
         let id = toggle.id().clone();
         let on_click = self.on_click.clone();
-        Button::new(toggle_id(toggle.group(), toggle.ix()))
+        Button::new(toggle.element().clone())
             .ghost()
             .small()
             .icon(toggle.look().icon)
@@ -328,19 +326,6 @@ impl StatusBarRow {
 /// The id of a status bar item the shell draws itself.
 fn status_item(id: &str) -> ElementId {
     (ElementId::from("status-item"), id.to_owned()).into()
-}
-
-/// The sidebar's toggles keep their position as id; any other group names its own.
-fn toggle_id(group: GroupKey, ix: usize) -> ElementId {
-    if group.primary() {
-        ("sidebar-panel", ix).into()
-    } else {
-        (
-            ElementId::from("panel-group-toggle"),
-            format!("{}:{ix}", group.id()),
-        )
-            .into()
-    }
 }
 
 /// Draws the window again after the current frame: a measure changed what fits.

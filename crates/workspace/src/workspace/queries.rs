@@ -226,7 +226,7 @@ impl Workspace {
     }
     /// Whether the primary group, which holds the sidebar, shows.
     pub fn primary_group_is_open(&self) -> bool {
-        self.panels.is_shown(GroupKey::Navigation)
+        self.panels.is_shown(GroupKey::NAVIGATION)
     }
     /// Whether a panel or widget was registered for the contribution.
     pub fn is_registered(&self, id: &ContributionId) -> bool {
