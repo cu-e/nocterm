@@ -438,6 +438,33 @@ fn an_opened_user_panel_shows_the_plugin_frame_and_is_named_in_the_menu(cx: &mut
 }
 
 #[gpui_kit::test]
+fn the_menu_names_a_panel_of_a_developer_session_with_dev(cx: &mut TestAppContext) {
+    let window = window_in(
+        &format!("{ALLOWED}{PLACED}"),
+        UserPluginMode::Dev("notes.toml".into()),
+        cx,
+    );
+    install(&window, "notes", true, cx);
+
+    let labels: Vec<String> = cx.update(|cx| {
+        let workspace = window.workspace.read(cx);
+        workspace
+            .panel_menu()
+            .concat()
+            .iter()
+            .map(|panel| panel.label())
+            .collect()
+    });
+
+    assert!(
+        labels
+            .iter()
+            .any(|label| label == "Plugin \u{b7} Example Notes \u{2014} Notes board \u{b7} DEV"),
+        "{labels:?}"
+    );
+}
+
+#[gpui_kit::test]
 fn a_panel_of_a_package_that_may_not_be_placed_does_not_open(cx: &mut TestAppContext) {
     let window = window(cx);
     install(&window, "notes", false, cx);

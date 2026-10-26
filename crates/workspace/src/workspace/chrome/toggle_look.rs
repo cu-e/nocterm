@@ -26,13 +26,12 @@ impl ToggleLook {
         Self::titled(contribution.title, contribution.icon, attention)
     }
 
-    /// The toggle of a user plugin's panel, whose tooltip names the plugin.
+    /// The toggle of a user plugin's panel, whose tooltip is `label`: it names the plugin.
     pub(super) fn of_user(
         contribution: ContributionRef<'_>,
-        plugin: &str,
+        label: String,
         attention: bool,
     ) -> Self {
-        let label = nocterm_plugin_model::user_label(plugin, contribution.title());
         let mut look = Self::of(contribution, attention);
         look.tooltip = if attention {
             format!("{label}: permission required").into()

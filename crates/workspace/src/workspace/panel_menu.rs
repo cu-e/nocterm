@@ -1,5 +1,5 @@
 //! The panels the window menu lists.
-use nocterm_plugin_model::{ContributionId, PluginSet};
+use nocterm_plugin_model::{ContributionId, PluginSet, UserAvailability};
 use nocterm_window_layout::ResolvedLayout;
 
 use super::panel_groups::PanelGroups;
@@ -12,6 +12,8 @@ pub struct PanelEntry {
     title: String,
     /// The name of the user plugin that owns the panel; `None` for the shell and system plugins.
     user_plugin: Option<String>,
+    /// Whether the run is a developer session, whose user plugin names end in DEV.
+    developer: bool,
     open: bool,
     available: bool,
 }
@@ -39,6 +41,7 @@ impl PanelEntry {
                                 .is_user()
                                 .then(|| set.plugin_of(id).map(|plugin| plugin.name().to_owned()))
                                 .flatten(),
+                            developer: set.availability() == UserAvailability::Developer,
                             open: panels.panel_is_open(id),
                             available: panels.panel_is_available(id),
                         })
@@ -63,11 +66,13 @@ impl PanelEntry {
     }
 
     /// What menus and the palette call the panel: a user plugin's panel is named after its
-    /// plugin, so it cannot pass for one of the shell's own.
+    /// plugin, so it cannot pass for one of the shell's own, and a developer session's ends in
+    /// DEV.
     pub fn label(&self) -> String {
-        match &self.user_plugin {
-            Some(name) => nocterm_plugin_model::user_label(name, &self.title),
-            None => self.title.clone(),
+        match (&self.user_plugin, self.developer) {
+            (Some(name), true) => nocterm_plugin_model::developer_label(name, &self.title),
+            (Some(name), false) => nocterm_plugin_model::user_label(name, &self.title),
+            (None, _) => self.title.clone(),
         }
     }
 

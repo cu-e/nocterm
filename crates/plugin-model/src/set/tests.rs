@@ -165,3 +165,25 @@ fn installing_users_into_a_set_keeps_the_mode_of_the_run() {
         .unwrap();
     assert_eq!(with_users.availability(), UserAvailability::Developer);
 }
+
+#[test]
+fn a_developer_session_names_user_contributions_with_dev_and_other_runs_do_not() {
+    let installed = PluginSet::system(catalog());
+    let developer = installed
+        .clone()
+        .with_availability(UserAvailability::Developer);
+    let held = installed.clone().with_availability(UserAvailability::Held);
+
+    assert_eq!(
+        installed.user_label("Notes", "Board"),
+        "Plugin \u{b7} Notes \u{2014} Board"
+    );
+    assert_eq!(
+        held.user_label("Notes", "Board"),
+        installed.user_label("Notes", "Board")
+    );
+    assert_eq!(
+        developer.user_label("Notes", "Board"),
+        "Plugin \u{b7} Notes \u{2014} Board \u{b7} DEV"
+    );
+}

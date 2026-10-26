@@ -230,6 +230,12 @@ pub fn user_label(plugin: &str, title: &str) -> String {
     alloc::format!("Plugin \u{b7} {plugin} \u{2014} {title}")
 }
 
+/// [`user_label`] in a developer session: the name also ends in "DEV", so a contribution that
+/// is not installed cannot pass for one that is.
+pub fn developer_label(plugin: &str, title: &str) -> String {
+    alloc::format!("{} \u{b7} DEV", user_label(plugin, title))
+}
+
 fn shortened(text: &str, max: usize, field: &'static str) -> Result<String, UserPluginError> {
     let text: String = sanitize_text(text).trim().chars().take(max).collect();
     if text.is_empty() {

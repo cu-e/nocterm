@@ -4,7 +4,7 @@
 //! whenever the installed plugins, their enabled flags or their placement approval change, and
 //! raises the revision, so a reader that holds an older snapshot can tell it is stale.
 
-use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
+use alloc::{collections::BTreeSet, string::String, sync::Arc, vec::Vec};
 use thiserror::Error;
 
 use crate::{
@@ -88,6 +88,17 @@ impl PluginSet {
     /// holds user plugins. A layout edit keeps such an id where the layout has it.
     pub fn keeps_unavailable(&self, id: &ContributionId) -> bool {
         self.availability == UserAvailability::Held && id.namespace().starts_with(USER_PREFIX)
+    }
+
+    /// What menus and tooltips call a user plugin's contribution in this run: the plugin, then
+    /// the title, and DEV after them in a developer session.
+    pub fn user_label(&self, plugin: &str, title: &str) -> String {
+        match self.availability {
+            UserAvailability::Developer => crate::developer_label(plugin, title),
+            UserAvailability::Installed | UserAvailability::Held => {
+                crate::user_label(plugin, title)
+            }
+        }
     }
 
     /// The same system catalog with `users` installed, at `revision`.

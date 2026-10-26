@@ -319,7 +319,10 @@ impl Resolver<'_> {
             group,
             ix,
             look: match self.set.plugin_of(id).filter(|_| contribution.is_user()) {
-                Some(plugin) => ToggleLook::of_user(contribution, plugin.name(), panel.attention()),
+                Some(plugin) => {
+                    let label = self.set.user_label(plugin.name(), contribution.title());
+                    ToggleLook::of_user(contribution, label, panel.attention())
+                }
                 None => ToggleLook::of(contribution, panel.attention()),
             },
             badge: panel.badge(self.cx),

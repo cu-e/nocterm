@@ -9,7 +9,7 @@ use gpui_kit::{
 use nocterm_plugin_api::{ContributionContext, Kind, LocalId, Zone};
 use nocterm_plugin_host::{Call, PluginHost};
 use nocterm_plugin_model::{
-    ContributionId, ContributionKind, PluginId, UserContribution, user_label,
+    ContributionId, ContributionKind, PluginId, UserContribution, developer_label, user_label,
 };
 use nocterm_plugin_ports::PluginProviders;
 use nocterm_plugin_view::FrameKind;
@@ -199,11 +199,10 @@ fn widget_of(parts: &Parts, cx: &mut Context<Workspace>) -> gpui_kit::Entity<Use
 /// What the tooltip of a bar widget says: the plugin, then the widget, and DEV in a developer
 /// session, whose bar item has no header line to say it.
 fn widget_label(plugin: &str, title: &str, dev: bool) -> String {
-    let label = user_label(plugin, title);
     if dev {
-        format!("{label} \u{b7} DEV")
+        developer_label(plugin, title)
     } else {
-        label
+        user_label(plugin, title)
     }
 }
 
