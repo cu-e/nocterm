@@ -56,6 +56,8 @@ pub(crate) struct HostServices {
     pub(crate) container_sessions: Arc<dyn nocterm_project_providers::ContainerSessionFactory>,
     pub(crate) workspace_sessions: Arc<dyn nocterm_project_providers::WorkspaceSessionFactory>,
     pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
+    /// The hub access ports; `None` leaves the application without hubs.
+    pub(crate) hubs: Option<nocterm_hubs::Deps>,
 }
 
 struct ProjectResources {
@@ -111,6 +113,8 @@ pub(crate) struct Booted {
     connections: Option<nocterm_connections::Installed>,
     snippets: Option<nocterm_snippets_ui::Installed>,
     projects: Option<nocterm_projects::Installed>,
+    /// Servers of nocterm hubs, when the application has them.
+    hubs: Option<nocterm_hubs_ui::Installed>,
     themes: nocterm_ui::ThemeUi,
     user_plugins: crate::shell_setup::UserShell,
     /// The vault, when it opened; credentials and its settings depend on it.
@@ -145,6 +149,33 @@ impl Booted {
         self.settings_ui.ordinary().clone()
     }
 
+    pub(crate) fn hubs(&self) -> Option<&nocterm_hubs_ui::Installed> {
+        self.hubs.as_ref()
+    }
+    pub(crate) fn terminal(&self) -> &nocterm_terminal::Installed {
+        &self.terminal
+    }
+
+    /// The settings and appearance commands, shared by every kind of window.
+    pub(crate) fn register_settings(&self, workspace: &mut Workspace) {
+        self.settings_ui.register(workspace, self.themes().clone());
+    }
+
+    /// The snippets, shared by every kind of window.
+    pub(crate) fn register_snippets(
+        &self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if let Some(snippets) = &self.snippets {
+            report_registration(
+                "snippets",
+                nocterm_snippets_ui::register(workspace, snippets, window, cx),
+            );
+        }
+    }
+
     pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
         self.workspace.clone()
     }
@@ -173,6 +204,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
+    let hub_deps = hosts.hubs.clone();
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
@@ -187,6 +219,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     .map(|projects| projects.with_local_host(local_host.clone()));
     let terminal_auth = terminal_auth_factory.map(|factory| factory(terminal.clone()));
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
+    let hubs = hub_deps.map(|deps| {
+        nocterm_hubs_ui::install(nocterm_hubs::install(deps, ui.settings().clone(), cx))
+    });
     let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
     let files = install_files(files, &ui, &shutdown, cx);
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
@@ -223,6 +258,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         connections,
         snippets,
         projects,
+        hubs,
         vault,
         files,
         user_plugins: plugins.user().clone(),
@@ -463,7 +499,10 @@ fn register_transfer_shutdown(
 }
 
 /// A feature the workspace refused to place stays installed without its panel or widget.
-fn report_registration(owner: &str, result: Result<(), nocterm_workspace::RegistrationError>) {
+pub(crate) fn report_registration(
+    owner: &str,
+    result: Result<(), nocterm_workspace::RegistrationError>,
+) {
     if let Err(error) = result {
         tracing::error!(owner, %error, "shell registration failed");
     }
@@ -569,19 +608,12 @@ pub(crate) fn build_workspace(
             connections,
         ));
     }
-    booted
-        .settings_ui
-        .register(workspace, booted.themes().clone());
+    booted.register_settings(workspace);
     report_registration(
         "files",
         nocterm_files::register(&booted.files, workspace, window, cx),
     );
-    if let Some(snippets) = &booted.snippets {
-        report_registration(
-            "snippets",
-            nocterm_snippets_ui::register(workspace, snippets, window, cx),
-        );
-    }
+    booted.register_snippets(workspace, window, cx);
     report_registration(
         "containers",
         nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx),
@@ -602,6 +634,16 @@ pub(crate) fn build_workspace(
         nocterm_agent::register(workspace, booted.agent.clone(), window, cx),
     );
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
+    if let Some(hubs) = &booted.hubs {
+        nocterm_hubs_ui::install_menu(
+            hubs,
+            nocterm_hubs_model::Environment::Local,
+            crate::windows::AppEnvironmentOpener::new(booted.clone()),
+            workspace,
+            window,
+            cx,
+        );
+    }
     user.attach(workspace, window, cx);
     if let Some(vault) = vault
         && vault

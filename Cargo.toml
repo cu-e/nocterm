@@ -45,6 +45,10 @@ nocterm-project-environment.workspace = true
 nocterm-project-container-fs.workspace = true
 nocterm-directory-io.workspace = true
 nocterm-explorer.workspace = true
+nocterm-hub-io.workspace = true
+nocterm-hubs.workspace = true
+nocterm-hubs-model.workspace = true
+nocterm-hubs-ui.workspace = true
 nocterm-project-service.workspace = true
 nocterm-project-storage.workspace = true
 nocterm-projects.workspace = true
@@ -172,6 +176,7 @@ uuid.workspace = true
 nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-snippets = { workspace = true, features = ["test-support"] }
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }

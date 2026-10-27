@@ -23,22 +23,57 @@ impl MenuState<'_> {
     }
 }
 
+impl<'a> MenuState<'a> {
+    fn of(workspace: &'a Workspace, window: &'a Window, cx: &'a App) -> Self {
+        let in_workspace = workspace.focus_handle(cx).contains_focused(window, cx);
+        Self {
+            workspace,
+            window,
+            cx,
+            in_workspace,
+            has_target: in_workspace && workspace.command_title(window, cx).is_some(),
+        }
+    }
+}
+
 pub(crate) fn build(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Menu> {
-    let in_workspace = workspace.focus_handle(cx).contains_focused(window, cx);
-    let state = MenuState {
-        workspace,
-        window,
-        cx,
-        in_workspace,
-        has_target: in_workspace && workspace.command_title(window, cx).is_some(),
-    };
+    let state = MenuState::of(workspace, window, cx);
     vec![
         session_menu(&state),
         edit_menu(&state),
         search_menu(&state),
-        window_menu(&state),
+        window_menu(&state, true),
         Menu::new("Help").items([MenuItem::action("About Nocterm", About)]),
     ]
+}
+
+/// The menus of a hub window: no command of the features a hub window does not have (logs,
+/// reconnecting, session settings, the vault, local terminal, AI agents).
+pub(crate) fn build_hub(workspace: &Workspace, window: &Window, cx: &App) -> Vec<Menu> {
+    let state = MenuState::of(workspace, window, cx);
+    vec![
+        hub_session_menu(&state),
+        edit_menu(&state),
+        search_menu(&state),
+        window_menu(&state, false),
+        Menu::new("Help").items([MenuItem::action("About Nocterm", About)]),
+    ]
+}
+
+fn hub_session_menu(state: &MenuState) -> Menu {
+    let in_workspace = state.in_workspace;
+    let has_target = state.has_target;
+    Menu::new("Session").items([
+        MenuItem::action("New Session", NewTab).disabled(!in_workspace),
+        MenuItem::action("New Window", NewWindow),
+        MenuItem::separator(),
+        MenuItem::action("Settings", OpenSettings).disabled(!in_workspace),
+        MenuItem::separator(),
+        MenuItem::action("Close View", CloseTab).disabled(!has_target),
+        MenuItem::action("Close All Views", CloseAllTabs).disabled(!has_target),
+        MenuItem::action("Close Window", CloseWindow),
+        MenuItem::action("Exit", Quit),
+    ])
 }
 
 fn session_menu(state: &MenuState) -> Menu {
@@ -127,7 +162,7 @@ fn search_menu(state: &MenuState) -> Menu {
 
 /// The Window menu asks the workspace about panels by contribution id and primary group, so
 /// it follows whatever the plugin catalog registers.
-fn window_menu(state: &MenuState) -> Menu {
+fn window_menu(state: &MenuState, local: bool) -> Menu {
     let MenuState {
         workspace,
         window,
@@ -137,7 +172,7 @@ fn window_menu(state: &MenuState) -> Menu {
     } = *state;
     let can_split = in_workspace && workspace.can_split_active(window, cx);
     let agents = &nocterm_agent::plugin::CHATS.id;
-    Menu::new("Window").items([
+    let mut items = vec![
         MenuItem::action("Split View Horizontally", SplitDown).disabled(!can_split),
         MenuItem::action("Split View Vertically", SplitRight).disabled(!can_split),
         MenuItem::action("Split to the Left", SplitLeft).disabled(!can_split),
@@ -156,13 +191,18 @@ fn window_menu(state: &MenuState) -> Menu {
         MenuItem::action("Sidebar", ToggleSidebar)
             .checked(workspace.primary_group_is_open())
             .disabled(!in_workspace),
-        MenuItem::action("Local Terminal", ToggleLocalTerminal)
-            .checked(workspace.local_terminal_is_visible(cx))
-            .disabled(!in_workspace),
-        MenuItem::action("AI Agents", ToggleRightPanel)
-            .checked(workspace.panel_is_open(agents))
-            .disabled(!in_workspace || !workspace.panel_is_available(agents)),
-    ])
+    ];
+    if local {
+        items.extend([
+            MenuItem::action("Local Terminal", ToggleLocalTerminal)
+                .checked(workspace.local_terminal_is_visible(cx))
+                .disabled(!in_workspace),
+            MenuItem::action("AI Agents", ToggleRightPanel)
+                .checked(workspace.panel_is_open(agents))
+                .disabled(!in_workspace || !workspace.panel_is_available(agents)),
+        ]);
+    }
+    Menu::new("Window").items(items)
 }
 
 /// The layouts to choose from, the selected one checked, the commands that move through them,

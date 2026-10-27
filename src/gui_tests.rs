@@ -17,6 +17,7 @@ use nocterm_workspace::{SessionSpec, Workspace};
 mod agent_installation;
 mod chat_history;
 mod default_shell_geometry;
+mod hub_windows;
 mod keymap;
 mod menu_layouts;
 mod menu_tabs;
@@ -42,6 +43,10 @@ struct MockTransport {
 /// The local host the fixture gives the application, so a test can read what ran on it.
 struct FixtureLocalHost(nocterm_session::testing::FakeExec);
 impl gpui_kit::Global for FixtureLocalHost {}
+
+/// The hub ports the fixture gives the application. Without them it has no hubs.
+struct FixtureHubs(nocterm_hubs::Deps);
+impl gpui_kit::Global for FixtureHubs {}
 
 struct FixtureDirectory {
     _directory: tempfile::TempDir,
@@ -324,6 +329,7 @@ fn fixture_hosts(
             activation.clone(),
         )),
         workspace_sessions: activation,
+        hubs: None,
     }
 }
 
@@ -364,7 +370,10 @@ fn boot_with_ports_and_probe(
             persist: false,
             connections: crate::connection_setup::memory(),
             projects: crate::project_setup::PreparedProjectSetup::memory(),
-            hosts: fixture_hosts(transport, local, local_host),
+            hosts: crate::bootstrap::HostServices {
+                hubs: cx.try_global::<FixtureHubs>().map(|hubs| hubs.0.clone()),
+                ..fixture_hosts(transport, local, local_host)
+            },
             terminal_auth_factory: None,
             files,
             themes,

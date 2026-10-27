@@ -64,6 +64,7 @@ impl PreparedApp {
         let preparation = Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
             environment.clone(),
         ));
+        let paths_for_hubs = paths.clone();
         Ok(Self {
             paths,
             executable,
@@ -88,6 +89,7 @@ impl PreparedApp {
                 container_actions: Arc::new(
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
+                hubs: hub_dependencies(&paths_for_hubs),
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,
@@ -165,7 +167,9 @@ impl PreparedApp {
             }
         })
         .detach();
-        if let Err(error) = crate::open_main_window(cx, &booted) {
+        if let Err(error) =
+            crate::windows::open_window(cx, &booted, nocterm_hubs_model::Environment::Local)
+        {
             tracing::error!(%error, "could not open the window");
             cx.quit();
         }
@@ -194,6 +198,36 @@ fn files_dependencies(
         Arc::new(nocterm_local::LocalProgramOpener::default()),
         directories,
     ))
+}
+
+/// The hub access ports, or none when the adapter cannot start: local work does not suffer.
+fn hub_dependencies(paths: &Paths) -> Option<nocterm_hubs::Deps> {
+    let config = nocterm_hub_io::HubLinksConfig {
+        credentials_dir: paths.state_dir().join("hubs"),
+        device_name: device_name(),
+    };
+    match nocterm_hub_io::HubLinks::start(config) {
+        Ok(links) => Some(nocterm_hubs::Deps {
+            trust: links.clone(),
+            sign_in: links.clone(),
+            sessions: links,
+        }),
+        Err(error) => {
+            tracing::error!(?error, "hubs are unavailable");
+            None
+        }
+    }
+}
+
+/// How this computer is named in the device list of a hub.
+fn device_name() -> String {
+    ["HOSTNAME", "COMPUTERNAME"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .or_else(|| fs::read_to_string("/etc/hostname").ok())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Nocterm".to_owned())
 }
 
 fn local_sessions() -> nocterm_terminal::LocalSessions {

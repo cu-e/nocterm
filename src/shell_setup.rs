@@ -8,6 +8,7 @@ use nocterm_store::{SettingsHandle, ShutdownCoordinator};
 use nocterm_ui::PluginSource;
 use nocterm_workspace::plugin;
 
+pub(crate) mod hub_window;
 mod layout_editor;
 mod plugins;
 #[cfg(test)]
@@ -47,6 +48,7 @@ pub(crate) fn plugin_catalog() -> Result<PluginCatalog, CatalogError> {
         &[
             nocterm_connections::plugin::CORE,
             nocterm_files::plugin::CORE,
+            nocterm_hubs_ui::plugin::CORE,
         ],
         PLUGINS,
     )
