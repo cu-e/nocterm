@@ -171,6 +171,10 @@ fn sign_in_through_the_dialog(
     type_text(handle, &hub.password, cx);
     press(handle, "enter", cx);
     eventually(handle, "the last step of the sign-in", cx, |cx| {
+        // The first sign-in of an account creates its keys and shows the recovery key once.
+        if shows(handle, "sign-in-key-saved", cx) {
+            click(handle, "sign-in-key-saved", cx);
+        }
         shows(handle, "sign-in-done", cx)
     });
 

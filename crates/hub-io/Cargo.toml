@@ -36,6 +36,9 @@ nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
+# The live tests keep an SSH key in an account and sign in to a real sshd with it.
+nocterm-ssh.workspace = true
+nocterm-ssh-keys.workspace = true
 
 [lints]
 workspace = true

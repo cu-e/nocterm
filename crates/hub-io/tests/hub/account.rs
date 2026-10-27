@@ -1,0 +1,199 @@
+//! The keys of an account on a real hub: what one device keeps, another device reads.
+//!
+//! Two devices are two credential directories. They sign in with the same account, so the
+//! second one opens the keyset the first one created. The records the tests write are removed
+//! again, and the account is left as it was found.
+
+use super::{Hub, hub, links, within};
+use futures::executor::block_on;
+use nocterm_connections_model::{
+    profiles::Profile,
+    replica::{ProfileReplica as _, RemoteBody, ReplicaScope},
+    test_support::profile_id_for,
+};
+use nocterm_hub_io::HubLinks;
+use nocterm_hubs_model::{HubSignIn as _, KeyStatus};
+use nocterm_session::{Auth, Prompt, Secret, SecretRequest, Transport as _};
+use nocterm_ssh_keys::KeyMaterial;
+use nocterm_vault::{CredentialBinding, VaultAccess as _};
+use std::sync::Arc;
+
+/// The shared real `sshd` fixture of the SSH suite. This file uses a part of it.
+#[allow(
+    dead_code,
+    reason = "the shared fixture offers more than this suite uses"
+)]
+#[path = "../../../ssh/tests/support/sshd.rs"]
+mod sshd;
+
+/// One device: its own credential directory, signed in with the account's password.
+struct Device {
+    links: Arc<HubLinks>,
+    _dir: tempfile::TempDir,
+}
+
+impl Device {
+    fn sign_in(hub: &Hub) -> (Self, KeyStatus) {
+        let dir = tempfile::tempdir().unwrap();
+        let links = links(&dir);
+        let signed = block_on(links.password(
+            hub.spec(),
+            hub.username.clone(),
+            Secret::new(hub.password.clone()),
+        ))
+        .expect("the account signs in");
+        (Self { links, _dir: dir }, signed.keys)
+    }
+
+    fn account(&self, hub: &Hub) -> nocterm_hub_io::HubAccount {
+        self.links.open_account(&hub.id()).expect("an account")
+    }
+}
+
+impl Drop for Device {
+    fn drop(&mut self) {
+        // The device is not left registered with the account.
+        if let Some(hub) = hub() {
+            let _ = block_on(self.links.sign_out(&hub.id()));
+        }
+    }
+}
+
+fn unique(name: &str) -> String {
+    format!("{name}-{}", uuid::Uuid::new_v4())
+}
+
+#[test]
+fn the_keys_of_an_account_open_on_a_second_device() {
+    let Some(hub) = hub() else { return };
+    let (_first, keys) = Device::sign_in(&hub);
+    // The first sign-in of an account makes the keys; any later one opens them.
+    assert!(
+        matches!(keys, KeyStatus::Created(_) | KeyStatus::Open),
+        "{keys:?}"
+    );
+    let (second, keys) = Device::sign_in(&hub);
+    assert!(matches!(keys, KeyStatus::Open), "{keys:?}");
+    assert!(second.account(&hub).vault().is_unlocked());
+}
+
+#[test]
+fn a_credential_kept_on_one_device_is_read_on_another() {
+    let Some(hub) = hub() else { return };
+    let (first, _) = Device::sign_in(&hub);
+    let (second, _) = Device::sign_in(&hub);
+    let label = unique("live-credential");
+    let binding = CredentialBinding::KeyPassphrase {
+        path: "/live/key".into(),
+    };
+
+    let id = block_on(first.account(&hub).vault().put(
+        None,
+        label.clone(),
+        binding.clone(),
+        Secret::new("hunter2"),
+    ))
+    .unwrap();
+    let vault = second.account(&hub).vault();
+    let listed = block_on(vault.list()).unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|info| info.id == id && info.label == label)
+    );
+    let secret = block_on(vault.get(id, binding)).unwrap();
+    assert_eq!(secret.expose(), "hunter2");
+
+    block_on(first.account(&hub).vault().delete(id)).unwrap();
+}
+
+#[test]
+fn a_profile_saved_on_one_device_is_read_on_another() {
+    let Some(hub) = hub() else { return };
+    let (first, _) = Device::sign_in(&hub);
+    let (second, _) = Device::sign_in(&hub);
+    let name = unique("live-profile");
+    let profile = Profile {
+        id: profile_id_for(&name),
+        name: name.clone(),
+        description: String::new(),
+        options: Default::default(),
+        target: nocterm_session::Target::new("ci", "live.example", 22),
+        auth: Auth::Password,
+        credential: None,
+        launch: None,
+        icon: None,
+        icon_color: None,
+        country: None,
+        group: None,
+        jump_hosts: Vec::new(),
+    };
+
+    let written = block_on(first.account(&hub).replica().put(
+        ReplicaScope::Personal,
+        profile.clone(),
+        None,
+    ))
+    .unwrap();
+    let page = block_on(second.account(&hub).replica().changes(None)).unwrap();
+    let seen = page
+        .changes
+        .iter()
+        .find(|change| change.id == profile.id)
+        .expect("the other device sees the profile");
+    assert_eq!(seen.body, RemoteBody::Present(Box::new(profile.clone())));
+
+    block_on(
+        first
+            .account(&hub)
+            .replica()
+            .delete(ReplicaScope::Personal, profile.id, written),
+    )
+    .unwrap();
+}
+
+/// A key a device keeps in the vault signs in to a real `sshd` from another device.
+#[test]
+fn a_key_kept_on_one_device_signs_in_to_a_server_from_another() {
+    let Some(hub) = hub() else { return };
+    let Some(sshd) = sshd::Sshd::start() else {
+        return;
+    };
+    let text = std::fs::read_to_string(sshd.root().join("plain/id_ed25519")).unwrap();
+    let key = KeyMaterial::import(&Secret::new(text), None).unwrap();
+    let public_key = key.public_key().as_str().to_owned();
+    let binding = CredentialBinding::PrivateKey {
+        public_key: public_key.clone(),
+    };
+
+    // Device 1 keeps the key; the server trusts its public half.
+    let (first, _) = Device::sign_in(&hub);
+    let id = block_on(first.account(&hub).vault().put(
+        None,
+        unique("live-key"),
+        binding.clone(),
+        key.to_secret(),
+    ))
+    .unwrap();
+
+    // Device 2 knows nothing but the account, and still signs in with the key.
+    let (second, _) = Device::sign_in(&hub);
+    let from_account = block_on(second.account(&hub).vault().get(id, binding)).unwrap();
+    let transport = sshd.transport("empty");
+    let mut request = sshd.request();
+    request.auth = Auth::VaultKey {
+        credential: id,
+        public_key,
+    };
+    let session = transport.open(request);
+    within(sshd::connect(&session, |prompt| match prompt {
+        Prompt::Secret {
+            request: SecretRequest::PrivateKey { .. },
+            reply,
+            ..
+        } => reply.send(Some(from_account.clone())),
+        other => sshd::accept(other),
+    }));
+    drop(session);
+    block_on(first.account(&hub).vault().delete(id)).unwrap();
+}

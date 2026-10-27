@@ -21,6 +21,9 @@ use nocterm_session::{
     Session, Target,
 };
 
+#[path = "hub/account.rs"]
+mod account;
+
 struct Hub {
     address: HubAddress,
     fingerprint: Fingerprint,
