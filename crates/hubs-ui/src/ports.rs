@@ -44,7 +44,7 @@ pub trait EnvironmentOpener {
 /// A hub tab could not be opened.
 #[derive(Debug, thiserror::Error)]
 #[error("the tab could not be opened")]
-pub struct HubTabError(#[from] pub ContextSelectionError);
+pub struct HubTabError(#[from] ContextSelectionError);
 
 /// Opens a terminal tab attached to a hub session. The application implements it with the
 /// terminal feature; features do not depend on each other.
