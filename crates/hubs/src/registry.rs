@@ -349,6 +349,35 @@ impl Hubs {
         })
     }
 
+    /// The server whose account keeps this device's profiles and vault in step with its other
+    /// devices, if one is chosen.
+    pub fn account_hub(&self, cx: &gpui::App) -> Option<HubId> {
+        self.settings.setting::<HubsSettings>(cx).account_hub()
+    }
+
+    /// Chooses the server whose account keeps profiles and vault, or none, in one edit of the
+    /// settings. Choosing only records the choice: whether the account's keys are open is up to
+    /// its sign-in.
+    pub fn set_account(
+        &mut self,
+        hub: Option<&HubId>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), HubsError>> {
+        if let Some(hub) = hub
+            && self.entry(hub).is_none()
+        {
+            return Task::ready(Err(HubsError::Unknown(hub.clone())));
+        }
+        let chosen = hub.cloned();
+        let saving = self
+            .settings
+            .update_checked::<HubsSettings>(cx, move |settings| {
+                settings.set_account_hub(chosen.as_ref());
+                Ok(())
+            });
+        cx.spawn(async move |_, _| saving.await.map(|_| ()).map_err(HubsError::Save))
+    }
+
     fn edit_record(
         &mut self,
         hub: &HubId,
