@@ -16,6 +16,14 @@ pub(crate) type Opened = Rc<RefCell<Vec<SessionSpec>>>;
 pub(crate) fn workspace(
     cx: &mut TestAppContext,
 ) -> (AnyWindowHandle, Entity<Workspace>, Opened, Installed) {
+    workspace_with_keys(cx, std::sync::Arc::new(nocterm_ssh_keys::NoVaultSshKeys))
+}
+
+/// A workspace whose connection editor offers the keys of `keys`.
+pub(crate) fn workspace_with_keys(
+    cx: &mut TestAppContext,
+    keys: std::sync::Arc<dyn nocterm_ssh_keys::VaultSshKeys>,
+) -> (AnyWindowHandle, Entity<Workspace>, Opened, Installed) {
     let opened = Opened::default();
     let calls = opened.clone();
     let (window, workspace, installed) = cx.update(|cx| {
@@ -28,10 +36,13 @@ pub(crate) fn workspace(
             cx,
         );
         let installed = crate::install(
-            crate::PreparedConnections::memory(nocterm_connections_model::draft::EditorDefaults {
-                user: Some("tester".into()),
-                home: None,
-            }),
+            crate::PreparedConnections::memory_with_keys(
+                nocterm_connections_model::draft::EditorDefaults {
+                    user: Some("tester".into()),
+                    home: None,
+                },
+                keys,
+            ),
             &ready,
             &nocterm_store::ShutdownCoordinator::default(),
             cx,

@@ -177,3 +177,27 @@ fn jump_hosts_flow_from_the_draft_into_the_saved_profile() {
     let profile = validated.into_profile(crate::test_support::profile_id_for("db"));
     assert_eq!(profile.jump_hosts, draft.jump_hosts);
 }
+#[test]
+fn a_vault_key_draft_becomes_an_auth_that_names_the_record_and_its_public_half() {
+    let mut draft = draft();
+    draft.authentication.kind = AuthKind::VaultKey;
+    let error = draft.validate(&defaults()).unwrap_err();
+    assert!(matches!(error, ProfileValidationError::MissingVaultKey));
+    assert_eq!(error.field(), ValidationField::Key);
+    let credential = CredentialId::from_bytes([4; 16]);
+    draft.authentication.vault_key = Some(VaultKeyChoice {
+        credential,
+        public_key: "ssh-ed25519 AAAA".into(),
+    });
+    // The typed file path and password reference are not part of this method.
+    draft.authentication.key_path = "~/.ssh/ignored".into();
+    let profile = draft.validate(&defaults()).unwrap();
+    assert_eq!(
+        profile.auth,
+        Auth::VaultKey {
+            credential,
+            public_key: "ssh-ed25519 AAAA".into()
+        }
+    );
+    assert_eq!(profile.credential, None);
+}

@@ -32,6 +32,13 @@ Interactive/MFA answers have no vault record type. A saved credential is used fo
 the initial matching request; rejected credentials return to manual entry instead
 of being silently retried. Unlocking can supply the still-pending initial request.
 
+An SSH key can also be a vault record: the binding is `private_key` with the canonical
+public half and the secret is the OpenSSH private key without a passphrase, protected by
+the vault envelope. A profile refers to it with `method = "vault_key"`, the credential id
+and the public key; signing in compares that public half with the record and never reads a
+file. Remember does not create or overwrite key records. The Credentials tab shows the
+fingerprint, never the key.
+
 ## Format and persistence
 
 The pure `nocterm-vault` domain owns this format and prepared state transitions.

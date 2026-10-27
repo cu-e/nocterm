@@ -183,6 +183,15 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let local_host = hosts.local_host.clone();
     let hubs = install_hubs(&hosts, &ui, cx);
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
+    // The vault opens first: the connection editor offers its keys, and its
+    // credentials need the installed connections afterwards.
+    let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
+    let connections = match &vault {
+        Some(vault) => {
+            connections.with_keys(Arc::new(crate::vault_keys::VaultKeys::new(vault.clone())))
+        }
+        None => connections,
+    };
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let projects = install_projects(
@@ -322,7 +331,7 @@ fn install_connections(
 /// Bind credentials before installing the retained terminal capability.
 fn install_terminal(
     terminal: nocterm_terminal::Deps,
-    vault: Option<VaultSetup>,
+    vault: Option<Arc<dyn VaultAccess>>,
     ready: &nocterm_ui::UiReady,
     connections: Option<&nocterm_connections::Installed>,
     cx: &mut App,
@@ -331,7 +340,7 @@ fn install_terminal(
     Option<Rc<nocterm_vault_ui::Installed>>,
 ) {
     let association_owner = connections.map(|installed| installed.connections().clone());
-    let vault = vault.and_then(|setup| open_vault(setup, ready, association_owner, cx));
+    let vault = vault.map(|vault| install_vault(vault, ready, association_owner, cx));
     let (terminal, vault) = match vault {
         Some(opened) => (
             terminal.with_credentials(opened.credentials),
@@ -505,13 +514,12 @@ struct OpenedVault {
     credentials: nocterm_terminal::CredentialProvider,
 }
 
-/// Opens the vault and lets terminals keep credentials in it.
+/// Opens the vault service, or none when it cannot be initialised.
 fn open_vault(
     setup: VaultSetup,
     ready: &nocterm_ui::UiReady,
-    connections: Option<gpui_kit::Entity<nocterm_connections::Connections>>,
     cx: &mut App,
-) -> Option<OpenedVault> {
+) -> Option<Arc<dyn VaultAccess>> {
     let device = setup.device_unlock.then(nocterm_device_unlock::provider);
     ready
         .settings()
@@ -524,14 +532,22 @@ fn open_vault(
                 .auto_lock_minutes,
         ) * 60,
     );
-    let vault: Arc<dyn VaultAccess> =
-        match VaultService::new_with_device_unlock(setup.file, duration, device) {
-            Ok(vault) => Arc::new(vault),
-            Err(error) => {
-                tracing::error!(%error, "could not initialize the credential vault");
-                return None;
-            }
-        };
+    match VaultService::new_with_device_unlock(setup.file, duration, device) {
+        Ok(vault) => Some(Arc::new(vault)),
+        Err(error) => {
+            tracing::error!(%error, "could not initialize the credential vault");
+            None
+        }
+    }
+}
+
+/// Lets terminals keep credentials in the vault and shows it in Settings.
+fn install_vault(
+    vault: Arc<dyn VaultAccess>,
+    ready: &nocterm_ui::UiReady,
+    connections: Option<gpui_kit::Entity<nocterm_connections::Connections>>,
+    cx: &mut App,
+) -> OpenedVault {
     let credentials = nocterm_terminal::CredentialProvider::new(
         Arc::new(nocterm_vault_ui::VaultCredentials::new(vault.clone())),
         move |spec, id, cx| {
@@ -564,14 +580,14 @@ fn open_vault(
             })
         },
     );
-    Some(OpenedVault {
+    OpenedVault {
         installed: Rc::new(nocterm_vault_ui::install(
             nocterm_vault_ui::Deps::new(vault),
             ready,
             cx,
         )),
         credentials,
-    })
+    }
 }
 
 /// Plugs every feature into a new window's workspace.

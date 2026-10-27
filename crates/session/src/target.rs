@@ -129,6 +129,13 @@ pub enum Auth {
     Password,
     /// One private key file.
     Key { path: PathBuf },
+    /// One private key kept in the credential vault. `public_key` is its canonical
+    /// public text: the host is offered that key only, and a vault record that holds
+    /// a different key is refused before any offer.
+    VaultKey {
+        credential: CredentialId,
+        public_key: String,
+    },
 }
 
 #[cfg(test)]
@@ -213,6 +220,34 @@ mod tests {
         }
         assert_eq!(Target::new("a", "h", 22).to_string(), "a@h");
         assert_eq!(Target::new("a", "::1", 2222).to_string(), "a@[::1]:2222");
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct Saved {
+        auth: Auth,
+    }
+
+    #[test]
+    fn a_vault_key_round_trips_through_toml_with_its_reference_and_public_half() {
+        let auth = Auth::VaultKey {
+            credential: CredentialId::from_bytes([0xab; 16]),
+            public_key: "ssh-ed25519 AAAAC3".into(),
+        };
+        let text = toml::to_string(&Saved { auth: auth.clone() }).unwrap();
+        assert!(text.contains("method = \"vault_key\""), "{text}");
+        assert!(text.contains("credential = \"abababababababababababababababab\""));
+        assert_eq!(toml::from_str::<Saved>(&text).unwrap(), Saved { auth });
+    }
+
+    #[test]
+    fn older_methods_still_read() {
+        let key: Saved = toml::from_str("[auth]\nmethod = \"key\"\npath = \"/k\"\n").unwrap();
+        assert_eq!(key.auth, Auth::Key { path: "/k".into() });
     }
 }
 

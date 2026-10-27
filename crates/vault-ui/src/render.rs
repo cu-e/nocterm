@@ -14,8 +14,9 @@ use gpui_kit::{
     prelude::*,
     rems,
 };
+use nocterm_ssh_keys::PublicKeyText;
 use nocterm_ui::{IconName, form};
-use nocterm_vault::DeviceAvailability;
+use nocterm_vault::{CredentialBinding, CredentialInfo, DeviceAvailability};
 
 use crate::view::{Tab, VaultView};
 
@@ -196,7 +197,7 @@ impl VaultView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(id.to_string()),
+                                    .child(describe(record)),
                             ),
                     )
                     .child(
@@ -365,5 +366,17 @@ impl VaultView {
             cx,
         );
         form::section("Behavior", [lock, startup], cx)
+    }
+}
+
+/// The second line of a credential row: a key shows its fingerprint, which is
+/// what other tools print for it; everything else shows its ID.
+pub(crate) fn describe(record: &CredentialInfo) -> String {
+    match &record.binding {
+        CredentialBinding::PrivateKey { public_key } => match PublicKeyText::parse(public_key) {
+            Ok(public) => format!("SSH key \u{b7} {}", public.fingerprint()),
+            Err(_) => format!("SSH key \u{b7} {}", record.id),
+        },
+        _ => record.id.to_string(),
     }
 }

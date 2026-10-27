@@ -1,5 +1,5 @@
 use gpui_kit::{App, WeakEntity};
-use nocterm_session::{HostExec, Prompt, Secret};
+use nocterm_session::{HostExec, Prompt, Secret, SecretRequest};
 use nocterm_workspace::{
     ExpectedSession, LiveCommands, RemoteReconnect, SignInPrompt, SignInPrompts,
     TerminalCapability, TerminalError, TerminalExecution, TerminalInfo, TerminalInput,
@@ -105,6 +105,11 @@ impl TerminalState for Access {
             alt_screen: terminal.emulator().modes().alt_screen,
             generation: terminal.emulator().generation(),
             sign_in: match terminal.prompt() {
+                // A vault key is answered by the vault, never by an agent or the user.
+                Some(Prompt::Secret {
+                    request: SecretRequest::PrivateKey { .. },
+                    ..
+                }) => None,
                 Some(Prompt::Secret { request, hop, .. }) => {
                     let (label, retry, masked) = describe(request, hop.as_ref());
                     Some(SignInPrompt {

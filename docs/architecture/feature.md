@@ -434,7 +434,13 @@ owns its cancellable status subscription. The feature handles
 `workspace::UnlockVault` and `workspace::LockVault`
 application-wide, so the palette and a terminal's sign-in prompt can unlock the
 vault in a small dialog without opening Settings and without depending on the
-vault feature.
+vault feature. The credential list describes a key record by its fingerprint and never shows
+or saves the secret.
+
+The connection editor chooses, creates and imports a vault key through the injected
+`VaultSshKeys` port (`EditorInputs::with_keys`); the terminal answers a private-key request
+only from the credential store and waits for the vault to unlock. See
+[ADR 0102](../adr/0102-ssh-keys-are-kept-in-the-vault.md).
 
 ## Agent
 

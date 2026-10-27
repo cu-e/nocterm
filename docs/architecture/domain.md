@@ -6,7 +6,7 @@ Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
 `nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault`, `nocterm-ssh-keys`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
 
 ## Workspace folders
@@ -225,6 +225,14 @@ use core shared cause ownership through domain constructors, so standard source
 traversal retains their original concrete classification. Snapshot clones retain
 the same diagnostic identity; adapter code gains no core dependency for construction.
 
+## SSH keys
+
+`nocterm-ssh-keys` owns the rules of an SSH key without I/O or entropy: import of OpenSSH
+private keys with the accepted algorithms, the canonical public text, the fingerprint and
+the `VaultSshKeys` port the connection editor uses to list, create and import vault keys.
+Its `ssh-key` version is the one `russh` resolves. See
+[ADR 0102](../adr/0102-ssh-keys-are-kept-in-the-vault.md).
+
 ## Vault
 
 `nocterm-vault` owns the versioned authenticated envelope, bounded codecs,
@@ -236,7 +244,8 @@ UI/service and native authentication contracts without workers or filesystem I/O
 `nocterm-vault-ui` receives an explicit `Arc<dyn VaultAccess>`. Profiles store opaque
 IDs constructed from supplied bytes in `nocterm-session`. Authentication uses only
 matching password/key-passphrase bindings; Remember commits after Connected and
-excludes MFA. See [security/lifecycle notes](../VAULT.md) and
+excludes MFA. A stored SSH key is the binding `PrivateKey { public_key }`, referenced from
+a profile by `Auth::VaultKey`; `SecretRequest::PrivateKey` is never storable. See [security/lifecycle notes](../VAULT.md) and
 [ADR 0016](../adr/0016-vault-storage-boundary.md).
 
 Transfer progress distinguishes completed files from acknowledged destination directory

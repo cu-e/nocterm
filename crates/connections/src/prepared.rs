@@ -8,16 +8,31 @@ use nocterm_connections_model::{
     repository::LoadedConnections,
     value_ports::{ConnectionClock, ProfileIds, SuppliedValues},
 };
+use nocterm_ssh_keys::{NoVaultSshKeys, VaultSshKeys};
 use nocterm_store::SnapshotWriter;
 use std::sync::Arc;
 #[derive(Clone)]
 pub struct EditorInputs {
     defaults: EditorDefaults,
     ids: Arc<dyn ProfileIds>,
+    keys: Arc<dyn VaultSshKeys>,
 }
 impl EditorInputs {
+    /// Inputs of a window without a vault: its key choices report that.
     pub fn new(defaults: EditorDefaults, ids: Arc<dyn ProfileIds>) -> Self {
-        Self { defaults, ids }
+        Self {
+            defaults,
+            ids,
+            keys: Arc::new(NoVaultSshKeys),
+        }
+    }
+    /// The keys the editor offers are those of `keys`.
+    pub fn with_keys(mut self, keys: Arc<dyn VaultSshKeys>) -> Self {
+        self.keys = keys;
+        self
+    }
+    pub(crate) fn keys(&self) -> &Arc<dyn VaultSshKeys> {
+        &self.keys
     }
     pub fn defaults(&self) -> &EditorDefaults {
         &self.defaults
@@ -67,12 +82,20 @@ impl PreparedConnections {
             observations,
         }
     }
+    /// The editor offers the keys of `keys` instead of reporting no vault.
+    pub fn with_keys(mut self, keys: Arc<dyn VaultSshKeys>) -> Self {
+        self.inputs = self.inputs.with_keys(keys);
+        self
+    }
     pub fn memory(defaults: EditorDefaults) -> Self {
+        Self::memory_with_keys(defaults, Arc::new(NoVaultSshKeys))
+    }
+    pub fn memory_with_keys(defaults: EditorDefaults, keys: Arc<dyn VaultSshKeys>) -> Self {
         let values = Arc::new(SuppliedValues::new(1, 0));
         Self {
             documents: LoadedConnections::default(),
             writers: None,
-            inputs: EditorInputs::new(defaults, values.clone()),
+            inputs: EditorInputs::new(defaults, values.clone()).with_keys(keys),
             clock: values,
             observations: ObservationDeps::offline(),
         }

@@ -565,3 +565,99 @@ fn the_session_context_carries_the_route_it_was_reached_through(cx: &mut TestApp
     let context = cx.read(|cx| direct.read(cx).terminal.read(cx).session_context());
     assert!(context.via.is_empty());
 }
+
+const KEY_PUBLIC: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+
+fn vault_key_prompt(
+    cx: &mut TestAppContext,
+    store: &Arc<crate::credentials::fake::FakeStore>,
+    credential: nocterm_session::CredentialId,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    futures::channel::oneshot::Receiver<Option<Secret>>,
+) {
+    let provider = crate::CredentialProvider::new(store.clone(), |_, _, _| Task::ready(Ok(())));
+    let (handle, _view, transport) = prompt_fixture(cx, Some(provider));
+    let (reply, answer) = Reply::channel();
+    emit_prompt(
+        cx,
+        &transport,
+        Prompt::Secret {
+            request: SecretRequest::PrivateKey {
+                credential,
+                public_key: KEY_PUBLIC.into(),
+            },
+            hop: None,
+            reply,
+        },
+    );
+    (handle, answer)
+}
+#[gpui_kit::test]
+fn a_vault_key_is_answered_from_the_vault_without_a_field(cx: &mut TestAppContext) {
+    let store = Arc::new(crate::credentials::fake::FakeStore::unlocked());
+    let id = store.insert_key(KEY_PUBLIC, "private key text");
+    let (handle, answer) = vault_key_prompt(cx, &store, id);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("secret-input").is_none());
+        assert!(window.try_find("remember-credential").is_none());
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        answer.now_or_never().unwrap().unwrap().unwrap().expose(),
+        "private key text"
+    );
+}
+#[gpui_kit::test]
+fn a_vault_key_waits_for_the_vault_then_answers(cx: &mut TestAppContext) {
+    let store = Arc::new(crate::credentials::fake::FakeStore::default());
+    let id = store.insert_key(KEY_PUBLIC, "private key text");
+    let (handle, answer) = vault_key_prompt(cx, &store, id);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("secret-input").is_none());
+        assert!(window.try_find("auth-open-vault").is_some());
+    })
+    .unwrap();
+    store.unlock();
+    cx.run_until_parked();
+    assert_eq!(
+        answer.now_or_never().unwrap().unwrap().unwrap().expose(),
+        "private key text"
+    );
+}
+#[gpui_kit::test]
+fn a_vault_key_missing_from_the_vault_is_declined_not_asked_for(cx: &mut TestAppContext) {
+    let store = Arc::new(crate::credentials::fake::FakeStore::unlocked());
+    let missing = nocterm_session::CredentialId::from_bytes([5; 16]);
+    let (handle, answer) = vault_key_prompt(cx, &store, missing);
+    cx.run_until_parked();
+    assert_eq!(answer.now_or_never().unwrap().unwrap(), None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("secret-input").is_none());
+    })
+    .unwrap();
+}
+#[gpui_kit::test]
+fn a_vault_key_without_a_vault_is_declined(cx: &mut TestAppContext) {
+    let (_handle, _view, transport) = prompt_fixture(cx, None);
+    let (reply, answer) = Reply::channel();
+    emit_prompt(
+        cx,
+        &transport,
+        Prompt::Secret {
+            request: SecretRequest::PrivateKey {
+                credential: nocterm_session::CredentialId::from_bytes([5; 16]),
+                public_key: KEY_PUBLIC.into(),
+            },
+            hop: None,
+            reply,
+        },
+    );
+    cx.run_until_parked();
+    assert_eq!(answer.now_or_never().unwrap().unwrap(), None);
+}

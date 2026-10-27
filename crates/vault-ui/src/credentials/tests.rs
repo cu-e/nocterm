@@ -61,3 +61,60 @@ fn the_store_becomes_available_when_the_vault_unlocks() {
     block_on(waiting);
     assert!(store.is_available());
 }
+
+const PUBLIC: &str =
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+
+fn key_request(credential: CredentialId, public_key: &str) -> SecretRequest {
+    SecretRequest::PrivateKey {
+        credential,
+        public_key: public_key.to_owned(),
+    }
+}
+
+#[test]
+fn a_key_prompt_never_saves_a_key_but_reads_one_bound_to_its_public_half() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store(&directory);
+    let id = block_on(store.0.put(
+        None,
+        "laptop".into(),
+        CredentialBinding::PrivateKey {
+            public_key: PUBLIC.into(),
+        },
+        Secret::new("private key text"),
+    ))
+    .unwrap();
+    let secret = block_on(store.get(id, &key_request(id, PUBLIC))).unwrap();
+    assert_eq!(secret.expose(), "private key text");
+    let other = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let error = block_on(store.get(id, &key_request(id, other))).unwrap_err();
+    assert!(error.to_string().contains("does not match"), "{error}");
+    assert!(
+        block_on(store.save("again".into(), &key_request(id, PUBLIC), Secret::new("x"))).is_err()
+    );
+    assert_eq!(block_on(store.0.list()).unwrap().len(), 1);
+}
+
+#[test]
+fn a_key_row_shows_the_fingerprint_other_rows_show_their_id() {
+    let id = CredentialId::from_bytes([7; 16]);
+    let key = nocterm_vault::CredentialInfo {
+        id,
+        label: "laptop".into(),
+        binding: CredentialBinding::PrivateKey {
+            public_key: PUBLIC.into(),
+        },
+    };
+    let text = crate::view::render::describe(&key);
+    assert!(text.starts_with("SSH key"), "{text}");
+    assert!(text.contains("SHA256:"), "{text}");
+    let password = nocterm_vault::CredentialInfo {
+        id,
+        label: "host".into(),
+        binding: CredentialBinding::Password {
+            target: Target::new("test", "test-host", 22),
+        },
+    };
+    assert_eq!(crate::view::render::describe(&password), id.to_string());
+}

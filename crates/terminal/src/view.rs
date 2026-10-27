@@ -571,6 +571,10 @@ impl TerminalView {
     fn sync_secret_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.terminal.read(cx);
         let question = match terminal.prompt() {
+            Some(Prompt::Secret {
+                request: SecretRequest::PrivateKey { .. },
+                ..
+            }) => None,
             Some(Prompt::Secret { request, .. }) => Some((
                 terminal.prompt_epoch(),
                 matches!(request, SecretRequest::Interactive { echo: true, .. }),

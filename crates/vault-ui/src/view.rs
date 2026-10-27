@@ -7,7 +7,7 @@ use std::sync::Arc;
 mod form;
 use form::VaultForm;
 #[path = "render.rs"]
-mod render;
+pub(crate) mod render;
 
 /// The page's tabs, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

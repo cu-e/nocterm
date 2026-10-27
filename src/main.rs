@@ -20,6 +20,7 @@ mod project_setup;
 mod settings_pages;
 mod shell_setup;
 mod startup;
+mod vault_keys;
 
 #[cfg(test)]
 mod agent_history_tests;
