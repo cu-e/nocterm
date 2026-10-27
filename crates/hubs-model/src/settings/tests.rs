@@ -170,7 +170,11 @@ fn a_colour_is_read_written_and_survives_a_round_trip() {
     )]))
     .unwrap();
     assert!(text.contains("color = \"blue\""), "{text}");
-    assert_eq!(text.matches("color").count(), 1, "unmarked servers write none");
+    assert_eq!(
+        text.matches("color").count(),
+        1,
+        "unmarked servers write none"
+    );
     assert_eq!(load(&text), settings);
 }
 

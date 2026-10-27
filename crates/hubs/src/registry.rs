@@ -2,7 +2,7 @@
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
-    HubAddress, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord, HubsSettings,
+    HubAddress, HubColor, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord, HubsSettings,
 };
 use nocterm_store::SettingsHandle;
 
@@ -25,6 +25,7 @@ pub struct HubSummary {
     pub id: HubId,
     pub label: String,
     pub address: HubAddress,
+    pub color: Option<HubColor>,
     pub status: HubStatus,
 }
 
@@ -78,6 +79,7 @@ impl Hubs {
                 id: entry.record.id(),
                 label: entry.record.display_label(),
                 address: entry.record.address.clone(),
+                color: entry.record.color,
                 status: entry.status.clone(),
             })
             .collect()
@@ -316,7 +318,53 @@ impl Hubs {
         })
     }
 
-    /// Removes a server from the settings and erases the credentials kept for it.
+    /// Renames a server in the settings, in one edit. An empty name shows the address.
+    pub fn set_label(
+        &mut self,
+        hub: &HubId,
+        label: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), HubsError>> {
+        let label = label.to_owned();
+        self.edit_record(hub, cx, move |settings, hub| {
+            settings.set_label(hub, &label);
+        })
+    }
+
+    /// Marks a server with a colour, or clears the mark, in one edit of the settings.
+    pub fn set_color(
+        &mut self,
+        hub: &HubId,
+        color: Option<HubColor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), HubsError>> {
+        self.edit_record(hub, cx, move |settings, hub| {
+            settings.set_color(hub, color);
+        })
+    }
+
+    fn edit_record(
+        &mut self,
+        hub: &HubId,
+        cx: &mut Context<Self>,
+        edit: impl FnOnce(&mut HubsSettings, &HubId) + 'static,
+    ) -> Task<Result<(), HubsError>> {
+        if self.entry(hub).is_none() {
+            return Task::ready(Err(HubsError::Unknown(hub.clone())));
+        }
+        let id = hub.clone();
+        let saving = self
+            .settings
+            .update_checked::<HubsSettings>(cx, move |settings| {
+                edit(settings, &id);
+                Ok(())
+            });
+        cx.spawn(async move |_, _| saving.await.map(|_| ()).map_err(HubsError::Save))
+    }
+
+    /// Removes a server from the settings and erases the credentials kept for it. When the
+    /// settings cannot be saved the server stays listed without credentials, and the hub
+    /// connects again to show where it stands.
     pub fn remove(&mut self, hub: &HubId, cx: &mut Context<Self>) -> Task<Result<(), HubsError>> {
         if self.entry(hub).is_none() {
             return Task::ready(Err(HubsError::Unknown(hub.clone())));
@@ -325,13 +373,20 @@ impl Hubs {
             return Task::ready(Err(error.into()));
         }
         let id = hub.clone();
+        let removed = hub.clone();
         let saving = self
             .settings
             .update_checked::<HubsSettings>(cx, move |settings| {
-                settings.remove(&id);
+                settings.remove(&removed);
                 Ok(())
             });
-        cx.spawn(async move |_, _| saving.await.map(|_| ()).map_err(HubsError::Save))
+        cx.spawn(async move |this, cx| {
+            let saved = saving.await;
+            if saved.is_err() {
+                this.update(cx, |hubs, cx| hubs.connect(&id, cx)).ok();
+            }
+            saved.map(|_| ()).map_err(HubsError::Save)
+        })
     }
 }
 

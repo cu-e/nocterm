@@ -414,7 +414,9 @@ impl SignInSession {
         let saving = self
             .settings
             .update_checked::<HubsSettings>(cx, move |settings| {
-                settings.upsert(record);
+                // Signing in again to a known server keeps the colour its owner chose.
+                let color = settings.find(&record.id()).and_then(|known| known.color);
+                settings.upsert(record.with_color(color));
                 Ok(())
             });
         self.work = Some(cx.spawn(async move |this, cx| {

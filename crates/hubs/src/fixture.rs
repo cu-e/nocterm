@@ -48,6 +48,15 @@ pub(crate) fn fixture(cx: &mut TestAppContext, hub: FakeHub, known: Vec<HubRecor
 
 /// As [`fixture`], but every write of the settings fails.
 pub(crate) fn fixture_with_failing_settings(cx: &mut TestAppContext, hub: FakeHub) -> Fixture {
+    fixture_with_known_failing_settings(cx, hub, Vec::new())
+}
+
+/// As [`fixture_with_failing_settings`], with `known` servers already listed.
+pub(crate) fn fixture_with_known_failing_settings(
+    cx: &mut TestAppContext,
+    hub: FakeHub,
+    known: Vec<HubRecord>,
+) -> Fixture {
     let writer: nocterm_store::SnapshotWriter<SettingsDocument> = Arc::new(|_| {
         Box::pin(async {
             Err(StoreError::backend(std::io::Error::from(
@@ -55,7 +64,7 @@ pub(crate) fn fixture_with_failing_settings(cx: &mut TestAppContext, hub: FakeHu
             )))
         })
     });
-    build(cx, hub, Vec::new(), Some(writer))
+    build(cx, hub, known, Some(writer))
 }
 
 fn build(

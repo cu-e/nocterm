@@ -2,10 +2,12 @@ use std::time::Duration;
 
 use gpui::TestAppContext;
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
-use nocterm_hubs_model::{Fingerprint, HubError, HubRecord, TrustPolicy};
+use nocterm_hubs_model::{Fingerprint, HubColor, HubError, HubRecord, TrustPolicy};
 
-use crate::fixture::{address, fixture, id, pinned_record, server};
-use crate::{HubStatus, Load};
+use crate::fixture::{
+    address, fixture, fixture_with_known_failing_settings, id, pinned_record, server,
+};
+use crate::{HubStatus, HubsError, Load};
 
 fn signed_in_hub() -> FakeHub {
     let hub = FakeHub::new().with_server(server());
@@ -230,4 +232,155 @@ async fn a_hub_that_stops_answering_while_online_goes_offline(cx: &mut TestAppCo
     window.update(cx, |window, cx| window.refresh(cx));
     cx.run_until_parked();
     assert!(matches!(fx.status(cx), Some(HubStatus::Offline { .. })));
+}
+
+fn revision(fx: &crate::fixture::Fixture, cx: &mut TestAppContext) -> u64 {
+    cx.read(|cx| fx.settings.revision(cx))
+}
+
+#[gpui::test]
+async fn renaming_a_server_is_one_settings_edit_and_shows_in_the_list(cx: &mut TestAppContext) {
+    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
+    cx.run_until_parked();
+    let before = revision(&fx, cx);
+
+    fx.hubs
+        .update(cx, |hubs, cx| hubs.set_label(&id(), "  Office\n", cx))
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(revision(&fx, cx), before + 1);
+    assert_eq!(fx.servers(cx)[0].label, "Office");
+    let label = fx
+        .hubs
+        .read_with(cx, |hubs, _| hubs.summary(&id()).unwrap().label);
+    assert_eq!(label, "Office");
+    assert_eq!(
+        fx.hub.count(FakeOp::Connect),
+        1,
+        "no new connection for a name"
+    );
+}
+
+#[gpui::test]
+async fn an_empty_name_shows_the_address_again(cx: &mut TestAppContext) {
+    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
+    cx.run_until_parked();
+    fx.hubs
+        .update(cx, |hubs, cx| hubs.set_label(&id(), "   ", cx))
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let label = fx
+        .hubs
+        .read_with(cx, |hubs, _| hubs.summary(&id()).unwrap().label);
+    assert_eq!(label, address().to_string());
+}
+
+#[gpui::test]
+async fn colouring_a_server_is_one_settings_edit_and_can_be_undone(cx: &mut TestAppContext) {
+    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
+    cx.run_until_parked();
+    let before = revision(&fx, cx);
+
+    fx.hubs
+        .update(cx, |hubs, cx| {
+            hubs.set_color(&id(), Some(HubColor::Green), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(revision(&fx, cx), before + 1);
+    let color = fx
+        .hubs
+        .read_with(cx, |hubs, _| hubs.summary(&id()).unwrap().color);
+    assert_eq!(color, Some(HubColor::Green));
+    assert_eq!(fx.status(cx), Some(HubStatus::Online), "still connected");
+
+    fx.hubs
+        .update(cx, |hubs, cx| hubs.set_color(&id(), None, cx))
+        .await
+        .unwrap();
+    assert_eq!(fx.servers(cx)[0].color, None);
+}
+
+#[gpui::test]
+async fn editing_an_unknown_server_fails_and_changes_nothing(cx: &mut TestAppContext) {
+    let fx = fixture(cx, signed_in_hub(), Vec::new());
+    let before = revision(&fx, cx);
+    let renamed = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.set_label(&id(), "x", cx));
+    let colored = fx.hubs.update(cx, |hubs, cx| {
+        hubs.set_color(&id(), Some(HubColor::Red), cx)
+    });
+    assert!(matches!(renamed.await, Err(HubsError::Unknown(_))));
+    assert!(matches!(colored.await, Err(HubsError::Unknown(_))));
+    assert_eq!(revision(&fx, cx), before);
+}
+
+#[gpui::test]
+async fn a_failed_save_leaves_the_name_and_colour_as_they_were(cx: &mut TestAppContext) {
+    let fx = fixture_with_known_failing_settings(cx, signed_in_hub(), vec![pinned_record()]);
+    cx.run_until_parked();
+    let renamed = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.set_label(&id(), "Office", cx));
+    assert!(matches!(renamed.await, Err(HubsError::Save(_))));
+    let colored = fx.hubs.update(cx, |hubs, cx| {
+        hubs.set_color(&id(), Some(HubColor::Cyan), cx)
+    });
+    assert!(matches!(colored.await, Err(HubsError::Save(_))));
+    cx.run_until_parked();
+    assert_eq!(fx.servers(cx), vec![pinned_record()]);
+}
+
+#[gpui::test]
+async fn signing_out_erases_the_credentials_and_keeps_name_and_colour(cx: &mut TestAppContext) {
+    let marked = pinned_record().with_color(Some(HubColor::Magenta));
+    let fx = fixture(cx, signed_in_hub(), vec![marked.clone()]);
+    cx.run_until_parked();
+    fx.hubs
+        .update(cx, |hubs, cx| hubs.sign_out(&id(), cx))
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(fx.status(cx), Some(HubStatus::SignedOut));
+    assert_eq!(fx.servers(cx), vec![marked]);
+    assert!(fx.hub.calls().contains(&FakeCall::SignOut(id())));
+    assert!(!fx.hub.is_signed_in(&id()));
+}
+
+#[gpui::test]
+async fn a_server_that_cannot_be_removed_from_the_settings_shows_as_signed_out(
+    cx: &mut TestAppContext,
+) {
+    let fx = fixture_with_known_failing_settings(cx, signed_in_hub(), vec![pinned_record()]);
+    cx.run_until_parked();
+    assert_eq!(fx.status(cx), Some(HubStatus::Online));
+
+    let removed = fx.hubs.update(cx, |hubs, cx| hubs.remove(&id(), cx));
+    assert!(matches!(removed.await, Err(HubsError::Save(_))));
+    cx.run_until_parked();
+
+    assert_eq!(fx.servers(cx), vec![pinned_record()], "still listed");
+    assert!(!fx.hub.is_signed_in(&id()), "the credentials are gone");
+    assert_eq!(
+        fx.status(cx),
+        Some(HubStatus::SignedOut),
+        "the list does not claim a connection that cannot work"
+    );
+}
+
+#[gpui::test]
+async fn credentials_that_cannot_be_erased_keep_the_server_listed(cx: &mut TestAppContext) {
+    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
+    cx.run_until_parked();
+    fx.hub.fail_next(FakeOp::Forget, HubError::NotSignedIn);
+    let removed = fx.hubs.update(cx, |hubs, cx| hubs.remove(&id(), cx));
+    assert!(matches!(removed.await, Err(HubsError::Hub(_))));
+    cx.run_until_parked();
+    assert_eq!(fx.servers(cx), vec![pinned_record()]);
+    assert_eq!(fx.status(cx), Some(HubStatus::Online));
 }

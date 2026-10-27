@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use gpui::{Entity, TestAppContext};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
-use nocterm_hubs_model::{Fingerprint, HubError, TrustPolicy};
+use nocterm_hubs_model::{Fingerprint, HubColor, HubError, TrustPolicy};
 use nocterm_session::Secret;
 
 use crate::fixture::{ADDRESS, Fixture, fixture, fixture_with_failing_settings, id, server};
@@ -450,4 +450,24 @@ async fn a_resumed_sign_in_cannot_be_pointed_at_another_server(cx: &mut TestAppC
     assert!(matches!(step(cx, &session), SignInStep::Address { .. }));
     assert_eq!(fx.hub.count(FakeOp::Probe), probes);
     assert_eq!(fx.hub.count(FakeOp::Connect), connects);
+}
+
+#[gpui::test]
+async fn signing_in_again_keeps_the_colour_chosen_for_the_server(cx: &mut TestAppContext) {
+    let hub = hub();
+    hub.sign_in_as(&id(), "ada");
+    hub.revoke_device(&id());
+    let marked = crate::fixture::pinned_record().with_color(Some(HubColor::Blue));
+    let fx = fixture(cx, hub, vec![marked]);
+    cx.run_until_parked();
+
+    let session = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.start_sign_in_for(&id(), cx))
+        .expect("a known hub");
+    cx.run_until_parked();
+    password(cx, &session, "ada", "secret");
+
+    assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
+    assert_eq!(fx.servers(cx)[0].color, Some(HubColor::Blue));
 }

@@ -37,6 +37,7 @@ pub enum FakeOp {
     Password,
     Oidc,
     SignOut,
+    Forget,
     Account,
     Nodes,
     Sessions,
@@ -230,7 +231,8 @@ impl FakeCall {
             Self::Password { .. } => FakeOp::Password,
             Self::Oidc { .. } => FakeOp::Oidc,
             Self::SignOut(_) => FakeOp::SignOut,
-            Self::Forget(_) | Self::Terminal(..) => return None,
+            Self::Forget(_) => FakeOp::Forget,
+            Self::Terminal(..) => return None,
             Self::Account(_) => FakeOp::Account,
             Self::Nodes(..) => FakeOp::Nodes,
             Self::Sessions(..) => FakeOp::Sessions,
@@ -426,6 +428,14 @@ impl HubSignIn for FakeHub {
     fn forget(&self, hub: &HubId) -> Result<(), HubError> {
         let mut state = lock(&self.state);
         state.calls.push(FakeCall::Forget(hub.clone()));
+        let injected = state
+            .failures
+            .iter()
+            .position(|(failing, _)| *failing == FakeOp::Forget)
+            .and_then(|index| state.failures.remove(index));
+        if let Some((_, error)) = injected {
+            return Err(error);
+        }
         state.credentials.remove(hub);
         Ok(())
     }
