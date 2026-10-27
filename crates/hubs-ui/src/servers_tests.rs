@@ -5,7 +5,7 @@ use super::{ServersPage, row::item, settings_page};
 use crate::test_support::{Fixture, fixture_over, hub_id, pinned_record, server};
 use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
 use nocterm_hubs::{HubStatus, HubSummary};
-use nocterm_hubs_model::testing::{FakeCall, FakeHub};
+use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
 use nocterm_hubs_model::{Fingerprint, HubColor, HubRecord, TrustPolicy};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
@@ -19,7 +19,22 @@ fn page_over(
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
-    let hub = FakeHub::new().with_server(server());
+    page_on(
+        cx,
+        config,
+        FakeHub::new().with_server(server()),
+        known,
+        signed_in,
+    )
+}
+
+fn page_on(
+    cx: &mut TestAppContext,
+    config: SettingsConfig,
+    hub: FakeHub,
+    known: Vec<HubRecord>,
+    signed_in: Option<&str>,
+) -> Fixture {
     let setup = fixture_over(cx, config, hub, known, signed_in);
     let hubs = setup.installed.hubs().clone();
     let (window, _) = cx.update(|cx| {
@@ -271,4 +286,34 @@ fn a_server_that_is_not_signed_in_cannot_become_the_account_server(cx: &mut Test
     let config = SettingsConfig::in_memory(SettingsDocument::default());
     let page = page_over(cx, config, vec![pinned_record()], None);
     assert!(!page.shows(item("server-account-on", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_server_whose_recovery_key_was_never_confirmed_offers_a_new_one(cx: &mut TestAppContext) {
+    let hub = FakeHub::new().with_server(server().with_keyset("ada", "secret", "recovery-ada"));
+    hub.leave_recovery_key_unconfirmed(&hub_id());
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let page = page_on(cx, config, hub, vec![pinned_record()], Some("ada"));
+    assert!(page.shows(item("server-recovery-issue", KEY), cx));
+
+    page.click(item("server-recovery-issue", KEY), cx);
+    page.settle_dialog(cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(page.shows("sign-in-key-saved", cx));
+    assert_eq!(page.hub.count(FakeOp::ReissueRecoveryKey), 1);
+
+    page.click("sign-in-key-saved", cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(
+        !page.shows(item("server-recovery-issue", KEY), cx),
+        "a saved key is not offered again"
+    );
+}
+
+#[gpui_kit::test]
+fn a_server_with_a_confirmed_recovery_key_offers_no_new_one(cx: &mut TestAppContext) {
+    let page = page(cx, vec![pinned_record()]);
+    assert!(!page.shows(item("server-recovery-issue", KEY), cx));
 }

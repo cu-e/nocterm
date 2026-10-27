@@ -38,16 +38,39 @@ pub(crate) fn start(hubs: &Entity<Hubs>, hub: Option<&HubId>, window: &mut Windo
     }
 }
 
+/// Shows the dialog that issues a new recovery key for the listed, signed-in server `hub`.
+pub(crate) fn start_reissue(hubs: &Entity<Hubs>, hub: &HubId, window: &mut Window, cx: &mut App) {
+    let session = hubs.update(cx, |hubs, cx| hubs.start_recovery_key_reissue(hub, cx));
+    if let Some(session) = session {
+        open(session, window, cx);
+    }
+}
+
 /// Opens the dialog over `session`. Closing the dialog ends the sign-in: a browser sign-in
-/// in flight is cancelled with the session.
+/// in flight is cancelled with the session. While a recovery key is being issued or shown the
+/// dialog cannot be closed (button, backdrop or Escape): the key exists on the server and is
+/// shown only here.
 pub(crate) fn open(session: Entity<SignInSession>, window: &mut Window, cx: &mut App) {
     let dialog = cx.new(|cx| SignInDialog::new(session, window, cx));
     let first = dialog.clone();
-    window.open_dialog(cx, move |shell, _, _| {
+    window.open_dialog(cx, move |shell, _, cx| {
         let submit = dialog.clone();
+        let guard = dialog.downgrade();
+        let (held, title) = {
+            let dialog = dialog.read(cx);
+            (dialog.holds_the_key(cx), dialog.title(cx))
+        };
         shell
-            .title("Sign in to a server")
+            .title(title)
             .w(px(480.))
+            .close_button(!held)
+            .overlay_closable(!held)
+            .keyboard(!held)
+            .on_cancel(move |_, _, cx| {
+                guard
+                    .upgrade()
+                    .is_none_or(|dialog| !dialog.read(cx).holds_the_key(cx))
+            })
             // Enter reaches the dialog as the confirm action. The step decides what it means
             // and the dialog closes itself when it is done.
             .on_ok(move |_, window, cx| {
@@ -117,6 +140,22 @@ impl SignInDialog {
         self.session.read(cx).step().clone()
     }
 
+    /// A recovery key is being issued or shown: leaving now would lose it.
+    fn holds_the_key(&self, cx: &App) -> bool {
+        matches!(
+            self.session.read(cx).step(),
+            SignInStep::RecoveryKey { .. } | SignInStep::Issuing
+        )
+    }
+
+    fn title(&self, cx: &App) -> &'static str {
+        if self.session.read(cx).reissue_only() {
+            "Recovery key"
+        } else {
+            "Sign in to a server"
+        }
+    }
+
     /// What Enter does on this step. Never a choice that cannot be taken back: on the trust
     /// step it goes back.
     fn primary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -132,8 +171,11 @@ impl SignInDialog {
             SignInStep::Finished(_) => self.close(window, cx),
             SignInStep::Passphrase { .. } => self.set_vault_passphrase(window, cx),
             SignInStep::Recovery { .. } => self.recover(window, cx),
-            // Enter must not skip past the one showing of the recovery key.
+            // Enter must not skip past the one showing of the recovery key, nor replace a key
+            // the person may still hold.
             SignInStep::RecoveryKey { .. }
+            | SignInStep::RecoveryOffer { .. }
+            | SignInStep::Issuing
             | SignInStep::Method { .. }
             | SignInStep::Checking
             | SignInStep::Authenticating
@@ -204,6 +246,13 @@ impl SignInDialog {
             } => self.render_method(&hub_name, password, &providers, note, problem.as_ref(), cx),
             SignInStep::Browser { provider, url } => self.render_browser(&provider, url, cx),
             SignInStep::RecoveryKey { key } => self.render_recovery_key(&key, cx),
+            SignInStep::RecoveryOffer { problem } => {
+                self.render_recovery_offer(problem.as_ref(), cx)
+            }
+            SignInStep::Issuing => v_flex()
+                .gap_3()
+                .child(note("Issuing a new recovery key…", cx))
+                .into_any_element(),
             SignInStep::Passphrase { problem } => self.render_passphrase(problem.as_ref(), cx),
             SignInStep::Recovery { problem } => self.render_recovery(problem.as_ref(), cx),
             SignInStep::Finished(_) => self.render_finished(cx),
@@ -491,6 +540,51 @@ impl SignInDialog {
             .into_any_element()
     }
 
+    fn render_recovery_offer(
+        &mut self,
+        failure: Option<&SignInError>,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let standalone = self.session.read(cx).reissue_only();
+        v_flex()
+            .gap_3()
+            .child(title("Your recovery key was not confirmed".to_owned(), cx))
+            .child(note(
+                "The recovery key made with your account keys was never confirmed as saved, so it may be lost. Issue a new one now: the old key stops working, and the new one is shown once.",
+                cx,
+            ))
+            .when_some(failure, |step, error| {
+                step.child(problem(sign_in_problem(error), cx))
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_end()
+                    .child(
+                        Button::new("sign-in-offer-later")
+                            .label("Not now")
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                if standalone {
+                                    this.close(window, cx);
+                                } else {
+                                    this.session
+                                        .update(cx, |session, cx| session.skip_recovery_offer(cx));
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("sign-in-offer-issue")
+                            .primary()
+                            .label("Issue a new recovery key")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.session
+                                    .update(cx, |session, cx| session.issue_recovery_key(cx));
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_passphrase(
         &mut self,
         failure: Option<&SignInError>,
@@ -570,13 +664,21 @@ impl SignInDialog {
     }
 
     fn render_finished(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let (heading, text) = if self.session.read(cx).reissue_only() {
+            (
+                "Recovery key saved",
+                "The new recovery key opens your account keys. The old one no longer does.",
+            )
+        } else {
+            (
+                "Signed in",
+                "The server is saved. Its sessions are in the Sessions panel.",
+            )
+        };
         v_flex()
             .gap_3()
-            .child(title("Signed in".to_owned(), cx))
-            .child(note(
-                "The server is saved. Its sessions are in the Sessions panel.",
-                cx,
-            ))
+            .child(title(heading.to_owned(), cx))
+            .child(note(text, cx))
             .child(
                 h_flex().justify_end().child(
                     Button::new("sign-in-done")

@@ -121,8 +121,10 @@ data on disk is ciphertext in a mode-0600 file replaced atomically, and the agre
 replica state in another private file. A record that does not verify (changed, or moved to
 another collection or identity) is an error that stops the feed, and never overwrites or deletes
 local data. Collections and record kinds this version does not know are never listed, rewritten
-or deleted. A revoked device leaves its cached ciphertext in place; it is unreadable without the
-keys, and a later sign-out of the server or its removal erases it.
+or deleted. A revoked device erases its cached ciphertext and zeroes its keys, as signing out of
+the server or removing it does. The only record of the recovery key on a device is a flag that
+it was shown and not yet confirmed as saved; it is not a secret, and it makes the open keys offer
+a new key, replacing the recovery envelope with a write conditional on the keyset version.
 
 ## Verification scope
 

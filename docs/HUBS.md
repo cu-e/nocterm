@@ -30,7 +30,11 @@ a hub, and each one opens as a terminal tab beside your local tabs. A window has
 6. Your account keys open as part of signing in:
    - The first time an account signs in, Nocterm creates its keys and shows a **recovery key**
      once. Write it down: it is the only way to open the keys if you lose your password, and it
-     is neither kept on this device nor shown again.
+     is neither kept on this device nor shown again. The dialog cannot be closed on this step
+     until you choose **I have saved it**. If the window is lost anyway (a crash, the computer
+     turned off), the next time the keys open Nocterm offers to **issue a new recovery key**,
+     here or on the Servers page; the old one stops working and the new one is shown once the
+     same way.
    - After single sign-on, the password of the provider does not open the keys, so Nocterm asks
      for a **vault passphrase** of at least eight characters. The first time, this sets it.
    - If the account's password was reset on the server, Nocterm asks for the **recovery key**; the

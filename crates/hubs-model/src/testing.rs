@@ -142,6 +142,18 @@ impl FakeHub {
     }
 
     /// Makes the hub revoke this device: its next call finds the device revoked.
+    /// Ends the sign-in of this device as an expired login does: the credentials are gone, the
+    /// account keys it holds are not.
+    pub fn expire_login(&self, hub: &HubId) {
+        lock(&self.state).credentials.remove(hub);
+    }
+
+    /// Marks the recovery key shown on this device for `hub` as never confirmed, as a dialog
+    /// closed on that step leaves it.
+    pub fn leave_recovery_key_unconfirmed(&self, hub: &HubId) {
+        lock(&self.state).unconfirmed.insert(hub.clone());
+    }
+
     pub fn revoke_device(&self, hub: &HubId) {
         lock(&self.state).revoked.insert(hub.clone());
     }

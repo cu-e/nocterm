@@ -48,5 +48,8 @@ vault, and `src/hub_account.rs` composes them.
 
 - A server operator learns the size, the number and the times of records, not their content.
 - Losing both the password and the recovery key loses the account's vault and replicated profiles.
-- A revoked device does not erase the cached ciphertext yet; it stays unreadable without the keys.
+- A revoked device erases its cached ciphertext and zeroes its keys, as signing out does.
+- A recovery key that was shown and not confirmed is flagged in the cache. While the flag stands
+  and the keys are open, a new key can be issued: it replaces the recovery envelope with a keyset
+  write conditional on the version, so the old key stops working.
 - The hub contract owns the cryptography; this repository adds no primitive of its own.

@@ -70,6 +70,15 @@ pub enum SignInStep {
     RecoveryKey {
         key: Secret,
     },
+    /// The keys are open, but the recovery key shown when they were made was never confirmed as
+    /// saved (the dialog was closed or the client stopped on that step). A new one can be
+    /// issued; the old one stays valid until then.
+    RecoveryOffer {
+        problem: Option<SignInError>,
+    },
+    /// Replacing the recovery key. The new key exists on the server before it is shown, so this
+    /// step cannot be left: stopping now would lose it.
+    Issuing,
     /// A browser sign-in cannot open the account's keys: waiting for the vault passphrase.
     Passphrase {
         problem: Option<SignInError>,
@@ -110,6 +119,8 @@ struct Attempt {
     fresh_credentials: bool,
     /// The address cannot be changed: signing in again to a known server.
     fixed: bool,
+    /// The run only issues a new recovery key for a server that is signed in to and listed.
+    reissue_only: bool,
 }
 
 /// One run of the sign-in dialog.
@@ -158,6 +169,29 @@ impl SignInSession {
         };
         session.connect(record.trust, note, cx);
         session
+    }
+
+    /// A run that issues a new recovery key for the signed-in server `hub`, without signing in.
+    pub(crate) fn reissue(
+        deps: &Deps,
+        settings: SettingsHandle,
+        hub: &HubId,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut session = Self::new(deps, settings);
+        session.attempt = Attempt {
+            address: Some(hub.address().clone()),
+            fixed: true,
+            reissue_only: true,
+            ..Attempt::default()
+        };
+        session.issue(hub.clone(), cx);
+        session
+    }
+
+    /// The run only issues a new recovery key: nothing is signed in to or saved.
+    pub fn reissue_only(&self) -> bool {
+        self.attempt.reissue_only
     }
 
     pub fn step(&self) -> &SignInStep {
@@ -293,7 +327,16 @@ impl SignInSession {
         let signed_in = info.signed_in;
         self.attempt.info = Some(info);
         if signed_in {
-            self.publish(cx);
+            // Keys that are open already, from a run of this dialog that was closed on the
+            // recovery key, still wait for it to be confirmed.
+            let unconfirmed = self
+                .hub()
+                .is_some_and(|hub| self.sign_in.recovery_key_unconfirmed(&hub));
+            if unconfirmed {
+                self.move_to(SignInStep::RecoveryOffer { problem: None }, cx);
+            } else {
+                self.publish(cx);
+            }
         } else {
             self.show_methods(None, cx);
         }
@@ -387,7 +430,10 @@ impl SignInSession {
     /// Goes on from what a sign-in (or a passphrase) did to the account's keys.
     fn keys_settled(&mut self, keys: KeyStatus, cx: &mut Context<Self>) {
         match keys {
-            KeyStatus::Open | KeyStatus::RecoveryKeyUnconfirmed => self.publish(cx),
+            KeyStatus::Open => self.publish(cx),
+            KeyStatus::RecoveryKeyUnconfirmed => {
+                self.move_to(SignInStep::RecoveryOffer { problem: None }, cx)
+            }
             KeyStatus::Created(key) => self.move_to(SignInStep::RecoveryKey { key }, cx),
             KeyStatus::PassphraseNeeded => {
                 self.move_to(SignInStep::Passphrase { problem: None }, cx)
@@ -400,10 +446,64 @@ impl SignInSession {
         self.attempt.address.clone().map(HubId::from)
     }
 
-    /// The user wrote the recovery key down: the sign-in goes on.
+    /// The user wrote the recovery key down: it is no longer offered again, and the sign-in
+    /// goes on.
     pub fn acknowledge_recovery_key(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.step, SignInStep::RecoveryKey { .. }) {
+        if !matches!(self.step, SignInStep::RecoveryKey { .. }) {
+            return;
+        }
+        let hub = self.hub();
+        if let Some(hub) = &hub
+            && let Err(error) = self.sign_in.confirm_recovery_key(hub)
+        {
+            // The key is shown again the next time the keys open; nothing else is lost.
+            tracing::warn!(%hub, %error, "the saved recovery key could not be recorded");
+        }
+        match hub {
+            Some(hub) if self.attempt.reissue_only => {
+                self.move_to(SignInStep::Finished(hub.clone()), cx);
+                cx.emit(SignInEvent::Finished(hub));
+            }
+            _ => self.publish(cx),
+        }
+    }
+
+    /// Issues a new recovery key, because the one made with the keys was never confirmed.
+    pub fn issue_recovery_key(&mut self, cx: &mut Context<Self>) {
+        let (SignInStep::RecoveryOffer { .. }, Some(hub)) = (&self.step, self.hub()) else {
+            return;
+        };
+        self.issue(hub, cx);
+    }
+
+    /// The user leaves the unconfirmed recovery key for later: the sign-in goes on, and the
+    /// servers page offers it again.
+    pub fn skip_recovery_offer(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.step, SignInStep::RecoveryOffer { .. }) && !self.attempt.reissue_only {
             self.publish(cx);
+        }
+    }
+
+    fn issue(&mut self, hub: HubId, cx: &mut Context<Self>) {
+        self.move_to(SignInStep::Issuing, cx);
+        let issuing = self.sign_in.reissue_recovery_key(&hub);
+        self.work = Some(cx.spawn(async move |this, cx| {
+            let result = issuing.await;
+            this.update(cx, |session, cx| session.issued(result, cx))
+                .ok();
+        }));
+    }
+
+    fn issued(&mut self, result: Result<Secret, HubError>, cx: &mut Context<Self>) {
+        self.work = None;
+        match result {
+            Ok(key) => self.move_to(SignInStep::RecoveryKey { key }, cx),
+            Err(error) => self.move_to(
+                SignInStep::RecoveryOffer {
+                    problem: Some(error.into()),
+                },
+                cx,
+            ),
         }
     }
 
@@ -482,6 +582,8 @@ impl SignInSession {
             | SignInStep::Method { .. } => SignInStep::Address { problem: None },
             SignInStep::Address { .. }
             | SignInStep::RecoveryKey { .. }
+            | SignInStep::RecoveryOffer { .. }
+            | SignInStep::Issuing
             | SignInStep::Saving
             | SignInStep::Finished(_)
             | SignInStep::Failed(_) => return,

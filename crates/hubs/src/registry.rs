@@ -298,6 +298,32 @@ impl Hubs {
         Some(session)
     }
 
+    /// Whether the account keys of `hub` are open and the recovery key made with them was never
+    /// confirmed as saved: a new one can be issued with [`Hubs::start_recovery_key_reissue`].
+    pub fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
+        self.entry(hub).is_some() && self.deps.sign_in.recovery_key_unconfirmed(hub)
+    }
+
+    /// Starts issuing a new recovery key for `hub`, which replaces the unconfirmed one. The
+    /// dialog shows it once; `None` when `hub` is not listed.
+    pub fn start_recovery_key_reissue(
+        &mut self,
+        hub: &HubId,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<SignInSession>> {
+        self.entry(hub)?;
+        let (deps, settings) = (self.deps.clone(), self.settings.clone());
+        let session = cx.new(|cx| SignInSession::reissue(&deps, settings, hub, cx));
+        // Saving the new key ends the offer: whoever shows it is told to look again.
+        cx.subscribe(&session, |_, _, event, cx| {
+            if matches!(event, SignInEvent::Finished(_)) {
+                cx.notify();
+            }
+        })
+        .detach();
+        Some(session)
+    }
+
     /// Ends this device's session on the hub and erases its credentials. The server stays
     /// in the list, signed out.
     pub fn sign_out(&mut self, hub: &HubId, cx: &mut Context<Self>) -> Task<Result<(), HubsError>> {

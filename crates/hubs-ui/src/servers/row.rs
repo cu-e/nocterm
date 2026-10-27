@@ -82,6 +82,7 @@ pub(super) fn server_row(
         .child(colors(summary, hubs, &key, cx))
         .child(certificate(summary, record, &key, cx))
         .child(account(summary, hubs, &key, cx))
+        .children(recovery_key(summary, hubs, &key, cx))
         .child(actions(summary, hubs, &key))
         .into_any_element()
 }
@@ -211,6 +212,43 @@ fn account(summary: &HubSummary, hubs: &Entity<Hubs>, key: &str, cx: &App) -> im
             .gap_2()
             .child(note(text, cx))
             .child(h_flex().justify_end().children(button)),
+    )
+}
+
+/// The offer of a new recovery key, while the one made with the account keys on this device was
+/// never confirmed as saved and the keys are open.
+fn recovery_key(
+    summary: &HubSummary,
+    hubs: &Entity<Hubs>,
+    key: &str,
+    cx: &App,
+) -> Option<gpui_kit::AnyElement> {
+    if !hubs.read(cx).recovery_key_unconfirmed(&summary.id) {
+        return None;
+    }
+    let (hubs, id) = (hubs.clone(), summary.id.clone());
+    Some(
+        field(
+            "Recovery key",
+            v_flex()
+                .id(item("server-recovery", key))
+                .test_support()
+                .gap_2()
+                .child(note(
+                    "The recovery key made with your account keys was never confirmed as saved. Issue a new one so you can still open them if you lose your password.",
+                    cx,
+                ))
+                .child(
+                    h_flex().justify_end().child(
+                        Button::new(item("server-recovery-issue", key))
+                            .label("Issue a new recovery key")
+                            .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                crate::sign_in::start_reissue(&hubs, &id, window, cx);
+                            }),
+                    ),
+                ),
+        )
+        .into_any_element(),
     )
 }
 

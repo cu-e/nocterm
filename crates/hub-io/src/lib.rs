@@ -28,7 +28,10 @@
 //! Globals: none.
 //! Invariants: the device key and tokens live only in a mode-0600 file of a mode-0700
 //! directory, published atomically and read under an inter-process lock; a pinned hub is
-//! trusted only with the exact pinned certificate; a revoked device erases its credentials;
+//! trusted only with the exact pinned certificate; a revoked device erases its credentials, its
+//! account cache and its keys; a recovery key shown and not confirmed is flagged in the cache (a
+//! fact, not a secret) and replaced by a new one through a keyset write conditional on its
+//! version, never by overwriting a record whose key pair is not the open one;
 //! no tonic or prost type crosses the crate boundary, and no text built from a failure does
 //! except the reason a terminal session ended, in the text variants `SessionError` already has;
 //! closing a terminal transport's session detaches from it and never ends the process on its
