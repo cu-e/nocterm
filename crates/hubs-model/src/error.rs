@@ -92,3 +92,16 @@ pub enum HubError {
         cause: SharedCause,
     },
 }
+
+/// Why the document of open windows could not be read or written.
+#[derive(Debug, thiserror::Error)]
+pub enum WindowDocumentError {
+    /// The text is not a document of open windows.
+    #[error("the open windows document is not readable")]
+    Unreadable(#[source] serde_json::Error),
+    /// A newer version of the application wrote it; its entries may mean something else.
+    #[error("the open windows document has version {found}, this version reads up to {supported}")]
+    UnsupportedVersion { found: u32, supported: u32 },
+    #[error("the open windows document could not be written")]
+    Unwritable(#[source] serde_json::Error),
+}

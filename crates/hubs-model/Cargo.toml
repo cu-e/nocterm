@@ -20,6 +20,7 @@ nocterm-settings.workspace = true
 futures.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
