@@ -7,27 +7,87 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{address::HubAddress, environment::Environment, error::WindowDocumentError};
+use crate::{
+    address::{HubAddress, HubId},
+    environment::Environment,
+    error::WindowDocumentError,
+    records::{HubSessionId, OrgId},
+};
 
 /// The version this application writes and reads.
 const VERSION: u32 = 1;
 
-/// One window as remembered.
-///
-/// Later versions add what a window of a hub needs to come back (its sessions, its
-/// organization) as new defaulted fields of this record.
+/// What a window of a hub keeps beyond its server: the organization it shows and the sessions
+/// its tabs are attached to, in the order the tabs opened.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HubWindowMemory {
+    organization: Option<OrgId>,
+    sessions: Vec<HubSessionId>,
+}
+
+impl HubWindowMemory {
+    pub const fn new(organization: Option<OrgId>, sessions: Vec<HubSessionId>) -> Self {
+        Self {
+            organization,
+            sessions,
+        }
+    }
+
+    /// The organization the window showed, if it had settled on one.
+    pub const fn organization(&self) -> Option<&OrgId> {
+        self.organization.as_ref()
+    }
+
+    /// The sessions the window's tabs were attached to.
+    pub fn sessions(&self) -> &[HubSessionId] {
+        &self.sessions
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.organization.is_none() && self.sessions.is_empty()
+    }
+}
+
+/// One window as remembered: its environment and, for a hub, what the window kept of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct WindowRecord {
+pub struct WindowRecord {
     environment: Environment,
+    hub: HubWindowMemory,
 }
 
 impl WindowRecord {
-    const fn new(environment: Environment) -> Self {
-        Self { environment }
+    pub const fn new(environment: Environment) -> Self {
+        Self {
+            environment,
+            hub: HubWindowMemory {
+                organization: None,
+                sessions: Vec::new(),
+            },
+        }
     }
 
-    const fn environment(&self) -> &Environment {
+    /// The same window with what it kept of its hub; a window of this computer keeps nothing.
+    #[must_use]
+    pub fn with_hub(mut self, hub: HubWindowMemory) -> Self {
+        if matches!(self.environment, Environment::Hub(_)) {
+            self.hub = hub;
+        }
+        self
+    }
+
+    pub const fn environment(&self) -> &Environment {
         &self.environment
+    }
+
+    /// What the window kept of its hub; empty for a window of this computer.
+    pub const fn hub(&self) -> &HubWindowMemory {
+        &self.hub
+    }
+}
+
+impl From<Environment> for WindowRecord {
+    fn from(environment: Environment) -> Self {
+        Self::new(environment)
     }
 }
 
@@ -40,6 +100,11 @@ pub struct WindowDocument {
 }
 
 impl WindowDocument {
+    /// The remembered windows, in order.
+    pub fn records(&self) -> &[WindowRecord] {
+        &self.windows
+    }
+
     /// The remembered environments, in order.
     pub fn environments(&self) -> impl Iterator<Item = &Environment> {
         self.windows.iter().map(WindowRecord::environment)
@@ -65,8 +130,8 @@ impl WindowDocument {
         let windows: Vec<_> = saved
             .windows
             .into_iter()
-            .filter_map(|record| serde_json::from_value::<SavedWindow>(record).ok())
-            .map(|saved| WindowRecord::new(saved.environment.into()))
+            .filter_map(|record| serde_json::from_value::<ReadWindow>(record).ok())
+            .map(ReadWindow::into_record)
             .collect();
         Ok(Self {
             skipped: total - windows.len(),
@@ -80,8 +145,9 @@ impl WindowDocument {
             windows: self
                 .windows
                 .iter()
-                .map(|record| SavedWindow {
+                .map(|record| WrittenWindow {
                     environment: SavedEnvironment::from(record.environment()),
+                    hub: SavedHub::of(record.hub()),
                 })
                 .collect(),
         };
@@ -112,18 +178,39 @@ impl<K> Default for OpenWindows<K> {
 impl<K: Copy + PartialEq> OpenWindows<K> {
     /// Adds a window after the others; a key that is open already takes the new environment.
     pub fn opened(&mut self, key: K, environment: Environment) {
-        let record = WindowRecord::new(environment);
+        self.opened_record(key, WindowRecord::new(environment));
+    }
+
+    /// As [`OpenWindows::opened`], for a window that comes back with what it kept of its hub.
+    pub fn restored(&mut self, key: K, record: WindowRecord) {
+        self.opened_record(key, record);
+    }
+
+    fn opened_record(&mut self, key: K, record: WindowRecord) {
         match self.windows.iter_mut().find(|(open, _)| *open == Some(key)) {
             Some((_, current)) => *current = record,
             None => self.windows.push((Some(key), record)),
         }
     }
 
-    /// A remembered environment that could not open in this run, such as a server whose list
+    /// A remembered window that could not open in this run, such as a server whose list
     /// could not be read. It stays in the saved document, at its place, so a later run can
     /// open it; it is not a window and closing windows never touches it.
-    pub fn kept(&mut self, environment: Environment) {
-        self.windows.push((None, WindowRecord::new(environment)));
+    pub fn kept(&mut self, record: impl Into<WindowRecord>) {
+        self.windows.push((None, record.into()));
+    }
+
+    /// What the open window `key` of `hub` keeps of that hub now. Ignored when the window is
+    /// not open or no longer shows `hub`, so a window switched to another server is not given
+    /// what the first one reported late.
+    pub fn remembered(&mut self, key: K, hub: &HubId, memory: HubWindowMemory) {
+        let found = self
+            .windows
+            .iter_mut()
+            .find(|(open, record)| *open == Some(key) && shows(record.environment(), hub));
+        if let Some((_, record)) = found {
+            record.hub = memory;
+        }
     }
 
     /// An open window now shows `environment`; a window not in the list is left out.
@@ -166,10 +253,15 @@ impl<K: Copy + PartialEq> OpenWindows<K> {
     }
 }
 
+/// Whether `environment` is the server `hub`.
+fn shows(environment: &Environment, hub: &HubId) -> bool {
+    matches!(environment, Environment::Hub(shown) if shown == hub)
+}
+
 #[derive(Serialize)]
 struct Written {
     version: u32,
-    windows: Vec<SavedWindow>,
+    windows: Vec<WrittenWindow>,
 }
 
 #[derive(Deserialize)]
@@ -181,9 +273,58 @@ struct Saved {
     windows: Vec<serde_json::Value>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct SavedWindow {
+#[derive(Serialize)]
+struct WrittenWindow {
     environment: SavedEnvironment,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hub: Option<SavedHub>,
+}
+
+#[derive(Deserialize)]
+struct ReadWindow {
+    environment: SavedEnvironment,
+    /// Read apart from the record: what a window kept never costs the window itself.
+    #[serde(default)]
+    hub: serde_json::Value,
+}
+
+impl ReadWindow {
+    fn into_record(self) -> WindowRecord {
+        let hub = serde_json::from_value::<SavedHub>(self.hub).unwrap_or_default();
+        WindowRecord::new(self.environment.into()).with_hub(hub.into())
+    }
+}
+
+/// What a window of a hub kept, as saved. Every field may be missing.
+#[derive(Default, Serialize, Deserialize)]
+struct SavedHub {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    organization: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sessions: Vec<String>,
+}
+
+impl SavedHub {
+    /// Nothing is written for a window that kept nothing.
+    fn of(memory: &HubWindowMemory) -> Option<Self> {
+        (!memory.is_empty()).then(|| Self {
+            organization: memory.organization().map(|org| org.as_str().to_owned()),
+            sessions: memory
+                .sessions()
+                .iter()
+                .map(|session| session.as_str().to_owned())
+                .collect(),
+        })
+    }
+}
+
+impl From<SavedHub> for HubWindowMemory {
+    fn from(saved: SavedHub) -> Self {
+        Self::new(
+            saved.organization.map(OrgId::new),
+            saved.sessions.into_iter().map(HubSessionId::new).collect(),
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize)]

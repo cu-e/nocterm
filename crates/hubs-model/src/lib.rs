@@ -44,4 +44,4 @@ pub use records::{
 };
 pub use settings::{HubRecord, HubsSettings};
 pub use trust::{Fingerprint, ProbedHub, TrustDecision, TrustPolicy, decide};
-pub use windows::{OpenWindows, WindowDocument};
+pub use windows::{HubWindowMemory, OpenWindows, WindowDocument, WindowRecord};

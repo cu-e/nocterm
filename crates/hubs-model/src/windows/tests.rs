@@ -242,3 +242,150 @@ fn closing_a_window_leaves_the_kept_environments() {
         [Environment::Local, hub("gone.example")]
     );
 }
+
+fn memory(organization: Option<&str>, sessions: &[&str]) -> HubWindowMemory {
+    HubWindowMemory::new(
+        organization.map(OrgId::new),
+        sessions.iter().map(|id| HubSessionId::new(*id)).collect(),
+    )
+}
+
+fn hub_id(address: &str) -> HubId {
+    HubId::from(HubAddress::parse(address).unwrap())
+}
+
+#[test]
+fn the_organization_and_sessions_of_a_hub_window_round_trip_in_order() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, hub("hub.home"));
+    windows.opened(2, Environment::Local);
+    windows.remembered(
+        1,
+        &hub_id("hub.home"),
+        memory(Some("lab"), &["s2", "s1", "s3"]),
+    );
+
+    let read = WindowDocument::decode(&windows.document().encode().unwrap()).unwrap();
+
+    assert_eq!(read, windows.document());
+    assert_eq!(
+        read.records()[0].hub(),
+        &memory(Some("lab"), &["s2", "s1", "s3"])
+    );
+    assert!(read.records()[1].hub().is_empty());
+}
+
+#[test]
+fn the_text_keeps_the_memory_under_the_hub_key_of_the_record() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, hub("hub.home"));
+    windows.remembered(1, &hub_id("hub.home"), memory(Some("lab"), &["s1"]));
+    let value: serde_json::Value =
+        serde_json::from_str(&windows.document().encode().unwrap()).unwrap();
+
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["windows"][0]["hub"]["organization"], "lab");
+    assert_eq!(value["windows"][0]["hub"]["sessions"][0], "s1");
+}
+
+#[test]
+fn a_window_that_kept_nothing_is_written_as_before() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, hub("hub.home"));
+    windows.opened(2, Environment::Local);
+    let value: serde_json::Value =
+        serde_json::from_str(&windows.document().encode().unwrap()).unwrap();
+
+    assert!(value["windows"][0].get("hub").is_none());
+    assert!(value["windows"][1].get("hub").is_none());
+}
+
+#[test]
+fn a_document_of_the_first_format_loads_with_empty_memory() {
+    let text = r#"{"version":1,"windows":[
+        {"environment":{"kind":"hub","hub":"hub.home:7443"}},
+        {"environment":{"kind":"local"}}]}"#;
+
+    let read = WindowDocument::decode(text).unwrap();
+
+    assert_eq!(read.records().len(), 2);
+    assert!(read.records().iter().all(|record| record.hub().is_empty()));
+}
+
+#[test]
+fn memory_that_cannot_be_read_costs_the_memory_not_the_window() {
+    let text = r#"{"version":1,"windows":[
+        {"environment":{"kind":"hub","hub":"hub.home:7443"},"hub":"nonsense"},
+        {"environment":{"kind":"hub","hub":"hub.home:7443"},"hub":{"organization":"lab","sessions":"s1"}},
+        {"environment":{"kind":"hub","hub":"hub.home:7443"},"hub":{"organization":"lab","future":1}}]}"#;
+
+    let read = WindowDocument::decode(text).unwrap();
+
+    assert_eq!(read.skipped(), 0);
+    assert_eq!(read.records().len(), 3);
+    assert!(read.records()[0].hub().is_empty());
+    assert!(read.records()[1].hub().is_empty());
+    assert_eq!(read.records()[2].hub(), &memory(Some("lab"), &[]));
+}
+
+#[test]
+fn memory_is_given_only_to_an_open_window_that_still_shows_that_hub() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, hub("a.example"));
+    windows.opened(2, Environment::Local);
+
+    // A report from before the window was switched to another server.
+    windows.switched(1, hub("b.example"));
+    windows.remembered(1, &hub_id("a.example"), memory(None, &["s1"]));
+    // A window of this computer and a window that is not open keep nothing.
+    windows.remembered(2, &hub_id("a.example"), memory(None, &["s1"]));
+    windows.remembered(9, &hub_id("b.example"), memory(None, &["s1"]));
+
+    assert!(
+        windows
+            .document()
+            .records()
+            .iter()
+            .all(|record| record.hub().is_empty())
+    );
+}
+
+#[test]
+fn switching_a_window_forgets_what_it_kept_of_the_previous_hub() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, hub("a.example"));
+    windows.remembered(1, &hub_id("a.example"), memory(Some("lab"), &["s1"]));
+
+    windows.switched(1, hub("b.example"));
+
+    assert!(windows.document().records()[0].hub().is_empty());
+}
+
+#[test]
+fn a_restored_window_comes_back_with_its_memory_and_a_local_one_with_none() {
+    let mut windows = OpenWindows::default();
+    windows.restored(
+        1,
+        WindowRecord::new(hub("hub.home")).with_hub(memory(Some("lab"), &["s1"])),
+    );
+    windows.restored(
+        2,
+        WindowRecord::new(Environment::Local).with_hub(memory(Some("lab"), &["s1"])),
+    );
+
+    let records = windows.document();
+    assert_eq!(records.records()[0].hub(), &memory(Some("lab"), &["s1"]));
+    assert!(records.records()[1].hub().is_empty());
+}
+
+#[test]
+fn a_kept_record_keeps_its_memory() {
+    let mut windows = OpenWindows::default();
+    windows.kept(WindowRecord::new(hub("gone.example")).with_hub(memory(None, &["s1"])));
+    windows.opened(1, Environment::Local);
+
+    assert_eq!(
+        windows.document().records()[0].hub(),
+        &memory(None, &["s1"])
+    );
+}
