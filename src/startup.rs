@@ -88,7 +88,9 @@ impl PreparedApp {
                 container_actions: Arc::new(
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
-                hubs: hub_dependencies(hub_links),
+                hubs: hub_dependencies(hub_links.clone()),
+                hub_accounts: hub_links
+                    .map(|links| links as Arc<dyn crate::hub_account::HubAccounts>),
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,

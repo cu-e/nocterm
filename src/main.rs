@@ -13,6 +13,7 @@ mod app_menus;
 mod application;
 mod bootstrap;
 mod connection_setup;
+mod hub_account;
 mod keymap;
 #[cfg(feature = "user-plugins")]
 mod plugin_command;
@@ -21,6 +22,7 @@ mod settings_pages;
 mod shell_setup;
 mod startup;
 mod vault_keys;
+mod vault_selection;
 
 #[cfg(test)]
 mod agent_history_tests;

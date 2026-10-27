@@ -58,6 +58,15 @@ pub(crate) struct HostServices {
     pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
     /// The hub access ports; `None` leaves the application without hubs.
     pub(crate) hubs: Option<nocterm_hubs::Deps>,
+    /// The encrypted data of hub accounts; without it a chosen account changes nothing.
+    pub(crate) hub_accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+}
+
+/// The hub servers every window shows, and what keeps them in step with the chosen account.
+#[derive(Clone)]
+pub(crate) struct HubServices {
+    ui: nocterm_hubs_ui::Installed,
+    _account: Option<gpui_kit::Entity<crate::hub_account::HubAccountSync>>,
 }
 
 struct ProjectResources {
@@ -114,7 +123,7 @@ pub(crate) struct Booted {
     snippets: Option<nocterm_snippets_ui::Installed>,
     projects: Option<nocterm_projects::Installed>,
     /// The hub servers, shared by every window.
-    hubs: Option<nocterm_hubs_ui::Installed>,
+    hubs: Option<HubServices>,
     themes: nocterm_ui::ThemeUi,
     user_plugins: crate::shell_setup::UserShell,
     /// The vault, when it opened; credentials and its settings depend on it.
@@ -127,6 +136,11 @@ impl Booted {
     }
     pub(crate) fn vault(&self) -> Option<&Rc<nocterm_vault_ui::Installed>> {
         self.vault.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn connections(&self) -> Option<&nocterm_connections::Installed> {
+        self.connections.as_ref()
     }
 
     #[cfg(test)]
@@ -150,7 +164,7 @@ impl Booted {
     }
 
     pub(crate) fn hubs(&self) -> Option<&nocterm_hubs_ui::Installed> {
-        self.hubs.as_ref()
+        self.hubs.as_ref().map(|hubs| &hubs.ui)
     }
 
     pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
@@ -182,17 +196,34 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
     let hubs = install_hubs(&hosts, &ui, cx);
+    let hub_accounts = hosts.hub_accounts.clone();
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     // The vault opens first: the connection editor offers its keys, and its
     // credentials need the installed connections afterwards.
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
     let connections = match &vault {
-        Some(vault) => {
-            connections.with_keys(Arc::new(crate::vault_keys::VaultKeys::new(vault.clone())))
-        }
+        Some(vault) => connections.with_keys(Arc::new(crate::vault_keys::VaultKeys::new(
+            Arc::new(vault.clone()),
+        ))),
         None => connections,
     };
     let connections = install_connections(connections, &ui, &shutdown, cx);
+    let hubs = hubs.map(|hubs| {
+        let account = install_hub_account(
+            &hubs,
+            hub_accounts,
+            vault.clone(),
+            connections.as_ref(),
+            stored,
+            &shutdown,
+            cx,
+        );
+        HubServices {
+            ui: nocterm_hubs_ui::install(hubs),
+            _account: account,
+        }
+    });
+    let vault = vault.map(|vault| Arc::new(vault) as Arc<dyn VaultAccess>);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let projects = install_projects(
         projects,
@@ -213,7 +244,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
     let inputs = GuestInputs::new(&monitor, &ui, keymap.clone(), &files, &layout)
         .with_projects(projects.as_ref())
-        .with_hubs(hubs.as_ref());
+        .with_hubs(hubs.as_ref().map(|hubs| &hubs.ui));
     let guests = install_guest_pages(inputs, &plugins, cx);
     let settings_ui = crate::settings_pages::SettingsPages::from_installations(
         ui.settings().clone(),
@@ -371,13 +402,33 @@ fn install_hubs(
     hosts: &HostServices,
     ui: &nocterm_ui::UiReady,
     cx: &mut App,
-) -> Option<nocterm_hubs_ui::Installed> {
+) -> Option<nocterm_hubs::Installed> {
     let deps = hosts.hubs.clone()?;
-    Some(nocterm_hubs_ui::install(nocterm_hubs::install(
-        deps,
-        ui.settings().clone(),
+    Some(nocterm_hubs::install(deps, ui.settings().clone(), cx))
+}
+
+/// Moves the saved profiles and the vault with the account the user chose. Without saved
+/// profiles or account access there is nothing to move, and the hub servers stand alone.
+fn install_hub_account(
+    hubs: &nocterm_hubs::Installed,
+    accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+    vault: Option<crate::vault_selection::SelectedVault>,
+    connections: Option<&nocterm_connections::Installed>,
+    stored: Option<&Paths>,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Option<gpui_kit::Entity<crate::hub_account::HubAccountSync>> {
+    let accounts = accounts?;
+    let store = connections?.connections().clone();
+    let replication = crate::hub_account::replication(store, stored, shutdown, cx);
+    let hubs = hubs.hubs().clone();
+    Some(crate::hub_account::HubAccountSync::install(
+        hubs,
+        accounts,
+        vault,
+        replication,
         cx,
-    )))
+    ))
 }
 
 /// The shared keymap: the defaults and the user's overrides, when the application keeps files.
@@ -519,7 +570,7 @@ fn open_vault(
     setup: VaultSetup,
     ready: &nocterm_ui::UiReady,
     cx: &mut App,
-) -> Option<Arc<dyn VaultAccess>> {
+) -> Option<crate::vault_selection::SelectedVault> {
     let device = setup.device_unlock.then(nocterm_device_unlock::provider);
     ready
         .settings()
@@ -533,7 +584,7 @@ fn open_vault(
         ) * 60,
     );
     match VaultService::new_with_device_unlock(setup.file, duration, device) {
-        Ok(vault) => Some(Arc::new(vault)),
+        Ok(vault) => Some(crate::vault_selection::SelectedVault::new(Arc::new(vault))),
         Err(error) => {
             tracing::error!(%error, "could not initialize the credential vault");
             None

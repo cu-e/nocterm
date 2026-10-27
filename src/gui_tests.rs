@@ -17,6 +17,7 @@ use nocterm_workspace::{SessionSpec, Workspace};
 mod agent_installation;
 mod chat_history;
 mod default_shell_geometry;
+mod hub_account;
 mod hub_live;
 mod hub_sessions;
 mod keymap;
@@ -328,6 +329,23 @@ fn fixture_hosts(
         )),
         workspace_sessions: activation,
         hubs: None,
+        hub_accounts: None,
+    }
+}
+
+/// The hub ports a fixture composes the application over.
+#[derive(Default)]
+struct HubPorts {
+    deps: Option<nocterm_hubs::Deps>,
+    accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+}
+
+impl From<Option<nocterm_hubs::Deps>> for HubPorts {
+    fn from(deps: Option<nocterm_hubs::Deps>) -> Self {
+        Self {
+            deps,
+            accounts: None,
+        }
     }
 }
 
@@ -340,9 +358,10 @@ fn boot_with_ports_and_probe(
     themes: Option<crate::bootstrap::Themes>,
     probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     user_plugins: crate::shell_setup::UserPluginMode,
-    hubs: Option<nocterm_hubs::Deps>,
+    hubs: impl Into<HubPorts>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
+    let hubs = hubs.into();
     let (transport, local) = terminal;
     let local_host = local.is_available().then(|| {
         let exec = nocterm_session::testing::FakeExec::default();
@@ -370,7 +389,8 @@ fn boot_with_ports_and_probe(
             connections: crate::connection_setup::memory(),
             projects: crate::project_setup::PreparedProjectSetup::memory(),
             hosts: crate::bootstrap::HostServices {
-                hubs,
+                hubs: hubs.deps,
+                hub_accounts: hubs.accounts,
                 ..fixture_hosts(transport, local, local_host)
             },
             terminal_auth_factory: None,
