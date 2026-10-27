@@ -158,3 +158,72 @@ fn a_missing_section_means_no_servers() {
     assert_eq!(load(""), HubsSettings::default());
     assert_eq!(HubsSettings::KEY, "hubs");
 }
+
+#[test]
+fn a_colour_is_read_written_and_survives_a_round_trip() {
+    let mut settings = HubsSettings::default();
+    settings.upsert(pinned("hub.home", "Home").with_color(Some(HubColor::Blue)));
+    settings.upsert(pinned("plain.home", "Plain"));
+    let text = toml::to_string(&toml::Table::from_iter([(
+        "hubs".to_owned(),
+        toml::Value::try_from(&settings).unwrap(),
+    )]))
+    .unwrap();
+    assert!(text.contains("color = \"blue\""), "{text}");
+    assert_eq!(text.matches("color").count(), 1, "unmarked servers write none");
+    assert_eq!(load(&text), settings);
+}
+
+#[test]
+fn a_colour_this_version_does_not_know_leaves_the_server_unmarked_but_listed() {
+    let settings = load(&format!(
+        r#"
+[[hubs.servers]]
+address = "future.home"
+fingerprint = "{PRINT}"
+color = "chartreuse"
+
+[[hubs.servers]]
+address = "odd.home"
+fingerprint = "{PRINT}"
+color = 7
+label = "Odd"
+unheard_of = true
+
+[[hubs.servers]]
+address = "kept.home"
+fingerprint = "{PRINT}"
+color = "green"
+"#
+    ));
+    assert_eq!(
+        settings.servers,
+        vec![
+            pinned("future.home", ""),
+            pinned("odd.home", "Odd"),
+            pinned("kept.home", "").with_color(Some(HubColor::Green)),
+        ]
+    );
+}
+
+#[test]
+fn editing_a_server_changes_only_that_server() {
+    let mut settings = HubsSettings::default();
+    settings.upsert(pinned("a.home", "A"));
+    settings.upsert(pinned("b.home", "B"));
+    let a = HubId::from(HubAddress::parse("a.home").unwrap());
+    let unknown = HubId::from(HubAddress::parse("c.home").unwrap());
+    assert!(settings.set_label(&a, " \u{7}Renamed "));
+    assert!(settings.set_color(&a, Some(HubColor::Red)));
+    assert!(!settings.set_label(&unknown, "x"));
+    assert!(!settings.set_color(&unknown, Some(HubColor::Red)));
+    assert_eq!(
+        settings.servers,
+        vec![
+            pinned("a.home", "Renamed").with_color(Some(HubColor::Red)),
+            pinned("b.home", "B")
+        ]
+    );
+    assert!(settings.set_color(&a, None));
+    assert_eq!(settings.find(&a).unwrap().color, None);
+}

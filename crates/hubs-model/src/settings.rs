@@ -5,6 +5,7 @@
 //! address = "hub.home:7443"
 //! fingerprint = "ab:cd:…"   # pins a self-signed certificate
 //! label = "Home"
+//! color = "blue"            # optional: red, yellow, green, cyan, blue or magenta
 //!
 //! [[hubs.servers]]
 //! address = "hub.example.com"
@@ -18,6 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::address::{HubAddress, HubId};
+use crate::color::HubColor;
 use crate::trust::{Fingerprint, TrustPolicy};
 
 /// Longest label kept, in characters.
@@ -32,6 +34,8 @@ pub struct HubRecord {
     pub trust: TrustPolicy,
     /// How the server is named in menus; empty shows the address.
     pub label: String,
+    /// The colour that marks the server in menus; none leaves it unmarked.
+    pub color: Option<HubColor>,
 }
 
 impl HubRecord {
@@ -40,7 +44,14 @@ impl HubRecord {
             address,
             trust,
             label: clean_label(&label.into()),
+            color: None,
         }
+    }
+
+    /// The record marked with `color`.
+    pub fn with_color(mut self, color: Option<HubColor>) -> Self {
+        self.color = color;
+        self
     }
 
     pub fn id(&self) -> HubId {
@@ -76,6 +87,30 @@ struct RawRecord {
     /// How the server is named in menus.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     label: String,
+    /// `red`, `yellow`, `green`, `cyan`, `blue` or `magenta`. A name this version does not know
+    /// leaves the server unmarked.
+    #[serde(
+        default,
+        deserialize_with = "lenient_color",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<HubColor>")]
+    color: Option<HubColor>,
+}
+
+/// Reads a colour this version knows; anything else is no colour, so a newer file does not
+/// make the server unusable.
+fn lenient_color<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<HubColor>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Entry {
+        Known(HubColor),
+        Unusable(serde::de::IgnoredAny),
+    }
+    Ok(match Entry::deserialize(deserializer)? {
+        Entry::Known(color) => Some(color),
+        Entry::Unusable(_) => None,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -105,11 +140,7 @@ impl TryFrom<RawRecord> for HubRecord {
             (None, Some(RawTrust::PublicCa)) => TrustPolicy::PublicCa,
             (None, None) => return Err(RecordError::NoTrust),
         };
-        Ok(Self::new(
-            HubAddress::parse(&raw.address)?,
-            trust,
-            raw.label,
-        ))
+        Ok(Self::new(HubAddress::parse(&raw.address)?, trust, raw.label).with_color(raw.color))
     }
 }
 
@@ -124,6 +155,7 @@ impl From<HubRecord> for RawRecord {
             fingerprint,
             trust,
             label: record.label,
+            color: record.color,
         }
     }
 }
@@ -170,6 +202,26 @@ impl HubsSettings {
         {
             Some(existing) => *existing = record,
             None => self.servers.push(record),
+        }
+    }
+
+    /// Renames a server; empty shows its address. `true` when it was known.
+    pub fn set_label(&mut self, hub: &HubId, label: &str) -> bool {
+        self.edit(hub, |record| record.label = clean_label(label))
+    }
+
+    /// Marks a server with a colour, or clears the mark. `true` when it was known.
+    pub fn set_color(&mut self, hub: &HubId, color: Option<HubColor>) -> bool {
+        self.edit(hub, |record| record.color = color)
+    }
+
+    fn edit(&mut self, hub: &HubId, change: impl FnOnce(&mut HubRecord)) -> bool {
+        match self.servers.iter_mut().find(|record| record.id() == *hub) {
+            Some(record) => {
+                change(record);
+                true
+            }
+            None => false,
         }
     }
 

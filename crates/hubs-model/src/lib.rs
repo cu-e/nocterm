@@ -3,7 +3,8 @@
 //!
 //! Owns: `Environment` (local or one hub), the document of open windows and its rules
 //! (`WindowDocument`, `OpenWindows`), hub addresses and ids, certificate fingerprints
-//! and the trust decision, the `[hubs]` settings section (`HubsSettings`), the hub access
+//! and the trust decision, the colour that marks a server (`HubColor`), the `[hubs]`
+//! settings section (`HubsSettings`), the hub access
 //! ports `HubTrust`, `HubSignIn`, `HubSessions` with their records and `HubError`.
 //! Does not own: the hub wire protocol and its SDK types (the hub contract crates, reached
 //! only by `nocterm-hub-io`), device keys and tokens (private adapter files), connection
@@ -20,6 +21,7 @@
 //! memory for consumers' tests.
 
 pub mod address;
+pub mod color;
 pub mod environment;
 pub mod error;
 pub mod ports;
@@ -32,6 +34,7 @@ pub mod windows;
 pub mod testing;
 
 pub use address::{DEFAULT_PORT, HubAddress, HubId};
+pub use color::HubColor;
 pub use environment::Environment;
 pub use error::{FingerprintError, HubAddressError, HubError, WindowDocumentError};
 pub use ports::{HubFuture, HubSessions, HubSignIn, HubTrust, OidcSignIn};
