@@ -3,6 +3,11 @@
 //! The rules are pure. They name what must happen and leave doing it, and the order
 //! of side effects, to the caller. A remote change always wins a conflict; the local
 //! edit it replaces is reported so the user can be told.
+//!
+//! A profile lives in one scope. Moving it to another is a deletion in the scope it
+//! was agreed in followed by a creation in the new one, in that order: the profile is
+//! never held in two scopes, and a refusal of the creation leaves it in the local
+//! document to be sent to the personal scope.
 use super::{RemoteBody, RemoteProfile, ReplicaScope, ReplicaState, ReplicaVersion, SyncedEntry};
 use crate::profiles::{Profile, ProfileId, Profiles};
 use std::collections::{HashMap, HashSet};
@@ -87,10 +92,29 @@ pub fn plan(
         .map(|profile| profile.id)
         .chain(changes.iter().map(|change| change.id))
         .chain(remembered)
-        .filter(|id| seen.insert(*id));
-    ids.filter(|id| !state.is_unrecognized(*id) || latest.contains_key(id))
-        .flat_map(|id| reconcile(local.get(id), latest.get(&id).copied(), state.entry(id)))
-        .collect()
+        .filter(|id| seen.insert(*id))
+        .collect::<Vec<_>>();
+    let mut actions: Vec<ReplicaAction> = ids
+        .iter()
+        .copied()
+        .filter(|id| !state.is_unrecognized(*id) || latest.contains_key(id))
+        .flat_map(|id| {
+            reconcile_placed(
+                local.get(id),
+                latest.get(&id).copied(),
+                state.entry(id),
+                state.placement(id),
+            )
+        })
+        .collect();
+    let mut stale: Vec<ProfileId> = state
+        .placements()
+        .map(|(id, _)| id)
+        .filter(|id| !seen.contains(id))
+        .collect();
+    stale.sort_by_key(ToString::to_string);
+    actions.extend(stale.into_iter().map(|id| ReplicaAction::Forget { id }));
+    actions
 }
 
 /// What to do about one profile. At least one of the three must be present.
@@ -98,6 +122,17 @@ pub fn reconcile(
     local: Option<&Profile>,
     remote: Option<&RemoteProfile>,
     synced: Option<&SyncedEntry>,
+) -> Vec<ReplicaAction> {
+    reconcile_placed(local, remote, synced, None)
+}
+
+/// [`reconcile`] for a profile the user asked to live in `wanted`: a local profile
+/// goes there, from wherever it was agreed to live. A remote change still wins.
+pub fn reconcile_placed(
+    local: Option<&Profile>,
+    remote: Option<&RemoteProfile>,
+    synced: Option<&SyncedEntry>,
+    wanted: Option<&ReplicaScope>,
 ) -> Vec<ReplicaAction> {
     let Some(id) = local
         .map(|profile| profile.id)
@@ -110,8 +145,8 @@ pub fn reconcile(
         return vec![ReplicaAction::NeedsNewerClient { id }];
     }
     match synced {
-        Some(synced) => with_history(local, remote, synced),
-        None => without_history(local, remote),
+        Some(synced) => with_history(local, remote, synced, wanted),
+        None => without_history(local, remote, wanted),
     }
 }
 
@@ -159,21 +194,28 @@ fn take_remote(
     }
 }
 
-fn without_history(local: Option<&Profile>, remote: Option<&RemoteProfile>) -> Vec<ReplicaAction> {
+fn without_history(
+    local: Option<&Profile>,
+    remote: Option<&RemoteProfile>,
+    wanted: Option<&ReplicaScope>,
+) -> Vec<ReplicaAction> {
     match (local, remote) {
         (None, None) => Vec::new(),
         (Some(local), None) => vec![ReplicaAction::Push {
-            scope: ReplicaScope::Personal,
+            scope: wanted.cloned().unwrap_or(ReplicaScope::Personal),
             profile: boxed(local),
             expected: None,
         }],
         (_, Some(change)) => match &change.body {
             RemoteBody::Present(remote) => take_remote(change, remote, local),
             RemoteBody::Deleted => local
-                .map(|local| ReplicaAction::Push {
-                    scope: change.scope.clone(),
-                    profile: boxed(local),
-                    expected: Some(change.version),
+                .map(|local| {
+                    let scope = wanted.unwrap_or(&change.scope);
+                    ReplicaAction::Push {
+                        scope: scope.clone(),
+                        profile: boxed(local),
+                        expected: (*scope == change.scope).then_some(change.version),
+                    }
                 })
                 .into_iter()
                 .collect(),
@@ -212,14 +254,49 @@ fn local_side<'a>(local: Option<&'a Profile>, synced: &SyncedEntry) -> Side<'a> 
     }
 }
 
+/// The actions that carry a local profile from the scope it was agreed in to `target`;
+/// `None` when the remote changed the profile, which then wins over the move.
+fn move_to(
+    target: &ReplicaScope,
+    local: Option<&Profile>,
+    remote: Side<'_>,
+    synced: &SyncedEntry,
+    version: ReplicaVersion,
+) -> Option<Vec<ReplicaAction>> {
+    let local = local?;
+    let create = ReplicaAction::Push {
+        scope: target.clone(),
+        profile: boxed(local),
+        expected: None,
+    };
+    match remote {
+        Side::Equal => Some(vec![
+            ReplicaAction::PushDelete {
+                scope: synced.scope.clone(),
+                id: synced.profile.id,
+                expected: version,
+            },
+            create,
+        ]),
+        Side::Deleted if *local != synced.profile => Some(vec![create]),
+        Side::Deleted | Side::Changed(_) => None,
+    }
+}
+
 fn with_history(
     local: Option<&Profile>,
     remote: Option<&RemoteProfile>,
     synced: &SyncedEntry,
+    wanted: Option<&ReplicaScope>,
 ) -> Vec<ReplicaAction> {
     let version = remote.map_or(synced.version, |change| change.version);
     let scope = synced.scope.clone();
     let remote_state = remote_side(remote, synced);
+    if let Some(target) = wanted.filter(|wanted| **wanted != synced.scope)
+        && let Some(actions) = move_to(target, local, remote_state, synced, version)
+    {
+        return actions;
+    }
     match (local_side(local, synced), remote_state, local, remote) {
         (Side::Equal, Side::Equal, ..) if version == synced.version => Vec::new(),
         (Side::Equal, Side::Equal, ..) => vec![ReplicaAction::MarkSynced {

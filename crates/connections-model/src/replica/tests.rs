@@ -1,4 +1,4 @@
-use super::rules::{ReplicaAction, plan, reconcile};
+use super::rules::{ReplicaAction, plan, reconcile, reconcile_placed};
 use super::*;
 use crate::{profiles::Profiles, test_support::profile_id_for};
 use nocterm_session::{Auth, Target};
@@ -321,4 +321,207 @@ fn agreeing_or_forgetting_a_profile_makes_it_readable_again() {
     state.mark_unrecognized(id());
     state.forget(id());
     assert!(!state.has_unrecognized() && state.entry(id()).is_none());
+}
+
+fn group() -> ReplicaScope {
+    ReplicaScope::Organization("acme".into())
+}
+
+fn synced_in(scope: ReplicaScope, name: &str, at: u64) -> SyncedEntry {
+    SyncedEntry {
+        scope,
+        ..synced(name, at)
+    }
+}
+
+fn push_to(scope: ReplicaScope, name: &str, expected: Option<u64>) -> ReplicaAction {
+    ReplicaAction::Push {
+        scope,
+        profile: Box::new(profile(name)),
+        expected: expected.map(version),
+    }
+}
+
+fn delete_in(scope: ReplicaScope, at: u64) -> ReplicaAction {
+    ReplicaAction::PushDelete {
+        scope,
+        id: id(),
+        expected: version(at),
+    }
+}
+
+#[test]
+fn a_new_profile_placed_in_a_group_is_created_there() {
+    let local = profile("a");
+    assert_eq!(
+        reconcile_placed(Some(&local), None, None, Some(&group())),
+        [push_to(group(), "a", None)]
+    );
+}
+
+#[test]
+fn a_placement_over_a_remote_tombstone_creates_in_the_new_scope_without_its_version() {
+    let local = profile("a");
+    let tombstone = remote(RemoteBody::Deleted, 4);
+    assert_eq!(
+        reconcile_placed(Some(&local), Some(&tombstone), None, Some(&group())),
+        [push_to(group(), "a", None)]
+    );
+    assert_eq!(
+        reconcile_placed(
+            Some(&local),
+            Some(&tombstone),
+            None,
+            Some(&ReplicaScope::Personal)
+        ),
+        [push("a", Some(4))]
+    );
+}
+
+#[test]
+fn moving_a_profile_deletes_it_where_it_was_agreed_and_creates_it_in_the_new_scope() {
+    let local = profile("a");
+    let history = synced("a", 3);
+    assert_eq!(
+        reconcile_placed(Some(&local), None, Some(&history), Some(&group())),
+        [
+            delete_in(ReplicaScope::Personal, 3),
+            push_to(group(), "a", None)
+        ]
+    );
+    let edited = profile("b");
+    assert_eq!(
+        reconcile_placed(Some(&edited), None, Some(&history), Some(&group())),
+        [
+            delete_in(ReplicaScope::Personal, 3),
+            push_to(group(), "b", None)
+        ]
+    );
+}
+
+#[test]
+fn a_move_out_of_a_group_deletes_in_that_group_first() {
+    let local = profile("a");
+    let history = synced_in(group(), "a", 3);
+    assert_eq!(
+        reconcile_placed(
+            Some(&local),
+            None,
+            Some(&history),
+            Some(&ReplicaScope::Personal)
+        ),
+        [
+            delete_in(group(), 3),
+            push_to(ReplicaScope::Personal, "a", None)
+        ]
+    );
+}
+
+#[test]
+fn a_placement_equal_to_the_agreed_scope_moves_nothing() {
+    let local = profile("a");
+    let history = synced_in(group(), "a", 3);
+    assert_eq!(
+        reconcile_placed(Some(&local), None, Some(&history), Some(&group())),
+        []
+    );
+    let edited = profile("b");
+    assert_eq!(
+        reconcile_placed(Some(&edited), None, Some(&history), Some(&group())),
+        [push_to(group(), "b", Some(3))]
+    );
+}
+
+#[test]
+fn a_remote_edit_wins_over_a_move_and_a_remote_tombstone_over_an_unedited_one() {
+    let local = profile("a");
+    let history = synced("a", 3);
+    assert_eq!(
+        reconcile_placed(
+            Some(&local),
+            Some(&present("c", 5)),
+            Some(&history),
+            Some(&group())
+        ),
+        [save("c", 5, Some("a"))]
+    );
+    let tombstone = remote(RemoteBody::Deleted, 4);
+    assert_eq!(
+        reconcile_placed(
+            Some(&local),
+            Some(&tombstone),
+            Some(&history),
+            Some(&group())
+        ),
+        [ReplicaAction::DeleteLocal {
+            id: id(),
+            expected: Box::new(profile("a")),
+        }]
+    );
+}
+
+#[test]
+fn an_edited_profile_over_a_tombstone_is_moved_by_creating_only() {
+    let edited = profile("b");
+    let tombstone = remote(RemoteBody::Deleted, 4);
+    assert_eq!(
+        reconcile_placed(
+            Some(&edited),
+            Some(&tombstone),
+            Some(&synced("a", 3)),
+            Some(&group())
+        ),
+        [push_to(group(), "b", None)]
+    );
+}
+
+#[test]
+fn a_locally_deleted_profile_is_deleted_remotely_whatever_was_asked_for_it() {
+    assert_eq!(
+        reconcile_placed(None, None, Some(&synced("a", 3)), Some(&group())),
+        [delete_in(ReplicaScope::Personal, 3)]
+    );
+}
+
+#[test]
+fn a_plan_moves_a_placed_profile_and_drops_a_placement_nothing_holds_any_more() {
+    let local = profiles_of(&[profile("a")]);
+    let gone = profile_id_for("gone");
+    let mut state = ReplicaState::default();
+    state.agree(id(), synced("a", 3));
+    state.place(id(), group());
+    state.place(gone, group());
+    let actions = plan(&local, &[], &state);
+    assert_eq!(
+        actions,
+        [
+            delete_in(ReplicaScope::Personal, 3),
+            push_to(group(), "a", None),
+            ReplicaAction::Forget { id: gone },
+        ]
+    );
+}
+
+#[test]
+fn a_placement_lasts_until_the_profile_is_agreed_or_forgotten() {
+    let mut state = ReplicaState::default();
+    state.place(id(), group());
+    assert_eq!(state.placement(id()), Some(&group()));
+    state.agree(id(), synced_in(group(), "a", 3));
+    assert_eq!(state.placement(id()), None);
+    state.place(id(), ReplicaScope::Personal);
+    state.forget(id());
+    assert_eq!(state.placement(id()), None);
+    state.place(id(), group());
+    state.unplace(id());
+    assert_eq!(state.placements().count(), 0);
+}
+
+#[test]
+fn a_placement_survives_serialization() {
+    let mut state = ReplicaState::default();
+    state.place(id(), group());
+    let restored: ReplicaState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(restored.placement(id()), Some(&group()));
 }

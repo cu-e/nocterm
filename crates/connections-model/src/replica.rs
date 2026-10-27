@@ -22,6 +22,24 @@ pub enum ReplicaScope {
     Organization(String),
 }
 
+/// How the account may use a space of the replica.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplicaAccess {
+    /// Profiles of the space are shown and used; the replica refuses changes to them.
+    Read,
+    /// Profiles of the space may be created, changed, moved out of it and deleted.
+    Write,
+}
+
+/// A place the replica keeps profiles in, as the account can use it now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplicaSpace {
+    pub scope: ReplicaScope,
+    /// What the user calls it: "Personal", or the name of the organization.
+    pub name: String,
+    pub access: ReplicaAccess,
+}
+
 /// An opaque position in the replica's change feed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -123,6 +141,12 @@ pub trait ProfileReplica: Send + Sync {
 
     /// Yields once whenever the replica may have new changes.
     fn watch(&self) -> BoxStream<'static, ()>;
+
+    /// The spaces the replica serves and what the account may do in each, as last learned.
+    /// A replica with a single, writable space of its own reports none.
+    fn spaces(&self) -> Vec<ReplicaSpace> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]

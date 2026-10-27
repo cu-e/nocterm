@@ -3,7 +3,7 @@ use crate::{
     profiles::{Profile, ProfileId},
     replica::{
         ProfileReplica, RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaPage,
-        ReplicaScope, ReplicaVersion,
+        ReplicaScope, ReplicaSpace, ReplicaVersion,
     },
 };
 use futures::{
@@ -29,7 +29,6 @@ pub enum ReplicaCall {
 }
 
 struct Stored {
-    scope: ReplicaScope,
     body: RemoteBody,
     version: u64,
 }
@@ -37,10 +36,12 @@ struct Stored {
 #[derive(Default)]
 struct Inner {
     sequence: u64,
-    objects: HashMap<ProfileId, Stored>,
-    feed: Vec<(u64, ProfileId)>,
+    objects: HashMap<(ReplicaScope, ProfileId), Stored>,
+    feed: Vec<(u64, ReplicaScope, ProfileId)>,
     offline: bool,
     forbidden: HashSet<ProfileId>,
+    forbidden_scopes: HashSet<ReplicaScope>,
+    spaces: Vec<ReplicaSpace>,
     forced_conflicts: usize,
     concurrent: Option<(ReplicaScope, Profile)>,
     page_size: Option<usize>,
@@ -57,11 +58,10 @@ pub struct MemoryReplica {
 impl Inner {
     fn store(&mut self, id: ProfileId, scope: ReplicaScope, body: RemoteBody) -> ReplicaVersion {
         self.sequence += 1;
-        self.feed.push((self.sequence, id));
+        self.feed.push((self.sequence, scope.clone(), id));
         self.objects.insert(
-            id,
+            (scope, id),
             Stored {
-                scope,
                 body,
                 version: self.sequence,
             },
@@ -71,6 +71,7 @@ impl Inner {
 
     fn check_write(
         &mut self,
+        scope: &ReplicaScope,
         id: ProfileId,
         expected: Option<ReplicaVersion>,
     ) -> Result<(), ReplicaError> {
@@ -81,7 +82,7 @@ impl Inner {
             let body = RemoteBody::Present(Box::new(profile.clone()));
             self.store(profile.id, scope, body);
         }
-        if self.forbidden.contains(&id) {
+        if self.forbidden.contains(&id) || self.forbidden_scopes.contains(scope) {
             return Err(ReplicaError::Forbidden { id });
         }
         if self.forced_conflicts > 0 {
@@ -90,7 +91,7 @@ impl Inner {
         }
         let current = self
             .objects
-            .get(&id)
+            .get(&(scope.clone(), id))
             .map(|stored| ReplicaVersion::new(stored.version));
         if current == expected {
             Ok(())
@@ -106,21 +107,21 @@ impl Inner {
         let mut ids = Vec::new();
         let mut last = from;
         let mut more = false;
-        for (sequence, id) in self.feed.iter().filter(|(sequence, _)| *sequence > from) {
+        for (sequence, scope, id) in self.feed.iter().filter(|(sequence, ..)| *sequence > from) {
             if self.page_size.is_some_and(|size| ids.len() >= size) {
                 more = true;
                 break;
             }
             last = *sequence;
-            ids.retain(|seen| seen != id);
-            ids.push(*id);
+            ids.retain(|(seen_scope, seen)| seen != id || seen_scope != scope);
+            ids.push((scope.clone(), *id));
         }
         let changes = ids
             .into_iter()
-            .filter_map(|id| {
-                let stored = self.objects.get(&id)?;
+            .filter_map(|(scope, id)| {
+                let stored = self.objects.get(&(scope.clone(), id))?;
                 Some(RemoteProfile {
-                    scope: stored.scope.clone(),
+                    scope,
                     id,
                     version: ReplicaVersion::new(stored.version),
                     body: stored.body.clone(),
@@ -187,6 +188,16 @@ impl MemoryReplica {
         self.with(|inner| inner.forbidden.insert(id));
     }
 
+    /// Writes into this scope are refused as `Forbidden`, as for a read-only member.
+    pub fn refuse_writes_in(&self, scope: ReplicaScope) {
+        self.with(|inner| inner.forbidden_scopes.insert(scope));
+    }
+
+    /// The spaces the replica reports to the application.
+    pub fn set_spaces(&self, spaces: Vec<ReplicaSpace>) {
+        self.with(|inner| inner.spaces = spaces);
+    }
+
     /// The next `count` writes lose a race regardless of their expectation.
     pub fn conflict_next_writes(&self, count: usize) {
         self.with(|inner| inner.forced_conflicts = count);
@@ -213,16 +224,28 @@ impl MemoryReplica {
             .collect()
     }
 
-    /// The stored scope, version and body of a profile.
+    /// The scope, version and body of the latest write of a profile, in any scope.
     pub fn stored(&self, id: ProfileId) -> Option<(ReplicaScope, ReplicaVersion, RemoteBody)> {
         self.with(|inner| {
-            inner.objects.get(&id).map(|stored| {
-                (
-                    stored.scope.clone(),
-                    ReplicaVersion::new(stored.version),
-                    stored.body.clone(),
-                )
-            })
+            let (_, scope, _) = inner.feed.iter().rev().find(|(_, _, seen)| *seen == id)?;
+            let stored = inner.objects.get(&(scope.clone(), id))?;
+            Some((
+                scope.clone(),
+                ReplicaVersion::new(stored.version),
+                stored.body.clone(),
+            ))
+        })
+    }
+
+    /// The version and body of a profile in one scope.
+    pub fn stored_in(
+        &self,
+        scope: &ReplicaScope,
+        id: ProfileId,
+    ) -> Option<(ReplicaVersion, RemoteBody)> {
+        self.with(|inner| {
+            let stored = inner.objects.get(&(scope.clone(), id))?;
+            Some((ReplicaVersion::new(stored.version), stored.body.clone()))
         })
     }
 
@@ -244,7 +267,7 @@ impl MemoryReplica {
     ) -> Result<ReplicaVersion, ReplicaError> {
         let result = self.with(|inner| {
             inner.calls.push(call);
-            inner.check_write(id, expected)?;
+            inner.check_write(&scope, id, expected)?;
             Ok(inner.store(id, scope, body))
         });
         if result.is_ok() {
@@ -301,6 +324,10 @@ impl ProfileReplica for MemoryReplica {
         let call = ReplicaCall::Delete { id, expected };
         let result = self.write(id, call, Some(expected), scope, RemoteBody::Deleted);
         futures::future::ready(result).boxed()
+    }
+
+    fn spaces(&self) -> Vec<ReplicaSpace> {
+        self.with(|inner| inner.spaces.clone())
     }
 
     fn watch(&self) -> BoxStream<'static, ()> {

@@ -22,6 +22,10 @@ pub struct ReplicaState {
     entries: HashMap<ProfileId, SyncedEntry>,
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     unrecognized: HashSet<ProfileId>,
+    /// Where the user wants a profile to live when that differs from where it was
+    /// agreed to live (or it has not been sent yet). Cleared once the profile is sent.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    placements: HashMap<ProfileId, ReplicaScope>,
 }
 
 impl ReplicaState {
@@ -46,6 +50,25 @@ impl ReplicaState {
         !self.unrecognized.is_empty()
     }
 
+    /// The scope the user asked the profile to be moved or created in, until it is sent.
+    pub fn placement(&self, id: ProfileId) -> Option<&ReplicaScope> {
+        self.placements.get(&id)
+    }
+
+    pub fn placements(&self) -> impl Iterator<Item = (ProfileId, &ReplicaScope)> {
+        self.placements.iter().map(|(id, scope)| (*id, scope))
+    }
+
+    /// Asks for the profile to live in `scope` from the next synchronization on.
+    pub fn place(&mut self, id: ProfileId, scope: ReplicaScope) {
+        self.placements.insert(id, scope);
+    }
+
+    /// The request was carried out, refused, or no longer matters.
+    pub fn unplace(&mut self, id: ProfileId) {
+        self.placements.remove(&id);
+    }
+
     pub fn advance(&mut self, cursor: ReplicaCursor) {
         self.cursor = Some(cursor);
     }
@@ -53,12 +76,15 @@ impl ReplicaState {
     /// Records agreement on `entry`; the replica's version is readable again.
     pub fn agree(&mut self, id: ProfileId, entry: SyncedEntry) {
         self.unrecognized.remove(&id);
+        self.placements.remove(&id);
         self.entries.insert(id, entry);
     }
 
-    /// Both sides no longer hold the profile.
+    /// Both sides no longer hold the profile in the scope it was agreed in. A move
+    /// carries its new scope in the action that follows, not in the state.
     pub fn forget(&mut self, id: ProfileId) {
         self.unrecognized.remove(&id);
+        self.placements.remove(&id);
         self.entries.remove(&id);
     }
 
