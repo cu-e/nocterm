@@ -64,9 +64,8 @@ pub(crate) fn hub() -> HubId {
     )
 }
 
-/// A slot whose vault was opened by a sign-in with `PASSWORD`, kept in `dir`.
-pub(crate) fn signed_in(dir: &std::path::Path) -> (Accounts, Arc<Slot>, v1::AccountKeyset) {
-    let accounts = Accounts::new(dir.to_path_buf());
+/// The slot of the test hub in `accounts`, opened as a sign-in with `PASSWORD` opens it.
+pub(crate) fn sign_in(accounts: &Accounts) -> (Arc<Slot>, v1::AccountKeyset) {
     let slot = accounts.slot(&hub()).unwrap();
     let unlock = unlock(PASSWORD);
     let (record, _) = record(&unlock);
@@ -74,6 +73,13 @@ pub(crate) fn signed_in(dir: &std::path::Path) -> (Accounts, Arc<Slot>, v1::Acco
         open(&record, &unlock),
         cache(&record, UnlockMethod::Passphrase),
     );
+    (slot, record)
+}
+
+/// A slot whose vault was opened by a sign-in with `PASSWORD`, kept in `dir`.
+pub(crate) fn signed_in(dir: &std::path::Path) -> (Accounts, Arc<Slot>, v1::AccountKeyset) {
+    let accounts = Accounts::new(dir.to_path_buf());
+    let (slot, record) = sign_in(&accounts);
     (accounts, slot, record)
 }
 

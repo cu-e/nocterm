@@ -96,7 +96,11 @@ impl HubLinks {
             .build()
             .map_err(HubStartError)?;
         let accounts = Arc::new(Accounts::new(config.credentials_dir.clone()));
-        let pool = Arc::new(Pool::new(config.credentials_dir, &config.device_name));
+        let pool = Arc::new(Pool::new(
+            config.credentials_dir,
+            &config.device_name,
+            Arc::clone(&accounts),
+        ));
         let keys = Arc::new(KeyFlow::new(Arc::clone(&pool), Arc::clone(&accounts)));
         Ok(Arc::new(Self {
             handle: runtime.handle().clone(),
