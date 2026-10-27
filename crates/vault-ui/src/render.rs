@@ -184,6 +184,7 @@ impl VaultView {
             .enumerate()
             .map(|(index, record)| {
                 let id = record.id;
+                let read_only = is_read_only(record);
                 h_flex()
                     .w_full()
                     .py_3()
@@ -215,8 +216,12 @@ impl VaultView {
                             .small()
                             .ghost()
                             .icon(IconName::Trash)
-                            .tooltip("Delete")
-                            .disabled(self.busy)
+                            .tooltip(if read_only {
+                                "Read-only group credential"
+                            } else {
+                                "Delete"
+                            })
+                            .disabled(self.busy || read_only)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.operation(this.service.delete(id), cx)
                             })),
@@ -372,11 +377,21 @@ impl VaultView {
 /// The second line of a credential row: a key shows its fingerprint, which is
 /// what other tools print for it; everything else shows its ID.
 pub(crate) fn describe(record: &CredentialInfo) -> String {
-    match &record.binding {
+    let what = match &record.binding {
         CredentialBinding::PrivateKey { public_key } => match PublicKeyText::parse(public_key) {
             Ok(public) => format!("SSH key \u{b7} {}", public.fingerprint()),
             Err(_) => format!("SSH key \u{b7} {}", record.id),
         },
         _ => record.id.to_string(),
+    };
+    match &record.group {
+        Some(group) if group.writable => format!("{what} \u{b7} Group {}", group.name),
+        Some(group) => format!("{what} \u{b7} Group {} \u{b7} read-only", group.name),
+        None => what,
     }
+}
+
+/// A group credential the member may only read cannot be deleted.
+fn is_read_only(record: &CredentialInfo) -> bool {
+    record.group.as_ref().is_some_and(|group| !group.writable)
 }

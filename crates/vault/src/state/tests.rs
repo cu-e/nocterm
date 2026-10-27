@@ -13,6 +13,7 @@ fn bounded_payload_parser_preserves_secret_bytes_and_rejects_lengths() {
             id: CredentialId::from_bytes([42; 16]),
             label: "label".into(),
             binding: binding(),
+            group: None,
         },
         secret: Secret::new(secret),
     }];
@@ -201,6 +202,7 @@ fn a_private_key_binding_survives_the_record_codec() {
             id: CredentialId::from_bytes([7; 16]),
             label: "laptop".into(),
             binding: private_key("ssh-ed25519 AAAAC3"),
+            group: None,
         },
         secret: Secret::new("-----BEGIN OPENSSH PRIVATE KEY-----\n"),
     }];

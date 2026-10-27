@@ -302,9 +302,15 @@ impl VaultAccess for ScriptedVaultAccess {
             memory.next += 1;
             let id = id.unwrap_or_else(|| CredentialId::from_bytes(memory.next.to_be_bytes()));
             memory.records.retain(|(info, _)| info.id != id);
-            memory
-                .records
-                .push((CredentialInfo { id, label, binding }, secret));
+            memory.records.push((
+                CredentialInfo {
+                    id,
+                    label,
+                    binding,
+                    group: None,
+                },
+                secret,
+            ));
             Ok(id)
         })
     }

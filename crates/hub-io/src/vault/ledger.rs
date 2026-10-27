@@ -137,6 +137,7 @@ impl Ledger {
                     id,
                     label: record.label,
                     binding: record.binding,
+                    group: None,
                 });
             }
         }
