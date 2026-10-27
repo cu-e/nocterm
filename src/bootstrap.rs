@@ -60,6 +60,9 @@ pub(crate) struct HostServices {
     pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
     /// The hub access ports; `None` leaves the application without hubs.
     pub(crate) hubs: Option<nocterm_hubs::Deps>,
+    /// Whether `[hubs]` came from the user's settings. False when the settings file could not
+    /// be read, so an empty list does not mean the user removed their servers.
+    pub(crate) hub_list_read: bool,
 }
 
 struct ProjectResources {
@@ -209,7 +212,15 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
-    let windowing = install_windowing(hosts.hubs.clone(), ui.settings(), stored, &shutdown, cx);
+    let hubs = install_hubs(hosts.hubs.clone(), ui.settings(), cx);
+    let windowing = Windowing::install(
+        hubs,
+        hosts.hub_list_read,
+        ui.settings(),
+        stored,
+        &shutdown,
+        cx,
+    );
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
@@ -388,17 +399,6 @@ fn install_themes(
     };
     let themes = nocterm_theme_service::ThemesHandle::install(library, registry, catalog, cx);
     nocterm_ui::ThemeUi::install(settings, themes, base, cx)
-}
-
-/// The hub servers and the list of open windows.
-fn install_windowing(
-    deps: Option<nocterm_hubs::Deps>,
-    settings: &nocterm_store::SettingsHandle,
-    stored: Option<&Paths>,
-    shutdown: &nocterm_store::ShutdownCoordinator,
-    cx: &mut App,
-) -> Windowing {
-    Windowing::install(install_hubs(deps, settings, cx), stored, shutdown, cx)
 }
 
 /// Hub access, when the application has it.

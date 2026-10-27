@@ -30,7 +30,7 @@ fn open(mode: &UserPluginMode, cx: &mut TestAppContext) -> (TempDir, SettingsHan
     let paths = Paths::rooted_at(root.path());
     fs::create_dir_all(paths.config_dir()).unwrap();
     fs::write(paths.settings_file(), SAVED).unwrap();
-    let mut config = load_settings(&paths, mode);
+    let (mut config, _) = load_settings(&paths, mode);
     config.register::<LayoutSettings>();
     let settings = cx.update(|cx| config.install(cx));
     (root, settings)
@@ -106,4 +106,17 @@ fn a_developer_session_keeps_a_layout_edit_in_memory_and_leaves_the_saved_layout
             "the session itself sees its edit: the plugin it does not know went to the tray"
         );
     });
+}
+
+#[test]
+fn settings_that_cannot_be_read_are_reported_so_an_empty_hub_list_is_not_trusted() {
+    let root = TempDir::new().unwrap();
+    let paths = Paths::rooted_at(root.path());
+    fs::create_dir_all(paths.config_dir()).unwrap();
+
+    fs::write(paths.settings_file(), SAVED).unwrap();
+    assert!(load_settings(&paths, &UserPluginMode::Installed).1);
+
+    fs::write(paths.settings_file(), "this = is [not toml").unwrap();
+    assert!(!load_settings(&paths, &UserPluginMode::Installed).1);
 }

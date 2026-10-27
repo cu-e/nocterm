@@ -75,3 +75,36 @@ fn quitting_writes_the_open_windows_where_the_next_start_reads_them(cx: &mut Tes
 
     assert_eq!(previous(&paths, cx), [Environment::Local, hub()]);
 }
+
+#[gpui_kit::test]
+fn a_file_written_by_a_newer_version_is_left_as_it_was(cx: &mut TestAppContext) {
+    let (_directory, paths) = paths();
+    let newer = r#"{"version":99,"windows":[{"environment":{"kind":"orbit"}}]}"#;
+    write(&paths, newer);
+    let shutdown = ShutdownCoordinator::default();
+    let (prepared, writer) = native(&paths);
+    cx.update(|cx| {
+        let set = WindowSet::install(prepared, writer, &shutdown, cx).unwrap();
+        assert!(set.previous().is_empty());
+        let window = cx
+            .open_window(Default::default(), |_, cx| cx.new(|_| gpui_kit::Empty))
+            .unwrap();
+        set.opened(AnyWindowHandle::from(window).window_id(), hub(), cx);
+    });
+    let work = cx.update(|cx| shutdown.capture_all(cx));
+    cx.background_executor.spawn(work).detach();
+    cx.run_until_parked();
+
+    assert_eq!(std::fs::read_to_string(file_of(&paths)).unwrap(), newer);
+}
+
+#[gpui_kit::test]
+fn one_record_that_cannot_be_read_does_not_lose_the_others(cx: &mut TestAppContext) {
+    let (_directory, paths) = paths();
+    write(
+        &paths,
+        r#"{"version":1,"windows":[{"environment":{"kind":"orbit"}},{"environment":{"kind":"local"}}]}"#,
+    );
+
+    assert_eq!(previous(&paths, cx), [Environment::Local]);
+}

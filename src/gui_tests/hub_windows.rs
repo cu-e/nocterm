@@ -43,22 +43,32 @@ fn boot_over(
     transport: &Arc<MockTransport>,
     cx: &mut TestAppContext,
 ) -> Booted {
+    let servers = if hub.is_some() {
+        vec![known_server()]
+    } else {
+        Vec::new()
+    };
+    let settings =
+        nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings { servers });
+    boot_with(hub, settings, transport, cx)
+}
+
+/// The application composed over `hub` (or without hubs) with these settings.
+fn boot_with(
+    hub: Option<&FakeHub>,
+    settings: nocterm_store::SettingsConfig,
+    transport: &Arc<MockTransport>,
+    cx: &mut TestAppContext,
+) -> Booted {
     let booted = cx.update(|cx| {
-        let (servers, deps) = match hub {
-            Some(hub) => (
-                vec![known_server()],
-                Some(nocterm_hubs::Deps {
-                    trust: Arc::new(hub.clone()),
-                    sign_in: Arc::new(hub.clone()),
-                    sessions: Arc::new(hub.clone()),
-                }),
-            ),
-            None => (Vec::new(), None),
-        };
+        let deps = hub.map(|hub| nocterm_hubs::Deps {
+            trust: Arc::new(hub.clone()),
+            sign_in: Arc::new(hub.clone()),
+            sessions: Arc::new(hub.clone()),
+        });
         boot_with_ports_and_probe(
             tempfile::tempdir().unwrap(),
-            nocterm_store::SettingsConfig::in_memory(Default::default())
-                .with(HubsSettings { servers }),
+            settings,
             (
                 transport.clone(),
                 nocterm_terminal::LocalSessions::disabled("/bin/bash".into()),

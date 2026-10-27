@@ -33,7 +33,7 @@ impl PreparedApp {
         let executable = std::env::current_exe().context("locating the nocterm executable")?;
         let paths = Paths::discover()?;
         let tokens = load_tokens(&paths);
-        let settings = load_settings(&paths, &user_plugins);
+        let (settings, settings_read) = load_settings(&paths, &user_plugins);
         let dirs = nocterm_themes::ThemeDirs {
             user: paths.user_themes_dir(),
             installed: paths.installed_themes_dir(),
@@ -90,6 +90,7 @@ impl PreparedApp {
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
                 hubs: hub_dependencies(&paths_for_hubs),
+                hub_list_read: settings_read,
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,
@@ -288,15 +289,19 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
 }
 
 /// Invalid sections keep their source; malformed files disable writes for this run. A
-/// developer session reads the file and never writes it.
-fn load_settings(paths: &Paths, mode: &UserPluginMode) -> SettingsConfig {
+/// developer session reads the file and never writes it. The second value is false when the
+/// file could not be read and the settings are the defaults.
+fn load_settings(paths: &Paths, mode: &UserPluginMode) -> (SettingsConfig, bool) {
     let file = SettingsFile::new(paths.settings_file());
     match file.load() {
-        Ok(document) if mode.saves_settings() => SettingsConfig::new(document, file),
-        Ok(document) => SettingsConfig::in_memory(document),
+        Ok(document) if mode.saves_settings() => (SettingsConfig::new(document, file), true),
+        Ok(document) => (SettingsConfig::in_memory(document), true),
         Err(error) => {
             tracing::error!(%error, "could not read the settings; changes will not be saved");
-            SettingsConfig::in_memory(SettingsDocument::default())
+            (
+                SettingsConfig::in_memory(SettingsDocument::default()),
+                false,
+            )
         }
     }
 }

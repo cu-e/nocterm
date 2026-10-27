@@ -46,8 +46,15 @@ fn each_remembered_environment_gets_a_window(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_server_removed_from_the_list_is_skipped(cx: &mut TestAppContext) {
-    let booted = boot_over(None, &Arc::new(MockTransport::default()), cx);
+fn a_server_removed_from_the_list_is_forgotten(cx: &mut TestAppContext) {
+    let settings =
+        nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings::default());
+    let booted = boot_with(
+        Some(&hub()),
+        settings,
+        &Arc::new(MockTransport::default()),
+        cx,
+    );
 
     restore(
         &booted,
@@ -57,6 +64,45 @@ fn a_server_removed_from_the_list_is_skipped(cx: &mut TestAppContext) {
 
     assert_eq!(titles(cx), ["Nocterm"]);
     assert_eq!(remembered(&booted, cx), [Environment::Local]);
+}
+
+#[gpui_kit::test]
+fn a_server_is_kept_when_hubs_did_not_start(cx: &mut TestAppContext) {
+    let booted = boot_over(None, &Arc::new(MockTransport::default()), cx);
+
+    restore(
+        &booted,
+        &[Environment::Hub(hub_id()), Environment::Local],
+        cx,
+    );
+
+    assert_eq!(titles(cx), ["Nocterm"]);
+    assert_eq!(
+        remembered(&booted, cx),
+        [Environment::Hub(hub_id()), Environment::Local]
+    );
+}
+
+#[gpui_kit::test]
+fn a_server_is_kept_when_the_hubs_section_could_not_be_read(cx: &mut TestAppContext) {
+    let table: toml::Table = toml::from_str("hubs = \"not a table\"").unwrap();
+    let settings = nocterm_store::SettingsConfig::in_memory(
+        nocterm_settings::SettingsDocument::from_table(table),
+    );
+    let booted = boot_with(
+        Some(&hub()),
+        settings,
+        &Arc::new(MockTransport::default()),
+        cx,
+    );
+
+    restore(&booted, &[Environment::Hub(hub_id())], cx);
+
+    assert_eq!(titles(cx), ["Nocterm"]);
+    assert_eq!(
+        remembered(&booted, cx),
+        [Environment::Hub(hub_id()), Environment::Local]
+    );
 }
 
 #[gpui_kit::test]
@@ -71,7 +117,14 @@ fn nothing_remembered_opens_one_local_window(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn when_no_remembered_window_can_open_one_local_window_opens(cx: &mut TestAppContext) {
-    let booted = boot_over(None, &Arc::new(MockTransport::default()), cx);
+    let settings =
+        nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings::default());
+    let booted = boot_with(
+        Some(&hub()),
+        settings,
+        &Arc::new(MockTransport::default()),
+        cx,
+    );
 
     restore(&booted, &[Environment::Hub(hub_id())], cx);
 
