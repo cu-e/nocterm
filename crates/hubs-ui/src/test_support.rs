@@ -10,9 +10,7 @@ use gpui_kit::{
     TestAppContext, Window, WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use nocterm_hubs_model::testing::{FakeHub, FakeServer};
-use nocterm_hubs_model::{
-    Environment, Fingerprint, HubAddress, HubId, HubRecord, HubsSettings, TrustPolicy,
-};
+use nocterm_hubs_model::{Environment, HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_session::{Target, Transport};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
@@ -45,11 +43,7 @@ pub(crate) fn server() -> FakeServer {
 
 /// The record of [`server`] as the settings keep it after a sign-in.
 pub(crate) fn pinned_record() -> HubRecord {
-    HubRecord::new(
-        HubAddress::parse(ADDRESS).unwrap(),
-        TrustPolicy::Pinned(Fingerprint::from_bytes([7; 32])),
-        "Home",
-    )
+    server().pinned_record("Home")
 }
 
 /// Remembers which environments the views asked to open.

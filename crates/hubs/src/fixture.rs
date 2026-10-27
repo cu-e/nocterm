@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui::{Entity, TestAppContext};
 use nocterm_hubs_model::testing::{FakeHub, FakeServer};
-use nocterm_hubs_model::{Fingerprint, HubAddress, HubId, HubRecord, HubsSettings, TrustPolicy};
+use nocterm_hubs_model::{HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SettingsHandle, StoreError};
 
@@ -38,11 +38,7 @@ pub(crate) fn server() -> FakeServer {
 }
 
 pub(crate) fn pinned_record() -> HubRecord {
-    HubRecord::new(
-        address(),
-        TrustPolicy::Pinned(Fingerprint::from_bytes([7; 32])),
-        "Home",
-    )
+    server().pinned_record("Home")
 }
 
 /// Installs the registry over `hub` with `known` servers in the settings.

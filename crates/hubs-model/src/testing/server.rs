@@ -6,8 +6,9 @@ use crate::records::{
     Account, AccountId, HubInfo, HubSessionState, HubSessionSummary, NodeId, NodeSummary,
     OidcProvider, OrgId, OrgSummary,
 };
+use crate::settings::HubRecord;
 use crate::testing::CLIENT_PROTOCOL;
-use crate::trust::Fingerprint;
+use crate::trust::{Fingerprint, TrustPolicy};
 
 /// A user who can sign in to a fake server.
 #[derive(Clone, Debug)]
@@ -60,6 +61,15 @@ impl FakeServer {
     pub fn named(mut self, name: &str) -> Self {
         self.name = name.into();
         self
+    }
+
+    /// The settings record of this server as a sign-in leaves it: pinned to its certificate.
+    pub fn pinned_record(&self, label: &str) -> HubRecord {
+        HubRecord::new(
+            self.address.clone(),
+            TrustPolicy::Pinned(self.certificate),
+            label,
+        )
     }
 
     #[must_use]
