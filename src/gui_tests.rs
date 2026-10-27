@@ -18,7 +18,7 @@ mod agent_installation;
 mod chat_history;
 mod default_shell_geometry;
 mod hub_live;
-mod hub_windows;
+mod hub_sessions;
 mod keymap;
 mod menu_layouts;
 mod menu_tabs;
@@ -328,7 +328,6 @@ fn fixture_hosts(
         )),
         workspace_sessions: activation,
         hubs: None,
-        hub_list_read: true,
     }
 }
 
