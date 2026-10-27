@@ -8,15 +8,16 @@
 //! Owns: the presentation of the known hubs and their status ([`install_menu`]); the Servers
 //! page of the settings ([`settings_page`]) and the palette commands that sign in to, open and
 //! sign out of a server; the steps of the sign-in dialog as the service orders them; the sessions panel and the new-session menu of
-//! a hub window ([`register_hub_window`]); the confirmation before a window with tabs switches.
+//! a hub window ([`register_hub_window`]); the confirmation before a window with tabs switches; what a hub window remembers of its
+//! organization and tabs and the reattaching of the sessions after a restart.
 //!
 //! Does not own: the registry of hubs, sign-in order and session lists (`nocterm-hubs`); hub
 //! I/O and trust rules (`nocterm-hubs-model` and the injected adapter); composing windows
 //! (the application, through [`EnvironmentOpener`]); terminal tabs (the application, through
 //! [`HubTerminalOpener`]).
 //!
-//! Ports: uses [`EnvironmentOpener`] and [`HubTerminalOpener`], both implemented by the
-//! application; provides the `hubs.sessions` panel ([`plugin::CORE`]).
+//! Ports: uses [`EnvironmentOpener`], [`HubTerminalOpener`] and [`HubMemoryKeeper`] (grouped in
+//! [`HubWindowPorts`]), all implemented by the application; provides the `hubs.sessions` panel ([`plugin::CORE`]).
 //!
 //! Settings: none of its own; the service owns the `[hubs]` section and the Servers page edits
 //! it through the service.

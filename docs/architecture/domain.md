@@ -445,7 +445,8 @@ refused), `Fingerprint` and `TrustPolicy`, the pure trust decision `decide` for 
 certificate (pinned, public authority, first use that needs a confirmation, or a mismatch that
 can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints,
 labels and an optional `HubColor` from a closed set of six theme-relative names; a colour this
-version does not know leaves the server unmarked and never drops the record; never secrets) and the ports `HubTrust`, `HubSignIn` and `HubSessions`. Port methods
+version does not know leaves the server unmarked and never drops the record; never secrets) and the ports `HubTrust`, `HubSignIn` and `HubSessions` (a `terminal` call returns a `HubTerminal`: the
+transport plus, for a new session, a receiver of the id the hub gives it). Port methods
 return runtime-agnostic futures and fail with the typed, cloneable `HubError`, which keeps the
 original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind all
 three ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
@@ -455,5 +456,7 @@ The `windows` module holds the state document of the open windows: `WindowDocume
 JSON of `WindowRecord`s, each with an `Environment`, tolerant of fields added later, with the
 typed `WindowDocumentError`) and `OpenWindows<K>`, the rules for a live list keyed by any
 window identity. A window that opens is appended, switching replaces its environment, and
-closing removes a window unless it is the last
+closing removes a window unless it is the last. A `WindowRecord` of a hub also carries a
+`HubWindowMemory` (the organization shown and the ids of the attached sessions, in tab order),
+which `OpenWindows::remembered` applies only to a window still showing that hub
 ([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)).

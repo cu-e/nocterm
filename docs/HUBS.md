@@ -55,7 +55,14 @@ on the server. **New Window** from the menu always opens a local window.
 
 After a restart Nocterm opens a window for each environment the previous run left open, in the
 same order. A server that was removed from the list is skipped; if no window can open, one
-local window opens. The windows open on their environment, not on their tabs.
+local window opens.
+
+A hub window also remembers its organization and the sessions of its open tabs. After a restart
+it shows the same organization (if you are still a member) and reattaches each session that is
+still running, with its screen. A session that ended meanwhile is dropped without a message.
+If the server is offline or you are signed out, the sessions are reattached once it is online
+again, or kept for the next start. Closing a tab forgets its session; quitting keeps them.
+Local windows reopen with their default tab.
 
 The window is named "Nocterm — server name".
 

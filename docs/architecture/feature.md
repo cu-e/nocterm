@@ -741,9 +741,16 @@ runner and expose readable immutable outcomes; sign-in cards retain the original
   existing session (also a double-click, or Enter on the session chosen with a click or the arrow
   keys), the "+" button ("New session") creates one on a chosen node or on any node, and the
   "End session" button asks for confirmation and then terminates the session on its node.
+- `Remembered` (private to the feature) holds what a hub window keeps for the next start: the
+  organization shown and the sessions of its tabs in opening order. A tab joins when it opens
+  (a new session when the hub reports its id) and leaves when it closes; it reports each change
+  through `HubMemoryKeeper`. In a restored window it reattaches the remembered sessions that the
+  hub still lists, once the lists first load, and drops the others without a notice.
 - The feature declares the ports it needs and the application implements them, because features
   do not depend on each other: `EnvironmentOpener` opens an environment in this or a new
-  window, and `HubTerminalOpener` adds a tab on a given transport to the workspace.
+  window, `HubTerminalOpener` adds a tab on a given transport to the workspace and
+  `HubMemoryKeeper` stores what the window keeps; `HubWindowPorts` groups them for
+  `register_hub_window`.
 
 A tab opened for a hub session is an attached tab of the terminal feature (see
 [Terminal](#terminal)). Closing it detaches: the process keeps running on its node and the

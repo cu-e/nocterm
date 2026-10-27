@@ -16,8 +16,11 @@ windows is missing.
 `state_dir/windows.json` is `{"version":1,"windows":[{"environment":{"kind":"local"}}, ...]}`,
 in the order the windows opened. It is state the application writes, so the user does not edit
 it and it is not in `settings.toml`. Records ignore unknown fields and every later field is
-optional, so a record can carry data of its own window, such as the sessions it shows, without
-a format break. A record this version cannot read, such as an environment of a kind a later
+optional, so a record can carry data of its own window without a format break. A hub window
+carries `"hub":{"organization":"...","sessions":["..."]}`, each part omitted when empty: the
+organization it showed and the ids of the hub sessions its tabs were attached to, in order.
+Older documents have no `hub` and load as before; a `hub` this version cannot read is treated
+as empty. A record this version cannot read, such as an environment of a kind a later
 build added, is left out and counted; the others are read. Text that cannot be parsed and a
 newer `version` are the typed `WindowDocumentError`; both start one local window. The next
 save replaces unreadable text, but a document of a newer version is never written over: that
@@ -45,6 +48,15 @@ files remembers nothing. `src/bootstrap/windowing.rs` groups the hub servers and
 set into one `Windowing` owner of `Booted`, which was at its field limit. If the save cannot be
 registered for shutdown, windows work and are not remembered.
 
+**A hub window remembers its organization and sessions.** `HubWindowMemory` is a plain value in
+the domain; `OpenWindows::remembered` applies it only to an open window still showing that hub,
+so a late report cannot reach a window that was switched to another server. `nocterm-hubs-ui`
+reports it through the `HubMemoryKeeper` port, which the application implements over the window
+set. A tab joins the memory when it opens; a tab that starts a new session joins it when the hub
+reports the id of the session. Closing a tab forgets its session; quitting forgets nothing, so
+the sessions of every tab survive a restart. Another organization chosen in the window is
+remembered as well.
+
 **Start opens a window per remembered environment.** `windows::restore_windows` opens each
 entry through `open_window`, which reports to the set. An entry that cannot open is logged and
 skipped. A server that is positively absent from a `[hubs]` that was read is forgotten. A
@@ -52,6 +64,16 @@ server that is only unavailable in this run, because `settings.toml` could not b
 `[hubs]` section is invalid or hubs did not start, stays in the document at its place, so
 fixing the cause brings its window back. When none opens, or nothing was remembered, one
 local window opens.
+
+**A restored hub window reattaches its sessions.** The window prefers the remembered
+organization: it is selected when the account is a member, else the default one stays. When the
+lists of the window first load, which happens when the hub is online, each remembered session
+that the hub still lists as starting or running opens a tab on `HubTerminalTarget::Existing`;
+the screen comes back through `Event::Restore`. A session the hub no longer lists, such as one
+that ended meanwhile, is dropped from the entry without a notice. While the hub is offline or
+the device is signed out, the lists do not load: the entry keeps its sessions, they are
+reattached when the hub comes online in this run, and otherwise stay for the next start. A
+window that opens its sessions again keeps their order; tabs of one window open in that order.
 
 ## Alternatives
 
@@ -63,9 +85,8 @@ crate for the document would only re-export `Environment` and `HubAddress`.
 
 ## Consequences
 
-- Restoring a window opens its environment, not its tabs: a local window starts with the
-  default tab and hub tabs are not reattached. A later decision can add per-window data to the
-  record.
+- A local window starts with the default tab; only hub windows restore tabs, because only
+  their sessions outlive the application.
 - The window position and size are the platform's; they are not part of the document.
 - The first window a start opens is saved at once, in the background, so a remembered entry
   that did not open and is not kept, such as a removed server, is gone from the file within the
