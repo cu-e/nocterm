@@ -113,10 +113,11 @@ fn password_sign_in_returns_the_account_and_remembers_the_device() {
     assert!(matches!(wrong, Err(HubError::InvalidCredentials)));
     assert!(!hub.is_signed_in(&hub_id()));
 
-    let account =
+    let signed_in =
         block_on(hub.password(endpoint(pinned()), "ada".into(), Secret::new("secret"))).unwrap();
-    assert_eq!(account.username, "ada");
-    assert_eq!(account.orgs[0].id.as_str(), "lab");
+    assert_eq!(signed_in.account.username, "ada");
+    assert_eq!(signed_in.account.orgs[0].id.as_str(), "lab");
+    assert_eq!(signed_in.keys, KeyStatus::Open);
     assert!(hub.is_signed_in(&hub_id()));
 }
 
@@ -149,7 +150,7 @@ fn browser_sign_in_hands_out_the_address_and_finishes_when_the_browser_does() {
         hub.complete_oidc("ada");
     };
     let (result, ()) = block_on(futures::future::join(done, browser_side));
-    assert_eq!(result.unwrap().username, "ada");
+    assert_eq!(result.unwrap().account.username, "ada");
     assert!(hub.is_signed_in(&hub_id()));
     assert_eq!(hub.cancelled_oidc(), 0);
 }
@@ -337,4 +338,63 @@ fn a_terminal_that_starts_a_session_learns_the_id_the_hub_gave_it() {
         Ok(HubSessionId::new("made-1"))
     );
     assert!(block_on(second.expect("a new session reports its id")).is_err());
+}
+
+fn keyed_hub() -> FakeHub {
+    FakeHub::new().with_server(server().keyed())
+}
+
+fn sign_in(hub: &FakeHub, password: &str) -> SignedIn {
+    block_on(hub.password(endpoint(pinned()), "ada".into(), Secret::new(password))).unwrap()
+}
+
+#[test]
+fn a_first_sign_in_creates_the_keys_and_hands_out_the_recovery_key_once() {
+    let hub = keyed_hub();
+    assert_eq!(
+        sign_in(&hub, "secret").keys,
+        KeyStatus::Created(Secret::new("recovery-ada"))
+    );
+    assert_eq!(sign_in(&hub, "secret").keys, KeyStatus::Open);
+}
+
+#[test]
+fn a_password_that_does_not_open_the_keys_waits_for_the_recovery_key() {
+    let hub = FakeHub::new().with_server(server().with_keyset("ada", "old", "recovery-key"));
+    assert_eq!(sign_in(&hub, "secret").keys, KeyStatus::RecoveryNeeded);
+
+    let wrong = block_on(hub.recover(&hub_id(), Secret::new("not it")));
+    assert!(matches!(wrong, Err(HubError::RecoveryKeyInvalid)));
+    block_on(hub.recover(&hub_id(), Secret::new("recovery-key"))).unwrap();
+    assert_eq!(sign_in(&hub, "secret").keys, KeyStatus::Open);
+}
+
+#[test]
+fn recovering_without_a_waiting_sign_in_is_refused() {
+    let hub = FakeHub::new().with_server(server().with_keyset("ada", "secret", "recovery-key"));
+    sign_in(&hub, "secret");
+    let result = block_on(hub.recover(&hub_id(), Secret::new("recovery-key")));
+    assert!(matches!(result, Err(HubError::NoRecoveryPending)));
+}
+
+#[test]
+fn a_browser_sign_in_needs_the_vault_passphrase_to_open_or_make_the_keys() {
+    let hub = keyed_hub();
+    let OidcSignIn { browser, done } = hub.oidc(endpoint(pinned()), "corp".into());
+    let browser_side = async {
+        browser.await.unwrap();
+        hub.complete_oidc("ada");
+    };
+    let (result, ()) = block_on(futures::future::join(done, browser_side));
+    assert_eq!(result.unwrap().keys, KeyStatus::PassphraseNeeded);
+
+    let made = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("a long passphrase")));
+    assert_eq!(
+        made.unwrap(),
+        KeyStatus::Created(Secret::new("recovery-ada"))
+    );
+    let again = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("a long passphrase")));
+    assert_eq!(again.unwrap(), KeyStatus::Open);
+    let other = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("another passphrase")));
+    assert_eq!(other.unwrap(), KeyStatus::RecoveryNeeded);
 }

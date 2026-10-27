@@ -12,15 +12,17 @@ use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
     Account, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
     HubSessionId, HubSessionSummary, HubSessions, HubSignIn, HubTerminal, HubTerminalTarget,
-    HubTrust, NodeSummary, OidcSignIn, OrgId, ProbedHub,
+    HubTrust, KeyStatus, NodeSummary, OidcSignIn, OrgId, ProbedHub, SignedIn,
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::AbortHandle;
 
+use crate::account::{Accounts, KeyFlow};
 use crate::classify::{probe_failed, remote};
 use crate::connect::Connector;
 use crate::directory::Directory;
+use crate::hub_account::HubAccount;
 use crate::pool::Pool;
 use crate::terminal::HubTerminalTransport;
 
@@ -52,6 +54,8 @@ pub struct HubLinks {
     pool: Arc<Pool>,
     connector: Arc<Connector>,
     directory: Arc<Directory>,
+    accounts: Arc<Accounts>,
+    keys: Arc<KeyFlow>,
 }
 
 /// The adapter's threads have stopped.
@@ -91,14 +95,34 @@ impl HubLinks {
             .enable_all()
             .build()
             .map_err(HubStartError)?;
+        let accounts = Arc::new(Accounts::new(config.credentials_dir.clone()));
         let pool = Arc::new(Pool::new(config.credentials_dir, &config.device_name));
+        let keys = Arc::new(KeyFlow::new(Arc::clone(&pool), Arc::clone(&accounts)));
         Ok(Arc::new(Self {
             handle: runtime.handle().clone(),
             runtime: Some(runtime),
-            connector: Arc::new(Connector::new(Arc::clone(&pool))),
+            connector: Arc::new(Connector::new(
+                Arc::clone(&pool),
+                Arc::clone(&accounts),
+                Arc::clone(&keys),
+            )),
             directory: Arc::new(Directory::new(Arc::clone(&pool))),
             pool,
+            accounts,
+            keys,
         }))
+    }
+
+    /// The encrypted data of the account this device is signed in to on `hub`: its profile
+    /// replica and its vault. Both share the account's keys, which open at sign-in and close
+    /// when the vault locks or the device signs out.
+    pub fn open_account(&self, hub: &HubId) -> Result<HubAccount, HubError> {
+        let slot = self.accounts.slot(hub)?;
+        Ok(HubAccount::new(
+            self.handle.clone(),
+            Arc::clone(&self.pool),
+            slot,
+        ))
     }
 
     /// What a relay needs of the links: their threads and the hubs they are signed in to.
@@ -168,7 +192,7 @@ impl HubSignIn for HubLinks {
         endpoint: HubEndpointSpec,
         username: String,
         password: Secret,
-    ) -> HubFuture<Account> {
+    ) -> HubFuture<SignedIn> {
         let connector = Arc::clone(&self.connector);
         self.run_boxed(async move { connector.password(endpoint, username, password).await })
     }
@@ -179,6 +203,16 @@ impl HubSignIn for HubLinks {
         let done =
             self.run_boxed(async move { connector.oidc(endpoint, provider, browser_sender).await });
         OidcSignIn { browser, done }
+    }
+
+    fn set_vault_passphrase(&self, hub: &HubId, passphrase: Secret) -> HubFuture<KeyStatus> {
+        let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
+        self.run_boxed(async move { keys.passphrase(&hub, passphrase).await })
+    }
+
+    fn recover(&self, hub: &HubId, recovery_key: Secret) -> HubFuture<()> {
+        let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
+        self.run_boxed(async move { keys.recover(&hub, recovery_key).await })
     }
 
     fn sign_out(&self, hub: &HubId) -> HubFuture<()> {

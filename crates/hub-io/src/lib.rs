@@ -39,6 +39,7 @@ mod convert;
 mod credentials;
 mod directory;
 mod endpoint;
+mod hub_account;
 mod links;
 mod pool;
 mod relay;
@@ -48,6 +49,7 @@ mod task;
 mod terminal;
 mod vault;
 
+pub use hub_account::HubAccount;
 pub use links::{HubLinks, HubLinksConfig, HubStartError};
 pub use relay::HubRelay;
 pub use replica::HubProfileReplica;

@@ -18,13 +18,13 @@ use crate::error::HubError;
 use crate::ports::{HubFuture, HubSessions, HubSignIn, HubTerminal, HubTrust, OidcSignIn};
 use crate::records::{
     Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionState, HubSessionSummary,
-    HubTerminalTarget, NodeSummary, OrgId,
+    HubTerminalTarget, KeyStatus, NodeSummary, OrgId, SignedIn,
 };
 use crate::trust::{ProbedHub, TrustPolicy};
 
 mod server;
 
-pub use server::{FakeServer, FakeUser};
+pub use server::{FakeKeyset, FakeServer, FakeUser};
 
 /// The protocol version the fake client speaks.
 pub const CLIENT_PROTOCOL: u32 = 1;
@@ -36,6 +36,8 @@ pub enum FakeOp {
     Connect,
     Password,
     Oidc,
+    SetVaultPassphrase,
+    Recover,
     SignOut,
     Forget,
     Account,
@@ -51,6 +53,8 @@ pub enum FakeCall {
     Connect(HubId),
     Password { hub: HubId, username: String },
     Oidc { hub: HubId, provider: String },
+    SetVaultPassphrase(HubId),
+    Recover(HubId),
     SignOut(HubId),
     Forget(HubId),
     Account(HubId),
@@ -87,6 +91,9 @@ struct State {
     oidc_cancelled: usize,
     /// The ids the hub gives the sessions that terminals start, in order.
     created: VecDeque<HubSessionId>,
+    /// Keys a sign-in could not open, waiting for the recovery key, and what should open them
+    /// afterwards.
+    recovering: BTreeMap<HubId, String>,
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -240,6 +247,8 @@ impl FakeCall {
             Self::Connect(_) => FakeOp::Connect,
             Self::Password { .. } => FakeOp::Password,
             Self::Oidc { .. } => FakeOp::Oidc,
+            Self::SetVaultPassphrase(_) => FakeOp::SetVaultPassphrase,
+            Self::Recover(_) => FakeOp::Recover,
             Self::SignOut(_) => FakeOp::SignOut,
             Self::Forget(_) => FakeOp::Forget,
             Self::Terminal(..) => return None,
@@ -300,6 +309,42 @@ impl State {
         self.reach(hub.address())
     }
 
+    /// What a sign-in with `secret` does to the keys of `username`: opens them, makes them (the
+    /// recovery key is `recovery-<username>`) or waits for the recovery key.
+    fn open_keys(
+        &mut self,
+        hub: &HubId,
+        username: &str,
+        secret: &str,
+    ) -> Result<KeyStatus, HubError> {
+        let server = self
+            .servers
+            .get_mut(hub.address())
+            .filter(|server| server.online)
+            .ok_or_else(|| Self::unreachable(hub.address()))?;
+        if !server.keyed {
+            return Ok(KeyStatus::Open);
+        }
+        match server.keysets.get(username) {
+            None => {
+                let recovery = format!("recovery-{username}");
+                server.keysets.insert(
+                    username.to_owned(),
+                    FakeKeyset {
+                        secret: secret.to_owned(),
+                        recovery: recovery.clone(),
+                    },
+                );
+                Ok(KeyStatus::Created(Secret::new(recovery)))
+            }
+            Some(keyset) if keyset.secret == secret => Ok(KeyStatus::Open),
+            Some(_) => {
+                self.recovering.insert(hub.clone(), secret.to_owned());
+                Ok(KeyStatus::RecoveryNeeded)
+            }
+        }
+    }
+
     fn account_of(&self, hub: &HubId, username: &str) -> Result<Account, HubError> {
         let server = self.reach(hub.address())?;
         server
@@ -358,7 +403,7 @@ impl HubSignIn for FakeHub {
         endpoint: HubEndpointSpec,
         username: String,
         password: Secret,
-    ) -> HubFuture<Account> {
+    ) -> HubFuture<SignedIn> {
         let hub = HubId::from(endpoint.address.clone());
         let call = FakeCall::Password {
             hub: hub.clone(),
@@ -377,7 +422,9 @@ impl HubSignIn for FakeHub {
             }
             state.revoked.remove(&hub);
             state.credentials.insert(hub.clone(), username.clone());
-            state.account_of(&hub, &username)
+            let account = state.account_of(&hub, &username)?;
+            let keys = state.open_keys(&hub, &username, password.expose())?;
+            Ok(SignedIn { account, keys })
         })
     }
 
@@ -417,10 +464,58 @@ impl HubSignIn for FakeHub {
             let mut state = lock(&shared);
             state.revoked.remove(&hub);
             state.credentials.insert(hub.clone(), username.clone());
-            state.account_of(&hub, &username)
+            state.recovering.remove(&hub);
+            let account = state.account_of(&hub, &username)?;
+            let keys = if state.reach(hub.address())?.keyed {
+                KeyStatus::PassphraseNeeded
+            } else {
+                KeyStatus::Open
+            };
+            Ok(SignedIn { account, keys })
         }
         .boxed();
         OidcSignIn { browser, done }
+    }
+
+    fn set_vault_passphrase(&self, hub: &HubId, passphrase: Secret) -> HubFuture<KeyStatus> {
+        let hub = hub.clone();
+        self.call(
+            FakeOp::SetVaultPassphrase,
+            FakeCall::SetVaultPassphrase(hub.clone()),
+            move |state| {
+                state.authenticate(&hub)?;
+                let username = state.credentials[&hub].clone();
+                state.open_keys(&hub, &username, passphrase.expose())
+            },
+        )
+    }
+
+    fn recover(&self, hub: &HubId, recovery_key: Secret) -> HubFuture<()> {
+        let hub = hub.clone();
+        self.call(
+            FakeOp::Recover,
+            FakeCall::Recover(hub.clone()),
+            move |state| {
+                state.authenticate(&hub)?;
+                let username = state.credentials[&hub].clone();
+                let secret = state
+                    .recovering
+                    .get(&hub)
+                    .cloned()
+                    .ok_or(HubError::NoRecoveryPending)?;
+                let keyset = state
+                    .servers
+                    .get_mut(hub.address())
+                    .and_then(|server| server.keysets.get_mut(&username))
+                    .ok_or(HubError::NoRecoveryPending)?;
+                if keyset.recovery != recovery_key.expose() {
+                    return Err(HubError::RecoveryKeyInvalid);
+                }
+                keyset.secret = secret;
+                state.recovering.remove(&hub);
+                Ok(())
+            },
+        )
     }
 
     fn sign_out(&self, hub: &HubId) -> HubFuture<()> {
@@ -430,6 +525,7 @@ impl HubSignIn for FakeHub {
             FakeCall::SignOut(hub.clone()),
             move |state| {
                 state.credentials.remove(&hub);
+                state.recovering.remove(&hub);
                 Ok(())
             },
         )
@@ -447,6 +543,7 @@ impl HubSignIn for FakeHub {
             return Err(error);
         }
         state.credentials.remove(hub);
+        state.recovering.remove(hub);
         Ok(())
     }
 }

@@ -114,10 +114,8 @@ impl KeyFlow {
                         // the recovery key decides, and then the typed passphrase is kept.
                         let fresh = UnlockKdf::random().map_err(remote)?;
                         let unlock = derive(&passphrase, &fresh).await?;
-                        let hub_uid = client.info().hub_id.clone();
                         slot.await_recovery(Recovery {
                             account_id: account_id.to_owned(),
-                            hub_uid,
                             unlock,
                             kdf: fresh,
                             method: UnlockMethod::Passphrase,
@@ -177,7 +175,6 @@ impl KeyFlow {
                 Err(KeysetError::WrongUnlockKey) => {
                     slot.await_recovery(Recovery {
                         account_id: account_id.to_owned(),
-                        hub_uid: client.info().hub_id.clone(),
                         unlock,
                         kdf,
                         method,
@@ -221,7 +218,6 @@ impl KeyFlow {
                     Err(KeysetError::WrongUnlockKey) => {
                         slot.await_recovery(Recovery {
                             account_id: account_id.to_owned(),
-                            hub_uid: client.info().hub_id.clone(),
                             unlock,
                             kdf,
                             method,

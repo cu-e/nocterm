@@ -8,9 +8,9 @@ use std::sync::Arc;
 use futures::FutureExt as _;
 use gpui::{Context, EventEmitter, Task};
 use nocterm_hubs_model::{
-    Account, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord,
-    HubSignIn, HubTrust, HubsSettings, OidcProvider, OidcSignIn, ProbedHub, TrustDecision,
-    TrustPolicy, decide,
+    Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord, HubSignIn,
+    HubTrust, HubsSettings, KeyStatus, OidcProvider, OidcSignIn, ProbedHub, SignedIn,
+    TrustDecision, TrustPolicy, decide,
 };
 use nocterm_session::Secret;
 use nocterm_store::SettingsHandle;
@@ -64,6 +64,20 @@ pub enum SignInStep {
         provider: String,
         /// The address to open; absent until the sign-in listens.
         url: Option<String>,
+    },
+    /// The account had no keys and they were made. The recovery key is shown here once and kept
+    /// nowhere: it is the only way back after the password is lost.
+    RecoveryKey {
+        key: Secret,
+    },
+    /// A browser sign-in cannot open the account's keys: waiting for the vault passphrase.
+    Passphrase {
+        problem: Option<SignInError>,
+    },
+    /// The password does not open the account's keys (it was reset): waiting for the
+    /// recovery key.
+    Recovery {
+        problem: Option<SignInError>,
     },
     /// Adding the server to the settings.
     Saving,
@@ -359,21 +373,101 @@ impl SignInSession {
         }
     }
 
-    fn signed(&mut self, result: Result<Account, HubError>, cx: &mut Context<Self>) {
+    fn signed(&mut self, result: Result<SignedIn, HubError>, cx: &mut Context<Self>) {
         self.work = None;
         match result {
-            Ok(_) => {
+            Ok(signed) => {
                 self.attempt.fresh_credentials = true;
-                self.publish(cx);
+                self.keys_settled(signed.keys, cx);
             }
             Err(error) => self.show_methods(Some(error.into()), cx),
+        }
+    }
+
+    /// Goes on from what a sign-in (or a passphrase) did to the account's keys.
+    fn keys_settled(&mut self, keys: KeyStatus, cx: &mut Context<Self>) {
+        match keys {
+            KeyStatus::Open => self.publish(cx),
+            KeyStatus::Created(key) => self.move_to(SignInStep::RecoveryKey { key }, cx),
+            KeyStatus::PassphraseNeeded => {
+                self.move_to(SignInStep::Passphrase { problem: None }, cx)
+            }
+            KeyStatus::RecoveryNeeded => self.move_to(SignInStep::Recovery { problem: None }, cx),
+        }
+    }
+
+    fn hub(&self) -> Option<HubId> {
+        self.attempt.address.clone().map(HubId::from)
+    }
+
+    /// The user wrote the recovery key down: the sign-in goes on.
+    pub fn acknowledge_recovery_key(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.step, SignInStep::RecoveryKey { .. }) {
+            self.publish(cx);
+        }
+    }
+
+    /// Opens (or makes) the account's keys with the vault passphrase of a browser sign-in.
+    pub fn set_vault_passphrase(&mut self, passphrase: Secret, cx: &mut Context<Self>) {
+        let (SignInStep::Passphrase { .. }, Some(hub)) = (&self.step, self.hub()) else {
+            return;
+        };
+        self.move_to(SignInStep::Authenticating, cx);
+        let opening = self.sign_in.set_vault_passphrase(&hub, passphrase);
+        self.work = Some(cx.spawn(async move |this, cx| {
+            let result = opening.await;
+            this.update(cx, |session, cx| session.passphrase_set(result, cx))
+                .ok();
+        }));
+    }
+
+    fn passphrase_set(&mut self, result: Result<KeyStatus, HubError>, cx: &mut Context<Self>) {
+        self.work = None;
+        match result {
+            Ok(keys) => self.keys_settled(keys, cx),
+            Err(error) => self.move_to(
+                SignInStep::Passphrase {
+                    problem: Some(error.into()),
+                },
+                cx,
+            ),
+        }
+    }
+
+    /// Opens the account's keys with the recovery key, after the password did not.
+    pub fn recover(&mut self, recovery_key: Secret, cx: &mut Context<Self>) {
+        let (SignInStep::Recovery { .. }, Some(hub)) = (&self.step, self.hub()) else {
+            return;
+        };
+        self.move_to(SignInStep::Authenticating, cx);
+        let recovering = self.sign_in.recover(&hub, recovery_key);
+        self.work = Some(cx.spawn(async move |this, cx| {
+            let result = recovering.await;
+            this.update(cx, |session, cx| session.recovered(result, cx))
+                .ok();
+        }));
+    }
+
+    fn recovered(&mut self, result: Result<(), HubError>, cx: &mut Context<Self>) {
+        self.work = None;
+        match result {
+            Ok(()) => self.publish(cx),
+            Err(error) => self.move_to(
+                SignInStep::Recovery {
+                    problem: Some(error.into()),
+                },
+                cx,
+            ),
         }
     }
 
     /// Goes one step back; a browser sign-in in flight is cancelled.
     pub fn back(&mut self, cx: &mut Context<Self>) {
         let target = match &self.step {
-            SignInStep::Browser { .. } | SignInStep::Authenticating => {
+            SignInStep::Browser { .. }
+            | SignInStep::Authenticating
+            | SignInStep::Passphrase { .. }
+            | SignInStep::Recovery { .. } => {
                 self.work = None;
                 self.show_methods(None, cx);
                 return;
@@ -387,6 +481,7 @@ impl SignInSession {
             | SignInStep::Mismatch { .. }
             | SignInStep::Method { .. } => SignInStep::Address { problem: None },
             SignInStep::Address { .. }
+            | SignInStep::RecoveryKey { .. }
             | SignInStep::Saving
             | SignInStep::Finished(_)
             | SignInStep::Failed(_) => return,
@@ -468,9 +563,9 @@ fn parse_inputs(
 /// Waits for a browser sign-in, reporting the address to open as soon as it is known.
 async fn await_browser_sign_in(
     browser: futures::channel::oneshot::Receiver<String>,
-    done: nocterm_hubs_model::HubFuture<Account>,
+    done: nocterm_hubs_model::HubFuture<SignedIn>,
     mut open: impl FnMut(String),
-) -> Result<Account, HubError> {
+) -> Result<SignedIn, HubError> {
     let mut browser = browser.fuse();
     let mut done = done.fuse();
     loop {

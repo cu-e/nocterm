@@ -56,11 +56,6 @@ impl CredentialDir {
         Self { root }
     }
 
-    /// The directory every per-hub file lives in.
-    pub(crate) fn root(&self) -> &Path {
-        &self.root
-    }
-
     pub(crate) fn file(&self, address: &HubAddress) -> Result<CredentialFile, CredentialError> {
         let name = file_stem(address);
         if name.len() > MAX_NAME_BYTES {

@@ -122,7 +122,8 @@ fn sign_in_survives_a_restart_and_sign_out_ends_it() {
         hub.username.clone(),
         Secret::new(hub.password.clone()),
     ))
-    .unwrap();
+    .unwrap()
+    .account;
     assert_eq!(account.username, hub.username);
     drop(first);
 

@@ -1,5 +1,7 @@
 //! The data of one fake hub server.
 
+use std::collections::BTreeMap;
+
 use crate::address::HubAddress;
 use crate::records::HubSessionId;
 use crate::records::{
@@ -18,6 +20,14 @@ pub struct FakeUser {
     pub account: Account,
 }
 
+/// The account keys a fake server keeps for one user: what opens them and the recovery key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FakeKeyset {
+    /// The password (or vault passphrase) that opens the keys.
+    pub secret: String,
+    pub recovery: String,
+}
+
 /// A server a [`crate::testing::FakeHub`] can reach. The fields are plain data a test edits.
 #[derive(Clone, Debug)]
 pub struct FakeServer {
@@ -34,6 +44,11 @@ pub struct FakeServer {
     pub password_login: bool,
     pub oidc_providers: Vec<OidcProvider>,
     pub users: Vec<FakeUser>,
+    /// The server keeps account keys: a sign-in opens, creates or waits for the recovery of
+    /// the keys of its user. Off, every sign-in finds the keys open.
+    pub keyed: bool,
+    /// The keys of the users that made them, by user name.
+    pub keysets: BTreeMap<String, FakeKeyset>,
     pub nodes: Vec<NodeSummary>,
     pub sessions: Vec<HubSessionSummary>,
 }
@@ -52,9 +67,32 @@ impl FakeServer {
             password_login: true,
             oidc_providers: Vec::new(),
             users: Vec::new(),
+            keyed: false,
+            keysets: BTreeMap::new(),
             nodes: Vec::new(),
             sessions: Vec::new(),
         }
+    }
+
+    /// Makes the server keep account keys; users without keys get them on their first sign-in.
+    #[must_use]
+    pub fn keyed(mut self) -> Self {
+        self.keyed = true;
+        self
+    }
+
+    /// Gives `username` account keys that `secret` opens and `recovery` recovers.
+    #[must_use]
+    pub fn with_keyset(mut self, username: &str, secret: &str, recovery: &str) -> Self {
+        self.keyed = true;
+        self.keysets.insert(
+            username.to_owned(),
+            FakeKeyset {
+                secret: secret.into(),
+                recovery: recovery.into(),
+            },
+        );
+        self
     }
 
     #[must_use]

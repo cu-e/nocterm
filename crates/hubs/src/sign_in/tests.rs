@@ -471,3 +471,114 @@ async fn signing_in_again_keeps_the_colour_chosen_for_the_server(cx: &mut TestAp
     assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
     assert_eq!(fx.servers(cx)[0].color, Some(HubColor::Blue));
 }
+
+fn keyed_hub() -> FakeHub {
+    FakeHub::new().with_server(server().keyed())
+}
+
+fn at_methods(cx: &mut TestAppContext, fx: &Fixture) -> Entity<SignInSession> {
+    let session = start(cx, fx);
+    submit(
+        cx,
+        &session,
+        ADDRESS,
+        &Fingerprint::from_bytes([7; 32]).to_string(),
+    );
+    session
+}
+
+#[gpui::test]
+async fn a_first_sign_in_shows_the_recovery_key_once_and_lists_the_server_when_it_is_acknowledged(
+    cx: &mut TestAppContext,
+) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    let session = at_methods(cx, &fx);
+    password(cx, &session, "ada", "secret");
+
+    let SignInStep::RecoveryKey { key } = step(cx, &session) else {
+        panic!("expected the recovery key");
+    };
+    assert_eq!(key, Secret::new("recovery-ada"));
+    assert!(
+        fx.servers(cx).is_empty(),
+        "the server waits for the key to be written down"
+    );
+
+    session.update(cx, |session, cx| session.acknowledge_recovery_key(cx));
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
+    assert_eq!(fx.servers(cx).len(), 1);
+}
+
+#[gpui::test]
+async fn a_reset_password_asks_for_the_recovery_key_and_refuses_a_wrong_one(
+    cx: &mut TestAppContext,
+) {
+    let hub = FakeHub::new().with_server(server().with_keyset("ada", "old", "recovery-key"));
+    let fx = fixture(cx, hub, Vec::new());
+    let session = at_methods(cx, &fx);
+    password(cx, &session, "ada", "secret");
+    assert!(matches!(
+        step(cx, &session),
+        SignInStep::Recovery { problem: None }
+    ));
+
+    session.update(cx, |session, cx| {
+        session.recover(Secret::new("not it"), cx);
+    });
+    cx.run_until_parked();
+    assert!(matches!(
+        step(cx, &session),
+        SignInStep::Recovery {
+            problem: Some(SignInError::Hub(HubError::RecoveryKeyInvalid))
+        }
+    ));
+    assert!(fx.servers(cx).is_empty());
+
+    session.update(cx, |session, cx| {
+        session.recover(Secret::new("recovery-key"), cx);
+    });
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
+    assert_eq!(fx.servers(cx).len(), 1);
+}
+
+#[gpui::test]
+async fn a_browser_sign_in_asks_for_a_vault_passphrase_before_listing_the_server(
+    cx: &mut TestAppContext,
+) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    let session = at_methods(cx, &fx);
+    session.update(cx, |session, cx| session.sign_in_with_provider("corp", cx));
+    cx.run_until_parked();
+    fx.hub.complete_oidc("ada");
+    cx.run_until_parked();
+    assert!(matches!(
+        step(cx, &session),
+        SignInStep::Passphrase { problem: None }
+    ));
+
+    session.update(cx, |session, cx| {
+        session.set_vault_passphrase(Secret::new("a long passphrase"), cx);
+    });
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::RecoveryKey { .. }));
+    session.update(cx, |session, cx| session.acknowledge_recovery_key(cx));
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
+}
+
+#[gpui::test]
+async fn the_key_steps_do_nothing_out_of_turn(cx: &mut TestAppContext) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    let session = at_methods(cx, &fx);
+    session.update(cx, |session, cx| {
+        session.acknowledge_recovery_key(cx);
+        session.recover(Secret::new("recovery-ada"), cx);
+        session.set_vault_passphrase(Secret::new("a long passphrase"), cx);
+    });
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::Method { .. }));
+    assert_eq!(fx.hub.count(FakeOp::Recover), 0);
+    assert_eq!(fx.hub.count(FakeOp::SetVaultPassphrase), 0);
+}

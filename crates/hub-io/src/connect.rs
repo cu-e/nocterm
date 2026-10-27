@@ -5,10 +5,13 @@ use std::sync::Arc;
 use futures::channel::oneshot;
 use nocterm_hub_client::{ClientError, HubClient, Session, StatusCode};
 use nocterm_hub_proto::v1;
-use nocterm_hubs_model::{Account, HubEndpointSpec, HubError, HubId, HubInfo, TrustPolicy};
+use nocterm_hubs_model::{
+    Account, HubEndpointSpec, HubError, HubId, HubInfo, KeyStatus, SignedIn, TrustPolicy,
+};
 use nocterm_keys::DeviceKey;
 use nocterm_session::Secret;
 
+use crate::account::{Accounts, KeyFlow};
 use crate::classify::{
     Method, classify_sign_in, credential_file, credentials, explain_connect, remote,
 };
@@ -21,6 +24,8 @@ use crate::pool::Pool;
 /// Connects to hubs and keeps the credentials of the ones the device signs in to.
 pub(crate) struct Connector {
     pool: Arc<Pool>,
+    accounts: Arc<Accounts>,
+    keys: Arc<KeyFlow>,
 }
 
 /// A sign-in under way: the client and the file its tokens will be kept in. A file created for
@@ -43,8 +48,12 @@ impl Drop for Attempt {
 }
 
 impl Connector {
-    pub(crate) fn new(pool: Arc<Pool>) -> Self {
-        Self { pool }
+    pub(crate) fn new(pool: Arc<Pool>, accounts: Arc<Accounts>, keys: Arc<KeyFlow>) -> Self {
+        Self {
+            pool,
+            accounts,
+            keys,
+        }
     }
 
     /// Connects with the decided trust, reads what the hub says of itself and renews the
@@ -129,8 +138,13 @@ impl Connector {
         })
     }
 
-    /// Keeps the tokens of a finished sign-in and reads who signed in.
-    async fn complete(&self, mut attempt: Attempt, session: Session) -> Result<Account, HubError> {
+    /// Keeps the tokens of a finished sign-in and reads who signed in, with the client that
+    /// signed in.
+    async fn complete(
+        &self,
+        mut attempt: Attempt,
+        session: Session,
+    ) -> Result<(Account, HubClient), HubError> {
         attempt
             .file
             .save_session(&session)
@@ -138,8 +152,10 @@ impl Connector {
         attempt.finished = true;
         let client = attempt.client.clone();
         client.persist_with(Arc::new(self.pool.file(attempt.hub.address())?));
-        self.pool.insert(attempt.hub.clone(), attempt.trust, client);
-        who_am_i(&attempt.client, &attempt.hub, &self.pool).await
+        self.pool
+            .insert(attempt.hub.clone(), attempt.trust, client.clone());
+        let account = who_am_i(&client, &attempt.hub, &self.pool).await?;
+        Ok((account, client))
     }
 
     pub(crate) async fn password(
@@ -147,16 +163,22 @@ impl Connector {
         spec: HubEndpointSpec,
         username: String,
         password: Secret,
-    ) -> Result<Account, HubError> {
+    ) -> Result<SignedIn, HubError> {
         let attempt = self.begin(&spec).await?;
+        let hub = attempt.hub.clone();
         let signed_in = attempt
             .client
             .password_login(&username, password.expose(), self.pool.device())
             .await
             .map_err(|error| classify_sign_in(&spec.address, Method::Password, error))?;
-        // The login also derives the key that opens the account's keyset. Nothing here needs it
-        // yet, so it is dropped (and wiped) with `signed_in` once the tokens are kept.
-        self.complete(attempt, signed_in.session).await
+        let secrets = signed_in.secrets;
+        let (account, client) = self.complete(attempt, signed_in.session).await?;
+        // The login password also derives the key that opens the account's keyset.
+        let keys = self
+            .keys
+            .after_password(&hub, &client, &account, &username, secrets)
+            .await?;
+        Ok(SignedIn { account, keys })
     }
 
     /// Signs in through the browser. `browser` receives the address to open.
@@ -165,8 +187,9 @@ impl Connector {
         spec: HubEndpointSpec,
         provider: String,
         browser: oneshot::Sender<String>,
-    ) -> Result<Account, HubError> {
+    ) -> Result<SignedIn, HubError> {
         let attempt = self.begin(&spec).await?;
+        let hub = attempt.hub.clone();
         let session = attempt
             .client
             .oidc_login(&provider, self.pool.device(), |url| {
@@ -174,7 +197,9 @@ impl Connector {
             })
             .await
             .map_err(|error| classify_sign_in(&spec.address, Method::Oidc, error))?;
-        self.complete(attempt, session).await
+        let (account, _) = self.complete(attempt, session).await?;
+        let keys: KeyStatus = self.keys.after_browser(&hub)?;
+        Ok(SignedIn { account, keys })
     }
 
     /// Ends this device's session on the hub if it can, and erases its credentials.
@@ -193,9 +218,14 @@ impl Connector {
     }
 
     /// Erases the credentials without contacting the hub.
+    /// The account's keys and cache go with the credentials: a device that signed out holds
+    /// nothing of the account.
     pub(crate) fn forget(&self, hub: &HubId) -> Result<(), HubError> {
         self.pool.evict(hub);
-        self.pool.file(hub.address())?.erase().map_err(credentials)
+        let slot = self.accounts.slot(hub)?;
+        let cache = slot.erase();
+        let file = self.pool.file(hub.address())?.erase().map_err(credentials);
+        cache.and(file)
     }
 }
 

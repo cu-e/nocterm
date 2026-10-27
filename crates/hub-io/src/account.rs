@@ -101,7 +101,6 @@ impl OpenKeys {
 /// A keyset the typed password does not open, kept until a recovery key opens it.
 pub(crate) struct Recovery {
     account_id: String,
-    hub_uid: String,
     unlock: UnlockKey,
     kdf: UnlockKdf,
     method: UnlockMethod,
@@ -266,6 +265,7 @@ impl Accounts {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn notice(&self) -> &Arc<Notice> {
         &self.notice
     }

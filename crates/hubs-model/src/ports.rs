@@ -12,7 +12,7 @@ use crate::address::{HubAddress, HubId};
 use crate::error::HubError;
 use crate::records::{
     Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionSummary, HubTerminalTarget,
-    NodeSummary, OrgId,
+    KeyStatus, NodeSummary, OrgId, SignedIn,
 };
 use crate::trust::ProbedHub;
 
@@ -32,7 +32,7 @@ pub struct OidcSignIn {
     pub browser: oneshot::Receiver<String>,
     /// Resolves when the browser sign-in finishes. Dropping it cancels the sign-in and closes
     /// its local listener.
-    pub done: HubFuture<Account>,
+    pub done: HubFuture<SignedIn>,
 }
 
 /// Connecting to a hub and signing in or out, with the trust the caller decided.
@@ -44,16 +44,28 @@ pub trait HubSignIn: Send + Sync {
     /// [`HubError::Revoked`].
     fn connect(&self, endpoint: HubEndpointSpec) -> HubFuture<HubInfo>;
 
-    /// Signs in with a user name and password and keeps the credentials on this device.
+    /// Signs in with a user name and password and keeps the credentials on this device. The
+    /// password also opens the account's keys, or creates them on a first sign-in: the answer
+    /// says which ([`SignedIn::keys`]).
     fn password(
         &self,
         endpoint: HubEndpointSpec,
         username: String,
         password: Secret,
-    ) -> HubFuture<Account>;
+    ) -> HubFuture<SignedIn>;
 
-    /// Signs in through the identity provider `provider` and keeps the credentials.
+    /// Signs in through the identity provider `provider` and keeps the credentials. The keys
+    /// stay closed until [`HubSignIn::set_vault_passphrase`] opens them.
     fn oidc(&self, endpoint: HubEndpointSpec, provider: String) -> OidcSignIn;
+
+    /// Opens (or, on the first time, creates) the account's keys with a vault passphrase, for an
+    /// account that signed in without a password. A passphrase that does not open the keys
+    /// leaves them waiting for the recovery key ([`KeyStatus::RecoveryNeeded`]).
+    fn set_vault_passphrase(&self, hub: &HubId, passphrase: Secret) -> HubFuture<KeyStatus>;
+
+    /// Opens the keys that wait for the recovery key, and makes the secret typed at sign-in
+    /// open them from now on. [`HubError::RecoveryKeyInvalid`] when the key is not the one.
+    fn recover(&self, hub: &HubId, recovery_key: Secret) -> HubFuture<()>;
 
     /// Ends this device's session on the hub and erases its credentials, even when the hub
     /// cannot be reached.

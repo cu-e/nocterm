@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use futures::StreamExt as _;
 use nocterm_connections_model::replica::RemoteBody;
 use nocterm_connections_model::test_support::profile_id_for;
 
