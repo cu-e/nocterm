@@ -4,6 +4,7 @@
 //! Does not own: encrypted format, persistence, workers or native authentication.
 //! Ports used: supplied VaultAccess and SettingsHandle. Ports provided: CredentialStore, SettingsPageSpec.
 //! Settings: vault. Globals: none. Invariants: hidden/locked pages clear secrets.
+mod credential_row;
 mod credentials;
 mod settings;
 mod unlock;

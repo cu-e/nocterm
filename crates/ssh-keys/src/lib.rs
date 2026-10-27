@@ -21,7 +21,7 @@ pub use material::{KeyMaterial, MIN_RSA_BITS};
 pub use port::{KeySource, NoVaultSshKeys, StoredKey, VaultSshKeys};
 pub use public::PublicKeyText;
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
 #[cfg(test)]

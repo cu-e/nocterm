@@ -103,6 +103,7 @@ impl Render for ConnectionEditor {
                     .min_h_0()
                     .pr_2()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .children(page),
             )
     }

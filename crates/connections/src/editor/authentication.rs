@@ -10,7 +10,7 @@ pub(super) struct AuthenticationFields {
     kind: AuthKind,
     key_path: Entity<InputState>,
     credential: Entity<InputState>,
-    vault_key: VaultKeyField,
+    vault_key: Entity<VaultKeyField>,
     _subscriptions: Vec<Subscription>,
 }
 impl AuthenticationFields {
@@ -36,11 +36,19 @@ impl AuthenticationFields {
             window,
             cx,
         );
-        let subscriptions = [&key_path, &credential]
+        let auth = profile.map(|p| &p.auth);
+        let vault_key = cx.new(|cx| VaultKeyField::new(keys, auth, window, cx));
+        let (label, passphrase) = {
+            let field = vault_key.read(cx);
+            (field.label().clone(), field.passphrase().clone())
+        };
+        let mut subscriptions: Vec<Subscription> = [&key_path, &credential, &label, &passphrase]
             .into_iter()
             .map(|input| watch(input, window, cx))
             .collect();
-        let vault_key = VaultKeyField::new(keys, profile.map(|p| &p.auth), window, cx);
+        subscriptions.push(cx.subscribe(&vault_key, |this, _, event, cx| {
+            this.on_vault_key(event, cx)
+        }));
         Self {
             kind,
             key_path,
@@ -58,11 +66,8 @@ impl AuthenticationFields {
     pub(super) fn key_path(&self) -> &Entity<InputState> {
         &self.key_path
     }
-    pub(super) fn vault_key(&self) -> &VaultKeyField {
+    pub(super) fn vault_key(&self) -> &Entity<VaultKeyField> {
         &self.vault_key
-    }
-    pub(super) fn vault_key_mut(&mut self) -> &mut VaultKeyField {
-        &mut self.vault_key
     }
     pub(super) fn credential(&self) -> &Entity<InputState> {
         &self.credential
@@ -71,13 +76,14 @@ impl AuthenticationFields {
         AuthenticationDraft {
             kind: self.kind,
             key_path: text(&self.key_path, cx),
-            vault_key: self.vault_key.chosen(),
+            vault_key: self.vault_key.read(cx).chosen(),
             credential: text(&self.credential, cx),
         }
     }
 }
 
 use super::render::field_row;
+use gpui_kit::component::input::Input;
 use gpui_kit::{
     AnyElement, ClipboardItem, SharedString,
     component::{
@@ -87,6 +93,7 @@ use gpui_kit::{
     },
     div,
     prelude::*,
+    rems,
 };
 use nocterm_ui::{IconName, form};
 
@@ -172,7 +179,7 @@ impl AuthenticationFields {
 impl AuthenticationFields {
     /// The vault's keys to choose from, and ways to add one.
     fn vault_key_rows(&self, cx: &mut Context<ConnectionEditor>) -> Vec<AnyElement> {
-        let field = &self.vault_key;
+        let field = self.vault_key.read(cx);
         let keys = field.listed().iter().enumerate().map(|(index, key)| {
             Button::new(SharedString::from(format!("vault-key-{index}")))
                 .small()
@@ -180,9 +187,9 @@ impl AuthenticationFields {
                 .label(format!("{} \u{b7} {}", key.label, key.fingerprint))
                 .selected(field.is_chosen(key))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.authentication.vault_key_mut().choose_listed(index);
-                    this.error = None;
-                    cx.notify();
+                    this.authentication
+                        .vault_key()
+                        .update(cx, |field, cx| field.choose_listed(index, cx));
                 }))
         });
         let list = v_flex().gap_1().children(keys).children(
@@ -207,7 +214,7 @@ impl AuthenticationFields {
                     .icon(IconName::Copy)
                     .label("Copy public key")
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(chosen) = this.authentication.vault_key().chosen() {
+                        if let Some(chosen) = this.authentication.vault_key().read(cx).chosen() {
                             cx.write_to_clipboard(ClipboardItem::new_string(chosen.public_key));
                         }
                     })),
@@ -229,12 +236,7 @@ impl AuthenticationFields {
                 .on_click(cx.listener(|this, _, window, cx| this.create_vault_key(window, cx))),
             cx,
         ));
-        rows.push(field_row(
-            "Private key",
-            "Path to a key file to import into the vault.",
-            &self.key_path,
-            cx,
-        ));
+        rows.push(self.import_row(cx));
         if field.passphrase_needed() {
             rows.push(field_row(
                 "Passphrase",
@@ -243,15 +245,33 @@ impl AuthenticationFields {
                 cx,
             ));
         }
-        rows.push(form::row(
-            "Import",
-            "Stores the key file in the vault.",
-            Button::new("vault-key-import")
-                .small()
-                .label("Import")
-                .on_click(cx.listener(|this, _, window, cx| this.import_vault_key(window, cx))),
-            cx,
-        ));
         rows
+    }
+
+    /// The key file to import, with its button beside the path so that the
+    /// button stays where it was when the passphrase row appears below.
+    fn import_row(&self, cx: &Context<ConnectionEditor>) -> AnyElement {
+        form::row(
+            "Private key",
+            "Path to a key file to import into the vault.",
+            h_flex()
+                .gap_1()
+                .child(
+                    div().w(rems(13.)).child(
+                        Input::new(&self.key_path)
+                            .id("editor-field-Private key")
+                            .small(),
+                    ),
+                )
+                .child(
+                    Button::new("vault-key-import")
+                        .small()
+                        .label("Import")
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.import_vault_key(window, cx)),
+                        ),
+                ),
+            cx,
+        )
     }
 }

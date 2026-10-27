@@ -6,7 +6,6 @@ use ssh_key::{
     private::{Ed25519Keypair, KeypairData},
 };
 use std::fmt;
-use zeroize::Zeroizing;
 
 /// The smallest RSA modulus accepted, in bits.
 pub const MIN_RSA_BITS: u32 = 2048;
@@ -41,9 +40,8 @@ impl KeyMaterial {
     }
 
     /// An Ed25519 key derived from `seed`. The caller supplies the entropy.
-    pub fn ed25519_from_seed(seed: [u8; 32], comment: &str) -> Result<Self, KeyImportError> {
-        let seed = Zeroizing::new(seed);
-        let pair = Ed25519Keypair::from_seed(&seed);
+    pub fn ed25519_from_seed(seed: &[u8; 32], comment: &str) -> Result<Self, KeyImportError> {
+        let pair = Ed25519Keypair::from_seed(seed);
         let key = PrivateKey::new(KeypairData::Ed25519(pair), comment)
             .map_err(KeyImportError::Malformed)?;
         Self::accept(key)

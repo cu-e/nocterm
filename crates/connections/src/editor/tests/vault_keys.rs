@@ -224,3 +224,63 @@ fn moving_a_key_file_to_the_vault_turns_the_connection_into_a_vault_key_one(
         Auth::VaultKey { credential, .. } if *credential == stored[0].credential
     ));
 }
+
+fn events_of(
+    cx: &mut TestAppContext,
+    keys: &MemoryVaultSshKeys,
+    run: impl FnOnce(
+        &mut crate::editor::vault_key::VaultKeyField,
+        &mut gpui_kit::Window,
+        &mut gpui_kit::Context<crate::editor::vault_key::VaultKeyField>,
+    ),
+) -> Vec<crate::editor::vault_key::VaultKeyEvent> {
+    use crate::editor::vault_key::VaultKeyField;
+    let (handle, _workspace, _opened, _installed) =
+        crate::test_support::workspace_with_keys(cx, Arc::new(keys.clone()));
+    let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = events.clone();
+    let field = cx
+        .update_window(handle, |_, window, cx| {
+            let field = cx.new(|cx| VaultKeyField::new(Arc::new(keys.clone()), None, window, cx));
+            cx.subscribe(&field, move |_, event, _| {
+                seen.borrow_mut().push(event.clone())
+            })
+            .detach();
+            field.update(cx, |field, cx| run(field, window, cx));
+            field
+        })
+        .unwrap();
+    cx.run_until_parked();
+    drop(field);
+    events.borrow().clone()
+}
+
+#[gpui_kit::test]
+fn the_key_field_reports_a_created_key_as_chosen(cx: &mut TestAppContext) {
+    let keys = MemoryVaultSshKeys::default();
+    let events = events_of(cx, &keys, |field, window, cx| {
+        field.create("made", window, cx)
+    });
+    assert_eq!(events, [crate::editor::vault_key::VaultKeyEvent::Chosen]);
+}
+
+#[gpui_kit::test]
+fn the_key_field_reports_a_refusal_and_a_protected_file_as_events(cx: &mut TestAppContext) {
+    use crate::editor::vault_key::VaultKeyEvent;
+    let locked = MemoryVaultSshKeys::default();
+    locked.set_locked(true);
+    let events = events_of(cx, &locked, |field, window, cx| {
+        field.create("made", window, cx)
+    });
+    assert!(matches!(events.as_slice(), [VaultKeyEvent::Failed(_)]));
+
+    let protected = MemoryVaultSshKeys::default()
+        .with_file("/keys/id", nocterm_session::Secret::new(ENCRYPTED));
+    let events = events_of(cx, &protected, |field, window, cx| {
+        field.import("made", "/keys/id".into(), window, cx)
+    });
+    assert!(matches!(
+        events.as_slice(),
+        [VaultKeyEvent::PassphraseAsked, VaultKeyEvent::Failed(_)]
+    ));
+}

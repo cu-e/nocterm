@@ -95,26 +95,3 @@ fn a_key_prompt_never_saves_a_key_but_reads_one_bound_to_its_public_half() {
     );
     assert_eq!(block_on(store.0.list()).unwrap().len(), 1);
 }
-
-#[test]
-fn a_key_row_shows_the_fingerprint_other_rows_show_their_id() {
-    let id = CredentialId::from_bytes([7; 16]);
-    let key = nocterm_vault::CredentialInfo {
-        id,
-        label: "laptop".into(),
-        binding: CredentialBinding::PrivateKey {
-            public_key: PUBLIC.into(),
-        },
-    };
-    let text = crate::view::render::describe(&key);
-    assert!(text.starts_with("SSH key"), "{text}");
-    assert!(text.contains("SHA256:"), "{text}");
-    let password = nocterm_vault::CredentialInfo {
-        id,
-        label: "host".into(),
-        binding: CredentialBinding::Password {
-            target: Target::new("test", "test-host", 22),
-        },
-    };
-    assert_eq!(crate::view::render::describe(&password), id.to_string());
-}

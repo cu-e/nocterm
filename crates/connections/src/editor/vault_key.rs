@@ -1,9 +1,11 @@
 //! The key kept in the vault that a connection signs in with: choosing one,
 //! creating an Ed25519 key and importing a key file.
-use super::{ConnectionEditor, field, watch};
+//!
+//! [`VaultKeyField`] owns its state and reports outcomes as [`VaultKeyEvent`]s;
+//! the editor decides what they mean for the connection and its error line.
 use futures::future::BoxFuture;
 use gpui_kit::{
-    AppContext as _, Context, Entity, Subscription, Task, Window, component::input::InputState,
+    AppContext as _, Context, Entity, EventEmitter, Task, Window, component::input::InputState,
 };
 use nocterm_connections_model::draft::VaultKeyChoice;
 use nocterm_session::{Auth, Secret};
@@ -19,6 +21,17 @@ enum Listing {
     Unavailable(String),
 }
 
+/// What an operation of the field came to, for the editor to act on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum VaultKeyEvent {
+    /// A key is now the chosen one.
+    Chosen,
+    /// The key file is protected and its passphrase is asked for now.
+    PassphraseAsked,
+    /// An operation failed; the text is what the person reads.
+    Failed(String),
+}
+
 pub(super) struct VaultKeyField {
     keys: Arc<dyn VaultSshKeys>,
     listed: Vec<StoredKey>,
@@ -32,15 +45,16 @@ pub(super) struct VaultKeyField {
     /// Bumped by every operation so that a superseded answer is dropped.
     epoch: u64,
     task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<VaultKeyEvent> for VaultKeyField {}
 
 impl VaultKeyField {
     pub(super) fn new(
         keys: Arc<dyn VaultSshKeys>,
         auth: Option<&Auth>,
         window: &mut Window,
-        cx: &mut Context<ConnectionEditor>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let chosen = match auth {
             Some(Auth::VaultKey {
@@ -52,13 +66,12 @@ impl VaultKeyField {
             }),
             _ => None,
         };
-        let label = field("Name of the new key", String::new(), window, cx);
+        let label = cx.new(|cx| InputState::new(window, cx).placeholder("Name of the new key"));
         let passphrase = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Passphrase of the key file")
                 .masked(true)
         });
-        let subscriptions = vec![watch(&label, window, cx), watch(&passphrase, window, cx)];
         Self {
             keys,
             listed: Vec::new(),
@@ -69,10 +82,8 @@ impl VaultKeyField {
             passphrase_needed: false,
             epoch: 0,
             task: None,
-            _subscriptions: subscriptions,
         }
     }
-
     pub(super) fn chosen(&self) -> Option<VaultKeyChoice> {
         self.chosen.clone()
     }
@@ -118,27 +129,28 @@ impl VaultKeyField {
                 .map(|public| public.fingerprint().to_owned()),
         }
     }
-    pub(super) fn choose_listed(&mut self, index: usize) {
+    pub(super) fn choose_listed(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(key) = self.listed.get(index).cloned() {
-            self.choose(&key);
+            self.choose(&key, cx);
         }
     }
-    fn choose(&mut self, key: &StoredKey) {
+    fn choose(&mut self, key: &StoredKey, cx: &mut Context<Self>) {
         self.chosen = Some(VaultKeyChoice {
             credential: key.credential,
             public_key: key.public_key.as_str().to_owned(),
         });
+        cx.emit(VaultKeyEvent::Chosen);
+        cx.notify();
     }
 
     /// Reads the vault's keys again.
-    pub(super) fn refresh(&mut self, window: &mut Window, cx: &mut Context<ConnectionEditor>) {
+    pub(super) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.listing = Listing::Loading;
         let list = self.keys.list();
         let epoch = self.begin();
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = list.await;
-            let _ = this.update_in(cx, |this, _, cx| {
-                let field = this.authentication.vault_key_mut();
+            let _ = this.update(cx, |field, cx| {
                 if field.epoch == epoch {
                     field.listing = match result {
                         Ok(keys) => {
@@ -158,7 +170,7 @@ impl VaultKeyField {
         &mut self,
         fallback_label: &str,
         window: &mut Window,
-        cx: &mut Context<ConnectionEditor>,
+        cx: &mut Context<Self>,
     ) {
         let label = self.label_or(fallback_label, cx);
         let stored = self.keys.generate(label);
@@ -171,7 +183,7 @@ impl VaultKeyField {
         fallback_label: &str,
         path: PathBuf,
         window: &mut Window,
-        cx: &mut Context<ConnectionEditor>,
+        cx: &mut Context<Self>,
     ) {
         let label = self.label_or(fallback_label, cx);
         let text = self.passphrase.read(cx).value().to_string();
@@ -180,7 +192,7 @@ impl VaultKeyField {
         self.store(stored, window, cx);
     }
 
-    fn label_or(&self, fallback: &str, cx: &Context<ConnectionEditor>) -> String {
+    fn label_or(&self, fallback: &str, cx: &Context<Self>) -> String {
         let typed = self.label.read(cx).value().trim().to_owned();
         if typed.is_empty() {
             fallback.to_owned()
@@ -198,36 +210,35 @@ impl VaultKeyField {
         &mut self,
         stored: BoxFuture<'static, Result<StoredKey, VaultSshKeysError>>,
         window: &mut Window,
-        cx: &mut Context<ConnectionEditor>,
+        cx: &mut Context<Self>,
     ) {
         let epoch = self.begin();
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = stored.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                if this.authentication.vault_key_mut().epoch != epoch {
+            let _ = this.update_in(cx, |field, window, cx| {
+                if field.epoch != epoch {
                     return;
                 }
                 match result {
                     Ok(key) => {
-                        let field = this.authentication.vault_key_mut();
-                        field.choose(&key);
-                        field.listed.push(key);
+                        field.listed.push(key.clone());
                         field.listing = Listing::Ready;
                         field.passphrase_needed = false;
                         field
                             .passphrase
                             .update(cx, |input, cx| input.set_value("", window, cx));
-                        this.authentication
-                            .select(nocterm_connections_model::draft::AuthKind::VaultKey);
-                        this.error = None;
+                        field.choose(&key, cx);
                     }
                     Err(error) => {
-                        this.authentication.vault_key_mut().passphrase_needed |= matches!(
+                        if matches!(
                             error,
                             VaultSshKeysError::Key(KeyImportError::PassphraseRequired)
                                 | VaultSshKeysError::Key(KeyImportError::WrongPassphrase)
-                        );
-                        this.error = Some(describe(&error).into());
+                        ) {
+                            field.passphrase_needed = true;
+                            cx.emit(VaultKeyEvent::PassphraseAsked);
+                        }
+                        cx.emit(VaultKeyEvent::Failed(describe(&error)));
                     }
                 }
                 cx.notify();

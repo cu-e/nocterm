@@ -1,7 +1,8 @@
 //! The form that creates and edits a saved connection.
 
 use gpui_kit::{
-    App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, WeakEntity, Window,
+    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription,
+    WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
@@ -57,6 +58,7 @@ use jump_hosts::JumpHostsFields;
 use launch::LaunchFields;
 use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField, expand_home};
 use state::EditState;
+use vault_key::VaultKeyEvent;
 mod authentication;
 mod connection;
 mod jump_hosts;
@@ -150,6 +152,8 @@ pub struct ConnectionEditor {
     jump_hosts: JumpHostsFields,
     options: Entity<nocterm_ui::SessionOptionsEditor>,
     section: EditorSection,
+    /// The page's scroll, to bring a row that just appeared into view.
+    scroll: ScrollHandle,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -209,7 +213,7 @@ impl ConnectionEditor {
             )
         });
         let subscription = cx.observe(installed.facts(), |_, _, cx| cx.notify());
-        let mut editor = Self {
+        let editor = Self {
             deps: installed,
             focus: cx.focus_handle(),
             edit: EditState::new(id, profile),
@@ -221,11 +225,12 @@ impl ConnectionEditor {
             jump_hosts,
             options,
             section: EditorSection::Connection,
+            scroll: ScrollHandle::new(),
             error: None,
             _subscriptions: vec![subscription],
         };
         if editor.authentication.kind() == AuthKind::VaultKey {
-            editor.authentication.vault_key_mut().refresh(window, cx);
+            editor.refresh_vault_keys(window, cx);
         }
         editor
     }
@@ -340,8 +345,28 @@ impl ConnectionEditor {
                 .authentication
                 .key_path()
                 .update(cx, |input, cx| input.focus(window, cx)),
-            AuthKind::VaultKey => self.authentication.vault_key_mut().refresh(window, cx),
+            AuthKind::VaultKey => self.refresh_vault_keys(window, cx),
             AuthKind::Auto | AuthKind::Password => {}
+        }
+        cx.notify();
+    }
+
+    fn refresh_vault_keys(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.authentication
+            .vault_key()
+            .update(cx, |field, cx| field.refresh(window, cx));
+    }
+
+    /// What a vault key operation came to: a chosen key signs the connection
+    /// in, a failure is the error the editor shows.
+    fn on_vault_key(&mut self, event: &VaultKeyEvent, cx: &mut Context<Self>) {
+        match event {
+            VaultKeyEvent::Chosen => {
+                self.authentication.select(AuthKind::VaultKey);
+                self.error = None;
+            }
+            VaultKeyEvent::PassphraseAsked => self.scroll.scroll_to_bottom(),
+            VaultKeyEvent::Failed(message) => self.error = Some(message.clone().into()),
         }
         cx.notify();
     }
@@ -360,8 +385,8 @@ impl ConnectionEditor {
         let label = self.key_label(cx);
         self.error = None;
         self.authentication
-            .vault_key_mut()
-            .create(&label, window, cx);
+            .vault_key()
+            .update(cx, |field, cx| field.create(&label, window, cx));
         cx.notify();
     }
 
@@ -385,8 +410,8 @@ impl ConnectionEditor {
         let label = self.key_label(cx);
         self.error = None;
         self.authentication
-            .vault_key_mut()
-            .import(&label, path, window, cx);
+            .vault_key()
+            .update(cx, |field, cx| field.import(&label, path, window, cx));
         cx.notify();
     }
 

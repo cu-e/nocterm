@@ -32,7 +32,7 @@ pub enum ReadKeyError {
 pub fn generate_ed25519(comment: &str) -> Result<KeyMaterial, GenerateKeyError> {
     let mut seed = Zeroizing::new([0_u8; 32]);
     getrandom::fill(seed.as_mut()).map_err(GenerateKeyError::Entropy)?;
-    Ok(KeyMaterial::ed25519_from_seed(*seed, comment)?)
+    Ok(KeyMaterial::ed25519_from_seed(&seed, comment)?)
 }
 
 /// The text of the private key file at `path`, read within bounds from a
