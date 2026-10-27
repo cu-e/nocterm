@@ -39,6 +39,14 @@ and the public key; signing in compares that public half with the record and nev
 file. Remember does not create or overwrite key records. The Credentials tab shows the
 fingerprint, never the key.
 
+## The vault of a hub account
+
+When a [hub server is chosen as the account](HUBS.md), the vault in use is that account's: the
+records are sealed on this device and stored on the server, and `vault.bin` is not read or
+changed until the account is stopped. Unlocking uses the account's password (or its vault
+passphrase); creating the vault, changing its password and device unlock are not available for it.
+See [ADR 0103](adr/0103-account-data-is-sealed-on-the-device.md).
+
 ## Format and persistence
 
 The pure `nocterm-vault` domain owns this format and prepared state transitions.

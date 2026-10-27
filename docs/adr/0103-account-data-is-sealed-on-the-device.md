@@ -1,0 +1,52 @@
+# 0103. Account data is sealed on the device; one chosen server keeps the vault and the profiles
+
+Status: accepted
+
+## Context
+
+A hub account can follow the user to another device ([ADR 0101](0101-profiles-synchronize-through-a-replica-beside-the-local-document.md)
+replicates profiles, [ADR 0102](0102-ssh-keys-are-kept-in-the-vault.md) keeps SSH keys in the
+vault). What a server may see of that data is a security decision of its own: a vault on a
+server the user does not run must not expose a credential to its operator, and a server that
+forges or reorders records must not make the client overwrite local data silently.
+
+## Decision
+
+**The hub keeps ciphertext only.** The keys come from the account's login password (or from a
+passphrase of its own for an account that signs in through a provider) and are derived on the
+device by the hub contract's `nocterm-keys`. A random keyset is created on the first sign-in of
+an account and stored sealed on the hub; a later device opens it with the same secret. Each
+collection (the vault, the profiles) has its own key, so a record of one cannot be read as the
+other. The device keeps no key on disk.
+
+**Opening and recovery are explicit.** Sign-in answers with the status of the keys: open, created
+(the recovery key is shown once and never stored), a passphrase needed, or the recovery key needed.
+The recovery key is a plain `Secret`; a wrong one is `RecoveryKeyInvalid`, a keyset the hub damaged
+is `KeysetDamaged`. Locking the vault and signing out zero the keys in memory.
+
+**Only ciphertext on disk.** The adapter caches the sealed vault records in a private file
+(mode 0600, replaced atomically through `nocterm_core::fs::write_private_atomic`) so credentials
+read offline. An offline write is refused with `Offline`; nothing is queued in clear.
+
+**A forgery is an error.** A record the hub presents that does not authenticate (changed
+ciphertext, or a record moved to another collection or identity) is the hub's forgery: it is
+reported as an error, the change feed does not move past it, and it never replaces or removes local
+data.
+Unknown collections and unknown record kinds are left exactly as they are: they are never listed,
+rewritten or deleted ([ADR 0101](0101-profiles-synchronize-through-a-replica-beside-the-local-document.md)).
+Organization collections are `Forbidden` until their keys exist.
+
+**One server is the account.** `[hubs] account` names the server whose account keeps this device's
+vault and profiles. The application holds a `SelectedVault` that delegates to the vault of this
+device or the account's; choosing another server (or none) locks the vault it replaces and
+attaches or detaches the profile replication, without a restart. The agreed replication state is a
+private file of the state directory that goes through the shared persistence service. The adapter
+does not know the application's settings: `HubLinks::open_account` returns the replica and the
+vault, and `src/hub_account.rs` composes them.
+
+## Consequences
+
+- A server operator learns the size, the number and the times of records, not their content.
+- Losing both the password and the recovery key loses the account's vault and replicated profiles.
+- A revoked device does not erase the cached ciphertext yet; it stays unreadable without the keys.
+- The hub contract owns the cryptography; this repository adds no primitive of its own.

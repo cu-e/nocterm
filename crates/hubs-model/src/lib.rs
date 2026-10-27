@@ -2,7 +2,9 @@
 //!
 //! Owns: hub addresses and ids, certificate fingerprints and the trust decision, the colour
 //! that marks a server (`HubColor`), the `[hubs]` settings section (`HubsSettings`), the hub
-//! access ports `HubTrust`, `HubSignIn`, `HubSessions` with their records and `HubError`.
+//! access ports `HubTrust`, `HubSignIn`, `HubSessions` with their records and `HubError`,
+//! including the status of the account keys after sign-in (`KeyStatus`) and the choice of the
+//! account server (`HubsSettings::account_hub`).
 //! Does not own: the hub wire protocol and its SDK types (the hub contract crates, reached
 //! only by `nocterm-hub-io`), device keys and tokens (private adapter files), connection
 //! state over time (`nocterm-hubs`), views.

@@ -27,7 +27,15 @@ a hub, and each one opens as a terminal tab beside your local tabs. A window has
    name for single sign-on. Single sign-on opens your browser; finish the login there. The
    address is also shown in the dialog with a copy button, in case the browser did not open.
    Cancelling the dialog ends the wait.
-6. Choose **Done**.
+6. Your account keys open as part of signing in:
+   - The first time an account signs in, Nocterm creates its keys and shows a **recovery key**
+     once. Write it down: it is the only way to open the keys if you lose your password, and it
+     is neither kept on this device nor shown again.
+   - After single sign-on, the password of the provider does not open the keys, so Nocterm asks
+     for a **vault passphrase** of at least eight characters. The first time, this sets it.
+   - If the account's password was reset on the server, Nocterm asks for the **recovery key**; the
+     new password opens the keys from then on.
+7. Choose **Done**.
 
 The server is now in the Sessions panel and on the Servers page. Nocterm keeps its address, how it is trusted and its name in
 `settings.toml` under `[hubs]`, which contains no passwords or tokens:
@@ -44,6 +52,27 @@ The device key and the tokens of each server are in a private file (readable by 
 a `hubs` folder of Nocterm's state directory, apart from the settings. They stay when you
 close Nocterm, so you sign in once per server and device. They are deleted when you sign out,
 when the server revokes the device, and when you remove the server.
+
+## Keep your servers and vault passwords on a server
+
+One server can keep your saved servers (connections) and your vault passwords so they follow you
+to your other computers. On **Settings → Servers**, press **Use for my account** on a server you
+are online with; **Stop keeping them here** returns both to this computer alone. The choice is
+saved as `account = "hub.example.com:7443"` under `[hubs]` and takes effect at once.
+
+- The server keeps only encrypted data. The keys come from your account password (or the vault
+  passphrase) on your computers; the server cannot read your passwords, keys or connection
+  details. If you lose both the password and the recovery key, that data cannot be recovered.
+- While a server is chosen, the vault is the account's: unlock it with the account password (or
+  the vault passphrase). It cannot be created or have its password changed here, and device unlock
+  is not offered. The vault of this computer is locked and comes back when you stop using the
+  account. Credentials can be read while the server is out of reach; changing them needs the
+  server.
+- Saved connections are copied both ways. Something other clients put on the server that this
+  version does not understand is left untouched.
+- A change on the server that does not verify is reported as an error and applied to nothing.
+- Choosing another server starts the sync again from that server's own data; connections are never
+  copied from one account to another.
 
 ## Sessions panel
 

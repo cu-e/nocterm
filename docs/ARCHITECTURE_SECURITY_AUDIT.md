@@ -109,6 +109,21 @@ and ends from either side, so a hub that stops reading or a session that stops r
 stalled, not buffered. The device is never signed in to a hub because a route names it, and a
 hub address that does not match a signed-in hub is refused before anything is sent.
 
+## Hub account data
+
+The vault and the saved profiles of a hub account are sealed on the device before they leave it
+([ADR 0103](adr/0103-account-data-is-sealed-on-the-device.md)). The hub stores ciphertext and
+learns the number, size and times of records. Each collection has its own key, derived with the
+hub contract's `nocterm-keys` from the account password (or a vault passphrase of its own); the
+keyset on the hub is sealed, and the recovery key is shown once and not stored. The device keeps
+no key on disk: locking the vault or signing out clears the keys in memory. The only account
+data on disk is ciphertext in a mode-0600 file replaced atomically, and the agreed profile
+replica state in another private file. A record that does not verify (changed, or moved to
+another collection or identity) is an error that stops the feed, and never overwrites or deletes
+local data. Collections and record kinds this version does not know are never listed, rewritten
+or deleted. A revoked device leaves its cached ciphertext in place; it is unreadable without the
+keys, and a later sign-out of the server or its removal erases it.
+
 ## Verification scope
 
 Storage, trust-store, SFTP protocol, concurrency, resource-budget and terminal

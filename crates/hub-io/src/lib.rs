@@ -11,12 +11,17 @@
 //! the model's records, and the terminal transport of hub sessions (the contract's terminal
 //! events as session events), and the relayed byte streams of SSH routes that use a hub as
 //! their first step (the pump between the transport's bounded frame channels and the hub's
-//! stream, and the mapping of the hub's refusals to `RelayError`).
+//! stream, and the mapping of the hub's refusals to `RelayError`), and the encrypted data of
+//! one signed-in account: the account keys (opened at sign-in and recovery, zeroed on lock), the
+//! store of sealed collections, the encrypted cache of the vault records, the vault
+//! ([`HubVault`]) and the profile replica ([`HubProfileReplica`]) built on them, which
+//! [`HubLinks::open_account`] hands out together as a [`HubAccount`].
 //! Does not own: which hubs the user knows or trusts (the `[hubs]` settings section and the
 //! trust decision belong to `nocterm-hubs-model` and the callers), connection status, retries,
 //! windows, terminal emulation, or any view.
 //! Ports provided: `HubTrust`, `HubSignIn` and `HubSessions` from `nocterm-hubs-model`, all
-//! implemented by [`HubLinks`], the `Transport` of `nocterm-session` that `HubSessions::terminal`
+//! implemented by [`HubLinks`], the `VaultAccess` of `nocterm-vault` and the `ProfileReplica` of
+//! `nocterm-connections-model`, implemented by [`HubVault`] and [`HubProfileReplica`], the `Transport` of `nocterm-session` that `HubSessions::terminal`
 //! returns for one attached hub session, and the `RelayDialer` of `nocterm-session`, implemented
 //! by [`HubRelay`] over the clients of the hubs this device is signed in to. Ports used: none.
 //! Settings section: none; the callers pass the directory for credentials.
@@ -29,7 +34,11 @@
 //! closing a terminal transport's session detaches from it and never ends the process on its
 //! node; a relay finds its hub only among the hubs signed in to and never signs in; every
 //! buffer between the transport and the hub's stream is bounded, and dropping either end of a
-//! relayed stream ends both directions, whether or not the target is silent.
+//! relayed stream ends both directions, whether or not the target is silent; account keys and
+//! the unlock secret live only in memory and are zeroed on lock, and only ciphertext is written
+//! to disk (mode 0600, atomically); a record of the hub that does not authenticate is an error,
+//! never a silent skip or overwrite; collections and record kinds this version does not know are
+//! never listed, changed or deleted; each collection has its own key.
 
 mod account;
 mod cache;
