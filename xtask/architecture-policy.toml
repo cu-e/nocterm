@@ -5,6 +5,8 @@
 "nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
 "nocterm_connections::os::Os" = "Detected operating-system facts value."
 "nocterm_files::local::LocalEntry" = "Filesystem listing row returned by the adapter."
+"nocterm_hubs::installed::Deps" = "Composition dependencies, copied into constructors."
+"nocterm_hubs::registry::HubSummary" = "One row of the hubs list, copied by value."
 "nocterm_layout_ui::user_facts::UserFacts" = "What the host knows of one installed user plugin, copied by value to the inspector."
 "nocterm_explorer::settings::ExplorerSettings" = "Serialized settings section."
 "nocterm_explorer::settings::IndexingSettings" = "Serialized settings values."

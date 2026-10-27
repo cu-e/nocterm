@@ -1,0 +1,339 @@
+//! Every hub this device knows, with the connection status all windows share.
+
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
+use nocterm_hubs_model::{
+    HubAddress, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord, HubsSettings,
+};
+use nocterm_store::SettingsHandle;
+
+use crate::error::HubsError;
+use crate::installed::Deps;
+use crate::sign_in::{SignInEvent, SignInSession};
+use crate::status::{HubStatus, Settled, retry_delay, settle_connect, settle_failure};
+use crate::window::{HubWindow, HubWindowEvent};
+
+/// What changes in the registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HubsEvent {
+    /// A hub was added or removed, or a status changed.
+    Changed,
+}
+
+/// A known hub as a menu shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HubSummary {
+    pub id: HubId,
+    pub label: String,
+    pub address: HubAddress,
+    pub status: HubStatus,
+}
+
+struct HubEntry {
+    record: HubRecord,
+    status: HubStatus,
+    /// Unsuccessful attempts to reach the hub in a row.
+    failures: u32,
+    /// The connection being made, or the wait before the next attempt.
+    attempt: Option<Task<()>>,
+    window: Option<LiveWindow>,
+}
+
+struct LiveWindow {
+    entity: Entity<HubWindow>,
+    _events: Subscription,
+}
+
+/// The known hubs, in the order of the settings, and the status of each.
+pub struct Hubs {
+    settings: SettingsHandle,
+    deps: Deps,
+    entries: Vec<HubEntry>,
+    _settings: Subscription,
+}
+
+impl EventEmitter<HubsEvent> for Hubs {}
+
+impl Hubs {
+    pub(crate) fn new(deps: Deps, settings: SettingsHandle, cx: &mut Context<Self>) -> Self {
+        settings.register::<HubsSettings>(cx);
+        let weak = cx.weak_entity();
+        let observed = settings.observe(cx, move |cx| {
+            weak.update(cx, |hubs, cx| hubs.sync(cx)).ok();
+        });
+        let mut hubs = Self {
+            settings,
+            deps,
+            entries: Vec::new(),
+            _settings: observed,
+        };
+        hubs.sync(cx);
+        hubs
+    }
+
+    /// The known hubs in the order of the settings.
+    pub fn list(&self) -> Vec<HubSummary> {
+        self.entries
+            .iter()
+            .map(|entry| HubSummary {
+                id: entry.record.id(),
+                label: entry.record.display_label(),
+                address: entry.record.address.clone(),
+                status: entry.status.clone(),
+            })
+            .collect()
+    }
+
+    pub fn summary(&self, hub: &HubId) -> Option<HubSummary> {
+        self.list().into_iter().find(|summary| summary.id == *hub)
+    }
+
+    pub fn status(&self, hub: &HubId) -> Option<HubStatus> {
+        self.entry(hub).map(|entry| entry.status.clone())
+    }
+
+    pub fn record(&self, hub: &HubId) -> Option<&HubRecord> {
+        self.entry(hub).map(|entry| &entry.record)
+    }
+
+    fn entry(&self, hub: &HubId) -> Option<&HubEntry> {
+        self.entries.iter().find(|entry| entry.record.id() == *hub)
+    }
+
+    fn entry_mut(&mut self, hub: &HubId) -> Option<&mut HubEntry> {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.record.id() == *hub)
+    }
+
+    /// Brings the entries in line with the published settings: new servers start
+    /// connecting, removed ones disappear, a changed trust connects again.
+    fn sync(&mut self, cx: &mut Context<Self>) {
+        let records = self.settings.setting::<HubsSettings>(cx).servers.clone();
+        let mut previous = std::mem::take(&mut self.entries);
+        let mut reconnect = Vec::new();
+        for record in records {
+            let id = record.id();
+            let kept = previous.iter().position(|entry| entry.record.id() == id);
+            let entry = match kept {
+                Some(index) => {
+                    let mut entry = previous.remove(index);
+                    if entry.record.trust != record.trust {
+                        reconnect.push(id);
+                    }
+                    entry.record = record;
+                    entry
+                }
+                None => {
+                    reconnect.push(id);
+                    HubEntry {
+                        record,
+                        status: HubStatus::Connecting,
+                        failures: 0,
+                        attempt: None,
+                        window: None,
+                    }
+                }
+            };
+            self.entries.push(entry);
+        }
+        for hub in reconnect {
+            self.connect(&hub, cx);
+        }
+        cx.emit(HubsEvent::Changed);
+        cx.notify();
+    }
+
+    /// Connects to a hub with the trust the settings state.
+    fn connect(&mut self, hub: &HubId, cx: &mut Context<Self>) {
+        let Some(index) = self.entries.iter().position(|e| e.record.id() == *hub) else {
+            return;
+        };
+        let entry = &mut self.entries[index];
+        entry.status = HubStatus::Connecting;
+        let connecting = self.deps.sign_in.connect(HubEndpointSpec {
+            address: entry.record.address.clone(),
+            trust: entry.record.trust,
+        });
+        let hub = hub.clone();
+        entry.attempt = Some(cx.spawn(async move |this, cx| {
+            let result = connecting.await;
+            this.update(cx, |hubs, cx| hubs.settled(&hub, result, cx))
+                .ok();
+        }));
+        cx.emit(HubsEvent::Changed);
+        cx.notify();
+    }
+
+    fn settled(&mut self, hub: &HubId, result: Result<HubInfo, HubError>, cx: &mut Context<Self>) {
+        let settled = settle_connect(&result);
+        self.rest(hub, settled, cx);
+    }
+
+    /// Records where a hub ended up and, for a hub that did not answer, when to try again.
+    fn rest(&mut self, hub: &HubId, settled: Settled, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let Some(entry) = self.entry_mut(hub) else {
+            return;
+        };
+        entry.attempt = None;
+        let mut retry = None;
+        match settled {
+            Settled::Status(status) => {
+                entry.failures = 0;
+                entry.status = status;
+            }
+            Settled::Retry => {
+                entry.failures += 1;
+                let delay = retry_delay(entry.failures);
+                entry.status = HubStatus::Offline {
+                    retry_at: now + delay,
+                };
+                retry = Some(delay);
+            }
+        }
+        let online = entry.status.is_online();
+        let window = entry.window.as_ref().map(|live| live.entity.clone());
+        if let Some(delay) = retry {
+            let again = hub.clone();
+            let waiting = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(delay).await;
+                this.update(cx, |hubs, cx| hubs.connect(&again, cx)).ok();
+            });
+            if let Some(entry) = self.entry_mut(hub) {
+                entry.attempt = Some(waiting);
+            }
+        }
+        if online && let Some(window) = window {
+            window.update(cx, |window, cx| window.refresh(cx));
+        }
+        cx.emit(HubsEvent::Changed);
+        cx.notify();
+    }
+
+    /// Tries a hub again now, instead of at the scheduled time.
+    pub fn retry(&mut self, hub: &HubId, cx: &mut Context<Self>) {
+        if self
+            .status(hub)
+            .is_some_and(|status| !matches!(status, HubStatus::Connecting | HubStatus::Online))
+        {
+            self.connect(hub, cx);
+        }
+    }
+
+    /// The shared state of the window for a hub, created on first use. `None` for an unknown
+    /// hub.
+    pub fn window(&mut self, hub: &HubId, cx: &mut Context<Self>) -> Option<Entity<HubWindow>> {
+        let index = self.entries.iter().position(|e| e.record.id() == *hub)?;
+        if let Some(live) = &self.entries[index].window {
+            return Some(live.entity.clone());
+        }
+        let sessions = std::sync::Arc::clone(&self.deps.sessions);
+        let entity = cx.new(|_| HubWindow::new(hub.clone(), sessions));
+        let id = hub.clone();
+        let events = cx.subscribe(&entity, move |hubs, _, event, cx| {
+            if let HubWindowEvent::Failed(error) = event {
+                hubs.window_failed(&id, error, cx);
+            }
+        });
+        let entry = &mut self.entries[index];
+        entry.window = Some(LiveWindow {
+            entity: entity.clone(),
+            _events: events,
+        });
+        if entry.status.is_online() {
+            entity.update(cx, |window, cx| window.refresh(cx));
+        }
+        Some(entity)
+    }
+
+    /// A call of a hub window failed. Only a hub that was online changes its status; a lost
+    /// session sends the hub through a new connection, which finds out why.
+    fn window_failed(&mut self, hub: &HubId, error: &HubError, cx: &mut Context<Self>) {
+        if !self.status(hub).is_some_and(|status| status.is_online()) {
+            return;
+        }
+        match error {
+            HubError::NotSignedIn => self.connect(hub, cx),
+            other => {
+                if let Some(settled) = settle_failure(other) {
+                    self.rest(hub, settled, cx);
+                }
+            }
+        }
+    }
+
+    /// Starts a sign-in to a server that is not known yet.
+    pub fn start_sign_in(&mut self, cx: &mut Context<Self>) -> Entity<SignInSession> {
+        let (deps, settings) = (self.deps.clone(), self.settings.clone());
+        let session = cx.new(|_| SignInSession::new(&deps, settings));
+        self.connect_when_signed_in(&session, cx);
+        session
+    }
+
+    /// A finished sign-in connects the hub again, so a hub that was signed out or revoked
+    /// comes back without a change of the settings. A new server is already connecting.
+    fn connect_when_signed_in(&self, session: &Entity<SignInSession>, cx: &mut Context<Self>) {
+        cx.subscribe(session, |hubs, _, event, cx| {
+            if let SignInEvent::Finished(hub) = event
+                && hubs.status(hub).is_some_and(|s| s != HubStatus::Connecting)
+            {
+                hubs.connect(hub, cx);
+            }
+        })
+        .detach();
+    }
+
+    /// Starts signing in again to a known hub, with the trust its record states.
+    pub fn start_sign_in_for(
+        &mut self,
+        hub: &HubId,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<SignInSession>> {
+        let record = self.record(hub)?.clone();
+        let (deps, settings) = (self.deps.clone(), self.settings.clone());
+        let session = cx.new(|cx| SignInSession::resume(&deps, settings, record, cx));
+        self.connect_when_signed_in(&session, cx);
+        Some(session)
+    }
+
+    /// Ends this device's session on the hub and erases its credentials. The server stays
+    /// in the list, signed out.
+    pub fn sign_out(&mut self, hub: &HubId, cx: &mut Context<Self>) -> Task<Result<(), HubsError>> {
+        if self.entry(hub).is_none() {
+            return Task::ready(Err(HubsError::Unknown(hub.clone())));
+        }
+        let signing_out = self.deps.sign_in.sign_out(hub);
+        let hub = hub.clone();
+        cx.spawn(async move |this, cx| {
+            let result = signing_out.await;
+            this.update(cx, |hubs, cx| {
+                if result.is_ok() {
+                    hubs.rest(&hub, Settled::Status(HubStatus::SignedOut), cx);
+                }
+            })
+            .ok();
+            result.map_err(HubsError::from)
+        })
+    }
+
+    /// Removes a server from the settings and erases the credentials kept for it.
+    pub fn remove(&mut self, hub: &HubId, cx: &mut Context<Self>) -> Task<Result<(), HubsError>> {
+        if self.entry(hub).is_none() {
+            return Task::ready(Err(HubsError::Unknown(hub.clone())));
+        }
+        if let Err(error) = self.deps.sign_in.forget(hub) {
+            return Task::ready(Err(error.into()));
+        }
+        let id = hub.clone();
+        let saving = self
+            .settings
+            .update_checked::<HubsSettings>(cx, move |settings| {
+                settings.remove(&id);
+                Ok(())
+            });
+        cx.spawn(async move |_, _| saving.await.map(|_| ()).map_err(HubsError::Save))
+    }
+}
+
+#[cfg(test)]
+mod tests;

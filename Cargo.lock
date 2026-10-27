@@ -5542,6 +5542,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-hubs"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-core",
+ "nocterm-hubs-model",
+ "nocterm-session",
+ "nocterm-settings",
+ "nocterm-store",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "nocterm-hubs-model"
 version = "0.0.0"
 dependencies = [
