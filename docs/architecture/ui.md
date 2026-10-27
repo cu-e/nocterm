@@ -122,7 +122,9 @@ bubbling; fitting containers and scroll boundaries avoid transient invalidation.
 `Workspace` coordinates eight private owners besides its focus handle: `WindowSurfaces`,
 `Chrome`, `PanelGroups`, body, `ShellLayout`, installed ports, registered actions and the
 registrations of the plugin catalog.
-`Chrome` owns window menus, the new-tab popover and the status bar; `PanelGroups`
+`Chrome` owns window menus, the new-tab popover, the title-bar slot of the environment menu
+(`Workspace::set_environment_menu`: a view the application installs, drawn after the menu bar;
+the workspace places it and knows nothing of what it offers) and the status bar; `PanelGroups`
 owns the navigation and assistant groups: their visibility, selected panel,
 attention, expansion and panel subscriptions (ADR 0081). The members of a group and their
 order come from the resolved layout; a panel the layout leaves in the tray stays openable

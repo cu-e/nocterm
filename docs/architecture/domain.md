@@ -80,6 +80,9 @@ validation returns typed field/constraint errors without filesystem access or
 value expansion; native transports reject invalid launches before starting I/O.
 `TextEncodingError` carries the configured `Charset` without retaining input text.
 Text conversion stays in the terminal feature, outside the session domain.
+`Event::Restore` is the screen a host holds when a session is attached again: the owner
+paints it on a fresh emulator and never treats it as output of the program
+([ADR 0095](../adr/0095-attached-sessions-restore-and-detach.md)).
 Local filesystem diagnostics retain native I/O and recursive partial-removal causes
 through foundation `SharedError`; clones share each original allocation. Domain
 constructors preserve semantic NotFound/PermissionDenied/AlreadyExists conversion

@@ -68,7 +68,11 @@ and settings changes. Private model owners separate session/prompt lifecycle,
 transport input and live leases, screen/search presentation, credential candidates
 and output recording. The view keeps independent frame-cache, keyboard/composition,
 cursor-clock and pointer owners. Selection and scrolling use named model actions;
-consumers only receive immutable emulator and painted-frame projections. See [ADR 0038](../adr/0038-private-terminal-state-owners.md). Its renderer decorates otherwise unstyled default-color
+consumers only receive immutable emulator and painted-frame projections. See [ADR 0038](../adr/0038-private-terminal-state-owners.md).
+`open_attached` opens a tab on an `AttachedSession`, a session reached through its own transport:
+`Event::Restore` repaints a fresh emulator without recording the picture, a repeated `Connected`
+of the same session starts no second automatic recording, and closing the tab detaches
+([ADR 0095](../adr/0095-attached-sessions-restore-and-detach.md)). Its renderer decorates otherwise unstyled default-color
 output with semantic roles for timestamps, validated IP addresses, versions,
 process/user identifiers and important messages. ANSI colors and program styles,
 selection, search results and block cursors take precedence. This presentation
