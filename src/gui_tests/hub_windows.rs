@@ -78,7 +78,11 @@ fn boot_over(
 }
 
 /// Opens a window the way the application does and returns it.
-fn open(booted: &Booted, environment: Environment, cx: &mut TestAppContext) -> AnyWindowHandle {
+pub(super) fn open(
+    booted: &Booted,
+    environment: Environment,
+    cx: &mut TestAppContext,
+) -> AnyWindowHandle {
     let before = cx.update(|cx| cx.windows());
     cx.update(|cx| crate::windows::open_window(cx, booted, environment))
         .unwrap();
@@ -92,7 +96,7 @@ fn open(booted: &Booted, environment: Environment, cx: &mut TestAppContext) -> A
     opened
 }
 
-fn show(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+pub(super) fn show(handle: AnyWindowHandle, cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
         window.render_frame(cx);
@@ -101,7 +105,7 @@ fn show(handle: AnyWindowHandle, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
-fn workspace_of(handle: AnyWindowHandle, cx: &mut TestAppContext) -> Entity<Workspace> {
+pub(super) fn workspace_of(handle: AnyWindowHandle, cx: &mut TestAppContext) -> Entity<Workspace> {
     cx.update_window(handle, |_, window, cx| {
         gpui_kit::base::Root::read(window, cx)
             .view()
@@ -112,7 +116,7 @@ fn workspace_of(handle: AnyWindowHandle, cx: &mut TestAppContext) -> Entity<Work
     .unwrap()
 }
 
-fn title_of(handle: AnyWindowHandle, cx: &mut TestAppContext) -> Option<String> {
+pub(super) fn title_of(handle: AnyWindowHandle, cx: &mut TestAppContext) -> Option<String> {
     VisualTestContext::from_window(handle, cx).window_title()
 }
 
@@ -130,7 +134,11 @@ fn tab_count(handle: AnyWindowHandle, cx: &mut TestAppContext) -> usize {
     cx.update(|cx| workspace.read(cx).items(cx).count())
 }
 
-fn dispatch(handle: AnyWindowHandle, action: impl gpui_kit::Action, cx: &mut TestAppContext) {
+pub(super) fn dispatch(
+    handle: AnyWindowHandle,
+    action: impl gpui_kit::Action,
+    cx: &mut TestAppContext,
+) {
     let workspace = workspace_of(handle, cx);
     cx.update_window(handle, |_, window, cx| {
         window.focus(&workspace.read(cx).focus_handle(cx), cx);
@@ -142,7 +150,11 @@ fn dispatch(handle: AnyWindowHandle, action: impl gpui_kit::Action, cx: &mut Tes
     show(handle, cx);
 }
 
-fn click(handle: AnyWindowHandle, id: impl Into<gpui_kit::ElementId>, cx: &mut TestAppContext) {
+pub(super) fn click(
+    handle: AnyWindowHandle,
+    id: impl Into<gpui_kit::ElementId>,
+    cx: &mut TestAppContext,
+) {
     cx.update_window(handle, |_, window, cx| window.click(id, cx))
         .unwrap();
     cx.run_until_parked();
@@ -150,7 +162,7 @@ fn click(handle: AnyWindowHandle, id: impl Into<gpui_kit::ElementId>, cx: &mut T
 }
 
 /// Waits for the entrance animation of a dialog, so its buttons can be clicked.
-fn settle_dialog(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+pub(super) fn settle_dialog(handle: AnyWindowHandle, cx: &mut TestAppContext) {
     show(handle, cx);
     std::thread::sleep(
         *gpui_kit::component::dialog::ANIMATION_DURATION + std::time::Duration::from_millis(50),
@@ -186,6 +198,17 @@ fn a_hub_window_has_the_sessions_panel_and_none_of_the_local_features(cx: &mut T
     ] {
         assert!(!registered(window, local, cx), "{local:?} is local only");
     }
+}
+
+#[gpui_kit::test]
+fn a_hub_window_shows_its_sessions_before_the_snippets(cx: &mut TestAppContext) {
+    let booted = boot_over(Some(&hub()), &Arc::new(MockTransport::default()), cx);
+    let window = open(&booted, Environment::Hub(hub_id()), cx);
+    let workspace = workspace_of(window, cx);
+
+    assert!(cx.update(|cx| workspace
+        .read(cx)
+        .panel_is_open(&nocterm_hubs_ui::plugin::SESSIONS.id)));
 }
 
 #[gpui_kit::test]

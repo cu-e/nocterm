@@ -23,8 +23,7 @@ pub(crate) fn build_hub_workspace(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    booted.register_settings(workspace);
-    booted.register_snippets(workspace, window, cx);
+    // The sessions go first: of the panels in the sidebar the first registered is shown.
     if let Some(hubs) = booted.hubs() {
         let terminals = Rc::new(AppHubTerminals {
             terminal: booted.terminal().clone(),
@@ -41,6 +40,8 @@ pub(crate) fn build_hub_workspace(
             tracing::error!(%error, "the hub window could not be composed");
         }
     }
+    booted.register_settings(workspace);
+    booted.register_snippets(workspace, window, cx);
     workspace.set_menu_builder(crate::app_menus::build_hub, window, cx);
 }
 
