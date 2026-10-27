@@ -1,8 +1,10 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
-//! Owns: targets, authentication, jump-host route values, launch/override validation, opaque IDs, text errors and execution/FS contracts.
+//! Owns: targets, authentication, route values (jump hosts, the hub proxy step), launch/override validation, opaque IDs, text errors and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
-//! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener,
+//! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener, RelayDialer,
 //! and recording::{OutputLogFactory, OutputLog}.
+//! A relay stream is two bounded frame channels (`RELAY_FRAMES` of at most `RELAY_FRAME_BYTES`);
+//! the hub is named by an opaque address string, so no hub type appears in this crate.
 //! Recording diagnostics use foundation shared typed causes and domain constructors;
 //! semantic equality retains category, path and append offset.
 //! Settings sections: ssh and local (existing adapter configuration). Globals: none.
@@ -40,6 +42,7 @@ mod options;
 mod program;
 mod program_opener;
 pub mod recording;
+mod relay;
 mod secret;
 mod session;
 mod settings;
@@ -53,6 +56,10 @@ pub use exec::{
 };
 pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
 pub use jump::{HostAddress, JumpHost, MAX_JUMP_HOSTS, PromptHop, ResolvedJump};
+pub use relay::{
+    RELAY_FRAME_BYTES, RELAY_FRAMES, RelayDialer, RelayError, RelayPeer, RelayReceiver,
+    RelayRefusal, RelaySender, RelayStream,
+};
 pub use secret::Secret;
 pub use session::{
     CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,
