@@ -150,3 +150,37 @@ fn a_second_lock_waits_until_the_first_is_released() {
     signal.recv_timeout(Duration::from_secs(10)).unwrap();
     waiter.join().unwrap();
 }
+
+#[test]
+fn waiting_for_the_lock_does_not_stall_the_workers_of_the_runtime_that_holds_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (held, holding) = mpsc::channel();
+    let holder = file_in(&dir, "hub.example");
+    runtime.spawn(async move {
+        let guard = SessionStore::lock(&holder).unwrap();
+        held.send(()).unwrap();
+        // The holder awaits the network, as a token rotation does.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        drop(guard);
+    });
+    holding.recv_timeout(Duration::from_secs(10)).unwrap();
+
+    let (acquired, signal) = mpsc::channel();
+    for _ in 0..2 {
+        let (waiter, acquired) = (file_in(&dir, "hub.example"), acquired.clone());
+        runtime.spawn(async move {
+            let _guard = SessionStore::lock(&waiter).unwrap();
+            acquired.send(()).unwrap();
+        });
+    }
+    for _ in 0..2 {
+        signal
+            .recv_timeout(Duration::from_secs(10))
+            .expect("both waiters get the lock once the holder is done");
+    }
+}

@@ -15,6 +15,7 @@ use nocterm_hub_client::{Session, SessionStore};
 use nocterm_hubs_model::HubAddress;
 use nocterm_keys::DeviceKey;
 use serde::{Deserialize, Serialize};
+use tokio::runtime::{Handle, RuntimeFlavor};
 
 mod seed;
 
@@ -134,12 +135,20 @@ impl CredentialFile {
 
     /// Replaces the tokens, keeping the key.
     pub(crate) fn save_session(&self, session: &Session) -> Result<(), CredentialError> {
+        let _lock = self.lock_exclusive().map_err(CredentialError::Prepare)?;
         self.replace_session(Some(session))
     }
 
     /// Forgets the tokens but keeps the key, so the device signs in again as itself.
     pub(crate) fn clear_session(&self) -> Result<(), CredentialError> {
+        let _lock = self.lock_exclusive().map_err(CredentialError::Prepare)?;
         self.replace_session(None)
+    }
+
+    /// Replaces the tokens for a caller that holds the lock already: the client of the
+    /// contract does while it rotates. A second lock would wait for itself.
+    fn save_locked(&self, session: &Session) -> Result<(), CredentialError> {
+        self.replace_session(Some(session))
     }
 
     fn replace_session(&self, session: Option<&Session>) -> Result<(), CredentialError> {
@@ -163,6 +172,7 @@ impl CredentialFile {
 
     /// Removes the credentials of the hub; no file is not an error.
     pub(crate) fn erase(&self) -> io::Result<()> {
+        let _lock = self.lock_exclusive()?;
         match fs::remove_file(&self.path) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
@@ -183,7 +193,8 @@ impl CredentialFile {
         builder.create(parent)
     }
 
-    /// Opens the lock file, creating it private, and waits for the exclusive lock.
+    /// Opens the lock file, creating it private, and waits for the exclusive lock. Waiting
+    /// does not hold up the worker of the runtime it runs on.
     fn lock_exclusive(&self) -> io::Result<File> {
         self.prepare_directory()?;
         let file = match create_private(&self.lock_path) {
@@ -193,8 +204,20 @@ impl CredentialFile {
             }
             Err(error) => return Err(error.into_io_error()),
         };
-        file.lock()?;
+        off_worker(|| file.lock())?;
         Ok(file)
+    }
+}
+
+/// Runs a call that waits for another holder of the lock. On a multi-thread runtime the
+/// worker hands its other tasks over first, so the holder, which may be one of them awaiting
+/// the network, keeps being polled and releases the lock.
+fn off_worker<T>(wait: impl FnOnce() -> T) -> T {
+    match Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(wait)
+        }
+        _ => wait(),
     }
 }
 
@@ -214,7 +237,7 @@ impl SessionStore for CredentialFile {
     }
 
     fn save(&self, session: &Session) -> io::Result<()> {
-        self.save_session(session).map_err(into_io)
+        self.save_locked(session).map_err(into_io)
     }
 }
 

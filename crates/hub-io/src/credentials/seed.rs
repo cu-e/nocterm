@@ -22,6 +22,10 @@ pub(crate) fn decode(text: &str) -> Result<[u8; 32], SeedError> {
     }
     let mut seed = [0_u8; 32];
     for (byte, pair) in seed.iter_mut().zip(pairs) {
+        // `from_str_radix` also takes a leading sign, which is no digit.
+        if !pair.iter().all(u8::is_ascii_hexdigit) {
+            return Err(SeedError);
+        }
         let pair = std::str::from_utf8(pair).map_err(|_| SeedError)?;
         *byte = u8::from_str_radix(pair, 16).map_err(|_| SeedError)?;
     }
@@ -47,5 +51,6 @@ mod tests {
         assert!(decode(&"a".repeat(63)).is_err());
         assert!(decode(&"g".repeat(64)).is_err());
         assert!(decode(&"é".repeat(32)).is_err());
+        assert!(decode(&"+f".repeat(32)).is_err());
     }
 }

@@ -9,6 +9,7 @@ mod bridge;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use futures::FutureExt as _;
 use nocterm_hub_client::HubClient;
 use nocterm_hub_client::terminal::{TerminalOptions, run_terminal};
 use nocterm_hub_proto::v1;
@@ -78,14 +79,23 @@ struct Attachment {
 impl Attachment {
     /// Attaches and shows the terminal until it ends; says why it ended.
     async fn run(&self, driver: &SessionDriver) -> CloseReason {
-        let prepared = tokio::select! {
-            prepared = self.prepare() => prepared,
+        let client = tokio::select! {
+            client = self.pool.fresh(&self.hub) => client,
             () = driver.closed() => return CloseReason::ClosedByUser,
         };
-        let (client, session_id) = match prepared {
-            Ok(prepared) => prepared,
+        let client = match client {
+            Ok(client) => client,
             Err(error) => return bridge::failed(&error),
         };
+        // Creating a session is not abandoned half way: it either exists or not, and a tab
+        // closed meanwhile leaves it running on its node, listed in the sessions panel.
+        let session_id = match self.session_for(&client).await {
+            Ok(session_id) => session_id,
+            Err(error) => return bridge::failed(&error),
+        };
+        if driver.closed().now_or_never().is_some() {
+            return CloseReason::ClosedByUser;
+        }
         let options = TerminalOptions {
             session_id: session_id.as_str().to_owned(),
             cols: self.size.cols,
@@ -99,9 +109,8 @@ impl Attachment {
         bridge::close_reason(end.map_err(|error| self.pool.failed(&self.hub, error)))
     }
 
-    /// The client of the hub and the session to attach to, which a new one creates first.
-    async fn prepare(&self) -> Result<(HubClient, HubSessionId), HubError> {
-        let client = self.pool.fresh(&self.hub).await?;
+    /// The session to attach to, which a new one creates first.
+    async fn session_for(&self, client: &HubClient) -> Result<HubSessionId, HubError> {
         let target = self
             .target
             .lock()
@@ -138,7 +147,7 @@ impl Attachment {
                 session
             }
         };
-        Ok((client, session))
+        Ok(session)
     }
 }
 

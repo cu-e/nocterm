@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use nocterm_hub_client::{ClientError, DeviceInfo, HubClient};
-use nocterm_hubs_model::{HubAddress, HubError, HubId};
+use nocterm_hubs_model::{HubAddress, HubError, HubId, TrustPolicy};
 
 use crate::classify::{classify, credential_file};
 use crate::credentials::{CredentialDir, CredentialFile};
@@ -13,10 +13,18 @@ use crate::credentials::{CredentialDir, CredentialFile};
 /// The application name a hub lists beside the device.
 const APP_NAME: &str = "Nocterm";
 
+/// The client of a hub and the trust it was connected with.
+struct Pooled {
+    trust: TrustPolicy,
+    client: HubClient,
+}
+
+/// One client per hub: clients of a hub share the turn in which its tokens are renewed, and
+/// two of them would renew the same refresh token against each other.
 pub(crate) struct Pool {
     credentials: CredentialDir,
     device: DeviceInfo,
-    clients: Mutex<HashMap<HubId, HubClient>>,
+    clients: Mutex<HashMap<HubId, Pooled>>,
 }
 
 impl Pool {
@@ -36,16 +44,23 @@ impl Pool {
         self.credentials.file(address).map_err(credential_file)
     }
 
-    fn clients(&self) -> MutexGuard<'_, HashMap<HubId, HubClient>> {
+    fn clients(&self) -> MutexGuard<'_, HashMap<HubId, Pooled>> {
         self.clients.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub(crate) fn insert(&self, hub: HubId, client: HubClient) {
-        self.clients().insert(hub, client);
+    pub(crate) fn insert(&self, hub: HubId, trust: TrustPolicy, client: HubClient) {
+        self.clients().insert(hub, Pooled { trust, client });
+    }
+
+    /// The client of the hub if it was connected with this trust.
+    pub(crate) fn connected(&self, hub: &HubId, trust: TrustPolicy) -> Option<HubClient> {
+        let clients = self.clients();
+        let pooled = clients.get(hub)?;
+        (pooled.trust == trust).then(|| pooled.client.clone())
     }
 
     pub(crate) fn evict(&self, hub: &HubId) -> Option<HubClient> {
-        self.clients().remove(hub)
+        self.clients().remove(hub).map(|pooled| pooled.client)
     }
 
     /// The client of a hub connected before, with tokens that are good for a while.
@@ -56,7 +71,7 @@ impl Pool {
         let client = self
             .clients()
             .get(hub)
-            .cloned()
+            .map(|pooled| pooled.client.clone())
             .ok_or(HubError::NotSignedIn)?;
         match client.ensure_fresh().await {
             Ok(_) => Ok(client),

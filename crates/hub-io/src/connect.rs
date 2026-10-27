@@ -5,7 +5,7 @@ use std::sync::Arc;
 use futures::channel::oneshot;
 use nocterm_hub_client::{ClientError, HubClient, Session, StatusCode};
 use nocterm_hub_proto::v1;
-use nocterm_hubs_model::{Account, HubEndpointSpec, HubError, HubId, HubInfo};
+use nocterm_hubs_model::{Account, HubEndpointSpec, HubError, HubId, HubInfo, TrustPolicy};
 use nocterm_keys::DeviceKey;
 use nocterm_session::Secret;
 
@@ -29,6 +29,7 @@ struct Attempt {
     hub: HubId,
     file: CredentialFile,
     client: HubClient,
+    trust: TrustPolicy,
     created: bool,
     finished: bool,
 }
@@ -47,9 +48,13 @@ impl Connector {
     }
 
     /// Connects with the decided trust, reads what the hub says of itself and renews the
-    /// tokens of a device that is signed in.
+    /// tokens of a device that is signed in. A hub keeps its client while it is trusted the
+    /// same way, so renewing goes through one turn however often this is called.
     pub(crate) async fn connect(&self, spec: HubEndpointSpec) -> Result<HubInfo, HubError> {
         let hub = HubId::from(spec.address.clone());
+        if let Some(client) = self.answering(&hub, &spec).await {
+            return self.renewed(&hub, spec.trust, client).await;
+        }
         let file = self.pool.file(&spec.address)?;
         let stored = file.load().map_err(credential_file)?;
         let (key, session) = match stored {
@@ -58,23 +63,46 @@ impl Connector {
         };
         let has_session = session.is_some();
         let client = open(&spec, key, session).await?;
-        let mut signed_in = false;
-        if has_session {
-            client.persist_with(Arc::new(file));
-            match client.ensure_fresh().await {
-                Ok(_) => signed_in = true,
-                Err(ClientError::Status {
-                    code: StatusCode::Unauthenticated,
-                    ..
-                }) => self.forget_tokens(&hub)?,
-                Err(error) => return Err(self.pool.failed(&hub, error)),
-            }
+        if !has_session {
+            self.pool.evict(&hub);
+            return Ok(convert::hub_info(client.info(), false));
         }
+        client.persist_with(Arc::new(file));
+        self.renewed(&hub, spec.trust, client).await
+    }
+
+    /// The pooled client of the hub, if the hub still answers as the one it connected to.
+    async fn answering(&self, hub: &HubId, spec: &HubEndpointSpec) -> Option<HubClient> {
+        let client = self.pool.connected(hub, spec.trust)?;
+        let now = client.auth().get_hub_info(v1::Empty {}).await.ok()?;
+        let (now, before) = (now.into_inner(), client.info());
+        (now.hub_id == before.hub_id && now.protocol_version == before.protocol_version)
+            .then_some(client)
+    }
+
+    /// Renews the tokens of `client`, which holds a session, and pools it while they work.
+    async fn renewed(
+        &self,
+        hub: &HubId,
+        trust: TrustPolicy,
+        client: HubClient,
+    ) -> Result<HubInfo, HubError> {
+        let signed_in = match client.ensure_fresh().await {
+            Ok(_) => true,
+            Err(ClientError::Status {
+                code: StatusCode::Unauthenticated,
+                ..
+            }) => {
+                self.forget_tokens(hub)?;
+                false
+            }
+            Err(error) => return Err(self.pool.failed(hub, error)),
+        };
         let info = convert::hub_info(client.info(), signed_in);
         if signed_in {
-            self.pool.insert(hub, client);
+            self.pool.insert(hub.clone(), trust, client);
         } else {
-            self.pool.evict(&hub);
+            self.pool.evict(hub);
         }
         Ok(info)
     }
@@ -95,6 +123,7 @@ impl Connector {
             hub: HubId::from(spec.address.clone()),
             file,
             client,
+            trust: spec.trust,
             created,
             finished: false,
         })
@@ -109,7 +138,7 @@ impl Connector {
         attempt.finished = true;
         let client = attempt.client.clone();
         client.persist_with(Arc::new(self.pool.file(attempt.hub.address())?));
-        self.pool.insert(attempt.hub.clone(), client);
+        self.pool.insert(attempt.hub.clone(), attempt.trust, client);
         who_am_i(&attempt.client, &attempt.hub, &self.pool).await
     }
 
