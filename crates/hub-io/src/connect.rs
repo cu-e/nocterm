@@ -149,12 +149,14 @@ impl Connector {
         password: Secret,
     ) -> Result<Account, HubError> {
         let attempt = self.begin(&spec).await?;
-        let session = attempt
+        let signed_in = attempt
             .client
             .password_login(&username, password.expose(), self.pool.device())
             .await
             .map_err(|error| classify_sign_in(&spec.address, Method::Password, error))?;
-        self.complete(attempt, session).await
+        // The login also derives the key that opens the account's keyset. Nothing here needs it
+        // yet, so it is dropped (and wiped) with `signed_in` once the tokens are kept.
+        self.complete(attempt, signed_in.session).await
     }
 
     /// Signs in through the browser. `browser` receives the address to open.
