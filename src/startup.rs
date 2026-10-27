@@ -33,7 +33,7 @@ impl PreparedApp {
         let executable = std::env::current_exe().context("locating the nocterm executable")?;
         let paths = Paths::discover()?;
         let tokens = load_tokens(&paths);
-        let (settings, settings_read) = load_settings(&paths, &user_plugins);
+        let settings = load_settings(&paths, &user_plugins);
         let dirs = nocterm_themes::ThemeDirs {
             user: paths.user_themes_dir(),
             installed: paths.installed_themes_dir(),
@@ -90,7 +90,6 @@ impl PreparedApp {
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
                 hubs: hub_dependencies(&paths_for_hubs),
-                hub_list_read: settings_read,
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,
@@ -168,9 +167,7 @@ impl PreparedApp {
             }
         })
         .detach();
-        if let Err(error) =
-            crate::windows::restore_windows(cx, &booted, booted.windowing().previous())
-        {
+        if let Err(error) = crate::open_main_window(cx, &booted) {
             tracing::error!(%error, "could not open the window");
             cx.quit();
         }
@@ -289,19 +286,15 @@ fn load_tokens(paths: &Paths) -> DesignTokens {
 }
 
 /// Invalid sections keep their source; malformed files disable writes for this run. A
-/// developer session reads the file and never writes it. The second value is false when the
-/// file could not be read and the settings are the defaults.
-fn load_settings(paths: &Paths, mode: &UserPluginMode) -> (SettingsConfig, bool) {
+/// developer session reads the file and never writes it.
+fn load_settings(paths: &Paths, mode: &UserPluginMode) -> SettingsConfig {
     let file = SettingsFile::new(paths.settings_file());
     match file.load() {
-        Ok(document) if mode.saves_settings() => (SettingsConfig::new(document, file), true),
-        Ok(document) => (SettingsConfig::in_memory(document), true),
+        Ok(document) if mode.saves_settings() => SettingsConfig::new(document, file),
+        Ok(document) => SettingsConfig::in_memory(document),
         Err(error) => {
             tracing::error!(%error, "could not read the settings; changes will not be saved");
-            (
-                SettingsConfig::in_memory(SettingsDocument::default()),
-                false,
-            )
+            SettingsConfig::in_memory(SettingsDocument::default())
         }
     }
 }

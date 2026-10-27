@@ -1,31 +1,25 @@
 //! Opening terminal tabs on the sessions of a hub.
 
 use std::rc::Rc;
-use std::sync::Arc;
 
-use futures::channel::oneshot;
-use futures::future::{self, Either};
 use gpui_kit::{App, Entity, WeakEntity, Window};
 use nocterm_hubs::{HubWindow, Hubs};
-use nocterm_hubs_model::{
-    HubId, HubSessionId, HubSessionSummary, HubTerminalTarget, NodeId, NodeSummary, OrgId,
-};
-use nocterm_session::{ConnectRequest, Session, Target, Transport};
+use nocterm_hubs_model::{HubId, HubSessionSummary, HubTerminalTarget, NodeId, NodeSummary};
+use nocterm_session::Target;
 use nocterm_workspace::Workspace;
 
 use crate::ports::HubTerminalOpener;
-use crate::remembered::{Remembered, TabId};
 
-/// Where the tabs of one hub open: its workspace, and what makes the tab.
+/// Opens tabs of one hub in one workspace.
 #[derive(Clone)]
-pub(crate) struct TabSite {
+pub(crate) struct HubTabs {
     hubs: Entity<Hubs>,
     hub: HubId,
     workspace: WeakEntity<Workspace>,
     opener: Rc<dyn HubTerminalOpener>,
 }
 
-impl TabSite {
+impl HubTabs {
     pub(crate) fn new(
         hubs: Entity<Hubs>,
         hub: HubId,
@@ -38,31 +32,6 @@ impl TabSite {
             workspace,
             opener,
         }
-    }
-}
-
-/// Opens tabs of one hub in one workspace, and tells the window's memory about them.
-#[derive(Clone)]
-pub(crate) struct HubTabs {
-    site: TabSite,
-    remembered: Entity<Remembered>,
-}
-
-/// A transport that lets go of its lease when the tab it belongs to is closed.
-struct LeasedTransport {
-    inner: Arc<dyn Transport>,
-    _lease: oneshot::Sender<()>,
-}
-
-impl Transport for LeasedTransport {
-    fn open(&self, request: ConnectRequest) -> Session {
-        self.inner.open(request)
-    }
-}
-
-impl HubTabs {
-    pub(crate) fn new(site: TabSite, remembered: Entity<Remembered>) -> Self {
-        Self { site, remembered }
     }
 
     /// Attaches a tab to a session that runs; false when the tab could not open.
@@ -79,7 +48,6 @@ impl HubTabs {
         };
         self.open(
             title,
-            session.org.clone(),
             HubTerminalTarget::Existing(session.id.clone()),
             window,
             cx,
@@ -106,23 +74,17 @@ impl HubTabs {
             );
             return;
         };
-        let HubTerminalTarget::New { org, .. } = &target else {
-            return;
-        };
-        let org = org.clone();
-        self.open(title, org, target, window, cx);
+        self.open(title, target, window, cx);
     }
 
     fn state(&self, cx: &mut App) -> Option<Entity<HubWindow>> {
-        let site = &self.site;
-        site.hubs.update(cx, |hubs, cx| hubs.window(&site.hub, cx))
+        self.hubs.update(cx, |hubs, cx| hubs.window(&self.hub, cx))
     }
 
-    /// Opens the tab of a session of `org`; false when it did not open.
+    /// Opens the tab of a session; false when it did not open.
     fn open(
         &self,
         title: String,
-        org: OrgId,
         target: HubTerminalTarget,
         window: &mut Window,
         cx: &mut App,
@@ -130,42 +92,26 @@ impl HubTabs {
         let Some(state) = self.state(cx) else {
             return false;
         };
-        let known = match &target {
-            HubTerminalTarget::Existing(session) => Some(session.clone()),
-            HubTerminalTarget::New { .. } => None,
-        };
-        let (transport, created) = state.read(cx).terminal(target).into_parts();
-        let (lease, closed) = oneshot::channel();
-        let transport: Arc<dyn Transport> = Arc::new(LeasedTransport {
-            inner: transport,
-            _lease: lease,
-        });
+        let (transport, _) = state.read(cx).terminal(target).into_parts();
         let user = state
             .read(cx)
             .account()
             .map_or_else(|| "hub".to_owned(), |account| account.username.clone());
         let Some(address) = self
-            .site
             .hubs
             .read(cx)
-            .record(&self.site.hub)
+            .record(&self.hub)
             .map(|r| r.address.clone())
         else {
             return false;
         };
         let destination = Target::new(user, address.host(), address.port());
-        let opener = Rc::clone(&self.site.opener);
-        let opened = self.site.workspace.update(cx, |workspace, cx| {
+        let opener = Rc::clone(&self.opener);
+        let opened = self.workspace.update(cx, |workspace, cx| {
             opener.open(workspace, title.into(), destination, transport, window, cx)
         });
         match opened {
-            Ok(Ok(())) => {
-                let tab = self
-                    .remembered
-                    .update(cx, |remembered, cx| remembered.tab_opened(org, known, cx));
-                self.follow(tab, created, closed, cx);
-                true
-            }
+            Ok(Ok(())) => true,
             Ok(Err(error)) => {
                 nocterm_ui::notice::error(
                     window,
@@ -178,40 +124,5 @@ impl HubTabs {
             }
             Err(_) => false,
         }
-    }
-
-    /// Tells the memory which session a new tab became and when the tab is closed. The transport
-    /// is dropped with the tab, which ends `closed`. A window dropped meanwhile has no memory
-    /// left to tell, so tabs lost with it do not forget their sessions.
-    fn follow(
-        &self,
-        tab: TabId,
-        created: Option<oneshot::Receiver<HubSessionId>>,
-        closed: oneshot::Receiver<()>,
-        cx: &mut App,
-    ) {
-        let remembered = self.remembered.downgrade();
-        cx.spawn(async move |cx| {
-            let closed = match created {
-                Some(created) => match future::select(created, closed).await {
-                    Either::Left((made, rest)) => {
-                        if let Ok(session) = made {
-                            let _ = remembered.update(cx, |remembered, cx| {
-                                remembered.tab_attached(tab, session, cx);
-                            });
-                        }
-                        Some(rest)
-                    }
-                    Either::Right(_) => None,
-                },
-                None => Some(closed),
-            };
-            if let Some(closed) = closed {
-                // Nothing is ever sent: the wait ends when the transport is dropped.
-                let _ = closed.await;
-            }
-            let _ = remembered.update(cx, |remembered, cx| remembered.tab_closed(tab, cx));
-        })
-        .detach();
     }
 }

@@ -710,48 +710,38 @@ runner and expose readable immutable outcomes; sign-in cards retain the original
 
 ## Hubs
 
-`nocterm-hubs-ui` holds the views of hub environments and depends on `nocterm-hubs` and
+`nocterm-hubs-ui` holds the views of hubs and depends on `nocterm-hubs` and
 `nocterm-hubs-model` for state, never on `nocterm-terminal` or the application
-([ADR 0097](../adr/0097-a-window-belongs-to-one-environment.md)).
+([ADR 0099](../adr/0099-windows-have-no-environments.md)). `register` puts its commands and
+panel into a window; the `hubs` system plugin (`plugin::PLUGIN`) declares the panel.
 
-- `EnvironmentMenu` is the view in the window's title-bar slot (`Workspace::set_environment_menu`).
-  It lists "This computer" (the `Local` environment), each known hub with its address and a status
-  chip, and "Sign in to a server…". Enter opens the choice in this window and Ctrl+Enter in a new one. A server that is
-  signed out or revoked opens the sign-in dialog; one whose certificate changed shows both
-  fingerprints and offers only removal and closing, never acceptance. A local window with open
-  tabs asks before switching, and "Open in a new window" is the default; a hub window switches
-  without asking because its tabs only detach. Without known servers the list has "This computer"
-  and "Sign in to a server…", and no network call is made.
 - `ServersPage` is the Servers page of the settings (`servers`, composed into the checked catalog by
   the application). Each known server has a name field (saved on Enter or blur), a colour
   chooser, the status, and a read-only view of the trusted and, after a change, the presented
   fingerprint; "Sign out" and "Remove…" (confirmed) call the service. Nothing on the page accepts
-  a certificate. The colour is drawn in the menu button and rows with the theme's shade.
+  a certificate.
 - The palette commands `ManageServers` (opens that page, handled by the application),
-  `SignInToServer`, `OpenServerInNewWindow` and `SignOutOfServer` (pickers over the known or the
-  signed-in servers) are actions of this crate.
+  `SignInToServer` and `SignOutOfServer` (a picker over the signed-in servers) are actions of this
+  crate, with `OpenHubSessions`, which shows or hides the sessions panel.
 - `SignInDialog` draws the steps of a `SignInSession`: address with an optional fingerprint,
   the pinned, public-authority or first-use trust (a self-signed certificate asks for an
   explicit "Trust and pin this certificate" beside the fingerprint, grouped for comparison), then the password
   form and a button for each single sign-on provider. The browser step opens the address from
   the service's event with `cx.open_url` and shows it with a copy button; cancelling or closing
-  the dialog ends the wait.
-- `SessionsPanel` (`hubs.sessions`, a core contribution that exists in a hub window only)
-  lists the nodes of the selected organization with their sessions. "Open" attaches a tab to an
-  existing session (also a double-click, or Enter on the session chosen with a click or the arrow
-  keys), the "+" button ("New session") creates one on a chosen node or on any node, and the
-  "End session" button asks for confirmation and then terminates the session on its node.
-- `Remembered` (private to the feature) holds what a hub window keeps for the next start: the
-  organization shown and the sessions of its tabs in opening order. A tab joins when it opens
-  (a new session when the hub reports its id) and leaves when it closes; it reports each change
-  through `HubMemoryKeeper`. In a restored window it reattaches the remembered sessions that the
-  hub still lists in their own organization, once the account is known, and drops the others
-  without a notice.
-- The feature declares the ports it needs and the application implements them, because features
-  do not depend on each other: `EnvironmentOpener` opens an environment in this or a new
-  window, `HubTerminalOpener` adds a tab on a given transport to the workspace and
-  `HubMemoryKeeper` stores what the window keeps; `HubWindowPorts` groups them for
-  `register_hub_window`.
+  the dialog ends the wait. The last step is "Done".
+- `SessionsPanel` (`hubs.sessions`, in the tray of the layout until placed) chooses the hub it
+  lists: the one the user picked, else the one it lists already, else the first that answers; a
+  button for each known server appears when there are several, and a button that signs in when
+  there are none. `SessionList` lists the nodes of the selected organization with their
+  sessions. "Open" attaches a tab to an existing session (also a double-click, or Enter on the
+  session chosen with a click or the arrow keys), the "+" button in the header and the one
+  beside an online node start a session on any node or on that node, and the "End session"
+  button asks for confirmation and then terminates the session on its node. A hub that is signed
+  out offers "Sign in"; one with a changed certificate or an unsupported protocol offers an
+  explanation and removal, never acceptance.
+- The feature declares the port it needs and the application implements it, because features
+  do not depend on each other: `HubTerminalOpener` adds a tab on a given transport to the
+  workspace.
 
 A tab opened for a hub session is an attached tab of the terminal feature (see
 [Terminal](#terminal)). Closing it detaches: the process keeps running on its node and the

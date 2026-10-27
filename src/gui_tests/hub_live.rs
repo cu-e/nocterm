@@ -9,15 +9,15 @@
 //! The application is composed as in the other window tests, but over the real `HubLinks` on a
 //! temporary credentials directory. The adapter works on its own runtime, so the test waits in
 //! real time: it polls the windows with short sleeps until a deadline.
-use super::hub_windows::{click, dispatch, open, settle_dialog, show, title_of, workspace_of};
+use super::hub_sessions::{click, dispatch, open, settle_dialog, show, workspace_of};
 use super::*;
 use crate::bootstrap::Booted;
 use crate::shell_setup::UserPluginMode;
 use futures::executor::block_on;
 use nocterm_hub_io::{HubLinks, HubLinksConfig};
 use nocterm_hubs_model::{
-    Environment, Fingerprint, HubAddress, HubId, HubSessionId, HubSessions as _, HubSignIn as _,
-    HubTrust as _, HubsSettings, OrgId, TrustPolicy,
+    Fingerprint, HubAddress, HubId, HubSessionId, HubSessions as _, HubSignIn as _, HubTrust as _,
+    HubsSettings, OrgId, TrustPolicy,
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter};
@@ -41,7 +41,7 @@ impl Hub {
     }
 }
 
-/// The hub of the environment, or `None` when the test is not asked to run.
+/// The hub the test variables describe, or `None` when the test is not asked to run.
 fn hub() -> Option<Hub> {
     let variable = |name: &str| std::env::var(name).ok();
     let settings = (
@@ -144,16 +144,14 @@ fn type_text(handle: AnyWindowHandle, text: &str, cx: &mut TestAppContext) {
     show(handle, cx);
 }
 
-/// Signs in through the dialog the environment menu opens, up to its last step.
+/// Signs in through the dialog the sign-in command opens, up to its last step.
 fn sign_in_through_the_dialog(
     handle: AnyWindowHandle,
     hub: &Hub,
     saved: &Saved,
     cx: &mut TestAppContext,
 ) {
-    dispatch(handle, nocterm_hubs_ui::OpenEnvironmentMenu, cx);
-    // This computer comes first, then the servers (none yet), then signing in.
-    click(handle, ("environment-row", 1usize), cx);
+    dispatch(handle, nocterm_hubs_ui::SignInToServer, cx);
     settle_dialog(handle, cx);
 
     type_text(handle, &hub.address.to_string(), cx);
@@ -173,7 +171,7 @@ fn sign_in_through_the_dialog(
     type_text(handle, &hub.password, cx);
     press(handle, "enter", cx);
     eventually(handle, "the last step of the sign-in", cx, |cx| {
-        shows(handle, "sign-in-open-here", cx)
+        shows(handle, "sign-in-done", cx)
     });
 
     let servers = saved
@@ -268,21 +266,17 @@ fn a_user_signs_in_works_in_a_session_and_signs_out(cx: &mut TestAppContext) {
     block_on(links.probe(&hub.address)).expect("the hub answers");
 
     let (booted, saved) = boot(&links, cx);
-    let window = open(&booted, Environment::Local, cx);
+    let window = open(&booted, cx);
     sign_in_through_the_dialog(window, &hub, &saved, cx);
 
     // The session panel of this window lists the node of the hub.
-    click(window, "sign-in-open-here", cx);
+    click(window, "sign-in-done", cx);
+    dispatch(window, nocterm_hubs_ui::OpenHubSessions, cx);
     let account = block_on(links.account(&hub.id())).unwrap();
     let org = account.orgs.first().expect("an organization").id.clone();
     eventually(window, "the sessions panel", cx, |cx| {
         shows(window, "hub-sessions-new", cx)
     });
-    let label = cx.update(|cx| booted.hubs().unwrap().label(&hub.id(), cx));
-    assert_eq!(
-        title_of(window, cx),
-        Some(format!("Nocterm \u{2014} {}", label.unwrap()))
-    );
     let nodes = block_on(links.nodes(&hub.id(), &org)).unwrap();
     let node = nodes.iter().find(|node| node.name == "demo-node").unwrap();
     eventually(window, "the node in the panel", cx, |cx| {
@@ -348,7 +342,6 @@ fn start_a_session_and_leave_a_marker(
     cx: &mut TestAppContext,
 ) -> HubSessionId {
     click(window, "hub-sessions-new", cx);
-    click(window, "new-session-auto", cx);
     eventually(window, "the tab of the new session", cx, |cx| {
         tabs(window, cx) == 1
     });

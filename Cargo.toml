@@ -47,7 +47,6 @@ nocterm-directory-io.workspace = true
 nocterm-explorer.workspace = true
 nocterm-hub-io.workspace = true
 nocterm-hubs.workspace = true
-nocterm-hubs-model.workspace = true
 nocterm-hubs-ui.workspace = true
 nocterm-project-service.workspace = true
 nocterm-project-storage.workspace = true
@@ -76,7 +75,6 @@ nocterm-plugin-view = { workspace = true, optional = true }
 nocterm-plugin-wasm = { workspace = true, optional = true }
 nocterm-plugins-ui.workspace = true
 nocterm-ui.workspace = true
-nocterm-window-set.workspace = true
 nocterm-workspace.workspace = true
 nocterm-workspace-ports.workspace = true
 
@@ -284,7 +282,6 @@ nocterm-theme-service = { path = "crates/theme-service" }
 nocterm-ui = { path = "crates/ui" }
 nocterm-vt = { path = "crates/vt" }
 nocterm-window-layout = { path = "crates/window-layout" }
-nocterm-window-set = { path = "crates/window-set" }
 nocterm-workspace = { path = "crates/workspace" }
 nocterm-vault = { path = "crates/vault" }
 nocterm-vault-store = { path = "crates/vault-store" }

@@ -32,9 +32,7 @@ pub(crate) fn register(
     cx.on_action(move |_: &NewWindow, cx| {
         let booted = booted.clone();
         cx.defer(move |cx| {
-            if let Err(error) =
-                crate::windows::open_window(cx, &booted, nocterm_hubs_model::Environment::Local)
-            {
+            if let Err(error) = super::open_main_window(cx, &booted) {
                 report_error(format!("Could not open a window: {error}"), cx);
             }
         });
@@ -106,7 +104,7 @@ fn open_directory(directory: PathBuf, cx: &mut App) {
     .detach();
 }
 
-pub(crate) fn report_error(message: String, cx: &mut App) {
+fn report_error(message: String, cx: &mut App) {
     tracing::error!(%message);
     if let Some(handle) = cx.active_window() {
         cx.defer(move |cx| {

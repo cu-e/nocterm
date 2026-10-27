@@ -63,7 +63,7 @@ pub trait HubSignIn: Send + Sync {
     fn forget(&self, hub: &HubId) -> Result<(), HubError>;
 }
 
-/// What the window of one hub reads and does on the hub.
+/// What the client reads and does on one hub.
 pub trait HubSessions: Send + Sync {
     /// The account this device is signed in as, with its organizations.
     fn account(&self, hub: &HubId) -> HubFuture<Account>;

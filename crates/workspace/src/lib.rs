@@ -2,9 +2,7 @@
 //!
 //! Owns: the permanent outer connection dock and inner project docks,
 //! tab membership and cached session context, one authoritative native dock per surface,
-//! window menus and chrome (including the title-bar slot of the environment menu,
-//! `Workspace::set_environment_menu`: a view the application installs), panel groups (the
-//! sidebar and the independent side panel),
+//! window menus and chrome, panel groups (the sidebar and the independent side panel),
 //! registration of panels and widgets under the ids of the plugin catalog (the shell's own
 //! `plugin::{CORE, GROUPS}` and the id queries), the resolved shell layout (`ShellLayout`
 //! follows the app-wide `[layouts]` settings of `nocterm-window-layout`, resolves the selected

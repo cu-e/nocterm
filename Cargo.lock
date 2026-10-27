@@ -5097,7 +5097,6 @@ dependencies = [
  "nocterm-vault-store",
  "nocterm-vault-ui",
  "nocterm-window-layout",
- "nocterm-window-set",
  "nocterm-workspace",
  "nocterm-workspace-ports",
  "serde_json",
@@ -5571,7 +5570,6 @@ dependencies = [
  "nocterm-settings",
  "schemars 1.2.2",
  "serde",
- "serde_json",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
 ]
@@ -5580,7 +5578,6 @@ dependencies = [
 name = "nocterm-hubs-ui"
 version = "0.0.0"
 dependencies = [
- "futures",
  "gpui-kit",
  "nocterm-core",
  "nocterm-hubs",
@@ -6302,17 +6299,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "nocterm-window-set"
-version = "0.0.0"
-dependencies = [
- "gpui-pre",
- "nocterm-hubs-model",
- "nocterm-store",
- "thiserror 2.0.21",
- "tracing",
 ]
 
 [[package]]

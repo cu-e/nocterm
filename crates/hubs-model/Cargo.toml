@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-hubs-model"
-description = "Window environments, hub addresses and trust rules, the hubs settings section and the hub access ports."
+description = "Hub addresses and trust rules, the hubs settings section and the hub access ports."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -20,7 +20,6 @@ nocterm-settings.workspace = true
 futures.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
