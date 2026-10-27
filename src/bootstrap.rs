@@ -204,7 +204,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
-    let hub_deps = hosts.hubs.clone();
+    let hubs = install_hubs(hosts.hubs.clone(), ui.settings(), cx);
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
@@ -219,13 +219,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     .map(|projects| projects.with_local_host(local_host.clone()));
     let terminal_auth = terminal_auth_factory.map(|factory| factory(terminal.clone()));
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
-    let hubs = hub_deps.map(|deps| {
-        nocterm_hubs_ui::install(nocterm_hubs::install(deps, ui.settings().clone(), cx))
-    });
     let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
     let files = install_files(files, &ui, &shutdown, cx);
-    let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
-    let keymap = crate::keymap::load(user_keymap, cx);
+    let keymap = install_keymap(stored, cx);
     let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);
     let plugins = Plugins::install(&paths, &shutdown, clock.clone(), mode, ui.settings(), cx)?;
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
@@ -387,6 +383,21 @@ fn install_themes(
     };
     let themes = nocterm_theme_service::ThemesHandle::install(library, registry, catalog, cx);
     nocterm_ui::ThemeUi::install(settings, themes, base, cx)
+}
+
+/// Hub access, when the application has it.
+fn install_hubs(
+    deps: Option<nocterm_hubs::Deps>,
+    settings: &nocterm_store::SettingsHandle,
+    cx: &mut App,
+) -> Option<nocterm_hubs_ui::Installed> {
+    deps.map(|deps| nocterm_hubs_ui::install(nocterm_hubs::install(deps, settings.clone(), cx)))
+}
+
+/// The shared keymap: the defaults and the user's overrides, when the application keeps files.
+fn install_keymap(stored: Option<&Paths>, cx: &mut App) -> nocterm_keymap::KeymapHandle {
+    let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
+    crate::keymap::load(user_keymap, cx)
 }
 
 /// Retain only installations registered with the common shutdown coordinator.
