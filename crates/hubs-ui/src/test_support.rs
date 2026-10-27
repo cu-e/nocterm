@@ -17,7 +17,9 @@ use nocterm_store::SettingsConfig;
 use nocterm_ui::DesignTokens;
 use nocterm_workspace::{Workspace, test_support::deps_for};
 
-use crate::{HubTabError, HubTerminalOpener, Installed, OpenHubSessions, install, plugin, register};
+use crate::{
+    HubTabError, HubTerminalOpener, Installed, OpenHubSessions, install, plugin, register,
+};
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
 

@@ -214,7 +214,9 @@ fn with_several_servers_the_panel_lists_the_one_chosen(cx: &mut TestAppContext) 
         .named("Other hub")
         .with_user("ada", "secret", "lab")
         .with_node("m1", "other box", true);
-    let hub = FakeHub::new().with_server(server()).with_server(other.clone());
+    let hub = FakeHub::new()
+        .with_server(server())
+        .with_server(other.clone());
     hub.sign_in_as(&other_id(), "ada");
     let window = fixture(
         cx,
@@ -223,7 +225,10 @@ fn with_several_servers_the_panel_lists_the_one_chosen(cx: &mut TestAppContext) 
         Some("ada"),
     );
     window.open_sessions(cx);
-    assert!(window.shows("hub-node-n1", cx), "the first server shows at first");
+    assert!(
+        window.shows("hub-node-n1", cx),
+        "the first server shows at first"
+    );
     assert!(!window.shows("hub-node-m1", cx));
     window.click(format!("hub-choice-{}", other_id()), cx);
     cx.run_until_parked();
@@ -233,7 +238,9 @@ fn with_several_servers_the_panel_lists_the_one_chosen(cx: &mut TestAppContext) 
 }
 
 fn other_id() -> nocterm_hubs_model::HubId {
-    nocterm_hubs_model::HubId::from(nocterm_hubs_model::HubAddress::parse("other.home:7443").unwrap())
+    nocterm_hubs_model::HubId::from(
+        nocterm_hubs_model::HubAddress::parse("other.home:7443").unwrap(),
+    )
 }
 
 #[gpui_kit::test]

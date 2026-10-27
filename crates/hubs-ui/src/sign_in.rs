@@ -27,12 +27,7 @@ use form::SignInForm;
 
 /// Starts signing in to a server not known yet, or again to `hub`, and shows the dialog. A hub
 /// that is not known any more shows nothing.
-pub(crate) fn start(
-    hubs: &Entity<Hubs>,
-    hub: Option<&HubId>,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub(crate) fn start(hubs: &Entity<Hubs>, hub: Option<&HubId>, window: &mut Window, cx: &mut App) {
     let session = hubs.update(cx, |hubs, cx| match hub {
         Some(hub) => hubs.start_sign_in_for(hub, cx),
         None => Some(hubs.start_sign_in(cx)),
