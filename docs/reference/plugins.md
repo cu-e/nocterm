@@ -19,6 +19,7 @@ Contributions of the window shell and its core features. They are not plugins an
 
 | Id | Kind | Title | Zone | Order | Group | Auto | Pinned |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `hubs.sessions` | panel | Sessions | left | 5 | `navigation` | show | no |
 | `connections.servers` | panel | Connections | left | 10 | `navigation` | show | no |
 | `files.explorer` | panel | Explorer | left | 20 | `navigation` | show | no |
 | `workspace.notifications` | widget | Notifications | right | 10 | none | show | yes |
