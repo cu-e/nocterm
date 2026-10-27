@@ -51,7 +51,10 @@ private files), `nocterm-hubs` (service: known hubs, their status, sign-in) and
 terminal tabs ([ADR 0095](adr/0095-attached-sessions-restore-and-detach.md)) show a hub's
 session and detach when closed. The environments of the open windows are remembered and opened
 again at the next start by `nocterm-window-set`
-([ADR 0098](adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)). User guide:
+([ADR 0098](adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)). A hub can also
+be the first step of an SSH route, from any window: the transport asks the `RelayDialer` port that
+`nocterm-hub-io` implements for a stream
+([ADR 0100](adr/0100-the-hub-is-a-route-step.md)). User guide:
 [hubs](HUBS.md).
 
 ## Plugins

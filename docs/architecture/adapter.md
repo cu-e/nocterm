@@ -354,3 +354,12 @@ hold up a worker of the runtime. Writers of the file take the same lock. A revok
 explained by reading the certificate the hub presents and comparing it with the pinned one,
 which separates a changed certificate from a hub that is not there. See
 [ADR 0096](../adr/0096-hub-contract-outside-the-workspace.md).
+
+`HubRelay` implements `RelayDialer` of `nocterm-session` over the same runtime and the same
+signed-in clients ([ADR 0100](../adr/0100-the-hub-is-a-route-step.md)). It finds the hub by
+address among the hubs this device is signed in to and never signs in on demand. After the hub
+opens the connection, one task carries frames between the bounded channels of the `RelayStream`
+and the hub's stream: the two runtimes share nothing else. A target that is silent does not
+keep a closed session alive, and each direction ends on its own: dropping the sender is end of
+file for the target, which may still answer. A refusal is told by the hub's code, never by its
+text.
