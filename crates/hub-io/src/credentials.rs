@@ -22,7 +22,7 @@ mod seed;
 /// A credential file is a few hundred bytes; anything larger is not ours.
 const MAX_FILE_BYTES: usize = 16 * 1024;
 /// Keeps `<name>.toml.lock` below the usual 255-byte file name limit.
-const MAX_NAME_BYTES: usize = 200;
+pub(crate) const MAX_NAME_BYTES: usize = 200;
 
 /// Why the credentials of a hub could not be read or kept.
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +56,11 @@ impl CredentialDir {
         Self { root }
     }
 
+    /// The directory every per-hub file lives in.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub(crate) fn file(&self, address: &HubAddress) -> Result<CredentialFile, CredentialError> {
         let name = file_stem(address);
         if name.len() > MAX_NAME_BYTES {
@@ -70,7 +75,8 @@ impl CredentialDir {
 }
 
 /// `host_port`; `:` becomes `_`, which no host name contains, so names are unique.
-fn file_stem(address: &HubAddress) -> String {
+pub(crate) fn file_stem(address: &HubAddress) -> String {
+    // Also names the account cache beside the credential file.
     format!("{}_{}", address.host(), address.port()).replace(':', "_")
 }
 
@@ -180,17 +186,10 @@ impl CredentialFile {
     }
 
     fn prepare_directory(&self) -> io::Result<()> {
-        let Some(parent) = self.path.parent() else {
-            return Ok(());
-        };
-        let mut builder = fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt as _;
-            builder.mode(0o700);
+        match self.path.parent() {
+            Some(parent) => prepare_private_directory(parent),
+            None => Ok(()),
         }
-        builder.create(parent)
     }
 
     /// Opens the lock file, creating it private, and waits for the exclusive lock. Waiting
@@ -207,6 +206,18 @@ impl CredentialFile {
         off_worker(|| file.lock())?;
         Ok(file)
     }
+}
+
+/// Creates `directory` and its parents, private to the user where the platform has modes.
+pub(crate) fn prepare_private_directory(directory: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder.create(directory)
 }
 
 /// Runs a call that waits for another holder of the lock. On a multi-thread runtime the

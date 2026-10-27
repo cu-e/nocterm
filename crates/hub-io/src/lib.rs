@@ -31,6 +31,8 @@
 //! buffer between the transport and the hub's stream is bounded, and dropping either end of a
 //! relayed stream ends both directions, whether or not the target is silent.
 
+mod account;
+mod cache;
 mod classify;
 mod connect;
 mod convert;
@@ -40,7 +42,13 @@ mod endpoint;
 mod links;
 mod pool;
 mod relay;
+mod replica;
+mod store;
+mod task;
 mod terminal;
+mod vault;
 
 pub use links::{HubLinks, HubLinksConfig, HubStartError};
 pub use relay::HubRelay;
+pub use replica::HubProfileReplica;
+pub use vault::HubVault;

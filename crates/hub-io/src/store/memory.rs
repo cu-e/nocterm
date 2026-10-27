@@ -1,0 +1,284 @@
+//! An in-memory hub store for tests: versions, conflicts, tombstones and change streams as the
+//! hub keeps them, and an offline switch.
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
+use futures::StreamExt as _;
+use nocterm_core::SharedCause;
+use nocterm_hub_proto::v1;
+use nocterm_hubs_model::HubError;
+
+use super::{Call, OpError, StoreOps};
+
+#[derive(Default)]
+struct Held {
+    collections: Vec<v1::Collection>,
+    envelopes: HashMap<String, Vec<u8>>,
+    objects: HashMap<String, BTreeMap<String, v1::StoredObject>>,
+    heads: HashMap<String, u64>,
+    clock: i64,
+    keyset: Option<v1::AccountKeyset>,
+}
+
+/// One account's collections on a pretend hub.
+#[derive(Default)]
+pub(crate) struct MemoryHub {
+    held: Mutex<Held>,
+    offline: AtomicBool,
+}
+
+impl MemoryHub {
+    pub(crate) fn set_offline(&self, offline: bool) {
+        self.offline.store(offline, Ordering::SeqCst);
+    }
+
+    fn held(&self) -> MutexGuard<'_, Held> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn reach(&self) -> Result<(), OpError> {
+        if self.offline.load(Ordering::SeqCst) {
+            let address = "hub.test".parse().expect("a valid address");
+            return Err(OpError::Hub(HubError::Unreachable {
+                address,
+                cause: SharedCause::new(std::io::Error::other("offline")),
+            }));
+        }
+        Ok(())
+    }
+
+    /// The keyset record the hub holds for the account.
+    pub(crate) fn set_keyset(&self, record: Option<v1::AccountKeyset>) {
+        self.held().keyset = record;
+    }
+
+    /// A collection another client made: of any kind, personal or an organization's.
+    pub(crate) fn add_foreign(&self, kind: &str, org_id: &str) -> String {
+        let mut held = self.held();
+        held.clock += 1;
+        let id = format!("foreign-{}", held.collections.len());
+        let collection = v1::Collection {
+            collection_id: id.clone(),
+            org_id: org_id.to_owned(),
+            personal: org_id.is_empty(),
+            kind: kind.to_owned(),
+            sealed_name: vec![1],
+            head: 0,
+            created_at_ms: held.clock,
+            deleted: false,
+        };
+        held.collections.push(collection);
+        id
+    }
+
+    /// Every stored object of a collection, tombstones included, as the hub holds them.
+    pub(crate) fn objects(&self, collection_id: &str) -> Vec<v1::StoredObject> {
+        let held = self.held();
+        held.objects
+            .get(collection_id)
+            .map(|objects| objects.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Replaces an object's ciphertext behind the client's back, as a hostile hub could.
+    pub(crate) fn tamper(&self, collection_id: &str, object_id: &str, ciphertext: Vec<u8>) {
+        let mut held = self.held();
+        if let Some(object) = held
+            .objects
+            .get_mut(collection_id)
+            .and_then(|objects| objects.get_mut(object_id))
+        {
+            object.ciphertext = ciphertext;
+        }
+    }
+
+    /// Replaces the sealed key a collection hands out.
+    pub(crate) fn tamper_key(&self, collection_id: &str, envelope: Vec<u8>) {
+        self.held()
+            .envelopes
+            .insert(collection_id.to_owned(), envelope);
+    }
+
+    fn write(
+        &self,
+        collection_id: &str,
+        object_id: &str,
+        expected: u64,
+        content: Option<(String, Vec<u8>)>,
+    ) -> Result<v1::ObjectVersion, OpError> {
+        let mut held = self.held();
+        if !held
+            .collections
+            .iter()
+            .any(|c| c.collection_id == collection_id)
+        {
+            return Err(OpError::Hub(HubError::NotFound));
+        }
+        let current = held
+            .objects
+            .get(collection_id)
+            .and_then(|objects| objects.get(object_id))
+            .map(|object| object.version)
+            .unwrap_or(0);
+        if current != expected {
+            return Err(OpError::Conflict);
+        }
+        let head = held.heads.entry(collection_id.to_owned()).or_default();
+        *head += 1;
+        let stream_version = *head;
+        let (kind, ciphertext, deleted) = match content {
+            Some((kind, ciphertext)) => (kind, ciphertext, false),
+            None => {
+                let kind = held
+                    .objects
+                    .get(collection_id)
+                    .and_then(|objects| objects.get(object_id))
+                    .map(|object| object.kind.clone())
+                    .unwrap_or_default();
+                (kind, Vec::new(), true)
+            }
+        };
+        let version = current + 1;
+        held.objects
+            .entry(collection_id.to_owned())
+            .or_default()
+            .insert(
+                object_id.to_owned(),
+                v1::StoredObject {
+                    collection_id: collection_id.to_owned(),
+                    object_id: object_id.to_owned(),
+                    version,
+                    kind,
+                    ciphertext,
+                    deleted,
+                    updated_at_ms: 0,
+                    updated_by_device: String::new(),
+                    stream_version,
+                },
+            );
+        Ok(v1::ObjectVersion {
+            collection_id: collection_id.to_owned(),
+            object_id: object_id.to_owned(),
+            version,
+            stream_version,
+        })
+    }
+}
+
+impl StoreOps for MemoryHub {
+    fn keyset(&self) -> Call<'_, Option<v1::AccountKeyset>> {
+        Box::pin(async move {
+            self.reach()?;
+            Ok(self.held().keyset.clone())
+        })
+    }
+
+    fn collections(&self, kind: &str) -> Call<'_, Vec<v1::Collection>> {
+        let kind = kind.to_owned();
+        Box::pin(async move {
+            self.reach()?;
+            Ok(self
+                .held()
+                .collections
+                .iter()
+                .filter(|c| c.kind == kind)
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn create_collection(&self, request: v1::CreateCollectionRequest) -> Call<'_, v1::Collection> {
+        Box::pin(async move {
+            self.reach()?;
+            let mut held = self.held();
+            held.clock += 1;
+            let collection = v1::Collection {
+                collection_id: request.collection_id.clone(),
+                org_id: request.org_id.clone(),
+                personal: request.org_id.is_empty(),
+                kind: request.kind,
+                sealed_name: request.sealed_name,
+                head: 0,
+                created_at_ms: held.clock,
+                deleted: false,
+            };
+            held.envelopes
+                .insert(request.collection_id, request.wrapped_key);
+            held.collections.push(collection.clone());
+            Ok(collection)
+        })
+    }
+
+    fn collection_key(&self, collection_id: &str) -> Call<'_, Vec<u8>> {
+        let id = collection_id.to_owned();
+        Box::pin(async move {
+            self.reach()?;
+            self.held()
+                .envelopes
+                .get(&id)
+                .cloned()
+                .ok_or(OpError::Hub(HubError::NotFound))
+        })
+    }
+
+    fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion> {
+        Box::pin(async move {
+            self.reach()?;
+            self.write(
+                &request.collection_id,
+                &request.object_id,
+                request.expected_version,
+                Some((request.kind, request.ciphertext)),
+            )
+        })
+    }
+
+    fn delete_object(&self, request: v1::DeleteObjectRequest) -> Call<'_, v1::ObjectVersion> {
+        Box::pin(async move {
+            self.reach()?;
+            self.write(
+                &request.collection_id,
+                &request.object_id,
+                request.expected_version,
+                None,
+            )
+        })
+    }
+
+    fn changes(&self, collection_id: &str, after: u64) -> Call<'_, v1::ChangeBatch> {
+        let id = collection_id.to_owned();
+        Box::pin(async move {
+            self.reach()?;
+            let held = self.held();
+            let mut changes: Vec<_> = held
+                .objects
+                .get(&id)
+                .map(|objects| {
+                    objects
+                        .values()
+                        .filter(|object| object.stream_version > after)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            changes.sort_by_key(|object: &v1::StoredObject| object.stream_version);
+            Ok(v1::ChangeBatch {
+                changes,
+                head: held.heads.get(&id).copied().unwrap_or(0),
+                more: false,
+            })
+        })
+    }
+
+    fn watch(
+        &self,
+        _collections: Vec<String>,
+    ) -> Call<'_, futures::stream::BoxStream<'static, ()>> {
+        Box::pin(async move {
+            self.reach()?;
+            Ok(futures::stream::pending().boxed())
+        })
+    }
+}

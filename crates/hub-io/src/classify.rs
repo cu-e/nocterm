@@ -26,6 +26,15 @@ pub(crate) fn credential_file(error: CredentialError) -> HubError {
     credentials(error)
 }
 
+/// Whether the hub cannot be asked now: it does not answer, or this device has no (more)
+/// credentials for it. Work that needs the hub waits; work that has a local copy goes on.
+pub(crate) fn unreachable(error: &HubError) -> bool {
+    matches!(
+        error,
+        HubError::Unreachable { .. } | HubError::NotSignedIn | HubError::Revoked
+    )
+}
+
 /// How a call to a hub that was signed in to, or not, is classified.
 enum Kind {
     Settled(HubError),
