@@ -14,6 +14,14 @@ Agent protocol SDK packages (`agent-client-protocol*`) may be dependencies of
 any kind only in `nocterm-acp`; renamed bindings do not escape the check
 ([ADR 0058](../adr/0058-neutral-agent-protocol-boundary.md)).
 
+The hub contract packages (`nocterm-hub-client`, `nocterm-hub-grpc`, `nocterm-hub-model`,
+`nocterm-hub-proto`, `nocterm-keys`, `nocterm-link`) come from a public repository outside
+this workspace. `EXTERNAL_CONTRACTS` in `xtask/src/external_contracts.rs` is the only
+exception to the layer rule for `nocterm-*` packages: each is used only by `nocterm-hub-io`,
+only from `git` at a full commit `rev`, and `Cargo.lock` must resolve it from there (no path
+or patch). `tonic*` and `prost*` are dependencies of `nocterm-hub-io` only
+([ADR 0096](../adr/0096-hub-contract-outside-the-workspace.md)).
+
 Every first-party workspace package must inherit `[lints] workspace = true` in
 its actual Cargo manifest. The check uses Cargo's complete no-dependencies
 workspace membership, including the root package, binaries and proc macros;

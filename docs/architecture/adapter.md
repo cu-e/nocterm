@@ -331,3 +331,17 @@ The adapter preserves the original PersistError behind typed operation errors, a
 performs no validation/fallback, queue or GUI work. Native UUIDv4 acquisition occurs
 only when the editor requests a new draft. See
 [ADR0055](../adr/0055-snippet-storage-boundaries.md).
+
+## Hub connections
+
+`nocterm-hub-io` is the only crate that speaks the hub protocol. It uses the hub contract
+(`nocterm-hub-client`, `nocterm-hub-proto`, `nocterm-keys`), a public repository outside this
+workspace that is pinned by commit, and implements the `HubTrust`, `HubSignIn` and `HubSessions`
+ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`. `tonic` and
+`prost` values stop at its boundary. The device key and tokens of each hub are kept in one
+mode-0600 file in a mode-0700 directory the application supplies; the contract rotates tokens
+under an inter-process lock that the adapter takes on a sibling `.lock` file, so two processes
+never spend a refresh token twice. A revoked device erases its file. A failed connection is
+explained by reading the certificate the hub presents and comparing it with the pinned one,
+which separates a changed certificate from a hub that is not there. See
+[ADR 0096](../adr/0096-hub-contract-outside-the-workspace.md).

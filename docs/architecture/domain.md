@@ -436,3 +436,16 @@ never has what `resolve` would reshape. A `[layouts]` table that does not read i
 [ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md),
 [ADR 0087](../adr/0087-status-bar-and-panels-editor.md) and
 [ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md).
+
+## Hubs
+
+`nocterm-hubs-model` owns what a window of a hub needs to know without I/O: `Environment`
+(`Local` or `Hub(HubId)`), `HubAddress` (default port 7443, `https://` dropped, `http://`
+refused), `Fingerprint` and `TrustPolicy`, the pure trust decision `decide` for a probed
+certificate (pinned, public authority, first use that needs a confirmation, or a mismatch that
+can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints and
+labels; never secrets) and the ports `HubTrust`, `HubSignIn` and `HubSessions`. Port methods
+return runtime-agnostic futures and fail with the typed, cloneable `HubError`, which keeps the
+original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind all
+three ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
+0096](../adr/0096-hub-contract-outside-the-workspace.md)).
