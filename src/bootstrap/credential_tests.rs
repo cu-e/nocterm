@@ -60,16 +60,16 @@ fn association_fixture(
                 Arc::new(|_| Box::pin(async { Ok(()) })),
             )
         });
-        let opened = open_vault(
+        let vault = open_vault(
             VaultSetup {
                 file,
                 device_unlock: false,
             },
             &ready,
-            Some(connections.clone()),
             cx,
         )
         .unwrap();
+        let opened = install_vault(vault, &ready, Some(connections.clone()), cx);
         let service = opened.installed.service().clone();
         let installed = nocterm_terminal::install(
             nocterm_terminal::Deps::new(

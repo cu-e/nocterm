@@ -55,13 +55,14 @@ use authentication::AuthenticationFields;
 use connection::ConnectionFields;
 use jump_hosts::JumpHostsFields;
 use launch::LaunchFields;
-use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField};
+use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField, expand_home};
 use state::EditState;
 mod authentication;
 mod connection;
 mod jump_hosts;
 mod launch;
 mod state;
+mod vault_key;
 
 #[derive(Debug)]
 struct FormError {
@@ -194,7 +195,7 @@ impl ConnectionEditor {
             .map_or_else(|| inputs.next_id(), |profile| profile.id);
         let existing = profile.as_ref();
         let connection = ConnectionFields::new(existing, inputs.defaults(), window, cx);
-        let authentication = AuthenticationFields::new(existing, window, cx);
+        let authentication = AuthenticationFields::new(existing, inputs.keys().clone(), window, cx);
         let launch = LaunchFields::new(existing, window, cx);
         let appearance = AppearanceFields::new(existing, &installed, window, cx);
         let choices = JumpHostsFields::choices(id, &installed, cx);
@@ -208,7 +209,7 @@ impl ConnectionEditor {
             )
         });
         let subscription = cx.observe(installed.facts(), |_, _, cx| cx.notify());
-        Self {
+        let mut editor = Self {
             deps: installed,
             focus: cx.focus_handle(),
             edit: EditState::new(id, profile),
@@ -222,7 +223,11 @@ impl ConnectionEditor {
             section: EditorSection::Connection,
             error: None,
             _subscriptions: vec![subscription],
+        };
+        if editor.authentication.kind() == AuthKind::VaultKey {
+            editor.authentication.vault_key_mut().refresh(window, cx);
         }
+        editor
     }
     fn fields(&self, cx: &App) -> ProfileDraft {
         let (metadata, endpoint) = self.connection.snapshot(cx);
@@ -330,11 +335,58 @@ impl ConnectionEditor {
     fn set_auth(&mut self, auth: AuthKind, window: &mut Window, cx: &mut Context<Self>) {
         self.authentication.select(auth);
         self.error = None;
-        if auth == AuthKind::Key {
-            self.authentication
+        match auth {
+            AuthKind::Key => self
+                .authentication
                 .key_path()
-                .update(cx, |input, cx| input.focus(window, cx));
+                .update(cx, |input, cx| input.focus(window, cx)),
+            AuthKind::VaultKey => self.authentication.vault_key_mut().refresh(window, cx),
+            AuthKind::Auto | AuthKind::Password => {}
         }
+        cx.notify();
+    }
+
+    /// The name a key created or imported here gets when none is typed.
+    fn key_label(&self, cx: &App) -> String {
+        let (metadata, endpoint) = self.connection.snapshot(cx);
+        [metadata.name, endpoint.host]
+            .into_iter()
+            .map(|text| text.trim().to_owned())
+            .find(|text| !text.is_empty())
+            .unwrap_or_else(|| "SSH key".to_owned())
+    }
+
+    fn create_vault_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let label = self.key_label(cx);
+        self.error = None;
+        self.authentication
+            .vault_key_mut()
+            .create(&label, window, cx);
+        cx.notify();
+    }
+
+    /// Stores the key file named in the editor in the vault. Both "Import"
+    /// and "Move to vault" end with the connection using the stored copy.
+    fn import_vault_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.authentication.snapshot(cx).key_path;
+        let typed = typed.trim();
+        if typed.is_empty() {
+            self.show_validation(
+                FormError::new(
+                    ValidationField::Key,
+                    "Enter the path of the key file to import.",
+                ),
+                window,
+                cx,
+            );
+            return;
+        }
+        let path = expand_home(typed, self.deps.inputs().defaults().home.as_deref());
+        let label = self.key_label(cx);
+        self.error = None;
+        self.authentication
+            .vault_key_mut()
+            .import(&label, path, window, cx);
         cx.notify();
     }
 

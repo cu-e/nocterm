@@ -57,6 +57,7 @@ nocterm-settings.workspace = true
 nocterm-store.workspace = true
 nocterm-settings-ui.workspace = true
 nocterm-ssh.workspace = true
+nocterm-ssh-keys.workspace = true
 nocterm-terminal.workspace = true
 nocterm-transfers.workspace = true
 nocterm-transfer-runtime.workspace = true
@@ -181,6 +182,7 @@ nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-vault = { workspace = true, features = ["test-support"] }
 nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-project-model = { workspace = true, features = ["test-support"] }
 nocterm-transfers = { workspace = true, features = ["test-support"] }

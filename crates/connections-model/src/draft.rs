@@ -12,6 +12,8 @@ pub enum AuthKind {
     Auto,
     Password,
     Key,
+    /// A key kept in the vault, chosen in the editor.
+    VaultKey,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationField {
@@ -42,6 +44,8 @@ pub enum ProfileValidationError {
     MissingUser,
     #[error("Choose the private key file to sign in with.")]
     MissingKey,
+    #[error("Choose a key from the vault, or create or import one.")]
+    MissingVaultKey,
     #[error(transparent)]
     Credential(#[from] CredentialIdParseError),
     #[error("Arguments must be a JSON array of strings.")]
@@ -65,7 +69,7 @@ impl ProfileValidationError {
             Self::MissingHost | Self::InvalidHost => ValidationField::Host,
             Self::InvalidPort(_) => ValidationField::Port,
             Self::MissingUser => ValidationField::User,
-            Self::MissingKey => ValidationField::Key,
+            Self::MissingKey | Self::MissingVaultKey => ValidationField::Key,
             Self::Credential(_) => ValidationField::Credential,
             Self::Arguments(_) => ValidationField::Arguments,
             Self::Environment(_) => ValidationField::Environment,
@@ -93,7 +97,15 @@ pub struct EndpointDraft {
 pub struct AuthenticationDraft {
     pub kind: AuthKind,
     pub key_path: String,
+    /// The vault record and canonical public half of the chosen vault key.
+    pub vault_key: Option<VaultKeyChoice>,
     pub credential: String,
+}
+/// A key the vault holds, as the profile will name it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VaultKeyChoice {
+    pub credential: CredentialId,
+    pub public_key: String,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LaunchDraft {
@@ -225,6 +237,16 @@ impl AuthenticationDraft {
                 let path = optional(&self.key_path).ok_or(ProfileValidationError::MissingKey)?;
                 Auth::Key {
                     path: expand_home(&path, home),
+                }
+            }
+            AuthKind::VaultKey => {
+                let key = self
+                    .vault_key
+                    .clone()
+                    .ok_or(ProfileValidationError::MissingVaultKey)?;
+                Auth::VaultKey {
+                    credential: key.credential,
+                    public_key: key.public_key,
                 }
             }
         })

@@ -20,6 +20,7 @@ mod project_setup;
 mod settings_pages;
 mod shell_setup;
 mod startup;
+mod vault_keys;
 mod window_set_setup;
 mod windows;
 

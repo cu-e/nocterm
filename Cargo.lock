@@ -5085,6 +5085,7 @@ dependencies = [
  "nocterm-snippets-store",
  "nocterm-snippets-ui",
  "nocterm-ssh",
+ "nocterm-ssh-keys",
  "nocterm-store",
  "nocterm-terminal",
  "nocterm-theme-service",
