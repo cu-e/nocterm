@@ -6,7 +6,7 @@ use crate::test_support::{Fixture, fixture_over, hub_id, pinned_record, server};
 use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
 use nocterm_hubs::{HubStatus, HubSummary};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub};
-use nocterm_hubs_model::{Environment, Fingerprint, HubColor, HubRecord, TrustPolicy};
+use nocterm_hubs_model::{Fingerprint, HubColor, HubRecord, TrustPolicy};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
 
@@ -20,7 +20,7 @@ fn page_over(
     signed_in: Option<&str>,
 ) -> Fixture {
     let hub = FakeHub::new().with_server(server());
-    let setup = fixture_over(cx, config, Environment::Local, hub, known, signed_in);
+    let setup = fixture_over(cx, config, hub, known, signed_in);
     let hubs = setup.installed.hubs().clone();
     let (window, _) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {

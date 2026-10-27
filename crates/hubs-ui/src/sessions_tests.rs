@@ -1,21 +1,18 @@
-//! The sessions panel and the new-session menu of a hub window.
+//! The sessions panel: the sessions of a hub, the choice of the hub, and new sessions.
 use crate::OpenHubSessions;
 use crate::plugin::SESSIONS;
 use crate::test_support::{Fixture, fixture, hub_id, pinned_record, server};
 use gpui_kit::{AppContext as _, TestAppContext, test::TestWindowExt as _};
-use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
-use nocterm_hubs_model::{Environment, HubSessionId, HubTerminalTarget, NodeId, OrgId};
+use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp, FakeServer};
+use nocterm_hubs_model::{
+    Fingerprint, HubRecord, HubSessionId, HubTerminalTarget, NodeId, OrgId, TrustPolicy,
+};
 use nocterm_session::Target;
 use std::time::Duration;
 
 fn hub_window(cx: &mut TestAppContext, hub: FakeHub) -> Fixture {
-    let window = fixture(
-        cx,
-        Environment::Hub(hub_id()),
-        hub,
-        vec![pinned_record()],
-        Some("ada"),
-    );
+    let window = fixture(cx, hub, vec![pinned_record()], Some("ada"));
+    window.open_sessions(cx);
     window.render(cx);
     window
 }
@@ -134,20 +131,13 @@ fn confirming_ends_the_session_and_the_list_drops_it(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_plus_button_opens_the_menu_that_starts_a_session_on_a_chosen_machine(
-    cx: &mut TestAppContext,
-) {
+fn the_plus_beside_a_machine_starts_a_session_on_it(cx: &mut TestAppContext) {
     let window = online_window(cx);
-    window.click("hub-sessions-new", cx);
-    assert!(cx.update(|cx| window.workspace.read(cx).new_tab_menu_is_open()));
-    window.click(("new-session-node", 1usize), cx);
     assert!(
-        cx.update(|cx| window.workspace.read(cx).new_tab_menu_is_open()),
+        !window.shows("hub-node-new-n2", cx),
         "a machine that is offline cannot be chosen"
     );
-    assert!(window.terminals.tabs().is_empty());
-    window.click(("new-session-node", 0usize), cx);
-    assert!(!cx.update(|cx| window.workspace.read(cx).new_tab_menu_is_open()));
+    window.click("hub-node-new-n1", cx);
     assert_eq!(window.terminals.tabs()[0].0.as_ref(), "Shell on build box");
     assert!(window.hub.calls().contains(&FakeCall::Terminal(
         hub_id(),
@@ -160,10 +150,9 @@ fn the_plus_button_opens_the_menu_that_starts_a_session_on_a_chosen_machine(
 }
 
 #[gpui_kit::test]
-fn a_new_session_on_any_machine_leaves_the_choice_to_the_hub(cx: &mut TestAppContext) {
+fn the_plus_in_the_header_leaves_the_choice_of_the_machine_to_the_hub(cx: &mut TestAppContext) {
     let window = online_window(cx);
     window.click("hub-sessions-new", cx);
-    window.click("new-session-auto", cx);
     assert_eq!(window.terminals.tabs()[0].0.as_ref(), "Shell");
     assert!(window.hub.calls().contains(&FakeCall::Terminal(
         hub_id(),
@@ -173,6 +162,78 @@ fn a_new_session_on_any_machine_leaves_the_choice_to_the_hub(cx: &mut TestAppCon
             title: "Shell".to_owned(),
         }
     )));
+}
+
+#[gpui_kit::test]
+fn without_a_known_server_the_panel_offers_to_sign_in(cx: &mut TestAppContext) {
+    let window = fixture(cx, FakeHub::new().with_server(server()), Vec::new(), None);
+    window.open_sessions(cx);
+    assert!(window.shows("hub-sessions-add-server", cx));
+    window.click("hub-sessions-add-server", cx);
+    window.settle_dialog(cx);
+    assert!(window.has_dialog(cx));
+}
+
+#[gpui_kit::test]
+fn a_server_that_is_signed_out_offers_to_sign_in_again(cx: &mut TestAppContext) {
+    let window = fixture(
+        cx,
+        FakeHub::new().with_server(server()),
+        vec![pinned_record()],
+        None,
+    );
+    window.open_sessions(cx);
+    window.click("hub-sessions-sign-in", cx);
+    window.settle_dialog(cx);
+    assert!(window.has_dialog(cx));
+}
+
+#[gpui_kit::test]
+fn a_changed_certificate_is_explained_and_its_sessions_are_never_listed(cx: &mut TestAppContext) {
+    let changed = HubRecord::new(
+        pinned_record().address,
+        TrustPolicy::Pinned(Fingerprint::from_bytes([9; 32])),
+        "Home",
+    );
+    let window = fixture(
+        cx,
+        FakeHub::new().with_server(server()),
+        vec![changed],
+        Some("ada"),
+    );
+    window.open_sessions(cx);
+    assert!(!window.shows("hub-session-s1", cx));
+    window.click("hub-sessions-explain", cx);
+    window.settle_dialog(cx);
+    assert!(window.shows("trust-failed-remove", cx));
+}
+
+#[gpui_kit::test]
+fn with_several_servers_the_panel_lists_the_one_chosen(cx: &mut TestAppContext) {
+    let other = FakeServer::new("other.home:7443", 3)
+        .named("Other hub")
+        .with_user("ada", "secret", "lab")
+        .with_node("m1", "other box", true);
+    let hub = FakeHub::new().with_server(server()).with_server(other.clone());
+    hub.sign_in_as(&other_id(), "ada");
+    let window = fixture(
+        cx,
+        hub,
+        vec![pinned_record(), other.pinned_record("Other")],
+        Some("ada"),
+    );
+    window.open_sessions(cx);
+    assert!(window.shows("hub-node-n1", cx), "the first server shows at first");
+    assert!(!window.shows("hub-node-m1", cx));
+    window.click(format!("hub-choice-{}", other_id()), cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("hub-node-m1", cx));
+    assert!(!window.shows("hub-node-n1", cx));
+}
+
+fn other_id() -> nocterm_hubs_model::HubId {
+    nocterm_hubs_model::HubId::from(nocterm_hubs_model::HubAddress::parse("other.home:7443").unwrap())
 }
 
 #[gpui_kit::test]

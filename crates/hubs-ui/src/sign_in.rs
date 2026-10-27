@@ -19,12 +19,10 @@ use gpui_kit::{
     px,
 };
 use nocterm_hubs::{Hubs, SignInError, SignInEvent, SignInSession, SignInStep, TrustNote};
-use nocterm_hubs_model::{Environment, HubId, OidcProvider};
+use nocterm_hubs_model::{HubId, OidcProvider};
 
 use crate::layout::{field, fingerprint_block, note, problem, title};
 use crate::messages::sign_in_problem;
-use crate::ports::Placement;
-use crate::switch::Switch;
 use form::SignInForm;
 
 /// Starts signing in to a server not known yet, or again to `hub`, and shows the dialog. A hub
@@ -32,7 +30,6 @@ use form::SignInForm;
 pub(crate) fn start(
     hubs: &Entity<Hubs>,
     hub: Option<&HubId>,
-    switch: Switch,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -41,19 +38,14 @@ pub(crate) fn start(
         None => Some(hubs.start_sign_in(cx)),
     });
     if let Some(session) = session {
-        open(session, switch, window, cx);
+        open(session, window, cx);
     }
 }
 
 /// Opens the dialog over `session`. Closing the dialog ends the sign-in: a browser sign-in
 /// in flight is cancelled with the session.
-pub(crate) fn open(
-    session: Entity<SignInSession>,
-    switch: Switch,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let dialog = cx.new(|cx| SignInDialog::new(session, switch, window, cx));
+pub(crate) fn open(session: Entity<SignInSession>, window: &mut Window, cx: &mut App) {
+    let dialog = cx.new(|cx| SignInDialog::new(session, window, cx));
     let first = dialog.clone();
     window.open_dialog(cx, move |shell, _, _| {
         let submit = dialog.clone();
@@ -74,7 +66,6 @@ pub(crate) fn open(
 
 struct SignInDialog {
     session: Entity<SignInSession>,
-    switch: Switch,
     form: SignInForm,
     focus: FocusHandle,
     /// The kind of step the focus was last placed for.
@@ -83,12 +74,7 @@ struct SignInDialog {
 }
 
 impl SignInDialog {
-    fn new(
-        session: Entity<SignInSession>,
-        switch: Switch,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(session: Entity<SignInSession>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let form = SignInForm::new(window, cx);
         let subscriptions = vec![
             cx.observe_in(&session, window, |this, _, window, cx| {
@@ -102,7 +88,6 @@ impl SignInDialog {
         ];
         Self {
             session,
-            switch,
             form,
             focus: cx.focus_handle(),
             placed: None,
@@ -146,7 +131,7 @@ impl SignInDialog {
                 self.session.update(cx, |session, cx| session.back(cx));
             }
             SignInStep::Method { password: true, .. } => self.sign_in_with_password(window, cx),
-            SignInStep::Finished(hub) => self.open_hub(&hub, Placement::ThisWindow, window, cx),
+            SignInStep::Finished(_) => self.close(window, cx),
             SignInStep::Method { .. }
             | SignInStep::Checking
             | SignInStep::Authenticating
@@ -181,18 +166,6 @@ impl SignInDialog {
         });
     }
 
-    fn open_hub(
-        &mut self,
-        hub: &HubId,
-        placement: Placement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.close(window, cx);
-        self.switch
-            .open(Environment::Hub(hub.clone()), placement, window, cx);
-    }
-
     fn render_step(&mut self, step: SignInStep, cx: &mut Context<Self>) -> impl IntoElement {
         match step {
             SignInStep::Address { problem } => self.render_address(problem.as_ref(), cx),
@@ -214,7 +187,7 @@ impl SignInDialog {
                 problem,
             } => self.render_method(&hub_name, password, &providers, note, problem.as_ref(), cx),
             SignInStep::Browser { provider, url } => self.render_browser(&provider, url, cx),
-            SignInStep::Finished(hub) => self.render_finished(hub, cx),
+            SignInStep::Finished(_) => self.render_finished(cx),
             SignInStep::Failed(error) => self.render_failed(&error, cx),
         }
     }
@@ -460,41 +433,23 @@ impl SignInDialog {
             .into_any_element()
     }
 
-    fn render_finished(&mut self, hub: HubId, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let (here, beside) = (hub.clone(), hub);
+    fn render_finished(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         v_flex()
             .gap_3()
             .child(title("Signed in".to_owned(), cx))
             .child(note(
-                "The server is saved. Open it now, or later from the environment menu.",
+                "The server is saved. Its sessions are in the Sessions panel.",
                 cx,
             ))
             .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(
-                        Button::new("sign-in-done")
-                            .label("Done")
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.close(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("sign-in-open-new-window")
-                            .label("Open in a new window")
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                this.open_hub(&beside, Placement::NewWindow, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("sign-in-open-here")
-                            .primary()
-                            .label("Open here")
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                this.open_hub(&here, Placement::ThisWindow, window, cx);
-                            })),
-                    ),
+                h_flex().justify_end().child(
+                    Button::new("sign-in-done")
+                        .primary()
+                        .label("Done")
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.close(window, cx);
+                        })),
+                ),
             )
             .into_any_element()
     }

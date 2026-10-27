@@ -1,295 +1,142 @@
-//! The sessions panel of a hub window: the machines of the organization and the terminal
-//! sessions on them. A session opens as a tab; ending it stops its process.
+//! The sessions panel of the window: the sessions of one hub at a time, and the choice of the
+//! hub when this device knows several. The sessions of the chosen hub are listed by
+//! [`list::SessionList`].
 
-mod new_session;
+mod list;
+
+use std::rc::Rc;
 
 use gpui_kit::{
-    App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyDownEvent, SharedString,
-    Subscription, TestSupportExt as _, WeakEntity, Window,
+    App, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
+    WeakEntity, Window,
     component::{
-        ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
-        WindowExt as _,
+        ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
-        dialog::DialogFooter,
         h_flex, v_flex,
     },
     div,
     prelude::*,
 };
-use nocterm_hubs::{HubStatus, HubWindow, HubWindowEvent, Hubs, Load, Watch};
-use nocterm_hubs_model::{
-    HubSessionId, HubSessionState, HubSessionSummary, NodeSummary, OrgId, OrgSummary,
-};
+use nocterm_hubs::{HubSummary, Hubs};
+use nocterm_hubs_model::HubId;
 use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, Workspace};
 
-use crate::messages::hub_problem;
 use crate::plugin::SESSIONS;
+use crate::ports::HubTerminalOpener;
+use crate::sign_in;
 use crate::tabs::HubTabs;
+use list::SessionList;
 
-pub(crate) use new_session::NewSessionMenu;
+/// The hub the panel lists and the view that lists it.
+struct Shown {
+    hub: HubId,
+    list: Entity<SessionList>,
+}
 
 pub(crate) struct SessionsPanel {
     hubs: Entity<Hubs>,
-    state: Entity<HubWindow>,
-    tabs: HubTabs,
     workspace: WeakEntity<Workspace>,
+    opener: Rc<dyn HubTerminalOpener>,
+    shown: Option<Shown>,
+    /// The hub the user picked; the panel picks one itself until then.
+    picked: Option<HubId>,
     focus: FocusHandle,
-    /// The session Enter opens.
-    selected: Option<HubSessionId>,
-    /// Held while the panel shows, so the lists refresh on their own.
-    watch: Option<Watch>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl SessionsPanel {
     pub(crate) fn new(
         hubs: Entity<Hubs>,
-        state: Entity<HubWindow>,
-        tabs: HubTabs,
+        opener: Rc<dyn HubTerminalOpener>,
         workspace: &Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![
-            cx.observe(&hubs, |_, _, cx| cx.notify()),
-            cx.subscribe(&state, |_, _, _: &HubWindowEvent, cx| cx.notify()),
-            cx.observe(workspace, |panel, _, cx| panel.follow_visibility(cx)),
-        ];
-        // The workspace creates the panel while it is being updated, so it is read on the next turn.
-        cx.spawn(async move |panel, cx| {
-            let _ = panel.update(cx, |panel, cx| panel.follow_visibility(cx));
-        })
-        .detach();
-        Self {
+        let subscriptions = vec![cx.observe(&hubs, |panel, _, cx| panel.follow_hubs(cx))];
+        let mut panel = Self {
             hubs,
-            state,
-            tabs,
             workspace: workspace.downgrade(),
+            opener,
+            shown: None,
+            picked: None,
             focus: cx.focus_handle(),
-            selected: None,
-            watch: None,
             _subscriptions: subscriptions,
-        }
-    }
-
-    fn shown(&self, cx: &App) -> bool {
-        self.workspace
-            .read_with(cx, |workspace, _| workspace.panel_is_open(&SESSIONS.id))
-            .unwrap_or(false)
-    }
-
-    /// Reads the lists every few seconds while the panel shows, and not while it is hidden.
-    fn follow_visibility(&mut self, cx: &mut Context<Self>) {
-        match (self.shown(cx), self.watch.is_some()) {
-            (true, false) => {
-                self.watch = Some(self.state.update(cx, |state, cx| {
-                    state.refresh(cx);
-                    state.watch(cx)
-                }));
-            }
-            (false, true) => self.watch = None,
-            _ => {}
-        }
-    }
-
-    fn status(&self, cx: &App) -> Option<HubStatus> {
-        self.hubs.read(cx).status(self.state.read(cx).hub())
-    }
-
-    fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.state.update(cx, |state, cx| state.refresh(cx));
-    }
-
-    fn retry(&mut self, cx: &mut Context<Self>) {
-        let hub = self.state.read(cx).hub().clone();
-        self.hubs.update(cx, |hubs, cx| hubs.retry(&hub, cx));
-    }
-
-    fn select_org(&mut self, org: OrgId, cx: &mut Context<Self>) {
-        self.state.update(cx, |state, cx| state.select_org(org, cx));
-    }
-
-    /// The sessions a tab can attach to, in the order the panel lists them.
-    fn attachable(&self, cx: &App) -> Vec<HubSessionSummary> {
-        let state = self.state.read(cx);
-        state
-            .nodes()
-            .iter()
-            .flat_map(|node| {
-                state
-                    .sessions()
-                    .iter()
-                    .filter(|session| session.node == node.id && is_attachable(session))
-            })
-            .cloned()
-            .collect()
-    }
-
-    fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
-        let sessions = self.attachable(cx);
-        let current = sessions
-            .iter()
-            .position(|session| Some(&session.id) == self.selected.as_ref());
-        let next = match (current, down) {
-            (None, true) => 0,
-            (None, false) => sessions.len().wrapping_sub(1),
-            (Some(index), true) => (index + 1) % sessions.len(),
-            (Some(index), false) => (index + sessions.len() - 1) % sessions.len(),
         };
-        self.selected = sessions.get(next).map(|session| session.id.clone());
+        panel.follow_hubs(cx);
+        panel
+    }
+
+    /// The hub the panel lists: the one the user picked, else the one it lists already, while
+    /// they are known; else the first that answers, else the first.
+    fn choice(&self, servers: &[HubSummary]) -> Option<HubId> {
+        let known = |hub: &&HubId| servers.iter().any(|server| &server.id == *hub);
+        let current = self.shown.as_ref().map(|shown| &shown.hub);
+        self.picked
+            .as_ref()
+            .filter(known)
+            .or_else(|| current.filter(known))
+            .cloned()
+            .or_else(|| {
+                servers
+                    .iter()
+                    .find(|server| server.status.is_online())
+                    .or_else(|| servers.first())
+                    .map(|server| server.id.clone())
+            })
+    }
+
+    /// Lists the hub the panel should list now, after the known hubs changed.
+    fn follow_hubs(&mut self, cx: &mut Context<Self>) {
+        let servers = self.hubs.read(cx).list();
+        let choice = self.choice(&servers);
+        if self.shown.as_ref().map(|shown| &shown.hub) != choice.as_ref() {
+            self.shown = choice.and_then(|hub| self.list_of(hub, cx));
+        }
         cx.notify();
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match event.keystroke.key.as_str() {
-            key @ ("up" | "down") if !self.attachable(cx).is_empty() => {
-                self.move_selection(key == "down", cx);
-                cx.stop_propagation();
-            }
-            "enter" if self.selected.is_some() => {
-                self.open_selected(window, cx);
-                cx.stop_propagation();
-            }
-            _ => {}
-        }
+    fn list_of(&self, hub: HubId, cx: &mut Context<Self>) -> Option<Shown> {
+        let workspace = self.workspace.upgrade()?;
+        let state = self
+            .hubs
+            .update(cx, |hubs, cx| hubs.window(&hub, cx))?;
+        let tabs = HubTabs::new(
+            self.hubs.clone(),
+            hub.clone(),
+            self.workspace.clone(),
+            Rc::clone(&self.opener),
+        );
+        let hubs = self.hubs.clone();
+        let list = cx.new(|cx| SessionList::new(hubs, state, tabs, &workspace, cx));
+        Some(Shown { hub, list })
     }
 
-    fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selected = self
-            .attachable(cx)
-            .into_iter()
-            .find(|session| Some(&session.id) == self.selected.as_ref());
-        if let Some(session) = selected {
-            self.tabs.open_existing(&session, window, cx);
-        }
+    fn pick(&mut self, hub: HubId, cx: &mut Context<Self>) {
+        self.picked = Some(hub);
+        self.follow_hubs(cx);
     }
 
-    fn open_new_session_menu(&mut self, cx: &mut Context<Self>) {
-        let _ = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.show_new_tab_menu(true, cx));
-    }
-
-    /// Asks before ending a session: its process stops and its screen is lost.
-    fn confirm_end(
-        &mut self,
-        session: HubSessionSummary,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let state = self.state.clone();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let (state, id) = (state.clone(), session.id.clone());
-            let end = Button::new("end-session-confirm")
-                .danger()
-                .label("End session")
-                .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                    window.close_dialog(cx);
-                    let ending = state.update(cx, |state, cx| state.end(id.clone(), cx));
-                    let message = window.window_handle();
-                    cx.spawn(async move |cx| {
-                        if let Err(error) = ending.await {
-                            let _ = message.update(cx, |_, window, cx| {
-                                nocterm_ui::notice::error(
-                                    window,
-                                    cx,
-                                    "hub-end-session",
-                                    "Could not end the session",
-                                    hub_problem(&error),
-                                );
-                            });
-                        }
-                    })
-                    .detach();
-                });
-            let keep = Button::new("end-session-keep")
-                .primary()
-                .label("Keep it")
-                .on_click(|_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                    window.close_dialog(cx);
-                });
-            alert
-                .title("End this session?")
-                .description(format!(
-                    "\"{}\" on {} stops, and what it was running is lost.",
-                    session.title, session.node_name
-                ))
-                .on_ok(|_, _, _| true)
-                .footer(DialogFooter::new().child(keep).child(end))
-        });
-    }
-
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let state = self.state.read(cx);
-        let orgs: Vec<OrgSummary> = state
-            .account()
-            .map(|account| account.orgs.clone())
-            .unwrap_or_default();
-        let selected = state.org().cloned();
-        let muted = cx.theme().muted_foreground;
-        let online = self.status(cx).is_some_and(|status| status.is_online());
-        v_flex()
+    fn render_choice(&self, servers: Vec<HubSummary>, cx: &mut Context<Self>) -> impl IntoElement {
+        let shown = self.shown.as_ref().map(|shown| shown.hub.clone());
+        h_flex()
             .gap_1()
             .px_2()
-            .py_1()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .font_semibold()
-                            .text_color(muted)
-                            .child("SESSIONS"),
-                    )
-                    .child(
-                        Button::new("hub-sessions-refresh")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::RefreshCw)
-                            .tooltip("Refresh")
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh(cx))),
-                    )
-                    .child(
-                        Button::new("hub-sessions-new")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Plus)
-                            .tooltip("New session")
-                            .disabled(!online)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.open_new_session_menu(cx);
-                            })),
-                    ),
-            )
-            .when(orgs.len() > 1, |header| {
-                header.child(
-                    h_flex()
-                        .gap_1()
-                        .flex_wrap()
-                        .children(orgs.into_iter().map(|org| {
-                            let id = org.id.clone();
-                            Button::new(SharedString::from(format!("hub-org-{}", org.id)))
-                                .xsmall()
-                                .ghost()
-                                .selected(selected.as_ref() == Some(&org.id))
-                                .label(org.name)
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.select_org(id.clone(), cx);
-                                }))
-                        })),
-                )
-            })
+            .pb_1()
+            .flex_wrap()
+            .children(servers.into_iter().map(|server| {
+                let id = server.id.clone();
+                Button::new(SharedString::from(format!("hub-choice-{}", server.id)))
+                    .xsmall()
+                    .ghost()
+                    .selected(shown.as_ref() == Some(&server.id))
+                    .label(server.label)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.pick(id.clone(), cx);
+                    }))
+            }))
     }
 
-    fn render_notice(
-        &self,
-        text: impl Into<SharedString>,
-        retry: bool,
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
+    fn render_no_server(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         v_flex()
             .gap_2()
             .px_3()
@@ -298,248 +145,18 @@ impl SessionsPanel {
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(text.into()),
+                    .child("No server yet. Sign in to a hub to see its sessions."),
             )
-            .when(retry, |notice| {
-                notice.child(
-                    Button::new("hub-sessions-retry")
-                        .small()
-                        .label("Try again")
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.retry(cx);
-                            this.refresh(cx);
-                        })),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn render_body(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        match self.status(cx) {
-            None => {
-                return self.render_notice("This server is not in the list any more.", false, cx);
-            }
-            Some(HubStatus::Offline { .. }) => {
-                return self.render_notice(
-                    "The server does not answer. Nocterm keeps trying.",
-                    true,
-                    cx,
-                );
-            }
-            Some(HubStatus::SignedOut | HubStatus::Revoked) => {
-                return self.render_notice(
-                    "Sign in to this server again from the environment menu.",
-                    false,
-                    cx,
-                );
-            }
-            Some(HubStatus::TrustFailed { .. } | HubStatus::UpgradeRequired { .. }) => {
-                return self.render_notice(
-                    "This server cannot be used now. See the environment menu.",
-                    false,
-                    cx,
-                );
-            }
-            Some(HubStatus::Connecting) => return self.render_notice("Connecting…", false, cx),
-            Some(HubStatus::Online) => {}
-        }
-        let state = self.state.read(cx);
-        match state.load() {
-            Load::Idle | Load::Loading => {
-                return self.render_notice("Loading sessions…", false, cx);
-            }
-            Load::Failed(error) if state.nodes().is_empty() => {
-                let text = hub_problem(error);
-                return self.render_notice(text, true, cx);
-            }
-            Load::Failed(_) | Load::Loaded => {}
-        }
-        if state.nodes().is_empty() {
-            return self.render_notice(
-                "No machine is connected to this organization yet.",
-                false,
-                cx,
-            );
-        }
-        let nodes = state.nodes().to_vec();
-        let sessions = state.sessions().to_vec();
-        v_flex()
-            .children(nodes.iter().map(|node| {
-                let own: Vec<&HubSessionSummary> = sessions
-                    .iter()
-                    .filter(|session| session.node == node.id)
-                    .collect();
-                self.render_node(node, &own, cx)
-            }))
-            .into_any_element()
-    }
-
-    fn render_node(
-        &self,
-        node: &NodeSummary,
-        sessions: &[&HubSessionSummary],
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
-        let (muted, ok) = (theme.muted_foreground, theme.success);
-        v_flex()
-            .id(SharedString::from(format!("hub-node-{}", node.id)))
-            .test_support()
             .child(
-                h_flex()
-                    .gap_2()
-                    .px_3()
-                    .py_1()
-                    .items_center()
-                    .child(
-                        Icon::new(if node.online {
-                            IconName::Server
-                        } else {
-                            IconName::ServerOff
-                        })
-                        .small()
-                        .text_color(if node.online { ok } else { muted }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .font_semibold()
-                            .child(node.name.clone()),
-                    )
-                    .when(!node.online, |row| {
-                        row.child(div().text_xs().text_color(muted).child("offline"))
-                    }),
-            )
-            .when(sessions.is_empty(), |node| {
-                node.child(
-                    div()
-                        .px_6()
-                        .pb_1()
-                        .text_xs()
-                        .text_color(muted)
-                        .child("No sessions"),
-                )
-            })
-            .children(
-                sessions
-                    .iter()
-                    .map(|session| self.render_session(session, cx)),
-            )
-            .into_any_element()
-    }
-
-    fn render_session(
-        &self,
-        session: &HubSessionSummary,
-        cx: &mut Context<Self>,
-    ) -> gpui_kit::AnyElement {
-        let theme = cx.theme();
-        let (muted, hover) = (theme.muted_foreground, theme.accent);
-        let attachable = is_attachable(session);
-        let selected = self.selected.as_ref() == Some(&session.id);
-        let mine = self.state.read(cx).is_mine(session);
-        let row = session.clone();
-        let title = if session.title.is_empty() {
-            "Session".to_owned()
-        } else {
-            session.title.clone()
-        };
-        h_flex()
-            .id(SharedString::from(format!("hub-session-{}", session.id)))
-            .test_support()
-            .gap_2()
-            .pl_6()
-            .pr_2()
-            .py_1()
-            .items_center()
-            .rounded(theme.radius)
-            .when(attachable, |row| {
-                row.cursor_pointer().hover(|style| style.bg(hover))
-            })
-            .when(selected, |row| row.bg(hover))
-            .child(
-                Icon::new(IconName::SquareTerminal)
+                Button::new("hub-sessions-add-server")
                     .small()
-                    .text_color(muted),
+                    .label("Sign in to a server")
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        sign_in::start(&this.hubs, None, window, cx);
+                    })),
             )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(div().truncate().text_sm().child(title))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(state_text(session, mine)),
-                    ),
-            )
-            .when(attachable, |line| line.child(self.open_button(session, cx)))
-            .when(mine, |line| line.child(self.end_button(session, cx)))
-            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                if !attachable {
-                    return;
-                }
-                // Enter opens the session that was clicked last.
-                this.selected = Some(row.id.clone());
-                window.focus(&this.focus, cx);
-                if event.click_count() == 2 {
-                    this.tabs.open_existing(&row, window, cx);
-                }
-                cx.notify();
-            }))
             .into_any_element()
     }
-
-    fn open_button(&self, session: &HubSessionSummary, cx: &mut Context<Self>) -> Button {
-        let open = session.clone();
-        Button::new(SharedString::from(format!("hub-session-open-{}", open.id)))
-            .ghost()
-            .xsmall()
-            .label("Open")
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.tabs.open_existing(&open, window, cx);
-            }))
-    }
-
-    fn end_button(&self, session: &HubSessionSummary, cx: &mut Context<Self>) -> Button {
-        let end = session.clone();
-        Button::new(SharedString::from(format!("hub-session-end-{}", end.id)))
-            .ghost()
-            .xsmall()
-            .icon(IconName::X)
-            .tooltip("End session")
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                cx.stop_propagation();
-                this.confirm_end(end.clone(), window, cx);
-            }))
-    }
-}
-
-/// What a session row says of the session: its state, and whose it is when not the account's.
-fn state_text(session: &HubSessionSummary, mine: bool) -> String {
-    let state = match session.state {
-        HubSessionState::Starting => "starting",
-        HubSessionState::Running => "running",
-        HubSessionState::Exited => "exited",
-        HubSessionState::Lost => "lost",
-    };
-    if mine {
-        state.to_owned()
-    } else {
-        format!("{state} · another user")
-    }
-}
-
-/// A session a tab can attach to: it runs, on a machine that is online.
-fn is_attachable(session: &HubSessionSummary) -> bool {
-    matches!(
-        session.state,
-        HubSessionState::Starting | HubSessionState::Running
-    ) && session.node_online
 }
 
 impl Panel for SessionsPanel {
@@ -551,44 +168,37 @@ impl Panel for SessionsPanel {
         IconName::SquareTerminal
     }
 
-    /// How many sessions run on the machines of the organization; none shows no count.
+    /// How many sessions run on the machines of the organization shown; none shows no count.
     fn badge(&self, cx: &App) -> Option<SharedString> {
-        let running = self
-            .state
-            .read(cx)
-            .sessions()
-            .iter()
-            .filter(|session| session.state == HubSessionState::Running)
-            .count();
+        let running = self.shown.as_ref()?.list.read(cx).running(cx);
         (running > 0).then(|| running.to_string().into())
     }
 }
 
 impl Focusable for SessionsPanel {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match &self.shown {
+            Some(shown) => shown.list.focus_handle(cx),
+            None => self.focus.clone(),
+        }
     }
 }
 
 impl Render for SessionsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let servers = self.hubs.read(cx).list();
+        let body = match &self.shown {
+            Some(shown) => shown.list.clone().into_any_element(),
+            None => self.render_no_server(cx),
+        };
         v_flex()
-            .id("hub-sessions-panel")
+            .id("hub-sessions-root")
             .track_focus(&self.focus)
-            .key_context("HubSessions")
             .size_full()
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                this.on_key(event, window, cx);
-            }))
-            .child(self.render_header(cx))
-            .child(
-                div()
-                    .id("hub-sessions-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(self.render_body(cx)),
-            )
+            .when(servers.len() > 1, |root| {
+                root.child(self.render_choice(servers, cx))
+            })
+            .child(div().flex_1().min_h_0().child(body))
     }
 }
 

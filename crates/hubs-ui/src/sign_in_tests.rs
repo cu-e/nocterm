@@ -1,18 +1,12 @@
 //! Signing in to a server through the dialog, step by step, over a fake hub.
-use crate::test_support::{Fixture, fixture, hub_id, server};
-use crate::{Placement, SignInToServer};
+use crate::SignInToServer;
+use crate::test_support::{Fixture, fixture, server};
 use gpui_kit::TestAppContext;
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp, FakeServer};
-use nocterm_hubs_model::{Environment, Fingerprint, HubError};
+use nocterm_hubs_model::{Fingerprint, HubError};
 
 fn dialog_over(server: FakeServer, cx: &mut TestAppContext) -> Fixture {
-    let window = fixture(
-        cx,
-        Environment::Local,
-        FakeHub::new().with_server(server),
-        Vec::new(),
-        None,
-    );
+    let window = fixture(cx, FakeHub::new().with_server(server), Vec::new(), None);
     window.dispatch(SignInToServer, cx);
     window.settle_dialog(cx);
     assert!(window.has_dialog(cx));
@@ -119,14 +113,14 @@ fn a_wrong_password_empties_the_field_and_the_right_one_signs_in(cx: &mut TestAp
     submit(&window, "hub.home:7443", None, cx);
     sign_in_with_password(&window, "ada", "wrong", cx);
     assert!(window.shows("sign-in-password", cx), "back at the methods");
-    assert!(!window.shows("sign-in-open-here", cx));
+    assert!(!window.shows("sign-in-done", cx));
     // Had the wrong password stayed in its field, this would be "wrongsecret".
     window.press("tab", cx);
     window.type_text("secret", cx);
     window.press("enter", cx);
     cx.run_until_parked();
     window.render(cx);
-    assert!(window.shows("sign-in-open-here", cx));
+    assert!(window.shows("sign-in-done", cx));
     assert_eq!(saved(&window, cx), 1, "the server is saved");
     let attempts = window
         .hub
@@ -138,27 +132,13 @@ fn a_wrong_password_empties_the_field_and_the_right_one_signs_in(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
-fn a_signed_in_server_can_be_opened_here_or_in_a_new_window(cx: &mut TestAppContext) {
-    let window = dialog_over(server().publicly_trusted(), cx);
-    submit(&window, "hub.home:7443", None, cx);
-    sign_in_with_password(&window, "ada", "secret", cx);
-    window.click("sign-in-open-new-window", cx);
-    cx.run_until_parked();
-    assert!(!window.has_dialog(cx));
-    assert_eq!(
-        window.environments.requests(),
-        vec![(Environment::Hub(hub_id()), Placement::NewWindow)]
-    );
-}
-
-#[gpui_kit::test]
-fn done_closes_the_dialog_without_opening_anything(cx: &mut TestAppContext) {
+fn done_closes_the_dialog_and_the_server_is_listed(cx: &mut TestAppContext) {
     let window = dialog_over(server().publicly_trusted(), cx);
     submit(&window, "hub.home:7443", None, cx);
     sign_in_with_password(&window, "ada", "secret", cx);
     window.click("sign-in-done", cx);
     assert!(!window.has_dialog(cx));
-    assert!(window.environments.requests().is_empty());
+    assert_eq!(saved(&window, cx), 1);
 }
 
 #[gpui_kit::test]
@@ -178,7 +158,7 @@ fn browser_sign_in_opens_the_provider_page_and_finishes_when_the_browser_does(
     window.hub.complete_oidc("ada");
     cx.run_until_parked();
     window.render(cx);
-    assert!(window.shows("sign-in-open-here", cx));
+    assert!(window.shows("sign-in-done", cx));
 }
 
 #[gpui_kit::test]
