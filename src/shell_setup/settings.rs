@@ -25,8 +25,6 @@ impl<'a> GuestInputs<'a> {
         ui: &'a nocterm_ui::UiReady,
         keymap: nocterm_keymap::KeymapHandle,
         files: &'a nocterm_files::Installed,
-        projects: Option<&'a nocterm_projects::Installed>,
-        hubs: Option<&'a nocterm_hubs_ui::Installed>,
         layout: &'a nocterm_ui::LayoutHandle,
     ) -> Self {
         Self {
@@ -34,10 +32,25 @@ impl<'a> GuestInputs<'a> {
             ui,
             keymap,
             files,
-            projects,
-            hubs,
+            projects: None,
+            hubs: None,
             layout,
         }
+    }
+
+    /// The settings page of projects, when projects are installed.
+    pub(crate) fn with_projects(
+        mut self,
+        projects: Option<&'a nocterm_projects::Installed>,
+    ) -> Self {
+        self.projects = projects;
+        self
+    }
+
+    /// The Servers settings page, when hubs are installed.
+    pub(crate) fn with_hubs(mut self, hubs: Option<&'a nocterm_hubs_ui::Installed>) -> Self {
+        self.hubs = hubs;
+        self
     }
 }
 

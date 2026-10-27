@@ -241,15 +241,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);
     let plugins = Plugins::install(&paths, &shutdown, clock.clone(), mode, ui.settings(), cx)?;
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
-    let inputs = GuestInputs::new(
-        &monitor,
-        &ui,
-        keymap.clone(),
-        &files,
-        projects.as_ref(),
-        hubs.as_ref(),
-        &layout,
-    );
+    let inputs = GuestInputs::new(&monitor, &ui, keymap.clone(), &files, &layout)
+        .with_projects(projects.as_ref())
+        .with_hubs(windowing.hubs());
     let guests = install_guest_pages(inputs, &plugins, cx);
     let settings_ui = crate::settings_pages::SettingsPages::from_installations(
         ui.settings().clone(),
