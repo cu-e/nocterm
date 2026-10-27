@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Subscription, Task, Window,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Subscription, Task,
+    TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
@@ -218,6 +219,7 @@ impl Render for ServersPage {
         let empty = rows.is_empty();
         v_flex()
             .id("servers-page")
+            .test_support()
             .track_focus(&self.focus)
             .size_full()
             .p_4()
@@ -245,7 +247,7 @@ impl Render for ServersPage {
                     ),
             )
             .when(empty, |page| {
-                page.child(div().id("servers-empty").child(note(
+                page.child(div().id("servers-empty").test_support().child(note(
                     "No servers yet. Sign in to one to open its terminal sessions from any computer.",
                     cx,
                 )))
