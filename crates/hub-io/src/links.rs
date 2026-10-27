@@ -101,6 +101,11 @@ impl HubLinks {
         }))
     }
 
+    /// What a relay needs of the links: their threads and the hubs they are signed in to.
+    pub(crate) fn relay_parts(&self) -> (Handle, Arc<Pool>) {
+        (self.handle.clone(), Arc::clone(&self.pool))
+    }
+
     /// Runs `work` on the adapter's threads.
     fn run<T: Send + 'static>(
         &self,
