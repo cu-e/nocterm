@@ -144,7 +144,8 @@ Code changes require `cargo fmt --all --check`,
 `cargo build --workspace --all-targets`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
 `cargo xtask architecture` and `cargo xtask docs --check` to pass. Run additional
-checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes). Changes to
+checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes, or the
+hub end-to-end test for `nocterm-hub-io` changes). Changes to
 user plugins (`nocterm-plugin-*`, `plugins-ui`, `src/shell_setup/user_plugin*`) also run
 `cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings` and
 `cargo test --workspace --features nocterm/user-plugins`: the default build compiles the feature out.
@@ -179,6 +180,7 @@ cargo test --locked --manifest-path examples/plugins/focus-timer/Cargo.toml
 cargo build --locked --release --target wasm32-unknown-unknown --manifest-path examples/plugins/focus-timer/Cargo.toml
 NOCTERM_GUEST_WASM=$PWD/examples/plugins/focus-timer/target/wasm32-unknown-unknown/release/focus_timer.wasm NOCTERM_REQUIRE_WASM_GUEST=1 cargo test -p nocterm --features nocterm/user-plugins user_plugin
 NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
+NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm-hub-io --test hub
 cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
