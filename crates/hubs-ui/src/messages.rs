@@ -10,6 +10,9 @@ pub(crate) fn sign_in_problem(error: &SignInError) -> String {
         SignInError::Address(error) => capitalize(&error.to_string()),
         SignInError::Fingerprint(error) => capitalize(&error.to_string()),
         SignInError::Hub(error) => hub_problem(error),
+        SignInError::AlreadyKnown(hub) => format!(
+            "{hub} is in the list already. Use its row to sign in again, or remove it first."
+        ),
         SignInError::NotInitialized => {
             "This server has no owner yet. Set it up first, then sign in here.".to_owned()
         }

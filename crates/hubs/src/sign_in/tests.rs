@@ -400,3 +400,54 @@ async fn signing_in_again_to_a_revoked_server_starts_at_the_methods(cx: &mut Tes
     cx.run_until_parked();
     assert_eq!(fx.status(cx), Some(HubStatus::Online));
 }
+
+#[gpui::test]
+async fn a_known_address_is_refused_so_a_changed_certificate_is_never_pinned_again(
+    cx: &mut TestAppContext,
+) {
+    let hub = hub();
+    let fx = fixture(cx, hub, vec![crate::fixture::pinned_record()]);
+    cx.run_until_parked();
+    let pinned = fx.servers(cx);
+    fx.hub.edit_server(&crate::fixture::address(), |server| {
+        server.certificate = Fingerprint::from_bytes([9; 32]);
+    });
+    let probes = fx.hub.count(FakeOp::Probe);
+
+    let session = start(cx, &fx);
+    submit(cx, &session, ADDRESS, "");
+
+    assert!(
+        matches!(
+            step(cx, &session),
+            SignInStep::Address {
+                problem: Some(SignInError::AlreadyKnown(hub))
+            } if hub == id()
+        ),
+        "the dialog does not offer to trust the new certificate"
+    );
+    assert_eq!(fx.hub.count(FakeOp::Probe), probes, "nothing was asked");
+    assert_eq!(fx.servers(cx), pinned, "the pinned record is unchanged");
+}
+
+#[gpui::test]
+async fn a_resumed_sign_in_cannot_be_pointed_at_another_server(cx: &mut TestAppContext) {
+    let hub = hub();
+    let fx = fixture(cx, hub, vec![crate::fixture::pinned_record()]);
+    cx.run_until_parked();
+    fx.hub
+        .edit_server(&crate::fixture::address(), |server| server.online = false);
+    let session = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.start_sign_in_for(&id(), cx))
+        .expect("a known hub");
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::Address { .. }));
+    let (probes, connects) = (fx.hub.count(FakeOp::Probe), fx.hub.count(FakeOp::Connect));
+
+    submit(cx, &session, "other.example:7443", "");
+
+    assert!(matches!(step(cx, &session), SignInStep::Address { .. }));
+    assert_eq!(fx.hub.count(FakeOp::Probe), probes);
+    assert_eq!(fx.hub.count(FakeOp::Connect), connects);
+}

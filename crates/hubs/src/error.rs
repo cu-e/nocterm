@@ -12,6 +12,10 @@ pub enum SignInError {
     Fingerprint(#[from] FingerprintError),
     #[error("the hub could not be used")]
     Hub(#[from] HubError),
+    /// The address is a server that is listed already. Signing in again to it goes through its
+    /// row, and a server whose certificate changed has to be removed first.
+    #[error("the server {0} is listed already")]
+    AlreadyKnown(HubId),
     /// The hub has no owner yet; this client cannot set it up.
     #[error("the hub is not set up yet")]
     NotInitialized,

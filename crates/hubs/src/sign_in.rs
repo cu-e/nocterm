@@ -162,7 +162,7 @@ impl SignInSession {
 
     /// Reads the certificate of the typed server. `fingerprint` may be empty.
     pub fn submit_address(&mut self, address: &str, fingerprint: &str, cx: &mut Context<Self>) {
-        if !matches!(self.step, SignInStep::Address { .. }) {
+        if !matches!(self.step, SignInStep::Address { .. }) || self.attempt.fixed {
             return;
         }
         let parsed = parse_inputs(address, fingerprint);
@@ -177,6 +177,17 @@ impl SignInSession {
                 );
             }
         };
+        // A known server keeps the certificate it was pinned with: a new sign-in must not
+        // replace it, so a changed certificate is dealt with by removing the server first.
+        let known = HubId::from(address.clone());
+        if self
+            .settings
+            .setting::<HubsSettings>(cx)
+            .find(&known)
+            .is_some()
+        {
+            return self.back_to_address(SignInError::AlreadyKnown(known), cx);
+        }
         self.attempt.address = Some(address.clone());
         self.attempt.expected = expected;
         self.move_to(SignInStep::Checking, cx);
