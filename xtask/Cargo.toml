@@ -13,6 +13,7 @@ layer = "tooling"
 nocterm-ai.workspace = true
 nocterm-design.workspace = true
 nocterm-explorer.workspace = true
+nocterm-hubs-model.workspace = true
 nocterm-terminal-model.workspace = true
 nocterm-monitor.workspace = true
 nocterm-plugin-abi.workspace = true

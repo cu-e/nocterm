@@ -29,6 +29,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-directory-io` | adapter | `nocterm-explorer`, `nocterm-session` | Read-only directory readers over injected local and session filesystems. |
 | `nocterm-explorer` | domain | `nocterm-session`, `nocterm-settings` | Explorer indexing policy and external program selection rules. |
 | `nocterm-files` | feature | `nocterm-explorer`, `nocterm-plugin-api`, `nocterm-plugin-model`, `nocterm-plugin-ports`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
+| `nocterm-hubs-model` | domain | `nocterm-core`, `nocterm-session`, `nocterm-settings` | Window environments, hub addresses and trust rules, the hubs settings section and the hub access ports. |
 | `nocterm-image-codec` | adapter | `nocterm-ai` | Bounded native image inspection and preview encoding. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-store`, `nocterm-ui` | Keymap settings page: search, rebind and reset key bindings. |
@@ -81,7 +82,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-window-layout` | domain | `nocterm-plugin-model`, `nocterm-settings` | The window shell's layout presets as plain data and pure rules: bar zones, groups, the built-in layouts and their resolution against the plugin catalog. |
 | `nocterm-workspace` | ui | `nocterm-core`, `nocterm-keymap`, `nocterm-plugin-api`, `nocterm-plugin-enablement`, `nocterm-plugin-model`, `nocterm-plugin-ports`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-window-layout`, `nocterm-workspace-ports` | Window shell: tab strip, sidebar and the registries features plug into. |
 | `nocterm-workspace-ports` | service | `nocterm-core`, `nocterm-project-model`, `nocterm-session` | Terminal and connection contracts below the window shell. |
-| `xtask` | tooling | `nocterm-ai`, `nocterm-design`, `nocterm-explorer`, `nocterm-monitor`, `nocterm-plugin-abi`, `nocterm-plugin-api`, `nocterm-plugin-enablement`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model`, `nocterm-ui`, `nocterm-vault`, `nocterm-window-layout`, `nocterm-workspace` | Repository automation: generated documentation and architecture checks. |
+| `xtask` | tooling | `nocterm-ai`, `nocterm-design`, `nocterm-explorer`, `nocterm-hubs-model`, `nocterm-monitor`, `nocterm-plugin-abi`, `nocterm-plugin-api`, `nocterm-plugin-enablement`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-terminal-model`, `nocterm-ui`, `nocterm-vault`, `nocterm-window-layout`, `nocterm-workspace` | Repository automation: generated documentation and architecture checks. |
 
 ```mermaid
 graph TD
@@ -239,6 +240,9 @@ graph TD
     nocterm_files --> nocterm_transfers
     nocterm_files --> nocterm_ui
     nocterm_files --> nocterm_workspace
+    nocterm_hubs_model --> nocterm_core
+    nocterm_hubs_model --> nocterm_session
+    nocterm_hubs_model --> nocterm_settings
     nocterm_image_codec --> nocterm_ai
     nocterm_keymap --> nocterm_core
     nocterm_keymap_ui --> nocterm_keymap
@@ -425,6 +429,7 @@ graph TD
     xtask --> nocterm_ai
     xtask --> nocterm_design
     xtask --> nocterm_explorer
+    xtask --> nocterm_hubs_model
     xtask --> nocterm_monitor
     xtask --> nocterm_plugin_abi
     xtask --> nocterm_plugin_api

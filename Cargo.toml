@@ -243,6 +243,7 @@ nocterm-snippets-io = { path = "crates/snippets-io" }
 nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
+nocterm-hubs-model = { path = "crates/hubs-model" }
 nocterm-keymap = { path = "crates/keymap" }
 nocterm-keymap-ui = { path = "crates/keymap-ui" }
 nocterm-layout-ui = { path = "crates/layout-ui" }
