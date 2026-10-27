@@ -6,13 +6,15 @@
 //! writing the file (the application supplies a [`SnapshotWriter`] and the loaded document),
 //! opening windows (the application), the hubs a window shows (`nocterm-hubs`), views.
 //! Ports used: `SnapshotWriter<WindowDocument>`, the shared `ShutdownCoordinator`.
-//! Ports provided: [`WindowSet`].
+//! Ports provided: none; [`WindowSet`] is a concrete handle the application holds.
 //! Settings section: none. Globals: none; one `on_window_closed` subscription, kept for the
 //! life of the application, applies the user's closes.
 //! Invariants: windows are remembered in the order they opened; a window the user closes is
 //! forgotten except the last one, which the next start restores; quitting forgets nothing,
-//! because the set is captured at shutdown before windows are dropped; a document that cannot
-//! be read starts an empty list, never an error the user sees.
+//! because the set is captured at shutdown before windows are dropped; an environment that
+//! could not open in this run can be kept in the document; a document that cannot be read
+//! starts an empty list, never an error the user sees, and one written by a newer version is
+//! left untouched for the whole run.
 
 mod error;
 
@@ -30,18 +32,30 @@ const WRITE_CAPACITY: usize = 16;
 /// The saved list, read before the first window opens.
 pub struct PreparedWindows {
     document: WindowDocument,
+    /// The file belongs to a newer version of the application: this run does not write it.
+    newer: bool,
 }
 
 impl PreparedWindows {
     /// What reading the file gave: no file, a document, or a failure. A document that cannot be
-    /// read is logged and replaced by an empty one; the next save overwrites it.
+    /// read is logged and replaced by an empty one; the next save overwrites it. A document
+    /// written by a newer version is logged, replaced by an empty one and never overwritten, so
+    /// going back to the newer build finds it as it was.
     pub fn loaded(loaded: Result<Option<WindowDocument>, WindowDocumentError>) -> Self {
+        let newer = matches!(loaded, Err(WindowDocumentError::UnsupportedVersion { .. }));
         let document = loaded.unwrap_or_else(|error| {
             tracing::warn!(?error, "the open windows were not restored");
             None
         });
+        if let Some(document) = document.as_ref().filter(|document| document.skipped() > 0) {
+            tracing::warn!(
+                skipped = document.skipped(),
+                "some remembered windows could not be read"
+            );
+        }
         Self {
             document: document.unwrap_or_default(),
+            newer,
         }
     }
 
@@ -66,8 +80,11 @@ impl WindowSet {
         shutdown: &ShutdownCoordinator,
         cx: &mut App,
     ) -> Result<Self, WindowSetError> {
-        let writer: SnapshotWriter<OpenWindows<WindowId>> =
-            Arc::new(move |windows| writer(windows.document()));
+        let writer: SnapshotWriter<OpenWindows<WindowId>> = if prepared.newer {
+            Arc::new(|_| Box::pin(async { Ok(()) }))
+        } else {
+            Arc::new(move |windows| writer(windows.document()))
+        };
         let state = cx.new(|_| {
             Persisted::new(
                 OpenWindows::default(),
@@ -108,6 +125,12 @@ impl WindowSet {
     /// A window opened showing `environment`.
     pub fn opened(&self, window: WindowId, environment: Environment, cx: &mut App) {
         self.edit(cx, |windows| windows.opened(window, environment));
+    }
+
+    /// A remembered environment could not open in this run; the document keeps it for a later
+    /// run instead of forgetting it with the next save.
+    pub fn kept(&self, environment: Environment, cx: &mut App) {
+        self.edit(cx, |windows| windows.kept(environment));
     }
 
     /// An open window now shows `environment`.

@@ -215,3 +215,45 @@ fn a_set_installed_while_shutting_down_is_refused(cx: &mut TestAppContext) {
     ));
     assert!(std::error::Error::source(&error).is_some());
 }
+
+#[gpui::test]
+fn a_kept_environment_is_saved_with_the_windows_that_opened(cx: &mut TestAppContext) {
+    let shutdown = ShutdownCoordinator::default();
+    let (set, saved) = installed(PreparedWindows::memory(), &shutdown, cx);
+
+    cx.update(|cx| set.kept(hub("away.example"), cx));
+    open(&set, Environment::Local, cx);
+    quit(&shutdown, cx);
+
+    assert_eq!(
+        last_saved(&saved),
+        [hub("away.example:7443"), Environment::Local]
+    );
+    assert_eq!(environments(&set, cx).len(), 2);
+}
+
+#[gpui::test]
+fn a_document_of_a_newer_version_is_never_written_over(cx: &mut TestAppContext) {
+    let shutdown = ShutdownCoordinator::default();
+    let newer = WindowDocument::decode(r#"{"version":99,"windows":[]}"#).unwrap_err();
+    let (set, saved) = installed(PreparedWindows::loaded(Err(newer)), &shutdown, cx);
+    assert!(set.previous().is_empty());
+
+    open(&set, Environment::Local, cx);
+    quit(&shutdown, cx);
+
+    assert!(saved.lock().unwrap().is_empty());
+    assert_eq!(environments(&set, cx), [Environment::Local]);
+}
+
+#[gpui::test]
+fn an_unreadable_document_is_replaced_by_the_first_save(cx: &mut TestAppContext) {
+    let shutdown = ShutdownCoordinator::default();
+    let unreadable = WindowDocument::decode("garbage").unwrap_err();
+    let (set, saved) = installed(PreparedWindows::loaded(Err(unreadable)), &shutdown, cx);
+
+    open(&set, Environment::Local, cx);
+    quit(&shutdown, cx);
+
+    assert_eq!(last_saved(&saved), [Environment::Local]);
+}
