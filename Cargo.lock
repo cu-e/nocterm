@@ -6067,9 +6067,11 @@ name = "nocterm-ssh"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "getrandom 0.4.3",
  "hmac 0.13.0",
  "nocterm-core",
  "nocterm-session",
+ "nocterm-ssh-keys",
  "russh",
  "russh-sftp",
  "rustix 1.1.5",
@@ -6120,6 +6122,7 @@ dependencies = [
  "nocterm-project-providers",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-ssh-keys",
  "nocterm-store",
  "nocterm-terminal-model",
  "nocterm-theme-service",
@@ -6286,6 +6289,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-ssh-keys",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-vault",
