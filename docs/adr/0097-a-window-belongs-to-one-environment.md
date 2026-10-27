@@ -26,7 +26,7 @@ composition builds a different `Workspace` instead.
 **A hub window has its own feature set.** `build_hub_workspace` registers the hub's sessions
 panel (`hubs.sessions`, a core contribution of `nocterm-hubs-ui`, present only in a hub
 window), the "+" menu that creates a session on a node, Settings, Appearance, Keymap, Plugins
-and Snippets, and the hub's application menu. It does not register terminal profiles,
+and Snippets, and the hub's application menu. It does not register the local terminal,
 connections, files, containers, workspaces, the monitor, the agent, the vault prompt or user
 plugins. The session factory stays the one that opens nothing, so a hub window cannot start a
 local shell. A panel the host does not register is absent from the footer and from panel
@@ -36,8 +36,8 @@ stay app-wide ([ADR 0084](0084-layout-presets-are-app-wide-settings.md),
 
 **Switching a window replaces its root.** For "this window" the application composes a new
 `Workspace` for the chosen environment and replaces the root view of the same native window,
-then updates the title and focus. Closing the window and opening another would move it on
-platforms that let the client position nothing, and closing the only window quits the
+then updates the title and focus. Closing the window and opening another would move it where the client cannot place a
+window (Wayland), and closing the only window quits the
 application. The old `Workspace` is released: local sessions are closed, tabs of a hub are
 detached ([ADR 0095](0095-attached-sessions-restore-and-detach.md)). When a local window
 holds tabs, the menu asks first, with "Open in a new window" as the default; a hub window
@@ -94,8 +94,8 @@ would route every request through a destination and refactor `ConnectRequest` an
 environment as a field of `Workspace` with features switched inside it needs unregistering,
 which no panel or factory supports and which would be a risky new mechanism; composing a new
 `Workspace` reuses the existing composition. A hub method on `SessionFactory` would widen a
-broad trait ([ADR 0006](0006-session-factory.md)); the attached tab takes its own transport
-instead. Closing a window and opening another loses the position and, with one window, quits.
+broad trait ([ADR 0006](0006-workspace-ports.md)); the attached tab takes its own transport
+instead. Closing a window and opening another loses its position and, with one window, quits.
 Storing credentials in the vault or the keyring was rejected above, and trusting a changed
 fingerprint after a prompt would make the pin worthless against the attack it exists for.
 
