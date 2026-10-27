@@ -6083,6 +6083,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-ssh-keys"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-core",
+ "nocterm-session",
+ "ssh-key",
+ "thiserror 2.0.21",
+ "zeroize",
+]
+
+[[package]]
 name = "nocterm-store"
 version = "0.0.0"
 dependencies = [
