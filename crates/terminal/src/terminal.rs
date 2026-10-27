@@ -128,6 +128,27 @@ impl Terminal {
         )
     }
 
+    /// A remote session reached through its own transport, as an attached tab.
+    pub(crate) fn new_attached(
+        deps: Installed,
+        title: SharedString,
+        target: nocterm_session::Target,
+        transport: Arc<dyn Transport>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let spec = SessionSpec {
+            profile: None,
+            options: Default::default(),
+            title,
+            target,
+            auth: nocterm_session::Auth::Auto,
+            launch: None,
+            credential: None,
+            jumps: Vec::new(),
+        };
+        Self::new_kind(deps, spec, false, Some(transport), None, cx)
+    }
+
     pub(crate) fn new_kind(
         deps: Installed,
         spec: SessionSpec,

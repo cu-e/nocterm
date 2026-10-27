@@ -110,6 +110,19 @@ impl TerminalView {
         Self::with_terminal(terminal, window, cx)
     }
 
+    pub(crate) fn new_attached(
+        deps: crate::Installed,
+        title: String,
+        target: nocterm_session::Target,
+        transport: std::sync::Arc<dyn nocterm_session::Transport>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let terminal =
+            cx.new(|cx| Terminal::new_attached(deps, title.into(), target, transport, cx));
+        Self::with_terminal(terminal, window, cx)
+    }
+
     pub(crate) fn with_terminal(
         terminal: Entity<Terminal>,
         window: &mut Window,

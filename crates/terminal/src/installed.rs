@@ -245,5 +245,34 @@ impl LocalCommand {
     }
 }
 
+/// A tab on a session that lives elsewhere, reached through its own transport.
+///
+/// The transport is bound to one session: opening the tab attaches to it, the
+/// first events restore the screen the host holds, and closing the tab only
+/// detaches. Nothing is launched locally and no profile is involved. The
+/// owner of the transport names where the session runs; the tab shows that
+/// destination in its status and offers it to consumers that follow the host.
+pub struct AttachedSession {
+    title: String,
+    target: nocterm_session::Target,
+    transport: Arc<dyn Transport>,
+}
+impl AttachedSession {
+    pub fn new(
+        title: String,
+        target: nocterm_session::Target,
+        transport: Arc<dyn Transport>,
+    ) -> Self {
+        Self {
+            title,
+            target,
+            transport,
+        }
+    }
+    pub(crate) fn into_parts(self) -> (String, nocterm_session::Target, Arc<dyn Transport>) {
+        (self.title, self.target, self.transport)
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -547,3 +547,80 @@ fn project_provider_refuses_foreign_destination_before_starting_a_terminal(
     .unwrap();
     assert_eq!(f.transport.requests().len(), 1);
 }
+
+fn node() -> nocterm_session::Target {
+    nocterm_session::Target::new("ops", "node-7", 2222)
+}
+
+#[gpui_kit::test]
+fn attached_session_opens_a_tab_on_its_own_transport_and_closing_it_sends_close(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let attached = Arc::new(ScriptedTransport::default());
+    let driver = attached.queue(None, None);
+    cx.update_window(f.window, |_, window, cx| {
+        f.workspace.update(cx, |workspace, cx| {
+            let session = AttachedSession::new("Node shell".into(), node(), attached.clone());
+            open_attached(&f.installed, workspace, session, window, cx).unwrap();
+        })
+    })
+    .unwrap();
+    assert_eq!(attached.requests().len(), 1, "the tab attaches at once");
+    assert_eq!(
+        attached.requests()[0].target,
+        node(),
+        "the tab names the destination its transport owner gave, not a placeholder"
+    );
+    assert!(
+        f.transport.requests().is_empty(),
+        "neither the remote nor the local transport is used"
+    );
+    assert!(
+        futures::FutureExt::now_or_never(driver.emit(nocterm_session::Event::Connected)).unwrap()
+    );
+    assert!(
+        futures::FutureExt::now_or_never(
+            driver.emit(nocterm_session::Event::Restore(b"restored".to_vec()))
+        )
+        .unwrap()
+    );
+    cx.run_until_parked();
+    let item = cx.update(|cx| f.workspace.read(cx).active_item(cx).unwrap());
+    cx.update(|cx| assert_eq!(item.tab_title(cx), "Node shell"));
+    cx.update_window(f.window, |_, window, cx| {
+        f.workspace.update(cx, |workspace, cx| {
+            workspace.close_tabs(
+                item.item_id(),
+                nocterm_workspace::TabCloseScope::Current,
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut commands = Vec::new();
+    while let Some(Some(command)) = futures::FutureExt::now_or_never(driver.next_command()) {
+        commands.push(command);
+    }
+    assert!(commands.contains(&nocterm_session::Command::Close));
+}
+
+#[gpui_kit::test]
+fn attached_session_is_refused_by_another_native_window_before_attaching(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let other = fixture(cx);
+    let attached = Arc::new(ScriptedTransport::default());
+    cx.update_window(other.window, |_, window, cx| {
+        f.workspace.update(cx, |workspace, cx| {
+            let session = AttachedSession::new("Node shell".into(), node(), attached.clone());
+            assert!(matches!(
+                open_attached(&f.installed, workspace, session, window, cx),
+                Err(ContextSelectionError::StaleWindow)
+            ));
+        })
+    })
+    .unwrap();
+    assert!(attached.requests().is_empty());
+}

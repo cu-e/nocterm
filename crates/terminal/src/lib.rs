@@ -41,6 +41,10 @@
 //! a jump host's prompt is answered only from that hop's own saved credential and never remembered.
 //! Every public General opener captures its original surface/window before native
 //! creation. Folder launches validate their original inner surface destination.
+//! `open_attached` opens a tab on a session reached through its own transport
+//! (`AttachedSession`): it launches nothing, `Event::Restore` repaints a fresh emulator
+//! without recording the picture, a repeated `Connected` of the same session starts no second
+//! automatic recording, and closing the tab only detaches (the transport decides what lives on).
 //! Ordinary local opening returns the exact registered ItemId for human workspace
 //! recovery; the unchanged General factory maps it to its existing unit result.
 
@@ -57,7 +61,9 @@ mod element;
 mod highlighting;
 pub use credentials::CredentialAssociationError;
 mod installed;
-pub use installed::{CredentialProvider, Deps, Installed, LocalCommand, LocalSessions};
+pub use installed::{
+    AttachedSession, CredentialProvider, Deps, Installed, LocalCommand, LocalSessions,
+};
 mod integration;
 mod session_settings;
 mod terminal;
@@ -153,6 +159,26 @@ pub fn open_local_command(
             window,
             cx,
         )
+    });
+    workspace.add_general_item_from(origin.selection(), view, window, cx)?;
+    Ok(())
+}
+
+/// Opens a tab on a session attached through its own transport.
+///
+/// The tab never launches anything locally. Closing it detaches; whether the
+/// session lives on is the transport's contract.
+pub fn open_attached(
+    installed: &Installed,
+    workspace: &mut Workspace,
+    session: AttachedSession,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Result<(), ContextSelectionError> {
+    let origin = workspace.general_terminal_target(window, cx)?;
+    let (title, target, transport) = session.into_parts();
+    let view = cx.new(|cx| {
+        TerminalView::new_attached(installed.clone(), title, target, transport, window, cx)
     });
     workspace.add_general_item_from(origin.selection(), view, window, cx)?;
     Ok(())
