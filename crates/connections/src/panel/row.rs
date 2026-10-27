@@ -199,7 +199,13 @@ impl ConnectionsPanel {
             )
     }
 
-    pub(super) fn render_row(&self, profile: &Profile, cx: &mut Context<Self>) -> impl IntoElement {
+    /// A connection's row. Without `writable` it can only be opened: no buttons, no dragging.
+    pub(super) fn render_row(
+        &self,
+        profile: &Profile,
+        writable: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let id = profile.id;
         let visual = RowVisual::new(profile, &self.installed, cx);
         let source = DragSource::default();
@@ -209,18 +215,21 @@ impl ConnectionsPanel {
         let actions = h_flex()
             .invisible()
             .group_hover(ROW_GROUP, |buttons| buttons.visible())
-            .child(edit.tooltip("Edit").on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.edit(id, window, cx);
-                },
-            )))
-            .child(delete.tooltip("Delete").on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.confirm_delete(id, window, cx);
-                },
-            )))
+            .when(writable, |actions| {
+                actions
+                    .child(edit.tooltip("Edit").on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.edit(id, window, cx);
+                        },
+                    )))
+                    .child(delete.tooltip("Delete").on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.confirm_delete(id, window, cx);
+                        },
+                    )))
+            })
             .into_any_element();
         div()
             .id(SharedString::from(format!("connection-{id}")))
@@ -233,16 +242,18 @@ impl ConnectionsPanel {
                 let source = source.clone();
                 move |bounds, window, _| source.capture(bounds, window)
             })
-            .on_drag(DraggedProfile(id), move |_, _, _, cx| {
-                cx.stop_propagation();
-                let visual = visual.clone();
-                cx.new(|_| source.preview(move |_, cx| visual.preview(cx)))
+            .when(writable, |row| {
+                row.on_drag(DraggedProfile(id), move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    let visual = visual.clone();
+                    cx.new(|_| source.preview(move |_, cx| visual.preview(cx)))
+                })
+                .on_drop(cx.listener(
+                    move |this, dragged: &DraggedProfile, window, cx| {
+                        this.move_profile(dragged, group.clone(), Some(id), window, cx)
+                    },
+                ))
             })
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, group.clone(), Some(id), window, cx)
-                }),
-            )
             .when(!profile.description.is_empty(), |row| {
                 let description = description_tooltip(&profile.description);
                 row.tooltip(move |_, cx| {

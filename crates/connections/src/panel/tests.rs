@@ -21,6 +21,7 @@ fn add_servers(
 mod drag;
 mod rename;
 mod reorder;
+mod spaces;
 
 #[test]
 fn description_preview_and_tooltip_are_bounded_without_losing_unicode() {

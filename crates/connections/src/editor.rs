@@ -56,11 +56,13 @@ use connection::ConnectionFields;
 use jump_hosts::JumpHostsFields;
 use launch::LaunchFields;
 use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField, expand_home};
+use space::SpaceField;
 use state::EditState;
 mod authentication;
 mod connection;
 mod jump_hosts;
 mod launch;
+mod space;
 mod state;
 mod vault_key;
 
@@ -149,6 +151,7 @@ pub struct ConnectionEditor {
     appearance: AppearanceFields,
     jump_hosts: JumpHostsFields,
     options: Entity<nocterm_ui::SessionOptionsEditor>,
+    space: SpaceField,
     section: EditorSection,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
@@ -209,6 +212,7 @@ impl ConnectionEditor {
             )
         });
         let subscription = cx.observe(installed.facts(), |_, _, cx| cx.notify());
+        let space = SpaceField::new(id, &installed, cx);
         let mut editor = Self {
             deps: installed,
             focus: cx.focus_handle(),
@@ -220,6 +224,7 @@ impl ConnectionEditor {
             appearance,
             jump_hosts,
             options,
+            space,
             section: EditorSection::Connection,
             error: None,
             _subscriptions: vec![subscription],
@@ -282,6 +287,8 @@ impl ConnectionEditor {
             }
         };
 
+        // Asked for before the save so the first synchronization already knows it.
+        self.space.commit(profile.id, cx);
         let saved = self.deps.connections().update(cx, |connections, cx| {
             connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
         });

@@ -25,11 +25,14 @@ use crate::{
     Connections, Installed, open_editor,
     os::{self, Os},
     session_intents::open_profile,
+    spaces::Spaces,
 };
 
 mod group_actions;
 mod row;
+mod sections;
 use group_actions::{GroupAction, run_group_action};
+use sections::Listing;
 
 /// A server's icon: `os` in `color` (its brand colour when none), or the
 /// generic server icon in `color` (`fallback` when none).
@@ -107,7 +110,7 @@ impl ConnectionsPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe_in(
                 installed.connections(),
                 window,
@@ -134,6 +137,10 @@ impl ConnectionsPanel {
                 _ => {}
             }),
         ];
+        // Where connections live changes with the account, not only with the profiles.
+        if let Some(replication) = installed.replication() {
+            subscriptions.push(cx.observe(replication, |_, _, cx| cx.notify()));
+        }
         Self {
             installed,
             workspace,
@@ -180,6 +187,9 @@ impl ConnectionsPanel {
     }
 
     fn edit(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
+        if !Spaces::of(&self.installed, cx).writable(id, cx) {
+            return;
+        }
         let profile = self
             .installed
             .connections()
@@ -199,6 +209,9 @@ impl ConnectionsPanel {
     }
 
     fn confirm_delete(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
+        if !Spaces::of(&self.installed, cx).writable(id, cx) {
+            return;
+        }
         let Some(name) = self
             .installed
             .connections()
@@ -579,8 +592,15 @@ impl ConnectionsPanel {
             .into_iter()
             .map(|(name, members)| (name, members.into_iter().cloned().collect::<Vec<_>>()))
             .collect();
-        let empty = profiles.is_empty() && groups.is_empty();
-        let nothing_matches = top.is_empty() && groups.is_empty();
+        let spaces = Spaces::of(&self.installed, cx);
+        let empty = profiles.is_empty() && !spaces.shared();
+        let listing = Listing::new(&spaces, top, groups, cx);
+        let nothing_matches = listing.is_empty(filtering);
+        let Listing {
+            top,
+            groups,
+            sections,
+        } = listing;
 
         let mut list = v_flex().gap_px().py_1().child(
             h_flex()
@@ -601,7 +621,7 @@ impl ConnectionsPanel {
                 })),
         );
         for profile in &top {
-            list = list.child(self.render_row(profile, cx));
+            list = list.child(self.render_row(profile, true, cx));
         }
         list = list.child(self.render_append_zone(None, cx));
         for (group, members) in &groups {
@@ -622,10 +642,13 @@ impl ConnectionsPanel {
                         }),
                     );
                 for profile in members {
-                    folder = folder.child(self.render_row(profile, cx));
+                    folder = folder.child(self.render_row(profile, true, cx));
                 }
                 list = list.child(folder.child(self.render_append_zone(Some(group), cx)));
             }
+        }
+        for section in &sections {
+            list = list.child(self.render_section(section, filtering, cx));
         }
 
         if empty {

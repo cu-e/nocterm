@@ -60,6 +60,7 @@ impl Render for ConnectionEditor {
                 &self.appearance,
                 self.edit.id(),
                 self.edit.editing(),
+                &self.space,
                 &self.deps,
                 cx,
             ),

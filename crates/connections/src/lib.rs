@@ -10,7 +10,7 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: views, editor inputs, session-intent conversion and detected-server image presentation and weak source projection.
+//! Owns: views (the panel's sections per organization and the editor's space choice, from the bound replication), editor inputs, session-intent conversion and detected-server image presentation and weak source projection.
 //! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
 //! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
@@ -43,6 +43,7 @@ mod panel;
 pub mod plugin;
 mod prepared;
 mod probe_sources;
+mod spaces;
 pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
 
 #[cfg(test)]

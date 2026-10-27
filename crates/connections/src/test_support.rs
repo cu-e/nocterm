@@ -132,3 +132,49 @@ fn model_inputs(connections: &Connections, cx: &gpui_kit::App) -> crate::EditorI
         values,
     )
 }
+
+/// A space of the replica: `scope` named `name`, which the account `writes` to or only reads.
+pub(crate) fn space(
+    scope: nocterm_connections_model::replica::ReplicaScope,
+    name: &str,
+    writes: bool,
+) -> nocterm_connections_model::replica::ReplicaSpace {
+    use nocterm_connections_model::replica::ReplicaAccess;
+    nocterm_connections_model::replica::ReplicaSpace {
+        scope,
+        name: name.to_owned(),
+        access: if writes {
+            ReplicaAccess::Write
+        } else {
+            ReplicaAccess::Read
+        },
+    }
+}
+
+/// An organization's scope.
+pub(crate) fn organization(id: &str) -> nocterm_connections_model::replica::ReplicaScope {
+    nocterm_connections_model::replica::ReplicaScope::Organization(id.to_owned())
+}
+
+/// Keeps `installed` in step with `replica`, as the application does for the chosen
+/// account, and runs the first synchronization.
+pub(crate) fn replicate(
+    installed: &Installed,
+    replica: std::sync::Arc<nocterm_connections_model::test_support::MemoryReplica>,
+    cx: &mut TestAppContext,
+) -> Entity<nocterm_connections_store::ProfileReplication> {
+    use nocterm_connections_model::replica::ReplicaState;
+    use nocterm_connections_store::ProfileReplication;
+    let replication = cx.update(|cx| {
+        let store = installed.connections().clone();
+        let writer: nocterm_store::SnapshotWriter<ReplicaState> =
+            std::sync::Arc::new(|_| Box::pin(async { Ok(()) }));
+        let document =
+            cx.new(|_| ProfileReplication::state_document(ReplicaState::default(), writer));
+        cx.new(|cx| ProfileReplication::new(store, document, cx))
+    });
+    installed.bind_replication(replication.clone());
+    replication.update(cx, |replication, cx| replication.attach(replica, cx));
+    cx.run_until_parked();
+    replication
+}
