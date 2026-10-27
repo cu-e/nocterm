@@ -136,6 +136,8 @@ impl HubWindow {
         self.org = Some(org);
         self.nodes.clear();
         self.list.clear();
+        // The lists are those of the other organization until the next read finishes.
+        self.load = Load::Loading;
         self.refresh(cx);
         cx.emit(HubWindowEvent::Changed);
         cx.notify();

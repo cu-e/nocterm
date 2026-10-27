@@ -38,6 +38,7 @@ mod menu;
 mod messages;
 mod ports;
 mod problems;
+mod remembered;
 mod servers;
 mod sessions;
 mod sign_in;
@@ -51,10 +52,11 @@ pub mod plugin;
 pub use installation::{Installed, install};
 pub use menu::install_menu;
 pub use ports::{
-    EnvironmentOpenError, EnvironmentOpener, HubTabError, HubTerminalOpener, Placement,
+    EnvironmentOpenError, EnvironmentOpener, HubMemoryKeeper, HubTabError, HubTerminalOpener,
+    Placement,
 };
 pub use servers::settings_page;
-pub use window::{HubWindowError, register_hub_window};
+pub use window::{HubWindowError, HubWindowPorts, register_hub_window};
 
 gpui_kit::actions!(
     hubs,

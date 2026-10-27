@@ -5580,6 +5580,7 @@ dependencies = [
 name = "nocterm-hubs-ui"
 version = "0.0.0"
 dependencies = [
+ "futures",
  "gpui-kit",
  "nocterm-core",
  "nocterm-hubs",

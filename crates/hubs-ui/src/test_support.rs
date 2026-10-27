@@ -10,7 +10,9 @@ use gpui_kit::{
     TestAppContext, Window, WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use nocterm_hubs_model::testing::{FakeHub, FakeServer};
-use nocterm_hubs_model::{Environment, HubAddress, HubId, HubRecord, HubsSettings};
+use nocterm_hubs_model::{
+    Environment, HubAddress, HubId, HubRecord, HubWindowMemory, HubsSettings,
+};
 use nocterm_session::{Target, Transport};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
@@ -18,8 +20,8 @@ use nocterm_ui::DesignTokens;
 use nocterm_workspace::{Workspace, test_support::deps_for_core};
 
 use crate::{
-    EnvironmentOpenError, EnvironmentOpener, HubTabError, HubTerminalOpener, Installed, Placement,
-    install, install_menu, plugin, register_hub_window,
+    EnvironmentOpenError, EnvironmentOpener, HubMemoryKeeper, HubTabError, HubTerminalOpener,
+    HubWindowPorts, Installed, Placement, install, install_menu, plugin, register_hub_window,
 };
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
@@ -71,15 +73,21 @@ impl EnvironmentOpener for RecordingEnvironments {
     }
 }
 
-/// Remembers the tabs the views asked for.
+/// Remembers the tabs the views asked for, and holds their transports the way open tabs do.
 #[derive(Default)]
 pub(crate) struct RecordingTerminals {
     tabs: RefCell<Vec<(SharedString, Target)>>,
+    transports: RefCell<Vec<Arc<dyn Transport>>>,
 }
 
 impl RecordingTerminals {
     pub(crate) fn tabs(&self) -> Vec<(SharedString, Target)> {
         self.tabs.borrow().clone()
+    }
+
+    /// Closes the tab that opened `index`th: its transport is dropped, as the tab drops it.
+    pub(crate) fn close_tab(&self, index: usize) {
+        drop(self.transports.borrow_mut().remove(index));
     }
 }
 
@@ -89,12 +97,37 @@ impl HubTerminalOpener for RecordingTerminals {
         _: &mut Workspace,
         title: SharedString,
         target: Target,
-        _: Arc<dyn Transport>,
+        transport: Arc<dyn Transport>,
         _: &mut Window,
         _: &mut Context<Workspace>,
     ) -> Result<(), HubTabError> {
         self.tabs.borrow_mut().push((title, target));
+        self.transports.borrow_mut().push(transport);
         Ok(())
+    }
+}
+
+/// Remembers what the windows asked to keep for the next start.
+#[derive(Default)]
+pub(crate) struct RecordingMemory {
+    kept: RefCell<Vec<HubWindowMemory>>,
+}
+
+impl RecordingMemory {
+    /// What the window keeps now: the last thing it asked to keep.
+    pub(crate) fn latest(&self) -> Option<HubWindowMemory> {
+        self.kept.borrow().last().cloned()
+    }
+
+    /// How many times the window asked to keep something.
+    pub(crate) fn count(&self) -> usize {
+        self.kept.borrow().len()
+    }
+}
+
+impl HubMemoryKeeper for RecordingMemory {
+    fn keep(&self, _: &HubId, memory: HubWindowMemory, _: &mut gpui_kit::App) {
+        self.kept.borrow_mut().push(memory);
     }
 }
 
@@ -105,6 +138,7 @@ pub(crate) struct Fixture {
     pub(crate) installed: Installed,
     pub(crate) environments: Rc<RecordingEnvironments>,
     pub(crate) terminals: Rc<RecordingTerminals>,
+    pub(crate) memory: Rc<RecordingMemory>,
 }
 
 /// A window of `environment` over `hub`, with `known` servers in the settings. The hub is
@@ -120,6 +154,24 @@ pub(crate) fn fixture(
     fixture_over(cx, config, environment, hub, known, signed_in)
 }
 
+/// As [`fixture`], for a hub window that comes back with what it kept before a restart.
+pub(crate) fn restored_fixture(
+    cx: &mut TestAppContext,
+    hub: FakeHub,
+    restored: HubWindowMemory,
+) -> Fixture {
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    build(
+        cx,
+        config,
+        Environment::Hub(hub_id()),
+        hub,
+        vec![pinned_record()],
+        Some("ada"),
+        restored,
+    )
+}
+
 /// As [`fixture`], but the settings are kept by `config`, which may fail to save.
 pub(crate) fn fixture_over(
     cx: &mut TestAppContext,
@@ -129,11 +181,32 @@ pub(crate) fn fixture_over(
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
+    build(
+        cx,
+        config,
+        environment,
+        hub,
+        known,
+        signed_in,
+        HubWindowMemory::default(),
+    )
+}
+
+fn build(
+    cx: &mut TestAppContext,
+    config: SettingsConfig,
+    environment: Environment,
+    hub: FakeHub,
+    known: Vec<HubRecord>,
+    signed_in: Option<&str>,
+    restored: HubWindowMemory,
+) -> Fixture {
     if let Some(user) = signed_in {
         hub.sign_in_as(&hub_id(), user);
     }
     let environments = Rc::new(RecordingEnvironments::default());
     let terminals = Rc::new(RecordingTerminals::default());
+    let memory = Rc::new(RecordingMemory::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
         let settings = config.with(HubsSettings { servers: known }).install(cx);
@@ -162,14 +235,20 @@ pub(crate) fn fixture_over(
         installed,
         environments,
         terminals,
+        memory,
     };
-    setup.compose(cx, environment);
+    setup.compose(cx, environment, restored);
     cx.run_until_parked();
     setup
 }
 
 impl Fixture {
-    fn compose(&self, cx: &mut TestAppContext, environment: Environment) {
+    fn compose(
+        &self,
+        cx: &mut TestAppContext,
+        environment: Environment,
+        restored: HubWindowMemory,
+    ) {
         cx.update_window(self.window, |_, window, cx| {
             self.workspace
                 .update(cx, |workspace, cx| match environment {
@@ -184,8 +263,12 @@ impl Fixture {
                     Environment::Hub(hub) => register_hub_window(
                         &self.installed,
                         hub,
-                        self.environments.clone(),
-                        self.terminals.clone(),
+                        HubWindowPorts {
+                            environments: self.environments.clone(),
+                            terminals: self.terminals.clone(),
+                            memory: self.memory.clone(),
+                        },
+                        restored.clone(),
                         workspace,
                         window,
                         cx,

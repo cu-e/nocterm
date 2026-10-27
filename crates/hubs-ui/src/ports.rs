@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui_kit::{App, Context, SharedString, Window};
 use nocterm_core::error::SharedCause;
-use nocterm_hubs_model::{Environment, HubId};
+use nocterm_hubs_model::{Environment, HubId, HubWindowMemory};
 use nocterm_session::{Target, Transport};
 use nocterm_workspace::Workspace;
 use nocterm_workspace_ports::ContextSelectionError;
@@ -60,4 +60,12 @@ pub trait HubTerminalOpener {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Result<(), HubTabError>;
+}
+
+/// Keeps what a hub window holds of its server for the next start. The application implements
+/// it with the list of open windows, which knows the window the keeper was made for.
+pub trait HubMemoryKeeper {
+    /// The window shows `hub` and now keeps `memory` of it: the organization it shows and the
+    /// sessions of its tabs, in the order the tabs opened. Called when the memory changes.
+    fn keep(&self, hub: &HubId, memory: HubWindowMemory, cx: &mut App);
 }

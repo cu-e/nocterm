@@ -18,6 +18,7 @@ nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
 nocterm-workspace-ports.workspace = true
+futures.workspace = true
 gpui-kit.workspace = true
 thiserror.workspace = true
 

@@ -207,3 +207,24 @@ async fn a_preferred_organization_the_account_left_is_ignored(cx: &mut TestAppCo
         assert!(matches!(window.load(), Load::Loaded));
     });
 }
+
+#[gpui::test]
+async fn another_organization_is_loading_until_its_lists_arrive(cx: &mut TestAppContext) {
+    let (fx, window) = open(cx);
+    two_organizations(&fx);
+    let release = fx.hub.hold(FakeOp::Sessions);
+
+    window.update(cx, |window, cx| window.select_org(OrgId::new("zoo"), cx));
+    cx.run_until_parked();
+    window.read_with(cx, |window, _| {
+        assert!(matches!(window.load(), Load::Loading));
+        assert!(window.sessions().is_empty());
+    });
+
+    release.release();
+    cx.run_until_parked();
+    window.read_with(cx, |window, _| {
+        assert!(matches!(window.load(), Load::Loaded));
+        assert_eq!(window.sessions().len(), 1);
+    });
+}
