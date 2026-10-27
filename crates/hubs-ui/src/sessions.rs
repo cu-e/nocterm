@@ -4,8 +4,8 @@
 mod new_session;
 
 use gpui_kit::{
-    App, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
-    TestSupportExt as _, WeakEntity, Window,
+    App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyDownEvent, SharedString,
+    Subscription, TestSupportExt as _, WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
         WindowExt as _,
@@ -17,7 +17,9 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_hubs::{HubStatus, HubWindow, HubWindowEvent, Hubs, Load, Watch};
-use nocterm_hubs_model::{HubSessionState, HubSessionSummary, NodeSummary, OrgId, OrgSummary};
+use nocterm_hubs_model::{
+    HubSessionId, HubSessionState, HubSessionSummary, NodeSummary, OrgId, OrgSummary,
+};
 use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, Workspace};
 
@@ -33,6 +35,8 @@ pub(crate) struct SessionsPanel {
     tabs: HubTabs,
     workspace: WeakEntity<Workspace>,
     focus: FocusHandle,
+    /// The session Enter opens.
+    selected: Option<HubSessionId>,
     /// Held while the panel shows, so the lists refresh on their own.
     watch: Option<Watch>,
     _subscriptions: Vec<Subscription>,
@@ -62,6 +66,7 @@ impl SessionsPanel {
             tabs,
             workspace: workspace.downgrade(),
             focus: cx.focus_handle(),
+            selected: None,
             watch: None,
             _subscriptions: subscriptions,
         }
@@ -102,6 +107,61 @@ impl SessionsPanel {
 
     fn select_org(&mut self, org: OrgId, cx: &mut Context<Self>) {
         self.state.update(cx, |state, cx| state.select_org(org, cx));
+    }
+
+    /// The sessions a tab can attach to, in the order the panel lists them.
+    fn attachable(&self, cx: &App) -> Vec<HubSessionSummary> {
+        let state = self.state.read(cx);
+        state
+            .nodes()
+            .iter()
+            .flat_map(|node| {
+                state
+                    .sessions()
+                    .iter()
+                    .filter(|session| session.node == node.id && is_attachable(session))
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
+        let sessions = self.attachable(cx);
+        let current = sessions
+            .iter()
+            .position(|session| Some(&session.id) == self.selected.as_ref());
+        let next = match (current, down) {
+            (None, true) => 0,
+            (None, false) => sessions.len().wrapping_sub(1),
+            (Some(index), true) => (index + 1) % sessions.len(),
+            (Some(index), false) => (index + sessions.len() - 1) % sessions.len(),
+        };
+        self.selected = sessions.get(next).map(|session| session.id.clone());
+        cx.notify();
+    }
+
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            key @ ("up" | "down") if !self.attachable(cx).is_empty() => {
+                self.move_selection(key == "down", cx);
+                cx.stop_propagation();
+            }
+            "enter" if self.selected.is_some() => {
+                self.open_selected(window, cx);
+                cx.stop_propagation();
+            }
+            _ => {}
+        }
+    }
+
+    fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self
+            .attachable(cx)
+            .into_iter()
+            .find(|session| Some(&session.id) == self.selected.as_ref());
+        if let Some(session) = selected {
+            self.tabs.open_existing(&session, window, cx);
+        }
     }
 
     fn open_new_session_menu(&mut self, cx: &mut Context<Self>) {
@@ -378,10 +438,8 @@ impl SessionsPanel {
     ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let (muted, hover) = (theme.muted_foreground, theme.accent);
-        let attachable = matches!(
-            session.state,
-            HubSessionState::Starting | HubSessionState::Running
-        ) && session.node_online;
+        let attachable = is_attachable(session);
+        let selected = self.selected.as_ref() == Some(&session.id);
         let mine = self.state.read(cx).is_mine(session);
         let state = match session.state {
             HubSessionState::Starting => "starting",
@@ -407,6 +465,7 @@ impl SessionsPanel {
             .when(attachable, |row| {
                 row.cursor_pointer().hover(|style| style.bg(hover))
             })
+            .when(selected, |row| row.bg(hover))
             .child(
                 Icon::new(IconName::SquareTerminal)
                     .small()
@@ -448,12 +507,27 @@ impl SessionsPanel {
                 )
             })
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                if attachable && event.click_count() == 2 {
+                if !attachable {
+                    return;
+                }
+                // Enter opens the session that was clicked last.
+                this.selected = Some(row.id.clone());
+                window.focus(&this.focus, cx);
+                if event.click_count() == 2 {
                     this.tabs.open_existing(&row, window, cx);
                 }
+                cx.notify();
             }))
             .into_any_element()
     }
+}
+
+/// A session a tab can attach to: it runs, on a machine that is online.
+fn is_attachable(session: &HubSessionSummary) -> bool {
+    matches!(
+        session.state,
+        HubSessionState::Starting | HubSessionState::Running
+    ) && session.node_online
 }
 
 impl Panel for SessionsPanel {
@@ -489,7 +563,11 @@ impl Render for SessionsPanel {
         v_flex()
             .id("hub-sessions-panel")
             .track_focus(&self.focus)
+            .key_context("HubSessions")
             .size_full()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.on_key(event, window, cx);
+            }))
             .child(self.render_header(cx))
             .child(
                 div()

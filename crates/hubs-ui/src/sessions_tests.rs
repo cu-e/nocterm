@@ -62,6 +62,38 @@ fn double_clicking_a_session_opens_it(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn enter_opens_the_session_that_was_selected_with_a_click(cx: &mut TestAppContext) {
+    let window = online_window(cx);
+    window.click("hub-session-s1", cx);
+    assert!(window.terminals.tabs().is_empty(), "one click only selects");
+    window.press("enter", cx);
+    let tabs = window.terminals.tabs();
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs[0].0.as_ref(), "make");
+}
+
+#[gpui_kit::test]
+fn the_arrow_keys_move_the_selection_between_sessions(cx: &mut TestAppContext) {
+    let window = online_window(cx);
+    window.click("hub-session-s1", cx);
+    window.press("down", cx);
+    window.press("enter", cx);
+    let tabs = window.terminals.tabs();
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs[0].0.as_ref(), "top", "down goes to the next session");
+    window.press("up", cx);
+    window.press("enter", cx);
+    assert_eq!(window.terminals.tabs()[1].0.as_ref(), "make");
+}
+
+#[gpui_kit::test]
+fn enter_with_nothing_selected_opens_nothing(cx: &mut TestAppContext) {
+    let window = online_window(cx);
+    window.press("enter", cx);
+    assert!(window.terminals.tabs().is_empty());
+}
+
+#[gpui_kit::test]
 fn only_sessions_of_this_account_can_be_ended(cx: &mut TestAppContext) {
     let window = online_window(cx);
     assert!(window.shows("hub-session-end-s1", cx));
