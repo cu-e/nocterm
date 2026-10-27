@@ -82,6 +82,11 @@ impl TerminalInput {
             *self.integration.borrow_mut() = ShellIntegration::default();
         }
     }
+    /// Forgets the directory and prompt the shell last reported: a restored
+    /// screen says nothing about them until the shell speaks again.
+    pub(super) fn forget_shell_state(&self) {
+        *self.integration.borrow_mut() = ShellIntegration::default();
+    }
     pub(super) fn set_shell_syntax(&mut self, syntax: Option<nocterm_workspace::ShellSyntax>) {
         self.shell_syntax = syntax;
     }

@@ -42,6 +42,27 @@ impl TerminalScreen {
     pub(super) fn set_palette(&mut self, palette: Palette) {
         self.emulator.set_palette(palette);
     }
+    /// Clears the screen the way a new emulator of the current size would be
+    /// and paints `bytes` on it, as the host holds the screen right now.
+    ///
+    /// Scrollback, modes, selection, a running search, a held synchronized
+    /// update and the program's title are discarded; the emulator's change
+    /// counters keep counting forward, so caches keyed by them miss. Of what
+    /// the picture provokes only a title survives: a snapshot asks no
+    /// questions, rings no bell and writes no clipboard. Returns what the host
+    /// must do.
+    pub(super) fn restore(&mut self, bytes: &[u8]) -> Vec<Effect> {
+        self.emulator.reset();
+        self.find_task = None;
+        self.find.searching = false;
+        self.sync_timer = None;
+        self.program_title = None;
+        self.emulator
+            .advance(bytes)
+            .into_iter()
+            .filter(|effect| matches!(effect, Effect::Title(_)))
+            .collect()
+    }
     pub(super) fn advance(&mut self, bytes: &[u8]) -> Vec<Effect> {
         self.emulator.advance(bytes)
     }

@@ -387,12 +387,12 @@ impl Terminal {
             Event::Connected => {
                 self.set_status(Status::Connected, cx);
                 self.save_authenticated_credential(cx);
-                if self.recording.options().auto_start {
+                if self.lifecycle.first_connected() && self.recording.options().auto_start {
                     self.start_recording(cx);
                 }
             }
             Event::Output(bytes) => self.advance_output(&bytes, cx),
-            Event::Restore(_) => {}
+            Event::Restore(bytes) => self.restore_screen(&bytes, cx),
             Event::Prompt(prompt) => {
                 // A newer question supersedes an unanswered one, including an
                 // identical retry. Views must discard the previous input state.
@@ -594,3 +594,5 @@ mod credential_tests;
 mod local_tests;
 #[cfg(test)]
 mod recording_tests;
+#[cfg(test)]
+mod restore_tests;
