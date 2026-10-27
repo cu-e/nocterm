@@ -201,6 +201,10 @@ installation. `Booted` shares it with every workspace window. Authentication tab
 retain explicit isolated transports and once-only completion; no transport or
 credential compatibility global participates. See [ADR 0042](../adr/0042-terminal-installed-dependencies.md).
 
+The vault opens before the connections feature so `src/vault_keys.rs` can inject the
+`VaultSshKeys` implementation over its `VaultAccess`; windows without a vault keep
+`NoVaultSshKeys`. Vault credentials and its pages install after the connections entity exists.
+
 Bootstrap retains the optional connection `Installed` handle in Booted and passes
 it to every new workspace. Vault association captures its exact connection entity
 rather than discovering a global. An installation failure skips connection view

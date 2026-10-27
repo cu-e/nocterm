@@ -79,7 +79,9 @@ for a missing remote source
 
 `nocterm-ssh` implements
 that contract using russh and lazily opened SFTP channels on a dedicated Tokio
-runtime.
+runtime. Authentication with a vault key reads the record through the credential store,
+checks its public half against the profile and signs without SHA-1 for RSA
+([ADR 0102](../adr/0102-ssh-keys-are-kept-in-the-vault.md)).
 `nocterm-local` adapts portable-pty to
 the same session events and launch contract. Integration supplies bounded OSC 7
 cwd and prompt markers without parsing rendered prompt text. It also implements the
