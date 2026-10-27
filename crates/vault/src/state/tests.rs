@@ -187,3 +187,72 @@ fn identity_updates_and_rejected_bindings_preserve_accepted_records() {
     assert_eq!(state.revision().unwrap(), revision);
     assert_eq!(state.get(id, &binding()).unwrap().expose(), "new secret");
 }
+
+fn private_key(public_key: &str) -> CredentialBinding {
+    CredentialBinding::PrivateKey {
+        public_key: public_key.into(),
+    }
+}
+
+#[test]
+fn a_private_key_binding_survives_the_record_codec() {
+    let records = vec![Record {
+        info: CredentialInfo {
+            id: CredentialId::from_bytes([7; 16]),
+            label: "laptop".into(),
+            binding: private_key("ssh-ed25519 AAAAC3"),
+        },
+        secret: Secret::new("-----BEGIN OPENSSH PRIVATE KEY-----\n"),
+    }];
+    let decoded = decode_records(&encode_records(&records).unwrap()).unwrap();
+    assert_eq!(decoded[0].info.binding, private_key("ssh-ed25519 AAAAC3"));
+    assert_eq!(
+        decoded[0].secret.expose(),
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    );
+}
+
+#[test]
+fn a_private_key_binding_is_written_as_a_tagged_record() {
+    let text = serde_json::to_string(&private_key("ssh-ed25519 AAAAC3")).unwrap();
+    assert_eq!(
+        text,
+        r#"{"kind":"private_key","public_key":"ssh-ed25519 AAAAC3"}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<CredentialBinding>(&text).unwrap(),
+        private_key("ssh-ed25519 AAAAC3")
+    );
+}
+
+#[test]
+fn a_key_record_answers_only_for_the_same_public_half() {
+    let mut state = state();
+    let id = CredentialId::from_bytes([11; 16]);
+    let prepared = state
+        .prepare_put(
+            id,
+            "laptop".into(),
+            private_key("ssh-ed25519 AAAAC3"),
+            Secret::new("pem"),
+            SealNonces::new([22; 24], [23; 24]),
+        )
+        .unwrap();
+    state.accept_write(prepared);
+    assert_eq!(
+        state
+            .get(id, &private_key("ssh-ed25519 AAAAC3"))
+            .unwrap()
+            .expose(),
+        "pem"
+    );
+    assert!(matches!(
+        state.get(id, &private_key("ssh-ed25519 BBBB")),
+        Err(VaultError::Binding)
+    ));
+    // A password request never opens a key record.
+    assert!(matches!(
+        state.get(id, &binding()),
+        Err(VaultError::Binding)
+    ));
+}

@@ -1,5 +1,5 @@
 //! Portable encrypted credential rules and explicit lifecycle contracts.
-//! Owns: version1 codec, cryptography, binding validation and prepared transitions.
+//! Owns: version1 codec, cryptography, binding validation (password, key passphrase, private key by public half) and prepared transitions.
 //! Does not own: filesystem, entropy, workers, native authentication or UI.
 //! Ports provided: VaultAccess and DeviceUnlockProvider. Ports used: none.
 //! Settings: none. Globals: none. Invariants: secrets zeroize; candidates are
