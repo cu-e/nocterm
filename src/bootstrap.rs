@@ -212,15 +212,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
-    let hubs = install_hubs(hosts.hubs.clone(), ui.settings(), cx);
-    let windowing = Windowing::install(
-        hubs,
-        hosts.hub_list_read,
-        ui.settings(),
-        stored,
-        &shutdown,
-        cx,
-    );
+    let windowing = install_windowing(&hosts, &ui, stored, &shutdown, cx);
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
@@ -396,13 +388,25 @@ fn install_themes(
     nocterm_ui::ThemeUi::install(settings, themes, base, cx)
 }
 
-/// Hub access, when the application has it.
-fn install_hubs(
-    deps: Option<nocterm_hubs::Deps>,
-    settings: &nocterm_store::SettingsHandle,
+/// The hub servers, when the application has hub access, and the set of open windows.
+fn install_windowing(
+    hosts: &HostServices,
+    ui: &nocterm_ui::UiReady,
+    stored: Option<&Paths>,
+    shutdown: &nocterm_store::ShutdownCoordinator,
     cx: &mut App,
-) -> Option<nocterm_hubs_ui::Installed> {
-    deps.map(|deps| nocterm_hubs_ui::install(nocterm_hubs::install(deps, settings.clone(), cx)))
+) -> Windowing {
+    let hubs = hosts.hubs.clone().map(|deps| {
+        nocterm_hubs_ui::install(nocterm_hubs::install(deps, ui.settings().clone(), cx))
+    });
+    Windowing::install(
+        hubs,
+        hosts.hub_list_read,
+        ui.settings(),
+        stored,
+        shutdown,
+        cx,
+    )
 }
 
 /// The shared keymap: the defaults and the user's overrides, when the application keeps files.
