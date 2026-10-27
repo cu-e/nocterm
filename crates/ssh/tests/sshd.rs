@@ -42,6 +42,9 @@ mod host_keys;
 #[path = "cases/jump.rs"]
 mod jump;
 
+#[path = "cases/hub_relay.rs"]
+mod hub_relay;
+
 use nocterm_session::{
     Auth, CloseReason, ConnectRequest, EntryKind, Event, HostKeyDecision, Prompt, Secret,
     SecretRequest, Session, SessionError, Target, Transport,

@@ -8,13 +8,15 @@
 //! The transport owns a small Tokio runtime, so callers need none: a session
 //! is driven entirely through the runtime-agnostic channels of [`Session`].
 //!
-//! Owns: SSH authentication, host-key policy, proxy tunnels, jump-host routes, SFTP and remote execution.
+//! Owns: SSH authentication, host-key policy, proxy tunnels and the bridge from a relay's frame channels to a stream, jump-host routes, SFTP and remote execution.
 //! Does not own: profiles, credential storage, terminal emulation or session views.
 //! Ports provided: `Transport`, `RemoteFs`, `HostExec` from `nocterm-session`.
+//! Ports used: `RelayDialer`, supplied by the application through `SshTransport::with_relay`.
 //! Settings section: consumes session SSH options. Globals: none.
 //! Invariants: bounded session channels and independent closure interrupt blocked I/O;
-//! the proxy carries only the first connection of a route, and each jump host is
-//! verified and authenticated before a forward is opened through it.
+//! the proxy or relay carries only the first connection of a route, the host key checked is
+//! always the destination's, and each jump host is verified and authenticated before a
+//! forward is opened through it.
 
 mod auth;
 mod connection;
@@ -28,7 +30,9 @@ mod sftp;
 
 use std::{path::PathBuf, sync::Arc};
 
-use nocterm_session::{ConnectRequest, MAX_JUMP_HOSTS, Session, SessionError, Transport};
+use nocterm_session::{
+    ConnectRequest, MAX_JUMP_HOSTS, RelayDialer, Session, SessionError, Transport,
+};
 use tokio::runtime::{Builder, Runtime};
 
 /// Threads serving every SSH connection of the application.
@@ -56,6 +60,7 @@ pub struct SshTransport {
     // `None` only while the transport is being dropped.
     runtime: Option<Runtime>,
     config: Arc<SshConfig>,
+    relay: Option<Arc<dyn RelayDialer>>,
 }
 
 impl SshTransport {
@@ -68,7 +73,18 @@ impl SshTransport {
         Ok(Self {
             runtime: Some(runtime),
             config: Arc::new(config),
+            relay: None,
         })
+    }
+
+    /// Lets sessions whose proxy is a hub open their first stream through `relay`.
+    ///
+    /// Without one, such a session fails to connect. The relay only supplies the byte
+    /// stream: host keys and sign-in are still checked here, against the destination.
+    #[must_use]
+    pub fn with_relay(mut self, relay: Arc<dyn RelayDialer>) -> Self {
+        self.relay = Some(relay);
+        self
     }
 }
 
@@ -92,6 +108,7 @@ impl Transport for SshTransport {
         let session = session.with_exec(Arc::new(exec));
         runtime.spawn(connection::run(
             self.config.clone(),
+            self.relay.clone(),
             request,
             driver,
             fs_requests,
