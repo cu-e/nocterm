@@ -30,16 +30,16 @@ pub(crate) fn build_hub_workspace(
 ) {
     // The sessions go first: of the panels in the sidebar the first registered is shown.
     if let Some(hubs) = booted.hubs() {
-        let ports = HubWindowPorts {
-            environments: AppEnvironmentOpener::new(booted.clone()),
-            terminals: Rc::new(AppHubTerminals {
+        let ports = HubWindowPorts::new(
+            AppEnvironmentOpener::new(booted.clone()),
+            Rc::new(AppHubTerminals {
                 terminal: booted.terminal().clone(),
             }),
-            memory: Rc::new(AppHubMemory {
+            Rc::new(AppHubMemory {
                 windowing: booted.windowing().clone(),
                 window: window.window_handle().window_id(),
             }),
-        };
+        );
         if let Err(error) = nocterm_hubs_ui::register_hub_window(
             hubs,
             hub.clone(),

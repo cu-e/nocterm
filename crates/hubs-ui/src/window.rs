@@ -26,12 +26,26 @@ pub enum HubWindowError {
 
 /// What the application gives a hub window to act with.
 pub struct HubWindowPorts {
-    /// Opens other environments, from the environment menu.
-    pub environments: Rc<dyn EnvironmentOpener>,
-    /// Opens the tabs of the sessions.
-    pub terminals: Rc<dyn HubTerminalOpener>,
-    /// Keeps the organization and sessions of the window for the next start.
-    pub memory: Rc<dyn HubMemoryKeeper>,
+    environments: Rc<dyn EnvironmentOpener>,
+    terminals: Rc<dyn HubTerminalOpener>,
+    memory: Rc<dyn HubMemoryKeeper>,
+}
+
+impl HubWindowPorts {
+    /// `environments` opens other environments from the environment menu, `terminals` opens the
+    /// tabs of the sessions, and `memory` keeps the organization and sessions of the window for
+    /// the next start.
+    pub fn new(
+        environments: Rc<dyn EnvironmentOpener>,
+        terminals: Rc<dyn HubTerminalOpener>,
+        memory: Rc<dyn HubMemoryKeeper>,
+    ) -> Self {
+        Self {
+            environments,
+            terminals,
+            memory,
+        }
+    }
 }
 
 /// Makes `workspace` the window of `hub`: the sessions panel, the menu behind "+" that starts a

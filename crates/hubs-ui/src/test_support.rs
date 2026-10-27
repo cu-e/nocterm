@@ -263,11 +263,11 @@ impl Fixture {
                     Environment::Hub(hub) => register_hub_window(
                         &self.installed,
                         hub,
-                        HubWindowPorts {
-                            environments: self.environments.clone(),
-                            terminals: self.terminals.clone(),
-                            memory: self.memory.clone(),
-                        },
+                        HubWindowPorts::new(
+                            self.environments.clone(),
+                            self.terminals.clone(),
+                            self.memory.clone(),
+                        ),
                         restored.clone(),
                         workspace,
                         window,
