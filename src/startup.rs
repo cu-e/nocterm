@@ -46,8 +46,8 @@ impl PreparedApp {
             nocterm_themes_registry::LocalThemeLibrary::new(dirs, Some(registry.clone())),
         );
         let catalog = library.scan();
-        let transport =
-            SshTransport::new(ssh_config(&paths)).context("starting the SSH runtime")?;
+        let hub_links = hub_links(&paths);
+        let transport = ssh_transport(&paths, hub_links.as_deref())?;
         let local_fs = Arc::new(
             nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
         );
@@ -64,7 +64,6 @@ impl PreparedApp {
         let preparation = Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
             environment.clone(),
         ));
-        let paths_for_hubs = paths.clone();
         Ok(Self {
             paths,
             executable,
@@ -89,7 +88,7 @@ impl PreparedApp {
                 container_actions: Arc::new(
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
-                hubs: hub_dependencies(&paths_for_hubs),
+                hubs: hub_dependencies(hub_links),
                 hub_list_read: settings_read,
             },
             files: files_dependencies(local_fs.clone())?,
@@ -201,23 +200,41 @@ fn files_dependencies(
     ))
 }
 
-/// The hub access ports, or none when the adapter cannot start: local work does not suffer.
-fn hub_dependencies(paths: &Paths) -> Option<nocterm_hubs::Deps> {
+/// The adapter that reaches hubs, or none when it cannot start: local work does not suffer.
+fn hub_links(paths: &Paths) -> Option<Arc<nocterm_hub_io::HubLinks>> {
     let config = nocterm_hub_io::HubLinksConfig {
         credentials_dir: paths.state_dir().join("hubs"),
         device_name: device_name(),
     };
     match nocterm_hub_io::HubLinks::start(config) {
-        Ok(links) => Some(nocterm_hubs::Deps {
-            trust: links.clone(),
-            sign_in: links.clone(),
-            sessions: links,
-        }),
+        Ok(links) => Some(links),
         Err(error) => {
             tracing::error!(?error, "hubs are unavailable");
             None
         }
     }
+}
+
+/// The hub access ports of the links, if there are any.
+fn hub_dependencies(links: Option<Arc<nocterm_hub_io::HubLinks>>) -> Option<nocterm_hubs::Deps> {
+    links.map(|links| nocterm_hubs::Deps {
+        trust: links.clone(),
+        sign_in: links.clone(),
+        sessions: links,
+    })
+}
+
+/// The SSH transport. A profile that routes its first hop through a hub is dialled by the hub
+/// links; without links such a profile fails to connect and everything else is unaffected.
+fn ssh_transport(
+    paths: &Paths,
+    links: Option<&nocterm_hub_io::HubLinks>,
+) -> anyhow::Result<SshTransport> {
+    let transport = SshTransport::new(ssh_config(paths)).context("starting the SSH runtime")?;
+    Ok(match links {
+        Some(links) => transport.with_relay(Arc::new(nocterm_hub_io::HubRelay::new(links))),
+        None => transport,
+    })
 }
 
 /// How this computer is named in the device list of a hub.
