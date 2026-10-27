@@ -1,6 +1,7 @@
 //! The environments of the open windows, remembered across restarts.
 //!
-//! Owns: the live list of open windows ([`WindowSet`]), the save of that list through one
+//! Owns: the live list of open windows ([`WindowSet`]) with what each window of a hub keeps
+//! (its organization and the sessions of its tabs), the save of that list through one
 //! `Persisted` document, and the list as it was loaded at start ([`WindowSet::previous`]).
 //! Does not own: the file format and the rules (`nocterm_hubs_model::windows`), reading and
 //! writing the file (the application supplies a [`SnapshotWriter`] and the loaded document),
@@ -21,7 +22,10 @@ mod error;
 use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Entity, WindowId};
-use nocterm_hubs_model::{Environment, OpenWindows, WindowDocument, WindowDocumentError};
+use nocterm_hubs_model::{
+    Environment, HubId, HubWindowMemory, OpenWindows, WindowDocument, WindowDocumentError,
+    WindowRecord,
+};
 use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter};
 
 pub use error::WindowSetError;
@@ -69,7 +73,7 @@ impl PreparedWindows {
 #[derive(Clone)]
 pub struct WindowSet {
     state: Entity<Persisted<OpenWindows<WindowId>>>,
-    previous: Arc<[Environment]>,
+    previous: Arc<[WindowRecord]>,
 }
 
 impl WindowSet {
@@ -98,7 +102,7 @@ impl WindowSet {
             .map_err(WindowSetError::Registration)?;
         let set = Self {
             state,
-            previous: prepared.document.environments().cloned().collect(),
+            previous: prepared.document.records().into(),
         };
         let closed = set.clone();
         cx.on_window_closed(move |cx, window| closed.edit(cx, |windows| windows.closed(window)))
@@ -106,8 +110,8 @@ impl WindowSet {
         Ok(set)
     }
 
-    /// The environments of the windows the previous run left open, in order.
-    pub fn previous(&self) -> &[Environment] {
+    /// The windows the previous run left open, in order, with what each kept of its hub.
+    pub fn previous(&self) -> &[WindowRecord] {
         &self.previous
     }
 
@@ -122,15 +126,33 @@ impl WindowSet {
             .collect()
     }
 
+    /// The windows that are open now, in the order they opened, with what each keeps.
+    pub fn records(&self, cx: &App) -> Vec<WindowRecord> {
+        self.state.read(cx).visible().document().records().to_vec()
+    }
+
     /// A window opened showing `environment`.
     pub fn opened(&self, window: WindowId, environment: Environment, cx: &mut App) {
         self.edit(cx, |windows| windows.opened(window, environment));
     }
 
-    /// A remembered environment could not open in this run; the document keeps it for a later
+    /// A window opened to bring `record` back, with what it kept of its hub, so the document
+    /// still holds it if the hub cannot be reached in this run.
+    pub fn restored(&self, window: WindowId, record: WindowRecord, cx: &mut App) {
+        self.edit(cx, |windows| windows.restored(window, record));
+    }
+
+    /// A remembered window could not open in this run; the document keeps it for a later
     /// run instead of forgetting it with the next save.
-    pub fn kept(&self, environment: Environment, cx: &mut App) {
-        self.edit(cx, |windows| windows.kept(environment));
+    pub fn kept(&self, record: impl Into<WindowRecord>, cx: &mut App) {
+        let record = record.into();
+        self.edit(cx, |windows| windows.kept(record));
+    }
+
+    /// The window shows `hub`, and now keeps `memory` of it: its organization and the sessions
+    /// of its tabs. Ignored when the window shows another server by now.
+    pub fn remembered(&self, window: WindowId, hub: &HubId, memory: HubWindowMemory, cx: &mut App) {
+        self.edit(cx, |windows| windows.remembered(window, hub, memory));
     }
 
     /// An open window now shows `environment`.

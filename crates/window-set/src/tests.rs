@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use gpui::{AnyWindowHandle, Context, IntoElement, Render, TestAppContext, Window};
-use nocterm_hubs_model::{HubAddress, HubId};
+use nocterm_hubs_model::{HubAddress, HubId, HubSessionId, OrgId};
 use nocterm_store::StoreError;
 
 use super::*;
@@ -179,8 +179,13 @@ fn the_previous_run_is_what_the_document_listed(cx: &mut TestAppContext) {
     let prepared = PreparedWindows::loaded(Ok(Some(document(&listed))));
     let (set, _) = installed(prepared, &ShutdownCoordinator::default(), cx);
 
+    let previous: Vec<_> = set
+        .previous()
+        .iter()
+        .map(|record| record.environment().clone())
+        .collect();
     assert_eq!(
-        set.previous(),
+        previous,
         [Environment::Local, hub("hub.home:7443"), Environment::Local]
     );
     assert!(environments(&set, cx).is_empty());
@@ -256,4 +261,100 @@ fn an_unreadable_document_is_replaced_by_the_first_save(cx: &mut TestAppContext)
     quit(&shutdown, cx);
 
     assert_eq!(last_saved(&saved), [Environment::Local]);
+}
+
+fn hub_id(address: &str) -> HubId {
+    HubId::from(HubAddress::parse(address).unwrap())
+}
+
+fn memory(organization: &str, sessions: &[&str]) -> HubWindowMemory {
+    HubWindowMemory::new(
+        Some(OrgId::new(organization)),
+        sessions.iter().map(|id| HubSessionId::new(*id)).collect(),
+    )
+}
+
+#[gpui::test]
+fn what_a_hub_window_keeps_is_saved_with_the_windows(cx: &mut TestAppContext) {
+    let (set, saved) = installed(
+        PreparedWindows::memory(),
+        &ShutdownCoordinator::default(),
+        cx,
+    );
+    let window = open(&set, hub("hub.home"), cx);
+
+    cx.update(|cx| {
+        set.remembered(
+            window.window_id(),
+            &hub_id("hub.home"),
+            memory("lab", &["s1", "s2"]),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let document = saved.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(document.records()[0].hub(), &memory("lab", &["s1", "s2"]));
+}
+
+#[gpui::test]
+fn a_window_that_comes_back_is_saved_with_what_it_kept(cx: &mut TestAppContext) {
+    let (set, saved) = installed(
+        PreparedWindows::memory(),
+        &ShutdownCoordinator::default(),
+        cx,
+    );
+    let handle = AnyWindowHandle::from(cx.add_window(|_, _| Blank));
+    let record = WindowRecord::new(hub("hub.home")).with_hub(memory("lab", &["s1"]));
+
+    cx.update(|cx| set.restored(handle.window_id(), record.clone(), cx));
+    cx.run_until_parked();
+
+    let document = saved.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(document.records(), [record]);
+}
+
+#[gpui::test]
+fn the_previous_run_carries_what_its_windows_kept(cx: &mut TestAppContext) {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, hub("hub.home"));
+    windows.remembered(1, &hub_id("hub.home"), memory("lab", &["s1"]));
+    let read = WindowDocument::decode(&windows.document().encode().unwrap()).unwrap();
+    let (set, _) = installed(
+        PreparedWindows::loaded(Ok(Some(read))),
+        &ShutdownCoordinator::default(),
+        cx,
+    );
+
+    assert_eq!(set.previous()[0].hub(), &memory("lab", &["s1"]));
+}
+
+#[gpui::test]
+fn what_a_closed_window_reports_late_is_not_given_to_another(cx: &mut TestAppContext) {
+    let (set, saved) = installed(
+        PreparedWindows::memory(),
+        &ShutdownCoordinator::default(),
+        cx,
+    );
+    let first = open(&set, hub("hub.home"), cx);
+    open(&set, Environment::Local, cx);
+    close(first, cx);
+
+    cx.update(|cx| {
+        set.remembered(
+            first.window_id(),
+            &hub_id("hub.home"),
+            memory("lab", &["s1"]),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let document = saved.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        document
+            .records()
+            .iter()
+            .all(|record| record.hub().is_empty())
+    );
 }
