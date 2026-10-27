@@ -1,5 +1,5 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
-//! Owns: targets, authentication, jump-host route values, launch/override validation, opaque IDs, text errors and execution/FS contracts.
+//! Owns: targets, authentication (including a reference to a key kept in the vault), jump-host route values, launch/override validation, opaque IDs, text errors and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
 //! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener,
 //! and recording::{OutputLogFactory, OutputLog}.

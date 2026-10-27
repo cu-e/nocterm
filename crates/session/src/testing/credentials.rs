@@ -112,6 +112,37 @@ impl FakeCredentialStore {
         Ok(id)
     }
 
+    /// Keeps `secret` as the vault key recorded for `public_key`. The request kind
+    /// is not storable from a prompt, so a test seeds the key here instead.
+    pub fn insert_private_key(
+        &self,
+        label: String,
+        public_key: &str,
+        secret: Secret,
+    ) -> Result<CredentialId, FakeCredentialError> {
+        let mut state = lock(&self.state);
+        check(&mut state)?;
+        let id = format!("{:032x}", state.next)
+            .parse()
+            .map_err(|_| FakeCredentialError::Exhausted)?;
+        state.next = state
+            .next
+            .checked_add(1)
+            .ok_or(FakeCredentialError::Exhausted)?;
+        state.records.insert(
+            id,
+            Record {
+                request: SecretRequest::PrivateKey {
+                    credential: id,
+                    public_key: public_key.to_owned(),
+                },
+                secret,
+                label,
+            },
+        );
+        Ok(id)
+    }
+
     pub fn lookup(
         &self,
         id: CredentialId,
@@ -159,6 +190,14 @@ fn same_binding(saved: &SecretRequest, asked: &SecretRequest) -> bool {
         (
             SecretRequest::KeyPassphrase { path: saved, .. },
             SecretRequest::KeyPassphrase { path: asked, .. },
+        ) => saved == asked,
+        (
+            SecretRequest::PrivateKey {
+                public_key: saved, ..
+            },
+            SecretRequest::PrivateKey {
+                public_key: asked, ..
+            },
         ) => saved == asked,
         _ => false,
     }

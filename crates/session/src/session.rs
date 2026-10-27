@@ -16,7 +16,9 @@ use std::{
 
 use futures::channel::oneshot;
 
-use crate::{Auth, HostExec, JumpHost, PromptHop, RemoteFs, Secret, ShellLaunch, Target};
+use crate::{
+    Auth, CredentialId, HostExec, JumpHost, PromptHop, RemoteFs, Secret, ShellLaunch, Target,
+};
 
 /// Events a transport may queue before it has to wait for the owner.
 ///
@@ -218,6 +220,13 @@ pub enum SecretRequest {
     Password { target: Target, retry: bool },
     /// The passphrase protecting a private key file.
     KeyPassphrase { path: PathBuf, retry: bool },
+    /// The private key a profile keeps in the vault, named by the profile itself:
+    /// it is answered from the credential store and never typed or saved here.
+    PrivateKey {
+        credential: CredentialId,
+        /// The canonical public text the key must have.
+        public_key: String,
+    },
     /// A question the server asks in its own words (one-time codes and such).
     Interactive {
         /// The server's prompt text.

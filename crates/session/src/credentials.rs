@@ -36,8 +36,12 @@ pub trait CredentialStore: Send + Sync + 'static {
 
 impl SecretRequest {
     /// Whether an answer may be saved and reused. One-time answers, such as
-    /// MFA codes, never are.
+    /// MFA codes, never are, and a vault key is only read: it is put in the
+    /// vault through its own port, not from a prompt.
     pub fn is_storable(&self) -> bool {
-        !matches!(self, SecretRequest::Interactive { .. })
+        !matches!(
+            self,
+            SecretRequest::Interactive { .. } | SecretRequest::PrivateKey { .. }
+        )
     }
 }
