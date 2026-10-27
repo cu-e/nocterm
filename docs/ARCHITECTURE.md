@@ -49,7 +49,10 @@ repository](adr/0096-hub-contract-outside-the-workspace.md); it keeps device cre
 private files), `nocterm-hubs` (service: known hubs, their status, sign-in) and
 `nocterm-hubs-ui` (feature: the menu, the sign-in dialog and the sessions panel). Attached
 terminal tabs ([ADR 0095](adr/0095-attached-sessions-restore-and-detach.md)) show a hub's
-session and detach when closed. User guide: [hubs](HUBS.md).
+session and detach when closed. The environments of the open windows are remembered and opened
+again at the next start by `nocterm-window-set`
+([ADR 0098](adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)). User guide:
+[hubs](HUBS.md).
 
 ## Plugins
 

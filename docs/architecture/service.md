@@ -348,3 +348,15 @@ with the one `Hubs` entity every window shares ([ADR 0097](../adr/0097-a-window-
 The service holds no secrets: device keys and tokens stay in the adapter's private files. It
 installs no global, registers no quit handler and writes the settings through the same
 persistence service as every section.
+
+## Window set
+
+`nocterm-window-set` remembers the environments of the open windows
+([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)). `WindowSet` holds
+the `OpenWindows<WindowId>` rules of `nocterm-hubs-model` in one `Persisted` entity, registered
+with the `ShutdownCoordinator`, so every change is saved in the background and the whole list is
+captured at quit. `PreparedWindows` carries the document the application read before the first
+window opened; a document that could not be read starts an empty list. The application reports
+`opened` and `switched`; the service itself subscribes to window closing, once and for the life of
+the application, to forget a window the user closes except the last. It reads no file, opens no
+window and installs no global; `WindowSet::previous` is what the application restores from.

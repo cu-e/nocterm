@@ -449,3 +449,10 @@ return runtime-agnostic futures and fail with the typed, cloneable `HubError`, w
 original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind all
 three ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
 0096](../adr/0096-hub-contract-outside-the-workspace.md)).
+
+The `windows` module holds the state document of the open windows: `WindowDocument` (versioned
+JSON of `WindowRecord`s, each with an `Environment`, tolerant of fields added later, with the
+typed `WindowDocumentError`) and `OpenWindows<K>`, the rules for a live list keyed by any
+window identity. A window that opens is appended, switching replaces its environment, and
+closing removes a window unless it is the last
+([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)).

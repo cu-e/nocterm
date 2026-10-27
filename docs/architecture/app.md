@@ -101,6 +101,14 @@ failure to start is logged and leaves hubs off, so local use is unaffected. Boot
 the service after Snippets and the feature after it; GUI tests use the same `bootstrap` with
 `FakeHub` or without hubs, in which case no window has an environment menu.
 
+`Booted` holds the hub installation and the window set as one `Windowing`
+(`src/bootstrap/windowing.rs`). The window set reads `windows.json` in the state directory
+through `src/window_set_setup.rs` and saves through `persist::save_text`; a run without a state
+directory remembers nothing. `open_window` and `replace_environment` report to it, and
+`startup` calls `windows::restore_windows` with the environments the previous run left open
+([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)): one window
+per entry, a server no longer in `[hubs]` skipped, and one local window when none opened.
+
 ## Menus
 
 The composition root supplies Session/Edit/Search/Window/Help descriptors to

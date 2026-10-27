@@ -50,8 +50,11 @@ Choose the server in the environment menu. Enter opens it in this window; Ctrl+E
 button at the end of the row, opens it in a new window. If this window holds local tabs,
 Nocterm asks first, because switching ends their sessions; **Open in a new window** is the
 default. A hub window can be switched without a question, because its sessions keep running
-on the server. **New Window** from the menu always opens a local window. Windows are not
-restored after a restart; choose the server again.
+on the server. **New Window** from the menu always opens a local window.
+
+After a restart Nocterm opens a window for each environment the previous run left open, in the
+same order. A server that was removed from the list is skipped; if no window can open, one
+local window opens. The windows open on their environment, not on their tabs.
 
 The window is named "Nocterm — server name".
 
