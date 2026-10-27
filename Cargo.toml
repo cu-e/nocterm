@@ -244,6 +244,7 @@ nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
 nocterm-hubs-model = { path = "crates/hubs-model" }
+nocterm-hub-io = { path = "crates/hub-io" }
 nocterm-keymap = { path = "crates/keymap" }
 nocterm-keymap-ui = { path = "crates/keymap-ui" }
 nocterm-layout-ui = { path = "crates/layout-ui" }
@@ -279,6 +280,10 @@ nocterm-workspace = { path = "crates/workspace" }
 nocterm-vault = { path = "crates/vault" }
 nocterm-vault-store = { path = "crates/vault-store" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
+# The hub contract lives outside this workspace (ADR 0096); only nocterm-hub-io may use it.
+nocterm-hub-client = { git = "https://github.com/cu-e/nocterm-contract", rev = "b7658b46601629edd44c51d6105605e29df78fd9" }
+nocterm-hub-proto = { git = "https://github.com/cu-e/nocterm-contract", rev = "b7658b46601629edd44c51d6105605e29df78fd9" }
+nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "b7658b46601629edd44c51d6105605e29df78fd9" }
 
 agent-client-protocol = "=2.2.0"
 agent-client-protocol-schema = { version = "=1.9.1", features = ["unstable_session_fork", "unstable_end_turn_token_usage"] }
