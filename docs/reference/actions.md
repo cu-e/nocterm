@@ -18,6 +18,9 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `files::OpenExplorerSettings` | Open the Explorer's settings: folder sizes and the programs that open files. |  |
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
+| `hubs::OpenEnvironmentMenu` | Open the environment menu in the title bar. |  |
+| `hubs::OpenHubSessions` | Show the sessions of the hub in the sidebar, or hide the sidebar if it shows them. |  |
+| `hubs::SignInToServer` | Sign in to a server that is not in the list yet. |  |
 | `monitor::OpenMonitorSettings` | Open the host monitor's settings. |  |
 | `projects::NewProject` | Create a workspace on the current server or this computer. |  |
 | `projects::ToggleProjects` | Show saved workspaces for the current connection. |  |
