@@ -95,3 +95,4 @@ acceptance; a later record supersedes an earlier one.
 | [0096](0096-hub-contract-outside-the-workspace.md) | The hub contract lives outside the workspace and only the hub adapter speaks it |
 | [0097](0097-a-window-belongs-to-one-environment.md) | A window belongs to one environment, local or one hub |
 | [0098](0098-windows-and-their-environments-are-restored-after-a-restart.md) | Windows and their environments are restored after a restart |
+| [0101](0101-profiles-synchronize-through-a-replica-beside-the-local-document.md) | Profiles synchronize through a replica beside the local document |
