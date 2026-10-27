@@ -1,4 +1,4 @@
-//! Every hub this device knows, with the connection status all windows share.
+//! Every hub this device knows, with the connection status every window shares.
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
@@ -8,9 +8,9 @@ use nocterm_store::SettingsHandle;
 
 use crate::error::HubsError;
 use crate::installed::Deps;
+use crate::session_lists::{HubSessionLists, HubSessionListsEvent};
 use crate::sign_in::{SignInEvent, SignInSession};
 use crate::status::{HubStatus, Settled, retry_delay, settle_connect, settle_failure};
-use crate::window::{HubWindow, HubWindowEvent};
 
 /// What changes in the registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,11 +36,11 @@ struct HubEntry {
     failures: u32,
     /// The connection being made, or the wait before the next attempt.
     attempt: Option<Task<()>>,
-    window: Option<LiveWindow>,
+    lists: Option<LiveLists>,
 }
 
-struct LiveWindow {
-    entity: Entity<HubWindow>,
+struct LiveLists {
+    entity: Entity<HubSessionLists>,
     _events: Subscription,
 }
 
@@ -132,7 +132,7 @@ impl Hubs {
                         status: HubStatus::Connecting,
                         failures: 0,
                         attempt: None,
-                        window: None,
+                        lists: None,
                     }
                 }
             };
@@ -194,7 +194,7 @@ impl Hubs {
             }
         }
         let online = entry.status.is_online();
-        let window = entry.window.as_ref().map(|live| live.entity.clone());
+        let window = entry.lists.as_ref().map(|live| live.entity.clone());
         if let Some(delay) = retry {
             let again = hub.clone();
             let waiting = cx.spawn(async move |this, cx| {
@@ -222,23 +222,27 @@ impl Hubs {
         }
     }
 
-    /// The shared state of the window for a hub, created on first use. `None` for an unknown
+    /// The shared lists of a hub's sessions, created on first use. `None` for an unknown
     /// hub.
-    pub fn window(&mut self, hub: &HubId, cx: &mut Context<Self>) -> Option<Entity<HubWindow>> {
+    pub fn session_lists(
+        &mut self,
+        hub: &HubId,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<HubSessionLists>> {
         let index = self.entries.iter().position(|e| e.record.id() == *hub)?;
-        if let Some(live) = &self.entries[index].window {
+        if let Some(live) = &self.entries[index].lists {
             return Some(live.entity.clone());
         }
         let sessions = std::sync::Arc::clone(&self.deps.sessions);
-        let entity = cx.new(|_| HubWindow::new(hub.clone(), sessions));
+        let entity = cx.new(|_| HubSessionLists::new(hub.clone(), sessions));
         let id = hub.clone();
         let events = cx.subscribe(&entity, move |hubs, _, event, cx| {
-            if let HubWindowEvent::Failed(error) = event {
-                hubs.window_failed(&id, error, cx);
+            if let HubSessionListsEvent::Failed(error) = event {
+                hubs.lists_failed(&id, error, cx);
             }
         });
         let entry = &mut self.entries[index];
-        entry.window = Some(LiveWindow {
+        entry.lists = Some(LiveLists {
             entity: entity.clone(),
             _events: events,
         });
@@ -248,9 +252,9 @@ impl Hubs {
         Some(entity)
     }
 
-    /// A call of a hub window failed. Only a hub that was online changes its status; a lost
+    /// A call of the session lists failed. Only a hub that was online changes its status; a lost
     /// session sends the hub through a new connection, which finds out why.
-    fn window_failed(&mut self, hub: &HubId, error: &HubError, cx: &mut Context<Self>) {
+    fn lists_failed(&mut self, hub: &HubId, error: &HubError, cx: &mut Context<Self>) {
         if !self.status(hub).is_some_and(|status| status.is_online()) {
             return;
         }

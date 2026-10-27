@@ -1,5 +1,5 @@
-//! What the window of one hub reads and does on the hub: its account, nodes and sessions,
-//! shared by every window of that hub.
+//! What the sessions panel reads and does on one hub: its account, nodes and sessions,
+//! shared by every window.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -16,7 +16,7 @@ use nocterm_hubs_model::{
 /// the list of sessions.
 const POLL: Duration = Duration::from_secs(5);
 
-/// The lists of a hub window, as last read.
+/// The lists of a hub, as last read.
 #[derive(Clone, Debug)]
 pub enum Load {
     /// Nothing was asked yet.
@@ -28,15 +28,15 @@ pub enum Load {
     Failed(HubError),
 }
 
-/// What happens to a hub window's lists.
+/// What happens to a hub's lists.
 #[derive(Clone, Debug)]
-pub enum HubWindowEvent {
+pub enum HubSessionListsEvent {
     Changed,
     /// A call failed; the registry decides what it says about the hub's status.
     Failed(HubError),
 }
 
-/// Keeps the lists of a hub window fresh while it is alive.
+/// Keeps the lists of a hub fresh while it is alive.
 #[must_use = "the lists stop refreshing when the watch is dropped"]
 pub struct Watch {
     watchers: Rc<Cell<usize>>,
@@ -50,7 +50,7 @@ impl Drop for Watch {
 
 /// The hub's account, nodes and sessions for one organization, and the transports that
 /// attach tabs to its sessions.
-pub struct HubWindow {
+pub struct HubSessionLists {
     hub: HubId,
     sessions: Arc<dyn HubSessions>,
     account: Option<Account>,
@@ -75,9 +75,9 @@ struct Polling {
     task: Option<Task<()>>,
 }
 
-impl EventEmitter<HubWindowEvent> for HubWindow {}
+impl EventEmitter<HubSessionListsEvent> for HubSessionLists {}
 
-impl HubWindow {
+impl HubSessionLists {
     pub(crate) fn new(hub: HubId, sessions: Arc<dyn HubSessions>) -> Self {
         Self {
             hub,
@@ -136,7 +136,7 @@ impl HubWindow {
         // The lists are those of the other organization until the next read finishes.
         self.load = Load::Loading;
         self.refresh(cx);
-        cx.emit(HubWindowEvent::Changed);
+        cx.emit(HubSessionListsEvent::Changed);
         cx.notify();
     }
 
@@ -149,7 +149,7 @@ impl HubWindow {
         }
         if matches!(self.load, Load::Idle) {
             self.load = Load::Loading;
-            cx.emit(HubWindowEvent::Changed);
+            cx.emit(HubSessionListsEvent::Changed);
             cx.notify();
         }
         let sessions = Arc::clone(&self.sessions);
@@ -187,10 +187,10 @@ impl HubWindow {
             }
             Err(error) => {
                 self.load = Load::Failed(error.clone());
-                cx.emit(HubWindowEvent::Failed(error));
+                cx.emit(HubSessionListsEvent::Failed(error));
             }
         }
-        cx.emit(HubWindowEvent::Changed);
+        cx.emit(HubSessionListsEvent::Changed);
         cx.notify();
         if std::mem::take(&mut self.reading.again) {
             self.refresh(cx);
@@ -209,7 +209,7 @@ impl HubWindow {
             let ended = sessions.end(&hub, &session).await;
             this.update(cx, |window, cx| {
                 if let Err(error) = &ended {
-                    cx.emit(HubWindowEvent::Failed(error.clone()));
+                    cx.emit(HubSessionListsEvent::Failed(error.clone()));
                 }
                 window.refresh(cx);
             })

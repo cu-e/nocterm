@@ -99,7 +99,7 @@ impl SessionsPanel {
         let workspace = self.workspace.upgrade()?;
         let state = self
             .hubs
-            .update(cx, |hubs, cx| hubs.window(&hub, cx))?;
+            .update(cx, |hubs, cx| hubs.session_lists(&hub, cx))?;
         let tabs = HubTabs::new(
             self.hubs.clone(),
             hub.clone(),

@@ -381,10 +381,11 @@ See [the patch notes](vendor/alacritty_terminal/NOCTERM.md) before updating it.
 
 ## Hubs
 
-A window can work in the environment of a self-hosted Nocterm server instead of the local one:
-choose **Sign in to a server** in the environment menu at the left of the title bar, verify the
-certificate fingerprint and sign in. A hub window offers the hub's terminal sessions, which keep
-running when you close their tabs. See [hubs](docs/HUBS.md).
+Sign in to a self-hosted Nocterm server with **Hubs: Sign in to server** in the command palette
+(or from the Servers settings page), verify the certificate fingerprint and sign in. The hub's
+terminal sessions are listed in the Sessions panel of any window, and keep running when you
+close their tabs.
+See [hubs](docs/HUBS.md).
 
 ## AI agents
 

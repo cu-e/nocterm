@@ -339,7 +339,7 @@ with the one `Hubs` entity every window shares ([ADR 0099](../adr/0099-windows-h
   a known server keeps the certificate it was pinned with, and one whose certificate changed is
   removed before signing in again. Signing in again to a known server goes through its row, with
   a fixed address.
-- `HubWindow` serves the sessions panel for one hub: the account and its organizations, the nodes and the
+- `HubSessionLists` serves the sessions panel for one hub: the account and its organizations, the nodes and the
   sessions of one organization, ending a session, and the transport that attaches a tab to
   one. The hub has no push for the list of sessions, so the lists are read again every 5
   seconds while somebody watches them and after each action, and requests in flight are

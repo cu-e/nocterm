@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use gpui_kit::{App, Entity, WeakEntity, Window};
-use nocterm_hubs::{HubWindow, Hubs};
+use nocterm_hubs::{HubSessionLists, Hubs};
 use nocterm_hubs_model::{HubId, HubSessionSummary, HubTerminalTarget, NodeId, NodeSummary};
 use nocterm_session::Target;
 use nocterm_workspace::Workspace;
@@ -77,8 +77,9 @@ impl HubTabs {
         self.open(title, target, window, cx);
     }
 
-    fn state(&self, cx: &mut App) -> Option<Entity<HubWindow>> {
-        self.hubs.update(cx, |hubs, cx| hubs.window(&self.hub, cx))
+    fn state(&self, cx: &mut App) -> Option<Entity<HubSessionLists>> {
+        self.hubs
+            .update(cx, |hubs, cx| hubs.session_lists(&self.hub, cx))
     }
 
     /// Opens the tab of a session; false when it did not open.
