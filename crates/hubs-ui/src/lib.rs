@@ -26,14 +26,18 @@
 //! it is sent; switching a window with tabs away from this computer asks first; closing the
 //! sign-in dialog cancels a sign-in in flight.
 
+mod color;
 mod installation;
 mod layout;
+mod manage;
 mod menu;
 mod messages;
 mod ports;
 mod problems;
+mod servers;
 mod sessions;
 mod sign_in;
+mod status;
 mod switch;
 mod tabs;
 mod window;
@@ -45,6 +49,7 @@ pub use menu::install_menu;
 pub use ports::{
     EnvironmentOpenError, EnvironmentOpener, HubTabError, HubTerminalOpener, Placement,
 };
+pub use servers::settings_page;
 pub use window::{HubWindowError, register_hub_window};
 
 gpui_kit::actions!(

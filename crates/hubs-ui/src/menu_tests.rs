@@ -1,5 +1,5 @@
 //! The environment menu lists this computer and the known servers, and opens what is chosen.
-use super::chip;
+use crate::status::chip;
 use crate::test_support::{Fixture, fixture, fixture_over, hub_id, pinned_record, server};
 use crate::{OpenEnvironmentMenu, Placement};
 use gpui_kit::{AppContext as _, Hsla, TestAppContext, hsla};

@@ -24,8 +24,10 @@ use nocterm_hubs_model::Environment;
 use nocterm_ui::IconName;
 use nocterm_workspace::Workspace;
 
+use crate::color::tint;
 use crate::installation::Installed;
 use crate::ports::{EnvironmentOpener, Placement};
+use crate::status::{status_chip, status_icon};
 use crate::switch::Switch;
 use crate::{OpenEnvironmentMenu, SignInToServer, problems, sign_in};
 
@@ -91,6 +93,15 @@ impl EnvironmentMenu {
         cx.notify();
     }
 
+    /// The colour of the server this window shows, when the owner chose one.
+    fn mark(&self, cx: &App) -> Option<Hsla> {
+        let Environment::Hub(id) = &self.environment else {
+            return None;
+        };
+        let color = self.hubs.read(cx).summary(id)?.color?;
+        Some(tint(color, cx))
+    }
+
     fn label(&self, cx: &App) -> SharedString {
         match &self.environment {
             Environment::Local => "This computer".into(),
@@ -110,10 +121,14 @@ impl Render for EnvironmentMenu {
             Environment::Local => IconName::Terminal,
             Environment::Hub(_) => IconName::Server,
         };
+        let mark = self.mark(cx);
         let trigger = Button::new("environment-menu")
             .ghost()
             .small()
-            .icon(icon)
+            .icon(match mark {
+                Some(color) => Icon::new(icon).text_color(color),
+                None => Icon::new(icon),
+            })
             .label(self.label(cx));
         let list = self.list.clone();
         let focus = list.read(cx).focus_handle(cx);
@@ -280,12 +295,16 @@ impl EnvironmentList {
     fn render_row(&self, index: usize, row: &Row, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let (muted, hover, accent) = (theme.muted_foreground, theme.accent, theme.accent);
+        let icon_color = match row {
+            Row::Hub(summary) => summary.color.map_or(muted, |color| tint(color, cx)),
+            _ => muted,
+        };
         let (icon, label, chip) = match row {
             Row::Local => (IconName::Terminal, "This computer".to_owned(), None),
             Row::Hub(summary) => (
                 status_icon(&summary.status),
                 summary.label.clone(),
-                Some(self.chip(&summary.status, cx)),
+                Some(status_chip(&summary.status, cx)),
             ),
             Row::SignIn => (
                 IconName::ServerPlus,
@@ -307,7 +326,7 @@ impl EnvironmentList {
             .cursor_pointer()
             .hover(|style| style.bg(hover))
             .when(index == self.selected, |style| style.bg(accent))
-            .child(Icon::new(icon).small().text_color(muted))
+            .child(Icon::new(icon).small().text_color(icon_color))
             .child(div().flex_1().min_w_0().truncate().text_sm().child(label))
             .when(current, |style| {
                 style.child(Icon::new(IconName::Check).small().text_color(muted))
@@ -337,52 +356,6 @@ impl EnvironmentList {
                 this.activate(row_click.clone(), placement, window, cx);
             }))
             .into_any_element()
-    }
-
-    fn chip(&self, status: &HubStatus, cx: &App) -> (SharedString, Hsla) {
-        let theme = cx.theme();
-        let now = cx.background_executor().now();
-        chip(
-            status,
-            now,
-            theme.success,
-            theme.muted_foreground,
-            theme.warning,
-            theme.danger,
-        )
-    }
-}
-
-/// How a server's status reads in the list, and in what colour.
-fn chip(
-    status: &HubStatus,
-    now: std::time::Instant,
-    good: Hsla,
-    quiet: Hsla,
-    warn: Hsla,
-    bad: Hsla,
-) -> (SharedString, Hsla) {
-    match status {
-        HubStatus::Online => ("Online".into(), good),
-        HubStatus::Connecting => ("Connecting…".into(), quiet),
-        HubStatus::Offline { retry_at } => {
-            let seconds = retry_at.saturating_duration_since(now).as_secs_f64().ceil();
-            (format!("Offline · retry in {seconds:.0} s").into(), warn)
-        }
-        HubStatus::SignedOut => ("Sign-in required".into(), warn),
-        HubStatus::Revoked => ("Device revoked".into(), bad),
-        HubStatus::TrustFailed { .. } => ("Certificate changed".into(), bad),
-        HubStatus::UpgradeRequired { .. } => ("Update Nocterm".into(), warn),
-    }
-}
-
-fn status_icon(status: &HubStatus) -> IconName {
-    match status {
-        HubStatus::Online | HubStatus::Connecting | HubStatus::SignedOut => IconName::Server,
-        HubStatus::Offline { .. } => IconName::ServerOff,
-        HubStatus::Revoked | HubStatus::TrustFailed { .. } | HubStatus::UpgradeRequired { .. } => {
-            IconName::TriangleAlert
-        }
     }
 }
 
