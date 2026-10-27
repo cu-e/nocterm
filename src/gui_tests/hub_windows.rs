@@ -206,9 +206,11 @@ fn a_hub_window_shows_its_sessions_before_the_snippets(cx: &mut TestAppContext) 
     let window = open(&booted, Environment::Hub(hub_id()), cx);
     let workspace = workspace_of(window, cx);
 
-    assert!(cx.update(|cx| workspace
-        .read(cx)
-        .panel_is_open(&nocterm_hubs_ui::plugin::SESSIONS.id)));
+    assert!(cx.update(|cx| {
+        workspace
+            .read(cx)
+            .panel_is_open(&nocterm_hubs_ui::plugin::SESSIONS.id)
+    }));
 }
 
 #[gpui_kit::test]

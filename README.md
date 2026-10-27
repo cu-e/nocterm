@@ -343,13 +343,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
 NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm-hub-io --test hub
+NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm hub_live
 cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
 cargo doc --workspace --no-deps
 ```
 
-The hub test needs a running hub (`docker compose up` in the server's repository) and
+The hub tests (the adapter and `hub_live`, which drives the windows) need a running hub (`docker compose up` in the server's repository) and
 `NOCTERM_HUB_ADDRESS`, `NOCTERM_HUB_FINGERPRINT`, `NOCTERM_HUB_USERNAME` and `NOCTERM_HUB_PASSWORD`.
 Without `NOCTERM_REQUIRE_HUB=1` it passes when they are missing; with it, missing variables or a
 missing hub fail the run.

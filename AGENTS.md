@@ -181,6 +181,7 @@ cargo build --locked --release --target wasm32-unknown-unknown --manifest-path e
 NOCTERM_GUEST_WASM=$PWD/examples/plugins/focus-timer/target/wasm32-unknown-unknown/release/focus_timer.wasm NOCTERM_REQUIRE_WASM_GUEST=1 cargo test -p nocterm --features nocterm/user-plugins user_plugin
 NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
 NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm-hub-io --test hub
+NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm hub_live
 cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture

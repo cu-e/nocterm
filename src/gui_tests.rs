@@ -17,6 +17,7 @@ use nocterm_workspace::{SessionSpec, Workspace};
 mod agent_installation;
 mod chat_history;
 mod default_shell_geometry;
+mod hub_live;
 mod hub_windows;
 mod keymap;
 mod menu_layouts;
