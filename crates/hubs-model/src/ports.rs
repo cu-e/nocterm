@@ -103,7 +103,8 @@ impl HubTerminal {
     }
 
     /// A transport that starts a session when it is opened. `created` receives its id once the
-    /// hub has made it; it is cancelled if the session was never made.
+    /// hub has made it. The transport holds the sender, so the receiver is cancelled when the
+    /// transport is dropped, which is when the tab that uses it closes.
     pub fn starting(
         transport: Arc<dyn Transport>,
         created: oneshot::Receiver<HubSessionId>,

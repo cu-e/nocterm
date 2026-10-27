@@ -177,14 +177,68 @@ async fn a_preferred_organization_the_account_belongs_to_is_shown_instead_of_the
 async fn a_preferred_organization_asked_after_the_first_read_switches_to_it(
     cx: &mut TestAppContext,
 ) {
-    let (fx, window) = open(cx);
+    let hub = FakeHub::new().with_server(server());
+    hub.sign_in_as(&id(), "ada");
+    let fx = fixture(cx, hub, vec![pinned_record()]);
     two_organizations(&fx);
+    let window = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .expect("a known hub");
+    cx.run_until_parked();
+    window.read_with(cx, |window, _| {
+        assert_eq!(window.org(), Some(&OrgId::new("lab")));
+    });
 
     window.update(cx, |window, cx| window.prefer_org(OrgId::new("zoo"), cx));
     cx.run_until_parked();
 
     window.read_with(cx, |window, _| {
         assert_eq!(window.org(), Some(&OrgId::new("zoo")));
+    });
+}
+
+#[gpui::test]
+async fn a_preferred_organization_asked_while_the_first_read_runs_still_wins(
+    cx: &mut TestAppContext,
+) {
+    let hub = FakeHub::new().with_server(server());
+    hub.sign_in_as(&id(), "ada");
+    let fx = fixture(cx, hub, vec![pinned_record()]);
+    two_organizations(&fx);
+    let release = fx.hub.hold(FakeOp::Account);
+    let window = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .expect("a known hub");
+    cx.run_until_parked();
+
+    window.update(cx, |window, cx| window.prefer_org(OrgId::new("zoo"), cx));
+    release.release();
+    cx.run_until_parked();
+
+    window.read_with(cx, |window, _| {
+        assert_eq!(window.org(), Some(&OrgId::new("zoo")));
+        assert!(matches!(window.load(), Load::Loaded));
+        let titles: Vec<_> = window.sessions().iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, ["zoo shell"]);
+    });
+}
+
+#[gpui::test]
+async fn the_sessions_of_another_organization_can_be_read_without_showing_it(
+    cx: &mut TestAppContext,
+) {
+    let (fx, window) = open(cx);
+    two_organizations(&fx);
+
+    let task = window.update(cx, |window, cx| window.list_sessions(OrgId::new("zoo"), cx));
+    let listed = task.await.expect("the hub answers");
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].title, "zoo shell");
+    window.read_with(cx, |window, _| {
+        assert_eq!(window.org(), Some(&OrgId::new("lab")));
     });
 }
 

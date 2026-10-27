@@ -145,7 +145,8 @@ impl HubWindow {
 
     /// Asks for the organization a window had before a restart. It is shown if the account
     /// still belongs to it; otherwise the organization shown first is kept. Before the account
-    /// is known the wish waits for the first read.
+    /// is known the wish waits for the read that finds it, also one that is under way now: if
+    /// that read showed another organization, the wanted one is read next.
     pub fn prefer_org(&mut self, org: OrgId, cx: &mut Context<Self>) {
         match &self.account {
             Some(account) if account.orgs.iter().any(|known| known.id == org) => {
@@ -196,12 +197,25 @@ impl HubWindow {
         match read {
             Ok(read) if self.org != asked => self.account = Some(read.account),
             Ok(read) => {
-                self.org = read.org;
-                self.preferred = None;
-                self.account = Some(read.account);
-                self.nodes = read.nodes;
-                self.list = read.sessions;
-                self.load = Load::Loaded;
+                let wish = self.preferred.take().filter(|wish| {
+                    read.org.as_ref() != Some(wish)
+                        && read.account.orgs.iter().any(|org| org.id == *wish)
+                });
+                if let Some(wish) = wish {
+                    // The read did not know the wish: its lists are those of another organization.
+                    self.account = Some(read.account);
+                    self.org = Some(wish);
+                    self.nodes.clear();
+                    self.list.clear();
+                    self.load = Load::Loading;
+                    self.reading.again = true;
+                } else {
+                    self.org = read.org;
+                    self.account = Some(read.account);
+                    self.nodes = read.nodes;
+                    self.list = read.sessions;
+                    self.load = Load::Loaded;
+                }
             }
             Err(error) => {
                 self.load = Load::Failed(error.clone());
@@ -234,6 +248,18 @@ impl HubWindow {
             .ok();
             ended
         })
+    }
+
+    /// Reads the sessions of `org`, which need not be the organization shown: what a tab
+    /// remembered from another organization is looked up there. Nothing in the window changes.
+    pub fn list_sessions(
+        &self,
+        org: OrgId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<HubSessionSummary>, HubError>> {
+        let sessions = Arc::clone(&self.sessions);
+        let hub = self.hub.clone();
+        cx.spawn(async move |_, _| sessions.sessions(&hub, &org).await)
     }
 
     /// The terminal of a tab attached to a session, which says which session a new one became.

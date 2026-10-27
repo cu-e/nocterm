@@ -4,12 +4,19 @@ use gpui_kit::TestAppContext;
 use nocterm_hubs_model::testing::{FakeCall, FakeHub};
 use nocterm_hubs_model::{
     Environment, HubSessionId, HubSessionState, HubTerminalTarget, HubWindowMemory, OrgId,
+    RememberedSession,
 };
 
 fn memory(organization: Option<&str>, sessions: &[&str]) -> HubWindowMemory {
     HubWindowMemory::new(
         organization.map(OrgId::new),
-        sessions.iter().map(|id| HubSessionId::new(*id)).collect(),
+        sessions
+            .iter()
+            .map(|entry| {
+                let (org, id) = entry.split_once('/').unwrap_or(("lab", entry));
+                RememberedSession::new(OrgId::new(org), HubSessionId::new(id))
+            })
+            .collect(),
     )
 }
 
@@ -131,8 +138,8 @@ fn the_sessions_that_still_run_are_attached_again_in_order(cx: &mut TestAppConte
     assert_eq!(titles(&window), ["top", "make"]);
     assert!(attached(&window, "s1") && attached(&window, "s2"));
     assert_eq!(
-        window.memory.latest().unwrap().sessions(),
-        [HubSessionId::new("s2"), HubSessionId::new("s1")]
+        window.memory.latest(),
+        Some(memory(Some("lab"), &["s2", "s1"]))
     );
 }
 
@@ -162,11 +169,40 @@ fn the_remembered_organization_is_shown_when_the_account_still_belongs_to_it(
         "zoo shell",
     ));
 
-    let window = restored_fixture(cx, hub, memory(Some("zoo"), &["z1", "s1"]));
+    let window = restored_fixture(cx, hub, memory(Some("zoo"), &["zoo/z1"]));
 
-    // s1 runs in lab, which is not the organization shown, so only z1 comes back.
     assert_eq!(titles(&window), ["zoo shell"]);
-    assert_eq!(window.memory.latest(), Some(memory(Some("zoo"), &["z1"])));
+    assert_eq!(
+        window.memory.latest(),
+        Some(memory(Some("zoo"), &["zoo/z1"]))
+    );
+}
+
+#[gpui_kit::test]
+fn a_tab_of_another_organization_than_the_one_shown_comes_back_too(cx: &mut TestAppContext) {
+    let hub = FakeHub::new().with_server(server().with_membership("ada", "zoo").with_session(
+        "z1",
+        "zoo",
+        "n1",
+        "ada",
+        "zoo shell",
+    ));
+
+    let window = restored_fixture(cx, hub, memory(Some("zoo"), &["lab/s1", "zoo/z1"]));
+
+    assert_eq!(titles(&window), ["make", "zoo shell"]);
+    assert_eq!(
+        window.memory.latest(),
+        Some(memory(Some("zoo"), &["lab/s1", "zoo/z1"]))
+    );
+}
+
+#[gpui_kit::test]
+fn a_session_of_an_organization_the_account_left_is_dropped(cx: &mut TestAppContext) {
+    let window = restored_fixture(cx, lab(), memory(Some("lab"), &["gone/g1", "s1"]));
+
+    assert_eq!(titles(&window), ["make"]);
+    assert_eq!(window.memory.latest(), Some(memory(Some("lab"), &["s1"])));
 }
 
 #[gpui_kit::test]

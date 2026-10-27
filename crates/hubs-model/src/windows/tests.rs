@@ -246,7 +246,13 @@ fn closing_a_window_leaves_the_kept_environments() {
 fn memory(organization: Option<&str>, sessions: &[&str]) -> HubWindowMemory {
     HubWindowMemory::new(
         organization.map(OrgId::new),
-        sessions.iter().map(|id| HubSessionId::new(*id)).collect(),
+        sessions
+            .iter()
+            .map(|entry| {
+                let (org, id) = entry.split_once('/').unwrap_or(("lab", entry));
+                RememberedSession::new(OrgId::new(org), HubSessionId::new(id))
+            })
+            .collect(),
     )
 }
 
@@ -276,6 +282,18 @@ fn the_organization_and_sessions_of_a_hub_window_round_trip_in_order() {
 }
 
 #[test]
+fn tabs_of_several_organizations_are_remembered_each_with_its_own() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, hub("hub.home"));
+    let shown = memory(Some("zoo"), &["lab/s1", "zoo/z1"]);
+    windows.remembered(1, &hub_id("hub.home"), shown.clone());
+
+    let read = WindowDocument::decode(&windows.document().encode().unwrap()).unwrap();
+
+    assert_eq!(read.records()[0].hub(), &shown);
+}
+
+#[test]
 fn the_text_keeps_the_memory_under_the_hub_key_of_the_record() {
     let mut windows = OpenWindows::default();
     windows.opened(1, hub("hub.home"));
@@ -285,7 +303,8 @@ fn the_text_keeps_the_memory_under_the_hub_key_of_the_record() {
 
     assert_eq!(value["version"], 1);
     assert_eq!(value["windows"][0]["hub"]["organization"], "lab");
-    assert_eq!(value["windows"][0]["hub"]["sessions"][0], "s1");
+    assert_eq!(value["windows"][0]["hub"]["sessions"][0]["id"], "s1");
+    assert_eq!(value["windows"][0]["hub"]["sessions"][0]["org"], "lab");
 }
 
 #[test]

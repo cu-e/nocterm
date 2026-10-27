@@ -8,7 +8,7 @@ use futures::future::{self, Either};
 use gpui_kit::{App, Entity, WeakEntity, Window};
 use nocterm_hubs::{HubWindow, Hubs};
 use nocterm_hubs_model::{
-    HubId, HubSessionId, HubSessionSummary, HubTerminalTarget, NodeId, NodeSummary,
+    HubId, HubSessionId, HubSessionSummary, HubTerminalTarget, NodeId, NodeSummary, OrgId,
 };
 use nocterm_session::{ConnectRequest, Session, Target, Transport};
 use nocterm_workspace::Workspace;
@@ -65,13 +65,13 @@ impl HubTabs {
         Self { site, remembered }
     }
 
-    /// Attaches a tab to a session that runs.
+    /// Attaches a tab to a session that runs; false when the tab could not open.
     pub(crate) fn open_existing(
         &self,
         session: &HubSessionSummary,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> bool {
         let title = if session.title.is_empty() {
             "Session".to_owned()
         } else {
@@ -79,10 +79,11 @@ impl HubTabs {
         };
         self.open(
             title,
+            session.org.clone(),
             HubTerminalTarget::Existing(session.id.clone()),
             window,
             cx,
-        );
+        )
     }
 
     /// Starts a shell on `node`, or on a machine the hub picks, and attaches a tab to it.
@@ -105,7 +106,11 @@ impl HubTabs {
             );
             return;
         };
-        self.open(title, target, window, cx);
+        let HubTerminalTarget::New { org, .. } = &target else {
+            return;
+        };
+        let org = org.clone();
+        self.open(title, org, target, window, cx);
     }
 
     fn state(&self, cx: &mut App) -> Option<Entity<HubWindow>> {
@@ -113,9 +118,17 @@ impl HubTabs {
         site.hubs.update(cx, |hubs, cx| hubs.window(&site.hub, cx))
     }
 
-    fn open(&self, title: String, target: HubTerminalTarget, window: &mut Window, cx: &mut App) {
+    /// Opens the tab of a session of `org`; false when it did not open.
+    fn open(
+        &self,
+        title: String,
+        org: OrgId,
+        target: HubTerminalTarget,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
         let Some(state) = self.state(cx) else {
-            return;
+            return false;
         };
         let known = match &target {
             HubTerminalTarget::Existing(session) => Some(session.clone()),
@@ -138,7 +151,7 @@ impl HubTabs {
             .record(&self.site.hub)
             .map(|r| r.address.clone())
         else {
-            return;
+            return false;
         };
         let destination = Target::new(user, address.host(), address.port());
         let opener = Rc::clone(&self.site.opener);
@@ -149,8 +162,9 @@ impl HubTabs {
             Ok(Ok(())) => {
                 let tab = self
                     .remembered
-                    .update(cx, |remembered, cx| remembered.tab_opened(known, cx));
+                    .update(cx, |remembered, cx| remembered.tab_opened(org, known, cx));
                 self.follow(tab, created, closed, cx);
+                true
             }
             Ok(Err(error)) => {
                 nocterm_ui::notice::error(
@@ -160,8 +174,9 @@ impl HubTabs {
                     "Could not open the session",
                     error.to_string(),
                 );
+                false
             }
-            Err(_) => {}
+            Err(_) => false,
         }
     }
 

@@ -17,16 +17,38 @@ use crate::{
 /// The version this application writes and reads.
 const VERSION: u32 = 1;
 
+/// A session a tab is attached to, with the organization it belongs to: tabs of several
+/// organizations can be open in one window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RememberedSession {
+    org: OrgId,
+    id: HubSessionId,
+}
+
+impl RememberedSession {
+    pub const fn new(org: OrgId, id: HubSessionId) -> Self {
+        Self { org, id }
+    }
+
+    pub const fn org(&self) -> &OrgId {
+        &self.org
+    }
+
+    pub const fn id(&self) -> &HubSessionId {
+        &self.id
+    }
+}
+
 /// What a window of a hub keeps beyond its server: the organization it shows and the sessions
 /// its tabs are attached to, in the order the tabs opened.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HubWindowMemory {
     organization: Option<OrgId>,
-    sessions: Vec<HubSessionId>,
+    sessions: Vec<RememberedSession>,
 }
 
 impl HubWindowMemory {
-    pub const fn new(organization: Option<OrgId>, sessions: Vec<HubSessionId>) -> Self {
+    pub const fn new(organization: Option<OrgId>, sessions: Vec<RememberedSession>) -> Self {
         Self {
             organization,
             sessions,
@@ -39,7 +61,7 @@ impl HubWindowMemory {
     }
 
     /// The sessions the window's tabs were attached to.
-    pub fn sessions(&self) -> &[HubSessionId] {
+    pub fn sessions(&self) -> &[RememberedSession] {
         &self.sessions
     }
 
@@ -301,7 +323,13 @@ struct SavedHub {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     organization: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    sessions: Vec<String>,
+    sessions: Vec<SavedSession>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedSession {
+    org: String,
+    id: String,
 }
 
 impl SavedHub {
@@ -312,7 +340,10 @@ impl SavedHub {
             sessions: memory
                 .sessions()
                 .iter()
-                .map(|session| session.as_str().to_owned())
+                .map(|session| SavedSession {
+                    org: session.org().as_str().to_owned(),
+                    id: session.id().as_str().to_owned(),
+                })
                 .collect(),
         })
     }
@@ -322,7 +353,13 @@ impl From<SavedHub> for HubWindowMemory {
     fn from(saved: SavedHub) -> Self {
         Self::new(
             saved.organization.map(OrgId::new),
-            saved.sessions.into_iter().map(HubSessionId::new).collect(),
+            saved
+                .sessions
+                .into_iter()
+                .map(|session| {
+                    RememberedSession::new(OrgId::new(session.org), HubSessionId::new(session.id))
+                })
+                .collect(),
         )
     }
 }

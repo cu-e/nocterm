@@ -3,8 +3,8 @@
 use std::rc::Rc;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, WeakEntity, Window};
-use nocterm_hubs::{HubWindow, Load};
-use nocterm_hubs_model::{Environment, HubId, HubWindowMemory};
+use nocterm_hubs::HubWindow;
+use nocterm_hubs_model::{Environment, HubId, HubWindowMemory, OrgId};
 use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};
 
 use crate::installation::Installed;
@@ -39,8 +39,8 @@ pub struct HubWindowPorts {
 ///
 /// `restored` is what the window kept of the hub before a restart: it shows that organization
 /// if the account still belongs to it, and attaches tabs again to the sessions that still run,
-/// as soon as the hub lists them (at once if it has, later if it is not reachable yet). A
-/// session the hub no longer lists is forgotten without a word.
+/// as soon as the hub lists the sessions of their organization (at once if it can, later if it
+/// is not reachable yet). A session the hub no longer lists is forgotten without a word.
 ///
 /// The action [`OpenHubSessions`] is registered even when the workspace refuses the panel.
 pub fn register_hub_window(
@@ -121,8 +121,8 @@ fn follow_hub(
     });
 }
 
-/// Brings the memory up to date with the hub window and, when the sessions of the shown
-/// organization are listed, attaches the remembered ones that still run.
+/// Brings the memory up to date with the hub window and, once the account is known, looks for
+/// the remembered sessions of each organization they belong to.
 fn settle(
     state: &Entity<HubWindow>,
     site: &TabSite,
@@ -133,10 +133,12 @@ fn settle(
     let Some(remembered) = remembered.upgrade() else {
         return;
     };
-    let (organization, listed) = state.read_with(cx, |state, _| {
+    let (organization, member_of) = state.read_with(cx, |state, _| {
         (
             state.org().cloned(),
-            matches!(state.load(), Load::Loaded).then(|| state.sessions().to_vec()),
+            state
+                .account()
+                .map(|account| account.orgs.iter().map(|org| org.id.clone()).collect()),
         )
     });
     if let Some(organization) = organization {
@@ -144,15 +146,57 @@ fn settle(
             remembered.organization_shown(organization, cx);
         });
     }
-    let Some(listed) = listed else {
+    let Some(member_of): Option<Vec<OrgId>> = member_of else {
         return;
     };
-    if !remembered.read(cx).is_waiting() {
+    for org in remembered.read(cx).waiting_orgs() {
+        if member_of.contains(&org) {
+            reattach(state, site, &remembered, org, window, cx);
+        } else {
+            // The account left the organization: nothing can be attached there any more.
+            remembered.update(cx, |remembered, cx| {
+                remembered.reattachable(&org, &[], cx);
+            });
+        }
+    }
+}
+
+/// Reads the sessions of `org` and attaches the remembered ones of it that still run. A read
+/// that fails leaves them remembered; the next change of the hub window tries again.
+fn reattach(
+    state: &Entity<HubWindow>,
+    site: &TabSite,
+    remembered: &Entity<Remembered>,
+    org: OrgId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if !remembered.update(cx, |remembered, _| remembered.begin_fetch(&org)) {
         return;
     }
-    let found = remembered.update(cx, |remembered, cx| remembered.reattachable(&listed, cx));
-    let tabs = HubTabs::new(site.clone(), remembered);
-    for session in &found {
-        tabs.open_existing(session, window, cx);
-    }
+    let listing = state.update(cx, |state, cx| state.list_sessions(org.clone(), cx));
+    let (site, remembered) = (site.clone(), remembered.downgrade());
+    window
+        .spawn(cx, async move |cx| {
+            let listed = listing.await;
+            let _ = cx.update(|window, cx| {
+                let Some(remembered) = remembered.upgrade() else {
+                    return;
+                };
+                remembered.update(cx, |remembered, _| remembered.end_fetch(&org));
+                let Ok(listed) = listed else {
+                    return;
+                };
+                let found = remembered.update(cx, |remembered, cx| {
+                    remembered.reattachable(&org, &listed, cx)
+                });
+                let tabs = HubTabs::new(site, remembered.clone());
+                for session in &found {
+                    if !tabs.open_existing(session, window, cx) {
+                        remembered.update(cx, |remembered, cx| remembered.tab_failed(session, cx));
+                    }
+                }
+            });
+        })
+        .detach();
 }
