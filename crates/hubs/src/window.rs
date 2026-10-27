@@ -8,10 +8,9 @@ use std::time::Duration;
 
 use gpui::{Context, EventEmitter, Task};
 use nocterm_hubs_model::{
-    Account, HubError, HubId, HubSessionId, HubSessionSummary, HubSessions, HubTerminalTarget,
-    NodeId, NodeSummary, OrgId,
+    Account, HubError, HubId, HubSessionId, HubSessionSummary, HubSessions, HubTerminal,
+    HubTerminalTarget, NodeId, NodeSummary, OrgId,
 };
-use nocterm_session::Transport;
 
 /// How often the lists are read again while somebody watches them: the hub has no push for
 /// the list of sessions.
@@ -56,6 +55,8 @@ pub struct HubWindow {
     sessions: Arc<dyn HubSessions>,
     account: Option<Account>,
     org: Option<OrgId>,
+    /// The organization a restored window asked for before the account was known.
+    preferred: Option<OrgId>,
     nodes: Vec<NodeSummary>,
     list: Vec<HubSessionSummary>,
     load: Load,
@@ -85,6 +86,7 @@ impl HubWindow {
             sessions,
             account: None,
             org: None,
+            preferred: None,
             nodes: Vec::new(),
             list: Vec::new(),
             load: Load::Idle,
@@ -139,6 +141,19 @@ impl HubWindow {
         cx.notify();
     }
 
+    /// Asks for the organization a window had before a restart. It is shown if the account
+    /// still belongs to it; otherwise the organization shown first is kept. Before the account
+    /// is known the wish waits for the first read.
+    pub fn prefer_org(&mut self, org: OrgId, cx: &mut Context<Self>) {
+        match &self.account {
+            Some(account) if account.orgs.iter().any(|known| known.id == org) => {
+                self.select_org(org, cx);
+            }
+            Some(_) => {}
+            None => self.preferred = Some(org),
+        }
+    }
+
     /// Reads the lists again. A read already under way is not doubled; it is repeated once
     /// it finishes, so the newest state wins.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -154,7 +169,11 @@ impl HubWindow {
         let sessions = Arc::clone(&self.sessions);
         let hub = self.hub.clone();
         let asked = self.org.clone();
-        let known = (self.account.clone(), asked.clone());
+        let known = Known {
+            account: self.account.clone(),
+            org: asked.clone(),
+            preferred: self.preferred.clone(),
+        };
         self.reading.task = Some(cx.spawn(async move |this, cx| {
             let read = read(&*sessions, &hub, known).await;
             this.update(cx, |window, cx| window.finish_read(asked, read, cx))
@@ -176,6 +195,7 @@ impl HubWindow {
             Ok(read) if self.org != asked => self.account = Some(read.account),
             Ok(read) => {
                 self.org = read.org;
+                self.preferred = None;
                 self.account = Some(read.account);
                 self.nodes = read.nodes;
                 self.list = read.sessions;
@@ -214,9 +234,9 @@ impl HubWindow {
         })
     }
 
-    /// The transport of a tab attached to a session. Closing the tab detaches; the process
-    /// keeps running on its node.
-    pub fn terminal(&self, target: HubTerminalTarget) -> Arc<dyn Transport> {
+    /// The terminal of a tab attached to a session, which says which session a new one became.
+    /// Closing the tab detaches; the process keeps running on its node.
+    pub fn terminal(&self, target: HubTerminalTarget) -> HubTerminal {
         self.sessions.terminal(&self.hub, target)
     }
 
@@ -265,17 +285,28 @@ struct Read {
     sessions: Vec<HubSessionSummary>,
 }
 
-/// The account if it is not known yet, then the nodes and sessions of the organization.
-async fn read(
-    sessions: &dyn HubSessions,
-    hub: &HubId,
-    (account, org): (Option<Account>, Option<OrgId>),
-) -> Result<Read, HubError> {
-    let account = match account {
+/// What a read starts from.
+struct Known {
+    account: Option<Account>,
+    org: Option<OrgId>,
+    preferred: Option<OrgId>,
+}
+
+/// The account if it is not known yet, then the nodes and sessions of the organization: the one
+/// chosen, else the preferred one the account belongs to, else the first.
+async fn read(sessions: &dyn HubSessions, hub: &HubId, known: Known) -> Result<Read, HubError> {
+    let account = match known.account {
         Some(account) => account,
         None => sessions.account(hub).await?,
     };
-    let org = org.or_else(|| first_org(&account));
+    let org = known
+        .org
+        .or_else(|| {
+            known
+                .preferred
+                .filter(|preferred| account.orgs.iter().any(|org| org.id == *preferred))
+        })
+        .or_else(|| first_org(&account));
     let (nodes, list) = match &org {
         Some(org) => {
             let (nodes, list) =

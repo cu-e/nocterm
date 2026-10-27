@@ -138,3 +138,72 @@ async fn a_new_session_target_names_the_shown_organization_and_a_terminal_record
     let _transport = window.read_with(cx, |window, _| window.terminal(target.clone()));
     assert!(fx.hub.calls().contains(&FakeCall::Terminal(id(), target)));
 }
+
+fn two_organizations(fx: &Fixture) {
+    fx.hub.edit_server(&address(), |server| {
+        *server = server.clone().with_membership("ada", "zoo").with_session(
+            "z1",
+            "zoo",
+            "n1",
+            "ada",
+            "zoo shell",
+        );
+    });
+}
+
+#[gpui::test]
+async fn a_preferred_organization_the_account_belongs_to_is_shown_instead_of_the_first(
+    cx: &mut TestAppContext,
+) {
+    let hub = FakeHub::new().with_server(server());
+    hub.sign_in_as(&id(), "ada");
+    let fx = fixture(cx, hub, vec![pinned_record()]);
+    two_organizations(&fx);
+    let window = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .expect("a known hub");
+    window.update(cx, |window, cx| window.prefer_org(OrgId::new("zoo"), cx));
+    cx.run_until_parked();
+
+    window.read_with(cx, |window, _| {
+        assert_eq!(window.org(), Some(&OrgId::new("zoo")));
+        let titles: Vec<_> = window.sessions().iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, ["zoo shell"]);
+    });
+}
+
+#[gpui::test]
+async fn a_preferred_organization_asked_after_the_first_read_switches_to_it(
+    cx: &mut TestAppContext,
+) {
+    let (fx, window) = open(cx);
+    two_organizations(&fx);
+
+    window.update(cx, |window, cx| window.prefer_org(OrgId::new("zoo"), cx));
+    cx.run_until_parked();
+
+    window.read_with(cx, |window, _| {
+        assert_eq!(window.org(), Some(&OrgId::new("zoo")));
+    });
+}
+
+#[gpui::test]
+async fn a_preferred_organization_the_account_left_is_ignored(cx: &mut TestAppContext) {
+    let hub = FakeHub::new().with_server(server());
+    hub.sign_in_as(&id(), "ada");
+    let fx = fixture(cx, hub, vec![pinned_record()]);
+    let window = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .expect("a known hub");
+    window.update(cx, |window, cx| window.prefer_org(OrgId::new("gone"), cx));
+    cx.run_until_parked();
+    window.update(cx, |window, cx| window.prefer_org(OrgId::new("gone"), cx));
+    cx.run_until_parked();
+
+    window.read_with(cx, |window, _| {
+        assert_eq!(window.org(), Some(&OrgId::new("lab")));
+        assert!(matches!(window.load(), Load::Loaded));
+    });
+}
