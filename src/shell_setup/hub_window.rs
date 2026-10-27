@@ -7,32 +7,44 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use gpui_kit::{Context, SharedString, Window};
-use nocterm_hubs_model::HubId;
-use nocterm_hubs_ui::{HubTabError, HubTerminalOpener};
+use gpui_kit::{App, Context, SharedString, Window, WindowId};
+use nocterm_hubs_model::{HubId, HubWindowMemory};
+use nocterm_hubs_ui::{HubMemoryKeeper, HubTabError, HubTerminalOpener, HubWindowPorts};
 use nocterm_session::{Target, Transport};
 use nocterm_workspace::Workspace;
 
-use crate::{bootstrap::Booted, windows::AppEnvironmentOpener};
+use crate::{
+    bootstrap::{Booted, Windowing},
+    windows::AppEnvironmentOpener,
+};
 
-/// Plugs the features of a hub window into `workspace`.
+/// Plugs the features of a hub window into `workspace`. `restored` is what the window kept of
+/// the hub before a restart.
 pub(crate) fn build_hub_workspace(
     workspace: &mut Workspace,
     booted: &Booted,
     hub: &HubId,
+    restored: &HubWindowMemory,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     // The sessions go first: of the panels in the sidebar the first registered is shown.
     if let Some(hubs) = booted.hubs() {
-        let terminals = Rc::new(AppHubTerminals {
-            terminal: booted.terminal().clone(),
-        });
+        let ports = HubWindowPorts {
+            environments: AppEnvironmentOpener::new(booted.clone()),
+            terminals: Rc::new(AppHubTerminals {
+                terminal: booted.terminal().clone(),
+            }),
+            memory: Rc::new(AppHubMemory {
+                windowing: booted.windowing().clone(),
+                window: window.window_handle().window_id(),
+            }),
+        };
         if let Err(error) = nocterm_hubs_ui::register_hub_window(
             hubs,
             hub.clone(),
-            AppEnvironmentOpener::new(booted.clone()),
-            terminals,
+            ports,
+            restored.clone(),
             workspace,
             window,
             cx,
@@ -68,5 +80,17 @@ impl HubTerminalOpener for AppHubTerminals {
             cx,
         )?;
         Ok(())
+    }
+}
+
+/// Keeps what a hub window holds of its server in the list of open windows.
+struct AppHubMemory {
+    windowing: Windowing,
+    window: WindowId,
+}
+
+impl HubMemoryKeeper for AppHubMemory {
+    fn keep(&self, hub: &HubId, memory: HubWindowMemory, cx: &mut App) {
+        self.windowing.remembered(self.window, hub, memory, cx);
     }
 }

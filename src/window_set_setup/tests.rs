@@ -25,7 +25,9 @@ fn previous(paths: &Paths, cx: &mut TestAppContext) -> Vec<Environment> {
         WindowSet::install(prepared, writer, &ShutdownCoordinator::default(), cx)
             .unwrap()
             .previous()
-            .to_vec()
+            .iter()
+            .map(|record| record.environment().clone())
+            .collect()
     })
 }
 

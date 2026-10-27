@@ -2,6 +2,11 @@
 use super::*;
 
 fn restore(booted: &Booted, previous: &[Environment], cx: &mut TestAppContext) {
+    let records: Vec<_> = previous.iter().cloned().map(WindowRecord::from).collect();
+    restore_records(booted, &records, cx);
+}
+
+pub(super) fn restore_records(booted: &Booted, previous: &[WindowRecord], cx: &mut TestAppContext) {
     cx.update(|cx| crate::windows::restore_windows(cx, booted, previous))
         .unwrap();
     cx.run_until_parked();

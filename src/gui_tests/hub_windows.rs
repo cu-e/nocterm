@@ -5,6 +5,7 @@ use crate::shell_setup::UserPluginMode;
 use gpui_kit::VisualTestContext;
 use nocterm_hubs_model::{
     Environment, Fingerprint, HubAddress, HubId, HubRecord, HubsSettings, TrustPolicy,
+    WindowRecord,
     testing::{FakeHub, FakeServer},
 };
 use nocterm_session::Command;
@@ -510,4 +511,5 @@ fn without_hubs_there_is_no_servers_page_to_manage(cx: &mut TestAppContext) {
     assert!(!available);
 }
 
+mod reattach;
 mod restore;

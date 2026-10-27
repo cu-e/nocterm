@@ -14,7 +14,7 @@ use gpui_kit::{
     component::TitleBar, px, size,
 };
 use nocterm_core::error::SharedCause;
-use nocterm_hubs_model::Environment;
+use nocterm_hubs_model::{Environment, HubWindowMemory, WindowRecord};
 use nocterm_hubs_ui::{EnvironmentOpenError, EnvironmentOpener, Placement};
 use nocterm_workspace::Workspace;
 
@@ -28,6 +28,17 @@ pub(crate) fn open_window(
     booted: &Booted,
     environment: Environment,
 ) -> Result<(), EnvironmentOpenError> {
+    open_remembered(cx, booted, WindowRecord::new(environment))
+}
+
+/// Opens a window to bring `record` back: its environment and, for a hub, the organization and
+/// sessions it kept, which it attaches again once the hub lists them.
+pub(crate) fn open_remembered(
+    cx: &mut App,
+    booted: &Booted,
+    record: WindowRecord,
+) -> Result<(), EnvironmentOpenError> {
+    let environment = record.environment().clone();
     let title = title_of(booted, &environment, cx)?;
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -47,16 +58,14 @@ pub(crate) fn open_window(
         window
             .observe_window_appearance(move |_, cx| themes.apply(cx))
             .detach();
-        let workspace = compose(booted, &environment, window, cx);
+        let workspace = compose(booted, &environment, record.hub(), window, cx);
         window.focus(&workspace.focus_handle(cx), cx);
         workspace
     })
     .map_err(|error| {
         EnvironmentOpenError::Window(SharedCause::new(std::io::Error::other(error)))
     })?;
-    booted
-        .windowing()
-        .opened(window.window_id(), environment, cx);
+    booted.windowing().opened(window.window_id(), record, cx);
     Ok(())
 }
 
@@ -71,7 +80,7 @@ pub(crate) fn replace_environment(
     let title = title_of(booted, environment, cx)?;
     let mut built = None;
     window.replace_root(cx, |window, cx| {
-        let workspace = compose(booted, environment, window, cx);
+        let workspace = compose(booted, environment, &HubWindowMemory::default(), window, cx);
         built = Some(workspace.clone());
         gpui_kit::base::Root::new(workspace, window, cx)
     });
@@ -101,10 +110,12 @@ fn title_of(
     }
 }
 
-/// Makes the workspace of `environment` for `window`.
+/// Makes the workspace of `environment` for `window`. `restored` is what a window of a hub kept
+/// before a restart.
 pub(crate) fn compose(
     booted: &Booted,
     environment: &Environment,
+    restored: &HubWindowMemory,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Workspace> {
@@ -115,7 +126,7 @@ pub(crate) fn compose(
                 crate::bootstrap::build_workspace(&mut workspace, booted, window, cx)
             }
             Environment::Hub(hub) => {
-                hub_window::build_hub_workspace(&mut workspace, booted, hub, window, cx);
+                hub_window::build_hub_workspace(&mut workspace, booted, hub, restored, window, cx);
             }
         }
         workspace

@@ -2,7 +2,7 @@
 //! list of windows that are open, remembered for the next start.
 
 use nocterm_core::Paths;
-use nocterm_hubs_model::{Environment, HubsSettings};
+use nocterm_hubs_model::{Environment, HubId, HubWindowMemory, HubsSettings, WindowRecord};
 use nocterm_settings::SettingsSection as _;
 use nocterm_window_set::{WindowSet, WindowSetError};
 
@@ -60,26 +60,40 @@ impl Windowing {
         self.hubs.as_ref()
     }
 
-    /// The environments the previous run left open, in order.
-    pub(crate) fn previous(&self) -> &[Environment] {
+    /// The windows the previous run left open, in order, with what each kept of its hub.
+    pub(crate) fn previous(&self) -> &[WindowRecord] {
         self.window_set.as_ref().map_or(&[], WindowSet::previous)
     }
 
     /// A remembered window could not open because its server is unknown. The server is
     /// forgotten when the list says it was removed; when the list is unavailable in this run
     /// the record stays in the document, so the next run can open it.
-    pub(crate) fn not_restored(&self, environment: Environment, cx: &mut App) {
+    pub(crate) fn not_restored(&self, record: WindowRecord, cx: &mut App) {
         if !self.hub_list_known
             && let Some(set) = &self.window_set
         {
-            set.kept(environment, cx);
+            set.kept(record, cx);
         }
     }
 
-    /// A window opened showing `environment`.
-    pub(crate) fn opened(&self, window: WindowId, environment: Environment, cx: &mut App) {
+    /// A window opened to show `record`: a new window, or one that comes back with what it kept
+    /// of its hub.
+    pub(crate) fn opened(&self, window: WindowId, record: WindowRecord, cx: &mut App) {
         if let Some(set) = &self.window_set {
-            set.opened(window, environment, cx);
+            set.restored(window, record, cx);
+        }
+    }
+
+    /// The window shows `hub` and now keeps `memory` of it.
+    pub(crate) fn remembered(
+        &self,
+        window: WindowId,
+        hub: &HubId,
+        memory: HubWindowMemory,
+        cx: &mut App,
+    ) {
+        if let Some(set) = &self.window_set {
+            set.remembered(window, hub, memory, cx);
         }
     }
 
@@ -88,6 +102,14 @@ impl Windowing {
         if let Some(set) = &self.window_set {
             set.switched(window, environment, cx);
         }
+    }
+
+    /// The windows that are open now, with what each keeps of its hub.
+    #[cfg(test)]
+    pub(crate) fn records(&self, cx: &App) -> Vec<WindowRecord> {
+        self.window_set
+            .as_ref()
+            .map_or_else(Vec::new, |set| set.records(cx))
     }
 
     /// The environments of the windows that are open now.
