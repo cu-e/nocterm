@@ -6,6 +6,7 @@
 //! every change so a vault can report its status without polling.
 
 mod flow;
+mod keyset_hub;
 #[cfg(test)]
 pub(crate) mod testing;
 

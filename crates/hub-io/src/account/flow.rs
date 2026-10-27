@@ -9,12 +9,13 @@
 use std::sync::Arc;
 
 use nocterm_core::SharedCause;
-use nocterm_hub_client::{HubClient, Keyset, KeysetError};
+use nocterm_hub_client::{Keyset, KeysetError};
 use nocterm_hub_proto::v1;
-use nocterm_hubs_model::{Account, HubError, HubId, KeyStatus};
+use nocterm_hubs_model::{HubError, HubId, KeyStatus};
 use nocterm_keys::{LoginError, LoginSecrets, RecoveryKey, UnlockKdf, UnlockKey};
 use nocterm_session::Secret;
 
+use super::keyset_hub::KeysetHub;
 use super::{Accounts, OpenKeys, Recovery, Slot};
 use crate::cache::{AccountCache, UnlockMethod};
 use crate::classify::remote;
@@ -54,8 +55,8 @@ impl KeyFlow {
     pub(crate) async fn after_password(
         &self,
         hub: &HubId,
-        client: &HubClient,
-        account: &Account,
+        client: &dyn KeysetHub,
+        account_id: &str,
         username: &str,
         secrets: LoginSecrets,
     ) -> Result<KeyStatus, HubError> {
@@ -65,7 +66,7 @@ impl KeyFlow {
         let method = UnlockMethod::Login {
             username: username.trim().to_owned(),
         };
-        self.settle(&slot, client, account.id.as_str(), method, unlock, kdf)
+        self.settle(&slot, client, account_id, method, unlock, kdf)
             .await
     }
 
@@ -84,51 +85,61 @@ impl KeyFlow {
         hub: &HubId,
         passphrase: Secret,
     ) -> Result<KeyStatus, HubError> {
-        let slot = self.accounts.slot(hub)?;
         let client = self.pool.fresh(hub).await?;
         let account = who_am_i(&client, hub, &self.pool).await?;
-        let record = self.record(hub, &client).await?;
-        let kdf = match &record {
-            Some(record) => UnlockKdf::parse(&record.kdf, &record.salt)
-                .map_err(|error| damaged(KeysetError::Kdf(error)))?,
-            None => UnlockKdf::random().map_err(remote)?,
-        };
-        let unlock = derive(&passphrase, &kdf).await?;
-        match record {
+        self.open_with_passphrase(hub, &client, account.id.as_str(), passphrase)
+            .await
+    }
+
+    async fn open_with_passphrase(
+        &self,
+        hub: &HubId,
+        client: &dyn KeysetHub,
+        account_id: &str,
+        passphrase: Secret,
+    ) -> Result<KeyStatus, HubError> {
+        let slot = self.accounts.slot(hub)?;
+        let record = match self.record(hub, client).await? {
+            Some(record) => record,
             None => {
-                self.create(
-                    &slot,
-                    &client,
-                    account.id.as_str(),
-                    UnlockMethod::Passphrase,
-                    unlock,
-                    kdf,
-                )
-                .await
-            }
-            Some(record) => {
-                let account_id = account.id.as_str();
-                match Keyset::open(&record, account_id, &unlock) {
-                    Err(KeysetError::WrongUnlockKey) => {
-                        // Nothing says whether the passphrase was mistyped or is a new one:
-                        // the recovery key decides, and then the typed passphrase is kept.
-                        let fresh = UnlockKdf::random().map_err(remote)?;
-                        let unlock = derive(&passphrase, &fresh).await?;
-                        slot.await_recovery(Recovery {
-                            account_id: account_id.to_owned(),
-                            unlock,
-                            kdf: fresh,
-                            method: UnlockMethod::Passphrase,
-                        });
-                        Ok(KeyStatus::RecoveryNeeded)
-                    }
-                    other => {
-                        let keyset = other.map_err(|error| self.keyset_failure(hub, error))?;
-                        self.keep(&slot, &client, keyset, UnlockMethod::Passphrase)
-                            .await?;
-                        Ok(KeyStatus::Open)
-                    }
+                let kdf = UnlockKdf::random().map_err(remote)?;
+                let unlock = derive(&passphrase, &kdf).await?;
+                let method = UnlockMethod::Passphrase;
+                if let Some(created) = self
+                    .try_create(&slot, client, account_id, &method, &unlock, &kdf)
+                    .await?
+                {
+                    return Ok(created);
                 }
+                // Another device made the keyset first, derived with a salt of its own: the
+                // passphrase is tried again against the keyset that exists.
+                self.record(hub, client)
+                    .await?
+                    .ok_or_else(|| damaged(KeysetError::Incomplete))?
+            }
+        };
+        let kdf = UnlockKdf::parse(&record.kdf, &record.salt)
+            .map_err(|error| damaged(KeysetError::Kdf(error)))?;
+        let unlock = derive(&passphrase, &kdf).await?;
+        match Keyset::open(&record, account_id, &unlock) {
+            Err(KeysetError::WrongUnlockKey) => {
+                // Nothing says whether the passphrase was mistyped or is a new one: the
+                // recovery key decides, and then the typed passphrase is kept.
+                let fresh = UnlockKdf::random().map_err(remote)?;
+                let unlock = derive(&passphrase, &fresh).await?;
+                slot.await_recovery(Recovery {
+                    account_id: account_id.to_owned(),
+                    unlock,
+                    kdf: fresh,
+                    method: UnlockMethod::Passphrase,
+                });
+                Ok(KeyStatus::RecoveryNeeded)
+            }
+            other => {
+                let keyset = other.map_err(|error| self.keyset_failure(hub, error))?;
+                self.keep(&slot, client, keyset, UnlockMethod::Passphrase)
+                    .await?;
+                Ok(KeyStatus::Open)
             }
         }
     }
@@ -136,97 +147,96 @@ impl KeyFlow {
     /// Opens the keys with the recovery key, and makes the password typed at sign-in (or the
     /// passphrase) open them from now on.
     pub(crate) async fn recover(&self, hub: &HubId, recovery_key: Secret) -> Result<(), HubError> {
+        let client = self.pool.fresh(hub).await?;
+        self.recover_with(hub, &client, recovery_key).await
+    }
+
+    async fn recover_with(
+        &self,
+        hub: &HubId,
+        client: &dyn KeysetHub,
+        recovery_key: Secret,
+    ) -> Result<(), HubError> {
         let slot = self.accounts.slot(hub)?;
         let pending = slot.recovery().ok_or(HubError::NoRecoveryPending)?;
         let key =
             RecoveryKey::parse(recovery_key.expose()).map_err(|_| HubError::RecoveryKeyInvalid)?;
-        let client = self.pool.fresh(hub).await?;
         let keyset = client
-            .recover_keyset(&pending.account_id, &key, &pending.unlock, &pending.kdf)
+            .recover(&pending.account_id, &key, &pending.unlock, &pending.kdf)
             .await
             .map_err(|error| match error {
                 KeysetError::WrongRecoveryKey => HubError::RecoveryKeyInvalid,
                 other => self.keyset_failure(hub, other),
             })?;
-        self.keep(&slot, &client, keyset, pending.method.clone())
+        self.keep(&slot, client, keyset, pending.method.clone())
             .await
     }
 
     async fn settle(
         &self,
         slot: &Slot,
-        client: &HubClient,
+        client: &dyn KeysetHub,
         account_id: &str,
         method: UnlockMethod,
         unlock: UnlockKey,
         kdf: UnlockKdf,
     ) -> Result<KeyStatus, HubError> {
         let hub = slot.hub();
-        match self.record(hub, client).await? {
+        let record = match self.record(hub, client).await? {
+            Some(record) => record,
             None => {
-                self.create(slot, client, account_id, method, unlock, kdf)
-                    .await
+                let created = self
+                    .try_create(slot, client, account_id, &method, &unlock, &kdf)
+                    .await?;
+                if let Some(created) = created {
+                    return Ok(created);
+                }
+                // Another device made the keyset first: this one opens it, never replaces it.
+                self.record(hub, client)
+                    .await?
+                    .ok_or_else(|| damaged(KeysetError::Incomplete))?
             }
-            Some(record) => match Keyset::open(&record, account_id, &unlock) {
-                Ok(keyset) => {
-                    self.keep(slot, client, keyset, method).await?;
-                    Ok(KeyStatus::Open)
-                }
-                Err(KeysetError::WrongUnlockKey) => {
-                    slot.await_recovery(Recovery {
-                        account_id: account_id.to_owned(),
-                        unlock,
-                        kdf,
-                        method,
-                    });
-                    Ok(KeyStatus::RecoveryNeeded)
-                }
-                Err(error) => Err(self.keyset_failure(hub, error)),
-            },
+        };
+        match Keyset::open(&record, account_id, &unlock) {
+            Ok(keyset) => {
+                self.keep(slot, client, keyset, method).await?;
+                Ok(KeyStatus::Open)
+            }
+            Err(KeysetError::WrongUnlockKey) => {
+                slot.await_recovery(Recovery {
+                    account_id: account_id.to_owned(),
+                    unlock,
+                    kdf,
+                    method,
+                });
+                Ok(KeyStatus::RecoveryNeeded)
+            }
+            Err(error) => Err(self.keyset_failure(hub, error)),
         }
     }
 
-    async fn create(
+    /// Creates the keyset and opens the vault with it. `None` when another device created the
+    /// keyset first.
+    async fn try_create(
         &self,
         slot: &Slot,
-        client: &HubClient,
+        client: &dyn KeysetHub,
         account_id: &str,
-        method: UnlockMethod,
-        unlock: UnlockKey,
-        kdf: UnlockKdf,
-    ) -> Result<KeyStatus, HubError> {
+        method: &UnlockMethod,
+        unlock: &UnlockKey,
+        kdf: &UnlockKdf,
+    ) -> Result<Option<KeyStatus>, HubError> {
         let hub = slot.hub();
-        let made = creation(client.create_keyset(account_id, &unlock, &kdf).await)
+        let made = creation(client.create(account_id, unlock, kdf).await)
             .map_err(|error| self.keyset_failure(hub, error))?;
         match made {
             Creation::Created(new) => {
-                self.keep(slot, client, new.keyset, method).await?;
-                Ok(KeyStatus::Created(Secret::new(
+                self.keep(slot, client, new.keyset, method.clone()).await?;
+                Ok(Some(KeyStatus::Created(Secret::new(
                     new.recovery.display().as_str(),
-                )))
+                ))))
             }
-            Creation::Raced => {
-                let record = self
-                    .record(hub, client)
-                    .await?
-                    .ok_or_else(|| damaged(KeysetError::Incomplete))?;
-                match Keyset::open(&record, account_id, &unlock) {
-                    Ok(keyset) => {
-                        self.keep(slot, client, keyset, method).await?;
-                        Ok(KeyStatus::Open)
-                    }
-                    Err(KeysetError::WrongUnlockKey) => {
-                        slot.await_recovery(Recovery {
-                            account_id: account_id.to_owned(),
-                            unlock,
-                            kdf,
-                            method,
-                        });
-                        Ok(KeyStatus::RecoveryNeeded)
-                    }
-                    Err(error) => Err(self.keyset_failure(hub, error)),
-                }
-            }
+            Creation::Raced => Ok(None),
         }
     }
 
@@ -234,7 +244,7 @@ impl KeyFlow {
     async fn keep(
         &self,
         slot: &Slot,
-        client: &HubClient,
+        client: &dyn KeysetHub,
         keyset: Keyset,
         method: UnlockMethod,
     ) -> Result<(), HubError> {
@@ -244,7 +254,7 @@ impl KeyFlow {
             .await?
             .ok_or_else(|| damaged(KeysetError::Incomplete))?;
         let cache = AccountCache::new(
-            client.info().hub_id.clone(),
+            client.hub_uid(),
             keyset.account_id().to_owned(),
             method,
             &record,
@@ -256,10 +266,10 @@ impl KeyFlow {
     async fn record(
         &self,
         hub: &HubId,
-        client: &HubClient,
+        client: &dyn KeysetHub,
     ) -> Result<Option<v1::AccountKeyset>, HubError> {
         client
-            .keyset_record()
+            .record()
             .await
             .map_err(|error| self.pool.failed(hub, error))
     }
