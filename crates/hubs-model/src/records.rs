@@ -127,3 +127,16 @@ impl HubSessionSummary {
         self.owner == account.id
     }
 }
+
+/// Which hub session a terminal tab attaches to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HubTerminalTarget {
+    /// Start a shell on a node and attach to it. Without a node the hub picks an online one.
+    New {
+        org: OrgId,
+        node: Option<NodeId>,
+        title: String,
+    },
+    /// Attach to a session that already runs; its screen is restored.
+    Existing(HubSessionId),
+}

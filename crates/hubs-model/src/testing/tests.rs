@@ -276,3 +276,44 @@ fn a_held_call_waits_until_released() {
     release.release();
     assert!(block_on(pending).is_ok());
 }
+
+fn request() -> nocterm_session::ConnectRequest {
+    nocterm_session::ConnectRequest {
+        proxy: Default::default(),
+        launch: Default::default(),
+        target: nocterm_session::Target {
+            host: "hub".into(),
+            port: 7443,
+            user: "ada".into(),
+        },
+        auth: nocterm_session::Auth::Password,
+        term: "xterm".into(),
+        size: Default::default(),
+        connect_timeout: std::time::Duration::from_secs(10),
+        keepalive_interval: None,
+        jumps: Vec::new(),
+    }
+}
+
+#[test]
+fn a_terminal_is_the_scripted_transport_and_the_call_names_its_target() {
+    use nocterm_session::Event;
+
+    let hub = signed_in();
+    let driver = hub.terminals().queue(None, None);
+    let target = HubTerminalTarget::Existing(HubSessionId::new("s1"));
+    let transport = hub.terminal(&hub_id(), target.clone());
+    let session = transport.open(request());
+    block_on(async {
+        assert!(driver.emit(Event::Restore(b"screen".to_vec())).await);
+        assert!(matches!(
+            session.next_event().await,
+            Some(Event::Restore(_))
+        ));
+    });
+    assert_eq!(
+        hub.calls().last(),
+        Some(&FakeCall::Terminal(hub_id(), target))
+    );
+    assert_eq!(hub.terminals().requests().len(), 1);
+}

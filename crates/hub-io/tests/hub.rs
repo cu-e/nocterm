@@ -10,9 +10,9 @@ use futures::executor::block_on;
 use nocterm_hub_io::{HubLinks, HubLinksConfig};
 use nocterm_hubs_model::{
     Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubSessions as _, HubSignIn as _,
-    HubTrust as _, TrustPolicy,
+    HubTerminalTarget, HubTrust as _, TrustPolicy,
 };
-use nocterm_session::Secret;
+use nocterm_session::{CloseReason, ConnectRequest, Event, Secret, Session};
 
 struct Hub {
     address: HubAddress,
@@ -137,4 +137,91 @@ fn sign_in_survives_a_restart_and_sign_out_ends_it() {
     ));
     let info = block_on(second.connect(hub.spec())).unwrap();
     assert!(!info.signed_in);
+}
+
+fn request() -> ConnectRequest {
+    ConnectRequest {
+        proxy: Default::default(),
+        launch: Default::default(),
+        target: nocterm_session::Target {
+            host: "hub".into(),
+            port: 7443,
+            user: "hub".into(),
+        },
+        auth: nocterm_session::Auth::Password,
+        term: "xterm-256color".into(),
+        size: Default::default(),
+        connect_timeout: std::time::Duration::from_secs(10),
+        keepalive_interval: None,
+        jumps: Vec::new(),
+    }
+}
+
+/// Reads events until the output contains `needle`; returns the output seen.
+fn read_until(session: &Session, needle: &str) -> String {
+    let mut seen = String::new();
+    block_on(async {
+        while !seen.contains(needle) {
+            match session.next_event().await {
+                Some(Event::Output(bytes) | Event::Restore(bytes)) => {
+                    seen.push_str(&String::from_utf8_lossy(&bytes));
+                }
+                Some(Event::Closed(reason)) => panic!("closed early: {reason:?}"),
+                Some(_) => {}
+                None => panic!("the session ended"),
+            }
+        }
+    });
+    seen
+}
+
+#[test]
+fn a_session_survives_detaching_and_is_restored_when_attached_again() {
+    let Some(hub) = hub() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let links = links(&dir);
+    block_on(links.password(
+        hub.spec(),
+        hub.username.clone(),
+        Secret::new(hub.password.clone()),
+    ))
+    .unwrap();
+    let account = block_on(links.account(&hub.id())).unwrap();
+    let org = account.orgs.first().expect("an organization").id.clone();
+    let target = HubTerminalTarget::New {
+        org: org.clone(),
+        node: None,
+        title: "hub-io test".into(),
+    };
+
+    let first = links.terminal(&hub.id(), target).open(request());
+    first.input("echo nocterm-e2e-marker\r");
+    read_until(&first, "nocterm-e2e-marker");
+    first.close();
+    drop(first);
+
+    let listed = block_on(links.sessions(&hub.id(), &org)).unwrap();
+    let mine = listed
+        .iter()
+        .find(|session| session.title == "hub-io test")
+        .expect("the session outlives its tab");
+
+    let second = links
+        .terminal(&hub.id(), HubTerminalTarget::Existing(mine.id.clone()))
+        .open(request());
+    let screen = read_until(&second, "nocterm-e2e-marker");
+    assert!(screen.contains("nocterm-e2e-marker"));
+
+    block_on(links.end(&hub.id(), &mine.id)).unwrap();
+    block_on(async {
+        while let Some(event) = second.next_event().await {
+            if let Event::Closed(reason) = event {
+                assert!(matches!(
+                    reason,
+                    CloseReason::Exited(_) | CloseReason::Failed(_)
+                ));
+                return;
+            }
+        }
+    });
 }

@@ -11,10 +11,10 @@ use futures::channel::oneshot;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
     Account, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
-    HubSessionId, HubSessionSummary, HubSessions, HubSignIn, HubTrust, NodeSummary, OidcSignIn,
-    OrgId, ProbedHub,
+    HubSessionId, HubSessionSummary, HubSessions, HubSignIn, HubTerminalTarget, HubTrust,
+    NodeSummary, OidcSignIn, OrgId, ProbedHub,
 };
-use nocterm_session::Secret;
+use nocterm_session::{Secret, Transport};
 use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::AbortHandle;
 
@@ -22,6 +22,7 @@ use crate::classify::{probe_failed, remote};
 use crate::connect::Connector;
 use crate::directory::Directory;
 use crate::pool::Pool;
+use crate::terminal::HubTerminalTransport;
 
 /// Threads serving every hub connection of the application.
 const WORKER_THREADS: usize = 2;
@@ -47,6 +48,8 @@ pub struct HubStartError(#[source] std::io::Error);
 pub struct HubLinks {
     // `None` only while the links are being dropped.
     runtime: Option<Runtime>,
+    handle: Handle,
+    pool: Arc<Pool>,
     connector: Arc<Connector>,
     directory: Arc<Directory>,
 }
@@ -90,14 +93,12 @@ impl HubLinks {
             .map_err(HubStartError)?;
         let pool = Arc::new(Pool::new(config.credentials_dir, &config.device_name));
         Ok(Arc::new(Self {
+            handle: runtime.handle().clone(),
             runtime: Some(runtime),
             connector: Arc::new(Connector::new(Arc::clone(&pool))),
-            directory: Arc::new(Directory::new(pool)),
+            directory: Arc::new(Directory::new(Arc::clone(&pool))),
+            pool,
         }))
-    }
-
-    fn handle(&self) -> Option<&Handle> {
-        self.runtime.as_ref().map(Runtime::handle)
     }
 
     /// Runs `work` on the adapter's threads.
@@ -106,14 +107,16 @@ impl HubLinks {
         work: impl Future<Output = Result<T, HubError>> + Send + 'static,
     ) -> Call<T> {
         let (sender, result) = oneshot::channel();
-        let task = self.handle().map(|handle| {
-            handle
-                .spawn(async move {
-                    let _ = sender.send(work.await);
-                })
-                .abort_handle()
-        });
-        Call { result, task }
+        let task = self
+            .handle
+            .spawn(async move {
+                let _ = sender.send(work.await);
+            })
+            .abort_handle();
+        Call {
+            result,
+            task: Some(task),
+        }
     }
 
     fn run_boxed<T: Send + 'static>(
@@ -202,5 +205,14 @@ impl HubSessions for HubLinks {
     fn end(&self, hub: &HubId, session: &HubSessionId) -> HubFuture<()> {
         let (directory, hub, session) = (Arc::clone(&self.directory), hub.clone(), session.clone());
         self.run_boxed(async move { directory.end(&hub, &session).await })
+    }
+
+    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> Arc<dyn Transport> {
+        Arc::new(HubTerminalTransport::new(
+            self.handle.clone(),
+            Arc::clone(&self.pool),
+            hub.clone(),
+            target,
+        ))
     }
 }

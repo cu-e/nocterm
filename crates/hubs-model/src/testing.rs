@@ -10,14 +10,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use nocterm_core::error::SharedCause;
-use nocterm_session::Secret;
+use nocterm_session::testing::ScriptedTransport;
+use nocterm_session::{Secret, Transport};
 
 use crate::address::{HubAddress, HubId};
 use crate::error::HubError;
 use crate::ports::{HubFuture, HubSessions, HubSignIn, HubTrust, OidcSignIn};
 use crate::records::{
     Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionState, HubSessionSummary,
-    NodeSummary, OrgId,
+    HubTerminalTarget, NodeSummary, OrgId,
 };
 use crate::trust::{ProbedHub, TrustPolicy};
 
@@ -55,6 +56,7 @@ pub enum FakeCall {
     Nodes(HubId, OrgId),
     Sessions(HubId, OrgId),
     End(HubId, HubSessionId),
+    Terminal(HubId, HubTerminalTarget),
 }
 
 /// Why a fake hub did not answer.
@@ -68,6 +70,7 @@ pub struct FakeOffline;
 #[derive(Clone, Default)]
 pub struct FakeHub {
     state: Arc<Mutex<State>>,
+    terminals: ScriptedTransport,
 }
 
 #[derive(Default)]
@@ -131,6 +134,12 @@ impl FakeHub {
 
     pub fn is_signed_in(&self, hub: &HubId) -> bool {
         lock(&self.state).credentials.contains_key(hub)
+    }
+
+    /// The transport behind every terminal this hub hands out. Queue sessions on it, in the
+    /// order the terminals will be opened, to script their events.
+    pub fn terminals(&self) -> ScriptedTransport {
+        self.terminals.clone()
     }
 
     /// Every call received, oldest first.
@@ -221,7 +230,7 @@ impl FakeCall {
             Self::Password { .. } => FakeOp::Password,
             Self::Oidc { .. } => FakeOp::Oidc,
             Self::SignOut(_) => FakeOp::SignOut,
-            Self::Forget(_) => return None,
+            Self::Forget(_) | Self::Terminal(..) => return None,
             Self::Account(_) => FakeOp::Account,
             Self::Nodes(..) => FakeOp::Nodes,
             Self::Sessions(..) => FakeOp::Sessions,
@@ -504,6 +513,13 @@ impl HubSessions for FakeHub {
                 Ok(())
             },
         )
+    }
+
+    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> Arc<dyn Transport> {
+        lock(&self.state)
+            .calls
+            .push(FakeCall::Terminal(hub.clone(), target));
+        Arc::new(self.terminals.clone())
     }
 }
 

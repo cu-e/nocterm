@@ -2,14 +2,17 @@
 //!
 //! Every method returns a runtime-agnostic future that can be awaited on any executor.
 
+use std::sync::Arc;
+
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
-use nocterm_session::Secret;
+use nocterm_session::{Secret, Transport};
 
 use crate::address::{HubAddress, HubId};
 use crate::error::HubError;
 use crate::records::{
-    Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionSummary, NodeSummary, OrgId,
+    Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionSummary, HubTerminalTarget,
+    NodeSummary, OrgId,
 };
 use crate::trust::ProbedHub;
 
@@ -72,4 +75,13 @@ pub trait HubSessions: Send + Sync {
 
     /// Terminates the process of a session on its node.
     fn end(&self, hub: &HubId, session: &HubSessionId) -> HubFuture<()>;
+
+    /// A transport attached to one hub session, for a terminal tab.
+    ///
+    /// The transport is bound to its target: it ignores the destination fields of the
+    /// `ConnectRequest` and uses only its size. Opening it attaches (creating the session first
+    /// for [`HubTerminalTarget::New`]); the screen of an existing session arrives as
+    /// `Event::Restore`. Closing the session detaches and leaves the process running on its
+    /// node; [`HubSessions::end`] terminates it. Failures arrive as `Event::Closed`.
+    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> Arc<dyn Transport>;
 }
