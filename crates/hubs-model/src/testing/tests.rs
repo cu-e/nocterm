@@ -302,7 +302,8 @@ fn a_terminal_is_the_scripted_transport_and_the_call_names_its_target() {
     let hub = signed_in();
     let driver = hub.terminals().queue(None, None);
     let target = HubTerminalTarget::Existing(HubSessionId::new("s1"));
-    let transport = hub.terminal(&hub_id(), target.clone());
+    let (transport, created) = hub.terminal(&hub_id(), target.clone()).into_parts();
+    assert!(created.is_none());
     let session = transport.open(request());
     block_on(async {
         assert!(driver.emit(Event::Restore(b"screen".to_vec())).await);
@@ -316,4 +317,24 @@ fn a_terminal_is_the_scripted_transport_and_the_call_names_its_target() {
         Some(&FakeCall::Terminal(hub_id(), target))
     );
     assert_eq!(hub.terminals().requests().len(), 1);
+}
+
+#[test]
+fn a_terminal_that_starts_a_session_learns_the_id_the_hub_gave_it() {
+    let hub = signed_in();
+    hub.create_sessions_as(["made-1"]);
+    let new = || HubTerminalTarget::New {
+        org: OrgId::new("lab"),
+        node: None,
+        title: "shell".into(),
+    };
+
+    let (_, first) = hub.terminal(&hub_id(), new()).into_parts();
+    let (_, second) = hub.terminal(&hub_id(), new()).into_parts();
+
+    assert_eq!(
+        block_on(first.expect("a new session reports its id")),
+        Ok(HubSessionId::new("made-1"))
+    );
+    assert!(block_on(second.expect("a new session reports its id")).is_err());
 }

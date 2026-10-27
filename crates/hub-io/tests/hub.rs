@@ -194,7 +194,8 @@ fn a_session_survives_detaching_and_is_restored_when_attached_again() {
         title: "hub-io test".into(),
     };
 
-    let first = links.terminal(&hub.id(), target).open(request());
+    let (first_transport, created) = links.terminal(&hub.id(), target).into_parts();
+    let first = first_transport.open(request());
     first.input("echo nocterm-e2e-marker\r");
     read_until(&first, "nocterm-e2e-marker");
     first.close();
@@ -206,8 +207,16 @@ fn a_session_survives_detaching_and_is_restored_when_attached_again() {
         .find(|session| session.title == "hub-io test")
         .expect("the session outlives its tab");
 
+    let created = block_on(created.expect("a new session reports its id")).unwrap();
+    assert_eq!(
+        created, mine.id,
+        "the id the terminal learned is the listed one"
+    );
+
     let second = links
         .terminal(&hub.id(), HubTerminalTarget::Existing(mine.id.clone()))
+        .into_parts()
+        .0
         .open(request());
     let screen = read_until(&second, "nocterm-e2e-marker");
     assert!(screen.contains("nocterm-e2e-marker"));

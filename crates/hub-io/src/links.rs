@@ -11,10 +11,10 @@ use futures::channel::oneshot;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
     Account, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
-    HubSessionId, HubSessionSummary, HubSessions, HubSignIn, HubTerminalTarget, HubTrust,
-    NodeSummary, OidcSignIn, OrgId, ProbedHub,
+    HubSessionId, HubSessionSummary, HubSessions, HubSignIn, HubTerminal, HubTerminalTarget,
+    HubTrust, NodeSummary, OidcSignIn, OrgId, ProbedHub,
 };
-use nocterm_session::{Secret, Transport};
+use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::AbortHandle;
 
@@ -207,12 +207,16 @@ impl HubSessions for HubLinks {
         self.run_boxed(async move { directory.end(&hub, &session).await })
     }
 
-    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> Arc<dyn Transport> {
-        Arc::new(HubTerminalTransport::new(
+    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> HubTerminal {
+        let (transport, created) = HubTerminalTransport::new(
             self.handle.clone(),
             Arc::clone(&self.pool),
             hub.clone(),
             target,
-        ))
+        );
+        match created {
+            Some(created) => HubTerminal::starting(Arc::new(transport), created),
+            None => HubTerminal::attached(Arc::new(transport)),
+        }
     }
 }

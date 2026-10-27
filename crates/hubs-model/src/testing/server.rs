@@ -106,6 +106,19 @@ impl FakeServer {
         self
     }
 
+    /// Makes the existing user `username` a member of one more organization `org` (id and name
+    /// are the same text); a user that does not exist is left alone.
+    #[must_use]
+    pub fn with_membership(mut self, username: &str, org: &str) -> Self {
+        if let Some(user) = self.users.iter_mut().find(|user| user.username == username) {
+            user.account.orgs.push(OrgSummary {
+                id: OrgId::new(org),
+                name: org.into(),
+            });
+        }
+        self
+    }
+
     #[must_use]
     pub fn with_node(mut self, id: &str, name: &str, online: bool) -> Self {
         self.nodes.push(NodeSummary {

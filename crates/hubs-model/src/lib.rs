@@ -37,7 +37,7 @@ pub use address::{DEFAULT_PORT, HubAddress, HubId};
 pub use color::HubColor;
 pub use environment::Environment;
 pub use error::{FingerprintError, HubAddressError, HubError, WindowDocumentError};
-pub use ports::{HubFuture, HubSessions, HubSignIn, HubTrust, OidcSignIn};
+pub use ports::{HubFuture, HubSessions, HubSignIn, HubTerminal, HubTrust, OidcSignIn};
 pub use records::{
     Account, AccountId, HubEndpointSpec, HubInfo, HubSessionId, HubSessionState, HubSessionSummary,
     HubTerminalTarget, NodeId, NodeSummary, OidcProvider, OrgId, OrgSummary,

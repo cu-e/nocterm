@@ -76,12 +76,46 @@ pub trait HubSessions: Send + Sync {
     /// Terminates the process of a session on its node.
     fn end(&self, hub: &HubId, session: &HubSessionId) -> HubFuture<()>;
 
-    /// A transport attached to one hub session, for a terminal tab.
+    /// A terminal for one hub session, for a tab.
     ///
-    /// The transport is bound to its target: it ignores the destination fields of the
+    /// Its transport is bound to its target: it ignores the destination fields of the
     /// `ConnectRequest` and uses only its size. Opening it attaches (creating the session first
     /// for [`HubTerminalTarget::New`]); the screen of an existing session arrives as
     /// `Event::Restore`. Closing the session detaches and leaves the process running on its
     /// node; [`HubSessions::end`] terminates it. Failures arrive as `Event::Closed`.
-    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> Arc<dyn Transport>;
+    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> HubTerminal;
+}
+
+/// What a terminal tab attaches with: a transport bound to one hub session and, when the tab
+/// starts the session, the id the hub gives it.
+pub struct HubTerminal {
+    transport: Arc<dyn Transport>,
+    created: Option<oneshot::Receiver<HubSessionId>>,
+}
+
+impl HubTerminal {
+    /// A transport for a session that exists already; there is nothing to report.
+    pub fn attached(transport: Arc<dyn Transport>) -> Self {
+        Self {
+            transport,
+            created: None,
+        }
+    }
+
+    /// A transport that starts a session when it is opened. `created` receives its id once the
+    /// hub has made it; it is cancelled if the session was never made.
+    pub fn starting(
+        transport: Arc<dyn Transport>,
+        created: oneshot::Receiver<HubSessionId>,
+    ) -> Self {
+        Self {
+            transport,
+            created: Some(created),
+        }
+    }
+
+    /// The transport, and the id of the session it starts, if it starts one.
+    pub fn into_parts(self) -> (Arc<dyn Transport>, Option<oneshot::Receiver<HubSessionId>>) {
+        (self.transport, self.created)
+    }
 }

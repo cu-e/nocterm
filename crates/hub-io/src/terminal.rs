@@ -10,6 +10,7 @@ mod bridge;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use futures::FutureExt as _;
+use futures::channel::oneshot;
 use nocterm_hub_client::HubClient;
 use nocterm_hub_client::terminal::{TerminalOptions, run_terminal};
 use nocterm_hub_proto::v1;
@@ -31,21 +32,33 @@ pub(crate) struct HubTerminalTransport {
     hub: HubId,
     // A new session is created once; opening the transport again attaches to what was made.
     target: Arc<Mutex<HubTerminalTarget>>,
+    // Told the id of a new session when the hub has made it.
+    created: Arc<Mutex<Option<oneshot::Sender<HubSessionId>>>>,
 }
 
 impl HubTerminalTransport {
+    /// The transport, and for a new session the receiver of its id.
     pub(crate) fn new(
         handle: Handle,
         pool: Arc<Pool>,
         hub: HubId,
         target: HubTerminalTarget,
-    ) -> Self {
-        Self {
+    ) -> (Self, Option<oneshot::Receiver<HubSessionId>>) {
+        let (made, created) = match target {
+            HubTerminalTarget::New { .. } => {
+                let (made, created) = oneshot::channel();
+                (Some(made), Some(created))
+            }
+            HubTerminalTarget::Existing(_) => (None, None),
+        };
+        let transport = Self {
             handle,
             pool,
             hub,
             target: Arc::new(Mutex::new(target)),
-        }
+            created: Arc::new(Mutex::new(made)),
+        };
+        (transport, created)
     }
 }
 
@@ -56,6 +69,7 @@ impl Transport for HubTerminalTransport {
             pool: Arc::clone(&self.pool),
             hub: self.hub.clone(),
             target: Arc::clone(&self.target),
+            created: Arc::clone(&self.created),
             size: request.size,
         };
         self.handle.spawn(async move {
@@ -73,6 +87,7 @@ struct Attachment {
     pool: Arc<Pool>,
     hub: HubId,
     target: Arc<Mutex<HubTerminalTarget>>,
+    created: Arc<Mutex<Option<oneshot::Sender<HubSessionId>>>>,
     size: PtySize,
 }
 
@@ -144,6 +159,15 @@ impl Attachment {
                 let session = HubSessionId::new(created.session_id);
                 *self.target.lock().unwrap_or_else(PoisonError::into_inner) =
                     HubTerminalTarget::Existing(session.clone());
+                let made = self
+                    .created
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take();
+                if let Some(made) = made {
+                    // The tab may be gone already; the session still exists.
+                    let _ = made.send(session.clone());
+                }
                 session
             }
         };

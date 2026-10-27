@@ -15,7 +15,7 @@ use nocterm_session::{Secret, Transport};
 
 use crate::address::{HubAddress, HubId};
 use crate::error::HubError;
-use crate::ports::{HubFuture, HubSessions, HubSignIn, HubTrust, OidcSignIn};
+use crate::ports::{HubFuture, HubSessions, HubSignIn, HubTerminal, HubTrust, OidcSignIn};
 use crate::records::{
     Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionState, HubSessionSummary,
     HubTerminalTarget, NodeSummary, OrgId,
@@ -85,6 +85,8 @@ struct State {
     holds: Vec<(FakeOp, oneshot::Receiver<()>)>,
     oidc: Option<oneshot::Sender<Result<String, HubError>>>,
     oidc_cancelled: usize,
+    /// The ids the hub gives the sessions that terminals start, in order.
+    created: VecDeque<HubSessionId>,
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -135,6 +137,14 @@ impl FakeHub {
 
     pub fn is_signed_in(&self, hub: &HubId) -> bool {
         lock(&self.state).credentials.contains_key(hub)
+    }
+
+    /// The ids the hub gives the sessions that terminals start, in the order they are asked
+    /// for. A terminal that starts a session when none is left never learns an id.
+    pub fn create_sessions_as<'a>(&self, ids: impl IntoIterator<Item = &'a str>) {
+        lock(&self.state)
+            .created
+            .extend(ids.into_iter().map(HubSessionId::new));
     }
 
     /// The transport behind every terminal this hub hands out. Queue sessions on it, in the
@@ -525,11 +535,20 @@ impl HubSessions for FakeHub {
         )
     }
 
-    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> Arc<dyn Transport> {
-        lock(&self.state)
-            .calls
-            .push(FakeCall::Terminal(hub.clone(), target));
-        Arc::new(self.terminals.clone())
+    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> HubTerminal {
+        let mut state = lock(&self.state);
+        let starts = matches!(target, HubTerminalTarget::New { .. });
+        state.calls.push(FakeCall::Terminal(hub.clone(), target));
+        let transport: Arc<dyn Transport> = Arc::new(self.terminals.clone());
+        if !starts {
+            return HubTerminal::attached(transport);
+        }
+        // A session is made as soon as it is asked for; without a scripted id it never is.
+        let (made, created) = oneshot::channel();
+        if let Some(id) = state.created.pop_front() {
+            let _ = made.send(id);
+        }
+        HubTerminal::starting(transport, created)
     }
 }
 
