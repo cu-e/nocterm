@@ -1,8 +1,11 @@
 //! Telling the profile reconciliation that the hub may have news.
 //!
-//! A task on the adapter's threads follows the hub's change hints and ticks when the feed
-//! connects, when a hint arrives and when the vault unlocks (profiles can only be read with the
-//! keys). It reconnects with a pause after a failure and ends when the stream is dropped.
+//! A task on the adapter's threads follows the hub's change hints of the account's own
+//! collection and of every group's it holds the key of, and ticks when the feed connects, when a
+//! hint arrives and when the vault unlocks (profiles can only be read with the keys). It
+//! reconnects with a pause after a failure and ends when the stream is dropped. A group that
+//! gets its key later is followed from the next connection on; every synchronization still reads
+//! it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,12 +44,21 @@ async fn once(
     };
     notice.borrow_and_update();
     let store = Store::new(Arc::clone(ops), keys);
-    let Ok(Some(at)) = store.find(PROFILES_KIND).await else {
+    let collections: Vec<String> = match store.layout(PROFILES_KIND).await {
+        Ok(layout) => layout
+            .personal
+            .iter()
+            .chain(layout.groups.iter().map(|group| &group.at))
+            .map(|at| at.id().to_owned())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    if collections.is_empty() {
         let _ = ticks.try_send(());
         tokio::time::sleep(RETRY).await;
         return;
-    };
-    let Ok(mut hints) = ops.watch(vec![at.id().to_owned()]).await else {
+    }
+    let Ok(mut hints) = ops.watch(collections).await else {
         tokio::time::sleep(RETRY).await;
         return;
     };

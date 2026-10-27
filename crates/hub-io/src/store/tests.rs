@@ -125,3 +125,82 @@ async fn an_unreachable_hub_is_a_hub_error_and_creates_nothing() {
     hub.set_offline(false);
     assert!(store.find(VAULT_KIND).await.unwrap().is_none());
 }
+
+fn member_of_acme(role: v1::Role) -> (Arc<MemoryHub>, Store, v1::AccountKeyset) {
+    let hub = Arc::new(MemoryHub::default());
+    let (keys, record) = crate::account::testing::open_keys_with_record();
+    hub.set_memberships(&[("acme", "Acme", role)]);
+    (hub.clone(), Store::new(hub, keys), record)
+}
+
+#[tokio::test]
+async fn a_group_collection_with_a_granted_key_is_used_with_the_members_role() {
+    for (role, writable) in [
+        (v1::Role::Guest, false),
+        (v1::Role::Member, true),
+        (v1::Role::Admin, true),
+        (v1::Role::Owner, true),
+    ] {
+        let (hub, store, record) = member_of_acme(role);
+        let (key, envelope) = crate::account::testing::granted(&record, "acme-vault");
+        hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope);
+        let layout = store.layout(VAULT_KIND).await.unwrap();
+        assert!(layout.personal.is_none());
+        let [group] = layout.groups.as_slice() else {
+            panic!("one group expected");
+        };
+        assert_eq!(
+            (group.org_id.as_str(), group.name.as_str(), group.writable),
+            ("acme", "Acme", writable)
+        );
+        let sealed = key
+            .seal_object("acme-vault", "o", "credential", b"x")
+            .unwrap();
+        let opened = group
+            .at
+            .key()
+            .open_object("acme-vault", "o", "credential", &sealed)
+            .unwrap();
+        assert_eq!(opened.as_slice(), b"x");
+    }
+}
+
+#[tokio::test]
+async fn a_group_without_a_key_for_the_account_is_left_out_not_an_error() {
+    let (hub, store, record) = member_of_acme(v1::Role::Member);
+    hub.add_foreign(VAULT_KIND, "acme");
+    let layout = store.layout(VAULT_KIND).await.unwrap();
+    assert!(layout.groups.is_empty());
+    assert!(store.shared(VAULT_KIND, "acme").await.unwrap().is_none());
+    let (_, envelope) = crate::account::testing::granted(&record, "acme-vault");
+    hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope);
+    hub.tamper_key("acme-vault", vec![1; 60]);
+    assert!(store.layout(VAULT_KIND).await.unwrap().groups.is_empty());
+}
+
+#[tokio::test]
+async fn an_organization_the_account_does_not_belong_to_is_never_used() {
+    let (hub, store, record) = member_of_acme(v1::Role::Member);
+    let (_, envelope) = crate::account::testing::granted(&record, "other-vault");
+    hub.add_group(VAULT_KIND, "other", "other-vault", envelope);
+    assert!(store.layout(VAULT_KIND).await.unwrap().groups.is_empty());
+}
+
+#[tokio::test]
+async fn the_account_never_creates_a_group_collection_and_ensure_stays_personal() {
+    let (hub, store, _) = member_of_acme(v1::Role::Owner);
+    let own = store.ensure(VAULT_KIND).await.unwrap();
+    assert!(
+        hub.collections(VAULT_KIND)
+            .await
+            .unwrap()
+            .iter()
+            .all(|c| c.org_id.is_empty())
+    );
+    let layout = store.layout(VAULT_KIND).await.unwrap();
+    assert_eq!(
+        layout.personal.map(|at| at.id().to_owned()),
+        Some(own.id().to_owned())
+    );
+    assert!(layout.groups.is_empty());
+}

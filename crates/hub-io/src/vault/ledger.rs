@@ -5,15 +5,21 @@
 //! Writes need the hub. A record that does not decode (unknown format or binding) is not
 //! listed, cannot be overwritten or deleted, and stays on the hub untouched. A record that
 //! does not authenticate is the hub's forgery and is an error, never a silent skip.
+//!
+//! The credentials of the account's organization groups are read through [`Groups`] and
+//! routed by the collection that holds them: an id that a group holds is written and deleted
+//! in that group, with that group's key, and never in the personal collection.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use nocterm_hubs_model::HubError;
 use nocterm_keys::random_bytes;
 use nocterm_session::{CredentialId, Secret};
 use nocterm_vault::{CredentialBinding, CredentialInfo, VaultError};
 
 use super::codec::{self, Decoded, KIND};
+use super::groups::{Groups, Held, Owner};
 use crate::account::{OpenKeys, Slot};
 use crate::cache::{ObjectCopy, VaultCopy};
 use crate::classify::unreachable;
@@ -25,12 +31,14 @@ const WRITE_ATTEMPTS: usize = 2;
 pub(super) struct Ledger {
     slot: Arc<Slot>,
     ops: Arc<dyn StoreOps>,
+    groups: Groups,
 }
 
 /// A failure of a store call, as the vault reports it.
 pub(super) fn vault_error(error: OpError) -> VaultError {
     match error {
         OpError::Conflict => VaultError::Conflict,
+        OpError::Hub(HubError::PermissionDenied) => VaultError::ReadOnly,
         OpError::Damaged(_) => VaultError::Authentication,
         OpError::Hub(error) if unreachable(&error) => VaultError::Offline,
         OpError::Hub(error) => VaultError::Io(std::io::Error::other(error)),
@@ -39,7 +47,71 @@ pub(super) fn vault_error(error: OpError) -> VaultError {
 
 impl Ledger {
     pub(super) fn new(slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
-        Self { slot, ops }
+        Self {
+            slot,
+            ops,
+            groups: Groups::default(),
+        }
+    }
+
+    fn store(&self, keys: &Arc<OpenKeys>) -> Store {
+        Store::new(Arc::clone(&self.ops), Arc::clone(keys))
+    }
+
+    fn in_personal(&self, object_id: &str) -> bool {
+        self.cached()
+            .is_some_and(|vault| vault.objects.contains_key(object_id))
+    }
+
+    /// The group that holds `object_id`, unless the personal vault holds it.
+    async fn group_owner(
+        &self,
+        store: &Store,
+        object_id: &str,
+    ) -> Result<Option<Owner>, VaultError> {
+        if self.in_personal(object_id) {
+            return Ok(None);
+        }
+        self.groups.sync(store).await?;
+        self.groups.owner_of(object_id)
+    }
+
+    /// Writes (`plaintext`) or deletes (`None`) a record of a group, with that group's key.
+    /// A guest's write is refused before any call.
+    async fn write_group(
+        &self,
+        store: &Store,
+        object_id: &str,
+        plaintext: Option<&[u8]>,
+        mut owner: Owner,
+    ) -> Result<(), VaultError> {
+        for attempt in 1..=WRITE_ATTEMPTS {
+            if !owner.group.writable {
+                return Err(VaultError::ReadOnly);
+            }
+            match (&owner.held, plaintext) {
+                (Held::Unreadable, Some(_)) => return Err(VaultError::Format),
+                (Held::Unreadable | Held::Deleted, None) => return Err(VaultError::NotFound),
+                _ => {}
+            }
+            let at = &owner.group.at;
+            let result = match plaintext {
+                Some(plain) => store.put(at, KIND, object_id, plain, owner.version).await,
+                None => store.remove(at, object_id, owner.version).await,
+            };
+            match result {
+                Ok(_) => return self.groups.sync(store).await,
+                Err(OpError::Conflict) if attempt < WRITE_ATTEMPTS => {
+                    self.groups.sync(store).await?;
+                    owner = self
+                        .groups
+                        .owner_of(object_id)?
+                        .ok_or(VaultError::NotFound)?;
+                }
+                Err(error) => return Err(vault_error(error)),
+            }
+        }
+        Err(VaultError::Conflict)
     }
 
     fn keys(&self) -> Result<Arc<OpenKeys>, VaultError> {
@@ -111,10 +183,7 @@ impl Ledger {
         let key = keys
             .collection(&vault.collection_id, &vault.key_envelope)
             .map_err(|_| VaultError::Authentication)?;
-        let plain = key
-            .open_object(&vault.collection_id, object_id, KIND, &object.ciphertext)
-            .map_err(|_| VaultError::Authentication)?;
-        Ok(Some(codec::decode(&plain)))
+        codec::open_sealed(&key, &vault.collection_id, object_id, object)
     }
 
     fn cached(&self) -> Option<VaultCopy> {
@@ -141,6 +210,8 @@ impl Ledger {
                 });
             }
         }
+        self.groups.sync(&self.store(&keys)).await?;
+        listed.extend(self.groups.list()?);
         Ok(listed)
     }
 
@@ -151,8 +222,14 @@ impl Ledger {
     ) -> Result<Secret, VaultError> {
         let keys = self.keys()?;
         self.sync(&keys).await?;
-        let vault = self.cached().ok_or(VaultError::NotFound)?;
         let object_id = id.to_string();
+        let personal = self
+            .cached()
+            .filter(|vault| vault.objects.contains_key(&object_id));
+        let Some(vault) = personal else {
+            self.groups.sync(&self.store(&keys)).await?;
+            return self.groups.secret(&object_id, &binding);
+        };
         let object = vault.objects.get(&object_id).ok_or(VaultError::NotFound)?;
         match Self::open(&keys, &vault, &object_id, object)? {
             Some(Decoded::Known(record)) if record.binding == binding => Ok(record.secret),
@@ -169,7 +246,8 @@ impl Ledger {
         secret: Secret,
     ) -> Result<CredentialId, VaultError> {
         let keys = self.keys()?;
-        let store = Store::new(Arc::clone(&self.ops), Arc::clone(&keys));
+        let store = self.store(&keys);
+        let given = id.is_some();
         let id = match id {
             Some(id) => id,
             None => {
@@ -178,6 +256,11 @@ impl Ledger {
         };
         let object_id = id.to_string();
         let plaintext = codec::encode(&label, &binding, &secret).map_err(|_| VaultError::Format)?;
+        if given && let Some(owner) = self.group_owner(&store, &object_id).await? {
+            self.write_group(&store, &object_id, Some(&plaintext), owner)
+                .await?;
+            return Ok(id);
+        }
         for attempt in 1..=WRITE_ATTEMPTS {
             let at = store.ensure(VAULT_KIND).await.map_err(vault_error)?;
             self.pull(&store, &at).await?;
@@ -196,8 +279,11 @@ impl Ledger {
 
     pub(super) async fn delete(&self, id: CredentialId) -> Result<(), VaultError> {
         let keys = self.keys()?;
-        let store = Store::new(Arc::clone(&self.ops), Arc::clone(&keys));
+        let store = self.store(&keys);
         let object_id = id.to_string();
+        if let Some(owner) = self.group_owner(&store, &object_id).await? {
+            return self.write_group(&store, &object_id, None, owner).await;
+        }
         for attempt in 1..=WRITE_ATTEMPTS {
             let at = store
                 .find(VAULT_KIND)

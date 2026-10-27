@@ -7,6 +7,7 @@
 //! device unlock, so those operations are [`VaultError::Unsupported`].
 
 mod codec;
+mod groups;
 mod ledger;
 mod unlock;
 

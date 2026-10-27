@@ -1,7 +1,7 @@
 //! An in-memory hub store for tests: versions, conflicts, tombstones and change streams as the
 //! hub keeps them, and an offline switch.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -20,6 +20,8 @@ struct Held {
     heads: HashMap<String, u64>,
     clock: i64,
     keyset: Option<v1::AccountKeyset>,
+    memberships: Vec<v1::Membership>,
+    read_only: HashSet<String>,
 }
 
 /// One account's collections on a pretend hub.
@@ -52,6 +54,82 @@ impl MemoryHub {
     /// The keyset record the hub holds for the account.
     pub(crate) fn set_keyset(&self, record: Option<v1::AccountKeyset>) {
         self.held().keyset = record;
+    }
+
+    /// The organizations the account belongs to, with its role in each.
+    pub(crate) fn set_memberships(&self, memberships: &[(&str, &str, v1::Role)]) {
+        self.held().memberships = memberships
+            .iter()
+            .map(|(org_id, name, role)| v1::Membership {
+                org: Some(v1::Org {
+                    org_id: (*org_id).to_owned(),
+                    name: (*name).to_owned(),
+                    created_at_ms: 0,
+                }),
+                role: *role as i32,
+                effective_permissions: Vec::new(),
+            })
+            .collect();
+    }
+
+    /// An organization's collection whose key was granted to the account: `envelope` is the
+    /// key sealed to the account's public key for `collection_id`.
+    pub(crate) fn add_group(
+        &self,
+        kind: &str,
+        org_id: &str,
+        collection_id: &str,
+        envelope: Vec<u8>,
+    ) {
+        let mut held = self.held();
+        held.clock += 1;
+        let collection = v1::Collection {
+            collection_id: collection_id.to_owned(),
+            org_id: org_id.to_owned(),
+            personal: false,
+            kind: kind.to_owned(),
+            sealed_name: vec![1],
+            head: 0,
+            created_at_ms: held.clock,
+            deleted: false,
+        };
+        held.collections.push(collection);
+        held.envelopes.insert(collection_id.to_owned(), envelope);
+    }
+
+    /// Writes into the collection are refused for lack of permission, as for a guest.
+    pub(crate) fn refuse_writes_to(&self, collection_id: &str) {
+        self.held().read_only.insert(collection_id.to_owned());
+    }
+
+    /// Another member writes an object, whatever the account may do.
+    pub(crate) fn write_as_member(
+        &self,
+        collection_id: &str,
+        object_id: &str,
+        kind: &str,
+        ciphertext: Vec<u8>,
+    ) -> v1::ObjectVersion {
+        let current = self
+            .held()
+            .objects
+            .get(collection_id)
+            .and_then(|objects| objects.get(object_id))
+            .map_or(0, |object| object.version);
+        self.write(
+            collection_id,
+            object_id,
+            current,
+            Some((kind.to_owned(), ciphertext)),
+        )
+        .expect("the member's write is accepted")
+    }
+
+    fn permitted(&self, collection_id: &str) -> Result<(), OpError> {
+        if self.held().read_only.contains(collection_id) {
+            return Err(OpError::Hub(HubError::PermissionDenied));
+        }
+        Ok(())
     }
 
     /// A collection another client made: of any kind, personal or an organization's.
@@ -223,9 +301,17 @@ impl StoreOps for MemoryHub {
         })
     }
 
+    fn memberships(&self) -> Call<'_, Vec<v1::Membership>> {
+        Box::pin(async move {
+            self.reach()?;
+            Ok(self.held().memberships.clone())
+        })
+    }
+
     fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion> {
         Box::pin(async move {
             self.reach()?;
+            self.permitted(&request.collection_id)?;
             self.write(
                 &request.collection_id,
                 &request.object_id,
@@ -238,6 +324,7 @@ impl StoreOps for MemoryHub {
     fn delete_object(&self, request: v1::DeleteObjectRequest) -> Call<'_, v1::ObjectVersion> {
         Box::pin(async move {
             self.reach()?;
+            self.permitted(&request.collection_id)?;
             self.write(
                 &request.collection_id,
                 &request.object_id,

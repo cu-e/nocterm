@@ -3,8 +3,13 @@
 //! [`StoreOps`] is the narrow seam to the hub's store service: plain calls with sealed bytes.
 //! [`Store`] adds what needs the account keys: finding or creating the account's personal
 //! collection of a kind, and sealing what goes into it. Only the kinds this client knows
-//! are asked for, so a collection of another kind (or an organization's) is never listed,
-//! opened, changed or deleted here.
+//! are asked for, so a collection of another kind is never listed, opened, changed or
+//! deleted here.
+//!
+//! A group is an organization's collection of a kind. The account only ever uses one whose
+//! key an administrator granted to it: the hub answers "not found" for the key of a
+//! collection the member holds none of, and that collection is then left out. This client
+//! never creates, deletes or grants a group's collection; that is `hubctl`'s job.
 
 mod grpc;
 #[cfg(test)]
@@ -51,6 +56,8 @@ pub(crate) trait StoreOps: Send + Sync {
     fn collections(&self, kind: &str) -> Call<'_, Vec<v1::Collection>>;
     fn create_collection(&self, request: v1::CreateCollectionRequest) -> Call<'_, v1::Collection>;
     fn collection_key(&self, collection_id: &str) -> Call<'_, Vec<u8>>;
+    /// The organizations the account belongs to, with its role in each.
+    fn memberships(&self) -> Call<'_, Vec<v1::Membership>>;
     fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion>;
     fn delete_object(&self, request: v1::DeleteObjectRequest) -> Call<'_, v1::ObjectVersion>;
     fn changes(&self, collection_id: &str, after: u64) -> Call<'_, v1::ChangeBatch>;
@@ -81,6 +88,47 @@ impl Located {
     }
 }
 
+/// A group's collection of one kind and what the member may do in it.
+#[derive(Clone)]
+pub(crate) struct Group {
+    pub(crate) org_id: String,
+    /// What the user calls the organization.
+    pub(crate) name: String,
+    /// Members and above may write; a guest only reads.
+    pub(crate) writable: bool,
+    pub(crate) at: Located,
+}
+
+/// The collections of one kind the account uses: its own and its groups'.
+#[derive(Clone, Default)]
+pub(crate) struct Layout {
+    pub(crate) personal: Option<Located>,
+    pub(crate) groups: Vec<Group>,
+}
+
+/// Whether the role may write to the organization's collections.
+fn may_write(role: i32) -> bool {
+    matches!(
+        v1::Role::try_from(role),
+        Ok(v1::Role::Member | v1::Role::Admin | v1::Role::Owner)
+    )
+}
+
+/// Of the live collections that satisfy `wanted`, the oldest: when two devices made one at
+/// the same moment, it is the collection and the others stay unused.
+fn oldest<'a>(
+    listed: &'a [v1::Collection],
+    kind: &str,
+    wanted: impl Fn(&v1::Collection) -> bool,
+) -> Option<&'a v1::Collection> {
+    listed
+        .iter()
+        .filter(|c| !c.deleted && c.kind == kind && wanted(c))
+        .min_by(|a, b| {
+            (a.created_at_ms, &a.collection_id).cmp(&(b.created_at_ms, &b.collection_id))
+        })
+}
+
 /// The account's collections on one hub, with the keys to read them.
 pub(crate) struct Store {
     ops: Arc<dyn StoreOps>,
@@ -96,25 +144,82 @@ impl Store {
     /// (two devices made one at once) the oldest is the collection; the others stay unused.
     pub(crate) async fn find(&self, kind: &str) -> Result<Option<Located>, OpError> {
         let listed = self.ops.collections(kind).await?;
-        let Some(chosen) = listed
-            .into_iter()
-            .filter(|c| !c.deleted && c.personal && c.org_id.is_empty() && c.kind == kind)
-            .min_by(|a, b| {
-                (a.created_at_ms, &a.collection_id).cmp(&(b.created_at_ms, &b.collection_id))
-            })
-        else {
+        match oldest(&listed, kind, |c| c.personal && c.org_id.is_empty()) {
+            Some(chosen) => Ok(Some(self.open(chosen).await?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The collection of `kind` that organization `org_id` keeps and the account holds the
+    /// key of. `None` when the organization has none or has not granted the key yet.
+    pub(crate) async fn shared(
+        &self,
+        kind: &str,
+        org_id: &str,
+    ) -> Result<Option<Located>, OpError> {
+        let listed = self.ops.collections(kind).await?;
+        let Some(chosen) = oldest(&listed, kind, |c| !c.personal && c.org_id == org_id) else {
             return Ok(None);
         };
+        self.granted(chosen).await
+    }
+
+    /// The account's own collection of `kind` and every group's it holds the key of. A group
+    /// whose key is missing, or does not open, is left out: one group cannot take the
+    /// account's own data away.
+    pub(crate) async fn layout(&self, kind: &str) -> Result<Layout, OpError> {
+        let listed = self.ops.collections(kind).await?;
+        let personal = match oldest(&listed, kind, |c| c.personal && c.org_id.is_empty()) {
+            Some(chosen) => Some(self.open(chosen).await?),
+            None => None,
+        };
+        let mut groups = Vec::new();
+        for membership in self.ops.memberships().await? {
+            let Some(org) = membership.org else { continue };
+            let Some(chosen) = oldest(&listed, kind, |c| !c.personal && c.org_id == org.org_id)
+            else {
+                continue;
+            };
+            if let Some(at) = self.granted(chosen).await? {
+                groups.push(Group {
+                    org_id: org.org_id,
+                    name: org.name,
+                    writable: may_write(membership.role),
+                    at,
+                });
+            }
+        }
+        Ok(Layout { personal, groups })
+    }
+
+    async fn open(&self, chosen: &v1::Collection) -> Result<Located, OpError> {
         let envelope = self.ops.collection_key(&chosen.collection_id).await?;
         let key = self
             .keys
             .collection(&chosen.collection_id, &envelope)
             .map_err(OpError::Damaged)?;
-        Ok(Some(Located {
-            id: chosen.collection_id,
+        Ok(Located {
+            id: chosen.collection_id.clone(),
             key,
             envelope,
-        }))
+        })
+    }
+
+    /// A group's collection, or `None` when this account cannot use it.
+    async fn granted(&self, chosen: &v1::Collection) -> Result<Option<Located>, OpError> {
+        match self.open(chosen).await {
+            Ok(at) => Ok(Some(at)),
+            Err(OpError::Hub(HubError::NotFound | HubError::PermissionDenied)) => Ok(None),
+            Err(OpError::Damaged(error)) => {
+                tracing::warn!(
+                    collection = %chosen.collection_id,
+                    %error,
+                    "a group's collection key does not open; the group is left out"
+                );
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// The personal collection of `kind`, created first if the account has none.

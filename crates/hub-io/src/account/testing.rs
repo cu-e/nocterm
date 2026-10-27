@@ -56,6 +56,27 @@ pub(crate) fn open_keys() -> Arc<OpenKeys> {
     Arc::new(open(&record, &unlock))
 }
 
+/// Open keys with the record they were opened from, for tests that grant the account a key.
+pub(crate) fn open_keys_with_record() -> (Arc<OpenKeys>, v1::AccountKeyset) {
+    let unlock = unlock(PASSWORD);
+    let (record, _) = record(&unlock);
+    (Arc::new(open(&record, &unlock)), record)
+}
+
+/// A collection key of an organization and the envelope an administrator would store for the
+/// account: the key sealed to the account's published public key.
+pub(crate) fn granted(
+    record: &v1::AccountKeyset,
+    collection_id: &str,
+) -> (nocterm_keys::CollectionKey, Vec<u8>) {
+    let key = nocterm_keys::CollectionKey::generate().expect("a fresh key");
+    let public = nocterm_keys::PublicKey::from_bytes(&record.public_key).expect("a public key");
+    let envelope = key
+        .seal_to(&public, collection_id, ACCOUNT_ID)
+        .expect("the grant is sealed");
+    (key, envelope)
+}
+
 pub(crate) fn hub() -> HubId {
     HubId::from(
         "hub.test"

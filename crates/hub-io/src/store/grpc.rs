@@ -82,6 +82,18 @@ impl StoreOps for HubStore {
         })
     }
 
+    fn memberships(&self) -> Call<'_, Vec<v1::Membership>> {
+        Box::pin(async move {
+            let client = self.pool.fresh(&self.hub).await?;
+            let me = client
+                .directory()
+                .who_am_i(v1::Empty {})
+                .await
+                .map_err(|status| self.failure(ClientError::from(status)))?;
+            Ok(me.into_inner().memberships)
+        })
+    }
+
     fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion> {
         Box::pin(async move {
             let client = self.pool.fresh(&self.hub).await?;

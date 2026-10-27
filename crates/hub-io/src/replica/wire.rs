@@ -43,6 +43,7 @@ pub(super) fn encode(profile: &Profile) -> Result<Vec<u8>, serde_json::Error> {
 /// One object of the feed as the replica reports it; `None` for an object that is not a
 /// profile at all (its id is not a profile id), which is neither shown nor touched.
 pub(super) fn read(
+    scope: ReplicaScope,
     collection_id: &str,
     key: &CollectionKey,
     object: &v1::StoredObject,
@@ -66,7 +67,7 @@ pub(super) fn read(
         body_of(id, &plain)
     };
     Ok(Some(RemoteProfile {
-        scope: ReplicaScope::Personal,
+        scope,
         id,
         version: ReplicaVersion::new(object.version),
         body,
