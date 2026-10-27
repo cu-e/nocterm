@@ -5318,6 +5318,7 @@ dependencies = [
 name = "nocterm-connections-model"
 version = "0.0.0"
 dependencies = [
+ "futures",
  "nocterm-core",
  "nocterm-session",
  "serde",

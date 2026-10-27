@@ -190,6 +190,18 @@ background drain has no App/entity access; successful physical prefix/final
 snapshots alone select recents effects through the existing two-event feed.
 See [ADR0047](../adr/0047-connection-publication-authority-service.md).
 
+## Profile replication
+
+`ProfileReplication` in `nocterm-connections-store` keeps the saved profiles and a
+`ProfileReplica` (a remote copy supplied by an adapter) in agreement. It observes
+`ProfilePublications`, reads the replica's changes, plans with the pure three-way rules
+of `nocterm-connections-model::replica` and applies the result: remote changes through
+`ConnectionStore`'s checked writes, local ones through the port. The last agreed state is a
+`Persisted<ReplicaState>` supplied and registered for shutdown by the application. A remote
+change never echoes back, an unreachable replica is a status, concurrent changes repeat the
+pass at most three times and an unreadable remote object never alters the local profile.
+See [ADR 0101](../adr/0101-profiles-synchronize-through-a-replica-beside-the-local-document.md).
+
 ## Raw connection facts
 
 `FactsService` in `nocterm-connections-store` owns optimistic persisted Known data,

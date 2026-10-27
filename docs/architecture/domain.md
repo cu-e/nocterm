@@ -96,6 +96,10 @@ hop a prompt belongs to, and `ConnectStage` names the hop being reached. `HostAd
 matches sessions, transfer jobs and program hosts by it, not by target alone, and
 `nocterm-connections-model::credential_scope` limits a remembered credential to the
 connection (and its recents) it was typed for when that connection has jump hosts.
+`nocterm-connections-model::replica` defines the `ProfileReplica` port (a feed of changes
+and versioned writes of one sealed object per profile), its values, the persisted agreed
+state and the pure rules that reconcile local, remote and agreed profiles
+([ADR 0101](../adr/0101-profiles-synchronize-through-a-replica-beside-the-local-document.md)).
 `nocterm-connections-model::jump_route` stores a profile's
 ordered jump entries (saved connections or literal addresses) and resolves them
 purely at open time, with typed errors for deleted connections, cycles and routes over

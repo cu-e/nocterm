@@ -18,6 +18,7 @@ tracing.workspace = true
 thiserror.workspace = true
 [dev-dependencies]
 nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-store = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
 toml.workspace = true

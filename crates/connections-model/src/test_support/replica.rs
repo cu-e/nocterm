@@ -1,0 +1,314 @@
+//! An in-memory profile replica with scripted remote writers, refusals and outages.
+use crate::{
+    profiles::{Profile, ProfileId},
+    replica::{
+        ProfileReplica, RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaPage,
+        ReplicaScope, ReplicaVersion,
+    },
+};
+use futures::{
+    FutureExt as _, StreamExt as _, channel::mpsc, future::BoxFuture, stream::BoxStream,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
+};
+
+/// A call the replica received, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplicaCall {
+    Changes(Option<String>),
+    Put {
+        id: ProfileId,
+        expected: Option<ReplicaVersion>,
+    },
+    Delete {
+        id: ProfileId,
+        expected: ReplicaVersion,
+    },
+}
+
+struct Stored {
+    scope: ReplicaScope,
+    body: RemoteBody,
+    version: u64,
+}
+
+#[derive(Default)]
+struct Inner {
+    sequence: u64,
+    objects: HashMap<ProfileId, Stored>,
+    feed: Vec<(u64, ProfileId)>,
+    offline: bool,
+    forbidden: HashSet<ProfileId>,
+    forced_conflicts: usize,
+    concurrent: Option<(ReplicaScope, Profile)>,
+    page_size: Option<usize>,
+    calls: Vec<ReplicaCall>,
+}
+
+/// Versions and cursors come from one counter, so a cursor is "after write N".
+#[derive(Default)]
+pub struct MemoryReplica {
+    inner: Mutex<Inner>,
+    watchers: Mutex<Vec<mpsc::UnboundedSender<()>>>,
+}
+
+impl Inner {
+    fn store(&mut self, id: ProfileId, scope: ReplicaScope, body: RemoteBody) -> ReplicaVersion {
+        self.sequence += 1;
+        self.feed.push((self.sequence, id));
+        self.objects.insert(
+            id,
+            Stored {
+                scope,
+                body,
+                version: self.sequence,
+            },
+        );
+        ReplicaVersion::new(self.sequence)
+    }
+
+    fn check_write(
+        &mut self,
+        id: ProfileId,
+        expected: Option<ReplicaVersion>,
+    ) -> Result<(), ReplicaError> {
+        if self.offline {
+            return Err(ReplicaError::Unavailable);
+        }
+        if let Some((scope, profile)) = self.concurrent.take() {
+            let body = RemoteBody::Present(Box::new(profile.clone()));
+            self.store(profile.id, scope, body);
+        }
+        if self.forbidden.contains(&id) {
+            return Err(ReplicaError::Forbidden { id });
+        }
+        if self.forced_conflicts > 0 {
+            self.forced_conflicts -= 1;
+            return Err(ReplicaError::Conflict { id });
+        }
+        let current = self
+            .objects
+            .get(&id)
+            .map(|stored| ReplicaVersion::new(stored.version));
+        if current == expected {
+            Ok(())
+        } else {
+            Err(ReplicaError::Conflict { id })
+        }
+    }
+
+    fn page(&self, after: Option<&ReplicaCursor>) -> ReplicaPage {
+        let from = after
+            .and_then(|cursor| cursor.as_str().parse::<u64>().ok())
+            .unwrap_or(0);
+        let mut ids = Vec::new();
+        let mut last = from;
+        let mut more = false;
+        for (sequence, id) in self.feed.iter().filter(|(sequence, _)| *sequence > from) {
+            if self.page_size.is_some_and(|size| ids.len() >= size) {
+                more = true;
+                break;
+            }
+            last = *sequence;
+            ids.retain(|seen| seen != id);
+            ids.push(*id);
+        }
+        let changes = ids
+            .into_iter()
+            .filter_map(|id| {
+                let stored = self.objects.get(&id)?;
+                Some(RemoteProfile {
+                    scope: stored.scope.clone(),
+                    id,
+                    version: ReplicaVersion::new(stored.version),
+                    body: stored.body.clone(),
+                })
+            })
+            .collect();
+        ReplicaPage {
+            changes,
+            cursor: ReplicaCursor::new(last.to_string()),
+            more,
+        }
+    }
+}
+
+impl MemoryReplica {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn with<R>(&self, work: impl FnOnce(&mut Inner) -> R) -> R {
+        work(&mut self.inner.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    fn notify(&self) {
+        self.watchers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|watcher| watcher.unbounded_send(()).is_ok());
+    }
+
+    /// Another device writes `profile`; watchers are told.
+    pub fn write_remote(&self, scope: ReplicaScope, profile: Profile) -> ReplicaVersion {
+        let id = profile.id;
+        let version =
+            self.with(|inner| inner.store(id, scope, RemoteBody::Present(Box::new(profile))));
+        self.notify();
+        version
+    }
+
+    /// Another device deletes the profile, leaving a tombstone.
+    pub fn delete_remote(&self, scope: ReplicaScope, id: ProfileId) -> ReplicaVersion {
+        let version = self.with(|inner| inner.store(id, scope, RemoteBody::Deleted));
+        self.notify();
+        version
+    }
+
+    /// A newer client wrote something this client cannot read.
+    pub fn write_unrecognized(&self, scope: ReplicaScope, id: ProfileId) -> ReplicaVersion {
+        let version = self.with(|inner| inner.store(id, scope, RemoteBody::Unrecognized));
+        self.notify();
+        version
+    }
+
+    /// Reachability: while offline every call answers `Unavailable`.
+    pub fn set_offline(&self, offline: bool) {
+        self.with(|inner| inner.offline = offline);
+        if !offline {
+            self.notify();
+        }
+    }
+
+    /// Writes of this profile are refused as `Forbidden`.
+    pub fn refuse_writes_of(&self, id: ProfileId) {
+        self.with(|inner| inner.forbidden.insert(id));
+    }
+
+    /// The next `count` writes lose a race regardless of their expectation.
+    pub fn conflict_next_writes(&self, count: usize) {
+        self.with(|inner| inner.forced_conflicts = count);
+    }
+
+    /// Another device writes `profile` just before the next write is checked.
+    pub fn write_concurrently_before_next_write(&self, scope: ReplicaScope, profile: Profile) {
+        self.with(|inner| inner.concurrent = Some((scope, profile)));
+    }
+
+    /// Changes come in pages of at most `size` writes.
+    pub fn page_size(&self, size: usize) {
+        self.with(|inner| inner.page_size = Some(size));
+    }
+
+    pub fn calls(&self) -> Vec<ReplicaCall> {
+        self.with(|inner| inner.calls.clone())
+    }
+
+    pub fn writes(&self) -> Vec<ReplicaCall> {
+        self.calls()
+            .into_iter()
+            .filter(|call| !matches!(call, ReplicaCall::Changes(_)))
+            .collect()
+    }
+
+    /// The stored scope, version and body of a profile.
+    pub fn stored(&self, id: ProfileId) -> Option<(ReplicaScope, ReplicaVersion, RemoteBody)> {
+        self.with(|inner| {
+            inner.objects.get(&id).map(|stored| {
+                (
+                    stored.scope.clone(),
+                    ReplicaVersion::new(stored.version),
+                    stored.body.clone(),
+                )
+            })
+        })
+    }
+
+    /// The live profile stored under `id`, if any.
+    pub fn profile(&self, id: ProfileId) -> Option<Profile> {
+        match self.stored(id)?.2 {
+            RemoteBody::Present(profile) => Some(*profile),
+            RemoteBody::Deleted | RemoteBody::Unrecognized => None,
+        }
+    }
+
+    fn write(
+        &self,
+        id: ProfileId,
+        call: ReplicaCall,
+        expected: Option<ReplicaVersion>,
+        scope: ReplicaScope,
+        body: RemoteBody,
+    ) -> Result<ReplicaVersion, ReplicaError> {
+        let result = self.with(|inner| {
+            inner.calls.push(call);
+            inner.check_write(id, expected)?;
+            Ok(inner.store(id, scope, body))
+        });
+        if result.is_ok() {
+            self.notify();
+        }
+        result
+    }
+}
+
+impl ProfileReplica for MemoryReplica {
+    fn changes(
+        &self,
+        after: Option<ReplicaCursor>,
+    ) -> BoxFuture<'static, Result<ReplicaPage, ReplicaError>> {
+        let result = self.with(|inner| {
+            inner.calls.push(ReplicaCall::Changes(
+                after.as_ref().map(|c| c.as_str().to_owned()),
+            ));
+            if inner.offline {
+                Err(ReplicaError::Unavailable)
+            } else {
+                Ok(inner.page(after.as_ref()))
+            }
+        });
+        futures::future::ready(result).boxed()
+    }
+
+    fn put(
+        &self,
+        scope: ReplicaScope,
+        profile: Profile,
+        expected: Option<ReplicaVersion>,
+    ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
+        let call = ReplicaCall::Put {
+            id: profile.id,
+            expected,
+        };
+        let result = self.write(
+            profile.id,
+            call,
+            expected,
+            scope,
+            RemoteBody::Present(Box::new(profile)),
+        );
+        futures::future::ready(result).boxed()
+    }
+
+    fn delete(
+        &self,
+        scope: ReplicaScope,
+        id: ProfileId,
+        expected: ReplicaVersion,
+    ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
+        let call = ReplicaCall::Delete { id, expected };
+        let result = self.write(id, call, Some(expected), scope, RemoteBody::Deleted);
+        futures::future::ready(result).boxed()
+    }
+
+    fn watch(&self) -> BoxStream<'static, ()> {
+        let (sender, receiver) = mpsc::unbounded();
+        self.watchers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(sender);
+        receiver.boxed()
+    }
+}
