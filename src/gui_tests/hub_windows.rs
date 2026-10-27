@@ -472,3 +472,5 @@ fn without_hubs_a_window_has_no_environment_menu(cx: &mut TestAppContext) {
         cx
     ));
 }
+
+mod restore;

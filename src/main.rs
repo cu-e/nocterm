@@ -20,6 +20,7 @@ mod project_setup;
 mod settings_pages;
 mod shell_setup;
 mod startup;
+mod window_set_setup;
 mod windows;
 
 #[cfg(test)]

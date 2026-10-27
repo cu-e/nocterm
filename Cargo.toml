@@ -76,6 +76,7 @@ nocterm-plugin-view = { workspace = true, optional = true }
 nocterm-plugin-wasm = { workspace = true, optional = true }
 nocterm-plugins-ui.workspace = true
 nocterm-ui.workspace = true
+nocterm-window-set.workspace = true
 nocterm-workspace.workspace = true
 nocterm-workspace-ports.workspace = true
 

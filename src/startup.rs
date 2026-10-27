@@ -168,7 +168,7 @@ impl PreparedApp {
         })
         .detach();
         if let Err(error) =
-            crate::windows::open_window(cx, &booted, nocterm_hubs_model::Environment::Local)
+            crate::windows::restore_windows(cx, &booted, booted.windowing().previous())
         {
             tracing::error!(%error, "could not open the window");
             cx.quit();

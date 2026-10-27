@@ -2,7 +2,10 @@
 //!
 //! A window is this computer or one server of nocterm hubs. Opening a window and switching the
 //! environment of an open one compose the same workspaces; only the second keeps the native
-//! window, so its place and size stay.
+//! window, so its place and size stay. The environments of the open windows are reported to the
+//! window set, which the next start restores from ([`restore_windows`]).
+
+mod restore;
 
 use std::rc::Rc;
 
@@ -14,6 +17,8 @@ use nocterm_core::error::SharedCause;
 use nocterm_hubs_model::Environment;
 use nocterm_hubs_ui::{EnvironmentOpenError, EnvironmentOpener, Placement};
 use nocterm_workspace::Workspace;
+
+pub(crate) use restore::restore_windows;
 
 use crate::{APP_ID, bootstrap::Booted, shell_setup::hub_window};
 
@@ -35,7 +40,7 @@ pub(crate) fn open_window(
         ..TitleBar::window_options()
     };
 
-    gpui_kit::open_window(options, cx, |window, cx| {
+    let (window, _) = gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title(&title);
         // "System" appearance follows the desktop as it changes.
         let themes = booted.themes().clone();
@@ -49,6 +54,9 @@ pub(crate) fn open_window(
     .map_err(|error| {
         EnvironmentOpenError::Window(SharedCause::new(std::io::Error::other(error)))
     })?;
+    booted
+        .windowing()
+        .opened(window.window_id(), environment, cx);
     Ok(())
 }
 
@@ -71,6 +79,9 @@ pub(crate) fn replace_environment(
     if let Some(workspace) = built {
         window.focus(&workspace.focus_handle(cx), cx);
     }
+    booted
+        .windowing()
+        .switched(window.window_handle().window_id(), environment.clone(), cx);
     Ok(())
 }
 

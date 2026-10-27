@@ -18,7 +18,9 @@ use std::rc::Rc;
 use crate::shell_setup::{GuestInputs, Plugins, UserPluginMode, install_guest_pages};
 
 mod error;
+mod windowing;
 pub(crate) use error::BootstrapError;
+pub(crate) use windowing::Windowing;
 
 /// What differs between the application and its tests.
 pub(crate) struct Services {
@@ -113,8 +115,8 @@ pub(crate) struct Booted {
     connections: Option<nocterm_connections::Installed>,
     snippets: Option<nocterm_snippets_ui::Installed>,
     projects: Option<nocterm_projects::Installed>,
-    /// Servers of nocterm hubs, when the application has them.
-    hubs: Option<nocterm_hubs_ui::Installed>,
+    /// The hub servers and the open windows, shared by every window.
+    windowing: Windowing,
     themes: nocterm_ui::ThemeUi,
     user_plugins: crate::shell_setup::UserShell,
     /// The vault, when it opened; credentials and its settings depend on it.
@@ -150,7 +152,10 @@ impl Booted {
     }
 
     pub(crate) fn hubs(&self) -> Option<&nocterm_hubs_ui::Installed> {
-        self.hubs.as_ref()
+        self.windowing.hubs()
+    }
+    pub(crate) fn windowing(&self) -> &Windowing {
+        &self.windowing
     }
     pub(crate) fn terminal(&self) -> &nocterm_terminal::Installed {
         &self.terminal
@@ -204,7 +209,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
-    let hubs = install_hubs(hosts.hubs.clone(), ui.settings(), cx);
+    let windowing = install_windowing(hosts.hubs.clone(), ui.settings(), stored, &shutdown, cx);
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     let connections = install_connections(connections, &ui, &shutdown, cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
@@ -254,7 +259,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         connections,
         snippets,
         projects,
-        hubs,
+        windowing,
         vault,
         files,
         user_plugins: plugins.user().clone(),
@@ -383,6 +388,17 @@ fn install_themes(
     };
     let themes = nocterm_theme_service::ThemesHandle::install(library, registry, catalog, cx);
     nocterm_ui::ThemeUi::install(settings, themes, base, cx)
+}
+
+/// The hub servers and the list of open windows.
+fn install_windowing(
+    deps: Option<nocterm_hubs::Deps>,
+    settings: &nocterm_store::SettingsHandle,
+    stored: Option<&Paths>,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Windowing {
+    Windowing::install(install_hubs(deps, settings, cx), stored, shutdown, cx)
 }
 
 /// Hub access, when the application has it.
@@ -645,7 +661,7 @@ pub(crate) fn build_workspace(
         nocterm_agent::register(workspace, booted.agent.clone(), window, cx),
     );
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
-    if let Some(hubs) = &booted.hubs {
+    if let Some(hubs) = booted.hubs() {
         nocterm_hubs_ui::install_menu(
             hubs,
             nocterm_hubs_model::Environment::Local,
