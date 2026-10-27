@@ -330,6 +330,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 toml = "1"
 toml_edit = "0.25"
 tracing = "0.1"
+tonic = { version = "0.14", default-features = false }
 # Writes the guest modules the wasm tests run. Dev only: the host reads binary modules.
 wat = "1.262"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

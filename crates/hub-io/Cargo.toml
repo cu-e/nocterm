@@ -25,6 +25,7 @@ toml.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+tonic.workspace = true
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

@@ -19,7 +19,7 @@ use crate::records::{
     Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionState, HubSessionSummary,
     NodeSummary, OrgId,
 };
-use crate::trust::{Fingerprint, ProbedHub, TrustPolicy};
+use crate::trust::{ProbedHub, TrustPolicy};
 
 mod server;
 

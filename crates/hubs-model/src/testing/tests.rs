@@ -1,6 +1,7 @@
 use futures::executor::block_on;
 
 use super::*;
+use crate::Fingerprint;
 
 const ADDRESS: &str = "hub.example:7443";
 

@@ -20,3 +20,14 @@
 //! directory, published atomically and read under an inter-process lock; a pinned hub is
 //! trusted only with the exact pinned certificate; a revoked device erases its credentials;
 //! no tonic or prost type, and no text built from a failure, crosses the crate boundary.
+
+mod classify;
+mod connect;
+mod convert;
+mod credentials;
+mod directory;
+mod endpoint;
+mod links;
+mod pool;
+
+pub use links::{HubLinks, HubLinksConfig, HubStartError};

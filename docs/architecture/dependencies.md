@@ -29,6 +29,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-directory-io` | adapter | `nocterm-explorer`, `nocterm-session` | Read-only directory readers over injected local and session filesystems. |
 | `nocterm-explorer` | domain | `nocterm-session`, `nocterm-settings` | Explorer indexing policy and external program selection rules. |
 | `nocterm-files` | feature | `nocterm-explorer`, `nocterm-plugin-api`, `nocterm-plugin-model`, `nocterm-plugin-ports`, `nocterm-project-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-transfers`, `nocterm-ui`, `nocterm-workspace` | Local and remote Explorer with streaming file transfers. |
+| `nocterm-hub-io` | adapter | `nocterm-core`, `nocterm-hubs-model`, `nocterm-session` | Reaches Nocterm hubs through the hub contract: pinned TLS, device credentials, sign-in and session lists. |
 | `nocterm-hubs-model` | domain | `nocterm-core`, `nocterm-session`, `nocterm-settings` | Window environments, hub addresses and trust rules, the hubs settings section and the hub access ports. |
 | `nocterm-image-codec` | adapter | `nocterm-ai` | Bounded native image inspection and preview encoding. |
 | `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
@@ -240,6 +241,9 @@ graph TD
     nocterm_files --> nocterm_transfers
     nocterm_files --> nocterm_ui
     nocterm_files --> nocterm_workspace
+    nocterm_hub_io --> nocterm_core
+    nocterm_hub_io --> nocterm_hubs_model
+    nocterm_hub_io --> nocterm_session
     nocterm_hubs_model --> nocterm_core
     nocterm_hubs_model --> nocterm_session
     nocterm_hubs_model --> nocterm_settings
