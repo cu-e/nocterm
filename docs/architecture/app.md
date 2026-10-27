@@ -107,7 +107,9 @@ through `src/window_set_setup.rs` and saves through `persist::save_text`; a run 
 directory remembers nothing. `open_window` and `replace_environment` report to it, and
 `startup` calls `windows::restore_windows` with the environments the previous run left open
 ([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)): one window
-per entry, a server no longer in `[hubs]` skipped, and one local window when none opened.
+per entry, one local window when none opened. A server no longer in `[hubs]` is forgotten; a
+server that is only unavailable in this run (settings unreadable, `[hubs]` invalid, hubs not
+started) stays in the saved list.
 
 ## Menus
 

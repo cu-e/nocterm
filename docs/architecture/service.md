@@ -356,7 +356,8 @@ persistence service as every section.
 the `OpenWindows<WindowId>` rules of `nocterm-hubs-model` in one `Persisted` entity, registered
 with the `ShutdownCoordinator`, so every change is saved in the background and the whole list is
 captured at quit. `PreparedWindows` carries the document the application read before the first
-window opened; a document that could not be read starts an empty list. The application reports
-`opened` and `switched`; the service itself subscribes to window closing, once and for the life of
+window opened; a document that could not be read starts an empty list, and one written by a
+newer version is never written over. The application reports `opened`, `switched` and `kept` (an
+environment that could not open in this run, which stays in the document); the service itself subscribes to window closing, once and for the life of
 the application, to forget a window the user closes except the last. It reads no file, opens no
 window and installs no global; `WindowSet::previous` is what the application restores from.

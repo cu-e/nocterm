@@ -17,8 +17,11 @@ windows is missing.
 in the order the windows opened. It is state the application writes, so the user does not edit
 it and it is not in `settings.toml`. Records ignore unknown fields and every later field is
 optional, so a record can carry data of its own window, such as the sessions it shows, without
-a format break. A newer `version` and text that cannot be parsed are the typed
-`WindowDocumentError`; both start one local window and the next save replaces the file.
+a format break. A record this version cannot read, such as an environment of a kind a later
+build added, is left out and counted; the others are read. Text that cannot be parsed and a
+newer `version` are the typed `WindowDocumentError`; both start one local window. The next
+save replaces unreadable text, but a document of a newer version is never written over: that
+run saves nothing, so going back to the newer build finds the file as it was.
 
 **The rules are pure and live in the domain.** `nocterm_hubs_model::windows` holds the document
 and `OpenWindows<K>`, the live list keyed by any window identity:
@@ -43,9 +46,12 @@ set into one `Windowing` owner of `Booted`, which was at its field limit. If the
 registered for shutdown, windows work and are not remembered.
 
 **Start opens a window per remembered environment.** `windows::restore_windows` opens each
-entry through `open_window`, which reports to the set. An entry that cannot open, such as a
-server removed from `[hubs]`, is logged and skipped. When none opens, or nothing was
-remembered, one local window opens.
+entry through `open_window`, which reports to the set. An entry that cannot open is logged and
+skipped. A server that is positively absent from a `[hubs]` that was read is forgotten. A
+server that is only unavailable in this run, because `settings.toml` could not be read, its
+`[hubs]` section is invalid or hubs did not start, stays in the document at its place, so
+fixing the cause brings its window back. When none opens, or nothing was remembered, one
+local window opens.
 
 ## Alternatives
 
@@ -61,8 +67,10 @@ crate for the document would only re-export `Environment` and `HubAddress`.
   default tab and hub tabs are not reattached. A later decision can add per-window data to the
   record.
 - The window position and size are the platform's; they are not part of the document.
-- A window opened by a failed restore does not erase its entry until a later save, which
-  writes only the windows that opened.
+- The first window a start opens is saved at once, in the background, so a remembered entry
+  that did not open and is not kept, such as a removed server, is gone from the file within the
+  same start.
 - A crash saves the list as of the last change, because every open, switch and close is saved
   in the background.
-- `Booted` has one field of room again.
+- `Booted` keeps its field count: the window set joins the hub installation in `Windowing`
+  instead of adding a field.
