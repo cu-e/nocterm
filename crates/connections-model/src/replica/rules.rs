@@ -82,8 +82,7 @@ pub fn plan(
     changes: &[RemoteProfile],
     state: &ReplicaState,
 ) -> Vec<ReplicaAction> {
-    let latest: HashMap<ProfileId, &RemoteProfile> =
-        changes.iter().map(|change| (change.id, change)).collect();
+    let latest = latest_changes(changes, state);
     let mut remembered: Vec<ProfileId> = state.entries().map(|(id, _)| id).collect();
     remembered.sort_by_key(ToString::to_string);
     let mut seen = HashSet::new();
@@ -115,6 +114,42 @@ pub fn plan(
     stale.sort_by_key(ToString::to_string);
     actions.extend(stale.into_iter().map(|id| ReplicaAction::Forget { id }));
     actions
+}
+
+/// The change that stands for each profile. A profile moved between scopes shows up twice,
+/// as a tombstone where it was and as a live profile where it is; the live one stands, so
+/// the move is never mistaken for a deletion. Otherwise the later change stands, except that
+/// a change in the scope the profile was agreed in outranks one in another scope.
+fn latest_changes<'a>(
+    changes: &'a [RemoteProfile],
+    state: &ReplicaState,
+) -> HashMap<ProfileId, &'a RemoteProfile> {
+    let mut latest: HashMap<ProfileId, &RemoteProfile> = HashMap::new();
+    for change in changes {
+        let home = state.entry(change.id).map(|entry| &entry.scope);
+        let stands = latest
+            .get(&change.id)
+            .is_none_or(|held| outranks(change, held, home));
+        if stands {
+            latest.insert(change.id, change);
+        }
+    }
+    latest
+}
+
+fn outranks(new: &RemoteProfile, held: &RemoteProfile, home: Option<&ReplicaScope>) -> bool {
+    fn rank(body: &RemoteBody) -> u8 {
+        match body {
+            RemoteBody::Deleted => 1,
+            RemoteBody::Present(_) => 2,
+            RemoteBody::Unrecognized => 3,
+        }
+    }
+    let (new_rank, held_rank) = (rank(&new.body), rank(&held.body));
+    if new_rank != held_rank {
+        return new_rank > held_rank;
+    }
+    !(home == Some(&held.scope) && home != Some(&new.scope))
 }
 
 /// What to do about one profile. At least one of the three must be present.
@@ -300,7 +335,7 @@ fn with_history(
     match (local_side(local, synced), remote_state, local, remote) {
         (Side::Equal, Side::Equal, ..) if version == synced.version => Vec::new(),
         (Side::Equal, Side::Equal, ..) => vec![ReplicaAction::MarkSynced {
-            scope,
+            scope: remote.map_or(scope, |change| change.scope.clone()),
             version,
             profile: boxed(&synced.profile),
         }],

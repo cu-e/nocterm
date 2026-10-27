@@ -525,3 +525,57 @@ fn a_placement_survives_serialization() {
         serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
     assert_eq!(restored.placement(id()), Some(&group()));
 }
+
+fn remote_in(scope: ReplicaScope, body: RemoteBody, at: u64) -> RemoteProfile {
+    RemoteProfile {
+        scope,
+        ..remote(body, at)
+    }
+}
+
+#[test]
+fn a_profile_another_device_moved_arrives_as_a_move_not_as_a_deletion() {
+    let local = profiles_of(&[profile("a")]);
+    let mut state = ReplicaState::default();
+    state.agree(id(), synced("a", 3));
+    let tombstone = remote_in(ReplicaScope::Personal, RemoteBody::Deleted, 4);
+    let created = remote_in(group(), RemoteBody::Present(Box::new(profile("a"))), 2);
+    for changes in [
+        [tombstone.clone(), created.clone()],
+        [created.clone(), tombstone.clone()],
+    ] {
+        assert_eq!(
+            plan(&local, &changes, &state),
+            [ReplicaAction::MarkSynced {
+                scope: group(),
+                version: version(2),
+                profile: Box::new(profile("a")),
+            }]
+        );
+    }
+}
+
+#[test]
+fn our_own_move_read_back_from_the_feed_changes_nothing() {
+    let local = profiles_of(&[profile("a")]);
+    let mut state = ReplicaState::default();
+    state.agree(id(), synced_in(group(), "a", 2));
+    let tombstone = remote_in(ReplicaScope::Personal, RemoteBody::Deleted, 4);
+    let created = remote_in(group(), RemoteBody::Present(Box::new(profile("a"))), 2);
+    assert_eq!(plan(&local, &[created, tombstone], &state), []);
+}
+
+#[test]
+fn of_two_live_copies_the_one_in_the_agreed_scope_stands() {
+    let local = profiles_of(&[profile("a")]);
+    let mut state = ReplicaState::default();
+    state.agree(id(), synced("a", 3));
+    let home = remote_in(
+        ReplicaScope::Personal,
+        RemoteBody::Present(Box::new(profile("b"))),
+        5,
+    );
+    let stray = remote_in(group(), RemoteBody::Present(Box::new(profile("c"))), 2);
+    let actions = plan(&local, &[home, stray], &state);
+    assert_eq!(actions, [save("b", 5, Some("a"))]);
+}
