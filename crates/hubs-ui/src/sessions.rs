@@ -441,13 +441,7 @@ impl SessionsPanel {
         let attachable = is_attachable(session);
         let selected = self.selected.as_ref() == Some(&session.id);
         let mine = self.state.read(cx).is_mine(session);
-        let state = match session.state {
-            HubSessionState::Starting => "starting",
-            HubSessionState::Running => "running",
-            HubSessionState::Exited => "exited",
-            HubSessionState::Lost => "lost",
-        };
-        let (open, end, row) = (session.clone(), session.clone(), session.clone());
+        let row = session.clone();
         let title = if session.title.is_empty() {
             "Session".to_owned()
         } else {
@@ -476,36 +470,15 @@ impl SessionsPanel {
                     .flex_1()
                     .min_w_0()
                     .child(div().truncate().text_sm().child(title))
-                    .child(div().text_xs().text_color(muted).child(if mine {
-                        state.to_owned()
-                    } else {
-                        format!("{state} · another user")
-                    })),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(state_text(session, mine)),
+                    ),
             )
-            .when(attachable, |line| {
-                line.child(
-                    Button::new(SharedString::from(format!("hub-session-open-{}", open.id)))
-                        .ghost()
-                        .xsmall()
-                        .label("Open")
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.tabs.open_existing(&open, window, cx);
-                        })),
-                )
-            })
-            .when(mine, |line| {
-                line.child(
-                    Button::new(SharedString::from(format!("hub-session-end-{}", end.id)))
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::X)
-                        .tooltip("End session")
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            this.confirm_end(end.clone(), window, cx);
-                        })),
-                )
-            })
+            .when(attachable, |line| line.child(self.open_button(session, cx)))
+            .when(mine, |line| line.child(self.end_button(session, cx)))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if !attachable {
                     return;
@@ -519,6 +492,45 @@ impl SessionsPanel {
                 cx.notify();
             }))
             .into_any_element()
+    }
+
+    fn open_button(&self, session: &HubSessionSummary, cx: &mut Context<Self>) -> Button {
+        let open = session.clone();
+        Button::new(SharedString::from(format!("hub-session-open-{}", open.id)))
+            .ghost()
+            .xsmall()
+            .label("Open")
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.tabs.open_existing(&open, window, cx);
+            }))
+    }
+
+    fn end_button(&self, session: &HubSessionSummary, cx: &mut Context<Self>) -> Button {
+        let end = session.clone();
+        Button::new(SharedString::from(format!("hub-session-end-{}", end.id)))
+            .ghost()
+            .xsmall()
+            .icon(IconName::X)
+            .tooltip("End session")
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                this.confirm_end(end.clone(), window, cx);
+            }))
+    }
+}
+
+/// What a session row says of the session: its state, and whose it is when not the account's.
+fn state_text(session: &HubSessionSummary, mine: bool) -> String {
+    let state = match session.state {
+        HubSessionState::Starting => "starting",
+        HubSessionState::Running => "running",
+        HubSessionState::Exited => "exited",
+        HubSessionState::Lost => "lost",
+    };
+    if mine {
+        state.to_owned()
+    } else {
+        format!("{state} · another user")
     }
 }
 
