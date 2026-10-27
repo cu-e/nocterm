@@ -19,23 +19,25 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_hubs::{HubStatus, HubSummary, Hubs, HubsEvent};
+use nocterm_hubs::{HubSummary, Hubs, HubsEvent};
 use nocterm_hubs_model::Environment;
 use nocterm_ui::IconName;
 use nocterm_workspace::Workspace;
 
 use crate::color::tint;
+use crate::commands::{open_server, pick_server_to_open, pick_server_to_sign_out};
 use crate::installation::Installed;
 use crate::ports::{EnvironmentOpener, Placement};
 use crate::status::{status_chip, status_icon};
 use crate::switch::Switch;
-use crate::{OpenEnvironmentMenu, SignInToServer, problems, sign_in};
+use crate::{OpenEnvironmentMenu, OpenServerInNewWindow, SignInToServer, SignOutOfServer, sign_in};
 
 /// How often the countdown of an offline server is redrawn while the menu shows.
 const TICK: Duration = Duration::from_secs(1);
 
 /// Puts the environment menu in the title bar of `workspace` and handles
-/// [`OpenEnvironmentMenu`] and [`SignInToServer`] there. `environment` is what the window
+/// [`OpenEnvironmentMenu`], [`SignInToServer`], [`OpenServerInNewWindow`] and
+/// [`SignOutOfServer`] there. `environment` is what the window
 /// shows; opening it again does nothing.
 pub fn install_menu(
     installed: &Installed,
@@ -53,8 +55,22 @@ pub fn install_menu(
     workspace.register_action(move |_, _: &OpenEnvironmentMenu, _, cx| {
         let _ = opening.update(cx, |menu, cx| menu.set_open(true, cx));
     });
+    let (signing_in, opening, signing_out) = (hubs.clone(), hubs.clone(), hubs);
+    let (sign_in_switch, open_switch) = (switch.clone(), switch);
     workspace.register_action(move |_, _: &SignInToServer, window, cx| {
-        sign_in::start(&hubs, None, switch.clone(), window, cx);
+        sign_in::start(&signing_in, None, sign_in_switch.clone(), window, cx);
+    });
+    workspace.register_action(move |_, _: &OpenServerInNewWindow, window, cx| {
+        let (hubs, switch) = (opening.clone(), open_switch.clone());
+        window.defer(cx, move |window, cx| {
+            pick_server_to_open(&hubs, switch, window, cx);
+        });
+    });
+    workspace.register_action(move |_, _: &SignOutOfServer, window, cx| {
+        let hubs = signing_out.clone();
+        window.defer(cx, move |window, cx| {
+            pick_server_to_sign_out(&hubs, window, cx);
+        });
     });
 }
 
@@ -249,20 +265,7 @@ impl EnvironmentList {
         window.defer(cx, move |window, cx| match row {
             Row::Local => switch.open(Environment::Local, placement, window, cx),
             Row::SignIn => sign_in::start(&hubs, None, switch, window, cx),
-            Row::Hub(summary) => match summary.status.clone() {
-                HubStatus::Online | HubStatus::Connecting | HubStatus::Offline { .. } => {
-                    switch.open(Environment::Hub(summary.id), placement, window, cx);
-                }
-                HubStatus::SignedOut | HubStatus::Revoked => {
-                    sign_in::start(&hubs, Some(&summary.id), switch, window, cx);
-                }
-                HubStatus::TrustFailed { pinned, presented } => {
-                    problems::open_trust_failed(hubs, summary, pinned, presented, window, cx);
-                }
-                HubStatus::UpgradeRequired { hub, client } => {
-                    problems::open_upgrade_required(&summary, hub, client, window, cx);
-                }
-            },
+            Row::Hub(summary) => open_server(hubs, summary, placement, switch, window, cx),
         });
     }
 

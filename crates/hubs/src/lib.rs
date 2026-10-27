@@ -2,7 +2,8 @@
 //!
 //! Owns: the registry of known hubs ([`Hubs`]) and the connection status all windows share
 //! ([`HubStatus`]); the order of the sign-in steps ([`SignInSession`]); the account, nodes and
-//! sessions a hub window shows ([`HubWindow`]); publishing a signed-in server to `[hubs]`.
+//! sessions a hub window shows ([`HubWindow`]); publishing a signed-in server to `[hubs]`, and
+//! renaming, colouring, signing out of and removing a known one.
 //!
 //! Does not own: any I/O or protocol (the injected hub ports do, see `nocterm-hubs-model`);
 //! the menus, dialog and panel that show this state (`nocterm-hubs-ui`); how windows are

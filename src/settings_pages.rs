@@ -17,6 +17,9 @@ const PLUGINS_PAGE: &str = "plugins";
 const APPEARANCE_PAGE: &str = "appearance";
 const LAYOUT_SECTION: &str = "layout";
 
+/// The id of the page of known hub servers, which exists when the application has hubs.
+const SERVERS_PAGE: &str = "servers";
+
 /// The lazy pages after the builtin ones, in navigation order, with the plugin catalog the
 /// Plugins page and the plugin page links read, and the sections guests add to Appearance.
 pub(crate) struct GuestPages {
@@ -164,6 +167,19 @@ impl SettingsPages {
             &self.ordinary,
             self.installed.clone(),
         );
+        if self
+            .ordinary
+            .pages()
+            .iter()
+            .any(|page| page.id() == SERVERS_PAGE)
+        {
+            open_on::<nocterm_hubs_ui::ManageServers>(
+                workspace,
+                SERVERS_PAGE,
+                &self.ordinary,
+                self.installed.clone(),
+            );
+        }
         if self.startup.is_some() {
             open_on::<OpenVault>(workspace, "vault", &self.ordinary, self.installed.clone());
         }
@@ -196,12 +212,13 @@ fn layout_anchor(action: &OpenLayoutSettings) -> Option<gpui_kit::SharedString> 
 }
 /// Lazy pages are composed from the same feature installations as the window. The page of a
 /// single plugin nests under Plugins, anchored at the plugin's id; Plugins comes after the
-/// other guests, and the Vault page after it.
+/// other guests, and the Vault page after it. The Servers page is there when hubs are installed.
 pub(crate) fn guest_pages(
     keymap: nocterm_keymap::KeymapHandle,
     monitor: &nocterm_monitor_ui::Installed,
     files: &nocterm_files::Installed,
     projects: Option<&nocterm_projects::Installed>,
+    hubs: Option<&nocterm_hubs_ui::Installed>,
     plugins_page: SettingsPageSpec,
     plugins: Arc<PluginCatalog>,
 ) -> GuestPages {
@@ -222,6 +239,9 @@ pub(crate) fn guest_pages(
             &nocterm_projects::plugin::PLUGIN,
         )
     }));
+    pages.extend(
+        hubs.map(|hubs| SettingsPageRegistration::lazy(nocterm_hubs_ui::settings_page(hubs))),
+    );
     pages.push(SettingsPageRegistration::lazy(plugins_page));
     GuestPages::new(pages, plugins)
 }

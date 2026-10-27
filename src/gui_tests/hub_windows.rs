@@ -483,4 +483,31 @@ fn without_hubs_a_window_has_no_environment_menu(cx: &mut TestAppContext) {
     ));
 }
 
+#[gpui_kit::test]
+fn managing_servers_opens_the_servers_page_of_the_settings(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let booted = boot_over(Some(&hub()), &Arc::new(MockTransport::default()), cx);
+    let window = open(&booted, Environment::Local, cx);
+
+    dispatch(window, nocterm_hubs_ui::ManageServers, cx);
+
+    cx.update_window(window, |_, window, _| {
+        assert!(window.find("servers-page").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn without_hubs_there_is_no_servers_page_to_manage(cx: &mut TestAppContext) {
+    let booted = boot_over(None, &Arc::new(MockTransport::default()), cx);
+    let window = open(&booted, Environment::Local, cx);
+
+    let available = cx
+        .update_window(window, |_, window, cx| {
+            window.is_action_available(&nocterm_hubs_ui::ManageServers, cx)
+        })
+        .unwrap();
+    assert!(!available);
+}
+
 mod restore;

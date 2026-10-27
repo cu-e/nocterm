@@ -18,6 +18,7 @@ use nocterm_hubs_model::{HubColor, HubRecord, TrustPolicy};
 use nocterm_ui::IconName;
 
 use crate::color::tint;
+use crate::commands::can_sign_out;
 use crate::layout::{field, fingerprint_block, note, problem};
 use crate::manage;
 use crate::status::{status_chip, status_icon};
@@ -176,7 +177,7 @@ fn certificate(summary: &HubSummary, record: &HubRecord, key: &str, cx: &App) ->
 
 /// Sign out and remove.
 fn actions(summary: &HubSummary, hubs: &Entity<Hubs>, key: &str) -> impl IntoElement {
-    let signed_in = !matches!(summary.status, HubStatus::SignedOut | HubStatus::Revoked);
+    let signed_in = can_sign_out(summary);
     let sign_out = signed_in.then(|| {
         let (hubs, id) = (hubs.clone(), summary.id.clone());
         Button::new(item("server-sign-out", key))

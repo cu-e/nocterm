@@ -247,6 +247,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         keymap.clone(),
         &files,
         projects.as_ref(),
+        hubs.as_ref(),
         &layout,
     );
     let guests = install_guest_pages(inputs, &plugins, cx);
