@@ -100,6 +100,15 @@ connection (and its recents) it was typed for when that connection has jump host
 ordered jump entries (saved connections or literal addresses) and resolves them
 purely at open time, with typed errors for deleted connections, cycles and routes over
 the limit ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
+A route can start at a hub instead of a socket: `ProxyConfig::Hub` names the hub by an
+opaque address (and optionally one of its nodes) and `validate` bounds both, without
+dialling. `RelayDialer` is the port the application implements to turn that address
+into a `RelayStream`: two bounded frame channels (`RELAY_FRAMES` frames of at most
+`RELAY_FRAME_BYTES`) so a side that stops reading stalls the other instead of growing
+a buffer, and dropping an end closes both directions. `RelayError` types why a stream
+was not opened (not signed in, refused, node unavailable, unreachable, closed). No hub
+type appears in the session domain
+([ADR 0100](../adr/0100-the-hub-is-a-route-step.md)).
 `nocterm-vt` turns a byte stream into a terminal grid using
 alacritty_terminal and encodes keyboard, mouse and paste input. These domain
 crates do not know the workspace or GPUI.
@@ -111,7 +120,7 @@ Native adapters and the shared scripted port retain the same physical-prefix and
 seal ordering, including failure outcomes that do not claim durability.
 
 The optional session `test-support` feature provides `InMemoryFs`, `FakeExec`,
-`ScriptedTransport` and `FakeCredentialStore` to consumers through dev-dependencies.
+`ScriptedTransport`, `ScriptedRelay` and `FakeCredentialStore` to consumers through dev-dependencies.
 They perform no real I/O or background scheduling. Tests drive the real session and
 execution channel ends and release pending filesystem/credential operations through
 `Gate`, so cancellation and back-pressure remain part of the port behavior. The

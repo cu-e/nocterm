@@ -28,6 +28,7 @@ thiserror.workspace = true
 rustix = { version = "1.1", features = ["fs"] }
 
 [dev-dependencies]
+nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

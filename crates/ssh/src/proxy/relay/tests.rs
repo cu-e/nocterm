@@ -65,18 +65,13 @@ async fn a_relay_that_stops_reading_stalls_the_writer_within_the_bounds() {
     let mut written = 0usize;
     // Everything that can be buffered: the channel, the pipe and the frame a pump holds.
     let ceiling = (RELAY_FRAMES + 3) * RELAY_FRAME_BYTES;
-    loop {
-        match timeout(SHORT, io.write_all(&chunk)).await {
-            Ok(result) => {
-                result.unwrap();
-                written += chunk.len();
-                assert!(
-                    written <= ceiling,
-                    "buffered {written} bytes without a reader"
-                );
-            }
-            Err(_) => break,
-        }
+    while let Ok(result) = timeout(SHORT, io.write_all(&chunk)).await {
+        result.unwrap();
+        written += chunk.len();
+        assert!(
+            written <= ceiling,
+            "buffered {written} bytes without a reader"
+        );
     }
     timeout(WAIT, async {
         while from_transport.len() < RELAY_FRAMES {
