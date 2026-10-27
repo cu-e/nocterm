@@ -369,4 +369,5 @@ that could not open in this run, which stays in the document); the service itsel
 the application, to forget a window the user closes except the last. It reads no file, opens no
 window and installs no global; `WindowSet::previous` is what the application restores from.
 `HubWindow` also takes a preferred organization, selected as soon as the account is known to be
-a member of it.
+a member of it (also when asked while the first read runs), and can list the sessions of an
+organization it does not show.

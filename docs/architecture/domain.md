@@ -457,6 +457,7 @@ JSON of `WindowRecord`s, each with an `Environment`, tolerant of fields added la
 typed `WindowDocumentError`) and `OpenWindows<K>`, the rules for a live list keyed by any
 window identity. A window that opens is appended, switching replaces its environment, and
 closing removes a window unless it is the last. A `WindowRecord` of a hub also carries a
-`HubWindowMemory` (the organization shown and the ids of the attached sessions, in tab order),
+`HubWindowMemory` (the organization shown and the attached sessions, each with its own
+organization, in tab order),
 which `OpenWindows::remembered` applies only to a window still showing that hub
 ([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)).

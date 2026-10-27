@@ -17,8 +17,10 @@ windows is missing.
 in the order the windows opened. It is state the application writes, so the user does not edit
 it and it is not in `settings.toml`. Records ignore unknown fields and every later field is
 optional, so a record can carry data of its own window without a format break. A hub window
-carries `"hub":{"organization":"...","sessions":["..."]}`, each part omitted when empty: the
-organization it showed and the ids of the hub sessions its tabs were attached to, in order.
+carries `"hub":{"organization":"...","sessions":[{"org":"...","id":"..."}]}`, each part omitted
+when empty: the organization it showed and the hub sessions its tabs were attached to, in order,
+each with the organization it belongs to, since tabs of several organizations can be open at
+once.
 Older documents have no `hub` and load as before; a `hub` this version cannot read is treated
 as empty. A record this version cannot read, such as an environment of a kind a later
 build added, is left out and counted; the others are read. Text that cannot be parsed and a
@@ -66,13 +68,17 @@ fixing the cause brings its window back. When none opens, or nothing was remembe
 local window opens.
 
 **A restored hub window reattaches its sessions.** The window prefers the remembered
-organization: it is selected when the account is a member, else the default one stays. When the
-lists of the window first load, which happens when the hub is online, each remembered session
-that the hub still lists as starting or running opens a tab on `HubTerminalTarget::Existing`;
-the screen comes back through `Event::Restore`. A session the hub no longer lists, such as one
-that ended meanwhile, is dropped from the entry without a notice. While the hub is offline or
-the device is signed out, the lists do not load: the entry keeps its sessions, they are
-reattached when the hub comes online in this run, and otherwise stay for the next start. A
+organization: it is selected when the account is a member, else the default one stays, also when
+the wish comes while the first read is under way. Once the account is known, which happens when
+the hub is online, the sessions of each organization that remembered sessions belong to are
+listed, whether or not it is the one shown, and each remembered session that the hub still lists
+as starting or running opens a tab on `HubTerminalTarget::Existing`; the screen comes back
+through `Event::Restore`. A session the hub no longer lists, such as one that ended meanwhile
+or one of an organization the account left, is dropped from the entry without a notice. While
+the hub is offline or the device is signed out, nothing is listed: the entry keeps its
+sessions, they are reattached when the hub comes online in this run, and otherwise stay for the
+next start. A tab that cannot open keeps its session in the entry for the next start; it is not
+tried again in this run. A
 window that opens its sessions again keeps their order; tabs of one window open in that order.
 
 ## Alternatives

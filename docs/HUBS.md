@@ -59,7 +59,8 @@ local window opens.
 
 A hub window also remembers its organization and the sessions of its open tabs. After a restart
 it shows the same organization (if you are still a member) and reattaches each session that is
-still running, with its screen. A session that ended meanwhile is dropped without a message.
+still running in its own organization, with its screen. A session that ended meanwhile, or
+belongs to an organization you left, is dropped without a message.
 If the server is offline or you are signed out, the sessions are reattached once it is online
 again, or kept for the next start. Closing a tab forgets its session; quitting keeps them.
 Local windows reopen with their default tab.

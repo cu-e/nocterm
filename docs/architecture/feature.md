@@ -745,7 +745,8 @@ runner and expose readable immutable outcomes; sign-in cards retain the original
   organization shown and the sessions of its tabs in opening order. A tab joins when it opens
   (a new session when the hub reports its id) and leaves when it closes; it reports each change
   through `HubMemoryKeeper`. In a restored window it reattaches the remembered sessions that the
-  hub still lists, once the lists first load, and drops the others without a notice.
+  hub still lists in their own organization, once the account is known, and drops the others
+  without a notice.
 - The feature declares the ports it needs and the application implements them, because features
   do not depend on each other: `EnvironmentOpener` opens an environment in this or a new
   window, `HubTerminalOpener` adds a tab on a given transport to the workspace and
