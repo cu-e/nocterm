@@ -315,3 +315,33 @@ what the user's own UI already holds (never reading an entity that may be updati
 starts a sampler, watch or connection
 ([ADR 0090](../adr/0090-user-plugin-host-and-passive-providers.md)). The isolation rules for both
 crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).
+
+## Hubs
+
+`nocterm-hubs` owns what the application knows about hubs over time, without views or I/O. It
+reaches a hub only through the `HubTrust`, `HubSignIn` and `HubSessions` ports of
+`nocterm-hubs-model`, passed in `Deps` by the composition, and reads and edits the `[hubs]`
+section through `SettingsHandle`. `install` registers the section and returns an `Installed`
+with the one `Hubs` entity every window shares ([ADR 0097](../adr/0097-a-window-belongs-to-one-environment.md)).
+
+- `Hubs` lists the known servers in the order of the settings with a `HubStatus` for each:
+  `SignedOut`, `Connecting`, `Online`, `Offline` with the time of the next attempt, `Revoked`,
+  `TrustFailed` and `UpgradeRequired`. A hub that does not answer is retried with growing delays
+  (2 s up to 60 s). A changed certificate is never retried, a revoked device erases its
+  credentials and is not retried, and a signed-out hub waits for the user. Every window of a
+  hub uses one connection and one status.
+- `SignInSession` owns the order of one sign-in: address, certificate trust (`trust::decide`
+  of the model), then a password or the browser. A view only draws its step and sends its
+  inputs. A browser sign-in reports the address to open as an event, so the view opens it,
+  and dropping the session cancels the wait. After success the server enters `[hubs]` in one
+  checked edit; if saving fails the credentials just created are erased and the failure is
+  `SignInError::Save`.
+- `HubWindow` serves one hub window: the account and its organizations, the nodes and the
+  sessions of one organization, ending a session, and the transport that attaches a tab to
+  one. The hub has no push for the list of sessions, so the lists are read again every 5
+  seconds while somebody watches them and after each action, and requests in flight are
+  merged.
+
+The service holds no secrets: device keys and tokens stay in the adapter's private files. It
+installs no global, registers no quit handler and writes the settings through the same
+persistence service as every section.

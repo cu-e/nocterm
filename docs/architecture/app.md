@@ -71,6 +71,36 @@ jump route, checks the original live surface before creating a normal terminal,
 and registers that terminal as background membership on that surface. The
 connection directory and general session factory keep their existing contracts.
 
+## Window environments
+
+A window is composed for one environment, `Local` or `Hub(HubId)`, and keeps it
+([ADR 0097](../adr/0097-a-window-belongs-to-one-environment.md)). `src/windows.rs`
+owns `open_window(cx, &Booted, Environment)`, which every entry (startup, New Window,
+the environment menu) calls; New Window always opens `Local`. A local window is
+`bootstrap::build_workspace` with the environment menu in its title bar. A hub window is
+`src/shell_setup/hub_window.rs::build_hub_workspace`: the same shell with only the hub's
+features, namely the sessions panel `hubs.sessions`, the new-session menu of the "+" button
+(hub nodes, not connections), Snippets, Settings, Appearance, Keymap and Plugins, the
+application menus of `app_menus::build_hub`, and the window title `Nocterm — <server>`. It
+never calls the terminal's `register`, so the session factory opens no local tab, and it
+registers no connections, files, containers, workspaces, monitor, agent or vault prompt;
+panels the host does not offer drop out of the footer and out of panel cycling. User plugins
+are attached in local windows only.
+
+`AppEnvironmentOpener` implements the feature's `EnvironmentOpener`. "New window" calls
+`open_window`. "This window" composes the new `Workspace` and replaces the root of the same
+native window, then sets the title and focus; the old `Workspace` is released, which closes
+its local sessions or detaches its hub tabs. The window does not close, so the
+last-window-closed quit does not run. `AppHubTerminals` implements `HubTerminalOpener` with
+`nocterm_terminal::open_attached`.
+
+The hubs installation is retained in `Booted` (`Option`, absent when the hub adapter could not
+start) and passed to each window. `startup` starts `HubLinks` with the state directory's
+`hubs` folder for private credential files and puts the three ports in `HostServices`; a
+failure to start is logged and leaves hubs off, so local use is unaffected. Bootstrap installs
+the service after Snippets and the feature after it; GUI tests use the same `bootstrap` with
+`FakeHub` or without hubs, in which case no window has an environment menu.
+
 ## Menus
 
 The composition root supplies Session/Edit/Search/Window/Help descriptors to

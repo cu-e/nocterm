@@ -36,6 +36,21 @@ Each layer's notes describe the behaviour and boundaries of its crates; the
 [dependency map](architecture/dependencies.md) lists every crate with its layer,
 internal dependencies and purpose.
 
+## Environments
+
+A window belongs to one environment, local or one hub of the self-hosted Nocterm server, chosen
+when the window is composed ([ADR 0097](adr/0097-a-window-belongs-to-one-environment.md)). The
+local window is the application described above; a hub window offers only the hub's terminal
+sessions, Snippets and the shared settings pages. The environment menu in the title bar opens an
+environment in the window or in a new one. Four crates carry it: `nocterm-hubs-model` (domain:
+addresses, trust rules, the `[hubs]` settings, the ports), `nocterm-hub-io` (adapter: the only
+crate that speaks the hub protocol, which lives in a [separate contract
+repository](adr/0096-hub-contract-outside-the-workspace.md); it keeps device credentials in
+private files), `nocterm-hubs` (service: known hubs, their status, sign-in) and
+`nocterm-hubs-ui` (feature: the menu, the sign-in dialog and the sessions panel). Attached
+terminal tabs ([ADR 0095](adr/0095-attached-sessions-restore-and-detach.md)) show a hub's
+session and detach when closed. User guide: [hubs](HUBS.md).
+
 ## Plugins
 
 The window shell hosts contributions: panels and status bar widgets. The shell's own
