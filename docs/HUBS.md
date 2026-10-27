@@ -4,13 +4,13 @@ A hub is a self-hosted Nocterm server. It keeps terminal sessions running on its
 session you start from one computer is still there when you open it from another. Nocterm
 reaches a hub from the title bar of any window.
 
-A window is always in one environment: **Local**, the application as you know it, or one
-hub. A hub window shows only that hub's sessions, never local tabs, connections or files.
+A window is always in one environment: **Local** (the menu calls it "This computer"), the
+application as you know it, or one hub. A hub window shows only that hub's sessions, never local tabs, connections or files.
 
 ## Sign in to a server
 
-1. Open the environment menu at the left of the title bar (it reads "Local") and choose
-   **Sign in to a server**.
+1. Open the environment menu at the left of the title bar (it reads "This computer") and
+   choose **Sign in to a server…**.
 2. Enter the address, `hub.example.com` or `hub.example.com:7443` (the default port is 7443).
    `http://` addresses are refused; a leading `https://` is accepted and dropped.
 3. Optionally enter the certificate's SHA-256 fingerprint. The server's setup prints it: run
@@ -21,13 +21,13 @@ hub. A hub window shows only that hub's sessions, never local tabs, connections 
    - a certificate issued by a public authority is trusted as such; nothing is pinned, so
      routine renewals do not matter;
    - a self-signed certificate is shown with its fingerprint. Compare it with the one the
-     server printed, and choose **Trust and pin** only if they are the same. This is trust on
+     server printed, and choose **Trust and pin this certificate** only if they are the same. This is trust on
      first use, like an SSH host key.
-5. Sign in with the account's name and password, or with **Sign in with** and the provider's
+5. Sign in with the account's name and password, or with **Continue with** and the provider's
    name for single sign-on. Single sign-on opens your browser; finish the login there. The
    address is also shown in the dialog with a copy button, in case the browser did not open.
    Cancelling the dialog ends the wait.
-6. Choose **Open in this window**, **Open in a new window** or **Done**.
+6. Choose **Open here**, **Open in a new window** or **Done**.
 
 The server is now in the menu. Nocterm keeps its address, how it is trusted and its name in
 `settings.toml` under `[hubs]`, which contains no passwords or tokens:
@@ -58,8 +58,9 @@ The window is named "Nocterm — server name".
 ## What a hub window offers
 
 - The **Sessions** panel lists the hub's nodes and the sessions on each. Open a session with
-  a double-click or Enter, and create one with **New session** or the **+** button on the tab
-  bar, on a chosen node or on any available node.
+  its **Open** button, a double-click, or by selecting it (click, or Up and Down) and pressing
+  Enter. Create one with the **+** button in the panel header or on the tab bar, on a
+  chosen node or on any available node.
 - Each session is a terminal tab. It reconnects by itself after a network drop (the tab
   shows "Connecting") and shows the screen as the session holds it when you open it again.
 - Snippets, Settings, Appearance, Keymap and Plugins work as in a local window.
@@ -71,7 +72,7 @@ local features and do not appear in a hub window.
 
 Closing a tab **detaches** from the session: the program keeps running on the node, and you
 can open it again from the Sessions panel, also from another computer. To stop the program,
-use **End** next to the session and confirm; this ends the process on the node.
+use the **End session** button (the cross) next to the session and confirm; this ends the process on the node.
 
 ## Status in the menu
 
@@ -79,11 +80,11 @@ use **End** next to the session and confirm; this ends the process on the node.
 | --- | --- | --- |
 | Online | Connected | Opens the window |
 | Connecting | Reaching the server | Opens the window, which shows the status |
-| No connection, retry in N s | The server did not answer; Nocterm retries with growing delays | Opens the window, which has a **Retry** button |
-| Sign-in needed | No stored credentials | Opens the sign-in dialog |
+| Offline · retry in N s | The server did not answer; Nocterm retries with growing delays | Opens the window, which has a **Try again** button |
+| Sign-in required | No stored credentials | Opens the sign-in dialog |
 | Device revoked | The server removed this device; credentials were deleted | Opens the sign-in dialog |
 | Certificate changed | The certificate is not the one you trusted | Shows both fingerprints |
-| New Nocterm version needed | The server speaks a protocol this version does not | Shows the versions |
+| Update Nocterm | The server speaks a protocol this version does not | Shows the versions |
 
 A changed certificate is never accepted from the dialog. It can mean a reinstalled server or
 someone intercepting the connection; verify with the server's administrator. If the change is

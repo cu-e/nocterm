@@ -46,7 +46,7 @@ always opens the local environment; a hub is opened from the menu.
 
 **The environment menu lives in the title bar.** The workspace offers a slot
 (`set_environment_menu`) that the composition fills with the feature's view. The menu lists
-"Local", every known hub with its status, and "Sign in to a server". The status is the one
+"This computer" (the `Local` environment), every known hub with its status, and "Sign in to a server". The status is the one
 all windows share: online, connecting, offline with the time of the next attempt, signed
 out, revoked, certificate changed, or a protocol version the application cannot speak.
 `EnvironmentOpener`, the port by which the menu asks for a window, is declared by the

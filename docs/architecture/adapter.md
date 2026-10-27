@@ -341,7 +341,9 @@ ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`
 `prost` values stop at its boundary. The device key and tokens of each hub are kept in one
 mode-0600 file in a mode-0700 directory the application supplies; the contract rotates tokens
 under an inter-process lock that the adapter takes on a sibling `.lock` file, so two processes
-never spend a refresh token twice. A revoked device erases its file. A failed connection is
+never spend a refresh token twice. A hub has one client while it is trusted the same way, so the
+contract's own turn serializes refreshes inside the process, and a wait for the file lock does not
+hold up a worker of the runtime. Writers of the file take the same lock. A revoked device erases its file. A failed connection is
 explained by reading the certificate the hub presents and comparing it with the pinned one,
 which separates a changed certificate from a hub that is not there. See
 [ADR 0096](../adr/0096-hub-contract-outside-the-workspace.md).

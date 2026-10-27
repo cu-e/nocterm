@@ -715,28 +715,29 @@ runner and expose readable immutable outcomes; sign-in cards retain the original
 ([ADR 0097](../adr/0097-a-window-belongs-to-one-environment.md)).
 
 - `EnvironmentMenu` is the view in the window's title-bar slot (`Workspace::set_environment_menu`).
-  It lists "Local", each known hub with its address and a status chip, and "Sign in to a
-  server". Enter opens the choice in this window and Ctrl+Enter in a new one. A server that is
+  It lists "This computer" (the `Local` environment), each known hub with its address and a status
+  chip, and "Sign in to a server…". Enter opens the choice in this window and Ctrl+Enter in a new one. A server that is
   signed out or revoked opens the sign-in dialog; one whose certificate changed shows both
   fingerprints and offers only removal and closing, never acceptance. A local window with open
   tabs asks before switching, and "Open in a new window" is the default; a hub window switches
-  without asking because its tabs only detach. Without known servers the list has "Local" and
-  "Sign in to a server", and no network call is made.
+  without asking because its tabs only detach. Without known servers the list has "This computer"
+  and "Sign in to a server…", and no network call is made.
 - `SignInDialog` draws the steps of a `SignInSession`: address with an optional fingerprint,
   the pinned, public-authority or first-use trust (a self-signed certificate asks for an
-  explicit "Trust and pin" beside the fingerprint, grouped for comparison), then the password
+  explicit "Trust and pin this certificate" beside the fingerprint, grouped for comparison), then the password
   form and a button for each single sign-on provider. The browser step opens the address from
   the service's event with `cx.open_url` and shows it with a copy button; cancelling or closing
   the dialog ends the wait.
 - `SessionsPanel` (`hubs.sessions`, a core contribution that exists in a hub window only)
   lists the nodes of the selected organization with their sessions. "Open" attaches a tab to an
-  existing session, "New session" and "+" create one on a chosen node or on any node, and "End"
-  asks for confirmation and then terminates the session on its node.
+  existing session (also a double-click, or Enter on the session chosen with a click or the arrow
+  keys), the "+" button ("New session") creates one on a chosen node or on any node, and the
+  "End session" button asks for confirmation and then terminates the session on its node.
 - The feature declares the ports it needs and the application implements them, because features
   do not depend on each other: `EnvironmentOpener` opens an environment in this or a new
   window, and `HubTerminalOpener` adds a tab on a given transport to the workspace.
 
 A tab opened for a hub session is an attached tab of the terminal feature (see
 [Terminal](#terminal)). Closing it detaches: the process keeps running on its node and the
-session can be opened again, also from another computer. "End" is the only action that
+session can be opened again, also from another computer. "End session" is the only action that
 terminates it.

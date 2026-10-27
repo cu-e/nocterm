@@ -335,7 +335,10 @@ with the one `Hubs` entity every window shares ([ADR 0097](../adr/0097-a-window-
   inputs. A browser sign-in reports the address to open as an event, so the view opens it,
   and dropping the session cancels the wait. After success the server enters `[hubs]` in one
   checked edit; if saving fails the credentials just created are erased and the failure is
-  `SignInError::Save`.
+  `SignInError::Save`. An address that is listed already is refused (`SignInError::AlreadyKnown`):
+  a known server keeps the certificate it was pinned with, and one whose certificate changed is
+  removed before signing in again. Signing in again to a known server goes through its row, with
+  a fixed address.
 - `HubWindow` serves one hub window: the account and its organizations, the nodes and the
   sessions of one organization, ending a session, and the transport that attaches a tab to
   one. The hub has no push for the list of sessions, so the lists are read again every 5
