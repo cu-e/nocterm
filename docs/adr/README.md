@@ -93,3 +93,4 @@ acceptance; a later record supersedes an earlier one.
 | [0094](0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md) | Panels stand alone or in groups the user makes, and the bar preview is the editor |
 | [0095](0095-attached-sessions-restore-and-detach.md) | Attached sessions restore their screen and detach on close |
 | [0096](0096-hub-contract-outside-the-workspace.md) | The hub contract lives outside the workspace and only the hub adapter speaks it |
+| [0097](0097-a-window-belongs-to-one-environment.md) | A window belongs to one environment, local or one hub |
