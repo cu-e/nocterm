@@ -392,6 +392,7 @@ impl Terminal {
                 }
             }
             Event::Output(bytes) => self.advance_output(&bytes, cx),
+            Event::Restore(_) => {}
             Event::Prompt(prompt) => {
                 // A newer question supersedes an unanswered one, including an
                 // identical retry. Views must discard the previous input state.

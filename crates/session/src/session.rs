@@ -85,6 +85,10 @@ pub enum Event {
     Connected,
     /// Bytes the remote program printed.
     Output(Vec<u8>),
+    /// The screen as the host holds it right now, sent when a session is
+    /// attached again. The owner discards what it drew, paints these bytes and
+    /// treats them as a picture, not as output of the program.
+    Restore(Vec<u8>),
     /// The session cannot go on without an answer from the user.
     Prompt(Prompt),
     /// The session is over. Nothing follows.
@@ -478,6 +482,22 @@ mod tests {
 
             assert!(driver.emit(Event::Connected).await);
             assert!(matches!(session.next_event().await, Some(Event::Connected)));
+        });
+    }
+
+    #[test]
+    fn restored_screens_arrive_in_order_between_output() {
+        let (session, driver) = channel(None);
+        block_on(async {
+            assert!(driver.emit(Event::Output(b"before".to_vec())).await);
+            assert!(driver.emit(Event::Restore(b"screen".to_vec())).await);
+            assert!(driver.emit(Event::Output(b"after".to_vec())).await);
+
+            assert!(matches!(session.next_event().await, Some(Event::Output(b)) if b == b"before"));
+            assert!(
+                matches!(session.next_event().await, Some(Event::Restore(b)) if b == b"screen")
+            );
+            assert!(matches!(session.next_event().await, Some(Event::Output(b)) if b == b"after"));
         });
     }
 

@@ -7,6 +7,8 @@
 //! semantic equality retains category, path and append offset.
 //! Settings sections: ssh and local (existing adapter configuration). Globals: none.
 //! Invariants: IDs use explicit bytes; launch validation performs no I/O or value expansion.
+//! `Event::Restore` carries the screen a host holds when a session is attached again: the
+//! owner discards what it drew and paints it, and it is never output of the program.
 //! InvalidLaunch/InvalidOptions preserve typed causes; errors never retain environment values.
 //!
 //! A [`Session`] is a pair of channels. The owner sends [`Command`]s (input,

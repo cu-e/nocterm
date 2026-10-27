@@ -223,7 +223,7 @@ pub(crate) async fn connect(session: &Session, mut answer: impl FnMut(Prompt)) {
             Event::Connected => return,
             Event::Prompt(prompt) => answer(prompt),
             Event::Closed(reason) => panic!("closed while connecting: {reason:?}"),
-            Event::Connecting(_) | Event::Output(_) => {}
+            Event::Connecting(_) | Event::Output(_) | Event::Restore(_) => {}
         }
     }
 }
