@@ -5571,6 +5571,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-hubs-ui"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "nocterm-core",
+ "nocterm-hubs",
+ "nocterm-hubs-model",
+ "nocterm-plugin-model",
+ "nocterm-session",
+ "nocterm-settings",
+ "nocterm-store",
+ "nocterm-ui",
+ "nocterm-workspace",
+ "nocterm-workspace-ports",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "nocterm-image-codec"
 version = "0.0.0"
 dependencies = [
