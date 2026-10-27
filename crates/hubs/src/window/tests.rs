@@ -4,7 +4,7 @@ use gpui::{Entity, TestAppContext};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
 use nocterm_hubs_model::{HubSessionId, HubTerminalTarget, NodeId, OrgId};
 
-use crate::fixture::{Fixture, fixture, id, pinned_record, server};
+use crate::fixture::{Fixture, address, fixture, id, pinned_record, server};
 use crate::{HubWindow, Load};
 
 fn open(cx: &mut TestAppContext) -> (Fixture, Entity<HubWindow>) {
@@ -54,6 +54,31 @@ async fn asking_again_while_a_read_runs_repeats_it_once_instead_of_piling_up(
     release.release();
     cx.run_until_parked();
     assert_eq!(fx.hub.count(FakeOp::Sessions), before + 2);
+}
+
+#[gpui::test]
+async fn an_organization_chosen_while_a_read_runs_is_not_replaced_by_that_read(
+    cx: &mut TestAppContext,
+) {
+    let (fx, window) = open(cx);
+    fx.hub.edit_server(&address(), |server| {
+        *server = server
+            .clone()
+            .with_session("z1", "zoo", "n1", "ada", "zoo shell");
+    });
+    let release = fx.hub.hold(FakeOp::Sessions);
+    window.update(cx, |window, cx| window.refresh(cx));
+    cx.run_until_parked();
+
+    window.update(cx, |window, cx| window.select_org(OrgId::new("zoo"), cx));
+    release.release();
+    cx.run_until_parked();
+
+    window.read_with(cx, |window, _| {
+        assert_eq!(window.org(), Some(&OrgId::new("zoo")));
+        let titles: Vec<_> = window.sessions().iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, ["zoo shell"]);
+    });
 }
 
 #[gpui::test]

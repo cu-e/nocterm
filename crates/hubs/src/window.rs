@@ -153,17 +153,27 @@ impl HubWindow {
         }
         let sessions = Arc::clone(&self.sessions);
         let hub = self.hub.clone();
-        let known = (self.account.clone(), self.org.clone());
+        let asked = self.org.clone();
+        let known = (self.account.clone(), asked.clone());
         self.reading.task = Some(cx.spawn(async move |this, cx| {
             let read = read(&*sessions, &hub, known).await;
-            this.update(cx, |window, cx| window.finish_read(read, cx))
+            this.update(cx, |window, cx| window.finish_read(asked, read, cx))
                 .ok();
         }));
     }
 
-    fn finish_read(&mut self, read: Result<Read, HubError>, cx: &mut Context<Self>) {
+    /// Takes what a read found. `asked` is the organization the read began with: when another
+    /// was chosen meanwhile, the lists of the old one are not shown and the read that
+    /// `select_org` asked for follows.
+    fn finish_read(
+        &mut self,
+        asked: Option<OrgId>,
+        read: Result<Read, HubError>,
+        cx: &mut Context<Self>,
+    ) {
         self.reading.task = None;
         match read {
+            Ok(read) if self.org != asked => self.account = Some(read.account),
             Ok(read) => {
                 self.org = read.org;
                 self.account = Some(read.account);
