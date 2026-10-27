@@ -131,11 +131,6 @@ impl WindowSet {
         self.state.read(cx).visible().document().records().to_vec()
     }
 
-    /// A window opened showing `environment`.
-    pub fn opened(&self, window: WindowId, environment: Environment, cx: &mut App) {
-        self.edit(cx, |windows| windows.opened(window, environment));
-    }
-
     /// A window opened to bring `record` back, with what it kept of its hub, so the document
     /// still holds it if the hub cannot be reached in this run.
     pub fn restored(&self, window: WindowId, record: WindowRecord, cx: &mut App) {

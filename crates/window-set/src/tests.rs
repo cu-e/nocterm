@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use gpui::{AnyWindowHandle, Context, IntoElement, Render, TestAppContext, Window};
-use nocterm_hubs_model::{HubAddress, HubId, HubSessionId, OrgId};
+use nocterm_hubs_model::{HubAddress, HubId, HubSessionId, OrgId, RememberedSession};
 use nocterm_store::StoreError;
 
 use super::*;
@@ -40,7 +40,7 @@ fn installed(
 
 fn open(set: &WindowSet, environment: Environment, cx: &mut TestAppContext) -> AnyWindowHandle {
     let handle = AnyWindowHandle::from(cx.add_window(|_, _| Blank));
-    cx.update(|cx| set.opened(handle.window_id(), environment, cx));
+    cx.update(|cx| set.restored(handle.window_id(), WindowRecord::new(environment), cx));
     handle
 }
 
@@ -270,7 +270,13 @@ fn hub_id(address: &str) -> HubId {
 fn memory(organization: &str, sessions: &[&str]) -> HubWindowMemory {
     HubWindowMemory::new(
         Some(OrgId::new(organization)),
-        sessions.iter().map(|id| HubSessionId::new(*id)).collect(),
+        sessions
+            .iter()
+            .map(|entry| {
+                let (org, id) = entry.split_once('/').unwrap_or(("lab", entry));
+                RememberedSession::new(OrgId::new(org), HubSessionId::new(id))
+            })
+            .collect(),
     )
 }
 

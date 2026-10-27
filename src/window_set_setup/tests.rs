@@ -1,6 +1,6 @@
 use super::*;
 use gpui_kit::{AnyWindowHandle, AppContext as _, TestAppContext};
-use nocterm_hubs_model::{Environment, HubAddress, HubId, OpenWindows};
+use nocterm_hubs_model::{Environment, HubAddress, HubId, OpenWindows, WindowRecord};
 use nocterm_store::ShutdownCoordinator;
 use nocterm_window_set::WindowSet;
 
@@ -68,7 +68,11 @@ fn quitting_writes_the_open_windows_where_the_next_start_reads_them(cx: &mut Tes
             let window = cx
                 .open_window(Default::default(), |_, cx| cx.new(|_| gpui_kit::Empty))
                 .unwrap();
-            set.opened(AnyWindowHandle::from(window).window_id(), environment, cx);
+            set.restored(
+                AnyWindowHandle::from(window).window_id(),
+                WindowRecord::new(environment),
+                cx,
+            );
         }
     });
     let work = cx.update(|cx| shutdown.capture_all(cx));
@@ -91,7 +95,11 @@ fn a_file_written_by_a_newer_version_is_left_as_it_was(cx: &mut TestAppContext) 
         let window = cx
             .open_window(Default::default(), |_, cx| cx.new(|_| gpui_kit::Empty))
             .unwrap();
-        set.opened(AnyWindowHandle::from(window).window_id(), hub(), cx);
+        set.restored(
+            AnyWindowHandle::from(window).window_id(),
+            WindowRecord::new(hub()),
+            cx,
+        );
     });
     let work = cx.update(|cx| shutdown.capture_all(cx));
     cx.background_executor.spawn(work).detach();
