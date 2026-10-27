@@ -97,6 +97,18 @@ an attacker-controlled PKCS#1 v1.5 decryption oracle was not identified.
 That reachability observation does not prove all RSA operations safe. Follow
 upstream fixes and re-run dependency auditing when upgrading russh/ssh-key.
 
+## Hub relay boundary
+
+A route through a hub ([ADR 0100](adr/0100-the-hub-is-a-route-step.md)) gives the hub a byte
+stream to the destination and nothing else. The SSH handshake runs end to end with the
+destination: its host key is checked against `known_hosts` and its authentication is the
+user's, so a hub that is a hop can drop or delay a connection but cannot read or alter it
+without failing the host-key check. The hub learns the destination address, the time and the
+volume. The stream is bounded in both directions (a few hundred KiB at most per direction)
+and ends from either side, so a hub that stops reading or a session that stops reading ends up
+stalled, not buffered. The device is never signed in to a hub because a route names it, and a
+hub address that does not match a signed-in hub is refused before anything is sent.
+
 ## Verification scope
 
 Storage, trust-store, SFTP protocol, concurrency, resource-budget and terminal

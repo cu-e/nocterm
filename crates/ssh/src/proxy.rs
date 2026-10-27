@@ -1,32 +1,103 @@
-//! Explicit TCP routes. The SSH handshake and host-key policy stay unchanged.
-use nocterm_session::{ProxyConfig, Target};
-use std::{io, net::IpAddr};
+//! Explicit routes for the first connection: a plain TCP connection, an HTTP
+//! CONNECT or SOCKS5 proxy, or a stream handed over by a hub relay. The SSH
+//! handshake and host-key policy stay unchanged: whatever the route, the host key
+//! checked is the destination's, never the proxy's or the hub's.
+use nocterm_session::{ProxyConfig, RelayDialer, RelayError, SessionError, Target};
+use std::{io, net::IpAddr, sync::Arc};
 use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
+    io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _},
     net::TcpStream,
 };
 
+#[cfg(test)]
+mod hub_tests;
+mod relay;
+
 const MAX_HEADER: usize = 16 * 1024;
 
-pub(crate) async fn connect(target: &Target, route: &ProxyConfig) -> io::Result<TcpStream> {
-    let (host, port) = match route {
-        ProxyConfig::Direct => (target.host.as_str(), target.port),
-        ProxyConfig::HttpConnect { host, port } | ProxyConfig::Socks5 { host, port, .. } => {
-            validate_host(host)?;
-            if *port == 0 {
-                return Err(invalid("proxy port must be nonzero"));
-            }
-            (host.as_str(), *port)
+/// A byte stream an SSH handshake can run over: a socket, a relayed stream or a
+/// forwarded channel.
+pub(crate) trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
+
+/// Why the first connection could not be made.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ConnectError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    /// The route names a hub, but this transport was built without a relay.
+    #[error("this transport has no hub relay")]
+    NoRelay,
+    #[error("hub {hub}: {source}")]
+    Relay {
+        hub: String,
+        #[source]
+        source: RelayError,
+    },
+}
+
+impl ConnectError {
+    /// The session error for a first connection to `host` that failed this way.
+    pub(crate) fn into_session(self, host: &str) -> SessionError {
+        match self {
+            Self::Relay { hub, source } => SessionError::Relay { hub, source },
+            other => SessionError::Unreachable {
+                host: host.to_owned(),
+                reason: other.to_string(),
+            },
         }
-    };
-    validate_host(&target.host)?;
-    let mut stream = TcpStream::connect((host, port)).await?;
-    stream.set_nodelay(true)?;
-    match route {
-        ProxyConfig::Direct => {}
-        ProxyConfig::HttpConnect { .. } => http(&mut stream, target).await?,
-        ProxyConfig::Socks5 { remote_dns, .. } => socks(&mut stream, target, *remote_dns).await?,
     }
+}
+
+/// Connects to `target` along `route`. A hub route needs `relay`.
+pub(crate) async fn connect(
+    target: &Target,
+    route: &ProxyConfig,
+    relay: Option<&Arc<dyn RelayDialer>>,
+) -> Result<Box<dyn Stream>, ConnectError> {
+    validate_host(&target.host)?;
+    Ok(match route {
+        ProxyConfig::Direct => Box::new(socket(&target.host, target.port).await?),
+        ProxyConfig::HttpConnect { host, port } => {
+            let mut stream = proxy_socket(host, *port).await?;
+            http(&mut stream, target).await?;
+            Box::new(stream)
+        }
+        ProxyConfig::Socks5 {
+            host,
+            port,
+            remote_dns,
+        } => {
+            let mut stream = proxy_socket(host, *port).await?;
+            socks(&mut stream, target, *remote_dns).await?;
+            Box::new(stream)
+        }
+        ProxyConfig::Hub { address, node } => {
+            let relay = relay.ok_or(ConnectError::NoRelay)?;
+            let stream = relay
+                .dial(address, node.as_deref(), target)
+                .await
+                .map_err(|source| ConnectError::Relay {
+                    hub: address.clone(),
+                    source,
+                })?;
+            Box::new(relay::bridge(stream))
+        }
+    })
+}
+
+async fn proxy_socket(host: &str, port: u16) -> io::Result<TcpStream> {
+    validate_host(host)?;
+    if port == 0 {
+        return Err(invalid("proxy port must be nonzero"));
+    }
+    socket(host, port).await
+}
+
+async fn socket(host: &str, port: u16) -> io::Result<TcpStream> {
+    let stream = TcpStream::connect((host, port)).await?;
+    // Keystrokes are tiny packets; batching them only adds latency.
+    stream.set_nodelay(true)?;
     Ok(stream)
 }
 fn invalid(message: &str) -> io::Error {
@@ -195,6 +266,7 @@ mod tests {
                 host: "127.0.0.1".into(),
                 port,
             },
+            None,
         )
         .await
         .unwrap();
@@ -225,7 +297,8 @@ mod tests {
                     &ProxyConfig::HttpConnect {
                         host: "127.0.0.1".into(),
                         port
-                    }
+                    },
+                    None
                 )
                 .await
                 .is_err()
@@ -244,7 +317,8 @@ mod tests {
                         host: "127.0.0.1".into(),
                         port,
                         remote_dns: true
-                    }
+                    },
+                    None
                 )
             )
             .await
@@ -280,6 +354,7 @@ mod tests {
                 port,
                 remote_dns: true,
             },
+            None,
         )
         .await
         .unwrap();

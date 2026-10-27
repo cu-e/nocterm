@@ -5,14 +5,21 @@
 //! `NOCTERM_HUB_USERNAME` and `NOCTERM_HUB_PASSWORD`. Without `NOCTERM_REQUIRE_HUB` the tests
 //! pass vacuously when the variables are missing; with it, missing variables fail the run, so
 //! CI cannot silently skip them.
+//!
+//! The relay test that reaches a destination also needs `NOCTERM_HUB_RELAY_TARGET` (`host:port`
+//! of an SSH server the hub is allowed to reach, for example a container of the compose file);
+//! without it that test passes vacuously.
 
 use futures::executor::block_on;
-use nocterm_hub_io::{HubLinks, HubLinksConfig};
+use nocterm_hub_io::{HubLinks, HubLinksConfig, HubRelay};
 use nocterm_hubs_model::{
     Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubSessions as _, HubSignIn as _,
     HubTerminalTarget, HubTrust as _, TrustPolicy,
 };
-use nocterm_session::{CloseReason, ConnectRequest, Event, Secret, Session};
+use nocterm_session::{
+    CloseReason, ConnectRequest, Event, RelayDialer as _, RelayError, RelayRefusal, Secret,
+    Session, Target,
+};
 
 struct Hub {
     address: HubAddress,
@@ -233,4 +240,111 @@ fn a_session_survives_detaching_and_is_restored_when_attached_again() {
             }
         }
     });
+}
+
+/// Waits for `future` for a while: a relay that never answers must fail the test, not hang it.
+fn within<T>(future: impl std::future::Future<Output = T>) -> T {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(20), future)
+                .await
+                .expect("no answer in time")
+        })
+}
+
+fn signed_in_relay(hub: &Hub, dir: &tempfile::TempDir) -> (std::sync::Arc<HubLinks>, HubRelay) {
+    let links = links(dir);
+    block_on(links.password(
+        hub.spec(),
+        hub.username.clone(),
+        Secret::new(hub.password.clone()),
+    ))
+    .unwrap();
+    let relay = HubRelay::new(&links);
+    (links, relay)
+}
+
+fn target(host: &str, port: u16) -> Target {
+    Target {
+        host: host.into(),
+        port,
+        user: "relay".into(),
+    }
+}
+
+#[test]
+fn a_relay_reaches_a_server_carries_its_banner_and_ends_with_it() {
+    let Some(hub) = hub() else { return };
+    let Some(destination) = std::env::var("NOCTERM_HUB_RELAY_TARGET").ok() else {
+        return;
+    };
+    let (host, port) = destination
+        .rsplit_once(':')
+        .expect("NOCTERM_HUB_RELAY_TARGET");
+    let port: u16 = port.parse().expect("NOCTERM_HUB_RELAY_TARGET port");
+    let dir = tempfile::tempdir().unwrap();
+    let (_links, relay) = signed_in_relay(&hub, &dir);
+
+    // The address is found as the user may type it, not only as it was signed in with.
+    let address = format!("https://{}/", hub.address);
+    let stream = within(relay.dial(&address, None, &target(host, port))).unwrap();
+    let (to_server, from_server) = stream.into_parts();
+
+    let banner = within(from_server.recv()).expect("the server sends its banner first");
+    assert!(
+        banner.starts_with(b"SSH-"),
+        "{:?}",
+        String::from_utf8_lossy(&banner)
+    );
+    // Ending our direction is a half-close: the server, which waits for our banner, closes.
+    drop(to_server);
+    within(async { while from_server.recv().await.is_ok() {} });
+}
+
+#[test]
+fn a_relay_refuses_the_hubs_own_network_and_the_metadata_service() {
+    let Some(hub) = hub() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let (_links, relay) = signed_in_relay(&hub, &dir);
+    for (host, port) in [("127.0.0.1", 22), ("169.254.169.254", 80)] {
+        let refused = within(relay.dial(&hub.address.to_string(), None, &target(host, port)));
+        assert!(
+            matches!(
+                refused,
+                Err(RelayError::Refused {
+                    reason: RelayRefusal::Policy | RelayRefusal::PrivateNetwork
+                })
+            ),
+            "{host}: {refused:?}"
+        );
+    }
+}
+
+#[test]
+fn a_relay_for_an_unknown_node_is_not_opened() {
+    let Some(hub) = hub() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let (_links, relay) = signed_in_relay(&hub, &dir);
+    let opened = within(relay.dial(
+        &hub.address.to_string(),
+        Some("no-such-node"),
+        &target("example.com", 22),
+    ));
+    assert!(opened.is_err(), "{opened:?}");
+}
+
+#[test]
+fn a_relay_needs_a_hub_that_was_signed_in_to_on_this_device() {
+    let Some(hub) = hub() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let links = links(&dir);
+    let relay = HubRelay::new(&links);
+    let refused = within(relay.dial(&hub.address.to_string(), None, &target("example.com", 22)));
+    assert!(
+        matches!(refused, Err(RelayError::NotSignedIn { .. })),
+        "{refused:?}"
+    );
 }

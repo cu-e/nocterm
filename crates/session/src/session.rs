@@ -157,6 +157,13 @@ pub enum SessionError {
         #[source]
         source: Box<SessionError>,
     },
+    /// The hub relaying the first connection could not provide the stream.
+    #[error("hub {hub}: {source}")]
+    Relay {
+        hub: String,
+        #[source]
+        source: crate::RelayError,
+    },
     #[error("{count} jump hosts exceed the limit of {limit}")]
     TooManyJumpHosts { count: usize, limit: usize },
     #[error("{0}")]

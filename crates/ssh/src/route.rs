@@ -1,6 +1,7 @@
 //! The chain of SSH connections that leads to the destination.
 //!
-//! The first hop is reached through the configured proxy; every further host is
+//! The first hop is reached through the configured proxy, or through a stream
+//! handed over by a hub relay; every further host is
 //! reached by asking the previous hop for a `direct-tcpip` channel and running
 //! the next SSH handshake over it. A hop is verified and signed in before a
 //! forward is opened through it. The hops live in a [`Route`], which closes
@@ -11,25 +12,20 @@ use std::{
     time::Duration,
 };
 
-use nocterm_session::{ConnectRequest, ConnectStage, Event, SessionDriver, SessionError, Target};
-use russh::{Disconnect, client::Handle};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    time::timeout,
+use nocterm_session::{
+    ConnectRequest, ConnectStage, Event, RelayDialer, SessionDriver, SessionError, Target,
 };
+use russh::{Disconnect, client::Handle};
+use tokio::time::timeout;
 
 use crate::{
     SshConfig, auth,
     login::{self, Client, Login, Observed},
-    proxy,
+    proxy::{self, Stream},
 };
 
 /// How long closing one hop may take.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// A byte stream an SSH handshake can run over: a socket or a forwarded channel.
-trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
-impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 
 /// One established jump host.
 struct Hop {
@@ -42,12 +38,20 @@ struct Hop {
 ///
 /// Dropping a route closes its hops in the background, so a route abandoned by
 /// cancellation or an early return never leaves a connection behind.
-#[derive(Default)]
 pub(crate) struct Route {
     hops: Vec<Hop>,
+    /// Opens the first stream when the route is relayed by a hub.
+    relay: Option<Arc<dyn RelayDialer>>,
 }
 
 impl Route {
+    fn new(relay: Option<Arc<dyn RelayDialer>>) -> Self {
+        Self {
+            hops: Vec::new(),
+            relay,
+        }
+    }
+
     /// Disconnects the hops from the destination backwards.
     pub(crate) async fn close(mut self) {
         disconnect_all(std::mem::take(&mut self.hops)).await;
@@ -111,10 +115,11 @@ enum Fault {
 pub(crate) async fn establish(
     config: &SshConfig,
     request: &ConnectRequest,
+    relay: Option<Arc<dyn RelayDialer>>,
     driver: &SessionDriver,
     observed: &Arc<Mutex<Observed>>,
 ) -> Result<(Handle<Client>, Route), SessionError> {
-    let mut route = Route::default();
+    let mut route = Route::new(relay);
     match extend(&mut route, config, request, driver, observed).await {
         Ok(handle) => Ok((handle, route)),
         Err(error) => {
@@ -226,12 +231,9 @@ async fn open_stream(
         reason,
     };
     let Some(previous) = route.hops.last() else {
-        let socket = proxy::connect(target, &request.proxy)
+        return proxy::connect(target, &request.proxy, route.relay.as_ref())
             .await
-            .map_err(|error| Fault::Own(unreachable(error.to_string())))?;
-        // Keystrokes are tiny packets; batching them only adds latency.
-        let _ = socket.set_nodelay(true);
-        return Ok(Box::new(socket));
+            .map_err(|error| Fault::Own(error.into_session(&target.host)));
     };
     proxy::validate_host(&target.host)
         .map_err(|error| Fault::Forward(unreachable(error.to_string())))?;

@@ -82,6 +82,25 @@ someone intercepting the connection; verify with the server's administrator. If 
 legitimate, remove the server and sign in again, comparing the new fingerprint with the one
 the server prints.
 
+## Reach a host through a server
+
+A connection can reach its host through a server you are signed in to, which is useful when the
+server can see hosts your computer cannot. In the connection editor, open **Proxy** and choose
+**Nocterm hub**:
+
+- **Hub address** is the server's address as in the sign-in dialog, for example
+  `hub.example.com`. You must be signed in to that server on this computer; Nocterm does not
+  sign in for you, and the connection says so when you are not.
+- **Node (optional)** names one of the server's nodes. The connection is then opened from inside
+  that node's network. Leave it empty to let the server open it.
+
+The server only forwards bytes. The SSH session is still yours: the host key is checked against
+`known_hosts` for the host you connect to, and you sign in to that host as usual. The server
+sees the address you connect to, when, and how much data crosses, not what is inside. It may
+refuse a destination, for example one on a private network, or a connection when you have
+reached a limit; the connection then fails with that reason. With jump hosts configured, the
+server carries only the first connection.
+
 ## Manage servers
 
 **Settings → Servers** (or the command **Hubs: Manage servers**) lists every known server:

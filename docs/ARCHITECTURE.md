@@ -49,7 +49,9 @@ opens a session as an attached terminal tab or starts a new one
 credentials in private files), `nocterm-hubs` (service: known hubs, their status, sign-in) and
 `nocterm-hubs-ui` (feature: the sign-in dialog, the Servers settings page and the sessions
 panel). Attached terminal tabs ([ADR 0095](adr/0095-attached-sessions-restore-and-detach.md)) show
-a hub's session and detach when closed. User guide: [hubs](HUBS.md).
+a hub's session and detach when closed. A hub can also be the first step of an SSH route: the
+transport asks the `RelayDialer` port that `nocterm-hub-io` implements for a stream
+([ADR 0100](adr/0100-the-hub-is-a-route-step.md)). User guide: [hubs](HUBS.md).
 
 ## Plugins
 

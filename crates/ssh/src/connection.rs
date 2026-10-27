@@ -7,7 +7,8 @@ use std::{
 };
 
 use nocterm_session::{
-    CloseReason, Command, ConnectRequest, ConnectStage, Event, PtySize, SessionDriver, SessionError,
+    CloseReason, Command, ConnectRequest, ConnectStage, Event, PtySize, RelayDialer, SessionDriver,
+    SessionError,
 };
 use russh::{
     Channel, ChannelMsg, Disconnect,
@@ -29,18 +30,28 @@ const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Runs a session from the first packet to [`Event::Closed`].
 pub(crate) async fn run(
     config: Arc<SshConfig>,
+    relay: Option<Arc<dyn RelayDialer>>,
     request: ConnectRequest,
     driver: SessionDriver,
     fs_requests: FsRequests,
     exec_requests: ExecRequests,
 ) {
-    let reason = session(&config, &request, &driver, fs_requests, exec_requests).await;
+    let reason = session(
+        &config,
+        relay,
+        &request,
+        &driver,
+        fs_requests,
+        exec_requests,
+    )
+    .await;
     tracing::debug!(target = %request.target, ?reason, "session closed");
     driver.emit(Event::Closed(reason)).await;
 }
 
 async fn session(
     config: &SshConfig,
+    relay: Option<Arc<dyn RelayDialer>>,
     request: &ConnectRequest,
     driver: &SessionDriver,
     fs_requests: FsRequests,
@@ -53,7 +64,7 @@ async fn session(
     // start it with and the user giving up.
     let established = tokio::select! {
         () = driver.closed() => return CloseReason::ClosedByUser,
-        result = route::establish(config, request, driver, &observed) => result,
+        result = route::establish(config, request, relay, driver, &observed) => result,
         () = closed_while_connecting(driver, &mut size) => return CloseReason::ClosedByUser,
     };
     let (handle, route) = match established {

@@ -121,6 +121,13 @@ enumerate and kill arbitrary detached jobs. Explicit input refusal
 is surfaced in the terminal instead of silently discarding text.
 HTTP CONNECT/SOCKS5 tunnel creation belongs to the SSH adapter, inside the same
 connection timeout and target host-key policy as a direct connection.
+A hub proxy (`ProxyConfig::Hub`) takes its first stream from the injected
+`RelayDialer` port instead of a socket: `SshTransport::with_relay` supplies it, and
+without one such a session fails to connect. The adapter bridges the stream's two
+bounded frame channels (`RELAY_FRAMES` frames of at most `RELAY_FRAME_BYTES`) to the
+async stream the handshake needs, so a relay that stops reading stalls the writer
+instead of growing a buffer. Closing either side ends both directions. The relay
+carries bytes only: the host key checked and the sign-in are the destination's.
 
 The adapter also establishes jump-host routes ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
 `ConnectRequest.jumps` lists resolved hops; each is reached through a `direct-tcpip`
@@ -349,3 +356,12 @@ hold up a worker of the runtime. Writers of the file take the same lock. A revok
 explained by reading the certificate the hub presents and comparing it with the pinned one,
 which separates a changed certificate from a hub that is not there. See
 [ADR 0096](../adr/0096-hub-contract-outside-the-workspace.md).
+
+`HubRelay` implements `RelayDialer` of `nocterm-session` over the same runtime and the same
+signed-in clients ([ADR 0100](../adr/0100-the-hub-is-a-route-step.md)). It finds the hub by
+address among the hubs this device is signed in to and never signs in on demand. After the hub
+opens the connection, one task carries frames between the bounded channels of the `RelayStream`
+and the hub's stream: the two runtimes share nothing else. A target that is silent does not
+keep a closed session alive, and each direction ends on its own: dropping the sender is end of
+file for the target, which may still answer. A refusal is told by the hub's code, never by its
+text.
