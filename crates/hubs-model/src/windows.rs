@@ -12,21 +12,21 @@ use crate::{address::HubAddress, environment::Environment, error::WindowDocument
 /// The version this application writes and reads.
 const VERSION: u32 = 1;
 
-/// One open window as remembered.
+/// One window as remembered.
 ///
 /// Later versions add what a window of a hub needs to come back (its sessions, its
 /// organization) as new defaulted fields of this record.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WindowRecord {
+struct WindowRecord {
     environment: Environment,
 }
 
 impl WindowRecord {
-    pub const fn new(environment: Environment) -> Self {
+    const fn new(environment: Environment) -> Self {
         Self { environment }
     }
 
-    pub const fn environment(&self) -> &Environment {
+    const fn environment(&self) -> &Environment {
         &self.environment
     }
 }
@@ -35,6 +35,8 @@ impl WindowRecord {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WindowDocument {
     windows: Vec<WindowRecord>,
+    /// How many records of the text this version could not read and left out.
+    skipped: usize,
 }
 
 impl WindowDocument {
@@ -43,11 +45,14 @@ impl WindowDocument {
         self.windows.iter().map(WindowRecord::environment)
     }
 
-    pub fn records(&self) -> &[WindowRecord] {
-        &self.windows
+    /// How many records of the text were left out because this version cannot read them, such
+    /// as an environment of a kind a later build added. The others are kept.
+    pub const fn skipped(&self) -> usize {
+        self.skipped
     }
 
-    /// Reads a document; text that is not one, or a newer version, is an error.
+    /// Reads a document; text that is not one, or a newer version, is an error. A record that
+    /// is not readable is left out and counted, so one record never costs the others.
     pub fn decode(text: &str) -> Result<Self, WindowDocumentError> {
         let saved: Saved = serde_json::from_str(text).map_err(WindowDocumentError::Unreadable)?;
         if saved.version > VERSION {
@@ -56,17 +61,21 @@ impl WindowDocument {
                 supported: VERSION,
             });
         }
+        let total = saved.windows.len();
+        let windows: Vec<_> = saved
+            .windows
+            .into_iter()
+            .filter_map(|record| serde_json::from_value::<SavedWindow>(record).ok())
+            .map(|saved| WindowRecord::new(saved.environment.into()))
+            .collect();
         Ok(Self {
-            windows: saved
-                .windows
-                .into_iter()
-                .map(|saved| WindowRecord::new(saved.environment.into()))
-                .collect(),
+            skipped: total - windows.len(),
+            windows,
         })
     }
 
     pub fn encode(&self) -> Result<String, WindowDocumentError> {
-        let saved = Saved {
+        let written = Written {
             version: VERSION,
             windows: self
                 .windows
@@ -76,7 +85,7 @@ impl WindowDocument {
                 })
                 .collect(),
         };
-        serde_json::to_string_pretty(&saved).map_err(WindowDocumentError::Unwritable)
+        serde_json::to_string_pretty(&written).map_err(WindowDocumentError::Unwritable)
     }
 }
 
@@ -84,9 +93,12 @@ impl WindowDocument {
 ///
 /// The list never becomes empty by closing: the last window stays, because closing it quits
 /// the application and it is what the next start restores.
+///
+/// It can also hold records that are not windows of this run, see [`OpenWindows::kept`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenWindows<K> {
-    windows: Vec<(K, WindowRecord)>,
+    /// A record with no key is kept, not open.
+    windows: Vec<(Option<K>, WindowRecord)>,
 }
 
 impl<K> Default for OpenWindows<K> {
@@ -101,35 +113,47 @@ impl<K: Copy + PartialEq> OpenWindows<K> {
     /// Adds a window after the others; a key that is open already takes the new environment.
     pub fn opened(&mut self, key: K, environment: Environment) {
         let record = WindowRecord::new(environment);
-        match self.windows.iter_mut().find(|(open, _)| *open == key) {
+        match self.windows.iter_mut().find(|(open, _)| *open == Some(key)) {
             Some((_, current)) => *current = record,
-            None => self.windows.push((key, record)),
+            None => self.windows.push((Some(key), record)),
         }
+    }
+
+    /// A remembered environment that could not open in this run, such as a server whose list
+    /// could not be read. It stays in the saved document, at its place, so a later run can
+    /// open it; it is not a window and closing windows never touches it.
+    pub fn kept(&mut self, environment: Environment) {
+        self.windows.push((None, WindowRecord::new(environment)));
     }
 
     /// An open window now shows `environment`; a window not in the list is left out.
     pub fn switched(&mut self, key: K, environment: Environment) {
-        if let Some((_, record)) = self.windows.iter_mut().find(|(open, _)| *open == key) {
+        if let Some((_, record)) = self.windows.iter_mut().find(|(open, _)| *open == Some(key)) {
             *record = WindowRecord::new(environment);
         }
     }
 
     /// The user closed a window. It is forgotten unless it is the last one.
     pub fn closed(&mut self, key: K) {
-        if self.windows.len() > 1 {
-            self.windows.retain(|(open, _)| *open != key);
+        if self.len() > 1 {
+            self.windows.retain(|(open, _)| *open != Some(key));
         }
     }
 
+    /// How many windows are open; kept records are not windows.
     pub fn len(&self) -> usize {
-        self.windows.len()
+        self.windows
+            .iter()
+            .filter(|(open, _)| open.is_some())
+            .count()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.windows.is_empty()
+        self.len() == 0
     }
 
-    /// What is saved: the environments in the order the windows were opened.
+    /// What is saved: the environments in the order the windows were opened, with the kept
+    /// ones where they were.
     pub fn document(&self) -> WindowDocument {
         WindowDocument {
             windows: self
@@ -137,16 +161,24 @@ impl<K: Copy + PartialEq> OpenWindows<K> {
                 .iter()
                 .map(|(_, record)| record.clone())
                 .collect(),
+            skipped: 0,
         }
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
+struct Written {
+    version: u32,
+    windows: Vec<SavedWindow>,
+}
+
+#[derive(Deserialize)]
 struct Saved {
     #[serde(default)]
     version: u32,
+    /// Decoded one by one, see [`WindowDocument::decode`].
     #[serde(default)]
-    windows: Vec<SavedWindow>,
+    windows: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -62,12 +62,7 @@ fn a_document_without_windows_is_empty() {
 
 #[test]
 fn text_that_is_not_a_document_is_unreadable() {
-    for text in [
-        "",
-        "not json",
-        r#"{"windows":[{"environment":{"kind":"moon"}}]}"#,
-        r#"{"windows":[{"environment":{"kind":"hub","hub":"http://plain"}}]}"#,
-    ] {
+    for text in ["", "not json", r#"{"windows":"none"}"#] {
         assert!(
             matches!(
                 WindowDocument::decode(text),
@@ -76,6 +71,34 @@ fn text_that_is_not_a_document_is_unreadable() {
             "{text:?}"
         );
     }
+}
+
+#[test]
+fn a_record_that_cannot_be_read_costs_only_itself() {
+    let text = r#"{"version":1,"windows":[
+        {"environment":{"kind":"moon"}},
+        {"environment":{"kind":"hub","hub":"hub.home:7443"}},
+        {"environment":{"kind":"hub","hub":"http://plain"}},
+        {"organization":"lab"},
+        {"environment":{"kind":"local"}}]}"#;
+
+    let read = WindowDocument::decode(text).unwrap();
+
+    assert_eq!(
+        read.environments().cloned().collect::<Vec<_>>(),
+        [hub("hub.home:7443"), Environment::Local]
+    );
+    assert_eq!(read.skipped(), 3);
+}
+
+#[test]
+fn a_document_whose_records_all_read_skips_nothing() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, Environment::Local);
+
+    let read = WindowDocument::decode(&windows.document().encode().unwrap()).unwrap();
+
+    assert_eq!(read.skipped(), 0);
 }
 
 #[test]
@@ -169,4 +192,53 @@ fn opening_a_key_twice_replaces_instead_of_duplicating() {
     windows.opened(1, hub("hub.home"));
 
     assert_eq!(environments(&windows), [hub("hub.home")]);
+}
+
+#[test]
+fn a_kept_environment_stays_in_the_document_at_its_place() {
+    let mut windows = OpenWindows::default();
+    windows.kept(hub("gone.example"));
+    windows.opened(1, Environment::Local);
+    windows.kept(hub("later.example"));
+    windows.opened(2, hub("hub.home"));
+
+    assert_eq!(
+        environments(&windows),
+        [
+            hub("gone.example"),
+            Environment::Local,
+            hub("later.example"),
+            hub("hub.home")
+        ]
+    );
+}
+
+#[test]
+fn a_kept_environment_is_not_a_window() {
+    let mut windows = OpenWindows::default();
+    windows.kept(hub("gone.example"));
+    windows.opened(1, Environment::Local);
+
+    windows.closed(1);
+
+    assert_eq!(windows.len(), 1);
+    assert_eq!(
+        environments(&windows),
+        [hub("gone.example"), Environment::Local]
+    );
+}
+
+#[test]
+fn closing_a_window_leaves_the_kept_environments() {
+    let mut windows = OpenWindows::default();
+    windows.opened(1, Environment::Local);
+    windows.kept(hub("gone.example"));
+    windows.opened(2, Environment::Local);
+
+    windows.closed(2);
+
+    assert_eq!(
+        environments(&windows),
+        [Environment::Local, hub("gone.example")]
+    );
 }

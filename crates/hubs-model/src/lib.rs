@@ -12,7 +12,7 @@
 //! Settings section: `hubs`. Globals: none.
 //! Invariants: no I/O; no protocol types; the window document is versioned and its records
 //! ignore fields they do not know, so a record can later carry per-window hub data without a
-//! format break; the last open window is never forgotten; a hub is identified by its canonical address;
+//! format break, and a record that cannot be read costs only itself; the last open window is never forgotten; a hub is identified by its canonical address;
 //! a pinned fingerprint never changes silently: a different certificate is an error, not a
 //! prompt; plaintext addresses are refused; secrets never appear in `HubsSettings`.
 //!
@@ -41,4 +41,4 @@ pub use records::{
 };
 pub use settings::{HubRecord, HubsSettings};
 pub use trust::{Fingerprint, ProbedHub, TrustDecision, TrustPolicy, decide};
-pub use windows::{OpenWindows, WindowDocument, WindowRecord};
+pub use windows::{OpenWindows, WindowDocument};
