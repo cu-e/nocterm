@@ -77,6 +77,7 @@ pub(super) struct Chrome {
     status: status_bar::StatusBar,
     menus: menus::WindowMenus,
     new_tab: NewTabControl,
+    environment: Option<AnyView>,
 }
 
 impl Chrome {
@@ -88,7 +89,11 @@ impl Chrome {
                 entry: None,
                 open: false,
             },
+            environment: None,
         }
+    }
+    pub(super) fn install_environment(&mut self, view: AnyView) {
+        self.environment = Some(view);
     }
     pub(super) fn status_bar(&self) -> &status_bar::StatusBar {
         &self.status
@@ -328,6 +333,16 @@ impl Chrome {
                                     },
                                 ))
                                 .child(menu.clone()),
+                        )
+                    })
+                    .when_some(self.environment.as_ref(), |bar, environment| {
+                        bar.child(
+                            div()
+                                .id("workspace-environment")
+                                .test_support()
+                                .flex_none()
+                                .h_full()
+                                .child(environment.clone()),
                         )
                     })
                     .child(div().flex_1())
