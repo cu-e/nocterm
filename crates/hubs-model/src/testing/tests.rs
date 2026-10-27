@@ -355,7 +355,39 @@ fn a_first_sign_in_creates_the_keys_and_hands_out_the_recovery_key_once() {
         sign_in(&hub, "secret").keys,
         KeyStatus::Created(Secret::new("recovery-ada"))
     );
+    // The key was never confirmed as saved, so opening the keys again offers a new one.
+    assert!(hub.recovery_key_unconfirmed(&hub_id()));
+    assert_eq!(
+        sign_in(&hub, "secret").keys,
+        KeyStatus::RecoveryKeyUnconfirmed
+    );
+    hub.confirm_recovery_key(&hub_id()).unwrap();
+    assert!(!hub.recovery_key_unconfirmed(&hub_id()));
     assert_eq!(sign_in(&hub, "secret").keys, KeyStatus::Open);
+}
+
+#[test]
+fn reissuing_replaces_the_recovery_key_until_it_is_confirmed() {
+    let hub = keyed_hub();
+    sign_in(&hub, "secret");
+    hub.confirm_recovery_key(&hub_id()).unwrap();
+
+    let key = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
+    assert_eq!(key, Secret::new("recovery-ada+"));
+    assert!(hub.recovery_key_unconfirmed(&hub_id()));
+    hub.confirm_recovery_key(&hub_id()).unwrap();
+
+    let again = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
+    assert_ne!(again, key);
+}
+
+#[test]
+fn reissuing_needs_open_keys() {
+    let hub = FakeHub::new().with_server(server().with_keyset("ada", "old", "recovery-key"));
+    assert_eq!(sign_in(&hub, "secret").keys, KeyStatus::RecoveryNeeded);
+    let result = block_on(hub.reissue_recovery_key(&hub_id()));
+    assert!(matches!(result, Err(HubError::KeysLocked)));
+    assert!(!hub.recovery_key_unconfirmed(&hub_id()));
 }
 
 #[test]
@@ -393,6 +425,7 @@ fn a_browser_sign_in_needs_the_vault_passphrase_to_open_or_make_the_keys() {
         made.unwrap(),
         KeyStatus::Created(Secret::new("recovery-ada"))
     );
+    hub.confirm_recovery_key(&hub_id()).unwrap();
     let again = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("a long passphrase")));
     assert_eq!(again.unwrap(), KeyStatus::Open);
     let other = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("another passphrase")));

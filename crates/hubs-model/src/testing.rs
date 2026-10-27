@@ -38,6 +38,7 @@ pub enum FakeOp {
     Oidc,
     SetVaultPassphrase,
     Recover,
+    ReissueRecoveryKey,
     SignOut,
     Forget,
     Account,
@@ -55,6 +56,7 @@ pub enum FakeCall {
     Oidc { hub: HubId, provider: String },
     SetVaultPassphrase(HubId),
     Recover(HubId),
+    ReissueRecoveryKey(HubId),
     SignOut(HubId),
     Forget(HubId),
     Account(HubId),
@@ -94,6 +96,8 @@ struct State {
     /// Keys a sign-in could not open, waiting for the recovery key, and what should open them
     /// afterwards.
     recovering: BTreeMap<HubId, String>,
+    /// Hubs whose recovery key was shown on this device and not confirmed as saved.
+    unconfirmed: BTreeSet<HubId>,
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -249,6 +253,7 @@ impl FakeCall {
             Self::Oidc { .. } => FakeOp::Oidc,
             Self::SetVaultPassphrase(_) => FakeOp::SetVaultPassphrase,
             Self::Recover(_) => FakeOp::Recover,
+            Self::ReissueRecoveryKey(_) => FakeOp::ReissueRecoveryKey,
             Self::SignOut(_) => FakeOp::SignOut,
             Self::Forget(_) => FakeOp::Forget,
             Self::Terminal(..) => return None,
@@ -335,9 +340,14 @@ impl State {
                         recovery: recovery.clone(),
                     },
                 );
+                self.unconfirmed.insert(hub.clone());
                 Ok(KeyStatus::Created(Secret::new(recovery)))
             }
-            Some(keyset) if keyset.secret == secret => Ok(KeyStatus::Open),
+            Some(keyset) if keyset.secret == secret => Ok(if self.unconfirmed.contains(hub) {
+                KeyStatus::RecoveryKeyUnconfirmed
+            } else {
+                KeyStatus::Open
+            }),
             Some(_) => {
                 self.recovering.insert(hub.clone(), secret.to_owned());
                 Ok(KeyStatus::RecoveryNeeded)
@@ -518,6 +528,40 @@ impl HubSignIn for FakeHub {
         )
     }
 
+    fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
+        let state = lock(&self.state);
+        state.unconfirmed.contains(hub) && !state.recovering.contains_key(hub)
+    }
+
+    fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret> {
+        let hub = hub.clone();
+        self.call(
+            FakeOp::ReissueRecoveryKey,
+            FakeCall::ReissueRecoveryKey(hub.clone()),
+            move |state| {
+                state.authenticate(&hub)?;
+                let username = state.credentials[&hub].clone();
+                if state.recovering.contains_key(&hub) {
+                    return Err(HubError::KeysLocked);
+                }
+                let keyset = state
+                    .servers
+                    .get_mut(hub.address())
+                    .and_then(|server| server.keysets.get_mut(&username))
+                    .ok_or(HubError::KeysLocked)?;
+                keyset.recovery.push('+');
+                let key = Secret::new(keyset.recovery.clone());
+                state.unconfirmed.insert(hub);
+                Ok(key)
+            },
+        )
+    }
+
+    fn confirm_recovery_key(&self, hub: &HubId) -> Result<(), HubError> {
+        lock(&self.state).unconfirmed.remove(hub);
+        Ok(())
+    }
+
     fn sign_out(&self, hub: &HubId) -> HubFuture<()> {
         let hub = hub.clone();
         self.call(
@@ -526,6 +570,7 @@ impl HubSignIn for FakeHub {
             move |state| {
                 state.credentials.remove(&hub);
                 state.recovering.remove(&hub);
+                state.unconfirmed.remove(&hub);
                 Ok(())
             },
         )
@@ -544,6 +589,7 @@ impl HubSignIn for FakeHub {
         }
         state.credentials.remove(hub);
         state.recovering.remove(hub);
+        state.unconfirmed.remove(hub);
         Ok(())
     }
 }

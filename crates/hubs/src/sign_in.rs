@@ -387,7 +387,7 @@ impl SignInSession {
     /// Goes on from what a sign-in (or a passphrase) did to the account's keys.
     fn keys_settled(&mut self, keys: KeyStatus, cx: &mut Context<Self>) {
         match keys {
-            KeyStatus::Open => self.publish(cx),
+            KeyStatus::Open | KeyStatus::RecoveryKeyUnconfirmed => self.publish(cx),
             KeyStatus::Created(key) => self.move_to(SignInStep::RecoveryKey { key }, cx),
             KeyStatus::PassphraseNeeded => {
                 self.move_to(SignInStep::Passphrase { problem: None }, cx)

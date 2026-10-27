@@ -32,7 +32,7 @@ fn a_keyset_the_hub_altered_is_reported_as_damaged_not_overwritten() {
     }
 }
 
-mod race {
+pub(super) mod race {
     use std::path::Path;
 
     use nocterm_vault::VaultStatus;
@@ -45,28 +45,37 @@ mod race {
     const PASSPHRASE: &str = "a long vault passphrase";
 
     /// One device of the account: its own cache directory and its own key flow.
-    struct Device {
-        flow: KeyFlow,
+    pub(super) struct Device {
+        pub(super) flow: KeyFlow,
         accounts: Arc<Accounts>,
-        _dir: TempDir,
+        dir: TempDir,
     }
 
     impl Device {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
+        pub(super) fn new() -> Self {
+            Self::in_dir(tempfile::tempdir().unwrap())
+        }
+
+        fn in_dir(dir: TempDir) -> Self {
             let accounts = Arc::new(Accounts::new(dir.path().to_path_buf()));
             Self {
                 flow: KeyFlow::new(pool(dir.path(), &accounts), Arc::clone(&accounts)),
                 accounts,
-                _dir: dir,
+                dir,
             }
         }
 
-        fn slot(&self) -> Arc<Slot> {
+        /// The same device after the client was closed and opened again: what it kept on disk
+        /// stays, what it held in memory is gone.
+        pub(super) fn restarted(self) -> Self {
+            Self::in_dir(self.dir)
+        }
+
+        pub(super) fn slot(&self) -> Arc<Slot> {
             self.accounts.slot(&hub()).unwrap()
         }
 
-        async fn sign_in(&self, hub_keys: &MemoryKeysets, password: &str) -> KeyStatus {
+        pub(super) async fn sign_in(&self, hub_keys: &MemoryKeysets, password: &str) -> KeyStatus {
             let secrets = LoginSecrets::derive(password, HUB_UID, "ada").unwrap();
             self.flow
                 .after_password(&hub(), hub_keys, ACCOUNT_ID, "ada", secrets)
@@ -203,5 +212,190 @@ mod race {
             .await;
         assert!(recovered.is_ok());
         assert_eq!(loser.slot().status(), VaultStatus::Unlocked);
+    }
+}
+
+mod reissue {
+    use nocterm_keys::{RecoveryKey, UnlockKey};
+
+    use super::race::Device;
+    use super::*;
+    use crate::account::testing::{ACCOUNT_ID, HUB_UID, MemoryKeysets, PASSWORD, hub};
+
+    /// A device that created the account's keys, and the recovery key it was shown.
+    async fn created() -> (Device, MemoryKeysets, RecoveryKey) {
+        let (device, hub_keys) = (Device::new(), MemoryKeysets::default());
+        let KeyStatus::Created(shown) = device.sign_in(&hub_keys, PASSWORD).await else {
+            panic!("a first sign-in creates the keys");
+        };
+        let key = RecoveryKey::parse(shown.expose()).unwrap();
+        (device, hub_keys, key)
+    }
+
+    async fn reissue(device: &Device, hub_keys: &MemoryKeysets) -> Result<RecoveryKey, HubError> {
+        let slot = device.slot();
+        let keys = slot.open().ok_or(HubError::KeysLocked)?;
+        let shown = device
+            .flow
+            .reissue_with(&slot, hub_keys, keys.keyset())
+            .await?;
+        Ok(RecoveryKey::parse(shown.expose()).unwrap())
+    }
+
+    fn opens_with(hub_keys: &MemoryKeysets, key: &RecoveryKey) -> bool {
+        Keyset::recover(&hub_keys.stored().unwrap(), ACCOUNT_ID, key).is_ok()
+    }
+
+    fn password_opens(hub_keys: &MemoryKeysets) -> bool {
+        let secrets = LoginSecrets::derive(PASSWORD, HUB_UID, "ada").unwrap();
+        let unlock: UnlockKey = secrets.into_unlock();
+        Keyset::open(&hub_keys.stored().unwrap(), ACCOUNT_ID, &unlock).is_ok()
+    }
+
+    #[tokio::test]
+    async fn a_recovery_key_is_unconfirmed_from_its_creation_until_the_person_confirms_it() {
+        let (device, ..) = created().await;
+        assert!(device.flow.recovery_key_unconfirmed(&hub()));
+
+        device.flow.confirm_recovery_key(&hub()).unwrap();
+
+        assert!(!device.flow.recovery_key_unconfirmed(&hub()));
+    }
+
+    #[tokio::test]
+    async fn an_unconfirmed_key_is_offered_again_when_the_keys_open_after_a_restart() {
+        let (device, hub_keys, _) = created().await;
+
+        let device = device.restarted();
+        assert!(
+            !device.flow.recovery_key_unconfirmed(&hub()),
+            "nothing is open before the password opens the keys"
+        );
+        let status = device.sign_in(&hub_keys, PASSWORD).await;
+        assert_eq!(status, KeyStatus::RecoveryKeyUnconfirmed);
+        assert!(device.flow.recovery_key_unconfirmed(&hub()));
+
+        device.flow.confirm_recovery_key(&hub()).unwrap();
+        let device = device.restarted();
+        assert_eq!(device.sign_in(&hub_keys, PASSWORD).await, KeyStatus::Open);
+    }
+
+    #[tokio::test]
+    async fn another_device_of_the_account_does_not_inherit_the_marker() {
+        let (_first, hub_keys, _) = created().await;
+
+        let second = Device::new();
+
+        assert_eq!(second.sign_in(&hub_keys, PASSWORD).await, KeyStatus::Open);
+    }
+
+    #[tokio::test]
+    async fn reissuing_replaces_the_recovery_key_the_hub_can_open_and_keeps_the_password() {
+        let (device, hub_keys, old) = created().await;
+        device.flow.confirm_recovery_key(&hub()).unwrap();
+        let version = hub_keys.stored().unwrap().version;
+
+        let new = reissue(&device, &hub_keys).await.unwrap();
+
+        assert!(opens_with(&hub_keys, &new));
+        assert!(!opens_with(&hub_keys, &old), "the old key no longer opens");
+        assert!(password_opens(&hub_keys), "the password still opens it");
+        let stored = hub_keys.stored().unwrap();
+        assert_eq!(stored.version, version + 1);
+        assert_eq!(
+            device
+                .slot()
+                .read_cache(|cache| cache.unwrap().keyset.clone()),
+            KeysetCopy::of(&stored),
+            "the cache holds the record the hub now has"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reissued_key_is_unconfirmed_until_confirmed_and_survives_a_restart() {
+        let (device, hub_keys, _) = created().await;
+        device.flow.confirm_recovery_key(&hub()).unwrap();
+
+        reissue(&device, &hub_keys).await.unwrap();
+        assert!(device.flow.recovery_key_unconfirmed(&hub()));
+
+        let device = device.restarted();
+        assert_eq!(
+            device.sign_in(&hub_keys, PASSWORD).await,
+            KeyStatus::RecoveryKeyUnconfirmed
+        );
+    }
+
+    #[tokio::test]
+    async fn a_write_that_loses_to_another_device_is_repeated_against_the_new_version() {
+        let (device, hub_keys, _) = created().await;
+        let version = hub_keys.stored().unwrap().version;
+        hub_keys.contend_recovery_writes(2);
+
+        let new = reissue(&device, &hub_keys).await.unwrap();
+
+        assert!(opens_with(&hub_keys, &new));
+        assert_eq!(
+            hub_keys.stored().unwrap().version,
+            version + 3,
+            "two writes of the other device and then ours"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_keyset_that_keeps_changing_leaves_the_old_key_valid_and_the_marker_as_it_was() {
+        let (device, hub_keys, old) = created().await;
+        device.flow.confirm_recovery_key(&hub()).unwrap();
+        hub_keys.contend_recovery_writes(100);
+
+        let result = reissue(&device, &hub_keys).await;
+
+        assert!(result.is_err());
+        assert!(opens_with(&hub_keys, &old), "nothing was replaced");
+        assert!(!device.flow.recovery_key_unconfirmed(&hub()));
+    }
+
+    #[tokio::test]
+    async fn reissuing_with_closed_keys_is_refused() {
+        let (device, ..) = created().await;
+        let device = device.restarted();
+
+        let result = device.flow.reissue_recovery_key(&hub()).await;
+
+        assert!(matches!(result, Err(HubError::KeysLocked)));
+    }
+
+    #[tokio::test]
+    async fn a_record_of_another_key_pair_is_refused_and_not_written_over() {
+        let (device, hub_keys, _) = created().await;
+        hub_keys.edit_record(|record| {
+            record.public_key = nocterm_keys::AccountKeyPair::generate()
+                .unwrap()
+                .public_key()
+                .to_bytes()
+                .to_vec();
+        });
+        let before = hub_keys.stored().unwrap();
+
+        let result = reissue(&device, &hub_keys).await;
+
+        assert!(matches!(result, Err(HubError::KeysetDamaged { .. })));
+        assert_eq!(hub_keys.stored().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn typing_the_recovery_key_confirms_that_the_person_holds_it() {
+        let (device, hub_keys, key) = created().await;
+        let device = device.restarted();
+        let other = device.sign_in(&hub_keys, "another long password").await;
+        assert_eq!(other, KeyStatus::RecoveryNeeded);
+
+        device
+            .flow
+            .recover_with(&hub(), &hub_keys, Secret::new(key.display().as_str()))
+            .await
+            .unwrap();
+
+        assert!(!device.flow.recovery_key_unconfirmed(&hub()));
     }
 }

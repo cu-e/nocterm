@@ -7,7 +7,7 @@
 use futures::future::BoxFuture;
 use nocterm_hub_client::{ClientError, HubClient, Keyset, KeysetError, NewKeyset};
 use nocterm_hub_proto::v1;
-use nocterm_keys::{RecoveryKey, UnlockKdf, UnlockKey};
+use nocterm_keys::{OpenError, RecoveryKey, UnlockKdf, UnlockKey};
 
 /// What a key flow asks of one hub.
 pub(crate) trait KeysetHub: Send + Sync {
@@ -34,6 +34,38 @@ pub(crate) trait KeysetHub: Send + Sync {
         unlock: &'a UnlockKey,
         kdf: &'a UnlockKdf,
     ) -> BoxFuture<'a, Result<Keyset, KeysetError>>;
+
+    /// Seals the account key of `keyset`, which is open, under `recovery` in place of the
+    /// recovery envelope the hub holds. One write conditional on the version just read: a
+    /// version that moved in between is a conflict ([`ClientError::is_conflict`]) the caller
+    /// retries. Returns the record the hub now holds.
+    fn reseal_recovery<'a>(
+        &'a self,
+        keyset: &'a Keyset,
+        recovery: &'a RecoveryKey,
+    ) -> BoxFuture<'a, Result<v1::AccountKeyset, KeysetError>>;
+}
+
+/// The write that replaces the recovery envelope of `record` and nothing else. The other values
+/// are the hub's own, and a record whose public key is not the one of the open `keyset` is not
+/// this account's: it is refused instead of sealed over.
+pub(crate) fn resealed(
+    record: &v1::AccountKeyset,
+    keyset: &Keyset,
+    recovery: &RecoveryKey,
+) -> Result<v1::PutAccountKeysetRequest, KeysetError> {
+    if record.public_key != keyset.public_key().to_bytes() {
+        return Err(KeysetError::Damaged(OpenError::Rejected));
+    }
+    Ok(v1::PutAccountKeysetRequest {
+        expected_version: record.version,
+        kdf: record.kdf.clone(),
+        salt: record.salt.clone(),
+        wrapped_account_key: record.wrapped_account_key.clone(),
+        public_key: record.public_key.clone(),
+        sealed_private_key: record.sealed_private_key.clone(),
+        recovery_wrapped_account_key: recovery.wrap(keyset.account_key(), keyset.account_id())?,
+    })
 }
 
 impl KeysetHub for HubClient {
@@ -63,4 +95,30 @@ impl KeysetHub for HubClient {
     ) -> BoxFuture<'a, Result<Keyset, KeysetError>> {
         Box::pin(self.recover_keyset(account_id, recovery, unlock, kdf))
     }
+
+    fn reseal_recovery<'a>(
+        &'a self,
+        keyset: &'a Keyset,
+        recovery: &'a RecoveryKey,
+    ) -> BoxFuture<'a, Result<v1::AccountKeyset, KeysetError>> {
+        Box::pin(reseal(self, keyset, recovery))
+    }
+}
+
+async fn reseal(
+    client: &HubClient,
+    keyset: &Keyset,
+    recovery: &RecoveryKey,
+) -> Result<v1::AccountKeyset, KeysetError> {
+    let record = client
+        .keyset_record()
+        .await?
+        .ok_or(KeysetError::Incomplete)?;
+    let request = resealed(&record, keyset, recovery)?;
+    let stored = client
+        .store()
+        .put_account_keyset(request)
+        .await
+        .map_err(ClientError::from)?;
+    Ok(stored.into_inner())
 }

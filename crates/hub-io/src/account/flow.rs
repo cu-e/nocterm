@@ -17,8 +17,8 @@ use nocterm_session::Secret;
 
 use super::keyset_hub::KeysetHub;
 use super::{Accounts, OpenKeys, Recovery, Slot};
-use crate::cache::{AccountCache, UnlockMethod};
-use crate::classify::remote;
+use crate::cache::{AccountCache, KeysetCopy, UnlockMethod};
+use crate::classify::{credentials, remote};
 use crate::directory::who_am_i;
 use crate::pool::Pool;
 
@@ -27,6 +27,10 @@ pub(crate) struct KeyFlow {
     pool: Arc<Pool>,
     accounts: Arc<Accounts>,
 }
+
+/// How often the replacement of the recovery envelope is tried against a keyset that other
+/// devices keep writing.
+const RESEAL_ATTEMPTS: u32 = 4;
 
 /// What a keyset write decided.
 enum Creation {
@@ -74,9 +78,89 @@ impl KeyFlow {
     pub(crate) fn after_browser(&self, hub: &HubId) -> Result<KeyStatus, HubError> {
         let slot = self.accounts.slot(hub)?;
         Ok(match slot.open() {
-            Some(_) => KeyStatus::Open,
+            Some(keys) => opened(&slot, keys.keyset().account_id()),
             None => KeyStatus::PassphraseNeeded,
         })
+    }
+
+    /// Whether the recovery key made on this device was never confirmed as saved.
+    pub(crate) fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
+        let Ok(slot) = self.accounts.slot(hub) else {
+            return false;
+        };
+        slot.open()
+            .is_some_and(|keys| slot.recovery_unconfirmed(keys.keyset().account_id()))
+    }
+
+    /// Records that the person saved the recovery key shown last.
+    pub(crate) fn confirm_recovery_key(&self, hub: &HubId) -> Result<(), HubError> {
+        let slot = self.accounts.slot(hub)?;
+        slot.update_cache(|cache| cache.recovery_unconfirmed = false)
+            .map_err(credentials)
+    }
+
+    /// Issues a new recovery key and replaces the one the hub holds a wrapped copy of. The open
+    /// keys are what allows it. The key is marked unconfirmed first, so that a window closed or
+    /// a crash before it is saved offers another; it is shown once and stored nowhere.
+    pub(crate) async fn reissue_recovery_key(&self, hub: &HubId) -> Result<Secret, HubError> {
+        let slot = self.accounts.slot(hub)?;
+        let keys = slot.open().ok_or(HubError::KeysLocked)?;
+        let client = self.pool.fresh(hub).await?;
+        self.reissue_with(&slot, &client, keys.keyset()).await
+    }
+
+    async fn reissue_with(
+        &self,
+        slot: &Slot,
+        client: &dyn KeysetHub,
+        keyset: &Keyset,
+    ) -> Result<Secret, HubError> {
+        let hub = slot.hub();
+        let before = slot.recovery_unconfirmed(keyset.account_id());
+        slot.update_cache(|cache| cache.recovery_unconfirmed = true)
+            .map_err(credentials)?;
+        let recovery = RecoveryKey::generate().map_err(remote)?;
+        let written = self.reseal(hub, client, keyset, &recovery).await;
+        match written {
+            Ok(record) => {
+                if let Err(error) = slot.update_cache(|cache| {
+                    cache.keyset = KeysetCopy::of(&record);
+                }) {
+                    tracing::warn!(%error, hub = %hub, "the account cache cannot be written");
+                }
+                Ok(Secret::new(recovery.display().as_str()))
+            }
+            Err(error) => {
+                if let Err(error) = slot.update_cache(|cache| cache.recovery_unconfirmed = before) {
+                    tracing::warn!(%error, hub = %hub, "the account cache cannot be written");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Writes the recovery envelope conditional on the keyset version read just before. A
+    /// device that wrote the keyset in between (another sign-in, a recovery) makes it conflict:
+    /// the record is read again and the write repeated, a few times.
+    async fn reseal(
+        &self,
+        hub: &HubId,
+        client: &dyn KeysetHub,
+        keyset: &Keyset,
+        recovery: &RecoveryKey,
+    ) -> Result<v1::AccountKeyset, HubError> {
+        let mut attempt = 1;
+        loop {
+            match client.reseal_recovery(keyset, recovery).await {
+                Ok(record) => return Ok(record),
+                Err(KeysetError::Hub(error))
+                    if error.is_conflict() && attempt < RESEAL_ATTEMPTS =>
+                {
+                    attempt += 1;
+                }
+                Err(error) => return Err(self.keyset_failure(hub, error)),
+            }
+        }
     }
 
     /// Opens, or creates, the keys with the vault passphrase of an account without a password.
@@ -137,9 +221,10 @@ impl KeyFlow {
             }
             other => {
                 let keyset = other.map_err(|error| self.keyset_failure(hub, error))?;
-                self.keep(&slot, client, keyset, UnlockMethod::Passphrase)
+                let unconfirmed = slot.recovery_unconfirmed(keyset.account_id());
+                self.keep(&slot, client, keyset, UnlockMethod::Passphrase, unconfirmed)
                     .await?;
-                Ok(KeyStatus::Open)
+                Ok(opened(&slot, account_id))
             }
         }
     }
@@ -168,7 +253,8 @@ impl KeyFlow {
                 KeysetError::WrongRecoveryKey => HubError::RecoveryKeyInvalid,
                 other => self.keyset_failure(hub, other),
             })?;
-        self.keep(&slot, client, keyset, pending.method.clone())
+        // The person typed the recovery key, so it is the one they hold.
+        self.keep(&slot, client, keyset, pending.method.clone(), false)
             .await
     }
 
@@ -199,8 +285,9 @@ impl KeyFlow {
         };
         match Keyset::open(&record, account_id, &unlock) {
             Ok(keyset) => {
-                self.keep(slot, client, keyset, method).await?;
-                Ok(KeyStatus::Open)
+                let unconfirmed = slot.recovery_unconfirmed(keyset.account_id());
+                self.keep(slot, client, keyset, method, unconfirmed).await?;
+                Ok(opened(slot, account_id))
             }
             Err(KeysetError::WrongUnlockKey) => {
                 slot.await_recovery(Recovery {
@@ -231,7 +318,10 @@ impl KeyFlow {
             .map_err(|error| self.keyset_failure(hub, error))?;
         match made {
             Creation::Created(new) => {
-                self.keep(slot, client, new.keyset, method.clone()).await?;
+                // Marked before the key is shown: if it is never confirmed, the next time the
+                // keys open another is offered.
+                self.keep(slot, client, new.keyset, method.clone(), true)
+                    .await?;
                 Ok(Some(KeyStatus::Created(Secret::new(
                     new.recovery.display().as_str(),
                 ))))
@@ -247,18 +337,20 @@ impl KeyFlow {
         client: &dyn KeysetHub,
         keyset: Keyset,
         method: UnlockMethod,
+        unconfirmed: bool,
     ) -> Result<(), HubError> {
         let hub = slot.hub();
         let record = self
             .record(hub, client)
             .await?
             .ok_or_else(|| damaged(KeysetError::Incomplete))?;
-        let cache = AccountCache::new(
+        let mut cache = AccountCache::new(
             client.hub_uid(),
             keyset.account_id().to_owned(),
             method,
             &record,
         );
+        cache.recovery_unconfirmed = unconfirmed;
         slot.install(OpenKeys::new(keyset), cache);
         Ok(())
     }
@@ -279,6 +371,15 @@ impl KeyFlow {
             KeysetError::Hub(error) => self.pool.failed(hub, error),
             other => keyset_error(other),
         }
+    }
+}
+
+/// The status of keys that are open: an unconfirmed recovery key is offered again.
+fn opened(slot: &Slot, account_id: &str) -> KeyStatus {
+    if slot.recovery_unconfirmed(account_id) {
+        KeyStatus::RecoveryKeyUnconfirmed
+    } else {
+        KeyStatus::Open
     }
 }
 

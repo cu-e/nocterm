@@ -66,6 +66,11 @@ impl OpenKeys {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The opened keyset.
+    pub(crate) fn keyset(&self) -> &Keyset {
+        &self.keyset
+    }
+
     /// The key of a collection, opened from the envelope the hub holds for this account.
     /// An envelope that does not open is [`OpenError`]: the hub altered it.
     pub(crate) fn collection(
@@ -178,6 +183,14 @@ impl Slot {
     /// Reads the cached account, if the hub has one on this device.
     pub(crate) fn read_cache<R>(&self, read: impl FnOnce(Option<&AccountCache>) -> R) -> R {
         read(self.state().cache.as_ref())
+    }
+
+    /// Whether the recovery key of `account_id` was shown on this device and never confirmed.
+    /// A cache of another account says nothing about this one.
+    pub(crate) fn recovery_unconfirmed(&self, account_id: &str) -> bool {
+        self.read_cache(|cache| {
+            cache.is_some_and(|cache| cache.account_id == account_id && cache.recovery_unconfirmed)
+        })
     }
 
     /// Changes the cached account and writes it through. Nothing happens without a cache.

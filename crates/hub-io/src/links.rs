@@ -219,6 +219,19 @@ impl HubSignIn for HubLinks {
         self.run_boxed(async move { keys.recover(&hub, recovery_key).await })
     }
 
+    fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
+        self.keys.recovery_key_unconfirmed(hub)
+    }
+
+    fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret> {
+        let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
+        self.run_boxed(async move { keys.reissue_recovery_key(&hub).await })
+    }
+
+    fn confirm_recovery_key(&self, hub: &HubId) -> Result<(), HubError> {
+        self.keys.confirm_recovery_key(hub)
+    }
+
     fn sign_out(&self, hub: &HubId) -> HubFuture<()> {
         let (connector, hub) = (Arc::clone(&self.connector), hub.clone());
         self.run_boxed(async move { connector.sign_out(&hub).await })
