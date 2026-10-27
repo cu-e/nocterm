@@ -1,6 +1,6 @@
 //! Native connection files, environment/entropy/clock and network observations.
 //!
-//! Owns: three-document repositories, native defaults/UUID/clock, DNS, bounded remote OS reads and HTTP/flag cache.
+//! Owns: three-document repositories, the private file of the agreed profile-replica state, native defaults/UUID/clock, DNS, bounded remote OS reads and HTTP/flag cache.
 //! Does not own: profile rules, GPUI images, observation scheduling or persistence workers.
 //! Ports used: foundation persistence. Ports provided: ConnectionRepository, ProfileIds,
 //! ConnectionClock, PublicAddressResolver, CountryLocator,
@@ -12,8 +12,10 @@
 mod os_probe;
 pub use os_probe::NativeOsDetector;
 mod native_values;
+mod replica_state;
 mod repository;
 pub use native_values::NativeValues;
+pub use replica_state::{FileReplicaState, ReplicaStateError};
 pub use repository::FileConnectionRepository;
 mod flags;
 mod http;
