@@ -51,7 +51,12 @@ impl SessionsPanel {
             cx.subscribe(&state, |_, _, _: &HubWindowEvent, cx| cx.notify()),
             cx.observe(workspace, |panel, _, cx| panel.follow_visibility(cx)),
         ];
-        let mut panel = Self {
+        // The workspace creates the panel while it is being updated, so it is read on the next turn.
+        cx.spawn(async move |panel, cx| {
+            let _ = panel.update(cx, |panel, cx| panel.follow_visibility(cx));
+        })
+        .detach();
+        Self {
             hubs,
             state,
             tabs,
@@ -59,9 +64,7 @@ impl SessionsPanel {
             focus: cx.focus_handle(),
             watch: None,
             _subscriptions: subscriptions,
-        };
-        panel.follow_visibility(cx);
-        panel
+        }
     }
 
     fn shown(&self, cx: &App) -> bool {

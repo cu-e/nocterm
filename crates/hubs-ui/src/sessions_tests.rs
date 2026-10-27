@@ -108,16 +108,12 @@ fn the_plus_button_opens_the_menu_that_starts_a_session_on_a_chosen_machine(
     let window = online_window(cx);
     window.click("hub-sessions-new", cx);
     assert!(cx.update(|cx| window.workspace.read(cx).new_tab_menu_is_open()));
-    let offline = cx
-        .update_window(window.window, |_, handle, _| {
-            handle.find(("new-session-node", 1usize)).disabled()
-        })
-        .unwrap();
-    assert_eq!(
-        offline,
-        Some(true),
+    window.click(("new-session-node", 1usize), cx);
+    assert!(
+        cx.update(|cx| window.workspace.read(cx).new_tab_menu_is_open()),
         "a machine that is offline cannot be chosen"
     );
+    assert!(window.terminals.tabs().is_empty());
     window.click(("new-session-node", 0usize), cx);
     assert!(!cx.update(|cx| window.workspace.read(cx).new_tab_menu_is_open()));
     assert_eq!(window.terminals.tabs()[0].0.as_ref(), "Shell on build box");
