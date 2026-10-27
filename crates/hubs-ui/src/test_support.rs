@@ -122,6 +122,19 @@ pub(crate) fn fixture(
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    fixture_over(cx, config, environment, hub, known, signed_in)
+}
+
+/// As [`fixture`], but the settings are kept by `config`, which may fail to save.
+pub(crate) fn fixture_over(
+    cx: &mut TestAppContext,
+    config: SettingsConfig,
+    environment: Environment,
+    hub: FakeHub,
+    known: Vec<HubRecord>,
+    signed_in: Option<&str>,
+) -> Fixture {
     if let Some(user) = signed_in {
         hub.sign_in_as(&hub_id(), user);
     }
@@ -129,9 +142,7 @@ pub(crate) fn fixture(
     let terminals = Rc::new(RecordingTerminals::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
-        let settings = SettingsConfig::in_memory(SettingsDocument::default())
-            .with(HubsSettings { servers: known })
-            .install(cx);
+        let settings = config.with(HubsSettings { servers: known }).install(cx);
         nocterm_ui::init(DesignTokens::builtin(), settings.clone(), cx);
         let installed = install(nocterm_hubs::install(
             nocterm_hubs::Deps {

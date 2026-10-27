@@ -17,6 +17,7 @@ use nocterm_hubs::{HubSummary, Hubs};
 use nocterm_hubs_model::Fingerprint;
 
 use crate::layout::{fingerprint_block, note, problem};
+use crate::messages::hubs_problem;
 
 /// Tells that the certificate of `hub` is not the trusted one, shows both fingerprints, and
 /// offers to forget the server. Signing in again to the same server then asks anew.
@@ -34,8 +35,24 @@ pub(crate) fn open_trust_failed(
             .label("Remove this server")
             .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                 let id = summary.id.clone();
-                hubs.update(cx, |hubs, cx| hubs.remove(&id, cx)).detach();
+                let removing = hubs.update(cx, |hubs, cx| hubs.remove(&id, cx));
                 window.close_dialog(cx);
+                window
+                    .spawn(cx, async move |cx| {
+                        if let Err(error) = removing.await {
+                            cx.update(|window, cx| {
+                                nocterm_ui::notice::error(
+                                    window,
+                                    cx,
+                                    "hub-remove",
+                                    "Could not remove the server",
+                                    hubs_problem(&error),
+                                );
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
             });
         let close = Button::new("trust-failed-close")
             .primary()

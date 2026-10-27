@@ -1,7 +1,7 @@
 //! The words the views use for the failures of the hub service. The service reports typed
 //! errors; this is the only place that turns them into text.
 
-use nocterm_hubs::SignInError;
+use nocterm_hubs::{HubsError, SignInError};
 use nocterm_hubs_model::HubError;
 
 /// Why a sign-in step did not work, for the dialog.
@@ -19,6 +19,17 @@ pub(crate) fn sign_in_problem(error: &SignInError) -> String {
         SignInError::Save(_) => {
             "The server could not be saved to the settings, so this device was signed out of it again."
                 .to_owned()
+        }
+    }
+}
+
+/// Why forgetting a server or signing out of it did not work.
+pub(crate) fn hubs_problem(error: &HubsError) -> String {
+    match error {
+        HubsError::Unknown(hub) => format!("{hub} is not in the list."),
+        HubsError::Hub(error) => hub_problem(error),
+        HubsError::Save(_) => {
+            "The settings could not be saved, so the server stays listed.".to_owned()
         }
     }
 }

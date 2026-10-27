@@ -1,10 +1,13 @@
 //! The environment menu lists this computer and the known servers, and opens what is chosen.
 use super::chip;
-use crate::test_support::{Fixture, fixture, hub_id, pinned_record, server};
+use crate::test_support::{Fixture, fixture, fixture_over, hub_id, pinned_record, server};
 use crate::{OpenEnvironmentMenu, Placement};
-use gpui_kit::{Hsla, TestAppContext, hsla};
+use gpui_kit::{AppContext as _, Hsla, TestAppContext, hsla};
 use nocterm_hubs::HubStatus;
 use nocterm_hubs_model::{Environment, Fingerprint, HubRecord, TrustPolicy, testing::FakeHub};
+use nocterm_settings::SettingsDocument;
+use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn local_window(cx: &mut TestAppContext, known: Vec<HubRecord>) -> Fixture {
@@ -103,6 +106,61 @@ fn a_server_that_needs_a_new_certificate_decision_opens_no_window(cx: &mut TestA
         window.environments.requests().is_empty(),
         "a changed certificate is never opened, let alone accepted"
     );
+}
+
+fn changed_certificate_window(cx: &mut TestAppContext, config: SettingsConfig) -> Fixture {
+    let changed = HubRecord::new(
+        pinned_record().address,
+        TrustPolicy::Pinned(Fingerprint::from_bytes([9; 32])),
+        "Home",
+    );
+    let window = fixture_over(
+        cx,
+        config,
+        Environment::Local,
+        FakeHub::new().with_server(server()),
+        vec![changed],
+        Some("ada"),
+    );
+    open_menu(&window, cx);
+    window.click(("environment-row", 1usize), cx);
+    window.settle_dialog(cx);
+    window
+}
+
+#[gpui_kit::test]
+fn removing_a_server_whose_certificate_changed_drops_its_row(cx: &mut TestAppContext) {
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let window = changed_certificate_window(cx, config);
+    window.click("trust-failed-remove", cx);
+    cx.run_until_parked();
+    assert!(!window.has_dialog(cx));
+    open_menu(&window, cx);
+    assert!(!window.shows(("environment-row", 2usize), cx));
+}
+
+#[gpui_kit::test]
+fn a_server_that_cannot_be_removed_says_so_instead_of_staying_listed_silently(
+    cx: &mut TestAppContext,
+) {
+    let writer: SnapshotWriter<SettingsDocument> = Arc::new(|_| {
+        Box::pin(async {
+            Err(StoreError::backend(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            )))
+        })
+    });
+    let config = SettingsConfig::with_writer(SettingsDocument::default(), writer);
+    let window = changed_certificate_window(cx, config);
+    window.click("trust-failed-remove", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    let notices = cx
+        .update_window(window.window, |_, window, cx| {
+            nocterm_ui::notice::count(window, cx)
+        })
+        .unwrap();
+    assert_eq!(notices, 1, "the failure is reported");
 }
 
 #[gpui_kit::test]
