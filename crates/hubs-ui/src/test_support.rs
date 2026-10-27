@@ -17,7 +17,9 @@ use nocterm_store::SettingsConfig;
 use nocterm_ui::DesignTokens;
 use nocterm_workspace::{Workspace, test_support::deps_for};
 
-use crate::{HubTabError, HubTerminalOpener, Installed, OpenHubSessions, install, plugin, register};
+use crate::{
+    HubTabError, HubTerminalOpener, Installed, OpenHubSessions, install, plugin, register,
+};
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
 
@@ -104,10 +106,12 @@ pub(crate) fn fixture_over(
     let terminals = Rc::new(RecordingTerminals::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
-        let settings = config.with(HubsSettings {
-            servers: known,
-            ..Default::default()
-        }).install(cx);
+        let settings = config
+            .with(HubsSettings {
+                servers: known,
+                ..Default::default()
+            })
+            .install(cx);
         nocterm_ui::init(DesignTokens::builtin(), settings.clone(), cx);
         let installed = install(nocterm_hubs::install(
             nocterm_hubs::Deps {

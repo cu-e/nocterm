@@ -20,6 +20,7 @@ use gpui_kit::{
 };
 use nocterm_hubs::{Hubs, SignInError, SignInEvent, SignInSession, SignInStep, TrustNote};
 use nocterm_hubs_model::{HubId, OidcProvider};
+use nocterm_session::Secret;
 
 use crate::layout::{field, fingerprint_block, note, problem, title};
 use crate::messages::sign_in_problem;
@@ -27,12 +28,7 @@ use form::SignInForm;
 
 /// Starts signing in to a server not known yet, or again to `hub`, and shows the dialog. A hub
 /// that is not known any more shows nothing.
-pub(crate) fn start(
-    hubs: &Entity<Hubs>,
-    hub: Option<&HubId>,
-    window: &mut Window,
-    cx: &mut App,
-) {
+pub(crate) fn start(hubs: &Entity<Hubs>, hub: Option<&HubId>, window: &mut Window, cx: &mut App) {
     let session = hubs.update(cx, |hubs, cx| match hub {
         Some(hub) => hubs.start_sign_in_for(hub, cx),
         None => Some(hubs.start_sign_in(cx)),
@@ -108,6 +104,8 @@ impl SignInDialog {
                 SignInStep::Method { password: true, .. } => {
                     self.form.username().read(cx).focus_handle(cx)
                 }
+                SignInStep::Passphrase { .. } => self.form.passphrase().read(cx).focus_handle(cx),
+                SignInStep::Recovery { .. } => self.form.recovery_key().read(cx).focus_handle(cx),
                 _ => self.focus.clone(),
             };
             window.focus(&target, cx);
@@ -132,7 +130,11 @@ impl SignInDialog {
             }
             SignInStep::Method { password: true, .. } => self.sign_in_with_password(window, cx),
             SignInStep::Finished(_) => self.close(window, cx),
-            SignInStep::Method { .. }
+            SignInStep::Passphrase { .. } => self.set_vault_passphrase(window, cx),
+            SignInStep::Recovery { .. } => self.recover(window, cx),
+            // Enter must not skip past the one showing of the recovery key.
+            SignInStep::RecoveryKey { .. }
+            | SignInStep::Method { .. }
             | SignInStep::Checking
             | SignInStep::Authenticating
             | SignInStep::Browser { .. }
@@ -157,6 +159,20 @@ impl SignInDialog {
         let password = self.form.take_password(window, cx);
         self.session.update(cx, |session, cx| {
             session.sign_in_with_password(&username, password, cx);
+        });
+    }
+
+    fn set_vault_passphrase(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let passphrase = self.form.take_passphrase(window, cx);
+        self.session.update(cx, |session, cx| {
+            session.set_vault_passphrase(passphrase, cx);
+        });
+    }
+
+    fn recover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let recovery_key = self.form.take_recovery_key(window, cx);
+        self.session.update(cx, |session, cx| {
+            session.recover(recovery_key, cx);
         });
     }
 
@@ -187,6 +203,9 @@ impl SignInDialog {
                 problem,
             } => self.render_method(&hub_name, password, &providers, note, problem.as_ref(), cx),
             SignInStep::Browser { provider, url } => self.render_browser(&provider, url, cx),
+            SignInStep::RecoveryKey { key } => self.render_recovery_key(&key, cx),
+            SignInStep::Passphrase { problem } => self.render_passphrase(problem.as_ref(), cx),
+            SignInStep::Recovery { problem } => self.render_recovery(problem.as_ref(), cx),
             SignInStep::Finished(_) => self.render_finished(cx),
             SignInStep::Failed(error) => self.render_failed(&error, cx),
         }
@@ -427,6 +446,123 @@ impl SignInDialog {
                             .label("Cancel")
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.session.update(cx, |session, cx| session.back(cx));
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_recovery_key(
+        &mut self,
+        key: &Secret,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let text = key.expose().to_owned();
+        v_flex()
+            .gap_3()
+            .child(title("Write down your recovery key".to_owned(), cx))
+            .child(note(
+                "Your account keys were created. This key is the only way to open them if you lose your password, and it is not shown again or kept on this device.",
+                cx,
+            ))
+            .child(note(text.clone(), cx))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_end()
+                    .child(Button::new("sign-in-copy-key").label("Copy key").on_click(
+                        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                                text.clone(),
+                            ));
+                        },
+                    ))
+                    .child(
+                        Button::new("sign-in-key-saved")
+                            .primary()
+                            .label("I have saved it")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.session.update(cx, |session, cx| {
+                                    session.acknowledge_recovery_key(cx);
+                                });
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_passphrase(
+        &mut self,
+        failure: Option<&SignInError>,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        v_flex()
+            .gap_3()
+            .child(title("Vault passphrase".to_owned(), cx))
+            .child(note(
+                "Signing in through a provider does not open your account keys. Type the passphrase that protects them; the first time, this sets it.",
+                cx,
+            ))
+            .child(field("Passphrase", Input::new(self.form.passphrase())))
+            .when_some(failure, |step, error| {
+                step.child(problem(sign_in_problem(error), cx))
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_end()
+                    .child(
+                        Button::new("sign-in-passphrase-back")
+                            .label("Back")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.session.update(cx, |session, cx| session.back(cx));
+                            })),
+                    )
+                    .child(
+                        Button::new("sign-in-passphrase")
+                            .primary()
+                            .label("Continue")
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.set_vault_passphrase(window, cx);
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_recovery(
+        &mut self,
+        failure: Option<&SignInError>,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        v_flex()
+            .gap_3()
+            .child(title("Enter your recovery key".to_owned(), cx))
+            .child(note(
+                "This password does not open your account keys; it was probably reset. The recovery key you saved when the account was created opens them, and this password opens them from now on.",
+                cx,
+            ))
+            .child(field("Recovery key", Input::new(self.form.recovery_key())))
+            .when_some(failure, |step, error| {
+                step.child(problem(sign_in_problem(error), cx))
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_end()
+                    .child(
+                        Button::new("sign-in-recovery-back")
+                            .label("Back")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.session.update(cx, |session, cx| session.back(cx));
+                            })),
+                    )
+                    .child(
+                        Button::new("sign-in-recovery")
+                            .primary()
+                            .label("Recover")
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.recover(window, cx);
                             })),
                     ),
             )

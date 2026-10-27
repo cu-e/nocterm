@@ -6,8 +6,8 @@ use nocterm_hubs::{HubStatus, HubSummary, Hubs};
 use nocterm_hubs_model::HubId;
 use nocterm_ui::{PickerOption, open_choice_picker};
 
-use crate::status::status_chip;
 use crate::manage;
+use crate::status::status_chip;
 
 /// Whether the server holds credentials of this device that signing out would erase. A server
 /// whose certificate changed has none to offer here: removing it is the way out, and signing

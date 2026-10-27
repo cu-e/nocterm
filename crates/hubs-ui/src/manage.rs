@@ -65,6 +65,18 @@ pub(crate) fn recolor(
     report(marking, "Could not change the colour", window, cx);
 }
 
+/// Makes `hub` the server whose account keeps this device's profiles and vault in step with
+/// its other devices, or `None` to stop keeping them anywhere but here.
+pub(crate) fn choose_account(
+    hubs: &Entity<Hubs>,
+    hub: Option<&HubId>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let choosing = hubs.update(cx, |hubs, cx| hubs.set_account(hub, cx));
+    report(choosing, "Could not change the account server", window, cx);
+}
+
 /// Asks before removing a server: it leaves this device's list and its credentials are
 /// erased. Sessions on the server itself are not touched.
 pub(crate) fn confirm_remove(

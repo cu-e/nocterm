@@ -50,6 +50,16 @@ pub(crate) fn hub_problem(error: &HubError) -> String {
             "This server speaks protocol {hub} and Nocterm speaks {client}. Update the older one."
         ),
         HubError::InvalidCredentials => "The user name or password was not accepted.".to_owned(),
+        HubError::RecoveryKeyInvalid => {
+            "That is not the recovery key of this account. Check it and try again.".to_owned()
+        }
+        HubError::InvalidVaultPassphrase => {
+            "The vault passphrase is too short. Use at least eight characters.".to_owned()
+        }
+        HubError::KeysetDamaged { .. } => {
+            "The account keys on the server do not verify. The server may have been tampered with; nothing was changed."
+                .to_owned()
+        }
         other => capitalize(&other.to_string()),
     }
 }

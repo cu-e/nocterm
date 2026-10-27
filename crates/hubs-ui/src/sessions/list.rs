@@ -162,7 +162,12 @@ impl SessionList {
     }
 
     /// Starts a shell on `node`, or on a machine the hub picks.
-    fn open_new(&mut self, node: Option<&NodeSummary>, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_new(
+        &mut self,
+        node: Option<&NodeSummary>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.tabs.open_new(node, window, cx);
     }
 
@@ -179,7 +184,14 @@ impl SessionList {
         };
         match summary.status.clone() {
             HubStatus::TrustFailed { pinned, presented } => {
-                problems::open_trust_failed(self.hubs.clone(), summary, pinned, presented, window, cx);
+                problems::open_trust_failed(
+                    self.hubs.clone(),
+                    summary,
+                    pinned,
+                    presented,
+                    window,
+                    cx,
+                );
             }
             HubStatus::UpgradeRequired { hub, client } => {
                 problems::open_upgrade_required(&summary, hub, client, window, cx);
@@ -386,11 +398,7 @@ impl SessionList {
                 );
             }
             Some(HubStatus::TrustFailed { .. } | HubStatus::UpgradeRequired { .. }) => {
-                return self.render_notice(
-                    "This server cannot be used now.",
-                    Offer::Explain,
-                    cx,
-                );
+                return self.render_notice("This server cannot be used now.", Offer::Explain, cx);
             }
             Some(HubStatus::Connecting) => {
                 return self.render_notice("Connecting…", Offer::Nothing, cx);
@@ -645,4 +653,3 @@ impl Render for SessionList {
             )
     }
 }
-

@@ -3,13 +3,16 @@
 use gpui_kit::{AppContext as _, Context, Entity, Window, component::input::InputState};
 use nocterm_session::Secret;
 
-/// The address, fingerprint, user name and password fields. A password is read out of its
-/// field once and the field is emptied, so a failed attempt starts from a blank one.
+/// The address, fingerprint, user name, password, vault passphrase and recovery key fields. A
+/// secret is read out of its field once and the field is emptied, so a failed attempt starts
+/// from a blank one.
 pub(crate) struct SignInForm {
     address: Entity<InputState>,
     fingerprint: Entity<InputState>,
     username: Entity<InputState>,
     password: Entity<InputState>,
+    passphrase: Entity<InputState>,
+    recovery_key: Entity<InputState>,
 }
 
 impl SignInForm {
@@ -24,6 +27,12 @@ impl SignInForm {
                     .masked(true)
                     .placeholder("Password")
             }),
+            passphrase: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .masked(true)
+                    .placeholder("Vault passphrase")
+            }),
+            recovery_key: cx.new(|cx| InputState::new(window, cx).placeholder("Recovery key")),
         }
     }
 
@@ -41,6 +50,14 @@ impl SignInForm {
 
     pub(crate) fn password(&self) -> &Entity<InputState> {
         &self.password
+    }
+
+    pub(crate) fn passphrase(&self) -> &Entity<InputState> {
+        &self.passphrase
+    }
+
+    pub(crate) fn recovery_key(&self) -> &Entity<InputState> {
+        &self.recovery_key
     }
 
     pub(crate) fn address_text<T>(&self, cx: &Context<T>) -> String {
@@ -61,9 +78,34 @@ impl SignInForm {
         window: &mut Window,
         cx: &mut Context<T>,
     ) -> Secret {
-        let secret = Secret::new(self.password.read(cx).value().to_string());
-        self.password
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        secret
+        take(&self.password, window, cx)
     }
+
+    /// The typed vault passphrase; the field is emptied.
+    pub(crate) fn take_passphrase<T: 'static>(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<T>,
+    ) -> Secret {
+        take(&self.passphrase, window, cx)
+    }
+
+    /// The typed recovery key; the field is emptied.
+    pub(crate) fn take_recovery_key<T: 'static>(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<T>,
+    ) -> Secret {
+        take(&self.recovery_key, window, cx)
+    }
+}
+
+fn take<T: 'static>(
+    field: &Entity<InputState>,
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> Secret {
+    let secret = Secret::new(field.read(cx).value().to_string());
+    field.update(cx, |input, cx| input.set_value("", window, cx));
+    secret
 }

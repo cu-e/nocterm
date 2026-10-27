@@ -222,3 +222,73 @@ fn the_address_is_validated_before_the_hub_is_asked(cx: &mut TestAppContext) {
     assert!(window.shows("sign-in-continue", cx));
     assert_eq!(window.hub.count(FakeOp::Probe), 0);
 }
+
+#[gpui_kit::test]
+fn a_new_account_shows_the_recovery_key_and_lists_the_server_once_it_is_saved(
+    cx: &mut TestAppContext,
+) {
+    let window = dialog_over(server().publicly_trusted().keyed(), cx);
+    submit(&window, "hub.home:7443", None, cx);
+    sign_in_with_password(&window, "ada", "secret", cx);
+    assert!(window.shows("sign-in-key-saved", cx));
+    assert_eq!(saved(&window, cx), 0, "not listed before the key is saved");
+
+    window.press("enter", cx);
+    window.render(cx);
+    assert!(
+        window.shows("sign-in-key-saved", cx),
+        "Enter does not skip the one showing of the key"
+    );
+
+    window.click("sign-in-key-saved", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("sign-in-done", cx));
+    assert_eq!(saved(&window, cx), 1);
+}
+
+#[gpui_kit::test]
+fn a_reset_password_asks_for_the_recovery_key_and_a_wrong_one_is_reported(cx: &mut TestAppContext) {
+    let window = dialog_over(
+        server()
+            .publicly_trusted()
+            .with_keyset("ada", "old", "recovery-key"),
+        cx,
+    );
+    submit(&window, "hub.home:7443", None, cx);
+    sign_in_with_password(&window, "ada", "secret", cx);
+    assert!(window.shows("sign-in-recovery", cx));
+
+    window.type_text("not it", cx);
+    window.press("enter", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("sign-in-recovery", cx));
+    assert_eq!(saved(&window, cx), 0);
+
+    window.type_text("recovery-key", cx);
+    window.press("enter", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("sign-in-done", cx));
+    assert_eq!(saved(&window, cx), 1);
+}
+
+#[gpui_kit::test]
+fn a_provider_sign_in_asks_for_the_vault_passphrase(cx: &mut TestAppContext) {
+    let window = dialog_over(server().publicly_trusted().keyed(), cx);
+    submit(&window, "hub.home:7443", None, cx);
+    window.click("sign-in-provider-corp", cx);
+    cx.run_until_parked();
+    window.hub.complete_oidc("ada");
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("sign-in-passphrase", cx));
+
+    window.type_text("a long passphrase", cx);
+    window.press("enter", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("sign-in-key-saved", cx));
+    assert_eq!(window.hub.count(FakeOp::SetVaultPassphrase), 1);
+}

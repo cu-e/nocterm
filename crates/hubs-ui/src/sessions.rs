@@ -97,9 +97,7 @@ impl SessionsPanel {
 
     fn list_of(&self, hub: HubId, cx: &mut Context<Self>) -> Option<Shown> {
         let workspace = self.workspace.upgrade()?;
-        let state = self
-            .hubs
-            .update(cx, |hubs, cx| hubs.window(&hub, cx))?;
+        let state = self.hubs.update(cx, |hubs, cx| hubs.window(&hub, cx))?;
         let tabs = HubTabs::new(
             self.hubs.clone(),
             hub.clone(),
