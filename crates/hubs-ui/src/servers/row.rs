@@ -5,9 +5,7 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
-        h_flex,
-        input::{Input, InputState},
-        v_flex,
+        h_flex, v_flex,
     },
     div,
     prelude::*,
@@ -15,7 +13,7 @@ use gpui_kit::{
 };
 use nocterm_hubs::{HubStatus, HubSummary, Hubs};
 use nocterm_hubs_model::{HubColor, HubRecord, TrustPolicy};
-use nocterm_ui::IconName;
+use nocterm_ui::{IconName, SettingsTextField};
 
 use crate::color::tint;
 use crate::commands::can_sign_out;
@@ -32,7 +30,7 @@ pub(super) fn item(kind: &str, address: &str) -> ElementId {
 pub(super) fn server_row(
     summary: &HubSummary,
     record: &HubRecord,
-    name: &Entity<InputState>,
+    name: &SettingsTextField,
     hubs: &Entity<Hubs>,
     cx: &App,
 ) -> gpui_kit::AnyElement {
@@ -78,8 +76,9 @@ pub(super) fn server_row(
             div()
                 .id(item("server-name", &key))
                 .test_support()
-                .child(Input::new(name)),
+                .child(name.input()),
         ))
+        .children(name.error(cx).map(|error| problem(error.to_string(), cx)))
         .child(colors(summary, hubs, &key, cx))
         .child(certificate(summary, record, &key, cx))
         .child(actions(summary, hubs, &key))

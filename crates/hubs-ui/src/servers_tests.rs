@@ -42,6 +42,11 @@ fn servers(page: &Fixture, cx: &mut TestAppContext) -> Vec<HubSummary> {
     cx.update(|cx| page.installed.hubs().read(cx).list())
 }
 
+/// How many times the settings were published.
+fn revision(page: &Fixture, cx: &mut TestAppContext) -> u64 {
+    cx.update(|cx| page.installed.hubs().read(cx).settings().revision(cx))
+}
+
 fn failing_config() -> SettingsConfig {
     let writer: SnapshotWriter<SettingsDocument> = Arc::new(|_| {
         Box::pin(async {
@@ -107,6 +112,7 @@ fn a_changed_certificate_is_shown_and_removing_is_the_only_way_out(cx: &mut Test
     assert!(page.shows(item("server-pinned", KEY), cx));
     assert!(page.shows(item("server-presented", KEY), cx));
     assert!(page.shows(item("server-remove", KEY), cx));
+    assert!(!page.shows(item("server-sign-out", KEY), cx));
     assert!(!page.shows("sign-in-trust", cx), "nothing to accept");
     assert_eq!(
         cx.update(|cx| page.installed.hubs().read(cx).record(&hub_id()).cloned()),
@@ -124,6 +130,38 @@ fn a_name_typed_in_the_row_is_saved_with_enter(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let label = cx.update(|cx| page.installed.label(&hub_id(), cx));
     assert_eq!(label.as_deref(), Some("Office"));
+}
+
+#[gpui_kit::test]
+fn a_name_that_was_not_edited_never_overwrites_a_newer_one(cx: &mut TestAppContext) {
+    let page = page(cx, vec![pinned_record()]);
+    page.render(cx);
+    // The name changes elsewhere, for instance in another window.
+    page.installed
+        .hubs()
+        .update(cx, |hubs, cx| hubs.set_label(&hub_id(), "Elsewhere", cx))
+        .detach();
+    cx.run_until_parked();
+
+    page.click(item("server-name", KEY), cx);
+    page.press("tab", cx);
+    cx.run_until_parked();
+
+    let label = cx.update(|cx| page.installed.label(&hub_id(), cx));
+    assert_eq!(label.as_deref(), Some("Elsewhere"));
+}
+
+#[gpui_kit::test]
+fn a_name_is_saved_once_when_enter_is_followed_by_leaving_the_field(cx: &mut TestAppContext) {
+    let page = page(cx, vec![server().pinned_record("")]);
+    page.click(item("server-name", KEY), cx);
+    page.type_text("Office", cx);
+    let before = revision(&page, cx);
+    page.press("enter", cx);
+    page.press("tab", cx);
+    cx.run_until_parked();
+
+    assert_eq!(revision(&page, cx), before + 1);
 }
 
 #[gpui_kit::test]

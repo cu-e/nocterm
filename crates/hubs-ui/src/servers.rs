@@ -10,21 +10,18 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Subscription, Task,
-    TestSupportExt as _, Window,
+    App, Context, Entity, FocusHandle, Focusable, Subscription, Task, TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
-        h_flex,
-        input::{InputEvent, InputState},
-        v_flex,
+        h_flex, v_flex,
     },
     div,
     prelude::*,
 };
 use nocterm_hubs::{HubStatus, Hubs};
-use nocterm_hubs_model::HubId;
-use nocterm_ui::{IconName, SettingsPage, SettingsPageSpec};
+use nocterm_hubs_model::{HubId, HubsSettings};
+use nocterm_ui::{IconName, SettingsPage, SettingsPageSpec, SettingsTextField};
 
 use crate::SignInToServer;
 use crate::installation::Installed;
@@ -43,11 +40,12 @@ pub fn settings_page(installed: &Installed) -> SettingsPageSpec {
 /// How often the countdown of an offline server is redrawn.
 const TICK: Duration = Duration::from_secs(1);
 
-/// The name field of one server. A name is saved when Enter is pressed, when the field loses
-/// focus and when the page is flushed.
+/// The name field of one server: the shared text field of the settings, which keeps what the
+/// user typed until its save is settled, saves a distinct text once and shows the stored name
+/// again when the settings change elsewhere.
 struct NameField {
-    input: Entity<InputState>,
-    _events: Subscription,
+    field: SettingsTextField,
+    _observed: Subscription,
 }
 
 /// The settings page that lists the known servers.
@@ -107,93 +105,53 @@ impl ServersPage {
             if self.names.contains_key(&hub) {
                 continue;
             }
-            let (stored, address) = match self.hubs.read(cx).record(&hub) {
-                Some(record) => (record.label.clone(), record.address.to_string()),
-                None => continue,
+            let Some(address) = self
+                .hubs
+                .read(cx)
+                .record(&hub)
+                .map(|record| record.address.to_string())
+            else {
+                continue;
             };
-            let input = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(address)
-                    .default_value(stored)
-            });
-            let id = hub.clone();
-            let events = cx.subscribe_in(&input, window, move |page, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
-                    page.save_name(&id, window, cx);
-                }
+            let (reading, writing) = (hub.clone(), hub.clone());
+            let field = SettingsTextField::new(
+                self.hubs.read(cx).settings(),
+                format!("server-name-input-{address}"),
+                move |document| {
+                    document
+                        .get::<HubsSettings>()
+                        .find(&reading)
+                        .map(|record| record.label.clone())
+                        .unwrap_or_default()
+                },
+                move |document, text| {
+                    document.update::<HubsSettings>(|settings| {
+                        settings.set_label(&writing, text);
+                    });
+                    Ok(())
+                },
+                window,
+                cx,
+            );
+            let page = cx.weak_entity();
+            let observed = field.observe(cx, move |cx| {
+                let _ = page.update(cx, |_, cx| cx.notify());
             });
             self.names.insert(
                 hub,
                 NameField {
-                    input,
-                    _events: events,
+                    field,
+                    _observed: observed,
                 },
             );
-        }
-    }
-
-    /// Saves the typed name when it differs from the stored one, then shows the stored name.
-    fn save_name(&mut self, hub: &HubId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(field) = self.names.get(hub) else {
-            return;
-        };
-        let typed = field.input.read(cx).value().to_string();
-        let stored = self
-            .hubs
-            .read(cx)
-            .record(hub)
-            .map(|record| record.label.clone());
-        if stored
-            .as_deref()
-            .is_none_or(|stored| stored == typed.trim())
-        {
-            return;
-        }
-        let saving = self
-            .hubs
-            .update(cx, |hubs, cx| hubs.set_label(hub, &typed, cx));
-        let id = hub.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let result = saving.await;
-            this.update_in(cx, |page, window, cx| {
-                if let Err(error) = result {
-                    nocterm_ui::notice::error(
-                        window,
-                        cx,
-                        "hub-manage",
-                        "Could not rename the server",
-                        crate::messages::hubs_problem(&error),
-                    );
-                }
-                page.show_stored_name(&id, window, cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Puts the stored name in the field, so it reads as the service cleaned it.
-    fn show_stored_name(&mut self, hub: &HubId, window: &mut Window, cx: &mut Context<Self>) {
-        let stored = self
-            .hubs
-            .read(cx)
-            .record(hub)
-            .map(|record| record.label.clone());
-        if let (Some(field), Some(stored)) = (self.names.get(hub), stored) {
-            field.input.update(cx, |input, cx| {
-                if input.value().as_ref() != stored.as_str() {
-                    input.set_value(stored, window, cx);
-                }
-            });
         }
     }
 }
 
 impl SettingsPage for ServersPage {
     fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let hubs: Vec<HubId> = self.names.keys().cloned().collect();
-        for hub in hubs {
-            self.save_name(&hub, window, cx);
+        for name in self.names.values() {
+            name.field.flush(window, cx);
         }
     }
 }
@@ -212,7 +170,7 @@ impl Render for ServersPage {
             .iter()
             .filter_map(|summary| {
                 let record = self.hubs.read(cx).record(&summary.id)?.clone();
-                let field = self.names.get(&summary.id)?.input.clone();
+                let field = self.names.get(&summary.id)?.field.clone();
                 Some(row::server_row(summary, &record, &field, &self.hubs, cx))
             })
             .collect();

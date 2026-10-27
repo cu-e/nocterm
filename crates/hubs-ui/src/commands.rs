@@ -38,9 +38,14 @@ pub(crate) fn open_server(
     }
 }
 
-/// Whether the server holds credentials of this device that signing out would erase.
+/// Whether the server holds credentials of this device that signing out would erase. A server
+/// whose certificate changed has none to offer here: removing it is the way out, and signing
+/// out would hide the warning until the next connection attempt.
 pub(crate) fn can_sign_out(summary: &HubSummary) -> bool {
-    !matches!(summary.status, HubStatus::SignedOut | HubStatus::Revoked)
+    !matches!(
+        summary.status,
+        HubStatus::SignedOut | HubStatus::Revoked | HubStatus::TrustFailed { .. }
+    )
 }
 
 fn options(servers: Vec<HubSummary>, cx: &App) -> Vec<PickerOption<HubId>> {

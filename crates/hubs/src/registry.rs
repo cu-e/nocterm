@@ -318,6 +318,12 @@ impl Hubs {
         })
     }
 
+    /// The settings the registry edits, for a text field that saves a server's name through
+    /// them in the same one-edit way as [`Hubs::set_label`].
+    pub fn settings(&self) -> SettingsHandle {
+        self.settings.clone()
+    }
+
     /// Renames a server in the settings, in one edit. An empty name shows the address.
     pub fn set_label(
         &mut self,
