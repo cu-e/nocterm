@@ -15,7 +15,7 @@ use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_connections_model::{
     profiles::ProfileId,
-    replica::{ProfileReplica, ReplicaScope, ReplicaState},
+    replica::{ProfileReplica, ReplicaScope, ReplicaSpace, ReplicaState},
 };
 use nocterm_store::{Persisted, Publication, SnapshotWriter};
 use round::{Outcome, Round};
@@ -107,6 +107,48 @@ impl ProfileReplication {
     pub fn scope_of(&self, id: ProfileId, cx: &App) -> Option<ReplicaScope> {
         let state = self.state.read(cx).visible();
         state.entry(id).map(|entry| entry.scope.clone())
+    }
+
+    /// Where the profile lives for the user: the scope they asked for if it is not yet
+    /// carried out, else the one it was agreed in, else their own space.
+    pub fn space_of(&self, id: ProfileId, cx: &App) -> ReplicaScope {
+        let state = self.state.read(cx).visible();
+        state
+            .placement(id)
+            .or_else(|| state.entry(id).map(|entry| &entry.scope))
+            .cloned()
+            .unwrap_or(ReplicaScope::Personal)
+    }
+
+    /// The spaces the attached replica serves, with the account's access to each.
+    pub fn spaces(&self) -> Vec<ReplicaSpace> {
+        self.replica
+            .as_ref()
+            .map(|replica| replica.spaces())
+            .unwrap_or_default()
+    }
+
+    /// Asks for the profile to live in `scope` and synchronizes. A request for the
+    /// scope it already lives in withdraws an earlier one.
+    pub fn place(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) {
+        let withdraw = self.scope_of(id, cx).as_ref() == Some(&scope);
+        let result = self.state.update(cx, |state, cx| {
+            state.update_latest(
+                move |state| {
+                    if withdraw {
+                        state.unplace(id);
+                    } else {
+                        state.place(id, scope);
+                    }
+                },
+                cx,
+            )
+        });
+        if let Err(error) = result {
+            tracing::error!(%error, "could not keep the requested scope of a profile");
+            return;
+        }
+        self.request_sync(cx);
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {

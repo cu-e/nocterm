@@ -130,14 +130,11 @@ async fn a_forbidden_profile_is_reported_without_blocking_the_others(
     assert_eq!(fixture.replica.profile(own.id), Some(own));
     assert_eq!(fixture.replica.profile(shared.id), None);
     assert_eq!(fixture.local(cx, &shared), Some(shared.clone()));
-    let events = fixture.events();
-    assert!(!events.is_empty());
-    assert!(events.iter().all(|event| matches!(
-        event,
-        ReplicationEvent::Failed(ReplicationFailure::Replica(
-            nocterm_connections_model::replica::ReplicaError::Forbidden { id }
-        )) if *id == shared.id
-    )));
+    assert!(matches!(
+        fixture.events().as_slice(),
+        [ReplicationEvent::Refused { profile, scope: ReplicaScope::Personal, restored: false }]
+            if profile.id == shared.id
+    ));
 }
 
 #[gpui::test]

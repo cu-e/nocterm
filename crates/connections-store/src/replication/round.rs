@@ -41,6 +41,9 @@ enum Flow {
     Conflict,
     /// This profile cannot be synchronized; the others still can.
     Skip(ReplicationFailure),
+    /// The replica refused the profile and the refusal was already dealt with and
+    /// reported; leave the rest of its actions undone.
+    Refused,
     Stop(Stop),
 }
 
@@ -68,7 +71,6 @@ fn remote_stop(error: ReplicaError) -> Stop {
 fn remote_flow(error: ReplicaError) -> Flow {
     match error {
         ReplicaError::Conflict { .. } => Flow::Conflict,
-        ReplicaError::Forbidden { .. } => Flow::Skip(error.into()),
         error => remote_stop(error).into(),
     }
 }
@@ -202,6 +204,9 @@ impl Round {
                     retry = true;
                     skipped.insert(id);
                 }
+                Err(Flow::Refused) => {
+                    skipped.insert(id);
+                }
                 Err(Flow::Skip(failure)) => {
                     skipped.insert(id);
                     self.emit(ReplicationEvent::Failed(failure), cx)?;
@@ -293,12 +298,16 @@ impl Round {
         expected: Option<ReplicaVersion>,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
-        let version = self
+        let id = profile.id;
+        let sent = self
             .replica
             .put(scope.clone(), profile.clone(), expected)
-            .await
-            .map_err(remote_flow)?;
-        Ok(self.agree(scope, version, profile, cx)?)
+            .await;
+        match sent {
+            Ok(version) => Ok(self.agree(scope, version, profile, cx)?),
+            Err(ReplicaError::Forbidden { .. }) => self.refused(id, profile, scope, cx).await,
+            Err(error) => Err(remote_flow(error)),
+        }
     }
 
     async fn push_delete(
@@ -308,11 +317,62 @@ impl Round {
         expected: ReplicaVersion,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
-        self.replica
-            .delete(scope, id, expected)
-            .await
-            .map_err(remote_flow)?;
-        Ok(self.record(cx, move |state| state.forget(id))?)
+        match self.replica.delete(scope.clone(), id, expected).await {
+            Ok(_) => Ok(self.record(cx, move |state| state.forget(id))?),
+            Err(ReplicaError::Forbidden { .. }) => {
+                let agreed = self
+                    .state
+                    .read_with(cx, |state, _| state.visible().entry(id).cloned());
+                match agreed {
+                    Some(entry) => self.refused(id, entry.profile, scope, cx).await,
+                    None => Err(Flow::Refused),
+                }
+            }
+            Err(error) => Err(remote_flow(error)),
+        }
+    }
+
+    /// The account may not write `profile` in `scope`. The user is told once, and the
+    /// local profile goes back to what was last agreed, so nothing is sent again.
+    /// A profile never agreed stays local and, without a requested scope, is sent to
+    /// the personal one on the next attempt.
+    async fn refused(
+        &self,
+        id: ProfileId,
+        profile: Profile,
+        scope: ReplicaScope,
+        cx: &mut AsyncApp,
+    ) -> Result<(), Flow> {
+        let agreed = self
+            .state
+            .read_with(cx, |state, _| state.visible().entry(id).cloned());
+        self.record(cx, move |state| state.unplace(id))?;
+        let restored = agreed.is_some();
+        if let Some(entry) = agreed {
+            let current = self
+                .store
+                .read_with(cx, |store, cx| store.profiles(cx).get(id).cloned());
+            if current.as_ref() != Some(&entry.profile) {
+                let restoring = self.store.update(cx, |store, cx| {
+                    store.save_profile_checked(entry.profile, current, cx)
+                });
+                restoring.await.map_err(|error| local_flow(id, error))?;
+            }
+        }
+        let personal = scope == ReplicaScope::Personal;
+        self.emit(
+            ReplicationEvent::Refused {
+                profile: Box::new(profile),
+                scope,
+                restored,
+            },
+            cx,
+        )?;
+        if restored || personal {
+            Err(Flow::Refused)
+        } else {
+            Err(Flow::Conflict)
+        }
     }
 
     fn agree(

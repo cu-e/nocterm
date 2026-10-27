@@ -11,6 +11,7 @@ use std::sync::Mutex;
 
 mod conflicts;
 mod lifecycle;
+mod spaces;
 
 fn profile(name: &str) -> Profile {
     Profile {
@@ -153,6 +154,19 @@ impl Fixture {
             .last()
             .cloned()
             .unwrap_or_default()
+    }
+
+    fn place(&self, cx: &mut gpui::TestAppContext, profile: &Profile, scope: ReplicaScope) {
+        let id = profile.id;
+        self.replication
+            .update(cx, |replication, cx| replication.place(id, scope, cx));
+        cx.run_until_parked();
+    }
+
+    fn space_of(&self, cx: &gpui::TestAppContext, profile: &Profile) -> ReplicaScope {
+        let id = profile.id;
+        self.replication
+            .read_with(cx, |replication, cx| replication.space_of(id, cx))
     }
 
     fn put_count(&self) -> usize {

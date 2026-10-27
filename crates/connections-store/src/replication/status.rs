@@ -2,7 +2,7 @@
 use crate::ConnectionsError;
 use nocterm_connections_model::{
     profiles::{Profile, ProfileId},
-    replica::ReplicaError,
+    replica::{ReplicaError, ReplicaScope},
 };
 use nocterm_store::StoreError;
 
@@ -55,4 +55,12 @@ pub enum ReplicationEvent {
         discarded: Box<Profile>,
     },
     Failed(ReplicationFailure),
+    /// The replica refused to change `profile` in `scope`, because the account may not
+    /// write there. When `restored`, the local profile is back to the last agreed
+    /// version; otherwise it stays local and is sent to the personal scope.
+    Refused {
+        profile: Box<Profile>,
+        scope: ReplicaScope,
+        restored: bool,
+    },
 }
