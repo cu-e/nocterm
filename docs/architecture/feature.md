@@ -722,6 +722,14 @@ runner and expose readable immutable outcomes; sign-in cards retain the original
   tabs asks before switching, and "Open in a new window" is the default; a hub window switches
   without asking because its tabs only detach. Without known servers the list has "This computer"
   and "Sign in to a server…", and no network call is made.
+- `ServersPage` is the Servers page of the settings (`servers`, composed into the checked catalog by
+  the application). Each known server has a name field (saved on Enter or blur), a colour
+  chooser, the status, and a read-only view of the trusted and, after a change, the presented
+  fingerprint; "Sign out" and "Remove…" (confirmed) call the service. Nothing on the page accepts
+  a certificate. The colour is drawn in the menu button and rows with the theme's shade.
+- The palette commands `ManageServers` (opens that page, handled by the application),
+  `SignInToServer`, `OpenServerInNewWindow` and `SignOutOfServer` (pickers over the known or the
+  signed-in servers) are actions of this crate.
 - `SignInDialog` draws the steps of a `SignInSession`: address with an optional fingerprint,
   the pinned, public-authority or first-use trust (a self-signed certificate asks for an
   explicit "Trust and pin this certificate" beside the fingerprint, grouped for comparison), then the password

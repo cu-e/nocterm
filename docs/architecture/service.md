@@ -344,6 +344,12 @@ with the one `Hubs` entity every window shares ([ADR 0097](../adr/0097-a-window-
   one. The hub has no push for the list of sessions, so the lists are read again every 5
   seconds while somebody watches them and after each action, and requests in flight are
   merged.
+- Managing known servers is one call each: `set_label` and `set_color` are one checked edit of
+  `[hubs]`; the label is cleaned by the record's own rule and an empty one shows the address.
+  `sign_out` erases the credentials and keeps the record, so the status becomes `SignedOut`.
+  `remove` erases the credentials first and then edits the settings; if the edit fails the hub
+  connects again, so its status shows the truth. A certificate is never edited here: a changed
+  one can only be removed.
 
 The service holds no secrets: device keys and tokens stay in the adapter's private files. It
 installs no global, registers no quit handler and writes the settings through the same

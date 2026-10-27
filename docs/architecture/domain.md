@@ -443,8 +443,9 @@ never has what `resolve` would reshape. A `[layouts]` table that does not read i
 (`Local` or `Hub(HubId)`), `HubAddress` (default port 7443, `https://` dropped, `http://`
 refused), `Fingerprint` and `TrustPolicy`, the pure trust decision `decide` for a probed
 certificate (pinned, public authority, first use that needs a confirmation, or a mismatch that
-can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints and
-labels; never secrets) and the ports `HubTrust`, `HubSignIn` and `HubSessions`. Port methods
+can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints,
+labels and an optional `HubColor` from a closed set of six theme-relative names; a colour this
+version does not know leaves the server unmarked and never drops the record; never secrets) and the ports `HubTrust`, `HubSignIn` and `HubSessions`. Port methods
 return runtime-agnostic futures and fail with the typed, cloneable `HubError`, which keeps the
 original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind all
 three ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR

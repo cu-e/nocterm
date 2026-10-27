@@ -37,6 +37,7 @@ The server is now in the menu. Nocterm keeps its address, how it is trusted and 
 address = "hub.example.com:7443"
 fingerprint = "ab:cd:..."   # or: trust = "public-ca"
 label = "Home"
+color = "blue"              # optional: red, yellow, green, cyan, blue or magenta
 ```
 
 The device key and the tokens of each server are in a private file (readable by you only) in
@@ -93,3 +94,26 @@ A changed certificate is never accepted from the dialog. It can mean a reinstall
 someone intercepting the connection; verify with the server's administrator. If the change is
 legitimate, remove the server and sign in again, comparing the new fingerprint with the one
 the server prints.
+
+## Manage servers
+
+**Settings → Servers** (or the command **Hubs: Manage servers**) lists every known server:
+
+- **Name** is what the menu and the window title show. Edit it and press Enter, or leave the
+  field, to save. An empty name shows the address again.
+- **Colour** marks the server: the icon in the environment menu, and the icon of the menu button
+  in a window of that server, take the colour in the current theme. **None** clears it.
+- The status reads as in the menu, with the **certificate** below: the pinned fingerprint, or a
+  note that a public authority vouches for the server. When the certificate changed, the
+  fingerprint the server presents is shown next to the trusted one. Fingerprints are only shown;
+  nothing on this page accepts a certificate.
+- **Sign out** deletes this device's credentials for the server and keeps it in the list, so the
+  next click on it asks for a sign-in. It is offered while this device is signed in.
+- **Remove…** asks, then deletes the credentials and the entry. Sessions on the server keep
+  running. For a changed certificate this is the only way forward: remove the server and sign in
+  again, comparing the new fingerprint with the one the server prints.
+
+A change that cannot be saved to `settings.toml` is reported and leaves the list as it was.
+
+The command palette also has **Hubs: Sign in to server**, **Hubs: Open server in new window** and
+**Hubs: Sign out of server**; the last two ask which server in a list.

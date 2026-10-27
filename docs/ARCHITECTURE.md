@@ -47,7 +47,7 @@ addresses, trust rules, the `[hubs]` settings, the ports), `nocterm-hub-io` (ada
 crate that speaks the hub protocol, which lives in a [separate contract
 repository](adr/0096-hub-contract-outside-the-workspace.md); it keeps device credentials in
 private files), `nocterm-hubs` (service: known hubs, their status, sign-in) and
-`nocterm-hubs-ui` (feature: the menu, the sign-in dialog and the sessions panel). Attached
+`nocterm-hubs-ui` (feature: the menu, the sign-in dialog, the Servers settings page and the sessions panel). Attached
 terminal tabs ([ADR 0095](adr/0095-attached-sessions-restore-and-detach.md)) show a hub's
 session and detach when closed. The environments of the open windows are remembered and opened
 again at the next start by `nocterm-window-set`
