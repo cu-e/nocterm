@@ -5,7 +5,8 @@
 //! Ports used/provided: none. Settings section: none. Globals: none.
 //! Invariants: input follows the negotiated terminal modes; snapshots expose this
 //! crate's types; searches report typed limits instead of truncating silently,
-//! and cancellation never publishes matches from an older generation.
+//! and cancellation never publishes matches from an older generation. `Emulator::reset`
+//! clears the screen in place and keeps the generation counting forward.
 //!
 //! This crate is the only place that knows the emulation library
 //! (`alacritty_terminal`). Everything it exposes is expressed in its own
