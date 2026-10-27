@@ -252,6 +252,7 @@ pub(super) fn open_local_window_in(
             None,
             super::unsupported_sandbox(),
             mode,
+            None,
             cx,
         );
         let (handle, workspace) = super::open_workspace(&booted, cx);

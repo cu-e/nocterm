@@ -44,10 +44,6 @@ struct MockTransport {
 struct FixtureLocalHost(nocterm_session::testing::FakeExec);
 impl gpui_kit::Global for FixtureLocalHost {}
 
-/// The hub ports the fixture gives the application. Without them it has no hubs.
-struct FixtureHubs(nocterm_hubs::Deps);
-impl gpui_kit::Global for FixtureHubs {}
-
 struct FixtureDirectory {
     _directory: tempfile::TempDir,
 }
@@ -295,6 +291,7 @@ fn boot_with_ports(
         themes,
         unsupported_sandbox(),
         crate::shell_setup::UserPluginMode::default(),
+        None,
         cx,
     )
 }
@@ -342,6 +339,7 @@ fn boot_with_ports_and_probe(
     themes: Option<crate::bootstrap::Themes>,
     probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     user_plugins: crate::shell_setup::UserPluginMode,
+    hubs: Option<nocterm_hubs::Deps>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
     let (transport, local) = terminal;
@@ -371,7 +369,7 @@ fn boot_with_ports_and_probe(
             connections: crate::connection_setup::memory(),
             projects: crate::project_setup::PreparedProjectSetup::memory(),
             hosts: crate::bootstrap::HostServices {
-                hubs: cx.try_global::<FixtureHubs>().map(|hubs| hubs.0.clone()),
+                hubs,
                 ..fixture_hosts(transport, local, local_host)
             },
             terminal_auth_factory: None,

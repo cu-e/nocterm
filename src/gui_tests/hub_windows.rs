@@ -1,6 +1,7 @@
 //! A window shows one environment: this computer, or one server of nocterm hubs.
 use super::*;
 use crate::bootstrap::Booted;
+use crate::shell_setup::UserPluginMode;
 use gpui_kit::VisualTestContext;
 use nocterm_hubs_model::{
     Environment, Fingerprint, HubAddress, HubId, HubRecord, HubsSettings, TrustPolicy,
@@ -43,18 +44,18 @@ fn boot_over(
     cx: &mut TestAppContext,
 ) -> Booted {
     let booted = cx.update(|cx| {
-        let servers = match hub {
-            Some(hub) => {
-                cx.set_global(FixtureHubs(nocterm_hubs::Deps {
+        let (servers, deps) = match hub {
+            Some(hub) => (
+                vec![known_server()],
+                Some(nocterm_hubs::Deps {
                     trust: Arc::new(hub.clone()),
                     sign_in: Arc::new(hub.clone()),
                     sessions: Arc::new(hub.clone()),
-                }));
-                vec![known_server()]
-            }
-            None => Vec::new(),
+                }),
+            ),
+            None => (Vec::new(), None),
         };
-        boot_with_ports(
+        boot_with_ports_and_probe(
             tempfile::tempdir().unwrap(),
             nocterm_store::SettingsConfig::in_memory(Default::default())
                 .with(HubsSettings { servers }),
@@ -65,6 +66,9 @@ fn boot_over(
             false,
             None,
             None,
+            unsupported_sandbox(),
+            UserPluginMode::default(),
+            deps,
             cx,
         )
     });

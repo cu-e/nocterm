@@ -32,6 +32,7 @@ fn init_with_probe(
         None,
         probe,
         crate::shell_setup::UserPluginMode::default(),
+        None,
         cx,
     );
     SettingsFixture {
