@@ -5290,6 +5290,7 @@ dependencies = [
  "nocterm-plugin-model",
  "nocterm-project-model",
  "nocterm-session",
+ "nocterm-ssh-keys",
  "nocterm-store",
  "nocterm-ui",
  "nocterm-workspace",

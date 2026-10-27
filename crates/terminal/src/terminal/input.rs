@@ -2,9 +2,9 @@
 use crate::file_drop::FileDropError;
 
 use super::{Terminal, TerminalEvent};
-use crate::credentials::credential_for;
+use crate::credentials::answering_credential;
 use gpui_kit::{App, Context};
-use nocterm_session::{HostKeyDecision, Prompt, Secret, SecretRequest};
+use nocterm_session::{CredentialStoreError, HostKeyDecision, Prompt, Secret, SecretRequest};
 use nocterm_vt::encode_paste;
 use nocterm_workspace::{LiveCommandLease, LocalDirectoryError, TerminalError};
 use std::{
@@ -438,7 +438,8 @@ impl Terminal {
             return;
         };
         let request = request.clone();
-        let credential = credential_for(self.spec(), hop.as_ref());
+        let vault_key = matches!(request, SecretRequest::PrivateKey { .. });
+        let credential = answering_credential(self.spec(), hop.as_ref(), &request);
         if !matches!(request, SecretRequest::Interactive { .. }) {
             self.credentials.cancel_candidate();
         }
@@ -449,18 +450,23 @@ impl Terminal {
         ) {
             return;
         }
-        if !request.is_storable() {
-            return;
-        }
         let Some(id) = credential else {
             return;
         };
         let Some(provider) = self.deps.credentials() else {
+            if vault_key {
+                self.skip_vault_key("No credential vault is available for this key.", cx);
+            }
             return;
         };
         if !provider.store().is_available() {
             self.credentials.set_message(Some(
-                "Unlock the credential vault to use the saved secret, or enter it here.".into(),
+                if vault_key {
+                    "Unlock the credential vault to sign in with its key."
+                } else {
+                    "Unlock the credential vault to use the saved secret, or enter it here."
+                }
+                .into(),
             ));
             self.credentials.wait_for_vault(true);
             let available = provider.store().wait_available();
@@ -478,6 +484,11 @@ impl Terminal {
                     }
                     match result {
                         Ok(secret) => this.answer_secret(Some(secret), cx),
+                        Err(CredentialStoreError::NotFound) if vault_key => {
+                            this.skip_vault_key("Key not found in the vault.", cx)
+                        }
+                        Err(error) if vault_key => this
+                            .skip_vault_key(&format!("The vault key is unavailable: {error}"), cx),
                         Err(error) => {
                             this.credentials.set_message(Some(format!(
                                 "Saved credential unavailable: {error}"
@@ -487,6 +498,12 @@ impl Terminal {
                     }
                 });
             }));
+    }
+    /// Declines the vault key: no one can type it, so the sign-in moves on to
+    /// the next method and the reason stays for the person to read.
+    fn skip_vault_key(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.answer_secret(None, cx);
+        self.credentials.set_message(Some(message.to_owned()));
     }
     /// Answers the prompt with the saved secret as soon as the vault is
     /// unlocked, whether from the prompt's link, Settings or device unlock.

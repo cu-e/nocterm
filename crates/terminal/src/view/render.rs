@@ -591,6 +591,9 @@ impl TerminalView {
         hop: Option<&PromptHop>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if matches!(request, SecretRequest::PrivateKey { .. }) {
+            return Some(self.render_vault_key(request, hop, cx));
+        }
         let input = self.secret.as_ref()?.input.clone();
         let (title, retry, masked) = crate::credentials::describe(request, hop);
         let danger = cx.theme().danger;
@@ -644,6 +647,34 @@ impl TerminalView {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// A key the vault answers: no field to type into, only the wait for the
+    /// vault and a way out.
+    fn render_vault_key(
+        &mut self,
+        request: &SecretRequest,
+        hop: Option<&PromptHop>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (title, _, _) = crate::credentials::describe(request, hop);
+        let terminal = self.terminal.read(cx);
+        let message = terminal.credential_message().map(str::to_owned);
+        let unlockable = terminal.awaiting_vault();
+        self.card(title, cx)
+            .when_some(message, |card, message| {
+                card.child(div().text_xs().child(message))
+            })
+            .children(self.secret_choices(false, unlockable, cx))
+            .child(
+                h_flex().justify_end().gap_2().child(
+                    Button::new("secret-cancel")
+                        .ghost()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_secret(cx))),
+                ),
+            )
+            .into_any_element()
     }
 
     /// The remember choice and the vault link under a secret field; none when
