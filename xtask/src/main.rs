@@ -15,6 +15,7 @@ use serde_json::Value;
 
 mod actions_reference;
 mod crate_cards;
+mod external_contracts;
 mod file_size;
 mod isolation;
 mod lint_policy;
@@ -63,6 +64,12 @@ struct Dependency {
     features: Vec<String>,
     #[serde(default)]
     uses_default_features: bool,
+    /// `git+<url>?rev=<commit>` or `registry+<url>`; absent for a path dependency.
+    #[serde(default)]
+    source: Option<String>,
+    /// Set for a path dependency.
+    #[serde(default)]
+    path: Option<PathBuf>,
 }
 fn main() -> anyhow::Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -169,11 +176,32 @@ fn check_dependency(
 }
 
 /// Agent protocol SDK types stay in the protocol adapter; other crates use
-/// neutral AI records (ADR 0058).
+/// neutral AI records (ADR 0058). The hub protocol SDK (`tonic`, `prost`) stays in the hub
+/// adapter the same way (ADR 0096).
 fn check_protocol_dependency(package: &str, dependency: &Dependency) -> anyhow::Result<()> {
     let name = dependency.name.as_str();
     if name.starts_with("agent-client-protocol") && package != "nocterm-acp" {
         bail!("{package} depends on agent protocol SDK {name}");
+    }
+    if external_contracts::is_protocol_sdk(name) && package != external_contracts::HUB_ADAPTER {
+        bail!("{package} depends on hub protocol SDK {name}");
+    }
+    Ok(())
+}
+
+/// Layer rules for workspace crates; the external hub contract has its own closed rule.
+fn check_package_dependencies(
+    package: &Package,
+    source: &str,
+    layers: &BTreeMap<&str, &str>,
+) -> anyhow::Result<()> {
+    for dependency in &package.dependencies {
+        if external_contracts::is_contract(&dependency.name) {
+            external_contracts::check_dependency(&package.name, dependency)?;
+        } else {
+            check_dependency(source, dependency, layers)?;
+        }
+        check_protocol_dependency(&package.name, dependency)?;
     }
     Ok(())
 }
@@ -182,6 +210,8 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
     let mut metadata = metadata(root)?;
     manifest_lints::check(root, &metadata)?;
     test_support_policy::check(&metadata)?;
+    external_contracts::check_members(&metadata.packages)?;
+    external_contracts::check_lock(root)?;
     metadata
         .packages
         .sort_by(|left, right| left.name.cmp(&right.name));
@@ -216,12 +246,8 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
     let mut edges = String::new();
     for package in &metadata.packages {
         let source = layers[package.name.as_str()];
-        for dependency in &package.dependencies {
-            check_dependency(source, dependency, &layers)
-                .with_context(|| format!("architecture violation in {}", package.name))?;
-            check_protocol_dependency(&package.name, dependency)
-                .with_context(|| format!("architecture violation in {}", package.name))?;
-        }
+        check_package_dependencies(package, source, &layers)
+            .with_context(|| format!("architecture violation in {}", package.name))?;
         let mut dependencies: Vec<_> = package
             .dependencies
             .iter()
@@ -444,6 +470,8 @@ mod tests {
                     rename: None,
                     features: Vec::new(),
                     uses_default_features: true,
+                    source: None,
+                    path: None,
                 };
                 assert!(check_dependency(source, &dependency, &layers).is_err());
             }
@@ -454,6 +482,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("domain", &test_support, &layers).is_ok());
         let runtime = Dependency {
@@ -462,6 +492,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("ui", &runtime, &layers).is_ok());
         assert!(check_dependency("service", &runtime, &layers).is_err());
@@ -471,6 +503,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("service", &gpui, &layers).is_ok());
         let missing = Dependency {
@@ -479,6 +513,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("app", &missing, &layers).is_err());
     }
@@ -492,6 +528,8 @@ mod tests {
                     rename: Some("renamed".into()),
                     features: Vec::new(),
                     uses_default_features: true,
+                    source: None,
+                    path: None,
                 };
                 assert!(check_protocol_dependency("nocterm-acp", &dependency).is_ok());
                 for package in [
@@ -501,6 +539,37 @@ mod tests {
                     "nocterm-agent-chat",
                     "nocterm-agent",
                     "nocterm",
+                ] {
+                    assert!(check_protocol_dependency(package, &dependency).is_err());
+                }
+            }
+        }
+    }
+    #[test]
+    fn hub_protocol_sdk_is_limited_to_the_hub_adapter() {
+        for name in [
+            "tonic",
+            "tonic-prost",
+            "tonic-build",
+            "prost",
+            "prost-types",
+        ] {
+            for kind in [None, Some("dev"), Some("build")] {
+                let dependency = Dependency {
+                    name: name.into(),
+                    kind: kind.map(str::to_owned),
+                    rename: None,
+                    features: Vec::new(),
+                    uses_default_features: true,
+                    source: None,
+                    path: None,
+                };
+                assert!(check_protocol_dependency("nocterm-hub-io", &dependency).is_ok());
+                for package in [
+                    "nocterm",
+                    "nocterm-hubs",
+                    "nocterm-hubs-model",
+                    "nocterm-ssh",
                 ] {
                     assert!(check_protocol_dependency(package, &dependency).is_err());
                 }
