@@ -104,7 +104,10 @@ pub(crate) fn fixture_over(
     let terminals = Rc::new(RecordingTerminals::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
-        let settings = config.with(HubsSettings { servers: known }).install(cx);
+        let settings = config.with(HubsSettings {
+            servers: known,
+            ..Default::default()
+        }).install(cx);
         nocterm_ui::init(DesignTokens::builtin(), settings.clone(), cx);
         let installed = install(nocterm_hubs::install(
             nocterm_hubs::Deps {

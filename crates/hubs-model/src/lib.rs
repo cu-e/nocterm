@@ -32,7 +32,7 @@ pub use error::{FingerprintError, HubAddressError, HubError};
 pub use ports::{HubFuture, HubSessions, HubSignIn, HubTerminal, HubTrust, OidcSignIn};
 pub use records::{
     Account, AccountId, HubEndpointSpec, HubInfo, HubSessionId, HubSessionState, HubSessionSummary,
-    HubTerminalTarget, NodeId, NodeSummary, OidcProvider, OrgId, OrgSummary,
+    HubTerminalTarget, KeyStatus, NodeId, NodeSummary, OidcProvider, OrgId, OrgSummary, SignedIn,
 };
 pub use settings::{HubRecord, HubsSettings};
 pub use trust::{Fingerprint, ProbedHub, TrustDecision, TrustPolicy, decide};

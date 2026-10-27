@@ -168,6 +168,10 @@ pub struct HubsSettings {
     /// ignored without affecting the others.
     #[serde(deserialize_with = "lenient_servers")]
     pub servers: Vec<HubRecord>,
+    /// The server whose account keeps this device's profiles and vault in step with its other
+    /// devices, as `host:port`. Empty keeps both on this device only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 /// Reads every table that is a usable server and skips the rest.
@@ -225,11 +229,37 @@ impl HubsSettings {
         }
     }
 
-    /// Forgets a server; `true` when it was known.
+    /// Forgets a server; `true` when it was known. A forgotten account server is no longer
+    /// the account server.
     pub fn remove(&mut self, hub: &HubId) -> bool {
         let before = self.servers.len();
         self.servers.retain(|record| record.id() != *hub);
+        if self.account_hub().as_ref() == Some(hub) {
+            self.account = None;
+        }
         self.servers.len() != before
+    }
+
+    /// The server that keeps the account's profiles and vault, when one is chosen and known.
+    pub fn account_hub(&self) -> Option<HubId> {
+        let address = HubAddress::parse(self.account.as_deref()?).ok()?;
+        let hub = HubId::from(address);
+        self.find(&hub).map(HubRecord::id)
+    }
+
+    /// Chooses the account server, or none. `true` when it was known (or none was asked).
+    pub fn set_account_hub(&mut self, hub: Option<&HubId>) -> bool {
+        match hub {
+            None => {
+                self.account = None;
+                true
+            }
+            Some(hub) if self.find(hub).is_some() => {
+                self.account = Some(hub.address().to_string());
+                true
+            }
+            Some(_) => false,
+        }
     }
 }
 
@@ -242,6 +272,9 @@ impl SettingsSection for HubsSettings {
         self.servers.retain(|record| seen.insert(record.id()));
         for record in &mut self.servers {
             record.label = clean_label(&record.label);
+        }
+        if self.account.is_some() && self.account_hub().is_none() {
+            self.account = None;
         }
     }
 }

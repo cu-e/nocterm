@@ -43,7 +43,10 @@ fn boot_over(hub: Option<&FakeHub>, cx: &mut TestAppContext) -> Booted {
         Vec::new()
     };
     let settings =
-        nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings { servers });
+        nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings {
+            servers,
+            ..Default::default()
+        });
     let booted = cx.update(|cx| {
         let deps = hub.map(|hub| nocterm_hubs::Deps {
             trust: Arc::new(hub.clone()),

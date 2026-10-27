@@ -79,7 +79,10 @@ fn build(
             Some(writer) => SettingsConfig::with_writer(document, writer),
             None => SettingsConfig::in_memory(document),
         };
-        let settings = config.with(HubsSettings { servers: known }).install(cx);
+        let settings = config.with(HubsSettings {
+            servers: known,
+            ..Default::default()
+        }).install(cx);
         let deps = Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),

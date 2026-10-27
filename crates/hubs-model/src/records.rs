@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use nocterm_session::Secret;
+
 use crate::address::HubAddress;
 use crate::trust::TrustPolicy;
 
@@ -87,6 +89,32 @@ pub struct Account {
     pub username: String,
     pub display_name: String,
     pub orgs: Vec<OrgSummary>,
+}
+
+/// What a sign-in leaves to do about the account's keys.
+///
+/// The keys protect what the account keeps on the hub (profiles, the vault); the hub never
+/// holds them. They are opened with the login password, or with a vault passphrase for an
+/// account that signs in through a provider.
+#[derive(Clone, Debug, PartialEq)]
+pub enum KeyStatus {
+    /// The keys are open: the account's data on the hub can be read.
+    Open,
+    /// The account had no keys; they were made now. The recovery key is the only way back
+    /// after the password is lost, so it must be shown once and kept nowhere by the client.
+    Created(Secret),
+    /// A browser sign-in cannot open the keys: the user types the vault passphrase.
+    PassphraseNeeded,
+    /// The keys exist but the password does not open them (it was reset): the recovery key
+    /// does.
+    RecoveryNeeded,
+}
+
+/// A finished sign-in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SignedIn {
+    pub account: Account,
+    pub keys: KeyStatus,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

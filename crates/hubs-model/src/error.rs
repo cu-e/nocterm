@@ -79,6 +79,22 @@ pub enum HubError {
     PermissionDenied,
     #[error("the hub has no such object")]
     NotFound,
+    /// The recovery key is not one of the account, or is not a recovery key at all.
+    #[error("the recovery key does not open the account")]
+    RecoveryKeyInvalid,
+    /// The vault passphrase cannot be used to derive a key (too short).
+    #[error("the vault passphrase is not acceptable")]
+    InvalidVaultPassphrase,
+    /// The account's key record on the hub does not open although the key is right: the hub
+    /// altered it, or it is too weak to trust. Nothing is overwritten.
+    #[error("the account's key record on the hub is damaged")]
+    KeysetDamaged {
+        #[source]
+        cause: SharedCause,
+    },
+    /// No recovery is under way for this hub: sign in first.
+    #[error("there is nothing to recover for this hub")]
+    NoRecoveryPending,
     /// The credential file of this device could not be read or written.
     #[error("the credentials of this device cannot be kept")]
     Credentials {

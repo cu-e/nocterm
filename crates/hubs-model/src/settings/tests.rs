@@ -231,3 +231,44 @@ fn editing_a_server_changes_only_that_server() {
     assert!(settings.set_color(&a, None));
     assert_eq!(settings.find(&a).unwrap().color, None);
 }
+
+#[test]
+fn the_account_server_must_be_a_known_server() {
+    let mut settings = load(&format!(
+        r#"
+[hubs]
+account = "hub.home"
+
+[[hubs.servers]]
+address = "hub.home"
+fingerprint = "{PRINT}"
+"#
+    ));
+    let home = HubId::from(HubAddress::parse("hub.home").unwrap());
+    assert_eq!(settings.account_hub(), Some(home.clone()));
+    assert!(settings.remove(&home));
+    assert_eq!(settings.account_hub(), None);
+    assert_eq!(settings.account, None);
+
+    let stray = load(
+        r#"
+[hubs]
+account = "nowhere.example"
+"#,
+    );
+    assert_eq!(stray.account, None);
+}
+
+#[test]
+fn choosing_an_unknown_account_server_changes_nothing() {
+    let mut settings = HubsSettings::default();
+    settings.upsert(pinned("hub.home", "Home"));
+    let home = settings.servers[0].id();
+    let other = HubId::from(HubAddress::parse("other.example").unwrap());
+    assert!(!settings.set_account_hub(Some(&other)));
+    assert_eq!(settings.account_hub(), None);
+    assert!(settings.set_account_hub(Some(&home)));
+    assert_eq!(settings.account_hub(), Some(home));
+    assert!(settings.set_account_hub(None));
+    assert_eq!(settings.account, None);
+}
