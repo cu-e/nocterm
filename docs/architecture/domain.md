@@ -439,8 +439,7 @@ never has what `resolve` would reshape. A `[layouts]` table that does not read i
 
 ## Hubs
 
-`nocterm-hubs-model` owns what a window of a hub needs to know without I/O: `Environment`
-(`Local` or `Hub(HubId)`), `HubAddress` (default port 7443, `https://` dropped, `http://`
+`nocterm-hubs-model` owns what the client needs to know about a hub without I/O: `HubAddress` (default port 7443, `https://` dropped, `http://`
 refused), `Fingerprint` and `TrustPolicy`, the pure trust decision `decide` for a probed
 certificate (pinned, public authority, first use that needs a confirmation, or a mismatch that
 can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints,
@@ -452,12 +451,4 @@ original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub
 three ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
 0096](../adr/0096-hub-contract-outside-the-workspace.md)).
 
-The `windows` module holds the state document of the open windows: `WindowDocument` (versioned
-JSON of `WindowRecord`s, each with an `Environment`, tolerant of fields added later, with the
-typed `WindowDocumentError`) and `OpenWindows<K>`, the rules for a live list keyed by any
-window identity. A window that opens is appended, switching replaces its environment, and
-closing removes a window unless it is the last. A `WindowRecord` of a hub also carries a
-`HubWindowMemory` (the organization shown and the attached sessions, each with its own
-organization, in tab order),
-which `OpenWindows::remembered` applies only to a window still showing that hub
-([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)).
+A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-environments.md)), so the crate holds no record of open windows.

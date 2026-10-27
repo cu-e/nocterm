@@ -322,7 +322,7 @@ crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).
 reaches a hub only through the `HubTrust`, `HubSignIn` and `HubSessions` ports of
 `nocterm-hubs-model`, passed in `Deps` by the composition, and reads and edits the `[hubs]`
 section through `SettingsHandle`. `install` registers the section and returns an `Installed`
-with the one `Hubs` entity every window shares ([ADR 0097](../adr/0097-a-window-belongs-to-one-environment.md)).
+with the one `Hubs` entity every window shares ([ADR 0099](../adr/0099-windows-have-no-environments.md)).
 
 - `Hubs` lists the known servers in the order of the settings with a `HubStatus` for each:
   `SignedOut`, `Connecting`, `Online`, `Offline` with the time of the next attempt, `Revoked`,
@@ -339,7 +339,7 @@ with the one `Hubs` entity every window shares ([ADR 0097](../adr/0097-a-window-
   a known server keeps the certificate it was pinned with, and one whose certificate changed is
   removed before signing in again. Signing in again to a known server goes through its row, with
   a fixed address.
-- `HubWindow` serves one hub window: the account and its organizations, the nodes and the
+- `HubWindow` serves the sessions panel for one hub: the account and its organizations, the nodes and the
   sessions of one organization, ending a session, and the transport that attaches a tab to
   one. The hub has no push for the list of sessions, so the lists are read again every 5
   seconds while somebody watches them and after each action, and requests in flight are
@@ -354,20 +354,3 @@ with the one `Hubs` entity every window shares ([ADR 0097](../adr/0097-a-window-
 The service holds no secrets: device keys and tokens stay in the adapter's private files. It
 installs no global, registers no quit handler and writes the settings through the same
 persistence service as every section.
-
-## Window set
-
-`nocterm-window-set` remembers the environments of the open windows
-([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)). `WindowSet` holds
-the `OpenWindows<WindowId>` rules of `nocterm-hubs-model` in one `Persisted` entity, registered
-with the `ShutdownCoordinator`, so every change is saved in the background and the whole list is
-captured at quit. `PreparedWindows` carries the document the application read before the first
-window opened; a document that could not be read starts an empty list, and one written by a
-newer version is never written over. The application reports `opened`, `restored` (a window that comes back with its record),
-`switched`, `remembered` (the organization and sessions a hub window keeps) and `kept` (a record
-that could not open in this run, which stays in the document); the service itself subscribes to window closing, once and for the life of
-the application, to forget a window the user closes except the last. It reads no file, opens no
-window and installs no global; `WindowSet::previous` is what the application restores from.
-`HubWindow` also takes a preferred organization, selected as soon as the account is known to be
-a member of it (also when asked while the first read runs), and can list the sessions of an
-organization it does not show.

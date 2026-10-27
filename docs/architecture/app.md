@@ -71,45 +71,19 @@ jump route, checks the original live surface before creating a normal terminal,
 and registers that terminal as background membership on that surface. The
 connection directory and general session factory keep their existing contracts.
 
-## Window environments
-
-A window is composed for one environment, `Local` or `Hub(HubId)`, and keeps it
-([ADR 0097](../adr/0097-a-window-belongs-to-one-environment.md)). `src/windows.rs`
-owns `open_window(cx, &Booted, Environment)`, which every entry (startup, New Window,
-the environment menu) calls; New Window always opens `Local`. A local window is
-`bootstrap::build_workspace` with the environment menu in its title bar. A hub window is
-`src/shell_setup/hub_window.rs::build_hub_workspace`: the same shell with only the hub's
-features, namely the sessions panel `hubs.sessions`, the new-session menu of the "+" button
-(hub nodes, not connections), Snippets, Settings, Appearance, Keymap and Plugins, the
-application menus of `app_menus::build_hub`, and the window title `Nocterm — <server>`. It
-never calls the terminal's `register`, so the session factory opens no local tab, and it
-registers no connections, files, containers, workspaces, monitor, agent or vault prompt;
-panels the host does not offer drop out of the footer and out of panel cycling. User plugins
-are attached in local windows only.
-
-`AppEnvironmentOpener` implements the feature's `EnvironmentOpener`. "New window" calls
-`open_window`. "This window" composes the new `Workspace` and replaces the root of the same
-native window, then sets the title and focus; the old `Workspace` is released, which closes
-its local sessions or detaches its hub tabs. The window does not close, so the
-last-window-closed quit does not run. `AppHubTerminals` implements `HubTerminalOpener` with
-`nocterm_terminal::open_attached`.
+## Hubs
 
 The hubs installation is retained in `Booted` (`Option`, absent when the hub adapter could not
 start) and passed to each window. `startup` starts `HubLinks` with the state directory's
 `hubs` folder for private credential files and puts the three ports in `HostServices`; a
 failure to start is logged and leaves hubs off, so local use is unaffected. Bootstrap installs
-the service after Snippets and the feature after it; GUI tests use the same `bootstrap` with
-`FakeHub` or without hubs, in which case no window has an environment menu.
-
-`Booted` holds the hub installation and the window set as one `Windowing`
-(`src/bootstrap/windowing.rs`). The window set reads `windows.json` in the state directory
-through `src/window_set_setup.rs` and saves through `persist::save_text`; a run without a state
-directory remembers nothing. `open_window` and `replace_environment` report to it, and
-`startup` calls `windows::restore_windows` with the environments the previous run left open
-([ADR 0098](../adr/0098-windows-and-their-environments-are-restored-after-a-restart.md)): one window
-per entry, one local window when none opened. A server no longer in `[hubs]` is forgotten; a
-server that is only unavailable in this run (settings unreadable, `[hubs]` invalid, hubs not
-started) stays in the saved list.
+the service after the interface and the feature after it; `build_workspace` registers the
+sessions panel and the sign-in commands of the feature in every window
+([ADR 0099](../adr/0099-windows-have-no-environments.md)), and without hubs no window has them.
+`AppHubTerminals` (`src/shell_setup/hub_terminals.rs`) implements the feature's
+`HubTerminalOpener` with `nocterm_terminal::open_attached`, so a hub session is an attached
+tab beside the local ones. The `hubs` system plugin is listed in the plugin catalog of
+`src/shell_setup.rs`; GUI tests use the same `bootstrap` with `FakeHub` or without hubs.
 
 ## Menus
 
