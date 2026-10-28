@@ -74,6 +74,29 @@ saved as `account = "hub.example.com:7443"` under `[hubs]` and takes effect at o
 - Choosing another server starts the sync again from that server's own data; connections are never
   copied from one account to another.
 
+### Connections and passwords of a group
+
+An administrator of an organization shares connections and vault passwords with a group by
+creating the group and adding you with `hubctl`; Nocterm only shows and edits what the group
+holds. Groups you were added to appear after the next synchronization (a reconnect or the next
+change).
+
+- The Servers panel lists each organization in its own section below your own connections. A
+  section marked **read-only** is one you are a Guest in: its connections open, but have no edit,
+  delete or drag handles.
+- As a Member, Admin or Owner you also see a **Space** choice in the connection editor, next to
+  **Folder**. **Personal** keeps the connection to yourself; an organization's name shares it with
+  the group. Choosing another space moves the connection: it is removed from the old one and
+  written to the new one, and the move yields to a change someone else made in the meantime.
+- Saved vault passwords of a group are listed in the vault with the group's name, and **read-only**
+  for a Guest. Changing one writes it back to its group, never to your own vault. A new password
+  always goes to your own vault.
+- When the server refuses a change (your role was lowered, or the group was closed), the connection
+  returns to the version on the server and a single notice says so; a new connection the server
+  refuses stays in your personal space. Nothing is retried in a loop.
+- Folders are a name on the connection, so renaming or deleting a folder also reaches connections
+  of a group that use the same folder name.
+
 ## Sessions panel
 
 The **Sessions** panel (command **Hubs: Open sessions**; it is offered in the tray of the window)

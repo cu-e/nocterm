@@ -15,7 +15,11 @@
 //! one signed-in account: the account keys (opened at sign-in and recovery, zeroed on lock), the
 //! store of sealed collections, the encrypted cache of the vault records, the vault
 //! ([`HubVault`]) and the profile replica ([`HubProfileReplica`]) built on them, which
-//! [`HubLinks::open_account`] hands out together as a [`HubAccount`].
+//! [`HubLinks::open_account`] hands out together as a [`HubAccount`]. Next to the personal
+//! collection the account reads the groups of its organizations: collections of a kind whose
+//! key was granted to the member, listed with the member's role. A group is left out when its
+//! key is not granted or does not open; the client never creates, deletes or grants one
+//! (`hubctl` does). A Guest only reads; the replica reports a refused write as `Forbidden`.
 //! Does not own: which hubs the user knows or trusts (the `[hubs]` settings section and the
 //! trust decision belong to `nocterm-hubs-model` and the callers), connection status, retries,
 //! windows, terminal emulation, or any view.
