@@ -19,6 +19,7 @@ mod chat_history;
 mod default_shell_geometry;
 mod hub_account;
 mod hub_live;
+mod hub_windows;
 mod keymap;
 mod menu_layouts;
 mod menu_tabs;
@@ -492,6 +493,19 @@ fn open_environment(
         crate::windows::compose(booted, &sources, window, cx)
     })
     .unwrap()
+}
+
+/// Delivers `count` frames to the window: its next-frame callbacks run and it is drawn, as the
+/// platform does, which tests do not.
+fn deliver_frames(handle: AnyWindowHandle, count: usize, cx: &mut TestAppContext) {
+    for _ in 0..count {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
 }
 
 /// Whether the host offers the agent panel of `workspace`.

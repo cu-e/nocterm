@@ -1,7 +1,6 @@
 //! A refused connection history write keeps the authenticated vault credential.
 use super::*;
 use futures::executor::block_on;
-use gpui_kit::AppContext as _;
 use nocterm_session::{
     Auth, CredentialStore as _, Event, Prompt, Reply, Secret, SecretRequest, Target,
     testing::ScriptedTransport,

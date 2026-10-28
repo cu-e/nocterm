@@ -9,6 +9,8 @@
 //! The application is composed as in the other window tests, but over the real `HubLinks` on a
 //! temporary credentials directory. The adapter works on its own runtime, so the test waits in
 //! real time: it polls the windows with short sleeps until a deadline.
+mod account_key;
+
 use super::*;
 use crate::bootstrap::Booted;
 use crate::shell_setup::UserPluginMode;

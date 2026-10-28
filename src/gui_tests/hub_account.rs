@@ -17,15 +17,15 @@ use nocterm_session::{Auth, Secret, Target};
 use nocterm_vault::{VaultAccess as _, VaultStatus, testing::ScriptedVaultAccess};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const ADDRESS: &str = "hub.home:7443";
-const OTHER: &str = "hub.work:7443";
-const PASSPHRASE: &str = "test unique master passphrase";
+pub(super) const ADDRESS: &str = "hub.home:7443";
+pub(super) const OTHER: &str = "hub.work:7443";
+pub(super) const PASSPHRASE: &str = "test unique master passphrase";
 
-fn hub_id(address: &str) -> HubId {
+pub(super) fn hub_id(address: &str) -> HubId {
     HubId::from(HubAddress::parse(address).unwrap())
 }
 
-fn record(address: &str) -> HubRecord {
+pub(super) fn record(address: &str) -> HubRecord {
     HubRecord::new(
         HubAddress::parse(address).unwrap(),
         TrustPolicy::Pinned(Fingerprint::from_bytes([7; 32])),
@@ -33,7 +33,7 @@ fn record(address: &str) -> HubRecord {
     )
 }
 
-fn profile(name: &str) -> Profile {
+pub(super) fn profile(name: &str) -> Profile {
     Profile {
         id: profile_id_for(name),
         name: name.into(),
@@ -52,13 +52,13 @@ fn profile(name: &str) -> Profile {
 }
 
 /// An account whose profiles and vault are in memory.
-struct Account {
-    replica: Arc<MemoryReplica>,
-    vault: Arc<ScriptedVaultAccess>,
+pub(super) struct Account {
+    pub(super) replica: Arc<MemoryReplica>,
+    pub(super) vault: Arc<ScriptedVaultAccess>,
 }
 
 impl Account {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let vault = Arc::new(ScriptedVaultAccess::default());
         futures::executor::block_on(vault.create(Secret::new(PASSPHRASE))).unwrap();
         Self {
@@ -69,13 +69,13 @@ impl Account {
 }
 
 /// The accounts of the servers it knows; any other server has none to open.
-struct FakeAccounts {
+pub(super) struct FakeAccounts {
     accounts: Vec<(HubId, Account)>,
     refusing: AtomicBool,
 }
 
 impl FakeAccounts {
-    fn of(accounts: Vec<(HubId, Account)>) -> Arc<Self> {
+    pub(super) fn of(accounts: Vec<(HubId, Account)>) -> Arc<Self> {
         Arc::new(Self {
             accounts,
             refusing: AtomicBool::new(false),
@@ -101,13 +101,12 @@ impl HubAccounts for FakeAccounts {
 }
 
 /// The application composed over two known hubs, signed in to both.
-struct World {
-    booted: Booted,
-    hub: FakeHub,
+pub(super) struct World {
+    pub(super) booted: Booted,
     transport: Arc<MockTransport>,
 }
 
-fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> World {
+pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> World {
     let settings =
         nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings {
             servers: vec![record(ADDRESS), record(OTHER)],
@@ -144,15 +143,11 @@ fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> World {
         )
     });
     cx.run_until_parked();
-    World {
-        booted,
-        hub,
-        transport,
-    }
+    World { booted, transport }
 }
 
 impl World {
-    fn open(
+    pub(super) fn open(
         &self,
         environment: &Environment,
         cx: &mut TestAppContext,
@@ -178,7 +173,7 @@ impl World {
             .read_with(cx, |store, cx| store.profiles(cx).iter().cloned().collect())
     }
 
-    fn vault_of(
+    pub(super) fn vault_of(
         &self,
         environment: &Environment,
         cx: &mut TestAppContext,
@@ -205,7 +200,7 @@ fn save(
     cx.run_until_parked();
 }
 
-fn home() -> Environment {
+pub(super) fn home() -> Environment {
     Environment::Hub(hub_id(ADDRESS))
 }
 
@@ -402,6 +397,8 @@ fn a_locked_account_asks_for_its_vault_in_the_window_and_lists_after_the_unlock(
     let (handle, _workspace) = world.open(&home(), cx);
     assert!(world.profiles_of(&home(), cx).is_empty());
 
+    // The window asks for the vault a couple of frames after it is composed.
+    deliver_frames(handle, 4, cx);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(

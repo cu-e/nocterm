@@ -32,7 +32,7 @@ mod gui_tests;
 
 use std::io;
 
-use gpui_kit::{App, Bounds, WindowBounds, WindowOptions, component::TitleBar, px, size};
+use gpui_kit::App;
 
 use tracing_subscriber::EnvFilter;
 
@@ -96,27 +96,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<()> {
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(1200.), px(760.)),
-            cx,
-        ))),
-        window_min_size: Some(size(px(640.), px(400.))),
-        app_id: Some(APP_ID.to_owned()),
-        ..TitleBar::window_options()
-    };
-
-    gpui_kit::open_window(options, cx, |window, cx| {
-        window.set_window_title("Nocterm");
-        // "System" appearance follows the desktop as it changes.
-        let themes = booted.themes().clone();
-        window
-            .observe_window_appearance(move |_, cx| themes.apply(cx))
-            .detach();
-
-        windows::compose(booted, &booted.local_sources(), window, cx)
-    })?;
+    windows::open_window(cx, booted, &nocterm_hubs_model::Environment::Local)?;
     Ok(())
 }
 
