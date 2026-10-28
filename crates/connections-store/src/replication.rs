@@ -131,6 +131,15 @@ impl ProfileReplication {
     /// Asks for the profile to live in `scope` and synchronizes. A request for the
     /// scope it already lives in withdraws an earlier one.
     pub fn place(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) {
+        if self.stage(id, scope, cx) {
+            self.request_sync(cx);
+        }
+    }
+
+    /// Records the request of [`Self::place`] without synchronizing, for a caller that saves
+    /// the profile next: the save's own publication then carries the move. Returns whether
+    /// the request was kept.
+    pub fn stage(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) -> bool {
         let withdraw = self.scope_of(id, cx).as_ref() == Some(&scope);
         let result = self.state.update(cx, |state, cx| {
             state.update_latest(
@@ -146,8 +155,23 @@ impl ProfileReplication {
         });
         if let Err(error) = result {
             tracing::error!(%error, "could not keep the requested scope of a profile");
-            return;
+            return false;
         }
+        true
+    }
+
+    /// Withdraws a request without synchronizing: the save it belonged to failed.
+    pub fn unstage(&mut self, id: ProfileId, cx: &mut Context<Self>) {
+        let result = self.state.update(cx, |state, cx| {
+            state.update_latest(move |state| state.unplace(id), cx)
+        });
+        if let Err(error) = result {
+            tracing::error!(%error, "could not withdraw the requested scope of a profile");
+        }
+    }
+
+    /// Synchronizes now, or after the round that is running.
+    pub fn sync_now(&mut self, cx: &mut Context<Self>) {
         self.request_sync(cx);
     }
 

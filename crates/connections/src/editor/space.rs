@@ -16,13 +16,19 @@ use nocterm_ui::form;
 pub(super) struct SpaceField {
     spaces: Spaces,
     selected: ReplicaScope,
+    /// A move was requested for the save in progress.
+    staged: bool,
 }
 
 impl SpaceField {
     pub(super) fn new(id: ProfileId, installed: &Installed, cx: &App) -> Self {
         let spaces = Spaces::of(installed, cx);
         let selected = spaces.scope(id, cx);
-        Self { spaces, selected }
+        Self {
+            spaces,
+            selected,
+            staged: false,
+        }
     }
 
     pub(super) fn select(&mut self, scope: ReplicaScope) {
@@ -61,10 +67,25 @@ impl SpaceField {
         ))
     }
 
-    /// Asks for the saved connection to move to the chosen space, when it is not there.
-    pub(super) fn commit(&self, id: ProfileId, cx: &mut App) {
-        if self.selected != self.spaces.scope(id, cx) {
-            self.spaces.place(id, self.selected.clone(), cx);
+    /// Records the chosen space, when it is not where the connection lives, to be carried
+    /// out by the save that follows.
+    pub(super) fn stage(&mut self, id: ProfileId, cx: &mut App) {
+        self.staged = self.selected != self.spaces.scope(id, cx);
+        if self.staged {
+            self.spaces.stage(id, self.selected.clone(), cx);
+        }
+    }
+
+    /// The save is over: a successful one carries out the staged move, a failed one leaves
+    /// no request behind.
+    pub(super) fn settle(&mut self, id: ProfileId, saved: bool, cx: &mut App) {
+        if !std::mem::take(&mut self.staged) {
+            return;
+        }
+        if saved {
+            self.spaces.sync(cx);
+        } else {
+            self.spaces.unstage(id, cx);
         }
     }
 }

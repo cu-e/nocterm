@@ -287,8 +287,9 @@ impl ConnectionEditor {
             }
         };
 
-        // Asked for before the save so the first synchronization already knows it.
-        self.space.commit(profile.id, cx);
+        // Part of the save: staged first so the save's own synchronization carries it, and
+        // withdrawn if the save fails.
+        self.space.stage(profile.id, cx);
         let saved = self.deps.connections().update(cx, |connections, cx| {
             connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
         });
@@ -297,6 +298,7 @@ impl ConnectionEditor {
         cx.spawn_in(window, async move |this, cx| {
             let result = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {
+                this.space.settle(profile.id, result.is_ok(), cx);
                 if !this.edit.finish() {
                     return;
                 }

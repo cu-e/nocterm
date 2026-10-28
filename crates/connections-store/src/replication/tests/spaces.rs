@@ -241,3 +241,28 @@ async fn the_replication_reports_the_spaces_of_the_attached_replica_only(
     fixture.attach(cx);
     assert_eq!(listed(cx), spaces);
 }
+
+#[gpui::test]
+async fn a_staged_move_waits_for_the_save_and_a_withdrawn_one_never_happens(
+    cx: &mut gpui::TestAppContext,
+) {
+    let fixture = Fixture::new(cx, &[]);
+    fixture.attach(cx);
+    let (kept, dropped) = (profile("kept"), profile("dropped"));
+    for added in [&kept, &dropped] {
+        fixture.replication.update(cx, |replication, cx| {
+            assert!(replication.stage(added.id, acme(), cx));
+        });
+    }
+    cx.run_until_parked();
+    assert_eq!(fixture.put_count(), 0, "staging alone sends nothing");
+
+    fixture
+        .replication
+        .update(cx, |replication, cx| replication.unstage(dropped.id, cx));
+    fixture.save(cx, kept.clone()).await;
+    fixture.save(cx, dropped.clone()).await;
+    assert_eq!(in_acme(&fixture, &kept), Some(kept.clone()));
+    assert_eq!(in_acme(&fixture, &dropped), None);
+    assert_eq!(in_personal(&fixture, &dropped), Some(dropped));
+}

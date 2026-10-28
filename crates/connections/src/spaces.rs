@@ -91,10 +91,26 @@ impl Spaces {
             .collect()
     }
 
-    /// Asks for the connection to live in `scope`; it moves with the next synchronization.
-    pub(crate) fn place(&self, id: ProfileId, scope: ReplicaScope, cx: &mut App) {
+    /// Records where the connection is to live, to be carried out with the save that follows.
+    pub(crate) fn stage(&self, id: ProfileId, scope: ReplicaScope, cx: &mut App) {
         if let Some(replication) = &self.replication {
-            replication.update(cx, |replication, cx| replication.place(id, scope, cx));
+            replication.update(cx, |replication, cx| {
+                replication.stage(id, scope, cx);
+            });
+        }
+    }
+
+    /// The save failed: the connection stays where it was.
+    pub(crate) fn unstage(&self, id: ProfileId, cx: &mut App) {
+        if let Some(replication) = &self.replication {
+            replication.update(cx, |replication, cx| replication.unstage(id, cx));
+        }
+    }
+
+    /// The save succeeded: carries out what was staged, also when the save changed nothing.
+    pub(crate) fn sync(&self, cx: &mut App) {
+        if let Some(replication) = &self.replication {
+            replication.update(cx, |replication, cx| replication.sync_now(cx));
         }
     }
 }
