@@ -14,7 +14,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_hubs::{HubStatus, HubWindow, HubWindowEvent, Hubs, Load, Watch};
+use nocterm_hubs::{HubSessionLists, HubSessionListsEvent, HubStatus, Hubs, Load, Watch};
 use nocterm_hubs_model::{
     HubSessionId, HubSessionState, HubSessionSummary, NodeSummary, OrgId, OrgSummary,
 };
@@ -28,7 +28,7 @@ use crate::{problems, sign_in};
 
 pub(super) struct SessionList {
     hubs: Entity<Hubs>,
-    state: Entity<HubWindow>,
+    state: Entity<HubSessionLists>,
     tabs: HubTabs,
     workspace: WeakEntity<Workspace>,
     focus: FocusHandle,
@@ -42,14 +42,14 @@ pub(super) struct SessionList {
 impl SessionList {
     pub(super) fn new(
         hubs: Entity<Hubs>,
-        state: Entity<HubWindow>,
+        state: Entity<HubSessionLists>,
         tabs: HubTabs,
         workspace: &Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&hubs, |_, _, cx| cx.notify()),
-            cx.subscribe(&state, |_, _, _: &HubWindowEvent, cx| cx.notify()),
+            cx.subscribe(&state, |_, _, _: &HubSessionListsEvent, cx| cx.notify()),
             cx.observe(workspace, |panel, _, cx| panel.follow_visibility(cx)),
         ];
         // The workspace creates the panel while it is being updated, so it is read on the next turn.

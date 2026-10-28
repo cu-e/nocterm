@@ -110,11 +110,11 @@ async fn windows_of_one_hub_share_one_connection_and_one_state(cx: &mut TestAppC
     cx.run_until_parked();
     let first = fx
         .hubs
-        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
         .expect("a known hub");
     let second = fx
         .hubs
-        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
         .expect("a known hub");
     assert_eq!(first, second);
     cx.run_until_parked();
@@ -129,7 +129,7 @@ async fn an_unknown_hub_has_no_window_status_or_removal(cx: &mut TestAppContext)
     let fx = fixture(cx, signed_in_hub(), Vec::new());
     assert!(
         fx.hubs
-            .update(cx, |hubs, cx| hubs.window(&id(), cx))
+            .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
             .is_none()
     );
     assert_eq!(fx.status(cx), None);
@@ -208,7 +208,7 @@ async fn a_hub_that_loses_the_session_while_online_is_connected_again(cx: &mut T
     cx.run_until_parked();
     let window = fx
         .hubs
-        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
         .unwrap();
     cx.run_until_parked();
     fx.hub.fail_next(FakeOp::Nodes, HubError::NotSignedIn);
@@ -224,7 +224,7 @@ async fn a_hub_that_stops_answering_while_online_goes_offline(cx: &mut TestAppCo
     cx.run_until_parked();
     let window = fx
         .hubs
-        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
         .unwrap();
     cx.run_until_parked();
     fx.hub

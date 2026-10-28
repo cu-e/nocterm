@@ -5,16 +5,16 @@ use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
 use nocterm_hubs_model::{HubSessionId, HubTerminalTarget, NodeId, OrgId};
 
 use crate::fixture::{Fixture, address, fixture, id, pinned_record, server};
-use crate::{HubWindow, Load};
+use crate::{HubSessionLists, Load};
 
-fn open(cx: &mut TestAppContext) -> (Fixture, Entity<HubWindow>) {
+fn open(cx: &mut TestAppContext) -> (Fixture, Entity<HubSessionLists>) {
     let hub = FakeHub::new().with_server(server());
     hub.sign_in_as(&id(), "ada");
     let fx = fixture(cx, hub, vec![pinned_record()]);
     cx.run_until_parked();
     let window = fx
         .hubs
-        .update(cx, |hubs, cx| hubs.window(&id(), cx))
+        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
         .expect("a known hub");
     cx.run_until_parked();
     (fx, window)
