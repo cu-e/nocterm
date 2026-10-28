@@ -313,6 +313,14 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The view shown in the title bar after the application menu: the
+    /// environment this window belongs to. The view owns its own popover and
+    /// focus; the workspace only gives it the place.
+    pub fn set_environment_menu<V: Render>(&mut self, menu: Entity<V>, cx: &mut Context<Self>) {
+        self.chrome.install_environment(menu.into());
+        cx.notify();
+    }
+
     pub fn show_new_tab_menu(&mut self, open: bool, cx: &mut Context<Self>) {
         if self.chrome.show_new_tab(open) {
             cx.notify();
