@@ -8,13 +8,15 @@
 //!
 //! The relay test that reaches a destination also needs `NOCTERM_HUB_RELAY_TARGET` (`host:port`
 //! of an SSH server the hub is allowed to reach, for example a container of the compose file);
-//! without it that test passes vacuously.
+//! without it that test passes vacuously. The node tunnel test needs `NOCTERM_HUB_NODE` (a node
+//! of the account's organization) and `NOCTERM_HUB_NODE_TARGET` (`host:port` of an SSH server only
+//! that node reaches, for example `sshd-lan` of the compose file); without them it passes vacuously.
 
 use futures::executor::block_on;
 use nocterm_hub_io::{HubLinks, HubLinksConfig, HubRelay};
 use nocterm_hubs_model::{
     Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubSessions as _, HubSignIn as _,
-    HubTerminalTarget, HubTrust as _, TrustPolicy,
+    HubTerminalTarget, HubTrust as _, SignedIn, TrustPolicy,
 };
 use nocterm_session::{
     CloseReason, ConnectRequest, Event, RelayDialer as _, RelayError, RelayRefusal, Secret,
@@ -78,6 +80,25 @@ fn links(dir: &tempfile::TempDir) -> std::sync::Arc<HubLinks> {
     .unwrap()
 }
 
+/// Signs in with the account's password. The hub limits how often an account signs in and the
+/// tests sign in at once, so a refusal for that reason is waited out.
+fn sign_in(links: &HubLinks, hub: &Hub) -> Result<SignedIn, HubError> {
+    for _ in 0..40 {
+        let signed = block_on(links.password(
+            hub.spec(),
+            hub.username.clone(),
+            Secret::new(hub.password.clone()),
+        ));
+        match signed {
+            Err(error) if format!("{error:?}").contains("ResourceExhausted") => {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            other => return other,
+        }
+    }
+    panic!("the hub kept refusing to sign {} in", hub.username)
+}
+
 #[test]
 fn probe_shows_the_certificate_that_was_pinned() {
     let Some(hub) = hub() else { return };
@@ -122,13 +143,7 @@ fn sign_in_survives_a_restart_and_sign_out_ends_it() {
         "{refused:?}"
     );
 
-    let account = block_on(first.password(
-        hub.spec(),
-        hub.username.clone(),
-        Secret::new(hub.password.clone()),
-    ))
-    .unwrap()
-    .account;
+    let account = sign_in(&first, &hub).unwrap().account;
     assert_eq!(account.username, hub.username);
     drop(first);
 
@@ -193,12 +208,7 @@ fn a_session_survives_detaching_and_is_restored_when_attached_again() {
     let Some(hub) = hub() else { return };
     let dir = tempfile::tempdir().unwrap();
     let links = links(&dir);
-    block_on(links.password(
-        hub.spec(),
-        hub.username.clone(),
-        Secret::new(hub.password.clone()),
-    ))
-    .unwrap();
+    sign_in(&links, &hub).unwrap();
     let account = block_on(links.account(&hub.id())).unwrap();
     let org = account.orgs.first().expect("an organization").id.clone();
     let target = HubTerminalTarget::New {
@@ -263,12 +273,7 @@ fn within<T>(future: impl std::future::Future<Output = T>) -> T {
 
 fn signed_in_relay(hub: &Hub, dir: &tempfile::TempDir) -> (std::sync::Arc<HubLinks>, HubRelay) {
     let links = links(dir);
-    block_on(links.password(
-        hub.spec(),
-        hub.username.clone(),
-        Secret::new(hub.password.clone()),
-    ))
-    .unwrap();
+    sign_in(&links, &hub).unwrap();
     let relay = HubRelay::new(&links);
     (links, relay)
 }
@@ -281,24 +286,16 @@ fn target(host: &str, port: u16) -> Target {
     }
 }
 
-#[test]
-fn a_relay_reaches_a_server_carries_its_banner_and_ends_with_it() {
-    let Some(hub) = hub() else { return };
-    let Some(destination) = std::env::var("NOCTERM_HUB_RELAY_TARGET").ok() else {
-        return;
-    };
-    let (host, port) = destination
-        .rsplit_once(':')
-        .expect("NOCTERM_HUB_RELAY_TARGET");
-    let port: u16 = port.parse().expect("NOCTERM_HUB_RELAY_TARGET port");
-    let dir = tempfile::tempdir().unwrap();
-    let (_links, relay) = signed_in_relay(&hub, &dir);
+/// The `host:port` a variable names, or `None` when it is not set.
+fn destination(variable: &str) -> Option<(String, u16)> {
+    let destination = std::env::var(variable).ok()?;
+    let (host, port) = destination.rsplit_once(':').expect(variable);
+    Some((host.to_owned(), port.parse().expect(variable)))
+}
 
-    // The address is found as the user may type it, not only as it was signed in with.
-    let address = format!("https://{}/", hub.address);
-    let stream = within(relay.dial(&address, None, &target(host, port))).unwrap();
+/// Reads the server's banner from a relay, then half-closes it and waits for the server to end.
+fn expect_banner_then_end(stream: nocterm_session::RelayStream) {
     let (to_server, from_server) = stream.into_parts();
-
     let banner = within(from_server.recv()).expect("the server sends its banner first");
     assert!(
         banner.starts_with(b"SSH-"),
@@ -308,6 +305,49 @@ fn a_relay_reaches_a_server_carries_its_banner_and_ends_with_it() {
     // Ending our direction is a half-close: the server, which waits for our banner, closes.
     drop(to_server);
     within(async { while from_server.recv().await.is_ok() {} });
+}
+
+#[test]
+fn a_relay_reaches_a_server_carries_its_banner_and_ends_with_it() {
+    let Some(hub) = hub() else { return };
+    let Some((host, port)) = destination("NOCTERM_HUB_RELAY_TARGET") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (_links, relay) = signed_in_relay(&hub, &dir);
+
+    // The address is found as the user may type it, not only as it was signed in with.
+    let address = format!("https://{}/", hub.address);
+    let stream = within(relay.dial(&address, None, &target(&host, port))).unwrap();
+    expect_banner_then_end(stream);
+}
+
+#[test]
+fn a_relay_through_a_node_reaches_a_server_the_hub_cannot() {
+    let Some(hub) = hub() else { return };
+    let (Ok(node), Some((host, port))) = (
+        std::env::var("NOCTERM_HUB_NODE"),
+        destination("NOCTERM_HUB_NODE_TARGET"),
+    ) else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (links, relay) = signed_in_relay(&hub, &dir);
+    let address = hub.address.to_string();
+    // A relay names its node by id; the variable names it as an administrator does.
+    let account = block_on(links.account(&hub.id())).unwrap();
+    let node = account
+        .orgs
+        .iter()
+        .flat_map(|org| block_on(links.nodes(&hub.id(), &org.id)).unwrap())
+        .find(|found| found.name == node)
+        .unwrap_or_else(|| panic!("no node {node} in the account's organizations"))
+        .id;
+
+    let direct = within(relay.dial(&address, None, &target(&host, port)));
+    assert!(direct.is_err(), "the hub itself must not reach {host}");
+    let stream = within(relay.dial(&address, Some(node.as_str()), &target(&host, port))).unwrap();
+    expect_banner_then_end(stream);
 }
 
 #[test]

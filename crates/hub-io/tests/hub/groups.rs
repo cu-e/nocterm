@@ -10,17 +10,20 @@
 //! - `NOCTERM_HUB_GUEST_USERNAME` and `NOCTERM_HUB_GUEST_PASSWORD`: the Guest.
 //!
 //! Without `NOCTERM_REQUIRE_HUB` the tests pass vacuously when they are missing. The profile the
-//! tests write is removed again.
+//! tests write is removed again. Each test device is new, so it confirms the administrator's key
+//! on first use, as a person does after comparing its fingerprint with `hubctl`'s.
 
 use super::{
     Hub,
     account::{Device, unique},
     hub,
 };
+use std::sync::Arc;
+
 use futures::executor::block_on;
 use nocterm_connections_model::{
     profiles::Profile,
-    replica::{ProfileReplica as _, RemoteBody, ReplicaAccess, ReplicaError, ReplicaScope},
+    replica::{ProfileReplica, RemoteBody, ReplicaAccess, ReplicaError, ReplicaScope},
     test_support::profile_id_for,
 };
 use nocterm_hubs_model::HubAddress;
@@ -60,6 +63,23 @@ fn group() -> Option<Group> {
     })
 }
 
+/// The replica of a new device, with the keys of the group's administrators confirmed. The
+/// first read finds the grants of keys this device has not pinned yet.
+fn trusting_replica(device: &Device, hub: &Hub) -> Arc<dyn ProfileReplica> {
+    let account = device.account(hub);
+    let replica = account.replica();
+    block_on(replica.changes(None)).unwrap();
+    let admins = account.admin_keys();
+    for pending in admins.pending() {
+        assert!(pending.replaces.is_none(), "{pending:?}");
+        admins
+            .confirm(&pending.account_id, &pending.fingerprint)
+            .unwrap();
+    }
+    block_on(replica.changes(None)).unwrap();
+    replica
+}
+
 fn profile(name: &str) -> Profile {
     Profile {
         id: profile_id_for(name),
@@ -83,13 +103,9 @@ fn a_member_shares_a_profile_with_the_group_and_a_guest_reads_but_cannot_change_
     let Some(group) = group() else { return };
     let (member, _) = Device::sign_in(&group.primary);
     let (guest, _) = Device::sign_in(&group.guest);
-    let member_replica = member.account(&group.primary).replica();
-    let guest_replica = guest.account(&group.guest).replica();
+    let member_replica = trusting_replica(&member, &group.primary);
+    let guest_replica = trusting_replica(&guest, &group.guest);
     let shared = profile(&unique("live-group-profile"));
-
-    // The spaces are learned with the first read.
-    block_on(member_replica.changes(None)).unwrap();
-    block_on(guest_replica.changes(None)).unwrap();
     let access = |replica: &dyn nocterm_connections_model::replica::ProfileReplica| {
         replica
             .spaces()
@@ -130,7 +146,7 @@ fn a_member_shares_a_profile_with_the_group_and_a_guest_reads_but_cannot_change_
 fn a_profile_moved_between_spaces_leaves_the_old_one() {
     let Some(group) = group() else { return };
     let (member, _) = Device::sign_in(&group.primary);
-    let replica = member.account(&group.primary).replica();
+    let replica = trusting_replica(&member, &group.primary);
     let moved = profile(&unique("live-moved-profile"));
 
     let personal = block_on(replica.put(ReplicaScope::Personal, moved.clone(), None)).unwrap();

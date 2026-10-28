@@ -4,7 +4,7 @@
 //! second one opens the keyset the first one created. The records the tests write are removed
 //! again, and the account is left as it was found.
 
-use super::{Hub, hub, links, within};
+use super::{Hub, hub, links, sign_in, within};
 use futures::executor::block_on;
 use nocterm_connections_model::{
     profiles::Profile,
@@ -36,12 +36,7 @@ impl Device {
     pub(super) fn sign_in(hub: &Hub) -> (Self, KeyStatus) {
         let dir = tempfile::tempdir().unwrap();
         let links = links(&dir);
-        let signed = block_on(links.password(
-            hub.spec(),
-            hub.username.clone(),
-            Secret::new(hub.password.clone()),
-        ))
-        .expect("the account signs in");
+        let signed = sign_in(&links, hub).expect("the account signs in");
         (Self { links, _dir: dir }, signed.keys)
     }
 
