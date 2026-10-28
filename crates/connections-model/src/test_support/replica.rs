@@ -49,6 +49,13 @@ struct Stored {
     version: u64,
 }
 
+/// What writes are refused: single connections and whole spaces.
+#[derive(Default)]
+struct Forbidden {
+    profiles: HashSet<ProfileId>,
+    scopes: HashSet<ReplicaScope>,
+}
+
 #[derive(Default)]
 struct Inner {
     sequence: u64,
@@ -61,8 +68,7 @@ struct Inner {
     offline_after: Option<usize>,
     /// The answer of the next write waits for this signal.
     held: Option<oneshot::Receiver<()>>,
-    forbidden: HashSet<ProfileId>,
-    forbidden_scopes: HashSet<ReplicaScope>,
+    forbidden: Forbidden,
     spaces: Vec<ReplicaSpace>,
     forced_conflicts: usize,
     concurrent: Option<(ReplicaScope, Profile)>,
@@ -117,7 +123,7 @@ impl Inner {
             let body = RemoteBody::Present(Box::new(profile.clone()));
             self.store(profile.id, scope, body);
         }
-        if self.forbidden.contains(&id) || self.forbidden_scopes.contains(scope) {
+        if self.forbidden.profiles.contains(&id) || self.forbidden.scopes.contains(scope) {
             return Err(ReplicaError::Forbidden { id });
         }
         if self.forced_conflicts > 0 {
@@ -243,12 +249,12 @@ impl MemoryReplica {
 
     /// Writes of this profile are refused as `Forbidden`.
     pub fn refuse_writes_of(&self, id: ProfileId) {
-        self.with(|inner| inner.forbidden.insert(id));
+        self.with(|inner| inner.forbidden.profiles.insert(id));
     }
 
     /// Writes into this scope are refused as `Forbidden`, as for a read-only member.
     pub fn refuse_writes_in(&self, scope: ReplicaScope) {
-        self.with(|inner| inner.forbidden_scopes.insert(scope));
+        self.with(|inner| inner.forbidden.scopes.insert(scope));
     }
 
     /// A secret is kept in `scope`, as the vault of that space would hold it.
@@ -349,9 +355,9 @@ impl MemoryReplica {
             if let Some(error) = inner.unserved() {
                 return Err(error);
             }
-            if inner.forbidden.contains(&id)
-                || inner.forbidden_scopes.contains(&from)
-                || inner.forbidden_scopes.contains(&to)
+            if inner.forbidden.profiles.contains(&id)
+                || inner.forbidden.scopes.contains(&from)
+                || inner.forbidden.scopes.contains(&to)
             {
                 return Err(ReplicaError::Forbidden { id });
             }

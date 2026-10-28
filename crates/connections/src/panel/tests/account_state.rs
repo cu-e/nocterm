@@ -5,7 +5,12 @@ use nocterm_connections_store::{ReplicationFailure, ReplicationStatus};
 use nocterm_workspace::UnlockVault;
 use std::{cell::Cell, rc::Rc};
 
-gpui_kit::actions!(hubs, [SignInToServer]);
+/// Stands in for the action of the hubs crate, which this crate cannot name. It is declared in
+/// a module so the actions reference does not list it twice.
+mod stand_in {
+    gpui_kit::actions!(hubs, [SignInToServer]);
+}
+use stand_in::SignInToServer;
 
 /// How the account stands in a panel over one personal connection.
 enum Account {

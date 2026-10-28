@@ -479,11 +479,7 @@ impl ConnectionsPanel {
         let empty = profiles.is_empty() && !spaces.shared();
         let listing = Listing::new(&spaces, top, groups, cx);
         let nothing_matches = listing.is_empty(filtering);
-        let Listing {
-            top,
-            groups,
-            sections,
-        } = listing;
+        let (top, groups, sections) = listing.into_parts();
 
         let mut list = v_flex().gap_px().py_1().child(
             h_flex()

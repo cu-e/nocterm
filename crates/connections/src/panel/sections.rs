@@ -43,12 +43,17 @@ impl Section {
 
 /// The list as shown: the personal connections filed in folders, then the sections.
 pub(super) struct Listing {
-    pub(super) top: Vec<Profile>,
-    pub(super) groups: Vec<(String, Vec<Profile>)>,
-    pub(super) sections: Vec<Section>,
+    top: Vec<Profile>,
+    groups: Vec<(String, Vec<Profile>)>,
+    sections: Vec<Section>,
 }
 
 impl Listing {
+    /// The ungrouped connections, the folders and the organization sections.
+    pub(super) fn into_parts(self) -> (Vec<Profile>, Vec<(String, Vec<Profile>)>, Vec<Section>) {
+        (self.top, self.groups, self.sections)
+    }
+
     /// Moves the connections of each organization out of the folders into its section.
     /// Folders are the user's own way to file their connections, so a shared connection
     /// is listed flat. Without organizations the list is returned as it came.
