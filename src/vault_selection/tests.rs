@@ -35,6 +35,7 @@ fn calls_reach_the_vault_selected_last() {
     selected.select(account.clone());
     block_on(account.unlock(Secret::new("test unique master passphrase"))).unwrap();
     assert!(block_on(selected.list()).unwrap().is_empty());
+    block_on(own.unlock(Secret::new("test unique master passphrase"))).unwrap();
     assert_eq!(block_on(own.list()).unwrap().len(), 1);
 }
 

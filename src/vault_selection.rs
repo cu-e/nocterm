@@ -123,13 +123,10 @@ impl VaultAccess for SelectedVault {
                 }
                 // `seen == base + revision`, so the vault's own view of it is the difference.
                 let own = vault.changed(seen - base);
+                // Either way the loop reads the selection again: a switch locks the vault it
+                // replaces, which wakes `own` before the new base is in place.
                 futures::select_biased! {
-                    revision = own.fuse() => {
-                        let now = base + revision;
-                        if now != seen {
-                            return now;
-                        }
-                    }
+                    _ = own.fuse() => {}
                     () = moved.fuse() => {}
                 }
             }
