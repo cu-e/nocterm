@@ -18,12 +18,12 @@ use gpui_kit::{
 use nocterm_session::Secret;
 use nocterm_ui::IconName;
 use nocterm_vault::{DeviceAvailability, DeviceUnlockError, VaultAccess, VaultError};
-use nocterm_workspace::{LockVault, OpenVault, UnlockVault};
+use nocterm_workspace::{LockVault, OpenVault, UnlockVault, Workspace};
 use std::sync::Arc;
 
 /// Lets `workspace::UnlockVault` and `workspace::LockVault` work in any
-/// window.
-pub(crate) fn init(service: Arc<dyn VaultAccess>, cx: &mut App) {
+/// window that has no vault of its own.
+pub(crate) fn bind_app(service: Arc<dyn VaultAccess>, cx: &mut App) {
     let unlock_service = service.clone();
     cx.on_action(move |_: &UnlockVault, cx| {
         if let Some(window) = cx.active_window() {
@@ -34,6 +34,21 @@ pub(crate) fn init(service: Arc<dyn VaultAccess>, cx: &mut App) {
         }
     });
     cx.on_action(move |_: &LockVault, cx| {
+        service.lock();
+        cx.refresh_windows();
+    });
+}
+
+/// Makes `workspace::UnlockVault` and `workspace::LockVault` act on `service`
+/// in the window of `workspace`. The workspace handles an action before the
+/// application does, so this vault answers there and the application's does not.
+pub(crate) fn bind_workspace(service: Arc<dyn VaultAccess>, workspace: &mut Workspace) {
+    let unlock_service = service.clone();
+    workspace.register_action(move |_, _: &UnlockVault, window, cx| {
+        let service = unlock_service.clone();
+        window.defer(cx, move |window, cx| open(service, window, cx));
+    });
+    workspace.register_action(move |_, _: &LockVault, _, cx| {
         service.lock();
         cx.refresh_windows();
     });
