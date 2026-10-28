@@ -345,8 +345,8 @@ only when the editor requests a new draft. See
 
 `nocterm-hub-io` is the only crate that speaks the hub protocol. It uses the hub contract
 (`nocterm-hub-client`, `nocterm-hub-proto`, `nocterm-keys`), a public repository outside this
-workspace that is pinned by commit, and implements the `HubTrust`, `HubSignIn` and `HubSessions`
-ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`. `tonic` and
+workspace that is pinned by commit, and implements the `HubTrust`, `HubSignIn`, `HubSessions` and
+`HubAdminKeys` ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`. `tonic` and
 `prost` values stop at its boundary. The device key and tokens of each hub are kept in one
 mode-0600 file in a mode-0700 directory the application supplies; the contract rotates tokens
 under an inter-process lock that the adapter takes on a sibling `.lock` file, so two processes

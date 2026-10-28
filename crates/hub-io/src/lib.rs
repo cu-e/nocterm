@@ -20,11 +20,15 @@
 //! key was granted to the member, listed with the member's role. A group is left out when its
 //! key is not granted or does not open; the client never creates, deletes or grants one
 //! (`hubctl` does). A Guest only reads; the replica reports a refused write as `Forbidden`.
+//! Administrators are trusted on first use, with a fingerprint: a group's key opens only under
+//! the key of its granter pinned on this device after a person compared fingerprints, so a
+//! group whose granter is not pinned, or whose key changed, is left out and listed as pending
+//! ([`AdminKeys`], reached through the `HubAdminKeys` port); confirming raises the keys notice.
 //! Does not own: which hubs the user knows or trusts (the `[hubs]` settings section and the
 //! trust decision belong to `nocterm-hubs-model` and the callers), connection status, retries,
 //! windows, terminal emulation, or any view.
-//! Ports provided: `HubTrust`, `HubSignIn` and `HubSessions` from `nocterm-hubs-model`, all
-//! implemented by [`HubLinks`], the `VaultAccess` of `nocterm-vault` and the `ProfileReplica` of
+//! Ports provided: `HubTrust`, `HubSignIn`, `HubSessions` and `HubAdminKeys` from
+//! `nocterm-hubs-model`, all implemented by [`HubLinks`], the `VaultAccess` of `nocterm-vault` and the `ProfileReplica` of
 //! `nocterm-connections-model`, implemented by [`HubVault`] and [`HubProfileReplica`], the `Transport` of `nocterm-session` that `HubSessions::terminal`
 //! returns for one attached hub session, and the `RelayDialer` of `nocterm-session`, implemented
 //! by [`HubRelay`] over the clients of the hubs this device is signed in to. Ports used: none.
@@ -42,8 +46,10 @@
 //! node; a relay finds its hub only among the hubs signed in to and never signs in; every
 //! buffer between the transport and the hub's stream is bounded, and dropping either end of a
 //! relayed stream ends both directions, whether or not the target is silent; account keys and
-//! the unlock secret live only in memory and are zeroed on lock, and only ciphertext is written
-//! to disk (mode 0600, atomically); a record of the hub that does not authenticate is an error,
+//! the unlock secret live only in memory and are zeroed on lock, and only ciphertext, non-secret
+//! facts and the public keys of pinned administrators are written to disk (mode 0600, atomically);
+//! a pin is never added or replaced without a person's confirmation, and is erased with the
+//! account; a record of the hub that does not authenticate is an error,
 //! never a silent skip or overwrite; collections and record kinds this version does not know are
 //! never listed, changed or deleted; each collection has its own key.
 

@@ -116,13 +116,20 @@ The vault and the saved profiles of a hub account are sealed on the device befor
 learns the number, size and times of records. Each collection has its own key, derived with the
 hub contract's `nocterm-keys` from the account password (or a vault passphrase of its own); the
 keyset on the hub is sealed, and the recovery key is shown once and not stored. The device keeps
-no key on disk: locking the vault or signing out clears the keys in memory. The only account
-data on disk is ciphertext in a mode-0600 file replaced atomically, and the agreed profile
-replica state in another private file. A record that does not verify (changed, or moved to
+no key on disk: locking the vault or signing out clears the keys in memory. The account data on
+disk is ciphertext, the non-secret facts needed to derive the unlock key again and the pinned
+administrator keys (public keys, stored in the clear), all in one mode-0600 file replaced
+atomically, and the agreed profile replica state in another private file. A record that does not verify (changed, or moved to
 another collection or identity) is an error that stops the feed, and never overwrites or deletes
 local data. Collections and record kinds this version does not know are never listed, rewritten
-or deleted. A revoked device erases its cached ciphertext and zeroes its keys, as signing out of
-the server or removing it does. The only record of the recovery key on a device is a flag that
+or deleted. A revoked device erases its cached ciphertext and its pins and zeroes its keys, as
+signing out of the server or removing it does. The hub names who granted an organization's key
+and publishes that account's public key, so a hostile hub could offer its own: the device opens a
+grant only under an administrator key it pinned after the person compared its fingerprint with the
+one the administrator sees in `hubctl` (trust on first use, out of band). A group whose granter is
+not pinned stays hidden and is listed on the Servers page with the fingerprint to compare; a key
+that differs from the pinned one is shown as a change and replaces the pin only when confirmed
+again. The only record of the recovery key on a device is a flag that
 it was shown and not yet confirmed as saved; it is not a secret, and it makes the open keys offer
 a new key, replacing the recovery envelope with a write conditional on the keyset version.
 

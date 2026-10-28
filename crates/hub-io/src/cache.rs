@@ -3,9 +3,10 @@
 //! One mode-0600 file per hub, `<host>_<port>.cache` beside the credential file. It holds only
 //! what the hub holds: the sealed keyset, the sealed key envelope of the vault collection and
 //! sealed objects, plus the non-secret facts needed to derive the unlock key again (the user
-//! name, the way the key is derived and the hub's own identifier). Nothing in it opens without
-//! the vault password, so it may sit on disk, and it lets the vault unlock while the hub is
-//! unreachable.
+//! name, the way the key is derived and the hub's own identifier) and the public keys of the
+//! administrators this device pinned, which are kept in the clear. Nothing secret in it opens
+//! without the vault password, so it may sit on disk, and it lets the vault unlock while the hub
+//! is unreachable.
 
 use std::collections::BTreeMap;
 use std::io;
