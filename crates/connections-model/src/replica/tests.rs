@@ -1,7 +1,7 @@
 use super::rules::{ReplicaAction, plan, reconcile, reconcile_placed};
 use super::*;
 use crate::{profiles::Profiles, test_support::profile_id_for};
-use nocterm_session::{Auth, Target};
+use nocterm_session::{Auth, CredentialId, Target};
 
 fn profile(name: &str) -> Profile {
     Profile {
@@ -617,4 +617,112 @@ fn a_plan_ignores_stale_entries_and_keeps_an_unreadable_profile_unreadable() {
     state.mark_unrecognized(id());
     assert_eq!(plan(&local, &[present("old", 3)], &state), []);
     assert!(state.is_unrecognized(id()));
+}
+
+fn using(name: &str, credential: CredentialId) -> Profile {
+    Profile {
+        id: profile_id_for(name),
+        credential: Some(credential),
+        ..profile(name)
+    }
+}
+
+fn acme() -> ReplicaScope {
+    ReplicaScope::Organization("acme".into())
+}
+
+fn secret(byte: u8) -> CredentialId {
+    CredentialId::from_bytes([byte; 16])
+}
+
+fn agreed_in(state: &mut ReplicaState, scope: ReplicaScope, profile: &Profile) {
+    state.agree(
+        profile.id,
+        SyncedEntry {
+            scope,
+            version: version(1),
+            profile: profile.clone(),
+        },
+    );
+}
+
+#[test]
+fn a_secret_another_profile_in_the_same_space_uses_is_shared() {
+    let (moving, staying) = (using("moving", secret(1)), using("staying", secret(1)));
+    let local = profiles_of(&[moving.clone(), staying.clone()]);
+    let mut state = ReplicaState::default();
+    agreed_in(&mut state, ReplicaScope::Personal, &moving);
+    agreed_in(&mut state, ReplicaScope::Personal, &staying);
+    assert_eq!(
+        rules::shared_secrets(
+            &local,
+            &state,
+            moving.id,
+            &moving.credentials(),
+            &ReplicaScope::Personal
+        ),
+        [secret(1)]
+    );
+}
+
+#[test]
+fn a_secret_only_the_moving_profile_uses_is_not_shared() {
+    let (moving, other) = (using("moving", secret(1)), using("other", secret(2)));
+    let local = profiles_of(&[moving.clone(), other.clone()]);
+    let mut state = ReplicaState::default();
+    agreed_in(&mut state, ReplicaScope::Personal, &moving);
+    agreed_in(&mut state, ReplicaScope::Personal, &other);
+    assert!(
+        rules::shared_secrets(
+            &local,
+            &state,
+            moving.id,
+            &moving.credentials(),
+            &ReplicaScope::Personal
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn a_profile_kept_in_another_space_or_leaving_does_not_share_the_source() {
+    let (moving, elsewhere, leaving) = (
+        using("moving", secret(1)),
+        using("elsewhere", secret(1)),
+        using("leaving", secret(1)),
+    );
+    let local = profiles_of(&[moving.clone(), elsewhere.clone(), leaving.clone()]);
+    let mut state = ReplicaState::default();
+    agreed_in(&mut state, ReplicaScope::Personal, &moving);
+    agreed_in(&mut state, acme(), &elsewhere);
+    agreed_in(&mut state, ReplicaScope::Personal, &leaving);
+    state.place(leaving.id, acme());
+    assert!(
+        rules::shared_secrets(
+            &local,
+            &state,
+            moving.id,
+            &moving.credentials(),
+            &ReplicaScope::Personal
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn a_profile_never_sent_counts_as_staying_personal() {
+    let (moving, fresh) = (using("moving", secret(1)), using("fresh", secret(1)));
+    let local = profiles_of(&[moving.clone(), fresh]);
+    let mut state = ReplicaState::default();
+    agreed_in(&mut state, acme(), &moving);
+    assert_eq!(
+        rules::shared_secrets(
+            &local,
+            &state,
+            moving.id,
+            &moving.credentials(),
+            &ReplicaScope::Personal
+        ),
+        [secret(1)]
+    );
 }

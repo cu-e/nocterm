@@ -373,3 +373,97 @@ async fn a_secret_kept_in_another_group_is_not_pulled_into_a_profiles_group(
     fixture.save(cx, added.clone()).await;
     assert_eq!(fixture.replica.secret_scope(secret), Some(other));
 }
+
+fn scopes(items: &[ReplicaScope]) -> std::collections::HashSet<ReplicaScope> {
+    items.iter().cloned().collect()
+}
+
+/// Two personal profiles that sign in with one secret.
+fn sharing(secret: CredentialId) -> (Profile, Profile) {
+    let using = |name: &str| Profile {
+        credential: Some(secret),
+        ..profile(name)
+    };
+    (using("first"), using("second"))
+}
+
+#[gpui::test]
+async fn a_secret_another_profile_still_uses_is_copied_when_a_profile_moves_to_a_group(
+    cx: &mut gpui::TestAppContext,
+) {
+    let secret = CredentialId::from_bytes([12; 16]);
+    let (first, second) = sharing(secret);
+    let fixture = Fixture::new(cx, &[first.clone(), second.clone()]);
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    fixture.attach(cx);
+    fixture.place(cx, &first, acme());
+    assert_eq!(
+        fixture.replica.secret_scopes(secret),
+        scopes(&[ReplicaScope::Personal, acme()]),
+        "the group has its copy and the profile that stayed keeps its own"
+    );
+    assert!(fixture.replica.writes().iter().any(|call| matches!(
+        call,
+        ReplicaCall::Copy { id, credentials, .. } if *id == first.id && *credentials == [secret]
+    )));
+    assert!(
+        !fixture
+            .replica
+            .writes()
+            .iter()
+            .any(|call| matches!(call, ReplicaCall::Carry { .. })),
+        "nothing was taken from the personal vault"
+    );
+    assert_eq!(in_acme(&fixture, &first), Some(first));
+    assert_eq!(in_personal(&fixture, &second), Some(second));
+}
+
+#[gpui::test]
+async fn the_last_profile_to_leave_takes_a_shared_secret_out_of_the_source(
+    cx: &mut gpui::TestAppContext,
+) {
+    let secret = CredentialId::from_bytes([13; 16]);
+    let (first, second) = sharing(secret);
+    let fixture = Fixture::new(cx, &[first.clone(), second.clone()]);
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    fixture.attach(cx);
+    fixture.place(cx, &first, acme());
+    fixture.place(cx, &second, acme());
+    assert_eq!(fixture.replica.secret_scope(secret), Some(acme()));
+}
+
+#[gpui::test]
+async fn a_new_group_profile_copies_a_secret_a_personal_profile_uses(
+    cx: &mut gpui::TestAppContext,
+) {
+    let secret = CredentialId::from_bytes([14; 16]);
+    let (mine, team) = sharing(secret);
+    let fixture = Fixture::new(cx, std::slice::from_ref(&mine));
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    fixture.attach(cx);
+    fixture.stage(cx, &team, acme());
+    fixture.save(cx, team.clone()).await;
+    assert_eq!(
+        fixture.replica.secret_scopes(secret),
+        scopes(&[ReplicaScope::Personal, acme()])
+    );
+    assert_eq!(in_acme(&fixture, &team), Some(team));
+}
+
+#[gpui::test]
+async fn a_refused_copy_leaves_the_shared_secret_and_the_profile_where_they_are(
+    cx: &mut gpui::TestAppContext,
+) {
+    let secret = CredentialId::from_bytes([15; 16]);
+    let (first, second) = sharing(secret);
+    let fixture = Fixture::new(cx, &[first.clone(), second]);
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    fixture.attach(cx);
+    fixture.replica.refuse_writes_in(acme());
+    fixture.place(cx, &first, acme());
+    assert_eq!(
+        fixture.replica.secret_scope(secret),
+        Some(ReplicaScope::Personal)
+    );
+    assert_eq!(in_personal(&fixture, &first), Some(first));
+}

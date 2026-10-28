@@ -267,6 +267,22 @@ impl ProfileReplica for HubProfileReplica {
         })
     }
 
+    fn copy(
+        &self,
+        id: ProfileId,
+        from: ReplicaScope,
+        to: ReplicaScope,
+        credentials: Vec<CredentialId>,
+    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+        let ledger = Arc::clone(&self.ledger);
+        self.run(async move {
+            ledger
+                .copy(&space_of(from), &space_of(to), &credentials)
+                .await
+                .map_err(|error| carry_error(error, id))
+        })
+    }
+
     fn changes(
         &self,
         after: Option<ReplicaCursor>,

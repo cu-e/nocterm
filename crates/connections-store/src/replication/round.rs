@@ -417,8 +417,9 @@ impl Round {
     }
 
     /// Moves the `credentials` of `shown` that are kept in `from` into `to`, and answers the
-    /// ones that moved. A space that refuses them is handled like a refusal of the profile
-    /// itself, before anything moved.
+    /// ones that arrived. A secret another profile staying in `from` still uses is copied
+    /// instead, so that profile keeps it. A space that refuses them is handled like a refusal
+    /// of the profile itself, before anything moved.
     async fn carry(
         &self,
         shown: &Profile,
@@ -431,14 +432,49 @@ impl Round {
             return Ok(Vec::new());
         }
         let id = shown.id;
-        match self.replica.carry(id, from, to.clone(), credentials).await {
-            Ok(moved) => Ok(moved),
-            Err(ReplicaError::Forbidden { .. }) => {
-                self.refused(id, shown.clone(), to.clone(), cx).await?;
-                Ok(Vec::new())
+        let shared = self.shared_secrets(id, &credentials, &from, cx);
+        let (copies, moves): (Vec<_>, Vec<_>) = credentials
+            .into_iter()
+            .partition(|credential| shared.contains(credential));
+        let mut arrived = Vec::new();
+        for (copying, wanted) in [(false, moves), (true, copies)] {
+            if wanted.is_empty() {
+                continue;
             }
-            Err(error) => Err(remote_flow(error)),
+            let sent = if copying {
+                self.replica.copy(id, from.clone(), to.clone(), wanted)
+            } else {
+                self.replica.carry(id, from.clone(), to.clone(), wanted)
+            };
+            match sent.await {
+                Ok(done) => arrived.extend(done),
+                Err(ReplicaError::Forbidden { .. }) => {
+                    self.carry_back(id, to, from, arrived).await;
+                    self.refused(id, shown.clone(), to.clone(), cx).await?;
+                    return Ok(Vec::new());
+                }
+                Err(error) => {
+                    self.carry_back(id, to, from, arrived).await;
+                    return Err(remote_flow(error));
+                }
+            }
         }
+        Ok(arrived)
+    }
+
+    /// The `credentials` another profile that stays in `from` still uses.
+    fn shared_secrets(
+        &self,
+        id: ProfileId,
+        credentials: &[CredentialId],
+        from: &ReplicaScope,
+        cx: &mut AsyncApp,
+    ) -> Vec<CredentialId> {
+        let local = self
+            .store
+            .read_with(cx, |store, cx| store.profiles(cx).clone());
+        let state = self.state.read_with(cx, |state, _| state.visible().clone());
+        rules::shared_secrets(&local, &state, id, credentials, from)
     }
 
     /// Puts secrets that moved from `from` back into `to`, after the profile did not

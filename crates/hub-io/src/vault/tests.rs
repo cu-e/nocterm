@@ -444,3 +444,80 @@ async fn a_credential_the_source_does_not_hold_stays_where_it_is() {
     assert!(moved.is_empty());
     assert!(!hub.objects(ACME_VAULT)[0].deleted);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copied_credential_is_in_the_group_and_stays_in_the_personal_vault() {
+    let (vault, hub, key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
+    let id = vault
+        .put(None, "Own".into(), binding(), Secret::new("own-pw"))
+        .await
+        .unwrap();
+    let copied = vault
+        .ledger()
+        .copy(&Space::Personal, &in_acme(), &[id])
+        .await
+        .unwrap();
+    assert_eq!(copied, [id]);
+    let stored = hub.objects(ACME_VAULT);
+    assert_eq!(stored.len(), 1);
+    let opened = key
+        .open_object(
+            ACME_VAULT,
+            &stored[0].object_id,
+            codec::KIND,
+            &stored[0].ciphertext,
+        )
+        .unwrap();
+    assert!(String::from_utf8_lossy(&opened).contains("own-pw"));
+    assert_eq!(vault.get(id, binding()).await.unwrap().expose(), "own-pw");
+    let listed = vault.list().await.unwrap();
+    assert_eq!(
+        listed.iter().filter(|info| info.group.is_none()).count(),
+        1,
+        "the personal vault still holds it"
+    );
+    assert_eq!(
+        listed.iter().filter(|info| info.group.is_some()).count(),
+        1,
+        "and so does the group"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_a_copied_credential_back_leaves_it_in_the_personal_vault_alone() {
+    let (vault, hub, _key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
+    let id = vault
+        .put(None, "Own".into(), binding(), Secret::new("own-pw"))
+        .await
+        .unwrap();
+    vault
+        .ledger()
+        .copy(&Space::Personal, &in_acme(), &[id])
+        .await
+        .unwrap();
+    let back = vault
+        .ledger()
+        .carry(&in_acme(), &Space::Personal, &[id])
+        .await
+        .unwrap();
+    assert_eq!(back, [id]);
+    assert!(hub.objects(ACME_VAULT)[0].deleted);
+    let listed = vault.list().await.unwrap();
+    assert!(listed.len() == 1 && listed[0].group.is_none());
+    assert_eq!(vault.get(id, binding()).await.unwrap().expose(), "own-pw");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guest_cannot_copy_a_credential_into_the_group() {
+    let (vault, hub, _key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Guest);
+    let id = vault
+        .put(None, "Own".into(), binding(), Secret::new("own-pw"))
+        .await
+        .unwrap();
+    let copied = vault
+        .ledger()
+        .copy(&Space::Personal, &in_acme(), &[id])
+        .await;
+    assert!(matches!(copied, Err(VaultError::ReadOnly)));
+    assert!(hub.objects(ACME_VAULT).is_empty());
+}

@@ -157,6 +157,20 @@ pub trait ProfileReplica: Send + Sync {
         Box::pin(std::future::ready(Ok(Vec::new())))
     }
 
+    /// Like [`carry`](Self::carry), but the secrets also stay in `from`: another profile that
+    /// stays there still uses them. Answers the ones that were copied. A refused copy
+    /// leaves nothing behind in `to`.
+    fn copy(
+        &self,
+        id: ProfileId,
+        from: ReplicaScope,
+        to: ReplicaScope,
+        credentials: Vec<CredentialId>,
+    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+        let _ = (id, from, to, credentials);
+        Box::pin(std::future::ready(Ok(Vec::new())))
+    }
+
     /// Yields once whenever the replica may have new changes.
     fn watch(&self) -> BoxStream<'static, ()>;
 

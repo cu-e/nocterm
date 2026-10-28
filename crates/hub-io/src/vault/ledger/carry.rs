@@ -4,6 +4,10 @@
 //! and then deleted from the space it leaves. A space the account may not write refuses the
 //! move before anything is copied, so a secret is never left in two places by a refusal,
 //! and never reaches a vault that was not asked for.
+//!
+//! A credential another profile that stays behind still uses is copied instead: it is written
+//! into the target and left in the space it came from. It then lives in both under one id; a
+//! later edit of the secret reaches the vault that holds it for the profile edited.
 
 use std::sync::Arc;
 
@@ -15,6 +19,15 @@ use crate::account::OpenKeys;
 use crate::store::Store;
 use crate::vault::codec::{self, Decoded, Record};
 use crate::vault::groups::Held;
+
+/// What becomes of the credential in the space it comes from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Leave {
+    /// It is deleted there: the credential moves.
+    Remove,
+    /// It stays there as well: the credential is copied.
+    Keep,
+}
 
 /// A vault of the account.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +47,27 @@ impl Ledger {
         to: &Space,
         ids: &[CredentialId],
     ) -> Result<Vec<CredentialId>, VaultError> {
+        self.relocate(from, to, ids, Leave::Remove).await
+    }
+
+    /// Copies the credentials `ids` that `from` holds into `to`, which leaves them in `from`
+    /// too. When a copy fails, the ones already copied are removed from `to` again.
+    pub(crate) async fn copy(
+        &self,
+        from: &Space,
+        to: &Space,
+        ids: &[CredentialId],
+    ) -> Result<Vec<CredentialId>, VaultError> {
+        self.relocate(from, to, ids, Leave::Keep).await
+    }
+
+    async fn relocate(
+        &self,
+        from: &Space,
+        to: &Space,
+        ids: &[CredentialId],
+        leave: Leave,
+    ) -> Result<Vec<CredentialId>, VaultError> {
         let keys = self.keys()?;
         let store = self.store(&keys);
         self.sync(&keys).await?;
@@ -41,16 +75,21 @@ impl Ledger {
         let mut moved = Vec::new();
         for id in ids {
             match self
-                .carry_one(&keys, &store, from, to, &id.to_string())
+                .carry_one(&keys, &store, from, to, &id.to_string(), leave)
                 .await
             {
                 Ok(true) => moved.push(*id),
                 Ok(false) => {}
                 Err(error) => {
                     for done in &moved {
-                        let _ = self
-                            .carry_one(&keys, &store, to, from, &done.to_string())
-                            .await;
+                        let object_id = done.to_string();
+                        let _ = match leave {
+                            Leave::Remove => self
+                                .carry_one(&keys, &store, to, from, &object_id, leave)
+                                .await
+                                .map(drop),
+                            Leave::Keep => self.remove_in(&keys, &store, to, &object_id).await,
+                        };
                     }
                     return Err(error);
                 }
@@ -59,7 +98,8 @@ impl Ledger {
         Ok(moved)
     }
 
-    /// Whether the credential `object_id` was in `from` and is now in `to` alone.
+    /// Whether the credential `object_id` was in `from` and is now in `to`, and in `from` no
+    /// more unless `leave` keeps it there.
     async fn carry_one(
         &self,
         keys: &Arc<OpenKeys>,
@@ -67,6 +107,7 @@ impl Ledger {
         from: &Space,
         to: &Space,
         object_id: &str,
+        leave: Leave,
     ) -> Result<bool, VaultError> {
         let Some(record) = self.read_in(keys, from, object_id)? else {
             return Ok(false);
@@ -77,6 +118,9 @@ impl Ledger {
             .map_err(|_| VaultError::Format)?;
         self.write_in(keys, store, to, object_id, &plaintext)
             .await?;
+        if leave == Leave::Keep {
+            return Ok(true);
+        }
         if let Err(error) = self.remove_in(keys, store, from, object_id).await {
             let _ = self.remove_in(keys, store, to, object_id).await;
             return Err(error);

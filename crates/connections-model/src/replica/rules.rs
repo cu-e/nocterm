@@ -11,6 +11,7 @@
 //! document to be sent to the personal scope.
 use super::{RemoteBody, RemoteProfile, ReplicaScope, ReplicaState, ReplicaVersion, SyncedEntry};
 use crate::profiles::{Profile, ProfileId, Profiles};
+use nocterm_session::CredentialId;
 use std::collections::{HashMap, HashSet};
 
 /// One effect the reconciliation asks for.
@@ -115,6 +116,36 @@ pub fn plan(
     stale.sort_by_key(ToString::to_string);
     actions.extend(stale.into_iter().map(|id| ReplicaAction::Forget { id }));
     actions
+}
+
+/// Of the `credentials` of profile `id` that are kept in the `from` space, the ones another
+/// profile that stays there still uses. Such a secret is copied when `id` leaves, not moved:
+/// moving it would take it from the profiles that remain. A profile never sent counts as staying
+/// in the personal scope, where it is sent unless it is placed elsewhere.
+pub fn shared_secrets(
+    local: &Profiles,
+    state: &ReplicaState,
+    id: ProfileId,
+    credentials: &[CredentialId],
+    from: &ReplicaScope,
+) -> Vec<CredentialId> {
+    let staying: HashSet<CredentialId> = local
+        .iter()
+        .filter(|other| other.id != id)
+        .filter(|other| {
+            state
+                .placement(other.id)
+                .or_else(|| state.entry(other.id).map(|entry| &entry.scope))
+                .unwrap_or(&ReplicaScope::Personal)
+                == from
+        })
+        .flat_map(Profile::credentials)
+        .collect();
+    credentials
+        .iter()
+        .copied()
+        .filter(|credential| staying.contains(credential))
+        .collect()
 }
 
 /// The change that stands for each profile. A profile moved between scopes shows up twice,
