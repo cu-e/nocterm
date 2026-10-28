@@ -57,7 +57,8 @@ pub enum ReplicationEvent {
     Failed(ReplicationFailure),
     /// The replica refused to change `profile` in `scope`, because the account may not
     /// write there. When `restored`, the local profile is back to the last agreed
-    /// version; otherwise it stays local and is sent to the personal scope.
+    /// version; otherwise it stays local and is sent to the personal scope, unless the
+    /// refusal came from the personal scope itself: then it stays local only.
     Refused {
         profile: Box<Profile>,
         scope: ReplicaScope,

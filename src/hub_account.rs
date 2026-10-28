@@ -204,9 +204,10 @@ pub(crate) fn refusal_message(
         (false, ReplicaScope::Organization(_)) => format!(
             "You may not add \u{201c}{name}\u{201d} to {space}. It stays in your personal space."
         ),
-        (false, ReplicaScope::Personal) => {
-            format!("The server refused \u{201c}{name}\u{201d}. It stays on this device only.")
-        }
+        (false, ReplicaScope::Personal) => format!(
+            "The server refused \u{201c}{name}\u{201d} in your personal space. \
+             It stays on this computer and is not synchronized."
+        ),
     }
 }
 
