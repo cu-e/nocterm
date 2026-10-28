@@ -101,10 +101,12 @@ change).
   written to the new one, and the move yields to a change someone else made in the meantime.
 - Saved vault passwords and keys of a group are listed in the vault with the group's name, and
   **read-only** for a Guest. Changing one writes it back to its group, never to your own vault.
-  A key or password you create for a connection starts in your own vault; when the connection is
-  saved in an organization's space it moves into that group's vault, sealed with the group's key,
-  so the other members can use it, and it is no longer in yours (unless a personal
-  connection still uses it, below). Moving a connection from one
+  A key or password you create for a connection starts in your own vault. It reaches a group only
+  when you save the connection from the editor with an organization's space chosen (the editor
+  says so beside **Space**): it then moves into that group's vault, sealed with the group's key,
+  so the other members can use it, and it is no longer in yours (unless a personal connection
+  still uses it, below). A password saved while connecting stays in your own vault, even for an
+  organization's connection; open the connection in the editor and save it to share it. Moving a connection from one
   space to another moves its keys and passwords with it, before the connection itself; a space
   you may not write refuses both, and nothing moves. A key or password that another connection
   staying behind still uses is copied instead of moved, under a new id: the connection that

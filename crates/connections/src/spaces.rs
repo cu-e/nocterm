@@ -117,6 +117,14 @@ impl Spaces {
         }
     }
 
+    /// Records that the connection's personal secrets go with it to `scope`, where it lives,
+    /// with the save that follows.
+    pub(crate) fn share(&self, id: ProfileId, scope: ReplicaScope, cx: &mut App) {
+        if let Some(replication) = &self.replication {
+            replication.update(cx, |replication, cx| replication.share(id, scope, cx));
+        }
+    }
+
     /// The save failed: the connection stays where it was.
     pub(crate) fn unstage(&self, id: ProfileId, cx: &mut App) {
         if let Some(replication) = &self.replication {

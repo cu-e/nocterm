@@ -310,7 +310,10 @@ impl ConnectionEditor {
 
         // Part of the save: carried out once it succeeds, withdrawn if it fails.
         let is_new = self.edit.original().is_none();
-        self.space.stage(profile.id, is_new, cx);
+        // Saving with the note about a shared secret shown is the user's word that the
+        // organization may have it.
+        let shares_secret = self.authentication.shares_secret(cx);
+        self.space.stage(profile.id, is_new, shares_secret, cx);
         let saved = self.deps.connections().update(cx, |connections, cx| {
             connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
         });

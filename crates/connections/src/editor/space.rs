@@ -26,6 +26,8 @@ pub(super) struct SpaceField {
     staged: bool,
     /// The request was recorded before the save, for a new connection.
     placed_early: bool,
+    /// The save shares the connection's personal secrets with the organization it stays in.
+    shared: bool,
 }
 
 impl SpaceField {
@@ -37,6 +39,7 @@ impl SpaceField {
             selected,
             staged: false,
             placed_early: false,
+            shared: false,
         }
     }
 
@@ -102,12 +105,17 @@ impl SpaceField {
     /// connection is placed before its save, so its first synchronization already writes it
     /// there: nothing can move a connection that does not exist yet. An existing one moves
     /// once its save succeeded, so a synchronization running meanwhile cannot carry out the
-    /// move of a save that is then refused.
-    pub(super) fn stage(&mut self, id: ProfileId, is_new: bool, cx: &mut App) {
+    /// move of a save that is then refused. An organization's connection that stays where it
+    /// is but is saved with a personal secret (`shares_secret`: the note of [`Self::row`] was
+    /// shown) asks for the secret to go with it, before the save that sends it.
+    pub(super) fn stage(&mut self, id: ProfileId, is_new: bool, shares_secret: bool, cx: &mut App) {
         self.staged = self.selected != self.spaces.scope(id, cx);
         self.placed_early = self.staged && is_new;
+        self.shared = !self.staged && shares_secret && self.organization_chosen();
         if self.placed_early {
             self.spaces.stage(id, self.selected.clone(), cx);
+        } else if self.shared {
+            self.spaces.share(id, self.selected.clone(), cx);
         }
     }
 
@@ -115,6 +123,9 @@ impl SpaceField {
     /// request behind.
     pub(super) fn settle(&mut self, id: ProfileId, saved: bool, cx: &mut App) {
         let placed_early = std::mem::take(&mut self.placed_early);
+        if std::mem::take(&mut self.shared) && !saved {
+            self.spaces.unstage(id, cx);
+        }
         if !std::mem::take(&mut self.staged) {
             return;
         }

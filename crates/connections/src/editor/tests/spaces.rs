@@ -291,3 +291,46 @@ fn nothing_is_said_about_a_connection_without_a_saved_secret(cx: &mut TestAppCon
     let plain = existing(nocterm_session::Auth::Auto, false);
     assert!(!note_after_choosing(cx, plain, "editor-space-acme"));
 }
+
+#[gpui_kit::test]
+fn saving_with_the_note_shown_shares_the_secret_with_the_organization(cx: &mut TestAppContext) {
+    let (handle, workspace, _opened, installed) = workspace(cx);
+    let replica = Arc::new(MemoryReplica::new());
+    replica.set_spaces(vec![
+        space_of(ReplicaScope::Personal, "Personal"),
+        space_of(organization("acme"), "Acme"),
+    ]);
+    let profile = existing(nocterm_session::Auth::Password, true);
+    let secret = profile.credential.unwrap();
+    replica.write_remote(organization("acme"), profile.clone());
+    replica.keep_secret(ReplicaScope::Personal, secret);
+    cx.update(|cx| {
+        installed.connections().update(cx, |connections, cx| {
+            futures::FutureExt::now_or_never(connections.save_profile(profile.clone(), cx))
+                .unwrap()
+                .unwrap()
+        });
+    });
+    replicate(&installed, replica.clone(), cx);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        open_editor(
+            installed.clone(),
+            Some(profile.clone()),
+            workspace.downgrade(),
+            window,
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(window.try_find("editor-space-secret-note").is_some());
+        window.input("-edited", cx);
+        window.click("editor-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let stored = replica.profile(profile.id).expect("the edit is sent");
+    assert_ne!(stored, profile, "the edit reached the organization");
+    let shared = stored.credential.expect("the connection keeps its secret");
+    assert_eq!(replica.secret_scope(shared), Some(organization("acme")));
+}
