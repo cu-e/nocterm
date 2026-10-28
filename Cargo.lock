@@ -5471,7 +5471,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-client"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=b7658b46601629edd44c51d6105605e29df78fd9#b7658b46601629edd44c51d6105605e29df78fd9"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986#fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -5492,12 +5492,13 @@ dependencies = [
  "tower",
  "tracing",
  "webpki-roots 1.0.9",
+ "zeroize",
 ]
 
 [[package]]
 name = "nocterm-hub-grpc"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=b7658b46601629edd44c51d6105605e29df78fd9#b7658b46601629edd44c51d6105605e29df78fd9"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986#fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986"
 dependencies = [
  "nocterm-hub-proto",
  "prost",
@@ -5538,7 +5539,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-model"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=b7658b46601629edd44c51d6105605e29df78fd9#b7658b46601629edd44c51d6105605e29df78fd9"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986#fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -5551,7 +5552,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-proto"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=b7658b46601629edd44c51d6105605e29df78fd9#b7658b46601629edd44c51d6105605e29df78fd9"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986#fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986"
 dependencies = [
  "nocterm-hub-model",
  "prost",
@@ -5641,7 +5642,7 @@ dependencies = [
 [[package]]
 name = "nocterm-keys"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=b7658b46601629edd44c51d6105605e29df78fd9#b7658b46601629edd44c51d6105605e29df78fd9"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986#fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -5652,6 +5653,7 @@ dependencies = [
  "nocterm-hub-model",
  "sha2 0.11.0",
  "thiserror 2.0.21",
+ "x25519-dalek",
  "zeroize",
 ]
 
@@ -5673,7 +5675,7 @@ dependencies = [
 [[package]]
 name = "nocterm-link"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=b7658b46601629edd44c51d6105605e29df78fd9#b7658b46601629edd44c51d6105605e29df78fd9"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986#fabc445f7ef6a09ce1b1aa855f0cb8ff24c85986"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -12182,6 +12184,17 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
+
+[[package]]
+name = "x25519-dalek"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7e8131a03190127fb2263afc72b322ecadae46b6ff8c6f399ff5d02f5559af6"
+dependencies = [
+ "curve25519-dalek",
+ "rand_core 0.10.1",
+ "zeroize",
+]
 
 [[package]]
 name = "xattr"
