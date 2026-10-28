@@ -52,10 +52,15 @@ impl Listing {
             }
         };
         let top: Vec<Profile> = top.into_iter().filter_map(&mut file).collect();
+        // A folder that became empty only because its connections are shown in a section
+        // goes with them; one that was empty already is the user's remembered folder.
         let groups = groups
             .into_iter()
-            .map(|(name, members)| (name, members.into_iter().filter_map(&mut file).collect()))
-            .filter(|(_, members): &(String, Vec<Profile>)| !members.is_empty())
+            .filter_map(|(name, members)| {
+                let listed = !members.is_empty();
+                let rest: Vec<Profile> = members.into_iter().filter_map(&mut file).collect();
+                (rest.is_empty() == !listed).then_some((name, rest))
+            })
             .collect();
         Self {
             top,
@@ -140,5 +145,22 @@ impl ConnectionsPanel {
             );
         }
         list
+    }
+}
+
+impl ConnectionsPanel {
+    /// The connections of folder `group` in the user's own list. A folder is listed only
+    /// there, so what it does reaches no connection of an organization that uses the same name.
+    pub(super) fn folder_members(&self, group: &str, cx: &App) -> Vec<ProfileId> {
+        let spaces = Spaces::of(&self.installed, cx);
+        self.installed
+            .connections()
+            .read(cx)
+            .profiles(cx)
+            .in_group(Some(group), "")
+            .iter()
+            .map(|profile| profile.id)
+            .filter(|id| spaces.filed_personally(*id, cx))
+            .collect()
     }
 }

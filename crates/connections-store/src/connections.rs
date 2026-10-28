@@ -227,6 +227,44 @@ impl ConnectionStore {
     ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(Mutation::DeleteGroup { group, expected }, cx)
     }
+    /// Renames the folder `from` for the listed `members` only (`to` empty: error); other
+    /// connections that use the folder name, such as those of another space, keep it.
+    pub fn rename_group_of(
+        &mut self,
+        members: Vec<ProfileId>,
+        from: String,
+        to: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConnectionsError>> {
+        let to = Some(to);
+        self.enqueue(Mutation::Regroup { members, from, to }, cx)
+    }
+    /// Moves the listed `members` of a folder to the top level; the folder name is forgotten.
+    pub fn ungroup_of(
+        &mut self,
+        members: Vec<ProfileId>,
+        group: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConnectionsError>> {
+        let to = None;
+        self.enqueue(
+            Mutation::Regroup {
+                members,
+                from: group,
+                to,
+            },
+            cx,
+        )
+    }
+    /// Deletes the listed `members` of a folder, provided each is still in it.
+    pub fn delete_group_of(
+        &mut self,
+        group: String,
+        members: Vec<ProfileId>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConnectionsError>> {
+        self.enqueue(Mutation::DeleteMembers { group, members }, cx)
+    }
     pub fn associate_credential(
         &mut self,
         scope: CredentialScope,

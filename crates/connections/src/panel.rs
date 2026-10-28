@@ -255,15 +255,7 @@ impl ConnectionsPanel {
 
     fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
         // The delete only applies while the group still holds these connections.
-        let members: Vec<ProfileId> = self
-            .installed
-            .connections()
-            .read(cx)
-            .profiles(cx)
-            .in_group(Some(&group), "")
-            .iter()
-            .map(|profile| profile.id)
-            .collect();
+        let members = self.folder_members(&group, cx);
         let count = members.len();
         let panel = cx.weak_entity();
         let connections = self.installed.connections().clone();
@@ -377,8 +369,9 @@ impl ConnectionsPanel {
         } else {
             self.collapsed.remove(&to);
         }
+        let members = self.folder_members(&group, cx);
         let renamed = self.installed.connections().update(cx, |connections, cx| {
-            connections.rename_group(group.clone(), to.clone(), cx)
+            connections.rename_group_of(members, group.clone(), to.clone(), cx)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = renamed.await;

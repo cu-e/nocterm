@@ -11,8 +11,20 @@ fn shared(
     Entity<ConnectionsPanel>,
     [Profile; 3],
 ) {
+    shared_in(cx, None)
+}
+
+/// The same, with `own` and `team` both filed in a folder called `folder`.
+fn shared_in(
+    cx: &mut TestAppContext,
+    folder: Option<&str>,
+) -> (
+    gpui_kit::AnyWindowHandle,
+    Entity<ConnectionsPanel>,
+    [Profile; 3],
+) {
     let (handle, workspace, _opened, installed) = crate::test_support::workspace(cx);
-    let (own, team, seen) = (gp("own", None), gp("team", None), gp("seen", None));
+    let (own, team, seen) = (gp("own", folder), gp("team", folder), gp("seen", None));
     let replica = Arc::new(MemoryReplica::new());
     replica.set_spaces(vec![
         space(ReplicaScope::Personal, "Personal", true),
@@ -104,6 +116,52 @@ fn without_an_account_the_list_has_no_sections(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, _| {
         assert!(has(window, format!("edit-{}", a.id)));
         assert!(!has(window, "connections-space-acme"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn deleting_a_folder_leaves_the_connections_of_an_organization_with_the_same_name(
+    cx: &mut TestAppContext,
+) {
+    let (handle, panel, [own, team, _]) = shared_in(cx, Some("Work"));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("group-delete-Work", cx);
+        window.render_frame(cx);
+        window.click("group-delete-all", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        let connections = panel.read(cx).installed.connections().clone();
+        let profiles = connections.read(cx).profiles(cx);
+        assert!(
+            profiles.get(own.id).is_none(),
+            "the personal folder's connection goes"
+        );
+        assert!(profiles.get(team.id).is_some(), "the organization's stays");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn renaming_a_folder_leaves_the_connections_of_an_organization_with_the_same_name(
+    cx: &mut TestAppContext,
+) {
+    let (handle, panel, [own, team, _]) = shared_in(cx, Some("Work"));
+    start_rename_via_double_click(cx, handle, "Work");
+    set_rename_value(cx, handle, &panel, "Team");
+    cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        let connections = panel.read(cx).installed.connections().clone();
+        let profiles = connections.read(cx).profiles(cx);
+        assert_eq!(profiles.get(own.id).unwrap().group.as_deref(), Some("Team"));
+        assert_eq!(
+            profiles.get(team.id).unwrap().group.as_deref(),
+            Some("Work")
+        );
     })
     .unwrap();
 }

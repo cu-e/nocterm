@@ -55,6 +55,13 @@ impl Spaces {
         self.access(&self.scope(id, cx)) == ReplicaAccess::Write
     }
 
+    /// Whether the connection is listed with the user's own, filed in folders, rather than in
+    /// the section of an organization.
+    pub(crate) fn filed_personally(&self, id: ProfileId, cx: &App) -> bool {
+        let scope = self.scope(id, cx);
+        !self.organizations().any(|space| space.scope == scope)
+    }
+
     /// The organizations the account sees, in the order the replica lists them.
     pub(crate) fn organizations(&self) -> impl Iterator<Item = &ReplicaSpace> {
         self.spaces
