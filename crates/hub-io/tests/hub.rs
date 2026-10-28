@@ -273,7 +273,7 @@ fn within<T>(future: impl std::future::Future<Output = T>) -> T {
 
 fn signed_in_relay(hub: &Hub, dir: &tempfile::TempDir) -> (std::sync::Arc<HubLinks>, HubRelay) {
     let links = links(dir);
-    sign_in(&links, &hub).unwrap();
+    sign_in(&links, hub).unwrap();
     let relay = HubRelay::new(&links);
     (links, relay)
 }
