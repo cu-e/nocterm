@@ -118,11 +118,11 @@ impl Spaces {
     }
 
     /// Records that the connection's personal secrets go with it to `scope`, where it lives,
-    /// with the save that follows.
-    pub(crate) fn share(&self, id: ProfileId, scope: ReplicaScope, cx: &mut App) {
-        if let Some(replication) = &self.replication {
-            replication.update(cx, |replication, cx| replication.share(id, scope, cx));
-        }
+    /// with the save that follows. Returns whether the request was recorded.
+    pub(crate) fn share(&self, id: ProfileId, scope: ReplicaScope, cx: &mut App) -> bool {
+        self.replication.as_ref().is_some_and(|replication| {
+            replication.update(cx, |replication, cx| replication.share(id, scope, cx))
+        })
     }
 
     /// The save failed: the connection stays where it was.

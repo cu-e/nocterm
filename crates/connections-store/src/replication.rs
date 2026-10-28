@@ -240,14 +240,21 @@ impl ProfileReplication {
 
     /// Asks for the profile's personal secrets to go with it to `scope`, the space it lives
     /// in, on its next push: the user agreed to share them there. Like [`Self::stage`], the
-    /// save that follows carries it out; [`Self::unstage`] withdraws it.
-    pub fn share(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) {
+    /// save that follows carries it out; [`Self::unstage`] withdraws it. A request already
+    /// pending for the profile, such as an unfinished move, is left as it is. Returns whether
+    /// this request was recorded, so only its own caller withdraws it.
+    pub fn share(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) -> bool {
+        if self.state.read(cx).visible().placement(id).is_some() {
+            return false;
+        }
         let result = self.state.update(cx, |state, cx| {
             state.update_latest(move |state| state.place(id, scope), cx)
         });
         if let Err(error) = result {
             tracing::error!(%error, "could not keep the request to share a profile's secrets");
+            return false;
         }
+        true
     }
 
     /// Withdraws a request without synchronizing: the save it belonged to failed.

@@ -276,13 +276,10 @@ impl ConnectionEditor {
         }
     }
 
-    /// Saves the connection, and opens it when `and_connect` is set.
-    /// The choice of space, with its note when the connection's secret would be shared.
+    /// The choice of space.
     fn space_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let editor = cx.weak_entity();
-        let shares_secret = self.authentication.shares_secret(cx);
         self.space.row(
-            shares_secret,
             move |scope, _, cx| {
                 let _ = editor.update(cx, |this, cx| {
                     this.space.select(scope);
@@ -293,6 +290,7 @@ impl ConnectionEditor {
         )
     }
 
+    /// Saves the connection, and opens it when `and_connect` is set.
     fn save(&mut self, and_connect: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.edit.try_begin() {
             return;
@@ -310,9 +308,11 @@ impl ConnectionEditor {
 
         // Part of the save: carried out once it succeeds, withdrawn if it fails.
         let is_new = self.edit.original().is_none();
-        // Saving with the note about a shared secret shown is the user's word that the
-        // organization may have it.
-        let shares_secret = self.authentication.shares_secret(cx);
+        // Saving a change with the note about a shared secret shown beside the save is the
+        // user's word that the organization may have it. A save that changes nothing sends
+        // nothing, so it asks for nothing either.
+        let changed = self.edit.original() != Some(&profile);
+        let shares_secret = changed && self.authentication.shares_secret(cx);
         self.space.stage(profile.id, is_new, shares_secret, cx);
         let saved = self.deps.connections().update(cx, |connections, cx| {
             connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
@@ -505,7 +505,11 @@ impl Render for EditorFooter {
 impl ConnectionEditor {
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let danger = cx.theme().danger;
+        let note = self
+            .space
+            .secret_note(self.authentication.shares_secret(cx), cx);
         v_flex().id("editor-footer").gap_2()
+            .children(note)
             .when_some(self.error.clone(), |form, error| {
                 form.child(div().text_sm().text_color(danger).child(error))
                     .when(self.edit.original().is_some(), |form| form.child(

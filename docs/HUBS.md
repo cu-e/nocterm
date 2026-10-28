@@ -107,8 +107,8 @@ and the group stays hidden until you confirm the new key the same way.
 - Saved vault passwords and keys of a group are listed in the vault with the group's name, and
   **read-only** for a Guest. Changing one writes it back to its group, never to your own vault.
   A key or password you create for a connection starts in your own vault. It reaches a group only
-  when you save the connection from the editor with an organization's space chosen (the editor
-  says so beside **Space**): it then moves into that group's vault, sealed with the group's key,
+  when you save a change to the connection from the editor with an organization's space chosen
+  (the editor says so beside **Save**): it then moves into that group's vault, sealed with the group's key,
   so the other members can use it, and it is no longer in yours (unless a personal connection
   still uses it, below). A password saved while connecting stays in your own vault, even for an
   organization's connection; open the connection in the editor and save it to share it. Moving a connection from one

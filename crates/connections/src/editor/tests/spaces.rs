@@ -292,8 +292,12 @@ fn nothing_is_said_about_a_connection_without_a_saved_secret(cx: &mut TestAppCon
     assert!(!note_after_choosing(cx, plain, "editor-space-acme"));
 }
 
-#[gpui_kit::test]
-fn saving_with_the_note_shown_shares_the_secret_with_the_organization(cx: &mut TestAppContext) {
+/// Saves an "Acme" connection whose password sits in the personal vault from an editor
+/// that first runs `before_save`, and returns the space its secret ends up in.
+fn secret_space_after_saving(
+    cx: &mut TestAppContext,
+    before_save: impl FnOnce(&mut Window, &mut App),
+) -> Option<ReplicaScope> {
     let (handle, workspace, _opened, installed) = workspace(cx);
     let replica = Arc::new(MemoryReplica::new());
     replica.set_spaces(vec![
@@ -322,15 +326,39 @@ fn saving_with_the_note_shown_shares_the_secret_with_the_organization(cx: &mut T
             cx,
         );
         window.render_frame(cx);
-        assert!(window.try_find("editor-space-secret-note").is_some());
-        window.input("-edited", cx);
+        before_save(window, cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("editor-space-secret-note").is_some(),
+            "the note stands beside the save"
+        );
         window.click("editor-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
 
-    let stored = replica.profile(profile.id).expect("the edit is sent");
-    assert_ne!(stored, profile, "the edit reached the organization");
-    let shared = stored.credential.expect("the connection keeps its secret");
-    assert_eq!(replica.secret_scope(shared), Some(organization("acme")));
+    let stored = replica.profile(profile.id).expect("the connection is sent");
+    let kept = stored.credential.expect("the connection keeps its secret");
+    replica.secret_scope(kept)
+}
+
+#[gpui_kit::test]
+fn saving_with_the_note_shown_shares_the_secret_with_the_organization(cx: &mut TestAppContext) {
+    let space = secret_space_after_saving(cx, |window, cx| window.input("-edited", cx));
+    assert_eq!(space, Some(organization("acme")));
+}
+
+#[gpui_kit::test]
+fn the_note_stands_beside_the_save_on_the_authentication_page(cx: &mut TestAppContext) {
+    let space = secret_space_after_saving(cx, |window, cx| {
+        window.input("-edited", cx);
+        window.click("editor-section-authentication", cx);
+    });
+    assert_eq!(space, Some(organization("acme")));
+}
+
+#[gpui_kit::test]
+fn a_save_that_changes_nothing_leaves_the_secret_personal(cx: &mut TestAppContext) {
+    let space = secret_space_after_saving(cx, |_, _| {});
+    assert_eq!(space, Some(ReplicaScope::Personal));
 }

@@ -23,7 +23,8 @@ pub struct ReplicaState {
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     unrecognized: HashSet<ProfileId>,
     /// Where the user wants a profile to live when that differs from where it was
-    /// agreed to live (or it has not been sent yet). Cleared once the profile is sent.
+    /// agreed to live (or it has not been sent yet), or the space it stays in when its
+    /// personal secrets are to go with it there. Cleared once the profile is sent.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     placements: HashMap<ProfileId, ReplicaScope>,
 }
