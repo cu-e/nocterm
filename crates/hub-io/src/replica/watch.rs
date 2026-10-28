@@ -2,7 +2,8 @@
 //!
 //! A task on the adapter's threads follows the hub's change hints of the account's own
 //! collection and of every group's it holds the key of, and ticks when the feed connects, when a
-//! hint arrives and when the vault unlocks (profiles can only be read with the keys). It
+//! hint arrives, when the vault unlocks (profiles can only be read with the keys) and when the
+//! open keys change, as they do when an administrator is confirmed. It
 //! reconnects with a pause after a failure and ends when the stream is dropped. A group that
 //! gets its key later is followed from the next connection on; every synchronization still reads
 //! it.
@@ -73,6 +74,9 @@ async fn once(
                 if changed.is_err() || slot.open().is_none() {
                     return;
                 }
+                // The keys changed while open: a group may have become readable (an
+                // administrator was confirmed), so the profiles are read again.
+                let _ = ticks.try_send(());
             }
         }
     }

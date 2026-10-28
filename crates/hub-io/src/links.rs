@@ -1,4 +1,4 @@
-//! The hub adapter's entry point: the runtime and the three ports.
+//! The hub adapter's entry point: the runtime and the four ports.
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -11,15 +11,16 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
-    Account, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
-    HubSessionId, HubSessionSummary, HubSessions, HubSignIn, HubTerminal, HubTerminalTarget,
-    HubTrust, KeyStatus, NodeSummary, OidcSignIn, OrgId, ProbedHub, SignedIn,
+    Account, AdminKeyError, Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec, HubError,
+    HubFuture, HubId, HubInfo, HubSessionId, HubSessionSummary, HubSessions, HubSignIn,
+    HubTerminal, HubTerminalTarget, HubTrust, KeyStatus, NodeSummary, OidcSignIn, OrgId,
+    PendingAdminKey, ProbedHub, SignedIn,
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::AbortHandle;
 
-use crate::account::{Accounts, KeyFlow};
+use crate::account::{Accounts, AdminKeys, KeyFlow};
 use crate::classify::{probe_failed, remote};
 use crate::connect::Connector;
 use crate::directory::Directory;
@@ -248,6 +249,26 @@ impl HubSignIn for HubLinks {
 
     fn forget(&self, hub: &HubId) -> Result<(), HubError> {
         self.connector.forget(hub)
+    }
+}
+
+impl HubAdminKeys for HubLinks {
+    fn pending_admin_keys(&self, hub: &HubId) -> Vec<PendingAdminKey> {
+        self.accounts
+            .slot(hub)
+            .map(|slot| AdminKeys::new(slot).pending())
+            .unwrap_or_default()
+    }
+
+    fn confirm_admin_key(
+        &self,
+        hub: &HubId,
+        account_id: &str,
+        fingerprint: &str,
+    ) -> Result<(), AdminKeyError> {
+        // A hub without a readable cache has no account keys to open.
+        let slot = self.accounts.slot(hub).map_err(|_| AdminKeyError::Locked)?;
+        AdminKeys::new(slot).confirm(account_id, fingerprint)
     }
 }
 

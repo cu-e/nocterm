@@ -1,7 +1,7 @@
 use futures::executor::block_on;
 
 use super::*;
-use crate::Fingerprint;
+use crate::{AdminKeyError, Fingerprint, HubAdminKeys, PendingAdminKey};
 
 const ADDRESS: &str = "hub.example:7443";
 
@@ -430,4 +430,61 @@ fn a_browser_sign_in_needs_the_vault_passphrase_to_open_or_make_the_keys() {
     assert_eq!(again.unwrap(), KeyStatus::Open);
     let other = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("another passphrase")));
     assert_eq!(other.unwrap(), KeyStatus::RecoveryNeeded);
+}
+
+fn acme_key(fingerprint: &str) -> PendingAdminKey {
+    PendingAdminKey {
+        organization: "Acme".to_owned(),
+        admin: "Grace".to_owned(),
+        account_id: "grace".to_owned(),
+        fingerprint: fingerprint.to_owned(),
+        replaces: None,
+    }
+}
+
+#[test]
+fn a_confirmed_admin_key_leaves_the_pending_list_and_raises_the_keys_notice() {
+    let hub = FakeHub::new();
+    let keys = FakeAdminKeys::alongside(&hub);
+    keys.offer(&hub_id(), acme_key("aaaa bbbb"));
+    let seen = hub.keys_revision();
+    assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
+
+    keys.confirm_admin_key(&hub_id(), "grace", "AAAA-BBBB")
+        .unwrap();
+
+    assert!(keys.pending_admin_keys(&hub_id()).is_empty());
+    assert_ne!(hub.keys_revision(), seen);
+    assert_eq!(keys.confirmed()[0].1.account_id, "grace");
+}
+
+#[test]
+fn an_admin_key_is_refused_for_another_fingerprint_or_when_nothing_is_pending() {
+    let hub = FakeHub::new();
+    let keys = FakeAdminKeys::alongside(&hub);
+    keys.offer(&hub_id(), acme_key("aaaa"));
+
+    assert_eq!(
+        keys.confirm_admin_key(&hub_id(), "grace", "cccc"),
+        Err(AdminKeyError::Mismatch)
+    );
+    assert_eq!(
+        keys.confirm_admin_key(&hub_id(), "someone", "aaaa"),
+        Err(AdminKeyError::NotPending)
+    );
+    assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
+}
+
+#[test]
+fn closed_keys_list_and_confirm_no_admin_key() {
+    let hub = FakeHub::new();
+    let keys = FakeAdminKeys::alongside(&hub);
+    keys.offer(&hub_id(), acme_key("aaaa"));
+    hub.lock_keys(&hub_id());
+
+    assert!(keys.pending_admin_keys(&hub_id()).is_empty());
+    assert_eq!(
+        keys.confirm_admin_key(&hub_id(), "grace", "aaaa"),
+        Err(AdminKeyError::Locked)
+    );
 }
