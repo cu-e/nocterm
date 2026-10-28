@@ -46,6 +46,7 @@ pub use installation::{Installed, install};
 pub use menu::register;
 pub use ports::{EnvironmentOpenError, EnvironmentOpener, Placement};
 pub use servers::settings_page;
+pub use sign_in::sign_in_again;
 
 gpui_kit::actions!(
     hubs,

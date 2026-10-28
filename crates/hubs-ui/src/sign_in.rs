@@ -46,6 +46,12 @@ pub(crate) fn start(
     }
 }
 
+/// Signs in again to the known server `hub` from its own window, such as when this device
+/// holds no keys for its account. Nothing is switched: the window stays where it is.
+pub fn sign_in_again(hubs: &Entity<Hubs>, hub: &HubId, window: &mut Window, cx: &mut App) {
+    start(hubs, Some(hub), None, window, cx);
+}
+
 /// Shows the dialog that issues a new recovery key for the listed, signed-in server `hub`.
 pub(crate) fn start_reissue(hubs: &Entity<Hubs>, hub: &HubId, window: &mut Window, cx: &mut App) {
     let session = hubs.update(cx, |hubs, cx| hubs.start_recovery_key_reissue(hub, cx));
