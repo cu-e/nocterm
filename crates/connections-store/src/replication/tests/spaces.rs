@@ -1,5 +1,6 @@
 use super::*;
 use nocterm_connections_model::replica::{ReplicaAccess, ReplicaSpace};
+use nocterm_session::CredentialId;
 
 fn acme() -> ReplicaScope {
     ReplicaScope::Organization("acme".into())
@@ -265,4 +266,110 @@ async fn a_staged_move_waits_for_the_save_and_a_withdrawn_one_never_happens(
     assert_eq!(in_acme(&fixture, &kept), Some(kept.clone()));
     assert_eq!(in_acme(&fixture, &dropped), None);
     assert_eq!(in_personal(&fixture, &dropped), Some(dropped));
+}
+
+fn with_secret(profile: &Profile, byte: u8) -> (Profile, CredentialId) {
+    let credential = CredentialId::from_bytes([byte; 16]);
+    let profile = Profile {
+        credential: Some(credential),
+        ..profile.clone()
+    };
+    (profile, credential)
+}
+
+#[gpui::test]
+async fn a_profile_moving_into_a_group_takes_its_secret_along_before_it_leaves(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (mine, secret) = with_secret(&profile("mine"), 7);
+    let fixture = Fixture::new(cx, std::slice::from_ref(&mine));
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    fixture.attach(cx);
+    fixture.place(cx, &mine, acme());
+    assert_eq!(fixture.replica.secret_scope(secret), Some(acme()));
+    let calls = fixture.replica.writes();
+    assert!(matches!(
+        calls[1..],
+        [
+            ReplicaCall::Carry { .. },
+            ReplicaCall::Delete { .. },
+            ReplicaCall::Put { .. }
+        ]
+    ));
+    assert_eq!(
+        calls[1],
+        ReplicaCall::Carry {
+            id: mine.id,
+            from: ReplicaScope::Personal,
+            to: acme(),
+            credentials: vec![secret],
+        }
+    );
+    assert_eq!(in_acme(&fixture, &mine), Some(mine.clone()));
+    assert!(fixture.events().is_empty());
+}
+
+#[gpui::test]
+async fn a_profile_moving_back_takes_its_secret_out_of_the_group(cx: &mut gpui::TestAppContext) {
+    let (shared, secret) = with_secret(&profile("shared"), 8);
+    let fixture = Fixture::new(cx, &[]);
+    fixture.replica.write_remote(acme(), shared.clone());
+    fixture.replica.keep_secret(acme(), secret);
+    fixture.attach(cx);
+    fixture.place(cx, &shared, ReplicaScope::Personal);
+    assert_eq!(
+        fixture.replica.secret_scope(secret),
+        Some(ReplicaScope::Personal)
+    );
+    assert_eq!(in_personal(&fixture, &shared), Some(shared.clone()));
+}
+
+#[gpui::test]
+async fn a_new_group_profile_keeps_no_secret_in_the_personal_vault(cx: &mut gpui::TestAppContext) {
+    let (added, secret) = with_secret(&profile("team"), 9);
+    let fixture = Fixture::new(cx, &[]);
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    fixture.attach(cx);
+    fixture.place(cx, &added, acme());
+    fixture.save(cx, added.clone()).await;
+    assert_eq!(fixture.replica.secret_scope(secret), Some(acme()));
+    assert_eq!(in_acme(&fixture, &added), Some(added.clone()));
+}
+
+#[gpui::test]
+async fn a_refused_move_leaves_the_secret_and_the_profile_where_they_are(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (mine, secret) = with_secret(&profile("mine"), 10);
+    let fixture = Fixture::new(cx, std::slice::from_ref(&mine));
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    fixture.attach(cx);
+    fixture.replica.refuse_writes_in(acme());
+    fixture.place(cx, &mine, acme());
+    assert_eq!(
+        fixture.replica.secret_scope(secret),
+        Some(ReplicaScope::Personal)
+    );
+    assert_eq!(in_personal(&fixture, &mine), Some(mine.clone()));
+    assert_eq!(in_acme(&fixture, &mine), None);
+    assert_eq!(fixture.space_of(cx, &mine), ReplicaScope::Personal);
+    assert!(matches!(
+        fixture.events().as_slice(),
+        [ReplicationEvent::Refused { scope, .. }] if *scope == acme()
+    ));
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Synced));
+}
+
+#[gpui::test]
+async fn a_secret_kept_in_another_group_is_not_pulled_into_a_profiles_group(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (added, secret) = with_secret(&profile("team"), 11);
+    let other = ReplicaScope::Organization("other".into());
+    let fixture = Fixture::new(cx, &[]);
+    fixture.replica.keep_secret(other.clone(), secret);
+    fixture.attach(cx);
+    fixture.place(cx, &added, acme());
+    fixture.save(cx, added.clone()).await;
+    assert_eq!(fixture.replica.secret_scope(secret), Some(other));
 }

@@ -304,6 +304,18 @@ impl Profiles {
 }
 
 impl Profile {
+    /// The vault credentials the connection signs in with: its saved credential and its
+    /// vault key, each once. They are the secrets that travel with it between spaces.
+    pub fn credentials(&self) -> Vec<CredentialId> {
+        let key = match &self.auth {
+            Auth::VaultKey { credential, .. } => Some(*credential),
+            _ => None,
+        };
+        let mut found: Vec<CredentialId> = self.credential.into_iter().chain(key).collect();
+        found.dedup();
+        found
+    }
+
     /// Whether `filter` occurs, ignoring case, in the name, the destination or
     /// the folder. An empty filter matches everything.
     pub fn matches(&self, filter: &str) -> bool {

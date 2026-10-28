@@ -13,6 +13,7 @@ pub use state::{ReplicaState, SyncedEntry};
 use crate::profiles::{Profile, ProfileId};
 use futures::{future::BoxFuture, stream::BoxStream};
 use nocterm_core::SharedCause;
+use nocterm_session::CredentialId;
 use serde::{Deserialize, Serialize};
 
 /// Where a replicated profile lives: the user's own space or an organization's.
@@ -138,6 +139,21 @@ pub trait ProfileReplica: Send + Sync {
         id: ProfileId,
         expected: ReplicaVersion,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>>;
+
+    /// Moves the secrets of profile `id` that are kept in the `from` space to the `to`
+    /// space, sealed with its key, and answers the ones that moved. A secret not kept in
+    /// `from` stays where it is. A space the account may not write is `Forbidden`, and
+    /// nothing has moved then. A replica that keeps no secrets moves none.
+    fn carry(
+        &self,
+        id: ProfileId,
+        from: ReplicaScope,
+        to: ReplicaScope,
+        credentials: Vec<CredentialId>,
+    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+        let _ = (id, from, to, credentials);
+        Box::pin(std::future::ready(Ok(Vec::new())))
+    }
 
     /// Yields once whenever the replica may have new changes.
     fn watch(&self) -> BoxStream<'static, ()>;

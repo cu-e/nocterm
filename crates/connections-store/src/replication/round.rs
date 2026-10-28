@@ -15,8 +15,12 @@ use nocterm_connections_model::{
         rules::{self, ReplicaAction},
     },
 };
+use nocterm_session::CredentialId;
 use nocterm_store::Persisted;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Passes tried before a profile that keeps changing under us is reported.
 pub(super) const MAX_ATTEMPTS: usize = 3;
@@ -33,6 +37,12 @@ enum Stop {
     Halt(Outcome),
     /// The application or the owning entity is gone.
     Gone,
+}
+
+/// Where a profile that leaves its scope arrives, and the secrets that go with it.
+struct Arrival {
+    scope: ReplicaScope,
+    credentials: Vec<CredentialId>,
 }
 
 /// Why one action did not finish.
@@ -85,6 +95,31 @@ fn local_flow(id: ProfileId, error: ConnectionsError) -> Flow {
         }
         _ => halt(ReplicationFailure::Local(error)).into(),
     }
+}
+
+/// The profiles that leave a scope in this pass and where they arrive: a profile that is
+/// deleted in one scope and created in another moves.
+fn arrivals(actions: &[ReplicaAction]) -> HashMap<ProfileId, Arrival> {
+    let leaving: HashSet<ProfileId> = actions
+        .iter()
+        .filter_map(|action| match action {
+            ReplicaAction::PushDelete { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    actions
+        .iter()
+        .filter_map(|action| match action {
+            ReplicaAction::Push { scope, profile, .. } if leaving.contains(&profile.id) => Some((
+                profile.id,
+                Arrival {
+                    scope: scope.clone(),
+                    credentials: profile.credentials(),
+                },
+            )),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(super) struct Round {
@@ -193,12 +228,13 @@ impl Round {
     async fn apply(&self, actions: Vec<ReplicaAction>, cx: &mut AsyncApp) -> Result<bool, Stop> {
         let mut skipped = HashSet::new();
         let mut retry = false;
+        let arrivals = arrivals(&actions);
         for action in actions {
             let id = action.id();
             if skipped.contains(&id) {
                 continue;
             }
-            match self.execute(action, cx).await {
+            match self.execute(action, &arrivals, cx).await {
                 Ok(()) => {}
                 Err(Flow::Conflict) => {
                     retry = true;
@@ -217,7 +253,12 @@ impl Round {
         Ok(retry)
     }
 
-    async fn execute(&self, action: ReplicaAction, cx: &mut AsyncApp) -> Result<(), Flow> {
+    async fn execute(
+        &self,
+        action: ReplicaAction,
+        arrivals: &HashMap<ProfileId, Arrival>,
+        cx: &mut AsyncApp,
+    ) -> Result<(), Flow> {
         match action {
             ReplicaAction::SaveLocal {
                 scope,
@@ -240,7 +281,10 @@ impl Round {
                 scope,
                 id,
                 expected,
-            } => self.push_delete(scope, id, expected, cx).await,
+            } => {
+                self.push_delete(scope, id, expected, arrivals.get(&id), cx)
+                    .await
+            }
             ReplicaAction::MarkSynced {
                 scope,
                 version,
@@ -299,14 +343,74 @@ impl Round {
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
         let id = profile.id;
+        // A profile placed in a group brings along the secrets it keeps personally; one
+        // that moved there already carried its own before it left the old space.
+        let carried = match scope {
+            ReplicaScope::Personal => Vec::new(),
+            _ => {
+                self.carry(
+                    &profile,
+                    profile.credentials(),
+                    ReplicaScope::Personal,
+                    &scope,
+                    cx,
+                )
+                .await?
+            }
+        };
         let sent = self
             .replica
             .put(scope.clone(), profile.clone(), expected)
             .await;
         match sent {
             Ok(version) => Ok(self.agree(scope, version, profile, cx)?),
-            Err(ReplicaError::Forbidden { .. }) => self.refused(id, profile, scope, cx).await,
+            Err(error) => {
+                self.carry_back(id, &scope, ReplicaScope::Personal, carried)
+                    .await;
+                match error {
+                    ReplicaError::Forbidden { .. } => self.refused(id, profile, scope, cx).await,
+                    error => Err(remote_flow(error)),
+                }
+            }
+        }
+    }
+
+    /// Moves the `credentials` of `shown` that are kept in `from` into `to`, and answers the
+    /// ones that moved. A space that refuses them is handled like a refusal of the profile
+    /// itself, before anything moved.
+    async fn carry(
+        &self,
+        shown: &Profile,
+        credentials: Vec<CredentialId>,
+        from: ReplicaScope,
+        to: &ReplicaScope,
+        cx: &mut AsyncApp,
+    ) -> Result<Vec<CredentialId>, Flow> {
+        if credentials.is_empty() || from == *to {
+            return Ok(Vec::new());
+        }
+        let id = shown.id;
+        match self.replica.carry(id, from, to.clone(), credentials).await {
+            Ok(moved) => Ok(moved),
+            Err(ReplicaError::Forbidden { .. }) => {
+                self.refused(id, shown.clone(), to.clone(), cx).await?;
+                Ok(Vec::new())
+            }
             Err(error) => Err(remote_flow(error)),
+        }
+    }
+
+    /// Puts secrets that moved from `from` back into `to`, after the profile did not
+    /// follow. Best effort: a secret that cannot go back is still readable where it is.
+    async fn carry_back(
+        &self,
+        id: ProfileId,
+        from: &ReplicaScope,
+        to: ReplicaScope,
+        moved: Vec<CredentialId>,
+    ) {
+        if !moved.is_empty() {
+            let _ = self.replica.carry(id, from.clone(), to, moved).await;
         }
     }
 
@@ -315,14 +419,33 @@ impl Round {
         scope: ReplicaScope,
         id: ProfileId,
         expected: ReplicaVersion,
+        arrival: Option<&Arrival>,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
+        let agreed = self
+            .state
+            .read_with(cx, |state, _| state.visible().entry(id).cloned());
+        // The secrets of a profile that moves go first, so a space that refuses them is
+        // found before the profile leaves the one it is in.
+        let mut carried = Vec::new();
+        if let (Some(arrival), Some(entry)) = (arrival, &agreed) {
+            carried = self
+                .carry(
+                    &entry.profile,
+                    arrival.credentials.clone(),
+                    scope.clone(),
+                    &arrival.scope,
+                    cx,
+                )
+                .await?;
+        }
         match self.replica.delete(scope.clone(), id, expected).await {
             Ok(_) => Ok(self.record(cx, move |state| state.forget(id))?),
             Err(ReplicaError::Forbidden { .. }) => {
-                let agreed = self
-                    .state
-                    .read_with(cx, |state, _| state.visible().entry(id).cloned());
+                if let Some(arrival) = arrival {
+                    self.carry_back(id, &arrival.scope, scope.clone(), carried)
+                        .await;
+                }
                 match agreed {
                     Some(entry) => self.refused(id, entry.profile, scope, cx).await,
                     None => Err(Flow::Refused),

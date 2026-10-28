@@ -9,6 +9,7 @@ use crate::{
 use futures::{
     FutureExt as _, StreamExt as _, channel::mpsc, future::BoxFuture, stream::BoxStream,
 };
+use nocterm_session::CredentialId;
 use std::{
     collections::{HashMap, HashSet},
     sync::Mutex,
@@ -25,6 +26,12 @@ pub enum ReplicaCall {
     Delete {
         id: ProfileId,
         expected: ReplicaVersion,
+    },
+    Carry {
+        id: ProfileId,
+        from: ReplicaScope,
+        to: ReplicaScope,
+        credentials: Vec<CredentialId>,
     },
 }
 
@@ -46,6 +53,7 @@ struct Inner {
     concurrent: Option<(ReplicaScope, Profile)>,
     page_size: Option<usize>,
     calls: Vec<ReplicaCall>,
+    secrets: HashMap<CredentialId, ReplicaScope>,
 }
 
 /// Versions and cursors come from one counter, so a cursor is "after write N".
@@ -193,6 +201,16 @@ impl MemoryReplica {
         self.with(|inner| inner.forbidden_scopes.insert(scope));
     }
 
+    /// A secret is kept in `scope`, as the vault of that space would hold it.
+    pub fn keep_secret(&self, scope: ReplicaScope, credential: CredentialId) {
+        self.with(|inner| inner.secrets.insert(credential, scope));
+    }
+
+    /// The space that keeps a secret now.
+    pub fn secret_scope(&self, credential: CredentialId) -> Option<ReplicaScope> {
+        self.with(|inner| inner.secrets.get(&credential).cloned())
+    }
+
     /// The spaces the replica reports to the application.
     pub fn set_spaces(&self, spaces: Vec<ReplicaSpace>) {
         self.with(|inner| inner.spaces = spaces);
@@ -323,6 +341,41 @@ impl ProfileReplica for MemoryReplica {
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
         let call = ReplicaCall::Delete { id, expected };
         let result = self.write(id, call, Some(expected), scope, RemoteBody::Deleted);
+        futures::future::ready(result).boxed()
+    }
+
+    fn carry(
+        &self,
+        id: ProfileId,
+        from: ReplicaScope,
+        to: ReplicaScope,
+        credentials: Vec<CredentialId>,
+    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+        let result = self.with(|inner| {
+            inner.calls.push(ReplicaCall::Carry {
+                id,
+                from: from.clone(),
+                to: to.clone(),
+                credentials: credentials.clone(),
+            });
+            if inner.offline {
+                return Err(ReplicaError::Unavailable);
+            }
+            if inner.forbidden.contains(&id)
+                || inner.forbidden_scopes.contains(&from)
+                || inner.forbidden_scopes.contains(&to)
+            {
+                return Err(ReplicaError::Forbidden { id });
+            }
+            let mut moved = Vec::new();
+            for credential in credentials {
+                if inner.secrets.get(&credential) == Some(&from) {
+                    inner.secrets.insert(credential, to.clone());
+                    moved.push(credential);
+                }
+            }
+            Ok(moved)
+        });
         futures::future::ready(result).boxed()
     }
 
