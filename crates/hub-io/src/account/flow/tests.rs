@@ -157,7 +157,7 @@ pub(super) mod race {
             .slot()
             .open()
             .unwrap()
-            .collection("shared", &envelope);
+            .own_collection("shared", &envelope);
         assert!(
             opened.is_ok(),
             "one account key opens what the other sealed"
@@ -181,6 +181,47 @@ pub(super) mod race {
         for device in [&first, &second] {
             assert_eq!(device.slot().status(), VaultStatus::Unlocked);
         }
+    }
+
+    #[tokio::test]
+    async fn a_keyset_sealed_with_the_login_password_is_not_opened_with_a_passphrase() {
+        let hub_keys = MemoryKeysets::default();
+        let (first, second) = (Device::new(), Device::new());
+        assert!(is_created(&first.sign_in(&hub_keys, PASSWORD).await));
+
+        let refused = second
+            .flow
+            .open_with_passphrase(&hub(), &hub_keys, ACCOUNT_ID, Secret::new(PASSPHRASE))
+            .await;
+
+        assert!(matches!(
+            refused,
+            Err(HubError::UnlockSourceMismatch {
+                needs_login_password: true
+            })
+        ));
+        assert!(second.slot().open().is_none());
+        assert!(
+            second.slot().recovery().is_none(),
+            "a wrong source is not a wrong password: no recovery key is asked for"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_keyset_sealed_with_a_vault_password_asks_for_it_instead_of_the_login_password() {
+        let hub_keys = MemoryKeysets::default();
+        let (first, second) = (Device::new(), Device::new());
+        first.with_passphrase(&hub_keys, PASSPHRASE).await;
+
+        let status = second.sign_in(&hub_keys, PASSWORD).await;
+
+        assert_eq!(status, KeyStatus::PassphraseNeeded);
+        assert!(second.slot().open().is_none());
+        assert!(second.slot().recovery().is_none());
+        assert_eq!(
+            second.with_passphrase(&hub_keys, PASSPHRASE).await,
+            KeyStatus::Open
+        );
     }
 
     #[tokio::test]

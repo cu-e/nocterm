@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use nocterm_hub_client::{Keyset, KeysetError};
+use nocterm_hub_client::{Keyset, KeysetError, UnlockMethod as KeysetUnlock};
 use nocterm_hub_proto::v1;
-use nocterm_keys::{LoginError, LoginSecrets, UnlockKdf, UnlockKey};
+use nocterm_keys::{LoginError, LoginSecrets, UnlockKey};
 use nocterm_session::Secret;
 use nocterm_vault::VaultError;
 
@@ -46,7 +46,8 @@ impl Unlocker {
         {
             tracing::warn!(%error, "the account cache cannot be written");
         }
-        self.slot.unlocked(OpenKeys::new(keyset));
+        self.slot
+            .unlocked(OpenKeys::pinning(keyset, cached.pinned()));
         Ok(())
     }
 
@@ -61,25 +62,30 @@ impl Unlocker {
     }
 }
 
-/// The unlock key of the typed password. Key derivation is slow and memory hard, so it runs on
-/// a thread of its own.
+/// The unlock key of the typed password, derived the way the keyset records ([`KeysetUnlock`]),
+/// not the way the person happened to sign in. Key derivation is slow and memory hard, so it
+/// runs on a thread of its own.
 async fn derive(
     cached: &AccountCache,
     record: &v1::AccountKeyset,
     password: Secret,
 ) -> Result<UnlockKey, VaultError> {
-    let method = cached.method.clone();
+    let method = KeysetUnlock::of(record).map_err(|_| VaultError::Format)?;
     let hub_uid = cached.hub_uid.clone();
-    let kdf = UnlockKdf::parse(&record.kdf, &record.salt);
-    let derived = tokio::task::spawn_blocking(move || match method {
-        UnlockMethod::Login { username } => {
+    // Only a login password needs the user name, which the cache kept from the sign-in.
+    let username = match &cached.method {
+        UnlockMethod::Login { username } => Some(username.clone()),
+        UnlockMethod::Passphrase => None,
+    };
+    let derived = tokio::task::spawn_blocking(move || match (method, username) {
+        (KeysetUnlock::LoginPassword, Some(username)) => {
             LoginSecrets::derive(password.expose(), &hub_uid, &username)
                 .map(LoginSecrets::into_unlock)
         }
-        UnlockMethod::Passphrase => match kdf {
-            Ok(kdf) => UnlockKey::from_vault_password(password.expose(), &kdf),
-            Err(_) => Err(LoginError::EmptyUsername),
-        },
+        (KeysetUnlock::LoginPassword, None) => Err(LoginError::EmptyUsername),
+        (KeysetUnlock::VaultPassword(kdf), _) => {
+            UnlockKey::from_vault_password(password.expose(), &kdf)
+        }
     })
     .await
     .map_err(|_| VaultError::Cancelled)?;

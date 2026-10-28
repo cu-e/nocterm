@@ -126,6 +126,17 @@ async fn frames_reach_the_hub_in_order_and_an_end_of_file_is_a_half_close() {
 }
 
 #[tokio::test]
+async fn an_empty_frame_from_the_transport_is_not_sent_to_the_hub() {
+    let mut relay = relay(None);
+    relay.to_hub.send(Vec::new()).await.unwrap();
+    relay.to_hub.send(b"one".to_vec()).await.unwrap();
+    relay.to_hub.send(Vec::new()).await.unwrap();
+    drop(relay.to_hub);
+    assert_eq!(relay.told.recv().await, Some(Told::Data(b"one".to_vec())));
+    assert_eq!(relay.told.recv().await, Some(Told::Finished));
+}
+
+#[tokio::test]
 async fn data_from_the_target_comes_in_frames_the_transport_accepts() {
     let relay = relay(None);
     let data: Vec<u8> = (0..(3 * RELAY_FRAME_BYTES + 1))

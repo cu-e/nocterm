@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use nocterm_core::SharedCause;
-use nocterm_hub_client::{Keyset, KeysetError};
+use nocterm_hub_client::{Keyset, KeysetError, UnlockMethod as KeysetUnlock};
 use nocterm_hub_proto::v1;
 use nocterm_hubs_model::{HubError, HubId, KeyStatus};
 use nocterm_keys::{LoginError, LoginSecrets, RecoveryKey, UnlockKdf, UnlockKey};
@@ -73,6 +73,19 @@ impl KeyFlow {
         };
         self.settle(&slot, client, account_id, method, unlock, kdf)
             .await
+    }
+
+    /// Whether the keyset `record` is opened by something other than the login password. The
+    /// record says so itself: the client never guesses it from how the user signed in.
+    fn needs_vault_passphrase(
+        &self,
+        hub: &HubId,
+        record: &v1::AccountKeyset,
+    ) -> Result<bool, HubError> {
+        match KeysetUnlock::of(record).map_err(|error| self.keyset_failure(hub, error))? {
+            KeysetUnlock::LoginPassword => Ok(false),
+            KeysetUnlock::VaultPassword(_) => Ok(true),
+        }
     }
 
     /// The keys after a browser sign-in: nothing opens them until a passphrase is typed.
@@ -221,8 +234,17 @@ impl KeyFlow {
                     .ok_or_else(|| damaged(KeysetError::Incomplete))?
             }
         };
-        let kdf = UnlockKdf::parse(&record.kdf, &record.salt)
-            .map_err(|error| damaged(KeysetError::Kdf(error)))?;
+        // The record says which password opens it; a keyset sealed with the login password
+        // cannot be opened with a passphrase, whatever is typed.
+        let kdf =
+            match KeysetUnlock::of(&record).map_err(|error| self.keyset_failure(hub, error))? {
+                KeysetUnlock::VaultPassword(kdf) => kdf,
+                KeysetUnlock::LoginPassword => {
+                    return Err(HubError::UnlockSourceMismatch {
+                        needs_login_password: true,
+                    });
+                }
+            };
         let unlock = derive(&passphrase, &kdf).await?;
         match Keyset::open(&record, account_id, &unlock) {
             Err(KeysetError::WrongUnlockKey) => {
@@ -302,6 +324,10 @@ impl KeyFlow {
                     .ok_or_else(|| damaged(KeysetError::Incomplete))?
             }
         };
+        if self.needs_vault_passphrase(hub, &record)? {
+            // The login password cannot open it, and is not a wrong password either.
+            return Ok(KeyStatus::PassphraseNeeded);
+        }
         match Keyset::open(&record, account_id, &unlock) {
             Ok(keyset) => {
                 let unconfirmed = slot.recovery_unconfirmed(keyset.account_id());
@@ -370,7 +396,14 @@ impl KeyFlow {
             &record,
         );
         cache.recovery_unconfirmed = unconfirmed;
-        slot.install(OpenKeys::new(keyset), cache);
+        // What this device pinned for the account survives a new sign-in.
+        slot.read_cache(|earlier| {
+            if let Some(earlier) = earlier {
+                cache.inherit_pins(earlier);
+            }
+        });
+        let keys = OpenKeys::pinning(keyset, cache.pinned());
+        slot.install(keys, cache);
         Ok(())
     }
 
@@ -411,7 +444,11 @@ fn keyset_error(error: KeysetError) -> HubError {
         | KeysetError::PublicKey(_)
         | KeysetError::AlreadyExists
         | KeysetError::WrongRecoveryKey
-        | KeysetError::WrongUnlockKey => damaged(error),
+        | KeysetError::WrongUnlockKey
+        | KeysetError::UnsupportedUnlock { .. } => damaged(error),
+        KeysetError::WrongUnlockSource { stored, .. } => HubError::UnlockSourceMismatch {
+            needs_login_password: matches!(stored, nocterm_keys::UnlockSource::LoginPassword),
+        },
         other => remote(other),
     }
 }

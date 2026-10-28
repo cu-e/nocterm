@@ -82,6 +82,6 @@ fn collection_keys_are_separate_and_open_only_their_own_collection() {
     assert!(second.open_object("c-1", "o", "k", &sealed).is_err());
     assert_ne!(first_envelope, second_envelope);
     // An envelope belongs to its collection: it does not open as another one.
-    assert!(keys.collection("c-3", &first_envelope).is_err());
-    assert!(keys.collection("c-1", &first_envelope).is_ok());
+    assert!(keys.own_collection("c-3", &first_envelope).is_err());
+    assert!(keys.own_collection("c-1", &first_envelope).is_ok());
 }

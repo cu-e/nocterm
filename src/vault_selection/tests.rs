@@ -117,17 +117,18 @@ fn the_auto_lock_applies_to_the_vault_selected_later() {
     assert_eq!(account.auto_lock_updates(), [Duration::from_secs(60)]);
 }
 
-#[test]
-fn the_keys_of_the_connection_editor_follow_the_selected_vault() {
+#[gpui_kit::test]
+fn the_keys_of_the_connection_editor_follow_the_selected_vault(cx: &mut gpui_kit::TestAppContext) {
     let own = unlocked();
     let selected = Arc::new(SelectedVault::new(own));
-    let keys = VaultKeys::new(selected.clone());
-    block_on(keys.generate("laptop".into())).unwrap();
-    assert_eq!(block_on(keys.list()).unwrap().len(), 1);
+    let keys = VaultKeys::new(selected.clone(), cx.executor().clone());
+    let executor = cx.foreground_executor().clone();
+    executor.block_test(keys.generate("laptop".into())).unwrap();
+    assert_eq!(executor.block_test(keys.list()).unwrap().len(), 1);
     let account = Arc::new(ScriptedVaultAccess::default());
     selected.select(account.clone());
     block_on(account.create(Secret::new("test unique master passphrase"))).unwrap();
-    assert!(block_on(keys.list()).unwrap().is_empty());
+    assert!(executor.block_test(keys.list()).unwrap().is_empty());
 }
 
 #[test]

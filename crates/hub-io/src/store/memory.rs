@@ -11,11 +11,13 @@ use nocterm_hub_proto::v1;
 use nocterm_hubs_model::HubError;
 
 use super::{Call, OpError, StoreOps};
+use crate::account::testing::Admin;
 
 #[derive(Default)]
 struct Held {
     collections: Vec<v1::Collection>,
-    envelopes: HashMap<String, Vec<u8>>,
+    keys: HashMap<String, v1::CollectionKey>,
+    members: HashMap<String, Vec<v1::CollectionMember>>,
     objects: HashMap<String, BTreeMap<String, v1::StoredObject>>,
     heads: HashMap<String, u64>,
     clock: i64,
@@ -72,14 +74,16 @@ impl MemoryHub {
             .collect();
     }
 
-    /// An organization's collection whose key was granted to the account: `envelope` is the
-    /// key sealed to the account's public key for `collection_id`.
+    /// An organization's collection whose key `granter` granted to the account: `envelope` is
+    /// the key sealed to the account's public key for `collection_id`. The hub lists the granter
+    /// as a member with the public key it holds for them.
     pub(crate) fn add_group(
         &self,
         kind: &str,
         org_id: &str,
         collection_id: &str,
         envelope: Vec<u8>,
+        granter: &Admin,
     ) {
         let mut held = self.held();
         held.clock += 1;
@@ -94,7 +98,29 @@ impl MemoryHub {
             deleted: false,
         };
         held.collections.push(collection);
-        held.envelopes.insert(collection_id.to_owned(), envelope);
+        held.keys.insert(
+            collection_id.to_owned(),
+            v1::CollectionKey {
+                collection_id: collection_id.to_owned(),
+                key_version: 1,
+                wrapped_key: envelope,
+                granted_by: granter.account_id().to_owned(),
+            },
+        );
+        held.members
+            .insert(collection_id.to_owned(), vec![granter.as_member()]);
+    }
+
+    /// The hub names `account_id` as the granter of a collection's key and lists `key` as its
+    /// public key, as a hostile hub could to pass off a key of its own.
+    pub(crate) fn name_granter(&self, collection_id: &str, account_id: &str, key: &Admin) {
+        let mut held = self.held();
+        if let Some(record) = held.keys.get_mut(collection_id) {
+            record.granted_by = account_id.to_owned();
+        }
+        let mut member = key.as_member();
+        member.account_id = account_id.to_owned();
+        held.members.insert(collection_id.to_owned(), vec![member]);
     }
 
     /// Writes into the collection are refused for lack of permission, as for a guest.
@@ -174,9 +200,9 @@ impl MemoryHub {
 
     /// Replaces the sealed key a collection hands out.
     pub(crate) fn tamper_key(&self, collection_id: &str, envelope: Vec<u8>) {
-        self.held()
-            .envelopes
-            .insert(collection_id.to_owned(), envelope);
+        if let Some(record) = self.held().keys.get_mut(collection_id) {
+            record.wrapped_key = envelope;
+        }
     }
 
     fn write(
@@ -282,22 +308,37 @@ impl StoreOps for MemoryHub {
                 created_at_ms: held.clock,
                 deleted: false,
             };
-            held.envelopes
-                .insert(request.collection_id, request.wrapped_key);
+            held.keys.insert(
+                request.collection_id.clone(),
+                v1::CollectionKey {
+                    collection_id: request.collection_id,
+                    key_version: 1,
+                    wrapped_key: request.wrapped_key,
+                    granted_by: String::new(),
+                },
+            );
             held.collections.push(collection.clone());
             Ok(collection)
         })
     }
 
-    fn collection_key(&self, collection_id: &str) -> Call<'_, Vec<u8>> {
+    fn collection_key(&self, collection_id: &str) -> Call<'_, v1::CollectionKey> {
         let id = collection_id.to_owned();
         Box::pin(async move {
             self.reach()?;
             self.held()
-                .envelopes
+                .keys
                 .get(&id)
                 .cloned()
                 .ok_or(OpError::Hub(HubError::NotFound))
+        })
+    }
+
+    fn members(&self, collection_id: &str) -> Call<'_, Vec<v1::CollectionMember>> {
+        let id = collection_id.to_owned();
+        Box::pin(async move {
+            self.reach()?;
+            Ok(self.held().members.get(&id).cloned().unwrap_or_default())
         })
     }
 

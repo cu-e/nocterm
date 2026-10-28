@@ -211,7 +211,7 @@ async fn a_locked_vault_reads_and_writes_nothing() {
 #[tokio::test]
 async fn a_record_the_hub_altered_is_an_error_not_a_silent_skip() {
     let hub = Arc::new(MemoryHub::default());
-    let (device, _) = device(&hub);
+    let (device, record) = device(&hub);
     let id = device
         .ledger
         .put(None, "Work".into(), password_binding(), Secret::new("pw"))
@@ -223,8 +223,12 @@ async fn a_record_the_hub_altered_is_an_error_not_a_silent_skip() {
         .unwrap()
         .remove(0);
     hub.tamper(&collection.collection_id, &id.to_string(), vec![9; 64]);
+    // A device that already holds the record keeps what it read; another reads the altered one.
+    let dir = tempfile::tempdir().unwrap();
+    let (_accounts, slot) = second_device(dir.path(), &record);
+    let other = Ledger::new(slot, hub.clone());
     assert!(matches!(
-        device.ledger.list().await,
+        other.list().await,
         Err(VaultError::Authentication)
     ));
 }

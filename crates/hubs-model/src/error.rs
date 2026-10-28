@@ -92,6 +92,11 @@ pub enum HubError {
         #[source]
         cause: SharedCause,
     },
+    /// The keys are protected by the other password than the one that was offered: the login
+    /// password where a vault passphrase is needed, or the reverse. Whatever is typed, the
+    /// other password cannot open them.
+    #[error("the account keys are protected by another password than the one offered")]
+    UnlockSourceMismatch { needs_login_password: bool },
     /// No recovery is under way for this hub: sign in first.
     #[error("there is nothing to recover for this hub")]
     NoRecoveryPending,

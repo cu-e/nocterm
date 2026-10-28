@@ -14,6 +14,7 @@ fn record() -> v1::AccountKeyset {
         public_key: vec![3; 32],
         sealed_private_key: vec![4; 70],
         recovery_wrapped_account_key: vec![5; 60],
+        unlock_kind: v1::UnlockKind::LoginPassword as i32,
     }
 }
 

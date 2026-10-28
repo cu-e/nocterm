@@ -60,6 +60,14 @@ pub(crate) fn hub_problem(error: &HubError) -> String {
             "The account keys are closed on this device. Unlock the vault or sign in with your password first."
                 .to_owned()
         }
+        HubError::UnlockSourceMismatch {
+            needs_login_password: true,
+        } => "These account keys are opened with your login password, not with a vault passphrase. Sign in with the password instead."
+            .to_owned(),
+        HubError::UnlockSourceMismatch {
+            needs_login_password: false,
+        } => "These account keys are opened with a vault passphrase, not with your login password. Type the passphrase."
+            .to_owned(),
         HubError::KeysetDamaged { .. } => {
             "The account keys on the server do not verify. The server may have been tampered with; nothing was changed."
                 .to_owned()

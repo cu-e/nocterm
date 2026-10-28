@@ -202,7 +202,11 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     // credentials need the installed connections afterwards.
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
     let connections = match &vault {
-        Some(vault) => connections.with_keys(crate::vault_keys::keys_of(vault, cx)),
+        Some(vault) => {
+            // The editor's keys follow the vault selected later, so they hold the selection.
+            let selected: Arc<dyn VaultAccess> = Arc::new(vault.clone());
+            connections.with_keys(crate::vault_keys::keys_of(&selected, cx))
+        }
         None => connections,
     };
     let connections = install_connections(connections, &ui, &shutdown, cx);

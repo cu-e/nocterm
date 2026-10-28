@@ -65,6 +65,7 @@ mod task;
 mod terminal;
 mod vault;
 
+pub use account::{AdminKeyError, AdminKeys, PendingAdminKey};
 pub use hub_account::HubAccount;
 pub use links::{HubLinks, HubLinksConfig, HubStartError};
 pub use relay::HubRelay;

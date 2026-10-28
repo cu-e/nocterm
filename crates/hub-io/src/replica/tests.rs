@@ -4,7 +4,7 @@ use nocterm_connections_model::replica::{RemoteBody, ReplicaAccess};
 use nocterm_connections_model::test_support::profile_id_for;
 
 use super::*;
-use crate::account::testing::{second_device, signed_in};
+use crate::account::testing::{Admin, second_device, signed_in_trusting};
 use crate::store::memory::MemoryHub;
 
 fn profile(name: &str) -> Profile {
@@ -23,9 +23,10 @@ struct Device {
     _dir: tempfile::TempDir,
 }
 
+/// A device that confirmed the administrator of "acme" already.
 fn device(hub: &Arc<MemoryHub>) -> (Device, nocterm_hub_proto::v1::AccountKeyset) {
     let dir = tempfile::tempdir().unwrap();
-    let (_accounts, slot, record) = signed_in(dir.path());
+    let (_accounts, slot, record) = signed_in_trusting(dir.path(), Admin::acme().pinned());
     let ledger = Arc::new(Ledger::new(Arc::clone(&slot), hub.clone()));
     let replica = HubProfileReplica::new(Handle::current(), Arc::clone(&slot), hub.clone(), ledger);
     (
@@ -131,8 +132,9 @@ fn acme_group(
     record: &nocterm_hub_proto::v1::AccountKeyset,
     role: nocterm_hub_proto::v1::Role,
 ) -> nocterm_keys::CollectionKey {
-    let (key, envelope) = crate::account::testing::granted(record, ACME_PROFILES);
-    hub.add_group(PROFILES_KIND, "acme", ACME_PROFILES, envelope);
+    let admin = Admin::acme();
+    let (key, envelope) = crate::account::testing::granted(record, ACME_PROFILES, admin);
+    hub.add_group(PROFILES_KIND, "acme", ACME_PROFILES, envelope, admin);
     hub.set_memberships(&[("acme", "Acme", role)]);
     key
 }

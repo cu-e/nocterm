@@ -5,7 +5,7 @@ use std::time::Duration;
 use nocterm_session::Target;
 
 use super::*;
-use crate::account::testing::{PASSWORD, signed_in};
+use crate::account::testing::{Admin, PASSWORD, signed_in, signed_in_trusting};
 use crate::store::VAULT_KIND;
 use crate::store::memory::MemoryHub;
 
@@ -152,10 +152,11 @@ fn vault_in_acme(
 ) {
     let hub = Arc::new(MemoryHub::default());
     let dir = tempfile::tempdir().unwrap();
-    let (_accounts, slot, record) = signed_in(dir.path());
+    let admin = Admin::acme();
+    let (_accounts, slot, record) = signed_in_trusting(dir.path(), admin.pinned());
     hub.set_keyset(Some(record.clone()));
-    let (key, envelope) = crate::account::testing::granted(&record, ACME_VAULT);
-    hub.add_group(VAULT_KIND, "acme", ACME_VAULT, envelope);
+    let (key, envelope) = crate::account::testing::granted(&record, ACME_VAULT, &admin);
+    hub.add_group(VAULT_KIND, "acme", ACME_VAULT, envelope, &admin);
     hub.set_memberships(&[("acme", "Acme", role)]);
     (
         HubVault::new(Handle::current(), slot, hub.clone()),
@@ -369,6 +370,7 @@ async fn a_personal_credential_moved_into_a_group_is_sealed_with_the_groups_key_
     assert_eq!(moved, [id]);
     let stored = hub.objects(ACME_VAULT);
     assert_eq!(stored.len(), 1);
+    let carried = stored[0].version;
     let opened = key
         .open_object(
             ACME_VAULT,
@@ -388,7 +390,7 @@ async fn a_personal_credential_moved_into_a_group_is_sealed_with_the_groups_key_
         .unwrap();
     assert_eq!(
         hub.objects(ACME_VAULT)[0].version,
-        3,
+        carried + 1,
         "later writes stay in the group"
     );
 }

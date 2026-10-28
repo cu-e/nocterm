@@ -166,6 +166,7 @@ impl KeysetHub for MemoryKeysets {
                 public_key: request.public_key,
                 sealed_private_key: request.sealed_private_key,
                 recovery_wrapped_account_key: request.recovery_wrapped_account_key,
+                unlock_kind: request.unlock_kind,
             };
             held.record = Some(next.clone());
             Ok(next)

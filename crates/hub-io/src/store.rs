@@ -8,8 +8,11 @@
 //!
 //! A group is an organization's collection of a kind. The account only ever uses one whose
 //! key an administrator granted to it: the hub answers "not found" for the key of a
-//! collection the member holds none of, and that collection is then left out. This client
-//! never creates, deletes or grants a group's collection; that is `hubctl`'s job.
+//! collection the member holds none of, and that collection is then left out. A grant opens
+//! only under the key of the administrator who made it, as pinned on this device
+//! ([`crate::AdminKeys`]): a group whose administrator is not pinned yet is left out and
+//! reported as pending with the fingerprint to compare. This client never creates, deletes or
+//! grants a group's collection; that is `hubctl`'s job.
 
 mod grpc;
 #[cfg(test)]
@@ -21,10 +24,10 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use nocterm_hub_proto::v1;
 use nocterm_hubs_model::HubError;
-use nocterm_keys::{CollectionKey, OpenError, random_bytes};
+use nocterm_keys::{CollectionKey, OpenError, PinError, PublicKey, TrustedKey, random_bytes};
 use uuid::Builder;
 
-use crate::account::OpenKeys;
+use crate::account::{OpenKeys, PendingAdminKey};
 use crate::classify::remote;
 
 pub(crate) use grpc::HubStore;
@@ -55,7 +58,10 @@ pub(crate) trait StoreOps: Send + Sync {
     fn keyset(&self) -> Call<'_, Option<v1::AccountKeyset>>;
     fn collections(&self, kind: &str) -> Call<'_, Vec<v1::Collection>>;
     fn create_collection(&self, request: v1::CreateCollectionRequest) -> Call<'_, v1::Collection>;
-    fn collection_key(&self, collection_id: &str) -> Call<'_, Vec<u8>>;
+    /// The key envelope the hub holds for the account, with who granted it.
+    fn collection_key(&self, collection_id: &str) -> Call<'_, v1::CollectionKey>;
+    /// The members of a collection the account can read, with their public keys.
+    fn members(&self, collection_id: &str) -> Call<'_, Vec<v1::CollectionMember>>;
     /// The organizations the account belongs to, with its role in each.
     fn memberships(&self) -> Call<'_, Vec<v1::Membership>>;
     fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion>;
@@ -104,6 +110,22 @@ pub(crate) struct Group {
 pub(crate) struct Layout {
     pub(crate) personal: Option<Located>,
     pub(crate) groups: Vec<Group>,
+}
+
+/// What the pins of this device say of the key a grant was made with.
+enum Granter {
+    Offered(TrustedKey),
+    Unconfirmed(PendingAdminKey, PublicKey),
+    Unusable,
+}
+
+/// What came of the key of a group's collection.
+enum Granted {
+    Opened(Located),
+    /// The account holds no key of it, or the key does not open: the group is left out.
+    Unusable,
+    /// The administrator who granted it is not pinned, or is pinned with another key.
+    Unconfirmed(PendingAdminKey, PublicKey),
 }
 
 /// Whether the role may write to the organization's collections.
@@ -161,7 +183,10 @@ impl Store {
         let Some(chosen) = oldest(&listed, kind, |c| !c.personal && c.org_id == org_id) else {
             return Ok(None);
         };
-        self.granted(chosen).await
+        match self.granted(chosen, org_id).await? {
+            Granted::Opened(at) => Ok(Some(at)),
+            Granted::Unusable | Granted::Unconfirmed(..) => Ok(None),
+        }
     }
 
     /// The account's own collection of `kind` and every group's it holds the key of. A group
@@ -174,51 +199,122 @@ impl Store {
             None => None,
         };
         let mut groups = Vec::new();
+        let mut pending = Vec::new();
         for membership in self.ops.memberships().await? {
             let Some(org) = membership.org else { continue };
             let Some(chosen) = oldest(&listed, kind, |c| !c.personal && c.org_id == org.org_id)
             else {
                 continue;
             };
-            if let Some(at) = self.granted(chosen).await? {
-                groups.push(Group {
+            match self.granted(chosen, &org.name).await? {
+                Granted::Opened(at) => groups.push(Group {
                     org_id: org.org_id,
                     name: org.name,
                     writable: may_write(membership.role),
                     at,
-                });
+                }),
+                Granted::Unconfirmed(admin, key) => pending.push((admin, key)),
+                Granted::Unusable => {}
             }
         }
+        self.keys.note_pending(kind, pending);
         Ok(Layout { personal, groups })
     }
 
+    /// The account's own collection: the envelope was sealed by this account.
     async fn open(&self, chosen: &v1::Collection) -> Result<Located, OpError> {
-        let envelope = self.ops.collection_key(&chosen.collection_id).await?;
+        let record = self.ops.collection_key(&chosen.collection_id).await?;
         let key = self
             .keys
-            .collection(&chosen.collection_id, &envelope)
+            .own_collection(&chosen.collection_id, &record.wrapped_key)
             .map_err(OpError::Damaged)?;
         Ok(Located {
             id: chosen.collection_id.clone(),
             key,
-            envelope,
+            envelope: record.wrapped_key,
         })
     }
 
-    /// A group's collection, or `None` when this account cannot use it.
-    async fn granted(&self, chosen: &v1::Collection) -> Result<Option<Located>, OpError> {
-        match self.open(chosen).await {
-            Ok(at) => Ok(Some(at)),
-            Err(OpError::Hub(HubError::NotFound | HubError::PermissionDenied)) => Ok(None),
-            Err(OpError::Damaged(error)) => {
+    /// A group's collection. An envelope the account sealed itself (a collection it created)
+    /// opens as its own; a grant opens only under the pinned key of the account that made it.
+    async fn granted(
+        &self,
+        chosen: &v1::Collection,
+        organization: &str,
+    ) -> Result<Granted, OpError> {
+        let id = &chosen.collection_id;
+        let record = match self.ops.collection_key(id).await {
+            Ok(record) => record,
+            Err(OpError::Hub(HubError::NotFound | HubError::PermissionDenied)) => {
+                return Ok(Granted::Unusable);
+            }
+            Err(error) => return Err(error),
+        };
+        let envelope = record.wrapped_key;
+        let opened = if record.granted_by.is_empty() {
+            self.keys.own_collection(id, &envelope)
+        } else {
+            let offered = match self.granter(id, &record.granted_by, organization).await? {
+                Granter::Offered(key) => key,
+                Granter::Unconfirmed(admin, key) => return Ok(Granted::Unconfirmed(admin, key)),
+                Granter::Unusable => return Ok(Granted::Unusable),
+            };
+            self.keys.granted_collection(id, &envelope, &offered)
+        };
+        match opened {
+            Ok(key) => Ok(Granted::Opened(Located {
+                id: id.clone(),
+                key,
+                envelope,
+            })),
+            Err(error) => {
                 tracing::warn!(
-                    collection = %chosen.collection_id,
+                    collection = %id,
                     %error,
                     "a group's collection key does not open; the group is left out"
                 );
-                Ok(None)
+                Ok(Granted::Unusable)
             }
-            Err(error) => Err(error),
+        }
+    }
+
+    /// The key the hub names as the granter's, checked against the pins of this device.
+    async fn granter(
+        &self,
+        collection_id: &str,
+        granted_by: &str,
+        organization: &str,
+    ) -> Result<Granter, OpError> {
+        let members = self.ops.members(collection_id).await?;
+        let Some(member) = members.iter().find(|m| m.account_id == granted_by) else {
+            tracing::warn!(collection = %collection_id, "the granter is not a member; the group is left out");
+            return Ok(Granter::Unusable);
+        };
+        let Ok(offered) = PublicKey::from_bytes(&member.public_key) else {
+            tracing::warn!(collection = %collection_id, "the granter has no usable public key; the group is left out");
+            return Ok(Granter::Unusable);
+        };
+        let pending = |replaces| PendingAdminKey {
+            organization: organization.to_owned(),
+            account_id: granted_by.to_owned(),
+            admin: if member.display_name.is_empty() {
+                member.username.clone()
+            } else {
+                member.display_name.clone()
+            },
+            fingerprint: offered.fingerprint(),
+            replaces,
+        };
+        match self.keys.trust(granted_by, &offered) {
+            Ok(trusted) => Ok(Granter::Offered(trusted)),
+            Err(PinError::Unknown { .. }) => Ok(Granter::Unconfirmed(pending(None), offered)),
+            Err(PinError::Changed { pinned, .. }) => {
+                Ok(Granter::Unconfirmed(pending(Some(pinned)), offered))
+            }
+            Err(error) => {
+                tracing::warn!(%error, "the granter's key cannot be trusted; the group is left out");
+                Ok(Granter::Unusable)
+            }
         }
     }
 

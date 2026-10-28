@@ -69,7 +69,7 @@ impl StoreOps for HubStore {
         })
     }
 
-    fn collection_key(&self, collection_id: &str) -> Call<'_, Vec<u8>> {
+    fn collection_key(&self, collection_id: &str) -> Call<'_, v1::CollectionKey> {
         let collection_id = collection_id.to_owned();
         Box::pin(async move {
             let client = self.pool.fresh(&self.hub).await?;
@@ -78,7 +78,20 @@ impl StoreOps for HubStore {
                 .get_collection_key(v1::GetCollectionKeyRequest { collection_id })
                 .await
                 .map_err(|status| self.failure(ClientError::from(status)))?;
-            Ok(key.into_inner().wrapped_key)
+            Ok(key.into_inner())
+        })
+    }
+
+    fn members(&self, collection_id: &str) -> Call<'_, Vec<v1::CollectionMember>> {
+        let collection_id = collection_id.to_owned();
+        Box::pin(async move {
+            let client = self.pool.fresh(&self.hub).await?;
+            let list = client
+                .store()
+                .list_collection_members(v1::ListCollectionMembersRequest { collection_id })
+                .await
+                .map_err(|status| self.failure(ClientError::from(status)))?;
+            Ok(list.into_inner().members)
         })
     }
 

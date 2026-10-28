@@ -65,6 +65,7 @@ pub(crate) fn resealed(
         public_key: record.public_key.clone(),
         sealed_private_key: record.sealed_private_key.clone(),
         recovery_wrapped_account_key: recovery.wrap(keyset.account_key(), keyset.account_id())?,
+        unlock_kind: record.unlock_kind,
     })
 }
 

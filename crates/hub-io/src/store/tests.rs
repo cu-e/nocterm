@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::memory::MemoryHub;
 use super::*;
-use crate::account::testing::open_keys;
+use crate::account::testing::{Admin, open_keys};
 
 fn store(hub: &Arc<MemoryHub>) -> Store {
     Store::new(hub.clone(), open_keys())
@@ -126,11 +126,13 @@ async fn an_unreachable_hub_is_a_hub_error_and_creates_nothing() {
     assert!(store.find(VAULT_KIND).await.unwrap().is_none());
 }
 
-fn member_of_acme(role: v1::Role) -> (Arc<MemoryHub>, Store, v1::AccountKeyset) {
+/// A store of an account in "acme" on a device that confirmed the organization's administrator.
+fn member_of_acme(role: v1::Role) -> (Arc<MemoryHub>, Store, v1::AccountKeyset, &'static Admin) {
+    let admin = Admin::acme();
     let hub = Arc::new(MemoryHub::default());
-    let (keys, record) = crate::account::testing::open_keys_with_record();
+    let (keys, record) = crate::account::testing::open_keys_trusting(admin.pinned());
     hub.set_memberships(&[("acme", "Acme", role)]);
-    (hub.clone(), Store::new(hub, keys), record)
+    (hub.clone(), Store::new(hub, keys), record, admin)
 }
 
 #[tokio::test]
@@ -141,9 +143,9 @@ async fn a_group_collection_with_a_granted_key_is_used_with_the_members_role() {
         (v1::Role::Admin, true),
         (v1::Role::Owner, true),
     ] {
-        let (hub, store, record) = member_of_acme(role);
-        let (key, envelope) = crate::account::testing::granted(&record, "acme-vault");
-        hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope);
+        let (hub, store, record, admin) = member_of_acme(role);
+        let (key, envelope) = crate::account::testing::granted(&record, "acme-vault", &admin);
+        hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope, &admin);
         let layout = store.layout(VAULT_KIND).await.unwrap();
         assert!(layout.personal.is_none());
         let [group] = layout.groups.as_slice() else {
@@ -167,28 +169,28 @@ async fn a_group_collection_with_a_granted_key_is_used_with_the_members_role() {
 
 #[tokio::test]
 async fn a_group_without_a_key_for_the_account_is_left_out_not_an_error() {
-    let (hub, store, record) = member_of_acme(v1::Role::Member);
+    let (hub, store, record, admin) = member_of_acme(v1::Role::Member);
     hub.add_foreign(VAULT_KIND, "acme");
     let layout = store.layout(VAULT_KIND).await.unwrap();
     assert!(layout.groups.is_empty());
     assert!(store.shared(VAULT_KIND, "acme").await.unwrap().is_none());
-    let (_, envelope) = crate::account::testing::granted(&record, "acme-vault");
-    hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope);
+    let (_, envelope) = crate::account::testing::granted(&record, "acme-vault", &admin);
+    hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope, &admin);
     hub.tamper_key("acme-vault", vec![1; 60]);
     assert!(store.layout(VAULT_KIND).await.unwrap().groups.is_empty());
 }
 
 #[tokio::test]
 async fn an_organization_the_account_does_not_belong_to_is_never_used() {
-    let (hub, store, record) = member_of_acme(v1::Role::Member);
-    let (_, envelope) = crate::account::testing::granted(&record, "other-vault");
-    hub.add_group(VAULT_KIND, "other", "other-vault", envelope);
+    let (hub, store, record, admin) = member_of_acme(v1::Role::Member);
+    let (_, envelope) = crate::account::testing::granted(&record, "other-vault", &admin);
+    hub.add_group(VAULT_KIND, "other", "other-vault", envelope, &admin);
     assert!(store.layout(VAULT_KIND).await.unwrap().groups.is_empty());
 }
 
 #[tokio::test]
 async fn the_account_never_creates_a_group_collection_and_ensure_stays_personal() {
-    let (hub, store, _) = member_of_acme(v1::Role::Owner);
+    let (hub, store, ..) = member_of_acme(v1::Role::Owner);
     let own = store.ensure(VAULT_KIND).await.unwrap();
     assert!(
         hub.collections(VAULT_KIND)

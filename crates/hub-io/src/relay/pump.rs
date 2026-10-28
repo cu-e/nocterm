@@ -87,6 +87,10 @@ pub(super) async fn carry<U: Uplink, D: Downlink>(peer: RelayPeer, up: U, down: 
 /// Moves what the transport sends to the hub, one frame at a time.
 async fn upload<U: Uplink>(from_transport: RelayReceiver, mut up: U) -> Ended {
     while let Ok(frame) = from_transport.recv().await {
+        // An empty frame carries nothing, and an empty data frame is not one the hub accepts.
+        if frame.is_empty() {
+            continue;
+        }
         if let Err(error) = up.send(&frame).await {
             tracing::debug!(%error, "the relay stream refused data");
             return Ended::Broken;

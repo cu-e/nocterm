@@ -90,6 +90,7 @@ pub(crate) fn settle_failure(error: &HubError) -> Option<Settled> {
         | HubError::RecoveryKeyInvalid
         | HubError::InvalidVaultPassphrase
         | HubError::KeysetDamaged { .. }
+        | HubError::UnlockSourceMismatch { .. }
         | HubError::KeysLocked
         | HubError::NoRecoveryPending => return None,
     })

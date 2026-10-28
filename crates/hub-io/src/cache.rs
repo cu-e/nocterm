@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use nocterm_core::fs::{BoundedReadError, FileError, read_regular_bounded, write_private_atomic};
 use nocterm_hub_proto::v1;
 use nocterm_hubs_model::HubAddress;
+use nocterm_keys::{PinnedKeys, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::credentials::{MAX_NAME_BYTES, file_stem, prepare_private_directory};
@@ -80,6 +81,8 @@ pub(crate) struct KeysetCopy {
     pub sealed_private_key: Vec<u8>,
     #[serde(with = "bytes")]
     pub recovery_wrapped_account_key: Vec<u8>,
+    /// Which password the unlock key comes from, as the hub's `UnlockKind` number.
+    pub unlock_kind: i32,
 }
 
 impl KeysetCopy {
@@ -92,6 +95,7 @@ impl KeysetCopy {
             public_key: record.public_key.clone(),
             sealed_private_key: record.sealed_private_key.clone(),
             recovery_wrapped_account_key: record.recovery_wrapped_account_key.clone(),
+            unlock_kind: record.unlock_kind,
         }
     }
 
@@ -105,6 +109,7 @@ impl KeysetCopy {
             public_key: self.public_key.clone(),
             sealed_private_key: self.sealed_private_key.clone(),
             recovery_wrapped_account_key: self.recovery_wrapped_account_key.clone(),
+            unlock_kind: self.unlock_kind,
         }
     }
 }
@@ -130,6 +135,11 @@ pub(crate) struct VaultCopy {
     pub objects: BTreeMap<String, ObjectCopy>,
 }
 
+/// The public key this device pinned for another account.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct PinCopy(#[serde(with = "bytes")] Vec<u8>);
+
 /// What the cache file holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct AccountCache {
@@ -146,6 +156,11 @@ pub(crate) struct AccountCache {
     /// open, a new recovery key is offered.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recovery_unconfirmed: bool,
+    /// The public keys of the administrators whose grants this device accepts, by account:
+    /// pinned after a person compared the fingerprint. Public data, so not secret, but only
+    /// kept while the account is signed in on this device.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pins: BTreeMap<String, PinCopy>,
 }
 
 impl AccountCache {
@@ -163,6 +178,35 @@ impl AccountCache {
             keyset: KeysetCopy::of(record),
             vault: None,
             recovery_unconfirmed: false,
+            pins: BTreeMap::new(),
+        }
+    }
+
+    /// The pinned keys. A pin that is not a public key is dropped: it is asked for again.
+    pub(crate) fn pinned(&self) -> PinnedKeys {
+        PinnedKeys::from_entries(self.pins.iter().filter_map(|(account, pin)| {
+            match PublicKey::from_bytes(&pin.0) {
+                Ok(key) => Some((account.clone(), key)),
+                Err(error) => {
+                    tracing::warn!(%error, account, "a pinned key in the cache is not valid");
+                    None
+                }
+            }
+        }))
+    }
+
+    /// Remembers `pinned` in place of the pins kept so far.
+    pub(crate) fn keep_pins(&mut self, pinned: &PinnedKeys) {
+        self.pins = pinned
+            .entries()
+            .map(|(account, key)| (account.to_owned(), PinCopy(key.to_bytes().to_vec())))
+            .collect();
+    }
+
+    /// The same pins as `earlier`, for a cache written anew for the same account.
+    pub(crate) fn inherit_pins(&mut self, earlier: &Self) {
+        if earlier.account_id == self.account_id {
+            self.pins.clone_from(&earlier.pins);
         }
     }
 }

@@ -182,7 +182,7 @@ impl Ledger {
             return Ok(None);
         }
         let key = keys
-            .collection(&vault.collection_id, &vault.key_envelope)
+            .own_collection(&vault.collection_id, &vault.key_envelope)
             .map_err(|_| VaultError::Authentication)?;
         codec::open_sealed(&key, &vault.collection_id, object_id, object)
     }

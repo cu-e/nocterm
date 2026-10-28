@@ -5027,6 +5027,7 @@ version = "3.1.0"
 dependencies = [
  "anyhow",
  "async-io",
+ "event-listener",
  "futures",
  "gpui-kit",
  "nocterm-acp",
@@ -5040,6 +5041,7 @@ dependencies = [
  "nocterm-connections",
  "nocterm-connections-io",
  "nocterm-connections-model",
+ "nocterm-connections-store",
  "nocterm-containers",
  "nocterm-containers-ui",
  "nocterm-core",
@@ -5312,6 +5314,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "tracing",
  "uuid",
 ]
@@ -5508,20 +5511,28 @@ dependencies = [
 name = "nocterm-hub-io"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "futures",
+ "nocterm-connections-model",
  "nocterm-core",
  "nocterm-hub-client",
  "nocterm-hub-proto",
  "nocterm-hubs-model",
  "nocterm-keys",
  "nocterm-session",
+ "nocterm-ssh",
+ "nocterm-ssh-keys",
+ "nocterm-vault",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
  "tonic",
  "tracing",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
