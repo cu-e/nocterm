@@ -253,6 +253,12 @@ impl ConnectionsPanel {
         });
     }
 
+    /// The user's own connections in folder `group`.
+    fn folder_members(&self, group: &str, cx: &App) -> Vec<ProfileId> {
+        let profiles = self.installed.connections().read(cx).profiles(cx);
+        Spaces::of(&self.installed, cx).folder_members(profiles, group, cx)
+    }
+
     fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
         // The delete only applies while the group still holds these connections.
         let members = self.folder_members(&group, cx);
@@ -651,7 +657,9 @@ impl ConnectionsPanel {
             }
         }
         for section in &sections {
-            list = list.child(self.render_section(section, filtering, cx));
+            list = list.child(section.render(filtering, cx, |profile, writable, cx| {
+                self.render_row(profile, writable, cx).into_any_element()
+            }));
         }
 
         if empty {

@@ -5,7 +5,7 @@
 //! (no spaces at all) behaves exactly as before: everything is personal and editable.
 use gpui_kit::{App, Entity};
 use nocterm_connections_model::{
-    profiles::ProfileId,
+    profiles::{ProfileId, Profiles},
     replica::{ReplicaAccess, ReplicaScope, ReplicaSpace},
 };
 use nocterm_connections_store::ProfileReplication;
@@ -60,6 +60,23 @@ impl Spaces {
     pub(crate) fn filed_personally(&self, id: ProfileId, cx: &App) -> bool {
         let scope = self.scope(id, cx);
         !self.organizations().any(|space| space.scope == scope)
+    }
+
+    /// The user's own connections in folder `group` of `profiles`. A folder is listed only
+    /// among them, so what it does reaches no connection of an organization that uses the
+    /// same name.
+    pub(crate) fn folder_members(
+        &self,
+        profiles: &Profiles,
+        group: &str,
+        cx: &App,
+    ) -> Vec<ProfileId> {
+        profiles
+            .in_group(Some(group), "")
+            .iter()
+            .map(|profile| profile.id)
+            .filter(|id| self.filed_personally(*id, cx))
+            .collect()
     }
 
     /// The organizations the account sees, in the order the replica lists them.

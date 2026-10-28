@@ -87,15 +87,17 @@ fn space_id(scope: &ReplicaScope) -> String {
     }
 }
 
-impl ConnectionsPanel {
-    pub(super) fn render_section(
+impl Section {
+    /// The header and the rows, each built by `row` from a connection and whether it can be
+    /// changed. Without write access the rows can only be opened.
+    pub(super) fn render<T: 'static>(
         &self,
-        section: &Section,
         filtering: bool,
-        cx: &mut Context<Self>,
+        cx: &mut Context<T>,
+        row: impl Fn(&Profile, bool, &mut Context<T>) -> AnyElement,
     ) -> impl IntoElement {
-        let id = space_id(&section.space.scope);
-        let writable = section.space.access == ReplicaAccess::Write;
+        let id = space_id(&self.space.scope);
+        let writable = self.space.access == ReplicaAccess::Write;
         let theme = cx.theme();
         let header = h_flex()
             .id(SharedString::from(format!("connections-space-{id}")))
@@ -114,7 +116,7 @@ impl ConnectionsPanel {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(section.space.name.clone()),
+                    .child(self.space.name.clone()),
             )
             .when(!writable, |header| {
                 header.child(
@@ -129,10 +131,10 @@ impl ConnectionsPanel {
             });
         let muted = theme.muted_foreground;
         let mut list = v_flex().gap_px().child(header);
-        for profile in &section.members {
-            list = list.child(self.render_row(profile, writable, cx));
+        for profile in &self.members {
+            list = list.child(row(profile, writable, cx));
         }
-        if section.members.is_empty() && !filtering {
+        if self.members.is_empty() && !filtering {
             list = list.child(
                 div()
                     .id(SharedString::from(format!("connections-space-{id}-empty")))
@@ -145,22 +147,5 @@ impl ConnectionsPanel {
             );
         }
         list
-    }
-}
-
-impl ConnectionsPanel {
-    /// The connections of folder `group` in the user's own list. A folder is listed only
-    /// there, so what it does reaches no connection of an organization that uses the same name.
-    pub(super) fn folder_members(&self, group: &str, cx: &App) -> Vec<ProfileId> {
-        let spaces = Spaces::of(&self.installed, cx);
-        self.installed
-            .connections()
-            .read(cx)
-            .profiles(cx)
-            .in_group(Some(group), "")
-            .iter()
-            .map(|profile| profile.id)
-            .filter(|id| spaces.filed_personally(*id, cx))
-            .collect()
     }
 }
