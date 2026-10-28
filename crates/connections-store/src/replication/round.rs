@@ -31,6 +31,7 @@ pub(super) enum Outcome {
     Synced,
     NeedsNewerClient,
     Offline,
+    Locked,
     Failed(ReplicationFailure),
 }
 
@@ -120,6 +121,7 @@ fn halt(failure: ReplicationFailure) -> Stop {
 fn remote_stop(error: ReplicaError) -> Stop {
     match error {
         ReplicaError::Unavailable => Stop::Halt(Outcome::Offline),
+        ReplicaError::Locked => Stop::Halt(Outcome::Locked),
         error => halt(error.into()),
     }
 }

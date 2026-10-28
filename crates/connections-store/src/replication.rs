@@ -345,6 +345,7 @@ impl ProfileReplication {
             Outcome::Synced => ReplicationStatus::Synced,
             Outcome::NeedsNewerClient => ReplicationStatus::NeedsNewerClient,
             Outcome::Offline => ReplicationStatus::Offline,
+            Outcome::Locked => ReplicationStatus::Locked,
             Outcome::Failed(failure) => {
                 cx.emit(ReplicationEvent::Failed(failure.clone()));
                 ReplicationStatus::Failed(failure)
