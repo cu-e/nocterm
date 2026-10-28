@@ -150,18 +150,41 @@ fn vault_in_acme(
     nocterm_keys::CollectionKey,
     tempfile::TempDir,
 ) {
+    let (vault, hub, mut keys, dir) = vault_in_groups(role, &[("acme", "Acme", ACME_VAULT)]);
+    (vault, hub, keys.remove(0), dir)
+}
+
+/// A vault whose account belongs to each organization `(id, name, vault collection)` with
+/// `role`, and holds the key of every collection, in the order given.
+fn vault_in_groups(
+    role: nocterm_hub_proto::v1::Role,
+    groups: &[(&str, &str, &str)],
+) -> (
+    HubVault,
+    Arc<MemoryHub>,
+    Vec<nocterm_keys::CollectionKey>,
+    tempfile::TempDir,
+) {
     let hub = Arc::new(MemoryHub::default());
     let dir = tempfile::tempdir().unwrap();
     let admin = Admin::acme();
     let (_accounts, slot, record) = signed_in_trusting(dir.path(), admin.pinned());
     hub.set_keyset(Some(record.clone()));
-    let (key, envelope) = crate::account::testing::granted(&record, ACME_VAULT, admin);
-    hub.add_group(VAULT_KIND, "acme", ACME_VAULT, envelope, admin);
-    hub.set_memberships(&[("acme", "Acme", role)]);
+    let mut keys = Vec::new();
+    for (org_id, _, collection) in groups {
+        let (key, envelope) = crate::account::testing::granted(&record, collection, admin);
+        hub.add_group(VAULT_KIND, org_id, collection, envelope, admin);
+        keys.push(key);
+    }
+    let memberships: Vec<_> = groups
+        .iter()
+        .map(|(org_id, name, _)| (*org_id, *name, role))
+        .collect();
+    hub.set_memberships(&memberships);
     (
         HubVault::new(Handle::current(), slot, hub.clone()),
         hub,
-        key,
+        keys,
         dir,
     )
 }
@@ -174,12 +197,23 @@ fn member_saves(
     label: &str,
     secret: &str,
 ) {
+    member_saves_in(hub, ACME_VAULT, key, id, label, secret);
+}
+
+fn member_saves_in(
+    hub: &MemoryHub,
+    collection: &str,
+    key: &nocterm_keys::CollectionKey,
+    id: CredentialId,
+    label: &str,
+    secret: &str,
+) {
     let plain = codec::encode(label, &binding(), &Secret::new(secret)).unwrap();
     let object_id = id.to_string();
     let sealed = key
-        .seal_object(ACME_VAULT, &object_id, codec::KIND, &plain)
+        .seal_object(collection, &object_id, codec::KIND, &plain)
         .unwrap();
-    hub.write_as_member(ACME_VAULT, &object_id, codec::KIND, sealed);
+    hub.write_as_member(collection, &object_id, codec::KIND, sealed);
 }
 
 fn shared_id() -> CredentialId {
@@ -446,7 +480,7 @@ async fn a_credential_the_source_does_not_hold_stays_where_it_is() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_copied_credential_is_in_the_group_and_stays_in_the_personal_vault() {
+async fn a_copied_credential_is_in_the_group_under_a_new_id_and_stays_in_the_personal_vault() {
     let (vault, hub, key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
     let id = vault
         .put(None, "Own".into(), binding(), Secret::new("own-pw"))
@@ -457,9 +491,13 @@ async fn a_copied_credential_is_in_the_group_and_stays_in_the_personal_vault() {
         .copy(&Space::Personal, &in_acme(), &[id])
         .await
         .unwrap();
-    assert_eq!(copied, [id]);
+    assert_eq!(copied.len(), 1);
+    let (from, copy) = copied[0];
+    assert_eq!(from, id);
+    assert_ne!(copy, id, "the two spaces never hold one id");
     let stored = hub.objects(ACME_VAULT);
     assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].object_id, copy.to_string());
     let opened = key
         .open_object(
             ACME_VAULT,
@@ -470,41 +508,99 @@ async fn a_copied_credential_is_in_the_group_and_stays_in_the_personal_vault() {
         .unwrap();
     assert!(String::from_utf8_lossy(&opened).contains("own-pw"));
     assert_eq!(vault.get(id, binding()).await.unwrap().expose(), "own-pw");
+    assert_eq!(vault.get(copy, binding()).await.unwrap().expose(), "own-pw");
     let listed = vault.list().await.unwrap();
+    let group_of = |wanted: CredentialId| {
+        listed
+            .iter()
+            .find(|info| info.id == wanted)
+            .map(|info| info.group.is_some())
+    };
     assert_eq!(
-        listed.iter().filter(|info| info.group.is_none()).count(),
-        1,
+        group_of(id),
+        Some(false),
         "the personal vault still holds it"
     );
-    assert_eq!(
-        listed.iter().filter(|info| info.group.is_some()).count(),
-        1,
-        "and so does the group"
-    );
+    assert_eq!(group_of(copy), Some(true), "and so does the group, apart");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn moving_a_copied_credential_back_leaves_it_in_the_personal_vault_alone() {
-    let (vault, hub, _key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
+/// A credential used by a personal profile and copied into Acme: `(personal id, group id)`.
+async fn copied_into_acme(vault: &HubVault) -> (CredentialId, CredentialId) {
     let id = vault
         .put(None, "Own".into(), binding(), Secret::new("own-pw"))
         .await
         .unwrap();
-    vault
+    let copied = vault
         .ledger()
         .copy(&Space::Personal, &in_acme(), &[id])
         .await
         .unwrap();
-    let back = vault
-        .ledger()
-        .carry(&in_acme(), &Space::Personal, &[id])
+    (id, copied[0].1)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_the_group_copy_leaves_the_personal_credential() {
+    let (vault, hub, _key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
+    let (personal, group) = copied_into_acme(&vault).await;
+    vault.delete(group).await.unwrap();
+    assert!(hub.objects(ACME_VAULT)[0].deleted);
+    assert_eq!(
+        vault.get(personal, binding()).await.unwrap().expose(),
+        "own-pw"
+    );
+    let listed = vault.list().await.unwrap();
+    assert!(listed.len() == 1 && listed[0].id == personal && listed[0].group.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_the_group_copy_changes_the_group_and_not_the_personal_credential() {
+    let (vault, hub, _key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
+    let (personal, group) = copied_into_acme(&vault).await;
+    vault
+        .put(Some(group), "Own".into(), binding(), Secret::new("team-pw"))
         .await
         .unwrap();
-    assert_eq!(back, [id]);
+    assert_eq!(hub.objects(ACME_VAULT)[0].version, 2);
+    assert_eq!(
+        vault.get(group, binding()).await.unwrap().expose(),
+        "team-pw"
+    );
+    assert_eq!(
+        vault.get(personal, binding()).await.unwrap().expose(),
+        "own-pw"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_list_shows_one_row_for_an_id_two_spaces_hold() {
+    let (vault, hub, key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
+    let id = vault
+        .put(None, "Own".into(), binding(), Secret::new("own-pw"))
+        .await
+        .unwrap();
+    // A copy made before copies had ids of their own: the group holds the personal id.
+    member_saves(&hub, &key, id, "Own", "own-pw");
+    let listed = vault.list().await.unwrap();
+    assert_eq!(listed.iter().filter(|info| info.id == id).count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_a_group_copy_back_keeps_the_personal_credential_it_was_copied_from() {
+    let (vault, hub, _key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
+    let (personal, group) = copied_into_acme(&vault).await;
+    let back = vault
+        .ledger()
+        .carry(&in_acme(), &Space::Personal, &[group])
+        .await
+        .unwrap();
+    assert_eq!(back, [group]);
     assert!(hub.objects(ACME_VAULT)[0].deleted);
     let listed = vault.list().await.unwrap();
-    assert!(listed.len() == 1 && listed[0].group.is_none());
-    assert_eq!(vault.get(id, binding()).await.unwrap().expose(), "own-pw");
+    assert!(listed.len() == 2 && listed.iter().all(|info| info.group.is_none()));
+    assert_eq!(
+        vault.get(personal, binding()).await.unwrap().expose(),
+        "own-pw"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -520,4 +616,23 @@ async fn a_guest_cannot_copy_a_credential_into_the_group() {
         .await;
     assert!(matches!(copied, Err(VaultError::ReadOnly)));
     assert!(hub.objects(ACME_VAULT).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_deleted_in_one_group_is_read_from_the_group_that_holds_it() {
+    const BETA_VAULT: &str = "beta-vault";
+    let (vault, hub, keys, _dir) = vault_in_groups(
+        nocterm_hub_proto::v1::Role::Member,
+        &[("acme", "Acme", ACME_VAULT), ("beta", "Beta", BETA_VAULT)],
+    );
+    member_saves_in(&hub, ACME_VAULT, &keys[0], shared_id(), "Team", "acme-pw");
+    vault.delete(shared_id()).await.unwrap();
+    member_saves_in(&hub, BETA_VAULT, &keys[1], shared_id(), "Team", "beta-pw");
+    for _ in 0..24 {
+        assert_eq!(
+            vault.get(shared_id(), binding()).await.unwrap().expose(),
+            "beta-pw",
+            "the tombstone in Acme does not hide the live record in Beta"
+        );
+    }
 }

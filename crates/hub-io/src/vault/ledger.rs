@@ -10,7 +10,7 @@
 //! routed by the collection that holds them: an id that a group holds is written and deleted
 //! in that group, with that group's key, and never in the personal collection.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use nocterm_hubs_model::HubError;
@@ -212,7 +212,14 @@ impl Ledger {
             }
         }
         self.groups.sync(&self.store(&keys)).await?;
-        listed.extend(self.groups.list()?);
+        // One row per id: the one `get`, `put` and `delete` answer for.
+        let mut seen: HashSet<CredentialId> = listed.iter().map(|info| info.id).collect();
+        listed.extend(
+            self.groups
+                .list()?
+                .into_iter()
+                .filter(|info| seen.insert(info.id)),
+        );
         Ok(listed)
     }
 

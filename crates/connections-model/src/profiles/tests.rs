@@ -727,3 +727,31 @@ fn deleting_listed_members_keeps_the_rest_and_refuses_one_that_left() {
     delete(vec![a.id]).apply(&mut profiles).unwrap();
     assert!(profiles.get(a.id).is_none() && profiles.get(b.id).is_some());
 }
+
+#[test]
+fn a_profile_follows_the_copies_of_its_saved_credential_and_vault_key() {
+    let id = |byte: u8| CredentialId::from_bytes([byte; 16]);
+    let copy = |from: u8, to: u8| CredentialCopy {
+        from: id(from),
+        to: id(to),
+    };
+    let mut item = profile("a", "a.example", None);
+    item.credential = Some(id(1));
+    item.auth = Auth::VaultKey {
+        credential: id(2),
+        public_key: "ssh-ed25519 AAAA".to_owned(),
+    };
+    let followed = item
+        .clone()
+        .rekeyed(&[copy(1, 11), copy(2, 12), copy(3, 13)]);
+    assert_eq!(followed.credential, Some(id(11)));
+    assert!(matches!(
+        followed.auth,
+        Auth::VaultKey { credential, .. } if credential == id(12)
+    ));
+    assert_eq!(
+        item.clone().rekeyed(&[copy(3, 13)]),
+        item,
+        "a credential that was not copied keeps its id"
+    );
+}

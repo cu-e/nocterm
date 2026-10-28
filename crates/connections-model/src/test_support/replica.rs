@@ -2,8 +2,8 @@
 use crate::{
     profiles::{Profile, ProfileId},
     replica::{
-        ProfileReplica, RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaPage,
-        ReplicaScope, ReplicaSpace, ReplicaVersion,
+        CredentialCopy, ProfileReplica, RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError,
+        ReplicaPage, ReplicaScope, ReplicaSpace, ReplicaVersion,
     },
 };
 use futures::{
@@ -60,6 +60,7 @@ struct Inner {
     page_size: Option<usize>,
     calls: Vec<ReplicaCall>,
     secrets: HashMap<CredentialId, HashSet<ReplicaScope>>,
+    copies: u64,
 }
 
 /// Versions and cursors come from one counter, so a cursor is "after write N".
@@ -289,7 +290,8 @@ impl MemoryReplica {
         }
     }
 
-    /// Puts the secrets kept in `from` into `to`, and out of `from` when `leave` is set.
+    /// Puts the secrets kept in `from` into `to`, and answers the id each goes by there.
+    /// A secret leaves `from` when `leave` is set; otherwise it is copied under a new id.
     fn relocate(
         &self,
         id: ProfileId,
@@ -298,7 +300,7 @@ impl MemoryReplica {
         to: ReplicaScope,
         credentials: Vec<CredentialId>,
         leave: bool,
-    ) -> Result<Vec<CredentialId>, ReplicaError> {
+    ) -> Result<Vec<CredentialCopy>, ReplicaError> {
         self.with(|inner| {
             inner.calls.push(call);
             if inner.offline {
@@ -320,9 +322,21 @@ impl MemoryReplica {
                 }
                 if leave {
                     kept.remove(&from);
+                    kept.insert(to.clone());
+                    moved.push(CredentialCopy {
+                        from: credential,
+                        to: credential,
+                    });
+                    continue;
                 }
-                kept.insert(to.clone());
-                moved.push(credential);
+                inner.copies += 1;
+                let copy =
+                    CredentialId::from_bytes((u128::MAX - u128::from(inner.copies)).to_be_bytes());
+                inner.secrets.insert(copy, HashSet::from([to.clone()]));
+                moved.push(CredentialCopy {
+                    from: credential,
+                    to: copy,
+                });
             }
             Ok(moved)
         })
@@ -410,7 +424,10 @@ impl ProfileReplica for MemoryReplica {
             to: to.clone(),
             credentials: credentials.clone(),
         };
-        futures::future::ready(self.relocate(id, call, from, to, credentials, true)).boxed()
+        let moved = self
+            .relocate(id, call, from, to, credentials, true)
+            .map(|moved| moved.into_iter().map(|copy| copy.from).collect());
+        futures::future::ready(moved).boxed()
     }
 
     fn copy(
@@ -419,7 +436,7 @@ impl ProfileReplica for MemoryReplica {
         from: ReplicaScope,
         to: ReplicaScope,
         credentials: Vec<CredentialId>,
-    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+    ) -> BoxFuture<'static, Result<Vec<CredentialCopy>, ReplicaError>> {
         let call = ReplicaCall::Copy {
             id,
             from: from.clone(),

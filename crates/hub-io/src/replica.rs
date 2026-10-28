@@ -18,8 +18,8 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use nocterm_connections_model::profiles::{Profile, ProfileId};
 use nocterm_connections_model::replica::{
-    ProfileReplica, ReplicaAccess, ReplicaCursor, ReplicaError, ReplicaPage, ReplicaScope,
-    ReplicaSpace, ReplicaVersion,
+    CredentialCopy, ProfileReplica, ReplicaAccess, ReplicaCursor, ReplicaError, ReplicaPage,
+    ReplicaScope, ReplicaSpace, ReplicaVersion,
 };
 use nocterm_core::SharedCause;
 use nocterm_hubs_model::HubError;
@@ -273,13 +273,17 @@ impl ProfileReplica for HubProfileReplica {
         from: ReplicaScope,
         to: ReplicaScope,
         credentials: Vec<CredentialId>,
-    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+    ) -> BoxFuture<'static, Result<Vec<CredentialCopy>, ReplicaError>> {
         let ledger = Arc::clone(&self.ledger);
         self.run(async move {
-            ledger
+            let copies = ledger
                 .copy(&space_of(from), &space_of(to), &credentials)
                 .await
-                .map_err(|error| carry_error(error, id))
+                .map_err(|error| carry_error(error, id))?;
+            Ok(copies
+                .into_iter()
+                .map(|(from, to)| CredentialCopy { from, to })
+                .collect())
         })
     }
 
