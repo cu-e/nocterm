@@ -181,8 +181,9 @@ async fn a_jump_host_route_continues_behind_the_relay_with_every_key_checked() {
         "only the first hop is dialled through the hub; the destination is forwarded by the jump host"
     );
     session.input("printf 'destination=%s\\n' \"$SSH_CONNECTION\"\r");
-    let seen = output_containing(&session, "destination=").await;
-    assert!(seen.contains(&format!("127.0.0.1 {}", destination.port())));
+    // Wait for the printed address itself: the terminal also echoes the typed command,
+    // which contains `destination=` before the shell has answered.
+    output_containing(&session, &format!("127.0.0.1 {}", destination.port())).await;
     session.close();
     closed(&session, no_prompts).await;
     hub.connection_ended().await;
