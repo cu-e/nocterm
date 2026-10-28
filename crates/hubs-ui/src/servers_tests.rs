@@ -9,7 +9,7 @@ use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
 use nocterm_hubs::{HubStatus, HubSummary};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
 use nocterm_hubs_model::{
-    Fingerprint, HubColor, HubRecord, HubSignIn as _, PendingAdminKey, TrustPolicy,
+    Environment, Fingerprint, HubColor, HubRecord, HubSignIn as _, PendingAdminKey, TrustPolicy,
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
@@ -39,7 +39,7 @@ fn page_on(
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
-    let setup = fixture_over(cx, config, hub, known, signed_in);
+    let setup = fixture_over(cx, config, Environment::Local, hub, known, signed_in);
     let hubs = setup.installed.hubs().clone();
     let (window, _) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {

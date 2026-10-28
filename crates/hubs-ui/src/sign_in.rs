@@ -24,17 +24,25 @@ use nocterm_session::Secret;
 
 use crate::layout::{field, fingerprint_block, note, problem, title};
 use crate::messages::sign_in_problem;
+use crate::switch::Switch;
 use form::SignInForm;
 
 /// Starts signing in to a server not known yet, or again to `hub`, and shows the dialog. A hub
-/// that is not known any more shows nothing.
-pub(crate) fn start(hubs: &Entity<Hubs>, hub: Option<&HubId>, window: &mut Window, cx: &mut App) {
+/// that is not known any more shows nothing. With a `switch`, finishing the sign-in opens the
+/// server's window.
+pub(crate) fn start(
+    hubs: &Entity<Hubs>,
+    hub: Option<&HubId>,
+    switch: Option<Switch>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let session = hubs.update(cx, |hubs, cx| match hub {
         Some(hub) => hubs.start_sign_in_for(hub, cx),
         None => Some(hubs.start_sign_in(cx)),
     });
     if let Some(session) = session {
-        open(session, window, cx);
+        open(session, switch, window, cx);
     }
 }
 
@@ -42,7 +50,7 @@ pub(crate) fn start(hubs: &Entity<Hubs>, hub: Option<&HubId>, window: &mut Windo
 pub(crate) fn start_reissue(hubs: &Entity<Hubs>, hub: &HubId, window: &mut Window, cx: &mut App) {
     let session = hubs.update(cx, |hubs, cx| hubs.start_recovery_key_reissue(hub, cx));
     if let Some(session) = session {
-        open(session, window, cx);
+        open(session, None, window, cx);
     }
 }
 
@@ -50,8 +58,13 @@ pub(crate) fn start_reissue(hubs: &Entity<Hubs>, hub: &HubId, window: &mut Windo
 /// in flight is cancelled with the session. While a recovery key is being issued or shown the
 /// dialog cannot be closed (button, backdrop or Escape): the key exists on the server and is
 /// shown only here.
-pub(crate) fn open(session: Entity<SignInSession>, window: &mut Window, cx: &mut App) {
-    let dialog = cx.new(|cx| SignInDialog::new(session, window, cx));
+pub(crate) fn open(
+    session: Entity<SignInSession>,
+    switch: Option<Switch>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let dialog = cx.new(|cx| SignInDialog::new(session, switch, window, cx));
     let first = dialog.clone();
     window.open_dialog(cx, move |shell, _, cx| {
         let submit = dialog.clone();
@@ -85,6 +98,8 @@ pub(crate) fn open(session: Entity<SignInSession>, window: &mut Window, cx: &mut
 
 struct SignInDialog {
     session: Entity<SignInSession>,
+    /// Opens the server's window once the sign-in is finished.
+    switch: Option<Switch>,
     form: SignInForm,
     focus: FocusHandle,
     /// The kind of step the focus was last placed for.
@@ -93,7 +108,12 @@ struct SignInDialog {
 }
 
 impl SignInDialog {
-    fn new(session: Entity<SignInSession>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        session: Entity<SignInSession>,
+        switch: Option<Switch>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let form = SignInForm::new(window, cx);
         let subscriptions = vec![
             cx.observe_in(&session, window, |this, _, window, cx| {
@@ -107,6 +127,7 @@ impl SignInDialog {
         ];
         Self {
             session,
+            switch,
             form,
             focus: cx.focus_handle(),
             placed: None,
@@ -168,7 +189,7 @@ impl SignInDialog {
                 self.session.update(cx, |session, cx| session.back(cx));
             }
             SignInStep::Method { password: true, .. } => self.sign_in_with_password(window, cx),
-            SignInStep::Finished(_) => self.close(window, cx),
+            SignInStep::Finished(hub) => self.finish(&hub, window, cx),
             SignInStep::Passphrase { .. } => self.set_vault_passphrase(window, cx),
             SignInStep::Recovery { .. } => self.recover(window, cx),
             // Enter must not skip past the one showing of the recovery key, nor replace a key
@@ -186,6 +207,14 @@ impl SignInDialog {
 
     fn close(&self, window: &mut Window, cx: &mut Context<Self>) {
         window.close_dialog(cx);
+    }
+
+    /// Closes the dialog and shows the server that was signed in to, when the dialog was asked to.
+    fn finish(&self, hub: &HubId, window: &mut Window, cx: &mut Context<Self>) {
+        self.close(window, cx);
+        if let Some(switch) = &self.switch {
+            switch.open_signed_in(hub, window, cx);
+        }
     }
 
     fn submit_address(&mut self, cx: &mut Context<Self>) {
@@ -255,7 +284,7 @@ impl SignInDialog {
                 .into_any_element(),
             SignInStep::Passphrase { problem } => self.render_passphrase(problem.as_ref(), cx),
             SignInStep::Recovery { problem } => self.render_recovery(problem.as_ref(), cx),
-            SignInStep::Finished(_) => self.render_finished(cx),
+            SignInStep::Finished(hub) => self.render_finished(hub, cx),
             SignInStep::Failed(error) => self.render_failed(&error, cx),
         }
     }
@@ -663,17 +692,19 @@ impl SignInDialog {
             .into_any_element()
     }
 
-    fn render_finished(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn render_finished(&mut self, hub: HubId, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let (heading, text) = if self.session.read(cx).reissue_only() {
             (
                 "Recovery key saved",
                 "The new recovery key opens your account keys. The old one no longer does.",
             )
         } else {
-            (
-                "Signed in",
-                "The server is saved. Its sessions are in the Sessions panel.",
-            )
+            let text = if self.switch.is_some() {
+                "The server is saved. Its connections and vault open in its own window."
+            } else {
+                "The server is saved."
+            };
+            ("Signed in", text)
         };
         v_flex()
             .gap_3()
@@ -684,8 +715,8 @@ impl SignInDialog {
                     Button::new("sign-in-done")
                         .primary()
                         .label("Done")
-                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                            this.close(window, cx);
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.finish(&hub, window, cx);
                         })),
                 ),
             )

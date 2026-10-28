@@ -190,6 +190,7 @@ nocterm-transfers = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
 # Writes the guest modules that the plugin check tests run (user-plugins builds only).
 wat.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }

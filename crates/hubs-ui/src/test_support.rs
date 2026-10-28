@@ -1,5 +1,8 @@
-//! Fixtures the tests of this crate share: a window over a [`FakeHub`].
+//! Fixtures the tests of this crate share: a window over a [`FakeHub`], and a recording stand-in
+//! for the port the application implements.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::{
@@ -7,13 +10,13 @@ use gpui_kit::{
     WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use nocterm_hubs_model::testing::{FakeAdminKeys, FakeHub, FakeServer};
-use nocterm_hubs_model::{HubAddress, HubId, HubRecord, HubsSettings};
+use nocterm_hubs_model::{Environment, HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
 use nocterm_ui::DesignTokens;
 use nocterm_workspace::{Workspace, test_support::deps_for};
 
-use crate::{Installed, install, register};
+use crate::{EnvironmentOpenError, EnvironmentOpener, Installed, Placement, install, register};
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
 
@@ -34,30 +37,58 @@ pub(crate) fn pinned_record() -> HubRecord {
     server().pinned_record("Home")
 }
 
+/// Remembers which environments the views asked to open.
+#[derive(Default)]
+pub(crate) struct RecordingEnvironments {
+    requests: RefCell<Vec<(Environment, Placement)>>,
+}
+
+impl RecordingEnvironments {
+    pub(crate) fn requests(&self) -> Vec<(Environment, Placement)> {
+        self.requests.borrow().clone()
+    }
+}
+
+impl EnvironmentOpener for RecordingEnvironments {
+    fn open(
+        &self,
+        environment: Environment,
+        placement: Placement,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::App,
+    ) -> Result<(), EnvironmentOpenError> {
+        self.requests.borrow_mut().push((environment, placement));
+        Ok(())
+    }
+}
+
 pub(crate) struct Fixture {
     pub(crate) window: AnyWindowHandle,
     pub(crate) workspace: Entity<Workspace>,
     pub(crate) hub: FakeHub,
     pub(crate) admin_keys: FakeAdminKeys,
     pub(crate) installed: Installed,
+    pub(crate) environments: Rc<RecordingEnvironments>,
 }
 
 /// A window over `hub`, with `known` servers in the settings. The hub is signed in to when
 /// `signed_in` names a user of the server.
 pub(crate) fn fixture(
     cx: &mut TestAppContext,
+    environment: Environment,
     hub: FakeHub,
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
     let config = SettingsConfig::in_memory(SettingsDocument::default());
-    fixture_over(cx, config, hub, known, signed_in)
+    fixture_over(cx, config, environment, hub, known, signed_in)
 }
 
 /// As [`fixture`], but the settings are kept by `config`, which may fail to save.
 pub(crate) fn fixture_over(
     cx: &mut TestAppContext,
     config: SettingsConfig,
+    environment: Environment,
     hub: FakeHub,
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
@@ -66,6 +97,7 @@ pub(crate) fn fixture_over(
         hub.sign_in_as(&hub_id(), user);
     }
     let admin_keys = FakeAdminKeys::alongside(&hub);
+    let environments = Rc::new(RecordingEnvironments::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
         let settings = config.with(HubsSettings { servers: known }).install(cx);
@@ -93,17 +125,49 @@ pub(crate) fn fixture_over(
         hub,
         admin_keys,
         installed,
+        environments,
     };
-    setup.compose(cx);
+    setup.compose(cx, environment);
     cx.run_until_parked();
     setup
 }
 
 impl Fixture {
-    fn compose(&self, cx: &mut TestAppContext) {
-        cx.update_window(self.window, |_, _, cx| {
-            self.workspace.update(cx, |workspace, _| {
-                register(&self.installed, workspace);
+    /// Adds a tab of a remote session, so the window holds something to lose.
+    pub(crate) fn add_tab(&self, cx: &mut TestAppContext) {
+        use nocterm_session::{Auth, Target};
+        use nocterm_workspace::{SessionSpec, test_support::SessionProbe};
+        cx.update_window(self.window, |_, window, cx| {
+            self.workspace.update(cx, |workspace, cx| {
+                let spec = SessionSpec {
+                    options: Default::default(),
+                    title: "shell".into(),
+                    profile: None,
+                    target: Target::new("me", "host.example", 22),
+                    auth: Auth::Auto,
+                    launch: None,
+                    credential: None,
+                    jumps: Vec::new(),
+                };
+                let tab = SessionProbe::new(spec, true, cx);
+                workspace.add_item(tab, window, cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    fn compose(&self, cx: &mut TestAppContext, environment: Environment) {
+        cx.update_window(self.window, |_, window, cx| {
+            self.workspace.update(cx, |workspace, cx| {
+                register(
+                    &self.installed,
+                    environment,
+                    self.environments.clone(),
+                    workspace,
+                    window,
+                    cx,
+                );
             });
         })
         .unwrap();

@@ -1,12 +1,26 @@
 //! Signing in to a server through the dialog, step by step, over a fake hub.
+use crate::Placement;
 use crate::SignInToServer;
 use crate::test_support::{Fixture, fixture, server};
 use gpui_kit::TestAppContext;
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp, FakeServer};
-use nocterm_hubs_model::{Fingerprint, HubError};
+use nocterm_hubs_model::{Environment, Fingerprint, HubError};
 
 fn dialog_over(server: FakeServer, cx: &mut TestAppContext) -> Fixture {
-    let window = fixture(cx, FakeHub::new().with_server(server), Vec::new(), None);
+    dialog_over_tabs(server, false, cx)
+}
+
+fn dialog_over_tabs(server: FakeServer, tabs: bool, cx: &mut TestAppContext) -> Fixture {
+    let window = fixture(
+        cx,
+        Environment::Local,
+        FakeHub::new().with_server(server),
+        Vec::new(),
+        None,
+    );
+    if tabs {
+        window.add_tab(cx);
+    }
     window.dispatch(SignInToServer, cx);
     window.settle_dialog(cx);
     assert!(window.has_dialog(cx));
@@ -139,6 +153,36 @@ fn done_closes_the_dialog_and_the_server_is_listed(cx: &mut TestAppContext) {
     window.click("sign-in-done", cx);
     assert!(!window.has_dialog(cx));
     assert_eq!(saved(&window, cx), 1);
+}
+
+#[gpui_kit::test]
+fn finishing_a_sign_in_from_an_empty_window_opens_the_server_in_it(cx: &mut TestAppContext) {
+    let window = dialog_over(server().publicly_trusted(), cx);
+    submit(&window, "hub.home:7443", None, cx);
+    sign_in_with_password(&window, "ada", "secret", cx);
+    window.click("sign-in-done", cx);
+    assert_eq!(
+        window.environments.requests(),
+        vec![(
+            Environment::Hub(crate::test_support::hub_id()),
+            Placement::ThisWindow
+        )]
+    );
+}
+
+#[gpui_kit::test]
+fn finishing_a_sign_in_from_a_window_with_tabs_opens_the_server_beside_it(cx: &mut TestAppContext) {
+    let window = dialog_over_tabs(server().publicly_trusted(), true, cx);
+    submit(&window, "hub.home:7443", None, cx);
+    sign_in_with_password(&window, "ada", "secret", cx);
+    window.click("sign-in-done", cx);
+    assert_eq!(
+        window.environments.requests(),
+        vec![(
+            Environment::Hub(crate::test_support::hub_id()),
+            Placement::NewWindow
+        )]
+    );
 }
 
 #[gpui_kit::test]
@@ -335,7 +379,7 @@ fn unconfirmed_key_dialog(cx: &mut TestAppContext) -> Fixture {
     ));
     let id = crate::test_support::hub_id();
     hub.leave_recovery_key_unconfirmed(&id);
-    let window = fixture(cx, hub, Vec::new(), Some("ada"));
+    let window = fixture(cx, Environment::Local, hub, Vec::new(), Some("ada"));
     window.dispatch(SignInToServer, cx);
     window.settle_dialog(cx);
     submit(&window, "hub.home:7443", None, cx);
