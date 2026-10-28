@@ -23,6 +23,8 @@ use nocterm_session::{
 
 #[path = "hub/account.rs"]
 mod account;
+#[path = "hub/groups.rs"]
+mod groups;
 
 struct Hub {
     address: HubAddress,

@@ -27,13 +27,13 @@ use std::sync::Arc;
 mod sshd;
 
 /// One device: its own credential directory, signed in with the account's password.
-struct Device {
+pub(super) struct Device {
     links: Arc<HubLinks>,
     _dir: tempfile::TempDir,
 }
 
 impl Device {
-    fn sign_in(hub: &Hub) -> (Self, KeyStatus) {
+    pub(super) fn sign_in(hub: &Hub) -> (Self, KeyStatus) {
         let dir = tempfile::tempdir().unwrap();
         let links = links(&dir);
         let signed = block_on(links.password(
@@ -45,7 +45,7 @@ impl Device {
         (Self { links, _dir: dir }, signed.keys)
     }
 
-    fn account(&self, hub: &Hub) -> nocterm_hub_io::HubAccount {
+    pub(super) fn account(&self, hub: &Hub) -> nocterm_hub_io::HubAccount {
         self.links.open_account(&hub.id()).expect("an account")
     }
 }
@@ -59,7 +59,7 @@ impl Drop for Device {
     }
 }
 
-fn unique(name: &str) -> String {
+pub(super) fn unique(name: &str) -> String {
     format!("{name}-{}", uuid::Uuid::new_v4())
 }
 
