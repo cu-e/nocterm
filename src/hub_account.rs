@@ -5,8 +5,11 @@
 //! local and the vault is the file of this device. Nothing restarts when the choice changes:
 //! this entity follows the registry of servers and moves the two consumers.
 use gpui_kit::{AppContext as _, Context, Entity, Subscription};
-use nocterm_connections_model::replica::{ProfileReplica, ReplicaState};
-use nocterm_connections_store::{ConnectionStore, ProfileReplication};
+use nocterm_connections_model::{
+    profiles::Profile,
+    replica::{ProfileReplica, ReplicaScope, ReplicaState},
+};
+use nocterm_connections_store::{ConnectionStore, ProfileReplication, ReplicationEvent};
 use nocterm_core::Paths;
 use nocterm_hubs::Hubs;
 use nocterm_hubs_model::{HubError, HubId};
@@ -46,6 +49,7 @@ pub(crate) struct HubAccountSync {
     /// The server whose account is in use now.
     attached: Option<HubId>,
     _hubs: Subscription,
+    _refusals: Subscription,
 }
 
 impl HubAccountSync {
@@ -67,6 +71,18 @@ impl HubAccountSync {
         cx: &mut Context<Self>,
     ) -> Self {
         let observed = cx.observe(&hubs, |this, _, cx| this.follow(cx));
+        let refusals = cx.subscribe(&replication, |_, replication, event, cx| {
+            if let ReplicationEvent::Refused {
+                profile,
+                scope,
+                restored,
+            } = event
+            {
+                let space = space_name(&replication.read(cx).spaces(), scope);
+                let message = refusal_message(profile, &space, scope, *restored);
+                gpui_kit::App::defer(cx, move |cx| notify(message, cx));
+            }
+        });
         let mut sync = Self {
             hubs,
             accounts,
@@ -74,6 +90,7 @@ impl HubAccountSync {
             replication,
             attached: None,
             _hubs: observed,
+            _refusals: refusals,
         };
         sync.follow(cx);
         sync
@@ -145,4 +162,57 @@ pub(crate) fn replication(
         tracing::error!(%error, "shutdown registration failed");
     }
     cx.new(|cx| ProfileReplication::new(store, document, cx))
+}
+
+/// What the user calls the space a refusal came from.
+fn space_name(
+    spaces: &[nocterm_connections_model::replica::ReplicaSpace],
+    scope: &ReplicaScope,
+) -> String {
+    spaces
+        .iter()
+        .find(|space| &space.scope == scope)
+        .map_or_else(|| "the organization".to_owned(), |space| space.name.clone())
+}
+
+/// Tells the user, once for the refusal, that the hub did not let them change a connection and
+/// where it is now.
+pub(crate) fn refusal_message(
+    profile: &Profile,
+    space: &str,
+    scope: &ReplicaScope,
+    restored: bool,
+) -> String {
+    let name = &profile.name;
+    match (restored, scope) {
+        (true, _) => format!(
+            "You may not change \u{201c}{name}\u{201d} in {space}. The shared version was restored."
+        ),
+        (false, ReplicaScope::Organization(_)) => format!(
+            "You may not add \u{201c}{name}\u{201d} to {space}. It stays in your personal space."
+        ),
+        (false, ReplicaScope::Personal) => {
+            format!("The server refused \u{201c}{name}\u{201d}. It stays on this device only.")
+        }
+    }
+}
+
+/// Shows `message` in the window the user is working in; with no window there is no one to tell.
+fn notify(message: String, cx: &mut gpui_kit::App) {
+    tracing::warn!(%message, "the hub refused a change to a connection");
+    let Some(handle) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    else {
+        return;
+    };
+    let _ = handle.update(cx, |_, window, cx| {
+        nocterm_ui::notice::warning(
+            window,
+            cx,
+            "connections-refused",
+            "Connection not changed",
+            message,
+        );
+    });
 }

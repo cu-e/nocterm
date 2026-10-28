@@ -419,8 +419,11 @@ fn install_hub_account(
     cx: &mut App,
 ) -> Option<gpui_kit::Entity<crate::hub_account::HubAccountSync>> {
     let accounts = accounts?;
-    let store = connections?.connections().clone();
+    let connections = connections?;
+    let store = connections.connections().clone();
     let replication = crate::hub_account::replication(store, stored, shutdown, cx);
+    // The views show where each connection lives and what the account may do there.
+    connections.bind_replication(replication.clone());
     let hubs = hubs.hubs().clone();
     Some(crate::hub_account::HubAccountSync::install(
         hubs,

@@ -274,3 +274,57 @@ fn an_account_that_cannot_be_opened_leaves_the_device_as_it_was(cx: &mut TestApp
     assert_eq!(vault(&booted).status(), VaultStatus::Missing);
     assert!(local_profiles(&booted, cx).is_empty());
 }
+
+#[gpui_kit::test]
+fn a_refused_change_to_a_shared_connection_is_undone_and_announced_once(cx: &mut TestAppContext) {
+    use futures::FutureExt as _;
+    use nocterm_connections_model::replica::{ReplicaAccess, ReplicaSpace};
+    let account = Account::new();
+    let acme = ReplicaScope::Organization("acme".into());
+    let shared = profile("shared");
+    account.replica.set_spaces(vec![
+        ReplicaSpace {
+            scope: ReplicaScope::Personal,
+            name: "Personal".into(),
+            access: ReplicaAccess::Write,
+        },
+        ReplicaSpace {
+            scope: acme.clone(),
+            name: "Acme".into(),
+            access: ReplicaAccess::Read,
+        },
+    ]);
+    account.replica.write_remote(acme.clone(), shared.clone());
+    account.replica.refuse_writes_in(acme);
+    let booted = boot_with(
+        FakeAccounts::of(vec![(hub_id(ADDRESS), account)]),
+        Some(ADDRESS),
+        cx,
+    );
+    assert_eq!(local_profiles(&booted, cx), [shared.clone()]);
+    let (handle, _workspace) = cx.update(|cx| open_workspace(&booted, cx));
+
+    let mut edited = shared.clone();
+    edited.name = "renamed".into();
+    let store = booted.connections().unwrap().connections().clone();
+    cx.update(|cx| {
+        store
+            .update(cx, |store, cx| store.save_profile(edited, cx))
+            .now_or_never()
+            .unwrap()
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        local_profiles(&booted, cx),
+        [shared],
+        "the shared version is back"
+    );
+    let notices = cx
+        .update_window(handle, |_, window, cx| {
+            nocterm_ui::notice::count(window, cx)
+        })
+        .unwrap();
+    assert_eq!(notices, 1, "one notice for the refusal");
+}
