@@ -234,7 +234,8 @@ impl Groups {
         })
     }
 
-    /// The secret of a group's credential, when it answers for `binding`.
+    /// The secret of a group's credential, when it answers for `binding`. A group that
+    /// only keeps a tombstone of it, such as the one it was moved out of, does not answer.
     pub(super) fn secret(
         &self,
         object_id: &str,
@@ -244,6 +245,9 @@ impl Groups {
             let Some(object) = snapshot.objects.get(object_id) else {
                 continue;
             };
+            if object.deleted {
+                continue;
+            }
             return match snapshot.open(object_id, object)? {
                 Some(Decoded::Known(record)) if record.binding == *binding => Ok(record.secret),
                 Some(Decoded::Known(_)) => Err(VaultError::Binding),

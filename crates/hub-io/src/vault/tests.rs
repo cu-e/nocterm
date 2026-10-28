@@ -150,18 +150,41 @@ fn vault_in_acme(
     nocterm_keys::CollectionKey,
     tempfile::TempDir,
 ) {
+    let (vault, hub, mut keys, dir) = vault_in_groups(role, &[("acme", "Acme", ACME_VAULT)]);
+    (vault, hub, keys.remove(0), dir)
+}
+
+/// A vault whose account belongs to each organization `(id, name, vault collection)` with
+/// `role`, and holds the key of every collection, in the order given.
+fn vault_in_groups(
+    role: nocterm_hub_proto::v1::Role,
+    groups: &[(&str, &str, &str)],
+) -> (
+    HubVault,
+    Arc<MemoryHub>,
+    Vec<nocterm_keys::CollectionKey>,
+    tempfile::TempDir,
+) {
     let hub = Arc::new(MemoryHub::default());
     let dir = tempfile::tempdir().unwrap();
     let admin = Admin::acme();
     let (_accounts, slot, record) = signed_in_trusting(dir.path(), admin.pinned());
     hub.set_keyset(Some(record.clone()));
-    let (key, envelope) = crate::account::testing::granted(&record, ACME_VAULT, admin);
-    hub.add_group(VAULT_KIND, "acme", ACME_VAULT, envelope, admin);
-    hub.set_memberships(&[("acme", "Acme", role)]);
+    let mut keys = Vec::new();
+    for (org_id, _, collection) in groups {
+        let (key, envelope) = crate::account::testing::granted(&record, collection, admin);
+        hub.add_group(VAULT_KIND, org_id, collection, envelope, admin);
+        keys.push(key);
+    }
+    let memberships: Vec<_> = groups
+        .iter()
+        .map(|(org_id, name, _)| (*org_id, *name, role))
+        .collect();
+    hub.set_memberships(&memberships);
     (
         HubVault::new(Handle::current(), slot, hub.clone()),
         hub,
-        key,
+        keys,
         dir,
     )
 }
@@ -174,12 +197,23 @@ fn member_saves(
     label: &str,
     secret: &str,
 ) {
+    member_saves_in(hub, ACME_VAULT, key, id, label, secret);
+}
+
+fn member_saves_in(
+    hub: &MemoryHub,
+    collection: &str,
+    key: &nocterm_keys::CollectionKey,
+    id: CredentialId,
+    label: &str,
+    secret: &str,
+) {
     let plain = codec::encode(label, &binding(), &Secret::new(secret)).unwrap();
     let object_id = id.to_string();
     let sealed = key
-        .seal_object(ACME_VAULT, &object_id, codec::KIND, &plain)
+        .seal_object(collection, &object_id, codec::KIND, &plain)
         .unwrap();
-    hub.write_as_member(ACME_VAULT, &object_id, codec::KIND, sealed);
+    hub.write_as_member(collection, &object_id, codec::KIND, sealed);
 }
 
 fn shared_id() -> CredentialId {
@@ -520,4 +554,23 @@ async fn a_guest_cannot_copy_a_credential_into_the_group() {
         .await;
     assert!(matches!(copied, Err(VaultError::ReadOnly)));
     assert!(hub.objects(ACME_VAULT).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_deleted_in_one_group_is_read_from_the_group_that_holds_it() {
+    const BETA_VAULT: &str = "beta-vault";
+    let (vault, hub, keys, _dir) = vault_in_groups(
+        nocterm_hub_proto::v1::Role::Member,
+        &[("acme", "Acme", ACME_VAULT), ("beta", "Beta", BETA_VAULT)],
+    );
+    member_saves_in(&hub, ACME_VAULT, &keys[0], shared_id(), "Team", "acme-pw");
+    vault.delete(shared_id()).await.unwrap();
+    member_saves_in(&hub, BETA_VAULT, &keys[1], shared_id(), "Team", "beta-pw");
+    for _ in 0..24 {
+        assert_eq!(
+            vault.get(shared_id(), binding()).await.unwrap().expose(),
+            "beta-pw",
+            "the tombstone in Acme does not hide the live record in Beta"
+        );
+    }
 }
