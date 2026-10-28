@@ -129,7 +129,7 @@ impl ConnectionFields {
         appearance: &AppearanceFields,
         id: ProfileId,
         editing: bool,
-        space: &super::space::SpaceField,
+        space: Option<AnyElement>,
         installed: &crate::Installed,
         cx: &mut Context<ConnectionEditor>,
     ) -> Vec<AnyElement> {
@@ -151,7 +151,7 @@ impl ConnectionFields {
             ),
             form::section(
                 "Organisation",
-                space.row(cx).into_iter().chain([
+                space.into_iter().chain([
                     field_row(
                         "Folder",
                         "Groups the connection in the sidebar.",

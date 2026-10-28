@@ -4,10 +4,41 @@ use super::*;
 use crate::spaces::Spaces;
 use nocterm_connections_model::replica::{ReplicaAccess, ReplicaScope, ReplicaSpace};
 
+/// The section of the connections whose organization the account does not reach now: before
+/// the first synchronization, while the vault is locked, or once its group left the layout.
+const UNAVAILABLE: &str = "unavailable";
+
 /// One organization and the connections of it that the filter lets through.
 pub(super) struct Section {
-    space: ReplicaSpace,
+    id: String,
+    name: String,
+    /// The organization the members belong to; none for the section of unreachable ones.
+    scope: Option<ReplicaScope>,
+    writable: bool,
     members: Vec<Profile>,
+}
+
+impl Section {
+    fn of(space: &ReplicaSpace) -> Self {
+        Self {
+            id: space_id(&space.scope),
+            name: space.name.clone(),
+            scope: Some(space.scope.clone()),
+            writable: space.access == ReplicaAccess::Write,
+            members: Vec::new(),
+        }
+    }
+
+    /// Connections of organizations that cannot be reached: shown, but only to open.
+    fn unavailable(members: Vec<Profile>) -> Self {
+        Self {
+            id: UNAVAILABLE.to_owned(),
+            name: "Unavailable".to_owned(),
+            scope: None,
+            writable: false,
+            members,
+        }
+    }
 }
 
 /// The list as shown: the personal connections filed in folders, then the sections.
@@ -27,28 +58,19 @@ impl Listing {
         groups: Vec<(String, Vec<Profile>)>,
         cx: &App,
     ) -> Self {
-        let mut sections: Vec<Section> = spaces
-            .organizations()
-            .map(|space| Section {
-                space: space.clone(),
-                members: Vec::new(),
-            })
-            .collect();
-        if sections.is_empty() {
-            return Self {
-                top,
-                groups,
-                sections,
-            };
-        }
-        let mut file = |profile: Profile| {
-            let scope = spaces.scope(profile.id, cx);
-            match sections.iter_mut().find(|s| s.space.scope == scope) {
-                Some(section) => {
-                    section.members.push(profile);
-                    None
+        let mut sections: Vec<Section> = spaces.organizations().map(Section::of).collect();
+        let mut unreachable = Vec::new();
+        let mut file = |profile: Profile| match spaces.scope(profile.id, cx) {
+            ReplicaScope::Personal => Some(profile),
+            scope => {
+                match sections
+                    .iter_mut()
+                    .find(|s| s.scope.as_ref() == Some(&scope))
+                {
+                    Some(section) => section.members.push(profile),
+                    None => unreachable.push(profile),
                 }
-                None => Some(profile),
+                None
             }
         };
         let top: Vec<Profile> = top.into_iter().filter_map(&mut file).collect();
@@ -62,6 +84,9 @@ impl Listing {
                 (rest.is_empty() == !listed).then_some((name, rest))
             })
             .collect();
+        if !unreachable.is_empty() {
+            sections.push(Section::unavailable(unreachable));
+        }
         Self {
             top,
             groups,
@@ -87,15 +112,16 @@ fn space_id(scope: &ReplicaScope) -> String {
     }
 }
 
-impl ConnectionsPanel {
-    pub(super) fn render_section(
+impl Section {
+    /// The header and the rows, each built by `row` from a connection and whether it can be
+    /// changed. Without write access the rows can only be opened.
+    pub(super) fn render<T: 'static>(
         &self,
-        section: &Section,
         filtering: bool,
-        cx: &mut Context<Self>,
+        cx: &mut Context<T>,
+        row: impl Fn(&Profile, bool, &mut Context<T>) -> AnyElement,
     ) -> impl IntoElement {
-        let id = space_id(&section.space.scope);
-        let writable = section.space.access == ReplicaAccess::Write;
+        let id = &self.id;
         let theme = cx.theme();
         let header = h_flex()
             .id(SharedString::from(format!("connections-space-{id}")))
@@ -109,14 +135,8 @@ impl ConnectionsPanel {
             .font_semibold()
             .text_color(theme.muted_foreground)
             .child(Icon::new(IconName::Layers).small())
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(section.space.name.clone()),
-            )
-            .when(!writable, |header| {
+            .child(div().flex_1().min_w_0().truncate().child(self.name.clone()))
+            .when(!self.writable, |header| {
                 header.child(
                     div()
                         .id(SharedString::from(format!(
@@ -129,10 +149,10 @@ impl ConnectionsPanel {
             });
         let muted = theme.muted_foreground;
         let mut list = v_flex().gap_px().child(header);
-        for profile in &section.members {
-            list = list.child(self.render_row(profile, writable, cx));
+        for profile in &self.members {
+            list = list.child(row(profile, self.writable, cx));
         }
-        if section.members.is_empty() && !filtering {
+        if self.members.is_empty() && !filtering {
             list = list.child(
                 div()
                     .id(SharedString::from(format!("connections-space-{id}-empty")))
@@ -145,22 +165,5 @@ impl ConnectionsPanel {
             );
         }
         list
-    }
-}
-
-impl ConnectionsPanel {
-    /// The connections of folder `group` in the user's own list. A folder is listed only
-    /// there, so what it does reaches no connection of an organization that uses the same name.
-    pub(super) fn folder_members(&self, group: &str, cx: &App) -> Vec<ProfileId> {
-        let spaces = Spaces::of(&self.installed, cx);
-        self.installed
-            .connections()
-            .read(cx)
-            .profiles(cx)
-            .in_group(Some(group), "")
-            .iter()
-            .map(|profile| profile.id)
-            .filter(|id| spaces.filed_personally(*id, cx))
-            .collect()
     }
 }

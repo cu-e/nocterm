@@ -253,6 +253,12 @@ impl ConnectionsPanel {
         });
     }
 
+    /// The user's own connections in folder `group`.
+    fn folder_members(&self, group: &str, cx: &App) -> Vec<ProfileId> {
+        let profiles = self.installed.connections().read(cx).profiles(cx);
+        Spaces::of(&self.installed, cx).folder_members(profiles, group, cx)
+    }
+
     fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
         // The delete only applies while the group still holds these connections.
         let members = self.folder_members(&group, cx);
@@ -578,6 +584,7 @@ impl ConnectionsPanel {
         &self,
         group: &str,
         members: &[Profile],
+        spaces: &Spaces,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let drop_group = group.to_owned();
@@ -593,7 +600,8 @@ impl ConnectionsPanel {
                 }),
             );
         for profile in members {
-            folder = folder.child(self.render_row(profile, true, cx));
+            let writable = spaces.writable(profile.id, cx);
+            folder = folder.child(self.render_row(profile, writable, cx));
         }
         folder.child(self.render_append_zone(Some(group), cx))
     }
@@ -639,7 +647,8 @@ impl ConnectionsPanel {
                 })),
         );
         for profile in &top {
-            list = list.child(self.render_row(profile, true, cx));
+            let writable = spaces.writable(profile.id, cx);
+            list = list.child(self.render_row(profile, writable, cx));
         }
         list = list.child(self.render_append_zone(None, cx));
         for (group, members) in &groups {
@@ -647,11 +656,13 @@ impl ConnectionsPanel {
             let collapsed = !filtering && self.collapsed.contains(group);
             list = list.child(self.render_group_header(group, collapsed, cx));
             if !collapsed {
-                list = list.child(self.render_folder(group, members, cx));
+                list = list.child(self.render_folder(group, members, &spaces, cx));
             }
         }
         for section in &sections {
-            list = list.child(self.render_section(section, filtering, cx));
+            list = list.child(section.render(filtering, cx, |profile, writable, cx| {
+                self.render_row(profile, writable, cx).into_any_element()
+            }));
         }
 
         if empty {

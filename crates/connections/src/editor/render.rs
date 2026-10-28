@@ -54,13 +54,14 @@ impl Render for ConnectionEditor {
         let available =
             (window.viewport_size().height - rems(10.).to_pixels(window.rem_size())).max(px(0.));
         let nav_width = rems(layout.connection_nav_width);
+        let space = self.space_row(cx);
         let page = match self.section {
             EditorSection::Connection => self.connection.page(
                 &self.launch,
                 &self.appearance,
                 self.edit.id(),
                 self.edit.editing(),
-                &self.space,
+                space,
                 &self.deps,
                 cx,
             ),

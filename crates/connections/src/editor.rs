@@ -1,8 +1,8 @@
 //! The form that creates and edits a saved connection.
 
 use gpui_kit::{
-    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription,
-    WeakEntity, Window,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString,
+    Subscription, WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
@@ -277,6 +277,22 @@ impl ConnectionEditor {
     }
 
     /// Saves the connection, and opens it when `and_connect` is set.
+    /// The choice of space, with its note when the connection's secret would be shared.
+    fn space_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let editor = cx.weak_entity();
+        let shares_secret = self.authentication.shares_secret(cx);
+        self.space.row(
+            shares_secret,
+            move |scope, _, cx| {
+                let _ = editor.update(cx, |this, cx| {
+                    this.space.select(scope);
+                    cx.notify();
+                });
+            },
+            cx,
+        )
+    }
+
     fn save(&mut self, and_connect: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.edit.try_begin() {
             return;
