@@ -1,61 +1,39 @@
 //! A hub relay stand-in: a `RelayDialer` that hands the transport a bounded relayed
 //! stream, with the destination reached over local TCP, refused, or never answered.
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use futures::{FutureExt as _, future::BoxFuture};
 use nocterm_session::{
     ConnectRequest, RELAY_FRAME_BYTES, RelayDialer, RelayError, RelayPeer, RelayStream, Target,
+    testing::{RelayRequest, ScriptedRelay},
 };
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::TcpStream,
-    sync::{Semaphore, oneshot},
+    sync::Semaphore,
     time::{Duration, timeout},
 };
 
-/// What one dial asked for: the hub, its node and the destination.
-pub(crate) type Dialed = (String, Option<String>, Target);
-
 pub(crate) const HUB: &str = "hub.test:7443";
 
-enum Mode {
-    /// Connect to the destination on this machine and carry bytes both ways.
-    Local,
-    Refuse(RelayError),
-    /// Open the stream and give the relay's end to the test, which never answers.
-    Silent(Mutex<Option<oneshot::Sender<RelayPeer>>>),
-}
-
-pub(crate) struct FakeHub {
-    mode: Mode,
-    asked: Mutex<Vec<Dialed>>,
+/// A scripted relay whose opened streams are carried to the destination over local TCP.
+///
+/// Refusals and silence need no more than a [`ScriptedRelay`] itself.
+pub(crate) struct TcpRelay {
+    script: ScriptedRelay,
     ended: Arc<Semaphore>,
 }
 
-impl FakeHub {
-    fn with(mode: Mode) -> Arc<Self> {
+impl TcpRelay {
+    pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            mode,
-            asked: Mutex::default(),
+            script: ScriptedRelay::default(),
             ended: Arc::new(Semaphore::new(0)),
         })
     }
 
-    pub(crate) fn local() -> Arc<Self> {
-        Self::with(Mode::Local)
-    }
-
-    pub(crate) fn refusing(error: RelayError) -> Arc<Self> {
-        Self::with(Mode::Refuse(error))
-    }
-
-    pub(crate) fn silent() -> (Arc<Self>, oneshot::Receiver<RelayPeer>) {
-        let (give, take) = oneshot::channel();
-        (Self::with(Mode::Silent(Mutex::new(Some(give)))), take)
-    }
-
-    pub(crate) fn asked(&self) -> Vec<Dialed> {
-        self.asked.lock().unwrap().clone()
+    pub(crate) fn asked(&self) -> Vec<RelayRequest> {
+        self.script.asked()
     }
 
     /// Resolves once a relayed connection has ended in both directions.
@@ -68,42 +46,26 @@ impl FakeHub {
     }
 }
 
-impl RelayDialer for FakeHub {
+impl RelayDialer for TcpRelay {
     fn dial(
         &self,
         hub: &str,
         node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
-        self.asked
-            .lock()
-            .unwrap()
-            .push((hub.to_owned(), node.map(str::to_owned), target.clone()));
-        let (stream, peer) = RelayStream::pair();
-        match &self.mode {
-            Mode::Refuse(error) => {
-                let error = error.clone();
-                async move { Err(error) }.boxed()
-            }
-            Mode::Silent(give) => {
-                let _ = give.lock().unwrap().take().map(|give| give.send(peer));
-                async move { Ok(stream) }.boxed()
-            }
-            Mode::Local => {
-                let port = target.port;
-                let ended = self.ended.clone();
-                async move {
-                    let tcp = TcpStream::connect(("127.0.0.1", port))
-                        .await
-                        .map_err(|error| {
-                            RelayError::Unreachable(nocterm_core::SharedCause::new(error))
-                        })?;
-                    tokio::spawn(carry(tcp, peer, ended));
-                    Ok(stream)
-                }
-                .boxed()
-            }
+        let dial = self.script.dial(hub, node, target);
+        let script = self.script.clone();
+        let ended = self.ended.clone();
+        let port = target.port;
+        async move {
+            let tcp = TcpStream::connect(("127.0.0.1", port))
+                .await
+                .map_err(|error| RelayError::Unreachable(nocterm_core::SharedCause::new(error)))?;
+            let stream = dial.await?;
+            tokio::spawn(carry(tcp, script.next_peer().await, ended));
+            Ok(stream)
         }
+        .boxed()
     }
 }
 

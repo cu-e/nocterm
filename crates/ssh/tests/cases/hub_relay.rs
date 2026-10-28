@@ -3,11 +3,14 @@
 //! The relay supplies bytes only: host keys, `known_hosts` and sign-in are still the
 //! transport's, against the destination. The stand-in hub is in `support/hub_relay.rs`.
 use super::*;
-use nocterm_session::{JumpHost, PtySize, RelayError, RelayRefusal};
+use nocterm_session::{
+    JumpHost, PtySize, RelayDialer, RelayError, RelayRefusal,
+    testing::{RelayRequest, ScriptedRelay},
+};
 use std::sync::Arc;
 #[path = "../support/hub_relay.rs"]
 mod hub;
-use hub::{FakeHub, HUB, through_hub};
+use hub::{HUB, TcpRelay, through_hub};
 
 /// A request that needs no server: the relay never reaches the target.
 fn offline_request() -> ConnectRequest {
@@ -25,7 +28,7 @@ fn offline_request() -> ConnectRequest {
 }
 
 /// A transport with its own empty trust store and the given relay, if any.
-fn offline_transport(relay: Option<Arc<FakeHub>>) -> (tempfile::TempDir, SshTransport) {
+fn offline_transport(relay: Option<Arc<dyn RelayDialer>>) -> (tempfile::TempDir, SshTransport) {
     let dir = tempfile::tempdir().unwrap();
     let transport = SshTransport::new(nocterm_ssh::SshConfig {
         known_hosts: dir.path().join("known_hosts"),
@@ -45,7 +48,7 @@ fn target_of(sshd: &Sshd) -> Target {
 #[tokio::test]
 async fn a_session_through_a_hub_relay_remembers_the_destination_key_and_not_the_hub() {
     let Some(server) = Sshd::start() else { return };
-    let hub = FakeHub::local();
+    let hub = TcpRelay::new();
     let transport = server.transport("plain").with_relay(hub.clone());
     let session = transport.open(through_hub(server.request(), Some("office")));
     let mut asked = 0;
@@ -64,11 +67,11 @@ async fn a_session_through_a_hub_relay_remembers_the_destination_key_and_not_the
     assert_eq!(asked, 1);
     assert_eq!(
         hub.asked(),
-        [(
-            HUB.to_owned(),
-            Some("office".to_owned()),
-            target_of(&server)
-        )]
+        [RelayRequest {
+            hub: HUB.into(),
+            node: Some("office".into()),
+            target: target_of(&server),
+        }]
     );
     assert!(session.fs().unwrap().home().await.unwrap().starts_with('/'));
     session.input("printf 'relayed-%s\\n' $((40+2))\r");
@@ -94,7 +97,7 @@ async fn a_session_through_a_hub_relay_remembers_the_destination_key_and_not_the
 #[tokio::test]
 async fn a_relayed_destination_key_that_is_rejected_never_reaches_sign_in() {
     let Some(server) = Sshd::start() else { return };
-    let hub = FakeHub::local();
+    let hub = TcpRelay::new();
     let transport = server.transport("plain").with_relay(hub.clone());
     let session = transport.open(through_hub(server.request(), None));
     let mut prompts = 0;
@@ -125,7 +128,7 @@ async fn a_revoked_destination_key_is_refused_over_a_relay() {
         format!("{label} {key}\n@revoked {label} {key}"),
     )
     .unwrap();
-    let hub = FakeHub::local();
+    let hub = TcpRelay::new();
     let transport = server.transport("plain").with_relay(hub.clone());
     let session = transport.open(through_hub(server.request(), None));
     let reason = closed(&session, no_prompts).await;
@@ -142,7 +145,7 @@ async fn a_jump_host_route_continues_behind_the_relay_with_every_key_checked() {
         return;
     };
     destination.authorize(&jump);
-    let hub = FakeHub::local();
+    let hub = TcpRelay::new();
     let transport = jump.transport("plain").with_relay(hub.clone());
     let mut request = through_hub(destination.request(), None);
     request.jumps = vec![JumpHost {
@@ -170,12 +173,17 @@ async fn a_jump_host_route_continues_behind_the_relay_with_every_key_checked() {
     );
     assert_eq!(
         hub.asked(),
-        [(HUB.to_owned(), None, target_of(&jump))],
+        [RelayRequest {
+            hub: HUB.into(),
+            node: None,
+            target: target_of(&jump),
+        }],
         "only the first hop is dialled through the hub; the destination is forwarded by the jump host"
     );
     session.input("printf 'destination=%s\\n' \"$SSH_CONNECTION\"\r");
-    let seen = output_containing(&session, "destination=").await;
-    assert!(seen.contains(&format!("127.0.0.1 {}", destination.port())));
+    // Wait for the printed address itself: the terminal also echoes the typed command,
+    // which contains `destination=` before the shell has answered.
+    output_containing(&session, &format!("127.0.0.1 {}", destination.port())).await;
     session.close();
     closed(&session, no_prompts).await;
     hub.connection_ended().await;
@@ -186,7 +194,7 @@ async fn a_relay_refusal_fails_the_session_naming_the_hub() {
     let refusal = RelayError::Refused {
         reason: RelayRefusal::PrivateNetwork,
     };
-    let hub = FakeHub::refusing(refusal.clone());
+    let hub = Arc::new(ScriptedRelay::refusing(refusal.clone()));
     let (_dir, transport) = offline_transport(Some(hub));
     let session = transport.open(through_hub(offline_request(), None));
     assert_eq!(
@@ -200,7 +208,9 @@ async fn a_relay_refusal_fails_the_session_naming_the_hub() {
 
 #[tokio::test]
 async fn a_relay_refusal_for_a_jump_host_is_reported_against_that_hop() {
-    let hub = FakeHub::refusing(RelayError::NotSignedIn { hub: HUB.into() });
+    let hub = Arc::new(ScriptedRelay::refusing(RelayError::NotSignedIn {
+        hub: HUB.into(),
+    }));
     let (_dir, transport) = offline_transport(Some(hub));
     let mut request = through_hub(offline_request(), None);
     request.jumps = vec![JumpHost {
@@ -228,12 +238,11 @@ async fn a_hub_route_on_a_transport_without_a_relay_cannot_connect() {
 
 #[tokio::test]
 async fn cancelling_while_the_relay_is_silent_closes_both_directions() {
-    let (hub, peer) = FakeHub::silent();
-    let (_dir, transport) = offline_transport(Some(hub));
+    let hub = ScriptedRelay::default();
+    let (_dir, transport) = offline_transport(Some(Arc::new(hub.clone())));
     let session = transport.open(through_hub(offline_request(), None));
-    let (from_transport, to_transport) = timeout(Duration::from_secs(5), peer)
+    let (from_transport, to_transport) = timeout(Duration::from_secs(5), hub.next_peer())
         .await
-        .unwrap()
         .unwrap()
         .into_parts();
     // The handshake has started: the client's version line reaches the relay.
@@ -267,13 +276,12 @@ async fn cancelling_while_the_relay_is_silent_closes_both_directions() {
 
 #[tokio::test]
 async fn the_relay_going_away_mid_handshake_ends_the_session_with_a_lost_connection() {
-    let (hub, peer) = FakeHub::silent();
-    let (_dir, transport) = offline_transport(Some(hub));
+    let hub = ScriptedRelay::default();
+    let (_dir, transport) = offline_transport(Some(Arc::new(hub.clone())));
     let session = transport.open(through_hub(offline_request(), None));
     drop(
-        timeout(Duration::from_secs(5), peer)
+        timeout(Duration::from_secs(5), hub.next_peer())
             .await
-            .unwrap()
             .unwrap(),
     );
     let reason = timeout(Duration::from_secs(5), closed(&session, no_prompts))

@@ -9,6 +9,7 @@ mod exec;
 mod fs;
 mod gate;
 pub mod recording;
+mod relay;
 mod transport;
 
 pub use credentials::{FakeCredentialError, FakeCredentialStore};
@@ -18,6 +19,7 @@ pub use fs::{
 };
 pub use gate::Gate;
 pub use recording::{ScriptedOutputLog, ScriptedOutputLogFactory};
+pub use relay::{RelayReply, RelayRequest, ScriptedRelay};
 pub use transport::ScriptedTransport;
 
 fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
