@@ -37,6 +37,9 @@ pub(crate) fn chip(
         HubStatus::SignedOut => ("Sign-in required".into(), warn),
         HubStatus::Revoked => ("Device revoked".into(), bad),
         HubStatus::TrustFailed { .. } => ("Certificate changed".into(), bad),
+        HubStatus::UpgradeRequired { hub, client } if hub < client => {
+            ("Update the server".into(), warn)
+        }
         HubStatus::UpgradeRequired { .. } => ("Update Nocterm".into(), warn),
     }
 }
@@ -50,3 +53,7 @@ pub(crate) fn status_icon(status: &HubStatus) -> IconName {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "status_tests.rs"]
+mod tests;
