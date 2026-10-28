@@ -7,6 +7,17 @@ cannot reach.
 A window shows one environment: this computer, or the account of one hub. You sign in to a
 server and manage it on the **Servers** page of the settings.
 
+## Switch between this computer and a server
+
+The title bar has an environment menu after the Help menu. It lists **Local**, every server you
+have signed in to with its status, and **Sign in to server…**. Choosing a server shows it in
+this window; the arrow beside it opens the server in a new window. If the window has open tabs,
+Nocterm asks before replacing them. A server window shows only the connections of its account
+(your own and your organizations') and keeps their passwords in the account's vault; a local
+window shows only the connections of this computer. Workspaces, files, containers, snippets and
+the other features work over the connections of the window you are in. Finishing a sign-in opens
+the server in the window that started it, or in a new window when that window has tabs.
+
 ## Sign in to a server
 
 1. Run **Hubs: Sign in to server** from the command palette, or press **Sign in to a server…** on
