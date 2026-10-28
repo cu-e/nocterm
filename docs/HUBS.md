@@ -76,7 +76,8 @@ saved as `account = "hub.example.com:7443"` under `[hubs]` and takes effect at o
   version does not understand is left untouched.
 - A change on the server that does not verify is reported as an error and applied to nothing.
 - Choosing another server starts the sync again from that server's own data; connections are never
-  copied from one account to another.
+  copied from one account to another. The connections kept by the account leave this computer when
+  you choose another server or stop using it, and come back when you choose it again.
 
 ### Connections and passwords of a group
 

@@ -47,6 +47,9 @@ pub struct ProfileReplication {
     /// refused (the cursor stays behind it) and a local profile the replica refused and
     /// never agreed to. Each pass meets them again but says so once.
     refused: HashSet<Announced>,
+    /// Removal of the profiles agreed with a replica that was detached; the next round
+    /// waits for it, so they are never offered to another account's replica.
+    leaving: Option<Task<()>>,
     _publications: Subscription,
 }
 
@@ -71,6 +74,7 @@ impl ProfileReplication {
             rerun: false,
             watcher: None,
             refused: HashSet::new(),
+            leaving: None,
             _publications: subscription,
         }
     }
@@ -102,9 +106,31 @@ impl ProfileReplication {
 
     /// Stops synchronizing and forgets what was agreed with that replica: the
     /// agreement and the feed position mean nothing to another account's replica.
-    /// Local profiles are left as they are.
+    /// The profiles agreed with it leave this device too, since they belong to that
+    /// account and come back when it is attached again; profiles never agreed with it
+    /// stay.
     pub fn detach(&mut self, cx: &mut Context<Self>) {
         self.stop(cx);
+        let agreed: Vec<ProfileId> = self
+            .state
+            .read(cx)
+            .visible()
+            .entries()
+            .map(|(id, _)| id)
+            .collect();
+        let removals: Vec<_> = self.store.update(cx, |store, cx| {
+            agreed
+                .into_iter()
+                .map(|id| store.delete_profile(id, cx))
+                .collect()
+        });
+        self.leaving = Some(cx.spawn(async move |_, _| {
+            for removal in removals {
+                if let Err(error) = removal.await {
+                    tracing::error!(%error, "could not remove a profile of the detached account");
+                }
+            }
+        }));
         self.state.update(cx, |state, cx| {
             if let Err(error) = state.update_latest(|state| *state = ReplicaState::default(), cx) {
                 tracing::error!(%error, "could not reset the profile replica state");
@@ -214,7 +240,11 @@ impl ProfileReplication {
             cx.weak_entity(),
         );
         self.set_status(ReplicationStatus::Syncing, cx);
+        let leaving = self.leaving.take();
         self.run = Some(cx.spawn(async move |this, cx| {
+            if let Some(leaving) = leaving {
+                leaving.await;
+            }
             let outcome = round.run(cx).await;
             if let Some(outcome) = outcome {
                 this.update(cx, |this, cx| this.finish(outcome, cx)).ok();

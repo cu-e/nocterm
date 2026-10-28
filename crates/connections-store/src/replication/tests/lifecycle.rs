@@ -43,18 +43,37 @@ async fn detaching_stops_synchronizing_and_forgets_the_agreement(cx: &mut gpui::
         .update(cx, |replication, cx| replication.detach(cx));
     cx.run_until_parked();
     assert!(matches!(fixture.status(cx), ReplicationStatus::Detached));
-    fixture.save(cx, at_host(&original, "local.example")).await;
+    let local = profile("local");
+    fixture.save(cx, local.clone()).await;
     fixture
         .replica
         .write_remote(ReplicaScope::Personal, profile("remote"));
     cx.run_until_parked();
     assert_eq!(fixture.put_count(), 1);
     assert_eq!(fixture.local(cx, &profile("remote")), None);
+    assert!(fixture.replica.profile(local.id).is_none());
     assert!(fixture.persisted_state().entry(original.id).is_none());
     let scope = fixture
         .replication
         .read_with(cx, |replication, cx| replication.scope_of(original.id, cx));
     assert_eq!(scope, None);
+}
+
+#[gpui::test]
+async fn detaching_takes_the_profiles_of_that_replica_off_the_device(
+    cx: &mut gpui::TestAppContext,
+) {
+    let agreed = profile("agreed");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&agreed));
+    fixture.attach(cx);
+    fixture
+        .replication
+        .update(cx, |replication, cx| replication.detach(cx));
+    cx.run_until_parked();
+    assert_eq!(fixture.local(cx, &agreed), None);
+    assert_eq!(fixture.replica.profile(agreed.id), Some(agreed.clone()));
+    fixture.attach(cx);
+    assert_eq!(fixture.local(cx, &agreed), Some(agreed));
 }
 
 #[gpui::test]
@@ -70,10 +89,12 @@ async fn attaching_another_replica_moves_synchronization_to_it(cx: &mut gpui::Te
         .replication
         .update(cx, |replication, cx| replication.attach(second.clone(), cx));
     cx.run_until_parked();
-    assert_eq!(second.profile(original.id), Some(original.clone()));
-    let edited = at_host(&original, "local.example");
-    fixture.save(cx, edited.clone()).await;
-    assert_eq!(second.profile(original.id), Some(edited));
+    // What was agreed with the first replica belongs to it, not to the second.
+    assert_eq!(second.profile(original.id), None);
+    assert_eq!(fixture.local(cx, &original), None);
+    let added = profile("added");
+    fixture.save(cx, added.clone()).await;
+    assert_eq!(second.profile(added.id), Some(added));
     assert_eq!(fixture.put_count(), 1);
 }
 

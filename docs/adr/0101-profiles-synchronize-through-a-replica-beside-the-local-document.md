@@ -58,7 +58,9 @@ everything.
 registers it with the shutdown coordinator, so a restart continues from the saved cursor without
 resending anything. `attach` keeps the state and `detach` resets it: what two sides agreed on
 means nothing to another account's replica, so changing the replica is a `detach` followed by an
-`attach`.
+`attach`. `detach` also removes the profiles agreed with that replica from the local document, and
+the next round waits for the removal: they belong to that account and must never reach another
+one as local additions.
 
 ## Consequences
 
