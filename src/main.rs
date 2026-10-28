@@ -23,6 +23,7 @@ mod shell_setup;
 mod startup;
 mod vault_keys;
 mod vault_selection;
+mod window_sources;
 
 #[cfg(test)]
 mod agent_history_tests;
@@ -120,7 +121,7 @@ fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<
 
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
-            bootstrap::build_workspace(&mut workspace, booted, window, cx);
+            bootstrap::build_workspace(&mut workspace, booted, &booted.local_sources(), window, cx);
             workspace
         });
         window.focus(&workspace.focus_handle(cx), cx);

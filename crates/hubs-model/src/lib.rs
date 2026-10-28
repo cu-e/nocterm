@@ -1,8 +1,9 @@
 //! The hubs this device knows and the neutral ports through which the client reaches a hub.
 //!
-//! Owns: hub addresses and ids, certificate fingerprints and the trust decision, the colour
-//! that marks a server (`HubColor`), the `[hubs]` settings section (`HubsSettings`), the hub
-//! access ports `HubTrust`, `HubSignIn`, `HubSessions` with their records and `HubError`,
+//! Owns: `Environment` (what a window shows: this computer or one hub), hub addresses and ids,
+//! certificate fingerprints and the trust decision, the colour that marks a server
+//! (`HubColor`), the `[hubs]` settings section (`HubsSettings`), the hub access
+//! ports `HubTrust`, `HubSignIn`, `HubSessions` with their records and `HubError`,
 //! including the status of the account keys after sign-in (`KeyStatus`) and the choice of the
 //! account server (`HubsSettings::account_hub`), and the administrator keys waiting for a
 //! person's confirmation (`HubAdminKeys`, `PendingAdminKey`).
@@ -22,6 +23,7 @@
 pub mod address;
 pub mod admin_keys;
 pub mod color;
+pub mod environment;
 pub mod error;
 pub mod ports;
 pub mod records;
@@ -34,6 +36,7 @@ pub mod testing;
 pub use address::{DEFAULT_PORT, HubAddress, HubId};
 pub use admin_keys::{AdminKeyError, HubAdminKeys, PendingAdminKey};
 pub use color::HubColor;
+pub use environment::Environment;
 pub use error::{FingerprintError, HubAddressError, HubError};
 pub use ports::{HubFuture, HubSessions, HubSignIn, HubTerminal, HubTrust, OidcSignIn};
 pub use records::{
