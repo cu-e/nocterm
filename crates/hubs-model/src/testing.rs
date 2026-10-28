@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use futures::FutureExt as _;
 use futures::channel::oneshot;
+use futures::future::BoxFuture;
 use nocterm_core::error::SharedCause;
 use nocterm_session::testing::ScriptedTransport;
 use nocterm_session::{Secret, Transport};
@@ -98,6 +99,20 @@ struct State {
     recovering: BTreeMap<HubId, String>,
     /// Hubs whose recovery key was shown on this device and not confirmed as saved.
     unconfirmed: BTreeSet<HubId>,
+    /// Hubs whose account keys are closed, as after a restart until the vault is unlocked.
+    locked: BTreeSet<HubId>,
+    /// How many times the keys of any hub were opened or dropped, and who waits for the next.
+    key_changes: u64,
+    key_waiters: Vec<oneshot::Sender<()>>,
+}
+
+impl State {
+    fn keys_changed(&mut self) {
+        self.key_changes += 1;
+        for waiter in self.key_waiters.drain(..) {
+            let _ = waiter.send(());
+        }
+    }
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -152,6 +167,22 @@ impl FakeHub {
     /// closed on that step leaves it.
     pub fn leave_recovery_key_unconfirmed(&self, hub: &HubId) {
         lock(&self.state).unconfirmed.insert(hub.clone());
+    }
+
+    /// Closes the account keys of `hub`, as a restart does until the vault is unlocked.
+    pub fn lock_keys(&self, hub: &HubId) {
+        let mut state = lock(&self.state);
+        if state.locked.insert(hub.clone()) {
+            state.keys_changed();
+        }
+    }
+
+    /// Opens the account keys of `hub`, as unlocking the vault does.
+    pub fn unlock_keys(&self, hub: &HubId) {
+        let mut state = lock(&self.state);
+        if state.locked.remove(hub) {
+            state.keys_changed();
+        }
     }
 
     pub fn revoke_device(&self, hub: &HubId) {
@@ -542,7 +573,33 @@ impl HubSignIn for FakeHub {
 
     fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
         let state = lock(&self.state);
-        state.unconfirmed.contains(hub) && !state.recovering.contains_key(hub)
+        state.unconfirmed.contains(hub)
+            && !state.recovering.contains_key(hub)
+            && !state.locked.contains(hub)
+    }
+
+    fn keys_revision(&self) -> u64 {
+        lock(&self.state).key_changes
+    }
+
+    fn keys_changed(&self, seen: u64) -> BoxFuture<'static, u64> {
+        let state = Arc::clone(&self.state);
+        Box::pin(async move {
+            loop {
+                let waiting = {
+                    let mut state = lock(&state);
+                    if state.key_changes != seen {
+                        return state.key_changes;
+                    }
+                    let (sender, receiver) = oneshot::channel();
+                    state.key_waiters.push(sender);
+                    receiver
+                };
+                if waiting.await.is_err() {
+                    return lock(&state).key_changes;
+                }
+            }
+        })
     }
 
     fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret> {

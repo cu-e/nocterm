@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use nocterm_core::SharedCause;
 use nocterm_hub_client::{Keyset, KeysetError};
 use nocterm_hub_proto::v1;
@@ -90,6 +91,24 @@ impl KeyFlow {
         };
         slot.open()
             .is_some_and(|keys| slot.recovery_unconfirmed(keys.keyset().account_id()))
+    }
+
+    /// The count of changes to any hub's account keys (opened, dropped, replaced) so far.
+    pub(crate) fn keys_revision(&self) -> u64 {
+        self.accounts.notice().count()
+    }
+
+    /// Resolves with the count once it differs from `seen`.
+    pub(crate) fn keys_changed(&self, seen: u64) -> BoxFuture<'static, u64> {
+        let mut changes = self.accounts.notice().subscribe();
+        Box::pin(async move {
+            loop {
+                let now = *changes.borrow_and_update();
+                if now != seen || changes.changed().await.is_err() {
+                    return now;
+                }
+            }
+        })
     }
 
     /// Records that the person saved the recovery key shown last.

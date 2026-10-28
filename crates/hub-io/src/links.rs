@@ -8,6 +8,7 @@ use std::task::{Context, Poll};
 
 use futures::FutureExt as _;
 use futures::channel::oneshot;
+use futures::future::BoxFuture;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
     Account, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
@@ -221,6 +222,14 @@ impl HubSignIn for HubLinks {
 
     fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
         self.keys.recovery_key_unconfirmed(hub)
+    }
+
+    fn keys_revision(&self) -> u64 {
+        self.keys.keys_revision()
+    }
+
+    fn keys_changed(&self, seen: u64) -> BoxFuture<'static, u64> {
+        self.keys.keys_changed(seen)
     }
 
     fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret> {

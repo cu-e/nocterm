@@ -279,7 +279,6 @@ impl Accounts {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn notice(&self) -> &Arc<Notice> {
         &self.notice
     }

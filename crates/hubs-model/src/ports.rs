@@ -71,6 +71,15 @@ pub trait HubSignIn: Send + Sync {
     /// never confirmed as saved, and the keys are open: a new one can be issued.
     fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool;
 
+    /// How many times the account keys of any hub were opened, dropped or replaced so far. Start
+    /// from it to follow [`HubSignIn::keys_changed`].
+    fn keys_revision(&self) -> u64;
+
+    /// Resolves with the new count once it differs from `seen`: the keys of some hub were
+    /// opened (a vault unlock, a sign-in), dropped or replaced, so what depends on them, such as
+    /// [`HubSignIn::recovery_key_unconfirmed`], should be read again.
+    fn keys_changed(&self, seen: u64) -> BoxFuture<'static, u64>;
+
     /// Issues a new recovery key with the open keys and replaces the hub's copy of the old one;
     /// the new key is returned once and kept nowhere, but marked unconfirmed until
     /// [`HubSignIn::confirm_recovery_key`]. [`HubError::KeysLocked`] while the keys are closed.
