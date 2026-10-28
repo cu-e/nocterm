@@ -232,11 +232,11 @@ impl HubsSettings {
     /// Forgets a server; `true` when it was known. A forgotten account server is no longer
     /// the account server.
     pub fn remove(&mut self, hub: &HubId) -> bool {
-        let before = self.servers.len();
-        self.servers.retain(|record| record.id() != *hub);
         if self.account_hub().as_ref() == Some(hub) {
             self.account = None;
         }
+        let before = self.servers.len();
+        self.servers.retain(|record| record.id() != *hub);
         self.servers.len() != before
     }
 

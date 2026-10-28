@@ -325,7 +325,14 @@ fn count_redraws(page: &Fixture, cx: &mut TestAppContext) -> Rc<Cell<usize>> {
     let redraws = Rc::new(Cell::new(0));
     let counted = Rc::clone(&redraws);
     cx.update_window(page.window, |root, _, cx| {
-        let servers = root.downcast::<ServersPage>().unwrap();
+        let servers = root
+            .downcast::<gpui_kit::base::Root>()
+            .unwrap()
+            .read(cx)
+            .view()
+            .clone()
+            .downcast::<ServersPage>()
+            .unwrap();
         cx.observe(&servers, move |_, _| counted.set(counted.get() + 1))
             .detach();
     })
