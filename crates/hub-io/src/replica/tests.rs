@@ -386,3 +386,48 @@ async fn the_watch_ticks_when_the_vault_unlocks() {
         .unwrap();
     assert_eq!(tick, Some(()));
 }
+
+/// Reads ticks until none comes for a moment.
+async fn settle(ticks: &mut futures::stream::BoxStream<'static, ()>) {
+    while tokio::time::timeout(Duration::from_millis(300), ticks.next())
+        .await
+        .is_ok()
+    {}
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn confirming_an_administrator_ticks_the_watch_and_opens_the_group() {
+    use nocterm_hub_proto::v1::Role;
+    let hub = Arc::new(MemoryHub::default());
+    let dir = tempfile::tempdir().unwrap();
+    let (_accounts, slot, record) = crate::account::testing::signed_in(dir.path());
+    let ledger = Arc::new(Ledger::new(Arc::clone(&slot), hub.clone()));
+    let replica = HubProfileReplica::new(Handle::current(), Arc::clone(&slot), hub.clone(), ledger);
+    replica
+        .put(ReplicaScope::Personal, profile("mine"), None)
+        .await
+        .unwrap();
+    let key = acme_group(&hub, &record, Role::Member);
+    member_writes(&hub, &key, &profile("team"));
+    let mut ticks = replica.watch();
+    settle(&mut ticks).await;
+    let spaces = replica.changes(None).await.unwrap();
+    assert!(
+        spaces
+            .changes
+            .iter()
+            .all(|c| c.scope == ReplicaScope::Personal)
+    );
+
+    let admin = Admin::acme();
+    crate::account::AdminKeys::new(Arc::clone(&slot))
+        .confirm(admin.account_id(), &admin.fingerprint())
+        .unwrap();
+
+    let tick = tokio::time::timeout(Duration::from_secs(5), ticks.next())
+        .await
+        .unwrap();
+    assert_eq!(tick, Some(()));
+    let page = replica.changes(None).await.unwrap();
+    assert!(page.changes.iter().any(|c| c.scope == acme()));
+}

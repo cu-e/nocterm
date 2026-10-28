@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
-    HubAddress, HubColor, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord, HubsSettings,
+    AdminKeyError, HubAddress, HubColor, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord,
+    HubsSettings, PendingAdminKey,
 };
 use nocterm_store::SettingsHandle;
 
@@ -326,6 +327,34 @@ impl Hubs {
     /// confirmed as saved: a new one can be issued with [`Hubs::start_recovery_key_reissue`].
     pub fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
         self.entry(hub).is_some() && self.deps.sign_in.recovery_key_unconfirmed(hub)
+    }
+
+    /// The administrators of `hub`'s organizations whose keys wait for a person to compare their
+    /// fingerprints with the administrator's own; their groups stay out of the account until
+    /// then. Empty while the account keys are closed. Observers of the registry are told when
+    /// the list changes.
+    pub fn pending_admin_keys(&self, hub: &HubId) -> Vec<PendingAdminKey> {
+        if self.entry(hub).is_none() {
+            return Vec::new();
+        }
+        self.deps.admin_keys.pending_admin_keys(hub)
+    }
+
+    /// Confirms the key of the administrator `account_id` of `hub`, shown with `fingerprint`,
+    /// once a person compared it out of band. The account reads the groups it unlocks again.
+    pub fn confirm_admin_key(
+        &mut self,
+        hub: &HubId,
+        account_id: &str,
+        fingerprint: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), AdminKeyError> {
+        let confirmed = self
+            .deps
+            .admin_keys
+            .confirm_admin_key(hub, account_id, fingerprint);
+        cx.notify();
+        confirmed
     }
 
     /// Starts issuing a new recovery key for `hub`, which replaces the unconfirmed one. The

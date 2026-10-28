@@ -89,8 +89,13 @@ effect at once.
 
 An administrator of an organization shares connections and vault passwords with a group by
 creating the group and adding you with `hubctl`; Nocterm only shows and edits what the group
-holds. Groups you were added to appear after the next synchronization (a reconnect or the next
-change).
+holds. A group you were added to appears only after you confirm its administrator's key: the
+**Servers** page of the settings lists each administrator whose key is waiting, with the
+fingerprint the server offers. Compare it with the fingerprint the administrator sees in
+`hubctl`, in person or over a channel you trust, and press **Confirm key** only if they are
+identical; the group then appears after the next synchronization, which starts at once. If the
+administrator's key later changes, the page warns you, shows the old and the new fingerprints,
+and the group stays hidden until you confirm the new key the same way.
 
 - The Servers panel lists each organization in its own section below your own connections. A
   section marked **read-only** is one you are a Guest in: its connections open, but have no edit,

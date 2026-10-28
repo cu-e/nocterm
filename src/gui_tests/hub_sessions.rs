@@ -52,6 +52,7 @@ fn boot_over(hub: Option<&FakeHub>, cx: &mut TestAppContext) -> Booted {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
             sessions: Arc::new(hub.clone()),
+            admin_keys: Arc::new(nocterm_hubs_model::testing::FakeAdminKeys::alongside(hub)),
         });
         boot_with_ports_and_probe(
             tempfile::tempdir().unwrap(),

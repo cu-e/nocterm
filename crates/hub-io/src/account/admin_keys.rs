@@ -9,8 +9,10 @@
 //! change, and replaces the pin only when confirmed again.
 //!
 //! [`AdminPins`] holds the pins and the pending list of one set of open keys; [`AdminKeys`] is
-//! the handle the application uses to read the list and confirm an entry. The pins are written
-//! to the account cache, so they outlive a restart and are erased with the account.
+//! the handle the application uses to read the list and confirm an entry. The pins are public
+//! keys, written to the account cache in the clear: they outlive a restart and are erased with
+//! the account. The keys notice is raised when the pending list changes and when an entry is
+//! confirmed, so the replica and the vault read the groups again and the views follow.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -18,36 +20,7 @@ use nocterm_keys::{PinError, PinnedKeys, PublicKey, TrustedKey};
 
 use super::Slot;
 
-/// A group's administrator whose key this device has not confirmed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingAdminKey {
-    /// What the user calls the organization.
-    pub organization: String,
-    /// The administrator's account, the argument of [`AdminKeys::confirm`].
-    pub account_id: String,
-    /// The administrator's name, as the hub lists it.
-    pub admin: String,
-    /// The fingerprint of the key the hub offers, to compare with the administrator's own.
-    pub fingerprint: String,
-    /// The fingerprint pinned earlier when the key is not the one that was pinned. A changed
-    /// key is either a new key of the administrator or an attack; confirm it only out of band.
-    pub replaces: Option<String>,
-}
-
-/// Why a pending key could not be confirmed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum AdminKeyError {
-    /// The keys are closed on this device.
-    #[error("the account keys are not open on this device")]
-    Locked,
-    /// Nothing is pending for the account: the list changed since it was shown.
-    #[error("no key of that administrator is waiting for confirmation")]
-    NotPending,
-    /// The fingerprint is not the one of the key now on offer: the hub offers another key than
-    /// the one that was shown.
-    #[error("the fingerprint is not the one of the key the hub now offers")]
-    Mismatch,
-}
+pub use nocterm_hubs_model::{AdminKeyError, PendingAdminKey};
 
 struct Pending {
     /// The kind of collection the grant was met in; each kind is looked at on its own.
@@ -83,12 +56,14 @@ impl AdminPins {
     }
 
     /// Records the groups of `kind` whose granter was met unpinned in the last look at the
-    /// hub, in place of the ones noted for that kind before.
+    /// hub, in place of the ones noted for that kind before. Whether the list a person sees
+    /// changed.
     pub(super) fn replace_pending(
         &mut self,
         kind: &str,
         pending: Vec<(PendingAdminKey, PublicKey)>,
-    ) {
+    ) -> bool {
+        let before = self.pending();
         self.pending.retain(|p| p.kind != kind);
         self.pending
             .extend(pending.into_iter().map(|(view, key)| Pending {
@@ -96,6 +71,7 @@ impl AdminPins {
                 view,
                 key,
             }));
+        self.pending() != before
     }
 
     /// One entry per administrator and organization, however many kinds met the same grant.
@@ -161,7 +137,8 @@ impl AdminKeys {
     }
 
     /// Pins the key shown with `fingerprint` for `account_id`, after a person compared it with
-    /// the administrator's. The groups it unlocks are read the next time the account is read.
+    /// the administrator's. The keys notice is raised, so the replica and the vault read the
+    /// groups it unlocks at once.
     pub fn confirm(&self, account_id: &str, fingerprint: &str) -> Result<(), AdminKeyError> {
         let keys = self.slot.open().ok_or(AdminKeyError::Locked)?;
         let pinned = {
@@ -170,6 +147,7 @@ impl AdminKeys {
             admins.pinned().clone()
         };
         self.slot.remember_pins(&pinned);
+        self.slot.notice().raise();
         Ok(())
     }
 }

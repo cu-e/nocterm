@@ -57,6 +57,8 @@ pub(crate) struct OpenKeys {
     keyset: Keyset,
     collections: Mutex<HashMap<String, Arc<CollectionKey>>>,
     admins: Admins,
+    /// Raised when the pending administrators change; set once the slot keeps the keys.
+    notice: Option<Arc<Notice>>,
 }
 
 impl OpenKeys {
@@ -66,7 +68,14 @@ impl OpenKeys {
             keyset,
             collections: Mutex::default(),
             admins: Mutex::new(AdminPins::new(pinned)),
+            notice: None,
         }
+    }
+
+    /// The keys, telling `notice` when the administrators waiting for confirmation change.
+    fn noticed_by(mut self, notice: &Arc<Notice>) -> Self {
+        self.notice = Some(Arc::clone(notice));
+        self
     }
 
     fn collections(&self) -> MutexGuard<'_, HashMap<String, Arc<CollectionKey>>> {
@@ -136,9 +145,13 @@ impl OpenKeys {
     }
 
     /// Notes the administrators met unpinned in collections of `kind`, in place of the ones
-    /// noted for that kind before.
+    /// noted for that kind before. A change of the list raises the keys notice, so a view of
+    /// the list is redrawn; looking again finds the same list and raises nothing.
     pub(crate) fn note_pending(&self, kind: &str, pending: Vec<(PendingAdminKey, PublicKey)>) {
-        self.admins().replace_pending(kind, pending);
+        let changed = self.admins().replace_pending(kind, pending);
+        if changed && let Some(notice) = &self.notice {
+            notice.raise();
+        }
     }
 
     /// A new collection key of its own, with the envelope the hub stores for this account.
@@ -276,14 +289,14 @@ impl Slot {
                 tracing::warn!(%error, hub = %self.hub, "the account cache cannot be written");
             }
             state.cache = Some(cache);
-            state.keys = KeyState::Open(Arc::new(keys));
+            state.keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
         }
         self.notice.raise();
     }
 
     /// Opens the vault with `keys` from a cache that is already kept.
     pub(crate) fn unlocked(&self, keys: OpenKeys) {
-        self.state().keys = KeyState::Open(Arc::new(keys));
+        self.state().keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
         self.notice.raise();
     }
 

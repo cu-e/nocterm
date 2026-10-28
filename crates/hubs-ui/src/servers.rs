@@ -4,6 +4,7 @@
 //! The page edits through the service and never decides who may be trusted: a certificate is
 //! shown, never accepted, and the only way out of a changed one is to remove the server.
 
+mod admin_keys;
 mod row;
 
 use std::collections::HashMap;

@@ -204,3 +204,22 @@ async fn nothing_is_pending_or_confirmable_while_the_keys_are_closed() {
         Err(AdminKeyError::Locked)
     );
 }
+
+#[tokio::test]
+async fn a_new_pending_administrator_and_a_confirmation_raise_the_keys_notice_once_each() {
+    let setup = setup();
+    let keys = AdminKeys::new(setup.slot.clone());
+    let start = setup.slot.notice().count();
+
+    assert_eq!(opened_groups(&setup).await, 0);
+    let found = setup.slot.notice().count();
+    assert_eq!(found, start + 1);
+
+    // Looking again finds the same administrator and tells nobody.
+    assert_eq!(opened_groups(&setup).await, 0);
+    assert_eq!(setup.slot.notice().count(), found);
+
+    keys.confirm(Admin::acme().account_id(), &Admin::acme().fingerprint())
+        .unwrap();
+    assert_eq!(setup.slot.notice().count(), found + 1);
+}

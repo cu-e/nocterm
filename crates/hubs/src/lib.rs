@@ -8,8 +8,10 @@
 //! Does not own: any I/O or protocol (the injected hub ports do, see `nocterm-hubs-model`);
 //! the commands, dialog and panel that show this state (`nocterm-hubs-ui`).
 //!
-//! Ports used: [`nocterm_hubs_model::HubTrust`], [`nocterm_hubs_model::HubSignIn`] and
-//! [`nocterm_hubs_model::HubSessions`], passed in [`Deps`]; `nocterm_store::SettingsHandle`.
+//! Ports used: [`nocterm_hubs_model::HubTrust`], [`nocterm_hubs_model::HubSignIn`],
+//! [`nocterm_hubs_model::HubSessions`] and [`nocterm_hubs_model::HubAdminKeys`] (the
+//! administrator keys waiting for confirmation, read and confirmed through [`Hubs`]), passed in
+//! [`Deps`]; `nocterm_store::SettingsHandle`.
 //! Provides: [`Installed`] with the [`Hubs`] entity.
 //!
 //! Settings: the `[hubs]` section ([`nocterm_hubs_model::HubsSettings`]), registered by

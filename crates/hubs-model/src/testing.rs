@@ -23,8 +23,10 @@ use crate::records::{
 };
 use crate::trust::{ProbedHub, TrustPolicy};
 
+mod admin_keys;
 mod server;
 
+pub use admin_keys::FakeAdminKeys;
 pub use server::{FakeKeyset, FakeServer, FakeUser};
 
 /// The protocol version the fake client speaks.
@@ -183,6 +185,16 @@ impl FakeHub {
         if state.locked.remove(hub) {
             state.keys_changed();
         }
+    }
+
+    /// Whether the account keys of `hub` are closed.
+    pub(crate) fn keys_closed(&self, hub: &HubId) -> bool {
+        lock(&self.state).locked.contains(hub)
+    }
+
+    /// Tells whoever follows the keys that something that depends on them changed.
+    pub(crate) fn raise_keys_changed(&self) {
+        lock(&self.state).keys_changed();
     }
 
     pub fn revoke_device(&self, hub: &HubId) {

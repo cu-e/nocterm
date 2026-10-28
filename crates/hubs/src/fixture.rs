@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui::{Entity, TestAppContext};
-use nocterm_hubs_model::testing::{FakeHub, FakeServer};
+use nocterm_hubs_model::testing::{FakeAdminKeys, FakeHub, FakeServer};
 use nocterm_hubs_model::{HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SettingsHandle, StoreError};
@@ -14,6 +14,7 @@ pub(crate) const ADDRESS: &str = "hub.home:7443";
 
 pub(crate) struct Fixture {
     pub hub: FakeHub,
+    pub admin_keys: FakeAdminKeys,
     pub hubs: Entity<Hubs>,
     pub settings: SettingsHandle,
 }
@@ -85,14 +86,17 @@ fn build(
                 ..Default::default()
             })
             .install(cx);
+        let admin_keys = FakeAdminKeys::alongside(&hub);
         let deps = Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
             sessions: Arc::new(hub.clone()),
+            admin_keys: Arc::new(admin_keys.clone()),
         };
         let installed = install(deps, settings.clone(), cx);
         Fixture {
             hub,
+            admin_keys,
             hubs: installed.hubs().clone(),
             settings,
         }

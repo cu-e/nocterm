@@ -331,7 +331,7 @@ crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).
 ## Hubs
 
 `nocterm-hubs` owns what the application knows about hubs over time, without views or I/O. It
-reaches a hub only through the `HubTrust`, `HubSignIn` and `HubSessions` ports of
+reaches a hub only through the `HubTrust`, `HubSignIn`, `HubSessions` and `HubAdminKeys` ports of
 `nocterm-hubs-model`, passed in `Deps` by the composition, and reads and edits the `[hubs]`
 section through `SettingsHandle`. `install` registers the section and returns an `Installed`
 with the one `Hubs` entity every window shares ([ADR 0099](../adr/0099-windows-have-no-environments.md)).
