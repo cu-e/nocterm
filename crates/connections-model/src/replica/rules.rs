@@ -2,7 +2,8 @@
 //!
 //! The rules are pure. They name what must happen and leave doing it, and the order
 //! of side effects, to the caller. A remote change always wins a conflict; the local
-//! edit it replaces is reported so the user can be told.
+//! edit it replaces is reported so the user can be told. A change older than the
+//! agreed version is a late entry of the feed, never a newer state, and is ignored.
 use super::{RemoteBody, RemoteProfile, ReplicaScope, ReplicaState, ReplicaVersion, SyncedEntry};
 use crate::profiles::{Profile, ProfileId, Profiles};
 use std::collections::{HashMap, HashSet};
@@ -70,15 +71,18 @@ impl ReplicaAction {
 /// Reconciles every profile known to any of the three sides.
 ///
 /// `changes` are the remote changes read since the state's cursor; a profile without
-/// one is unchanged remotely. A profile the replica holds unreadably stays untouched
+/// one, or with only changes older than its agreed version, is unchanged remotely. A profile the replica holds unreadably stays untouched
 /// until a readable version of it arrives.
 pub fn plan(
     local: &Profiles,
     changes: &[RemoteProfile],
     state: &ReplicaState,
 ) -> Vec<ReplicaAction> {
-    let latest: HashMap<ProfileId, &RemoteProfile> =
-        changes.iter().map(|change| (change.id, change)).collect();
+    let latest: HashMap<ProfileId, &RemoteProfile> = changes
+        .iter()
+        .filter(|change| !is_stale(change, state.entry(change.id)))
+        .map(|change| (change.id, change))
+        .collect();
     let mut remembered: Vec<ProfileId> = state.entries().map(|(id, _)| id).collect();
     remembered.sort_by_key(ToString::to_string);
     let mut seen = HashSet::new();
@@ -93,12 +97,18 @@ pub fn plan(
         .collect()
 }
 
+/// The feed delivered a version older than the one already agreed for the profile.
+fn is_stale(change: &RemoteProfile, synced: Option<&SyncedEntry>) -> bool {
+    synced.is_some_and(|synced| change.version < synced.version)
+}
+
 /// What to do about one profile. At least one of the three must be present.
 pub fn reconcile(
     local: Option<&Profile>,
     remote: Option<&RemoteProfile>,
     synced: Option<&SyncedEntry>,
 ) -> Vec<ReplicaAction> {
+    let remote = remote.filter(|change| !is_stale(change, synced));
     let Some(id) = local
         .map(|profile| profile.id)
         .or_else(|| remote.map(|change| change.id))

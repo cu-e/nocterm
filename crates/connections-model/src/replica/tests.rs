@@ -322,3 +322,42 @@ fn agreeing_or_forgetting_a_profile_makes_it_readable_again() {
     state.forget(id());
     assert!(!state.has_unrecognized() && state.entry(id()).is_none());
 }
+
+#[test]
+fn a_feed_entry_older_than_the_agreed_version_never_reverts_the_local_profile() {
+    let synced = synced("current", 5);
+    let stale = [
+        present("old", 3),
+        remote(RemoteBody::Deleted, 4),
+        remote(RemoteBody::Unrecognized, 2),
+    ];
+    for change in &stale {
+        assert_eq!(
+            reconcile(Some(&profile("current")), Some(change), Some(&synced)),
+            []
+        );
+    }
+}
+
+#[test]
+fn a_local_edit_is_still_sent_against_the_agreed_version_beside_a_stale_feed_entry() {
+    assert_eq!(
+        reconcile(
+            Some(&profile("edited")),
+            Some(&present("old", 3)),
+            Some(&synced("current", 5)),
+        ),
+        [push("edited", Some(5))]
+    );
+}
+
+#[test]
+fn a_plan_ignores_stale_entries_and_keeps_an_unreadable_profile_unreadable() {
+    let local = profiles_of(&[profile("current")]);
+    let mut state = ReplicaState::default();
+    state.agree(id(), synced("current", 5));
+    assert_eq!(plan(&local, &[present("old", 3)], &state), []);
+    state.mark_unrecognized(id());
+    assert_eq!(plan(&local, &[present("old", 3)], &state), []);
+    assert!(state.is_unrecognized(id()));
+}

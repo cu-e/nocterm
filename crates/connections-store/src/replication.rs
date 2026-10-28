@@ -19,7 +19,7 @@ use nocterm_connections_model::{
 };
 use nocterm_store::{Persisted, Publication, SnapshotWriter};
 use round::{Outcome, Round};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 pub use status::{ReplicationEvent, ReplicationFailure, ReplicationStatus};
 
@@ -34,6 +34,9 @@ pub struct ProfileReplication {
     run: Option<Task<()>>,
     rerun: bool,
     watcher: Option<Task<()>>,
+    /// Remote changes the local document refused and that were already reported; the
+    /// cursor stays behind them, so each pass reads them again but says so once.
+    refused: HashSet<ProfileId>,
     _publications: Subscription,
 }
 
@@ -57,6 +60,7 @@ impl ProfileReplication {
             run: None,
             rerun: false,
             watcher: None,
+            refused: HashSet::new(),
             _publications: subscription,
         }
     }
@@ -145,6 +149,26 @@ impl ProfileReplication {
                 this.update(cx, |this, cx| this.finish(outcome, cx)).ok();
             }
         }));
+    }
+
+    /// Reports a profile the pass skipped. A refused remote change is read again by
+    /// every pass until it can be applied, but is announced only the first time.
+    fn announce_skip(
+        &mut self,
+        id: ProfileId,
+        failure: ReplicationFailure,
+        cx: &mut Context<Self>,
+    ) {
+        let first =
+            !matches!(failure, ReplicationFailure::Rejected { .. }) || self.refused.insert(id);
+        if first {
+            cx.emit(ReplicationEvent::Failed(failure));
+        }
+    }
+
+    /// A pass left nothing refused behind it: later refusals are news again.
+    fn forget_refusals(&mut self) {
+        self.refused.clear();
     }
 
     fn finish(&mut self, outcome: Outcome, cx: &mut Context<Self>) {
