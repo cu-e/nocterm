@@ -90,7 +90,6 @@ fn build(
         let deps = Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
-            sessions: Arc::new(hub.clone()),
             admin_keys: Arc::new(admin_keys.clone()),
         };
         let installed = install(deps, settings.clone(), cx);

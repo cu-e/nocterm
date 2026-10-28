@@ -12,13 +12,10 @@ layer = "feature"
 [dependencies]
 nocterm-hubs.workspace = true
 nocterm-hubs-model.workspace = true
-nocterm-plugin-model.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
-nocterm-workspace-ports.workspace = true
 gpui-kit.workspace = true
-thiserror.workspace = true
 
 [dev-dependencies]
 nocterm-core.workspace = true

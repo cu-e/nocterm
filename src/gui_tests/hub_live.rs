@@ -77,7 +77,6 @@ fn boot(links: &Arc<HubLinks>, cx: &mut TestAppContext) -> (Booted, Saved) {
     let deps = nocterm_hubs::Deps {
         trust: links.clone(),
         sign_in: links.clone(),
-        sessions: links.clone(),
         admin_keys: links.clone(),
     };
     let booted = cx.update(|cx| {

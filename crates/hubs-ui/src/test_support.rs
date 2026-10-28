@@ -21,15 +21,13 @@ pub(crate) fn hub_id() -> HubId {
     HubId::from(HubAddress::parse(ADDRESS).unwrap())
 }
 
-/// The server most tests talk to: certificate `[7; 32]`, user `ada` in organization `lab`, one
-/// machine `build box` with a session of `ada` and one of `bob`.
+/// The server most tests talk to: certificate `[7; 32]`, user `ada` in organization `lab`.
 pub(crate) fn server() -> FakeServer {
     FakeServer::new(ADDRESS, 7)
         .named("Home hub")
         .with_user("ada", "secret", "lab")
         .with_provider("corp", "Corporate SSO")
         .with_node("n1", "build box", true)
-        .with_node("n2", "spare box", false)
         .with_session("s1", "lab", "n1", "ada", "make")
         .with_session("s2", "lab", "n1", "bob", "top")
 }
@@ -84,7 +82,6 @@ pub(crate) fn fixture_over(
             nocterm_hubs::Deps {
                 trust: Arc::new(hub.clone()),
                 sign_in: Arc::new(hub.clone()),
-                sessions: Arc::new(hub.clone()),
                 admin_keys: Arc::new(admin_keys.clone()),
             },
             settings,

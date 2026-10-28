@@ -207,7 +207,7 @@ impl Render for ServersPage {
             )
             .when(empty, |page| {
                 page.child(div().id("servers-empty").test_support().child(note(
-                    "No servers yet. Sign in to one to open its terminal sessions from any computer.",
+                    "No servers yet. Sign in to one to use your hub from this computer.",
                     cx,
                 )))
             })

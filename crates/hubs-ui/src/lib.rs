@@ -30,7 +30,6 @@ mod installation;
 mod layout;
 mod manage;
 mod messages;
-mod problems;
 mod registration;
 mod servers;
 mod sign_in;

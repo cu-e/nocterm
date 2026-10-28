@@ -1,6 +1,5 @@
 //! Composing the hubs of the window: the commands that sign in to and out of a server.
 
-use gpui_kit::AppContext as _;
 use nocterm_workspace::Workspace;
 
 use crate::installation::Installed;
