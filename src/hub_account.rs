@@ -4,12 +4,17 @@
 //! replicate to and from its account and the vault is the account's; without one, profiles stay
 //! local and the vault is the file of this device. Nothing restarts when the choice changes:
 //! this entity follows the registry of servers and moves the two consumers.
+//!
+//! Stopping (unchecking the account, removing the server) never takes a profile off the device.
+//! Only choosing another server removes what the leaving account agreed to and the user did not
+//! change since, so it is not offered to the other account; an edited profile stays and goes to
+//! the next account's personal space.
 use gpui_kit::{AppContext as _, Context, Entity, Subscription};
 use nocterm_connections_model::{
     profiles::Profile,
     replica::{ProfileReplica, ReplicaScope, ReplicaState},
 };
-use nocterm_connections_store::{ConnectionStore, ProfileReplication, ReplicationEvent};
+use nocterm_connections_store::{ConnectionStore, Departure, ProfileReplication, ReplicationEvent};
 use nocterm_core::Paths;
 use nocterm_hubs::Hubs;
 use nocterm_hubs_model::{HubError, HubId};
@@ -102,32 +107,40 @@ impl HubAccountSync {
         if wanted == self.attached {
             return;
         }
-        if self.attached.take().is_some() {
-            self.leave(cx);
-        }
-        let Some(hub) = wanted else {
-            return;
-        };
-        match self.accounts.open(&hub) {
-            Ok(account) => {
-                if let Some(vault) = &self.vault {
-                    vault.select(account.vault);
-                }
-                self.replication.update(cx, |replication, cx| {
-                    replication.attach(account.replica, cx)
-                });
-                self.attached = Some(hub);
-            }
+        let next = wanted.and_then(|hub| match self.accounts.open(&hub) {
+            Ok(account) => Some((hub, account)),
             Err(error) => {
                 tracing::error!(%error, "the account of the chosen server cannot be opened");
+                None
             }
+        });
+        if self.attached.take().is_some() {
+            // Profiles leave the device only for the sake of another account that is
+            // really taking over; stopping, removing the server or failing to reach the
+            // next one leaves everything here.
+            let departure = if next.is_some() {
+                Departure::Switched
+            } else {
+                Departure::Stopped
+            };
+            self.leave(departure, cx);
         }
+        let Some((hub, account)) = next else {
+            return;
+        };
+        if let Some(vault) = &self.vault {
+            vault.select(account.vault);
+        }
+        self.replication.update(cx, |replication, cx| {
+            replication.attach(account.replica, cx)
+        });
+        self.attached = Some(hub);
     }
 
     /// Back to this device's own profiles and vault.
-    fn leave(&mut self, cx: &mut Context<Self>) {
+    fn leave(&mut self, departure: Departure, cx: &mut Context<Self>) {
         self.replication
-            .update(cx, |replication, cx| replication.detach(cx));
+            .update(cx, |replication, cx| replication.detach(departure, cx));
         if let Some(vault) = &self.vault {
             vault.select_home();
         }
@@ -191,9 +204,10 @@ pub(crate) fn refusal_message(
         (false, ReplicaScope::Organization(_)) => format!(
             "You may not add \u{201c}{name}\u{201d} to {space}. It stays in your personal space."
         ),
-        (false, ReplicaScope::Personal) => {
-            format!("The server refused \u{201c}{name}\u{201d}. It stays on this device only.")
-        }
+        (false, ReplicaScope::Personal) => format!(
+            "The server refused \u{201c}{name}\u{201d} in your personal space. \
+             It stays on this computer and is not synchronized."
+        ),
     }
 }
 

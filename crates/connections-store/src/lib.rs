@@ -30,7 +30,7 @@ pub use nocterm_connections_model::profile_authority::{
 };
 pub use publication::projection::ProfilePublications;
 pub use replication::{
-    ProfileReplication, ReplicationEvent, ReplicationFailure, ReplicationStatus,
+    Departure, ProfileReplication, ReplicationEvent, ReplicationFailure, ReplicationStatus,
 };
 
 mod facts;

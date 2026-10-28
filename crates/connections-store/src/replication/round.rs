@@ -364,7 +364,7 @@ impl Round {
                 scope,
                 version,
                 profile,
-            } => Ok(self.agree(scope, version, *profile, cx)?),
+            } => Ok(self.adopt(scope, version, *profile, cx)?),
             ReplicaAction::Forget { id } => Ok(self.record(cx, move |state| state.forget(id))?),
             ReplicaAction::Overwritten { id, discarded } => {
                 Ok(self.emit(ReplicationEvent::Overwritten { id, discarded }, cx)?)
@@ -389,7 +389,7 @@ impl Round {
             store.save_profile_checked(profile, expected, cx)
         });
         saving.await.map_err(|error| local_flow(id, error))?;
-        Ok(self.agree(scope, version, agreed, cx)?)
+        Ok(self.adopt(scope, version, agreed, cx)?)
     }
 
     /// The comparison and the deletion happen in one synchronous step, so an edit
@@ -420,11 +420,16 @@ impl Round {
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
         let id = profile.id;
-        // A profile placed in a group brings along the secrets it keeps personally; one
-        // that moved there already carried its own before it left the old space.
+        // A profile the user placed in a group brings along the secrets it keeps personally;
+        // one that moved there already carried its own before it left the old space. A plain
+        // edit of a profile already in the group takes nothing: a secret reaches a group only
+        // when the user chose that space for the profile.
+        let requested = self
+            .state
+            .read_with(cx, |state, _| state.visible().placement(id) == Some(&scope));
         let carried = match scope {
             ReplicaScope::Personal => Carried::default(),
-            _ if moved => Carried::default(),
+            _ if moved || !requested => Carried::default(),
             _ => {
                 self.carry(
                     &profile,
@@ -613,7 +618,13 @@ impl Round {
             arrival.copied(&carried.copies);
         }
         match self.replica.delete(scope.clone(), id, expected).await {
-            Ok(_) => Ok(self.record(cx, move |state| state.forget(id))?),
+            Ok(_) => {
+                let arrival = arrival.map(|arrival| arrival.scope.clone());
+                Ok(self.record(cx, move |state| match arrival {
+                    Some(arrival) => state.leave_for(id, arrival),
+                    None => state.forget(id),
+                })?)
+            }
             Err(ReplicaError::Forbidden { .. }) => {
                 if let Some(arrival) = arrival {
                     self.carry_back(id, &arrival.scope, scope.clone(), carried.arrived())
@@ -671,6 +682,7 @@ impl Round {
         }
     }
 
+    /// The replica took what this client sent.
     fn agree(
         &self,
         scope: ReplicaScope,
@@ -685,6 +697,23 @@ impl Round {
             profile,
         };
         self.record(cx, move |state| state.agree(id, entry))
+    }
+
+    /// The replica's version stands, whether it was written here or already matched.
+    fn adopt(
+        &self,
+        scope: ReplicaScope,
+        version: ReplicaVersion,
+        profile: Profile,
+        cx: &mut AsyncApp,
+    ) -> Result<(), Stop> {
+        let id = profile.id;
+        let entry = SyncedEntry {
+            scope,
+            version,
+            profile,
+        };
+        self.record(cx, move |state| state.adopt(id, entry))
     }
 
     fn record(

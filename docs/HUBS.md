@@ -61,8 +61,9 @@ when the server revokes the device, and when you remove the server.
 
 One server can keep your saved servers (connections) and your vault passwords so they follow you
 to your other computers. On **Settings → Servers**, press **Use for my account** on a server you
-are online with; **Stop keeping them here** returns both to this computer alone. The choice is
-saved as `account = "hub.example.com:7443"` under `[hubs]` and takes effect at once.
+are online with; **Stop keeping them here** returns both to this computer alone (the connections
+stay here). The choice is saved as `account = "hub.example.com:7443"` under `[hubs]` and takes
+effect at once.
 
 - The server keeps only encrypted data. The keys come from your account password (or the vault
   passphrase) on your computers; the server cannot read your passwords, keys or connection
@@ -75,9 +76,14 @@ saved as `account = "hub.example.com:7443"` under `[hubs]` and takes effect at o
 - Saved connections are copied both ways. Something other clients put on the server that this
   version does not understand is left untouched.
 - A change on the server that does not verify is reported as an error and applied to nothing.
-- Choosing another server starts the sync again from that server's own data; connections are never
-  copied from one account to another. The connections kept by the account leave this computer when
-  you choose another server or stop using it, and come back when you choose it again.
+- **Stop keeping them here**, unchecking **Use for my account** and removing the server never take
+  a connection off this computer: they all stay as local connections, and the vault of this
+  computer comes back. Choosing a server again later, this one or another, sends them to its
+  account like any connection created here.
+- Choosing another server starts the sync again from that server's own data. The connections the
+  previous account kept and you did not change since leave this computer; they come back when you
+  choose that server again. A connection you edited, or created, and that was not sent yet when
+  you switched stays on this computer and goes with you to the Personal space of the new account.
 
 ### Connections and passwords of a group
 

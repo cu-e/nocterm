@@ -5,6 +5,7 @@
 //! session reached through jump hosts binds only to the profile it was opened
 //! from, and a direct session binds only to connections without jump hosts.
 use nocterm_session::{Auth, Target};
+use std::collections::HashSet;
 
 use crate::{
     profiles::{Profile, ProfileId, Profiles},
@@ -23,6 +24,8 @@ pub struct CredentialScope {
     target: Target,
     auth: Auth,
     reach: Reach,
+    /// The connections the credential may be attached to; any when not set.
+    within: Option<HashSet<ProfileId>>,
 }
 
 impl CredentialScope {
@@ -32,6 +35,7 @@ impl CredentialScope {
             target,
             auth,
             reach: Reach::Direct,
+            within: None,
         }
     }
 
@@ -41,6 +45,7 @@ impl CredentialScope {
             target,
             auth,
             reach: Reach::Through(profile),
+            within: None,
         }
     }
 
@@ -58,6 +63,15 @@ impl CredentialScope {
         profile.map(|profile| Self::routed(profile, target, auth))
     }
 
+    /// Limits the connections the credential is attached to, and no others, to `profiles`: a
+    /// secret typed for a connection of one space must not reach one of another space that
+    /// merely shares its address.
+    #[must_use]
+    pub fn within(mut self, profiles: HashSet<ProfileId>) -> Self {
+        self.within = Some(profiles);
+        self
+    }
+
     pub fn target(&self) -> &Target {
         &self.target
     }
@@ -69,6 +83,10 @@ impl CredentialScope {
     pub(crate) fn admits_profile(&self, profile: &Profile) -> bool {
         profile.target == self.target
             && profile.auth == self.auth
+            && self
+                .within
+                .as_ref()
+                .is_none_or(|within| within.contains(&profile.id))
             && match self.reach {
                 Reach::Direct => profile.jump_hosts.is_empty(),
                 Reach::Through(id) => profile.id == id,
