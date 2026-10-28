@@ -134,7 +134,6 @@ pub(super) fn scoped_fixture_with_history(
                 connector.clone(),
                 storage,
                 directory.path(),
-                Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
                 resolver.clone(),
                 cx,
             ),

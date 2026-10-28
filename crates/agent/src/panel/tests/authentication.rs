@@ -186,7 +186,6 @@ fn terminal_authentication_uses_host_callback_and_retries_after_cancel_or_failur
         |f| {
             let mut services = fixture_services(f);
             services.terminal_auth = Some(opener);
-            services.usage_source = Arc::new(nocterm_ai::testing::ScriptedUsageSource::default());
             services
         },
         cx,

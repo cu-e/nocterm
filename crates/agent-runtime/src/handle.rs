@@ -153,10 +153,6 @@ impl RuntimeHandle {
         self.runtime
             .update(cx, |runtime, cx| runtime.set_last_agent(agent, cx))
     }
-    pub fn refresh_limits(&self, agent: &str, cx: &mut App) {
-        self.runtime
-            .update(cx, |runtime, cx| runtime.refresh_limits(agent, cx))
-    }
     pub fn claim_document(
         &self,
         id: String,

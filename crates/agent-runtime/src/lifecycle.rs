@@ -272,7 +272,6 @@ impl Runtime {
         let cleanup = self.connections.take_cleanup();
         self.bridge.stop();
         self.services.bridge.stop();
-        self.usage.stop();
         let executor = cx.background_executor().clone();
         Box::pin(async move {
             // Independent process cleanup cannot be serialized behind synchronous file I/O.

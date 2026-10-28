@@ -341,19 +341,12 @@ impl AgentPanel {
         if open {
             self.close_usage(window, cx);
         } else {
-            self.refresh_usage(cx);
             self.menus.open(MenuKind::Usage);
             // Read-only information must not interrupt composing.
             if !self.composer.focus(cx).is_focused(window) {
                 window.focus(self.menus.usage_focus(), cx);
             }
             cx.notify();
-        }
-    }
-    pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
-        if let Some(thread) = self.current() {
-            let agent = thread.read(cx).document().agent_id().to_owned();
-            self.host.runtime().refresh_limits(&agent, cx);
         }
     }
     pub(super) fn usage_report(&self, cx: &App) -> Option<Report> {

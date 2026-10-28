@@ -5027,7 +5027,6 @@ version = "3.1.0"
 dependencies = [
  "anyhow",
  "async-io",
- "event-listener",
  "futures",
  "gpui-kit",
  "nocterm-acp",
@@ -5036,7 +5035,6 @@ dependencies = [
  "nocterm-agent-runtime",
  "nocterm-agent-settings-ui",
  "nocterm-agent-storage",
- "nocterm-agent-usage",
  "nocterm-ai",
  "nocterm-connections",
  "nocterm-connections-io",
@@ -5247,17 +5245,6 @@ dependencies = [
  "tempfile",
  "toml 1.1.6+spec-1.1.0",
  "uuid",
-]
-
-[[package]]
-name = "nocterm-agent-usage"
-version = "0.0.0"
-dependencies = [
- "futures",
- "gpui-pre-reqwest",
- "nocterm-ai",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

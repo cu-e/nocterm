@@ -7,13 +7,11 @@
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: metadata::ChatMetadataSource,
 //! AgentConnector, ToolBridge,
-//! AgentStateRepository, ChatRepository, usage::AccountUsageSource,
+//! AgentStateRepository, ChatRepository,
 //! workspace::WorkdirResolver, sandbox::SandboxProbe and
 //! images::{ImageInspector, ImageThumbnailer}.
 //! Image preflight and encoded admission are pure; native decoding is injected.
 //! ImageCodecCause reuses core shared causes without exposing a native codec type.
-//! Account usage diagnostics retain typed native I/O causes through foundation SharedError;
-//! narrow domain constructors preserve operation category and path.
 //! Workspace preparation and sandbox spawn diagnostics retain typed shared native I/O;
 //! adapter constructors preserve classification without changing policy or mount authority.
 //! Settings section: ai. Globals: none.

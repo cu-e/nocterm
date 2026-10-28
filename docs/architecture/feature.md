@@ -449,9 +449,10 @@ AI is gated by `Settings.ai.enabled`; switching it off tears down prompts,
 permissions, tool registrations, processes and panel visibility across windows.
 Chats are saved one file each in a private state directory and reopened through
 the agent's session resume/load; fork uses `session/fork`. All three are sent only when
-advertised. Favorites have a separate state file. Usage limits come from Claude's
-`usage_update` metadata and Codex's session logs through an injected
-`AccountUsageSource`, as each agent's profile says. See [AI agents](../AI_AGENTS.md) for protocol, limits and
+advertised. Favorites have a separate state file. Usage limits come only from
+agent `usage_update` metadata, interpreted as each agent's profile says. The card
+shows an unavailable hint until the agent reports limits and never initiates
+provider requests or reads provider session files. See [AI agents](../AI_AGENTS.md) for protocol, limits and
 privacy boundaries. On Linux, `nocterm_ai::sandbox` validates supplied path facts
 and derives the ordered mount policy; the ACP adapter resolves native paths and
 launches bubblewrap. Startup uses the injected `WorkdirResolver` to prepare the

@@ -270,7 +270,7 @@ reports and nothing it does not:
 | Percent full, used / window tokens, session cost | ACP `usage_update` | All that send it |
 | Split of the used tokens | Estimated by Nocterm | Shown with the total |
 | Session tokens: input, cache read/write, output, reasoning, total | `usage` of the prompt response (unstable ACP) | Claude, Codex, Hermes |
-| Plan limits: 5-hour, weekly, per-model weekly, extra usage | See below | Claude, Codex |
+| Plan limits: 5-hour, weekly, per-model weekly, extra usage | Agent metadata attached to ACP `usage_update` | Claude, when reported |
 
 ACP reports only the total in the context window. The split into "System
 prompt, tools & rules", "Messages", "Reasoning" and "Tool calls" is estimated
@@ -279,19 +279,25 @@ reported total is attributed to the agent's own instructions and tools. When
 the agent has compacted its context, the transcript's parts are scaled down to
 fit the total. The card says the split is an estimate.
 
-Plan limits are not part of ACP:
+Plan limits are not standardized by ACP. Nocterm displays only limits supplied by
+the agent through ACP metadata:
 
 - **Claude.** The Claude adapter attaches Claude Code's rate-limit event to
   `usage_update` as `_meta["_claude/rateLimit"]` (window, utilization, reset
   time, status). Each report updates its window. Claude sends them only after
   replies, and not every window in every reply.
-- **Codex.** The Codex adapter does not forward limits. Codex itself writes them
-  into its session logs, so Nocterm reads the newest
-  `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (default `~/.codex`). It
-  reads only the last 256 KiB of the newest log, read-only. It reads after each
-  Codex reply and when the card opens. Codex logs record the limits of the
-  account, not of one session.
-- **Hermes and custom agents** report no limits; the card shows none.
+- **Codex.** The pinned Codex adapter does not forward plan limits in a metadata
+  shape Nocterm supports. The card says that the agent has not reported them.
+- **Hermes and unrecognized custom agents** have no supported plan-limit metadata;
+  the card shows none. Custom launches recognized as a built-in agent use that
+  agent's metadata shape.
+
+Nocterm does not read Claude sign-in tokens, request private provider account
+endpoints or scan Codex session logs. Opening the card and finishing a prompt do
+not poll the provider. Authentication and subscription credentials stay with the
+agent; inherited configuration-directory and API-key environment variables still
+reach the agent as described in [Agent setup](#agent-setup). Agents and their
+adapters remain subject to their providers' own terms.
 
 Limits are kept per agent for the running application, so a new chat with the
 same agent shows the last known values. Each limit shows the share used, a bar
@@ -383,11 +389,11 @@ physical image validation and PNG previews through injected image ports. `nocter
 bridge transport. `nocterm-agent-chat` owns chat state, sessions and tools; `nocterm-agent`
 owns the chat UI and routing.
 Saved chats (`nocterm_ai::history`), Claude limit metadata and transcript usage
-estimates (`nocterm_ai::usage`) remain domain code. Codex session-log parsing and
-bounded native reads belong to `nocterm-agent-storage`. The panel is split into modules by part: transcript, menus, attach menu, approvals,
-composer, history and usage card (`panel/*.rs`). Account usage is injected through
-`AgentServices::usage_source`; tests supply a scripted domain port and never read
-the user's logs.
+estimates (`nocterm_ai::usage`) remain domain code. `nocterm-agent-runtime` retains
+plan-limit projections from accepted ACP events. The panel is split into modules
+by part: transcript, menus, attach menu, approvals, composer, history and usage
+card (`panel/*.rs`). Tests supply scripted agent events; neither tests nor
+production discover provider credentials or session logs for usage reporting.
 The composition root injects adapters through domain contracts. Features never
 import ACP adapters or the terminal/connections features; Workspace supplies
 neutral narrow terminal ports and `ConnectionDirectory` contracts.
@@ -457,8 +463,9 @@ group teardown; Windows process tree termination is best effort.
 
 Saved chats are plain JSON readable by your user account. They contain what the
 chat showed, including tool output that may quote terminal text. Delete a chat
-from the history to remove its file. Reading Codex logs for limits stays on the
-machine; nothing about usage is sent anywhere.
+from the history to remove its file. Usage reports arrive from the connected
+agent through ACP. Nocterm does not extract subscription tokens from provider
+files, read provider session logs, or send separate requests for plan limits.
 
 **Without isolation, local agents run as your user and may read and change any of
 your files with their own tools, including `~/.ssh`.** Nocterm's allowlisted
@@ -509,8 +516,10 @@ by the selected provider/agent, not by Nocterm.
 
 Domain tests cover stable ACP updates, environment blocks, input limits,
 metadata filtering, image decoding limits, favorites persistence, saved chat
-files (round trip, permissions, path safety, bounds, pins and names), Claude and
-Codex limit parsing and the context estimate. Panel tests cover saving,
+files (round trip, permissions, path safety, bounds, pins and names), profile-selected
+rate-limit metadata parsing and the context estimate. Runtime tests cover retained
+limit windows from agent events, missing or malformed reports, unsupported metadata
+profiles and late reports after shutdown. Panel tests cover saving,
 restoring and resuming chats, stopping and continuing a session, dropped empty
 chats, in-place restart, history search, pin, rename and fork, the usage card,
 the sections and folder tree of the attach menu, opening a server from it, and

@@ -1,7 +1,5 @@
 //! Claude Code through Zed's `claude-agent-acp` adapter.
-use nocterm_ai::agents::{
-    AccountUsage, AgentMark, AgentProfile, LaunchDefaults, UsageMeta, UsageProfile,
-};
+use nocterm_ai::agents::{AgentMark, AgentProfile, LaunchDefaults, UsageMeta, UsageProfile};
 
 pub(crate) const PROFILE: AgentProfile = AgentProfile::new(
     "claude",
@@ -19,13 +17,10 @@ pub(crate) const PROFILE: AgentProfile = AgentProfile::new(
 .recognized_by(&["claude-agent-acp"])
 .writes_home(&[".claude", ".claude.json", ".config/claude"])
 .with_usage(
-    UsageProfile::new(
-        UsageMeta::RateLimitRecord {
-            key: "_claude/rateLimit",
-        },
-        AccountUsage::OAuthAccount,
-    )
-    .with_empty_hint("Claude plan limits load from your Claude Code sign-in."),
+    UsageProfile::new(UsageMeta::RateLimitRecord {
+        key: "_claude/rateLimit",
+    })
+    .with_empty_hint("Claude has not reported plan limits."),
 )
 .with_mark(
     AgentMark::new(

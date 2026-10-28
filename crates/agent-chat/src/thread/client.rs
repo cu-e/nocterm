@@ -283,11 +283,6 @@ impl AgentThread {
                 if response.usage.is_some() {
                     self.state.tokens(response.usage);
                 }
-                // Agents that keep limits in their own files have
-                // just written this turn's.
-                let agent = self.state.agent_id().to_owned();
-                let runtime = self.deps.runtime().clone();
-                cx.defer(move |cx| runtime.refresh_limits(&agent, cx));
                 self.notice.present(if self.session.stopped() {
                     "Stopped".into()
                 } else {

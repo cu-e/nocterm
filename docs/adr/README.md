@@ -101,3 +101,4 @@ acceptance; a later record supersedes an earlier one.
 | [0102](0102-ssh-keys-are-kept-in-the-vault.md) | SSH keys are kept in the vault; the editor receives them through `VaultSshKeys` |
 | [0103](0103-account-data-is-sealed-on-the-device.md) | Account data is sealed on the device: the hub keeps ciphertext, and one chosen server keeps the vault and the profiles |
 | [0104](0104-a-window-shows-one-environment.md) | A window shows one environment: this computer or the account of one hub (supersedes 0099) |
+| [0105](0105-provider-usage-through-acp-only.md) | Provider usage reaches Nocterm only through ACP (partially supersedes 0061) |

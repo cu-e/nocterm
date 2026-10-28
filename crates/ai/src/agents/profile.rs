@@ -44,31 +44,17 @@ pub enum UsageMeta {
     RateLimitRecord { key: &'static str },
 }
 
-/// How nocterm reads an agent's plan limits outside the protocol.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum AccountUsage {
-    /// Limits arrive with usage updates only.
-    #[default]
-    None,
-    /// The agent keeps an OAuth sign-in whose account reports limits.
-    OAuthAccount,
-    /// The agent logs limits to session files in its home.
-    SessionLog,
-}
-
 /// How an agent reports plan limits, and what to say while none are known.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UsageProfile {
     meta: UsageMeta,
-    account: AccountUsage,
     empty_hint: Option<&'static str>,
 }
 
 impl UsageProfile {
-    pub const fn new(meta: UsageMeta, account: AccountUsage) -> Self {
+    pub const fn new(meta: UsageMeta) -> Self {
         Self {
             meta,
-            account,
             empty_hint: None,
         }
     }
@@ -79,9 +65,6 @@ impl UsageProfile {
     }
     pub fn meta(&self) -> UsageMeta {
         self.meta
-    }
-    pub fn account(&self) -> AccountUsage {
-        self.account
     }
     pub fn empty_hint(&self) -> Option<&'static str> {
         self.empty_hint
@@ -141,7 +124,7 @@ impl AgentProfile {
             launch,
             markers: &[],
             state: &[],
-            usage: UsageProfile::new(UsageMeta::None, AccountUsage::None),
+            usage: UsageProfile::new(UsageMeta::None),
             mark: None,
         }
     }

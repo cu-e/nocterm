@@ -4,7 +4,7 @@
 //! keyed write admission, lazy history hydration and usage projections.
 //! Does not own: settings storage, history/favorites files, ACP subprocesses or views.
 //! Ports used: AgentConnector, ToolBridge, AgentStateRepository, ChatRepository,
-//! AccountUsageSource, WorkdirResolver, explicit SettingsHandle and host-supplied ShutdownCoordinator
+//! WorkdirResolver, explicit SettingsHandle and host-supplied ShutdownCoordinator
 //! at installation.
 //! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
 //! Settings section: ai consumer. Globals: none.
@@ -73,8 +73,6 @@ pub struct RuntimeServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub storage: AgentStorage,
-    /// Account usage is read through a host-injected native capability.
-    pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
     /// Whether the host can run an agent's sign-in command in a terminal.
@@ -127,11 +125,10 @@ impl Runtime {
         let state = state::AgentStateStore::new(&services.storage, cx);
         let chats = documents::ChatStore::new(&mut services.storage, cx);
         let releases = releases::LeaseInbox::new(cx);
-        let usage = usage::UsageLimits::new(services.usage_source.clone());
         Self {
             state,
             chats,
-            usage,
+            usage: Default::default(),
             services,
             connections: Default::default(),
             admission: Default::default(),
@@ -277,18 +274,6 @@ impl Runtime {
     /// The plan limits last reported for `agent`.
     pub fn limits(&self, agent: &str) -> Option<&nocterm_ai::usage::Limits> {
         self.usage.get(agent)
-    }
-    /// Reads `agent`'s plan limits again, from agents that keep them in their
-    /// own files. Others report them along with usage.
-    pub fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
-        if self.shutting_down {
-            return;
-        }
-        let Some(agent) = self.services.agents.get(agent, cx) else {
-            return;
-        };
-        self.usage
-            .refresh(nocterm_ai::usage::UsageAgent::new(&agent), cx);
     }
     pub fn start_bridge(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down {

@@ -297,13 +297,13 @@ ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
 ([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
-Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`
-carries the agent id and its profile's `AccountUsage` kind, never its launch or
-environment, and `UsageSources` routes it to the source registered for that kind.
-Rate-limit records in usage-update metadata are parsed by `rate_limit_record` under
-the key the profile's `UsageMeta` names. Typed `UsageReadError` retains native causes
-as values. Domain `Limits` and transcript estimates remain pure; account requests,
-log discovery and their grammars belong to the agent-usage adapter.
+Account plan limits come only from agent usage events. `rate_limit_record` parses
+usage-update metadata under the key the profile's `UsageMeta` names. Domain
+`Limits` merges each reported window independently; missing or malformed records
+leave prior reports intact. Context, token totals and transcript estimates remain
+independent of account limits. There is no native account-source port or provider
+credential/log discovery in the application
+([ADR 0105](../adr/0105-provider-usage-through-acp-only.md)).
 
 AI workspace preparation is a pure `WorkdirResolver` contract with typed
 `WorkdirError` values. `SandboxPolicy` validates supplied lexical/canonical path

@@ -14,7 +14,6 @@ nocterm-ai.workspace = true
 nocterm-agent-providers.workspace = true
 nocterm-image-codec.workspace = true
 nocterm-agent-storage.workspace = true
-nocterm-agent-usage.workspace = true
 nocterm-agent-runtime.workspace = true
 nocterm-acp.workspace = true
 nocterm-agent.workspace = true
@@ -82,7 +81,6 @@ nocterm-workspace.workspace = true
 nocterm-workspace-ports.workspace = true
 
 anyhow.workspace = true
-event-listener.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
 thiserror.workspace = true
@@ -233,7 +231,6 @@ nocterm-workspace-ports = { path = "crates/workspace-ports" }
 nocterm-agent-chat = { path = "crates/agent-chat" }
 nocterm-image-codec = { path = "crates/image-codec" }
 nocterm-agent-storage = { path = "crates/agent-storage" }
-nocterm-agent-usage = { path = "crates/agent-usage" }
 nocterm-acp = { path = "crates/acp" }
 nocterm-agent = { path = "crates/agent" }
 nocterm-agent-runtime = { path = "crates/agent-runtime" }

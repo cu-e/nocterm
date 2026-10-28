@@ -6,35 +6,22 @@ use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
 #[gpui_kit::test]
 fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
-    let source = Arc::new(nocterm_ai::testing::ScriptedUsageSource::default());
-    source.push(Ok(Some(vec![
-        nocterm_ai::usage::RateLimit {
-            window: nocterm_ai::usage::Window::Weekly,
-            used: Some(0.38),
-            resets_at: Some(1_791_588_105),
-            reached: false,
-        },
-        nocterm_ai::usage::RateLimit {
-            window: nocterm_ai::usage::Window::FiveHour,
-            used: Some(0.12),
-            resets_at: Some(1_791_500_000),
-            reached: false,
-        },
-    ])));
-    let f = fixture_with_width(cx, 26., source, workspace_resolver(), image_deps());
-    new_chat(&f, cx);
+    let f = fixture(cx);
+    panel_actions::new_agent_chat(&f, "claude", cx);
     let session = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
         thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
         thread.read(cx).session().clone().unwrap()
     });
     cx.run_until_parked();
-    f.events
-        .try_send(AgentEvent::Session(SessionNotice::new(
-            session,
-            SessionUpdate::UsageUpdate(ContextUsage::new(25_900, 256_000)),
-        )))
-        .unwrap();
+    for (kind, used) in [("seven_day", 0.38), ("five_hour", 0.12)] {
+        f.events
+            .try_send(AgentEvent::Session(SessionNotice::new(
+                session.clone(),
+                SessionUpdate::UsageUpdate(plan_usage(kind, used)),
+            )))
+            .unwrap();
+    }
     cx.run_until_parked();
     let finish = f.commands.pending.lock().unwrap().take().unwrap();
     finish
@@ -50,7 +37,7 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let runtime = f.installation.installed.runtime();
         let limits: Vec<_> = runtime
-            .limits("codex", cx)
+            .limits("claude", cx)
             .unwrap()
             .iter()
             .cloned()
@@ -74,6 +61,61 @@ fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
         window.click("agent-usage-close", cx);
         window.render_frame(cx);
         assert!(window.try_find("agent-usage").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn context_tokens_and_cost_remain_available_without_plan_limits(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
+    cx.run_until_parked();
+    let session = thread.read_with(cx, |thread, _| thread.session().clone().unwrap());
+    let mut usage = ContextUsage::new(50, 100);
+    usage.cost = Some(nocterm_ai::model::usage::Cost {
+        amount: 1.25,
+        currency: "USD".into(),
+    });
+    f.events
+        .try_send(AgentEvent::Session(SessionNotice::new(
+            session,
+            SessionUpdate::UsageUpdate(usage.clone()),
+        )))
+        .unwrap();
+    cx.run_until_parked();
+    f.commands
+        .pending
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap()
+        .send(PromptOutcome {
+            usage: Some(TokenTotals::new(30, 20, 10)),
+            ..PromptOutcome::new(StopReason::EndTurn)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.transcript().usage, Some(usage));
+        assert_eq!(
+            thread.transcript().tokens,
+            Some(TokenTotals::new(30, 20, 10))
+        );
+    });
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-context-usage", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("agent-usage").is_some());
+        assert!(
+            f.installation
+                .installed
+                .runtime()
+                .limits("codex", cx)
+                .is_none()
+        );
     })
     .unwrap();
 }
@@ -152,7 +194,6 @@ fn image_preparation_runs_once_and_renders_a_cached_small_static_preview(cx: &mu
     let f = fixture_with_width(
         cx,
         26.,
-        usage_source(),
         workspace_resolver(),
         crate::ImageDeps::new(codec.clone(), codec.clone()),
     );
@@ -227,7 +268,7 @@ fn agent_popup_is_anchored_to_header_and_dismisses(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     f.commands.config.set_options(vec![ConfigOption::select(
         "model",
         "Model",
@@ -367,7 +408,7 @@ fn transcript_activity_tracks_only_live_reasoning_and_unfinished_tools() {
 fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| thread.send("Question".into(), cx));
@@ -445,7 +486,7 @@ fn compact_chips_and_live_reasoning_respect_narrow_layout_and_reduced_motion(
 
 #[gpui_kit::test]
 fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let long = "very_long_unbroken_argument_".repeat(300);
     cx.update(|cx| {
@@ -513,52 +554,58 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
     .unwrap();
 }
 
+fn plan_usage(kind: &str, used: f64) -> ContextUsage {
+    let meta = serde_json::json!({"_claude/rateLimit": {
+        "rateLimitType": kind,
+        "utilization": used,
+        "resetsAt": 1_791_588_105u64,
+        "status": "allowed"
+    }});
+    ContextUsage::new(25_900, 256_000).meta(
+        meta.as_object()
+            .cloned()
+            .map(nocterm_ai::model::extensions::Extensions::from),
+    )
+}
+
 #[gpui_kit::test]
-fn prompt_completion_refreshes_its_original_usage_source_after_another_installation(
+fn received_plan_limits_stay_with_their_original_installation_after_prompt_completion(
     cx: &mut TestAppContext,
 ) {
-    let source = usage_source();
-    source.push(Ok(Some(vec![nocterm_ai::usage::RateLimit {
-        window: nocterm_ai::usage::Window::Weekly,
-        used: Some(0.38),
-        resets_at: None,
-        reached: false,
-    }])));
-    let first = fixture_with_width(cx, 26., source.clone(), workspace_resolver(), image_deps());
-    new_chat(&first, cx);
+    let first = fixture(cx);
+    panel_actions::new_agent_chat(&first, "claude", cx);
     let thread = cx.update(|cx| first.panel.read(cx).current().unwrap());
     thread.update(cx, |thread, cx| thread.send("original prompt".into(), cx));
     cx.run_until_parked();
     let finish = first.commands.pending.lock().unwrap().take().unwrap();
-    let other_source = usage_source();
-    let second = fixture_with_width(
-        cx,
-        26.,
-        other_source.clone(),
-        workspace_resolver(),
-        image_deps(),
-    );
+    let second = fixture(cx);
+    panel_actions::new_agent_chat(&second, "claude", cx);
+    let session = thread.read_with(cx, |thread, _| thread.session().clone().unwrap());
+    first
+        .events
+        .try_send(AgentEvent::Session(SessionNotice::new(
+            session,
+            SessionUpdate::UsageUpdate(plan_usage("seven_day", 0.38)),
+        )))
+        .unwrap();
     finish
         .send(PromptOutcome::new(StopReason::EndTurn))
         .unwrap();
     cx.run_until_parked();
-    assert_eq!(source.requests().len(), 1);
-    assert!(other_source.requests().is_empty());
     cx.update(|cx| {
-        assert!(
-            first
-                .installation
-                .installed
-                .runtime()
-                .limits("codex", cx)
-                .is_some()
-        );
+        let limits = first
+            .installation
+            .installed
+            .runtime()
+            .limits("claude", cx)
+            .unwrap();
+        assert_eq!(limits.iter().next().unwrap().used, Some(0.38));
         assert!(
             second
                 .installation
                 .installed
                 .runtime()
-                .limits("codex", cx)
+                .limits("claude", cx)
                 .is_none()
         );
     });

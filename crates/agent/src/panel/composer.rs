@@ -580,7 +580,6 @@ impl AgentPanel {
             thread.update(cx, |thread, cx| thread.set_draft(text, cx));
         }
     }
-    /// Reads the plan limits again when the card opens.
     pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) {
         self.menus.reset();
         cx.notify();

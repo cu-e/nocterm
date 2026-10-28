@@ -166,32 +166,23 @@ fn runtime_from_storage(
     storage: AgentStorage,
     directory: &std::path::Path,
 ) -> Entity<Runtime> {
-    runtime_with_usage_source(
+    runtime_with_workspace_resolver(
         cx,
         connector,
         storage,
         directory,
-        Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
         Arc::new(nocterm_ai::testing::ScriptedWorkdirResolver::accept_requests()),
     )
 }
-fn runtime_with_usage_source(
+fn runtime_with_workspace_resolver(
     cx: &mut TestAppContext,
     connector: Arc<ScriptedConnector>,
     storage: AgentStorage,
     directory: &std::path::Path,
-    usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
 ) -> Entity<Runtime> {
     cx.update(|cx| {
-        let services = runtime_services(
-            connector,
-            storage,
-            directory,
-            usage_source,
-            workdir_resolver,
-            cx,
-        );
+        let services = runtime_services(connector, storage, directory, workdir_resolver, cx);
         cx.new(|cx| Runtime::new(services, cx))
     })
 }
@@ -199,7 +190,6 @@ fn runtime_services(
     connector: Arc<ScriptedConnector>,
     storage: AgentStorage,
     directory: &std::path::Path,
-    usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     cx: &mut App,
 ) -> RuntimeServices {
@@ -215,7 +205,6 @@ fn runtime_services(
         connector,
         bridge: Arc::new(UnusedBridge),
         storage,
-        usage_source,
         workdir_resolver,
         workdir: directory.join("work"),
         terminal_auth: false,

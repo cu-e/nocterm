@@ -5,7 +5,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
 `nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-environment`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-environment`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -252,29 +252,13 @@ dependency. Repository futures run filesystem work when polled on the background
 executor. The adapter owns no writer loop, per-chat gate or shutdown timer.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
-## Agent account usage
+## Agent usage boundary
 
-`nocterm_agent_usage::native_sources()` resolves the readers' locations once and
-registers one reader per `AccountUsage` kind in AI's `UsageSources`. The runtime
-asks with the agent's kind from its profile, so readers never inspect launches and
-agents without a profile or kind are never read.
-
-`nocterm-agent-usage::ClaudeUsageReader` serves `OAuthAccount` agents. Composition
-supplies Claude Code's configuration directory (`CLAUDE_CONFIG_DIR` or
-`~/.claude`); the reader takes the unexpired OAuth access token from
-`.credentials.json`, requests the account's plan limits from Anthropic's API with a
-10-second timeout and a 1 MiB response bound, and converts percentage windows to
-shares. Missing credentials, an expired token or a rejected request produce no
-report; it never refreshes or writes credentials. Rate-limit records the agent
-attaches to usage updates still merge into the same limits between reads.
-
-`nocterm-agent-usage::CodexUsageReader` serves `SessionLog` agents. Composition
-supplies its optional home directory (`CODEX_HOME` or `~/.codex`). The reader selects the newest lexical date and log, scans at most the
-last 256 KiB and returns the last usable account report. Missing or malformed reports
-produce no replacement; physical failures preserve typed I/O causes.
-AI owns typed shared usage causes and category-specific constructors; native readers
-retain the original I/O classification and deeper cause through standard traversal.
-Clones share the original payload without changing account selection or tail limits.
+The ACP adapter maps the connected agent's context usage, token totals and usage
+metadata into AI's neutral records. No adapter in Nocterm reads provider sign-in
+tokens or session logs, or requests private provider account endpoints. The agent
+owns its authentication, requests and state files
+([ADR 0105](../adr/0105-provider-usage-through-acp-only.md)).
 
 ## Agent workspace and sandbox
 

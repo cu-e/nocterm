@@ -2,7 +2,7 @@
 use super::*;
 use nocterm_ai::{
     AgentError,
-    testing::{ScriptedUsageSource, ScriptedWorkdirResolver},
+    testing::ScriptedWorkdirResolver,
     workspace::{PreparedWorkspace, WorkdirError},
 };
 fn candidate() -> std::path::PathBuf {
@@ -26,14 +26,7 @@ fn runtime_with_workspace(
 ) -> Entity<Runtime> {
     let repository = Arc::new(InMemoryAgentRepository::default());
     let storage = AgentStorage::prepared(repository.clone(), repository, Ok(Default::default()));
-    runtime_with_usage_source(
-        cx,
-        connector,
-        storage,
-        &candidate(),
-        Arc::new(ScriptedUsageSource::default()),
-        resolver,
-    )
+    runtime_with_workspace_resolver(cx, connector, storage, &candidate(), resolver)
 }
 fn connect(runtime: &Entity<Runtime>, cx: &mut TestAppContext) {
     let client = ProbeClient::new(cx, snapshot());

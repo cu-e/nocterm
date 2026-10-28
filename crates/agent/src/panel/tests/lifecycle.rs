@@ -101,7 +101,6 @@ async fn disabling_ai_cancels_pending_initialization_immediately(cx: &mut TestAp
                 started: started.clone(),
                 cancelled: cancelled.clone(),
             });
-            services.usage_source = Arc::new(nocterm_ai::testing::ScriptedUsageSource::default());
             services.workdir = f._directory.path().join("pending");
             services
         },

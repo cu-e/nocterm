@@ -65,8 +65,6 @@ pub struct AgentServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub storage: runtime::AgentStorage,
-    /// The host's account usage capability, without native paths in the view.
-    pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
     pub terminal_auth: Option<TerminalAuthOpener>,

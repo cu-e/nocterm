@@ -60,7 +60,6 @@ pub(crate) fn install(
             connector: services.connector,
             bridge: services.bridge,
             storage: services.storage,
-            usage_source: services.usage_source,
             workdir_resolver: services.workdir_resolver,
             workdir: services.workdir,
             terminal_auth: services.terminal_auth.is_some(),

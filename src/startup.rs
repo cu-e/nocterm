@@ -280,7 +280,6 @@ fn agent_services(
         )),
         storage,
         workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
-        usage_source: Arc::new(nocterm_agent_usage::native_sources()),
         workdir: paths.state_dir().join("agent-workspace"),
         private_dirs: vec![paths.config_dir().to_owned(), paths.state_dir().to_owned()],
         shared_dirs: vec![paths.effective_runtime_dir()],

@@ -115,19 +115,15 @@ struct Fixture {
     repository: Arc<nocterm_ai::testing::InMemoryAgentRepository>,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
-    fixture_with_width(cx, 26., usage_source(), workspace_resolver(), image_deps())
+    fixture_with_width(cx, 26., workspace_resolver(), image_deps())
 }
 fn workspace_resolver() -> Arc<nocterm_ai::testing::ScriptedWorkdirResolver> {
     Arc::new(nocterm_ai::testing::ScriptedWorkdirResolver::accept_requests())
-}
-fn usage_source() -> Arc<nocterm_ai::testing::ScriptedUsageSource> {
-    Arc::new(nocterm_ai::testing::ScriptedUsageSource::default())
 }
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_width(
     cx: &mut TestAppContext,
     width: f32,
-    usage_source: Arc<nocterm_ai::testing::ScriptedUsageSource>,
     workdir_resolver: Arc<nocterm_ai::testing::ScriptedWorkdirResolver>,
     images: crate::ImageDeps,
 ) -> Fixture {
@@ -198,7 +194,6 @@ fn fixture_with_width(
                         repository.clone(),
                         Ok(Default::default()),
                     ),
-                    usage_source,
                     workdir_resolver,
                     workdir: directory.path().join("work"),
                 },
@@ -251,7 +246,6 @@ fn fixture_services(f: &Fixture) -> AgentServices {
             f.repository.clone(),
             Ok(f.repository.state()),
         ),
-        usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
         workdir_resolver: workspace_resolver(),
         workdir: f._directory.path().join("work"),
         terminal_auth: None,

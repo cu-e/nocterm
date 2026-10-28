@@ -13,13 +13,10 @@ const ALPHA: AgentProfile = AgentProfile::new(
 .recognized_by(&["alpha-acp"])
 .writes_home(&[".alpha", ".config/alpha"])
 .with_usage(
-    UsageProfile::new(
-        UsageMeta::RateLimitRecord {
-            key: "_alpha/rateLimit",
-        },
-        AccountUsage::OAuthAccount,
-    )
-    .with_empty_hint("Alpha limits load from your sign-in."),
+    UsageProfile::new(UsageMeta::RateLimitRecord {
+        key: "_alpha/rateLimit",
+    })
+    .with_empty_hint("Alpha has not reported plan limits through ACP."),
 );
 const BETA: AgentProfile =
     AgentProfile::new("beta", "Beta", LaunchDefaults::new("beta", &["acp"], &[]));

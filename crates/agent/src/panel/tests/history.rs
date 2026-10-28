@@ -272,7 +272,7 @@ fn assert_unaccepted_prompts_leave_no_history(
 
 #[gpui_kit::test]
 fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -493,7 +493,7 @@ fn settle_scheduled_history(
 #[gpui_kit::test]
 fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut TestAppContext) {
     use gpui_kit::{px, size};
-    let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 60., workspace_resolver(), image_deps());
     let layout = &f.installation.layout;
     cx.update(|cx| cx.set_reduce_motion(true));
     new_chat(&f, cx);
@@ -573,7 +573,7 @@ fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut T
 #[gpui_kit::test]
 fn closing_one_window_keeps_the_surviving_history_layout_subscription(cx: &mut TestAppContext) {
     use gpui_kit::px;
-    let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 60., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| {
         cx.set_reduce_motion(true);
@@ -624,7 +624,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
     cx: &mut TestAppContext,
 ) {
     use gpui_kit::{InputEvent as _, MouseButton, MouseDownEvent, MouseUpEvent, point, px, size};
-    let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 60., workspace_resolver(), image_deps());
     let layout = &f.installation.layout;
     cx.update(|cx| cx.set_reduce_motion(true));
     new_chat(&f, cx);

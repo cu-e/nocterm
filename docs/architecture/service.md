@@ -156,10 +156,12 @@ Favorites, chats and process cleanup start independently
 under the host's one `ShutdownCoordinator` budget. Runtime installs no quit hook
 or persistence deadline. See [ADR0022](../adr/0022-agent-storage-owners.md).
 
-The runtime's private `UsageLimits` owner coalesces account refreshes per agent and
-schedules the injected `AccountUsageSource` on its existing background executor.
-Missing reports and failures retain the last accepted limits; stopping the runtime
-cancels pending delivery. Native account paths remain in the injected adapter.
+The runtime's private `UsageLimits` owner retains plan limits per agent from
+accepted usage events. Each reported window replaces only its prior value;
+missing or malformed metadata retains the last accepted limits. Opening a usage
+card or finishing a prompt starts no native account polling. Provider credentials,
+requests and session files remain under the agent's control
+([ADR 0105](../adr/0105-provider-usage-through-acp-only.md)).
 
 Runtime performs no native workspace filesystem or home lookup. Its startup task
 checks cancellation before and after preparation and passes one resulting canonical
