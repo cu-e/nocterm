@@ -104,7 +104,6 @@ fn boot_with(accounts: Arc<FakeAccounts>, chosen: Option<&str>, cx: &mut TestApp
         nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings {
             servers: vec![record(ADDRESS), record(OTHER)],
             account: chosen.map(str::to_owned),
-            ..Default::default()
         });
     let hub = nocterm_hubs_model::testing::FakeHub::new();
     let booted = cx.update(|cx| {
@@ -251,7 +250,7 @@ fn switching_accounts_keeps_the_profiles_of_each_account_apart(cx: &mut TestAppC
         Some(ADDRESS),
         cx,
     );
-    assert_eq!(local_profiles(&booted, cx), [at_home.clone()]);
+    assert_eq!(local_profiles(&booted, cx), std::slice::from_ref(&at_home));
 
     choose(&booted, Some(OTHER), cx);
 
@@ -301,7 +300,7 @@ fn a_refused_change_to_a_shared_connection_is_undone_and_announced_once(cx: &mut
         Some(ADDRESS),
         cx,
     );
-    assert_eq!(local_profiles(&booted, cx), [shared.clone()]);
+    assert_eq!(local_profiles(&booted, cx), std::slice::from_ref(&shared));
     let (handle, _workspace) = cx.update(|cx| open_workspace(&booted, cx));
 
     let mut edited = shared.clone();

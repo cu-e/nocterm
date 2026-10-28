@@ -128,6 +128,47 @@ enum Granted {
     Unconfirmed(PendingAdminKey, PublicKey),
 }
 
+/// The member of a collection the hub names as the granter, with the public key it lists for
+/// them. A granter that is not a member, or has no usable key, leaves the group out.
+fn listed_key<'a>(
+    members: &'a [v1::CollectionMember],
+    collection_id: &str,
+    granted_by: &str,
+) -> Option<(&'a v1::CollectionMember, PublicKey)> {
+    let Some(member) = members.iter().find(|m| m.account_id == granted_by) else {
+        tracing::warn!(collection = %collection_id, "the granter is not a member; the group is left out");
+        return None;
+    };
+    match PublicKey::from_bytes(&member.public_key) {
+        Ok(offered) => Some((member, offered)),
+        Err(_) => {
+            tracing::warn!(collection = %collection_id, "the granter has no usable public key; the group is left out");
+            None
+        }
+    }
+}
+
+/// An administrator's key as it is shown for confirmation.
+fn pending_key(
+    member: &v1::CollectionMember,
+    organization: &str,
+    offered: &PublicKey,
+    replaces: Option<String>,
+) -> PendingAdminKey {
+    let admin = if member.display_name.is_empty() {
+        member.username.clone()
+    } else {
+        member.display_name.clone()
+    };
+    PendingAdminKey {
+        organization: organization.to_owned(),
+        account_id: member.account_id.clone(),
+        admin,
+        fingerprint: offered.fingerprint(),
+        replaces,
+    }
+}
+
 /// Whether the role may write to the organization's collections.
 fn may_write(role: i32) -> bool {
     matches!(
@@ -286,25 +327,10 @@ impl Store {
         organization: &str,
     ) -> Result<Granter, OpError> {
         let members = self.ops.members(collection_id).await?;
-        let Some(member) = members.iter().find(|m| m.account_id == granted_by) else {
-            tracing::warn!(collection = %collection_id, "the granter is not a member; the group is left out");
+        let Some((member, offered)) = listed_key(&members, collection_id, granted_by) else {
             return Ok(Granter::Unusable);
         };
-        let Ok(offered) = PublicKey::from_bytes(&member.public_key) else {
-            tracing::warn!(collection = %collection_id, "the granter has no usable public key; the group is left out");
-            return Ok(Granter::Unusable);
-        };
-        let pending = |replaces| PendingAdminKey {
-            organization: organization.to_owned(),
-            account_id: granted_by.to_owned(),
-            admin: if member.display_name.is_empty() {
-                member.username.clone()
-            } else {
-                member.display_name.clone()
-            },
-            fingerprint: offered.fingerprint(),
-            replaces,
-        };
+        let pending = |replaces| pending_key(member, organization, &offered, replaces);
         match self.keys.trust(granted_by, &offered) {
             Ok(trusted) => Ok(Granter::Offered(trusted)),
             Err(PinError::Unknown { .. }) => Ok(Granter::Unconfirmed(pending(None), offered)),

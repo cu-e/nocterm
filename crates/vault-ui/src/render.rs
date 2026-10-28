@@ -166,6 +166,59 @@ impl VaultView {
             .into_any_element()
     }
 
+    /// One saved credential with its copy and delete buttons.
+    fn credential_row(
+        &self,
+        index: usize,
+        record: &CredentialInfo,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = record.id;
+        let read_only = is_read_only(record);
+        h_flex()
+            .w_full()
+            .py_3()
+            .gap_2()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_sm().child(record.label.clone()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(crate::credential_row::describe(record)),
+                    ),
+            )
+            .child(
+                Button::new(("vault-copy-id", index))
+                    .small()
+                    .ghost()
+                    .icon(IconName::Copy)
+                    .tooltip("Copy ID")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(id.to_string()))
+                    }),
+            )
+            .child(
+                Button::new(("vault-delete", index))
+                    .small()
+                    .ghost()
+                    .icon(IconName::Trash)
+                    .tooltip(if read_only {
+                        "Read-only group credential"
+                    } else {
+                        "Delete"
+                    })
+                    .disabled(self.busy || read_only)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.operation(this.service.delete(id), cx)
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn credentials(&self, cx: &mut Context<Self>) -> AnyElement {
         if !self.service.is_unlocked() {
             return form::section(
@@ -181,52 +234,7 @@ impl VaultView {
             .records
             .iter()
             .enumerate()
-            .map(|(index, record)| {
-                let id = record.id;
-                let read_only = is_read_only(record);
-                h_flex()
-                    .w_full()
-                    .py_3()
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().text_sm().child(record.label.clone()))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(crate::credential_row::describe(record)),
-                            ),
-                    )
-                    .child(
-                        Button::new(("vault-copy-id", index))
-                            .small()
-                            .ghost()
-                            .icon(IconName::Copy)
-                            .tooltip("Copy ID")
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(id.to_string()))
-                            }),
-                    )
-                    .child(
-                        Button::new(("vault-delete", index))
-                            .small()
-                            .ghost()
-                            .icon(IconName::Trash)
-                            .tooltip(if read_only {
-                                "Read-only group credential"
-                            } else {
-                                "Delete"
-                            })
-                            .disabled(self.busy || read_only)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.operation(this.service.delete(id), cx)
-                            })),
-                    )
-                    .into_any_element()
-            })
+            .map(|(index, record)| self.credential_row(index, record, cx))
             .collect();
         if rows.is_empty() {
             rows.push(form::note(

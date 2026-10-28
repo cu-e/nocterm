@@ -69,6 +69,49 @@ pub(crate) struct HubServices {
     _account: Option<gpui_kit::Entity<crate::hub_account::HubAccountSync>>,
 }
 
+/// The hub servers with the account data they will be kept in step with.
+struct PendingHubs {
+    hubs: nocterm_hubs::Installed,
+    accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+}
+
+fn start_hubs(
+    pending: Option<PendingHubs>,
+    vault: Option<crate::vault_selection::SelectedVault>,
+    connections: &Option<nocterm_connections::Installed>,
+    stored: Option<&Paths>,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> Option<HubServices> {
+    let PendingHubs { hubs, accounts } = pending?;
+    let sync = install_hub_account(
+        &hubs,
+        accounts,
+        vault,
+        connections.as_ref(),
+        stored,
+        shutdown,
+        cx,
+    );
+    Some(HubServices {
+        ui: nocterm_hubs_ui::install(hubs),
+        _account: sync,
+    })
+}
+
+/// The connection editor offers the keys of the vault; they follow the vault selected later.
+fn offer_keys(
+    connections: nocterm_connections::PreparedConnections,
+    vault: Option<&crate::vault_selection::SelectedVault>,
+    cx: &App,
+) -> nocterm_connections::PreparedConnections {
+    let Some(vault) = vault else {
+        return connections;
+    };
+    let selected: Arc<dyn VaultAccess> = Arc::new(vault.clone());
+    connections.with_keys(crate::vault_keys::keys_of(&selected, cx))
+}
+
 struct ProjectResources {
     settings: nocterm_store::SettingsHandle,
     directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
@@ -196,35 +239,13 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
     let hubs = install_hubs(&hosts, &ui, cx);
-    let hub_accounts = hosts.hub_accounts.clone();
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     // The vault opens first: the connection editor offers its keys, and its
     // credentials need the installed connections afterwards.
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
-    let connections = match &vault {
-        Some(vault) => {
-            // The editor's keys follow the vault selected later, so they hold the selection.
-            let selected: Arc<dyn VaultAccess> = Arc::new(vault.clone());
-            connections.with_keys(crate::vault_keys::keys_of(&selected, cx))
-        }
-        None => connections,
-    };
+    let connections = offer_keys(connections, vault.as_ref(), cx);
     let connections = install_connections(connections, &ui, &shutdown, cx);
-    let hubs = hubs.map(|hubs| {
-        let account = install_hub_account(
-            &hubs,
-            hub_accounts,
-            vault.clone(),
-            connections.as_ref(),
-            stored,
-            &shutdown,
-            cx,
-        );
-        HubServices {
-            ui: nocterm_hubs_ui::install(hubs),
-            _account: account,
-        }
-    });
+    let hubs = start_hubs(hubs, vault.clone(), &connections, stored, &shutdown, cx);
     let vault = vault.map(|vault| Arc::new(vault) as Arc<dyn VaultAccess>);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let projects = install_projects(
@@ -404,9 +425,12 @@ fn install_hubs(
     hosts: &HostServices,
     ui: &nocterm_ui::UiReady,
     cx: &mut App,
-) -> Option<nocterm_hubs::Installed> {
+) -> Option<PendingHubs> {
     let deps = hosts.hubs.clone()?;
-    Some(nocterm_hubs::install(deps, ui.settings().clone(), cx))
+    Some(PendingHubs {
+        hubs: nocterm_hubs::install(deps, ui.settings().clone(), cx),
+        accounts: hosts.hub_accounts.clone(),
+    })
 }
 
 /// Moves the saved profiles and the vault with the account the user chose. Without saved

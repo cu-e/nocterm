@@ -573,6 +573,31 @@ impl ConnectionsPanel {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_group(&name, cx)))
     }
 
+    /// The members of a folder, which also takes a profile dropped on it.
+    fn render_folder(
+        &self,
+        group: &str,
+        members: &[Profile],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let drop_group = group.to_owned();
+        let mut folder = v_flex()
+            .id(SharedString::from(format!("group-members-{group}")))
+            .test_support()
+            .pl_3()
+            .gap_px()
+            .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
+            .on_drop(
+                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
+                    this.move_profile(dragged, Some(drop_group.clone()), None, window, cx)
+                }),
+            );
+        for profile in members {
+            folder = folder.child(self.render_row(profile, true, cx));
+        }
+        folder.child(self.render_append_zone(Some(group), cx))
+    }
+
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filter = self.filter_text(cx);
         let filtering = !filter.trim().is_empty();
@@ -622,22 +647,7 @@ impl ConnectionsPanel {
             let collapsed = !filtering && self.collapsed.contains(group);
             list = list.child(self.render_group_header(group, collapsed, cx));
             if !collapsed {
-                let drop_group = group.clone();
-                let mut folder = v_flex()
-                    .id(SharedString::from(format!("group-members-{group}")))
-                    .test_support()
-                    .pl_3()
-                    .gap_px()
-                    .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
-                    .on_drop(
-                        cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                            this.move_profile(dragged, Some(drop_group.clone()), None, window, cx)
-                        }),
-                    );
-                for profile in members {
-                    folder = folder.child(self.render_row(profile, true, cx));
-                }
-                list = list.child(folder.child(self.render_append_zone(Some(group), cx)));
+                list = list.child(self.render_folder(group, members, cx));
             }
         }
         for section in &sections {

@@ -144,8 +144,8 @@ async fn a_group_collection_with_a_granted_key_is_used_with_the_members_role() {
         (v1::Role::Owner, true),
     ] {
         let (hub, store, record, admin) = member_of_acme(role);
-        let (key, envelope) = crate::account::testing::granted(&record, "acme-vault", &admin);
-        hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope, &admin);
+        let (key, envelope) = crate::account::testing::granted(&record, "acme-vault", admin);
+        hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope, admin);
         let layout = store.layout(VAULT_KIND).await.unwrap();
         assert!(layout.personal.is_none());
         let [group] = layout.groups.as_slice() else {
@@ -174,8 +174,8 @@ async fn a_group_without_a_key_for_the_account_is_left_out_not_an_error() {
     let layout = store.layout(VAULT_KIND).await.unwrap();
     assert!(layout.groups.is_empty());
     assert!(store.shared(VAULT_KIND, "acme").await.unwrap().is_none());
-    let (_, envelope) = crate::account::testing::granted(&record, "acme-vault", &admin);
-    hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope, &admin);
+    let (_, envelope) = crate::account::testing::granted(&record, "acme-vault", admin);
+    hub.add_group(VAULT_KIND, "acme", "acme-vault", envelope, admin);
     hub.tamper_key("acme-vault", vec![1; 60]);
     assert!(store.layout(VAULT_KIND).await.unwrap().groups.is_empty());
 }
@@ -183,8 +183,8 @@ async fn a_group_without_a_key_for_the_account_is_left_out_not_an_error() {
 #[tokio::test]
 async fn an_organization_the_account_does_not_belong_to_is_never_used() {
     let (hub, store, record, admin) = member_of_acme(v1::Role::Member);
-    let (_, envelope) = crate::account::testing::granted(&record, "other-vault", &admin);
-    hub.add_group(VAULT_KIND, "other", "other-vault", envelope, &admin);
+    let (_, envelope) = crate::account::testing::granted(&record, "other-vault", admin);
+    hub.add_group(VAULT_KIND, "other", "other-vault", envelope, admin);
     assert!(store.layout(VAULT_KIND).await.unwrap().groups.is_empty());
 }
 

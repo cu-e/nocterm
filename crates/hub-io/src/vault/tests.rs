@@ -155,8 +155,8 @@ fn vault_in_acme(
     let admin = Admin::acme();
     let (_accounts, slot, record) = signed_in_trusting(dir.path(), admin.pinned());
     hub.set_keyset(Some(record.clone()));
-    let (key, envelope) = crate::account::testing::granted(&record, ACME_VAULT, &admin);
-    hub.add_group(VAULT_KIND, "acme", ACME_VAULT, envelope, &admin);
+    let (key, envelope) = crate::account::testing::granted(&record, ACME_VAULT, admin);
+    hub.add_group(VAULT_KIND, "acme", ACME_VAULT, envelope, admin);
     hub.set_memberships(&[("acme", "Acme", role)]);
     (
         HubVault::new(Handle::current(), slot, hub.clone()),
