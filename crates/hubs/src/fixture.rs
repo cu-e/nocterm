@@ -33,9 +33,6 @@ pub(crate) fn server() -> FakeServer {
         .named("Home hub")
         .with_user("ada", "secret", "lab")
         .with_provider("corp", "Corporate SSO")
-        .with_node("n1", "build box", true)
-        .with_session("s1", "lab", "n1", "ada", "make")
-        .with_session("s2", "lab", "n1", "bob", "top")
 }
 
 pub(crate) fn pinned_record() -> HubRecord {
@@ -80,17 +77,11 @@ fn build(
             Some(writer) => SettingsConfig::with_writer(document, writer),
             None => SettingsConfig::in_memory(document),
         };
-        let settings = config
-            .with(HubsSettings {
-                servers: known,
-                ..Default::default()
-            })
-            .install(cx);
+        let settings = config.with(HubsSettings { servers: known }).install(cx);
         let admin_keys = FakeAdminKeys::alongside(&hub);
         let deps = Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
-            sessions: Arc::new(hub.clone()),
             admin_keys: Arc::new(admin_keys.clone()),
         };
         let installed = install(deps, settings.clone(), cx);

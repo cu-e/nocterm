@@ -160,6 +160,21 @@ impl Installed {
             container: false,
         }))
     }
+    /// A copy of this installation that answers prompts from another
+    /// credential provider. Everything else, including the transports and the
+    /// settings, stays shared with the original, which keeps its own provider.
+    pub fn with_credentials(&self, credentials: CredentialProvider) -> Self {
+        Self(Arc::new(InstalledDeps {
+            remote: self.0.remote.clone(),
+            local: self.0.local.clone(),
+            credentials: Some(credentials),
+            recording: self.0.recording.clone(),
+            containers: self.0.containers.clone(),
+            workspace_sessions: self.0.workspace_sessions.clone(),
+            settings: self.0.settings.clone(),
+            container: self.0.container,
+        }))
+    }
     pub(crate) fn container_transport(
         &self,
         local: bool,

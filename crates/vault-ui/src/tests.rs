@@ -420,4 +420,5 @@ fn closing_before_capability_probe_finishes_prevents_a_late_native_scan(cx: &mut
     .unwrap();
 }
 
+mod scoped_unlock;
 mod settings_authority;

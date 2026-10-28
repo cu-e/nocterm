@@ -1,4 +1,4 @@
-//! The hub adapter's entry point: the runtime and the four ports.
+//! The hub adapter's entry point: the runtime and the three ports.
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -11,10 +11,9 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
-    Account, AdminKeyError, Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec, HubError,
-    HubFuture, HubId, HubInfo, HubSessionId, HubSessionSummary, HubSessions, HubSignIn,
-    HubTerminal, HubTerminalTarget, HubTrust, KeyStatus, NodeSummary, OidcSignIn, OrgId,
-    PendingAdminKey, ProbedHub, SignedIn,
+    AdminKeyError, Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec, HubError, HubFuture,
+    HubId, HubInfo, HubSignIn, HubTrust, KeyStatus, OidcSignIn, PendingAdminKey, ProbedHub,
+    SignedIn,
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
@@ -23,10 +22,8 @@ use tokio::task::AbortHandle;
 use crate::account::{Accounts, AdminKeys, KeyFlow};
 use crate::classify::{probe_failed, remote};
 use crate::connect::Connector;
-use crate::directory::Directory;
 use crate::hub_account::HubAccount;
 use crate::pool::Pool;
-use crate::terminal::HubTerminalTransport;
 
 /// Threads serving every hub connection of the application.
 const WORKER_THREADS: usize = 2;
@@ -55,7 +52,6 @@ pub struct HubLinks {
     handle: Handle,
     pool: Arc<Pool>,
     connector: Arc<Connector>,
-    directory: Arc<Directory>,
     accounts: Arc<Accounts>,
     keys: Arc<KeyFlow>,
 }
@@ -112,7 +108,6 @@ impl HubLinks {
                 Arc::clone(&accounts),
                 Arc::clone(&keys),
             )),
-            directory: Arc::new(Directory::new(Arc::clone(&pool))),
             pool,
             accounts,
             keys,
@@ -269,40 +264,5 @@ impl HubAdminKeys for HubLinks {
         // A hub without a readable cache has no account keys to open.
         let slot = self.accounts.slot(hub).map_err(|_| AdminKeyError::Locked)?;
         AdminKeys::new(slot).confirm(account_id, fingerprint)
-    }
-}
-
-impl HubSessions for HubLinks {
-    fn account(&self, hub: &HubId) -> HubFuture<Account> {
-        let (directory, hub) = (Arc::clone(&self.directory), hub.clone());
-        self.run_boxed(async move { directory.account(&hub).await })
-    }
-
-    fn nodes(&self, hub: &HubId, org: &OrgId) -> HubFuture<Vec<NodeSummary>> {
-        let (directory, hub, org) = (Arc::clone(&self.directory), hub.clone(), org.clone());
-        self.run_boxed(async move { directory.nodes(&hub, &org).await })
-    }
-
-    fn sessions(&self, hub: &HubId, org: &OrgId) -> HubFuture<Vec<HubSessionSummary>> {
-        let (directory, hub, org) = (Arc::clone(&self.directory), hub.clone(), org.clone());
-        self.run_boxed(async move { directory.sessions(&hub, &org).await })
-    }
-
-    fn end(&self, hub: &HubId, session: &HubSessionId) -> HubFuture<()> {
-        let (directory, hub, session) = (Arc::clone(&self.directory), hub.clone(), session.clone());
-        self.run_boxed(async move { directory.end(&hub, &session).await })
-    }
-
-    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> HubTerminal {
-        let (transport, created) = HubTerminalTransport::new(
-            self.handle.clone(),
-            Arc::clone(&self.pool),
-            hub.clone(),
-            target,
-        );
-        match created {
-            Some(created) => HubTerminal::starting(Arc::new(transport), created),
-            None => HubTerminal::attached(Arc::new(transport)),
-        }
     }
 }

@@ -1,23 +1,22 @@
-//! Fixtures the tests of this crate share: a window over a [`FakeHub`], and a recording
-//! stand-in for the port the application implements.
+//! Fixtures the tests of this crate share: a window over a [`FakeHub`], and a recording stand-in
+//! for the port the application implements.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Context, ElementId, Entity, Focusable as _, SharedString,
-    TestAppContext, Window, WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
+    AnyWindowHandle, AppContext as _, ElementId, Entity, Focusable as _, TestAppContext,
+    WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use nocterm_hubs_model::testing::{FakeAdminKeys, FakeHub, FakeServer};
-use nocterm_hubs_model::{HubAddress, HubId, HubRecord, HubsSettings};
-use nocterm_session::{Target, Transport};
+use nocterm_hubs_model::{Environment, HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
 use nocterm_ui::DesignTokens;
 use nocterm_workspace::{Workspace, test_support::deps_for};
 
-use crate::{HubTabError, HubTerminalOpener, Installed, install, plugin, register};
+use crate::{EnvironmentOpenError, EnvironmentOpener, Installed, Placement, install, register};
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
 
@@ -25,17 +24,12 @@ pub(crate) fn hub_id() -> HubId {
     HubId::from(HubAddress::parse(ADDRESS).unwrap())
 }
 
-/// The server most tests talk to: certificate `[7; 32]`, user `ada` in organization `lab`, one
-/// machine `build box` with a session of `ada` and one of `bob`.
+/// The server most tests talk to: certificate `[7; 32]`, user `ada` in organization `lab`.
 pub(crate) fn server() -> FakeServer {
     FakeServer::new(ADDRESS, 7)
         .named("Home hub")
         .with_user("ada", "secret", "lab")
         .with_provider("corp", "Corporate SSO")
-        .with_node("n1", "build box", true)
-        .with_node("n2", "spare box", false)
-        .with_session("s1", "lab", "n1", "ada", "make")
-        .with_session("s2", "lab", "n1", "bob", "top")
 }
 
 /// The record of [`server`] as the settings keep it after a sign-in.
@@ -43,29 +37,27 @@ pub(crate) fn pinned_record() -> HubRecord {
     server().pinned_record("Home")
 }
 
-/// Remembers the tabs the views asked for.
+/// Remembers which environments the views asked to open.
 #[derive(Default)]
-pub(crate) struct RecordingTerminals {
-    tabs: RefCell<Vec<(SharedString, Target)>>,
+pub(crate) struct RecordingEnvironments {
+    requests: RefCell<Vec<(Environment, Placement)>>,
 }
 
-impl RecordingTerminals {
-    pub(crate) fn tabs(&self) -> Vec<(SharedString, Target)> {
-        self.tabs.borrow().clone()
+impl RecordingEnvironments {
+    pub(crate) fn requests(&self) -> Vec<(Environment, Placement)> {
+        self.requests.borrow().clone()
     }
 }
 
-impl HubTerminalOpener for RecordingTerminals {
+impl EnvironmentOpener for RecordingEnvironments {
     fn open(
         &self,
-        _: &mut Workspace,
-        title: SharedString,
-        target: Target,
-        _: Arc<dyn Transport>,
-        _: &mut Window,
-        _: &mut Context<Workspace>,
-    ) -> Result<(), HubTabError> {
-        self.tabs.borrow_mut().push((title, target));
+        environment: Environment,
+        placement: Placement,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::App,
+    ) -> Result<(), EnvironmentOpenError> {
+        self.requests.borrow_mut().push((environment, placement));
         Ok(())
     }
 }
@@ -76,25 +68,27 @@ pub(crate) struct Fixture {
     pub(crate) hub: FakeHub,
     pub(crate) admin_keys: FakeAdminKeys,
     pub(crate) installed: Installed,
-    pub(crate) terminals: Rc<RecordingTerminals>,
+    pub(crate) environments: Rc<RecordingEnvironments>,
 }
 
 /// A window over `hub`, with `known` servers in the settings. The hub is signed in to when
 /// `signed_in` names a user of the server.
 pub(crate) fn fixture(
     cx: &mut TestAppContext,
+    environment: Environment,
     hub: FakeHub,
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
     let config = SettingsConfig::in_memory(SettingsDocument::default());
-    fixture_over(cx, config, hub, known, signed_in)
+    fixture_over(cx, config, environment, hub, known, signed_in)
 }
 
 /// As [`fixture`], but the settings are kept by `config`, which may fail to save.
 pub(crate) fn fixture_over(
     cx: &mut TestAppContext,
     config: SettingsConfig,
+    environment: Environment,
     hub: FakeHub,
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
@@ -102,22 +96,16 @@ pub(crate) fn fixture_over(
     if let Some(user) = signed_in {
         hub.sign_in_as(&hub_id(), user);
     }
-    let terminals = Rc::new(RecordingTerminals::default());
     let admin_keys = FakeAdminKeys::alongside(&hub);
+    let environments = Rc::new(RecordingEnvironments::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
-        let settings = config
-            .with(HubsSettings {
-                servers: known,
-                ..Default::default()
-            })
-            .install(cx);
+        let settings = config.with(HubsSettings { servers: known }).install(cx);
         nocterm_ui::init(DesignTokens::builtin(), settings.clone(), cx);
         let installed = install(nocterm_hubs::install(
             nocterm_hubs::Deps {
                 trust: Arc::new(hub.clone()),
                 sign_in: Arc::new(hub.clone()),
-                sessions: Arc::new(hub.clone()),
                 admin_keys: Arc::new(admin_keys.clone()),
             },
             settings,
@@ -125,7 +113,7 @@ pub(crate) fn fixture_over(
         ));
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| Workspace::new(deps_for(&[&plugin::PLUGIN], cx), window, cx))
+                cx.new(|cx| Workspace::new(deps_for(&[], cx), window, cx))
             })
             .unwrap();
         (window, workspace, installed)
@@ -137,41 +125,52 @@ pub(crate) fn fixture_over(
         hub,
         admin_keys,
         installed,
-        terminals,
+        environments,
     };
-    setup.compose(cx);
+    setup.compose(cx, environment);
     cx.run_until_parked();
     setup
 }
 
 impl Fixture {
-    fn compose(&self, cx: &mut TestAppContext) {
+    /// Adds a tab of a remote session, so the window holds something to lose.
+    pub(crate) fn add_tab(&self, cx: &mut TestAppContext) {
+        use nocterm_session::{Auth, Target};
+        use nocterm_workspace::{SessionSpec, test_support::SessionProbe};
+        cx.update_window(self.window, |_, window, cx| {
+            self.workspace.update(cx, |workspace, cx| {
+                let spec = SessionSpec {
+                    options: Default::default(),
+                    title: "shell".into(),
+                    profile: None,
+                    target: Target::new("me", "host.example", 22),
+                    auth: Auth::Auto,
+                    launch: None,
+                    credential: None,
+                    jumps: Vec::new(),
+                };
+                let tab = SessionProbe::new(spec, true, cx);
+                workspace.add_item(tab, window, cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    fn compose(&self, cx: &mut TestAppContext, environment: Environment) {
         cx.update_window(self.window, |_, window, cx| {
             self.workspace.update(cx, |workspace, cx| {
                 register(
                     &self.installed,
-                    self.terminals.clone(),
+                    environment,
+                    self.environments.clone(),
                     workspace,
                     window,
                     cx,
-                )
-                .unwrap();
+                );
             });
         })
         .unwrap();
-    }
-
-    /// Shows the sessions panel and leaves it showing when it already does: the sidebar of
-    /// this window has no other panel, so it opens on this one.
-    pub(crate) fn open_sessions(&self, cx: &mut TestAppContext) {
-        cx.update_window(self.window, |_, window, cx| {
-            self.workspace.update(cx, |workspace, cx| {
-                workspace.open_panel(&plugin::SESSIONS.id, window, cx);
-            });
-        })
-        .unwrap();
-        self.render(cx);
-        self.render(cx);
     }
 
     /// Draws the window.
@@ -183,6 +182,8 @@ impl Fixture {
 
     /// Runs `action` as if the focused workspace received it.
     pub(crate) fn dispatch(&self, action: impl gpui_kit::Action, cx: &mut TestAppContext) {
+        // Focus belongs to a drawn tree.
+        self.render(cx);
         cx.update_window(self.window, |_, window, cx| {
             window.focus(&self.workspace.read(cx).focus_handle(cx), cx);
             window.dispatch_action(Box::new(action), cx);

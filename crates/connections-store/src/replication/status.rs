@@ -17,6 +17,10 @@ pub enum ReplicationStatus {
     /// The replica could not be reached; local work continues and sync retries on the
     /// next local change or remote notification.
     Offline,
+    /// The keys that open the replica are closed; the server may be reachable. Local work
+    /// continues and sync resumes when the keys open and the replica notifies, or on the
+    /// next attach.
+    Locked,
     /// The replica holds a profile this client cannot read; the local copy is untouched.
     NeedsNewerClient,
     Failed(ReplicationFailure),

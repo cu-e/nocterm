@@ -21,11 +21,17 @@ mod tests {
     use super::tint;
     use crate::test_support::{fixture, server};
     use gpui_kit::{Hsla, TestAppContext};
-    use nocterm_hubs_model::{HubColor, testing::FakeHub};
+    use nocterm_hubs_model::{Environment, HubColor, testing::FakeHub};
 
     #[gpui_kit::test]
     fn every_colour_has_its_own_shade_in_the_theme(cx: &mut TestAppContext) {
-        let _window = fixture(cx, FakeHub::new().with_server(server()), Vec::new(), None);
+        let _window = fixture(
+            cx,
+            Environment::Local,
+            FakeHub::new().with_server(server()),
+            Vec::new(),
+            None,
+        );
         let shades: Vec<Hsla> = cx.update(|cx| {
             HubColor::ALL
                 .into_iter()

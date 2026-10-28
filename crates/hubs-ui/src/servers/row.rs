@@ -81,7 +81,6 @@ pub(super) fn server_row(
         .children(name.error(cx).map(|error| problem(error.to_string(), cx)))
         .child(colors(summary, hubs, &key, cx))
         .child(certificate(summary, record, &key, cx))
-        .child(account(summary, hubs, &key, cx))
         .children(super::admin_keys::admin_keys(summary, hubs, &key, cx))
         .children(recovery_key(summary, hubs, &key, cx))
         .child(actions(summary, hubs, &key))
@@ -175,45 +174,6 @@ fn certificate(summary: &HubSummary, record: &HubRecord, key: &str, cx: &App) ->
             );
     }
     section
-}
-
-/// Whether this server's account keeps the profiles and vault of this device in step with its
-/// other devices. Only a server this device is signed in to can be chosen.
-fn account(summary: &HubSummary, hubs: &Entity<Hubs>, key: &str, cx: &App) -> impl IntoElement {
-    let chosen = hubs.read(cx).account_hub(cx).as_ref() == Some(&summary.id);
-    let (hubs, id) = (hubs.clone(), summary.id.clone());
-    let (text, button) = if chosen {
-        (
-            "Your saved servers and vault passwords are kept, encrypted, on this server and follow you to your other devices.",
-            Some(
-                Button::new(item("server-account-off", key))
-                    .label("Stop keeping them here")
-                    .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                        manage::choose_account(&hubs, None, window, cx);
-                    }),
-            ),
-        )
-    } else {
-        (
-            "Keep your saved servers and vault passwords on this server, encrypted, to use them on your other devices.",
-            summary.status.is_online().then(|| {
-                Button::new(item("server-account-on", key))
-                    .label("Use for my account")
-                    .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                        manage::choose_account(&hubs, Some(&id), window, cx);
-                    })
-            }),
-        )
-    };
-    field(
-        "Account",
-        v_flex()
-            .id(item("server-account", key))
-            .test_support()
-            .gap_2()
-            .child(note(text, cx))
-            .child(h_flex().justify_end().children(button)),
-    )
 }
 
 /// The offer of a new recovery key, while the one made with the account keys on this device was

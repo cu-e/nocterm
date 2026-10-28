@@ -96,7 +96,7 @@ async fn a_stale_write_conflicts_and_a_delete_is_a_tombstone() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_locked_or_unreachable_replica_is_unavailable_not_failed() {
+async fn an_unreachable_hub_is_unavailable_not_failed() {
     let hub = Arc::new(MemoryHub::default());
     let (device, _) = device(&hub);
     hub.set_offline(true);
@@ -104,19 +104,43 @@ async fn a_locked_or_unreachable_replica_is_unavailable_not_failed() {
         device.replica.changes(None).await,
         Err(ReplicaError::Unavailable)
     ));
-    hub.set_offline(false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closed_account_keys_are_locked_even_when_the_hub_is_reachable() {
+    let hub = Arc::new(MemoryHub::default());
+    let (device, _) = device(&hub);
     device.slot.lock();
     assert!(matches!(
         device.replica.changes(None).await,
-        Err(ReplicaError::Unavailable)
+        Err(ReplicaError::Locked)
     ));
     assert!(matches!(
         device
             .replica
             .put(ReplicaScope::Personal, profile("web"), None)
             .await,
-        Err(ReplicaError::Unavailable)
+        Err(ReplicaError::Locked)
     ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn moving_secrets_while_the_account_keys_are_closed_is_locked() {
+    let hub = Arc::new(MemoryHub::default());
+    let (device, _) = device(&hub);
+    device.slot.lock();
+    let id = profile_id_for("web");
+    let credential = CredentialId::from_bytes([7; 16]);
+    let copied = device
+        .replica
+        .copy(id, ReplicaScope::Personal, acme(), vec![credential])
+        .await;
+    assert!(matches!(copied, Err(ReplicaError::Locked)));
+    let carried = device
+        .replica
+        .carry(id, ReplicaScope::Personal, acme(), vec![credential])
+        .await;
+    assert!(matches!(carried, Err(ReplicaError::Locked)));
 }
 
 fn acme() -> ReplicaScope {

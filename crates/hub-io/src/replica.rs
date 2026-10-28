@@ -76,7 +76,7 @@ impl HubProfileReplica {
     }
 
     fn store(slot: &Slot, ops: &Arc<dyn StoreOps>) -> Result<Store, ReplicaError> {
-        let keys: Arc<OpenKeys> = slot.open().ok_or(ReplicaError::Unavailable)?;
+        let keys: Arc<OpenKeys> = slot.open().ok_or(ReplicaError::Locked)?;
         Ok(Store::new(Arc::clone(ops), keys))
     }
 
@@ -244,7 +244,8 @@ fn space_of(scope: ReplicaScope) -> Space {
 fn carry_error(error: VaultError, id: ProfileId) -> ReplicaError {
     match error {
         VaultError::ReadOnly => ReplicaError::Forbidden { id },
-        VaultError::Locked | VaultError::Offline => ReplicaError::Unavailable,
+        VaultError::Locked => ReplicaError::Locked,
+        VaultError::Offline => ReplicaError::Unavailable,
         VaultError::Conflict => ReplicaError::Conflict { id },
         other => ReplicaError::Other(SharedCause::new(other)),
     }

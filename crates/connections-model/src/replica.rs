@@ -115,6 +115,10 @@ pub enum ReplicaError {
     /// The replica cannot be reached now; local work continues.
     #[error("The profile replica is not reachable.")]
     Unavailable,
+    /// The keys that open the replica are closed, so nothing can be read or written until
+    /// they are opened again. The server may well be reachable.
+    #[error("The profile replica is locked.")]
+    Locked,
     /// The expected version is no longer the replica's current one.
     #[error("Profile {id} changed on the replica.")]
     Conflict { id: ProfileId },

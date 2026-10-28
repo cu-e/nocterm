@@ -19,7 +19,7 @@ mod chat_history;
 mod default_shell_geometry;
 mod hub_account;
 mod hub_live;
-mod hub_sessions;
+mod hub_windows;
 mod keymap;
 mod menu_layouts;
 mod menu_tabs;
@@ -337,7 +337,7 @@ fn fixture_hosts(
 #[derive(Default)]
 struct HubPorts {
     deps: Option<nocterm_hubs::Deps>,
-    accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+    accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
 }
 
 impl From<Option<nocterm_hubs::Deps>> for HubPorts {
@@ -467,11 +467,45 @@ fn open_workspace(
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
-            crate::bootstrap::build_workspace(&mut workspace, booted, window, cx);
+            crate::bootstrap::build_workspace(
+                &mut workspace,
+                booted,
+                &booted.local_sources(),
+                window,
+                cx,
+            );
             workspace
         })
     })
     .unwrap()
+}
+
+/// Opens a window that shows `environment`, composed as the application composes it.
+fn open_environment(
+    booted: &crate::bootstrap::Booted,
+    environment: &nocterm_hubs_model::Environment,
+    cx: &mut gpui_kit::App,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    let sources = booted
+        .window_sources(environment, cx)
+        .expect("the window's sources");
+    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        crate::windows::compose(booted, &sources, window, cx)
+    })
+    .unwrap()
+}
+
+/// Delivers `count` frames to the window: its next-frame callbacks run and it is drawn, as the
+/// platform does, which tests do not.
+fn deliver_frames(handle: AnyWindowHandle, count: usize, cx: &mut TestAppContext) {
+    for _ in 0..count {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
 }
 
 /// Whether the host offers the agent panel of `workspace`.

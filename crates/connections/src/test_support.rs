@@ -156,11 +156,10 @@ pub(crate) fn organization(id: &str) -> nocterm_connections_model::replica::Repl
     nocterm_connections_model::replica::ReplicaScope::Organization(id.to_owned())
 }
 
-/// Keeps `installed` in step with `replica`, as the application does for the chosen
-/// account, and runs the first synchronization.
-pub(crate) fn replicate(
+/// Binds a replication to `installed` that no replica is attached to: the state of an
+/// account that is signed out.
+pub(crate) fn unattached(
     installed: &Installed,
-    replica: std::sync::Arc<nocterm_connections_model::test_support::MemoryReplica>,
     cx: &mut TestAppContext,
 ) -> Entity<nocterm_connections_store::ProfileReplication> {
     use nocterm_connections_model::replica::ReplicaState;
@@ -174,6 +173,17 @@ pub(crate) fn replicate(
         cx.new(|cx| ProfileReplication::new(store, document, cx))
     });
     installed.bind_replication(replication.clone());
+    replication
+}
+
+/// Keeps `installed` in step with `replica`, as the application does for the chosen
+/// account, and runs the first synchronization.
+pub(crate) fn replicate(
+    installed: &Installed,
+    replica: std::sync::Arc<nocterm_connections_model::test_support::MemoryReplica>,
+    cx: &mut TestAppContext,
+) -> Entity<nocterm_connections_store::ProfileReplication> {
+    let replication = unattached(installed, cx);
     replication.update(cx, |replication, cx| replication.attach(replica, cx));
     cx.run_until_parked();
     replication

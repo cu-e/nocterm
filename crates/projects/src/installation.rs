@@ -122,6 +122,12 @@ impl Installed {
     ) -> Option<&std::sync::Arc<dyn nocterm_explorer::directory::DirectoryReaders>> {
         self.directories.as_ref()
     }
+    /// Opens workspace terminals through `terminals`, for a window whose connections are
+    /// another source's than the ones this installation was made for.
+    pub fn with_terminals(mut self, terminals: Rc<dyn ProjectTerminalOpen>) -> Self {
+        self.terminals = terminals;
+        self
+    }
     pub fn with_terminal_resolver(
         mut self,
         resolver: Rc<dyn nocterm_workspace_ports::ProjectTerminalResolve>,

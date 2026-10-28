@@ -65,18 +65,6 @@ pub(crate) fn recolor(
     report(marking, "Could not change the colour", window, cx);
 }
 
-/// Makes `hub` the server whose account keeps this device's profiles and vault in step with
-/// its other devices, or `None` to stop keeping them anywhere but here.
-pub(crate) fn choose_account(
-    hubs: &Entity<Hubs>,
-    hub: Option<&HubId>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let choosing = hubs.update(cx, |hubs, cx| hubs.set_account(hub, cx));
-    report(choosing, "Could not change the account server", window, cx);
-}
-
 /// Confirms the key of the administrator `account_id` of `hub`, shown with `fingerprint`, after
 /// the person compared it with the administrator's own. The service reads the groups it unlocks
 /// again; a key that is no longer the one on offer is reported.

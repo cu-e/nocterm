@@ -21,6 +21,7 @@ workspace = true
 
 [dev-dependencies]
 nocterm-settings.workspace = true
+nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-vault = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

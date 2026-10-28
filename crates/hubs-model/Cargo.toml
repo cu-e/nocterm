@@ -24,7 +24,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 toml.workspace = true
-nocterm-session = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

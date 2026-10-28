@@ -90,7 +90,7 @@ impl PreparedApp {
                 ),
                 hubs: hub_dependencies(hub_links.clone()),
                 hub_accounts: hub_links
-                    .map(|links| links as Arc<dyn crate::hub_account::HubAccounts>),
+                    .map(|links| links as Arc<dyn crate::hub_sources::HubAccounts>),
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,
@@ -219,7 +219,6 @@ fn hub_dependencies(links: Option<Arc<nocterm_hub_io::HubLinks>>) -> Option<noct
     links.map(|links| nocterm_hubs::Deps {
         trust: links.clone(),
         sign_in: links.clone(),
-        sessions: links.clone(),
         admin_keys: links,
     })
 }

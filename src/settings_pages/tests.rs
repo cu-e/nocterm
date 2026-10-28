@@ -206,3 +206,63 @@ fn catalog_keeps_the_real_keymap_page_alive_without_a_booted_fixture_handle(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn another_vault_page_replaces_the_vault_page_and_keeps_every_other_page(cx: &mut TestAppContext) {
+    let called = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        let ids = |catalog: &SettingsCatalog| {
+            catalog
+                .pages()
+                .iter()
+                .map(SettingsPageRegistration::id)
+                .collect::<Vec<_>>()
+        };
+        let with_vault = SettingsPages::new(
+            Installed::new(settings.clone()),
+            builtins(called.clone()),
+            guests(vec![spec("keymap", called.clone())]),
+            Some(spec("vault", called.clone())),
+        )
+        .unwrap();
+        let without_vault = SettingsPages::new(
+            Installed::new(settings),
+            builtins(called.clone()),
+            guests(vec![spec("keymap", called.clone())]),
+            None,
+        )
+        .unwrap();
+        assert!(without_vault.startup().is_none());
+
+        for pages in [&with_vault, &without_vault] {
+            let replaced = pages.with_vault(spec("vault", called.clone())).unwrap();
+            assert_eq!(
+                ids(replaced.ordinary()),
+                [
+                    "appearance",
+                    "terminal",
+                    "local-shell",
+                    "ssh",
+                    "ai",
+                    "keymap",
+                    "vault"
+                ]
+            );
+            assert_eq!(
+                ids(replaced
+                    .startup()
+                    .expect("a vault window offers the vault at startup")),
+                [
+                    "appearance",
+                    "terminal",
+                    "local-shell",
+                    "ssh",
+                    "ai",
+                    "vault"
+                ]
+            );
+        }
+        assert_eq!(called.get(), 0, "no page is built by replacing one");
+    });
+}

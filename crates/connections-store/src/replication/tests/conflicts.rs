@@ -120,6 +120,43 @@ async fn an_unreachable_replica_leaves_local_work_alone_and_catches_up_when_back
 }
 
 #[gpui::test]
+async fn a_locked_account_is_reported_apart_from_an_unreachable_server_and_resumes_when_opened(
+    cx: &mut gpui::TestAppContext,
+) {
+    let original = profile("a");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&original));
+    fixture.replica.set_locked(true);
+    fixture.attach(cx);
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Locked));
+    let added = profile("b");
+    fixture.save(cx, added.clone()).await;
+    assert_eq!(fixture.local(cx, &added), Some(added.clone()));
+    assert_eq!(fixture.replica.writes(), []);
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Locked));
+    fixture.replica.set_locked(false);
+    cx.run_until_parked();
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Synced));
+    assert_eq!(fixture.replica.profile(original.id), Some(original));
+    assert_eq!(fixture.replica.profile(added.id), Some(added));
+    assert_eq!(fixture.events().len(), 0);
+}
+
+#[gpui::test]
+async fn attaching_again_after_the_keys_opened_synchronizes_a_locked_account(
+    cx: &mut gpui::TestAppContext,
+) {
+    let original = profile("a");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&original));
+    fixture.replica.set_locked(true);
+    fixture.attach(cx);
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Locked));
+    fixture.replica.set_locked(false);
+    fixture.attach(cx);
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Synced));
+    assert_eq!(fixture.replica.profile(original.id), Some(original));
+}
+
+#[gpui::test]
 async fn a_forbidden_profile_is_reported_without_blocking_the_others(
     cx: &mut gpui::TestAppContext,
 ) {

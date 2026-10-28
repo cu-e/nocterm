@@ -95,8 +95,9 @@ acceptance; a later record supersedes an earlier one.
 | [0096](0096-hub-contract-outside-the-workspace.md) | The hub contract lives outside the workspace and only the hub adapter speaks it |
 | [0097](0097-a-window-belongs-to-one-environment.md) | A window belongs to one environment, local or one hub (superseded by 0099) |
 | [0098](0098-windows-and-their-environments-are-restored-after-a-restart.md) | Windows and their environments are restored after a restart (superseded by 0099) |
-| [0099](0099-windows-have-no-environments.md) | Windows have no environments: hub sessions live in the ordinary window (supersedes 0097 and 0098) |
+| [0099](0099-windows-have-no-environments.md) | Windows have no environments: hub sessions live in the ordinary window (supersedes 0097 and 0098; superseded by 0104) |
 | [0100](0100-the-hub-is-a-route-step.md) | The hub is a route step: the first connection of an SSH route can be a relay |
 | [0101](0101-profiles-synchronize-through-a-replica-beside-the-local-document.md) | Profiles synchronize through a replica beside the local document |
 | [0102](0102-ssh-keys-are-kept-in-the-vault.md) | SSH keys are kept in the vault; the editor receives them through `VaultSshKeys` |
 | [0103](0103-account-data-is-sealed-on-the-device.md) | Account data is sealed on the device: the hub keeps ciphertext, and one chosen server keeps the vault and the profiles |
+| [0104](0104-a-window-shows-one-environment.md) | A window shows one environment: this computer or the account of one hub (supersedes 0099) |

@@ -8,20 +8,17 @@
 //!
 //! The relay test that reaches a destination also needs `NOCTERM_HUB_RELAY_TARGET` (`host:port`
 //! of an SSH server the hub is allowed to reach, for example a container of the compose file);
-//! without it that test passes vacuously. The node tunnel test needs `NOCTERM_HUB_NODE` (a node
-//! of the account's organization) and `NOCTERM_HUB_NODE_TARGET` (`host:port` of an SSH server only
+//! without it that test passes vacuously. The node tunnel test needs `NOCTERM_HUB_NODE` (the id of a
+//! node of the account's organization) and `NOCTERM_HUB_NODE_TARGET` (`host:port` of an SSH server only
 //! that node reaches, for example `sshd-lan` of the compose file); without them it passes vacuously.
 
 use futures::executor::block_on;
 use nocterm_hub_io::{HubLinks, HubLinksConfig, HubRelay};
 use nocterm_hubs_model::{
-    Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubSessions as _, HubSignIn as _,
-    HubTerminalTarget, HubTrust as _, SignedIn, TrustPolicy,
+    Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubSignIn as _, HubTrust as _,
+    SignedIn, TrustPolicy,
 };
-use nocterm_session::{
-    CloseReason, ConnectRequest, Event, RelayDialer as _, RelayError, RelayRefusal, Secret,
-    Session, Target,
-};
+use nocterm_session::{RelayDialer as _, RelayError, RelayRefusal, Secret, Target};
 
 #[path = "hub/account.rs"]
 mod account;
@@ -151,111 +148,10 @@ fn sign_in_survives_a_restart_and_sign_out_ends_it() {
     let second = links(&dir);
     let info = block_on(second.connect(hub.spec())).unwrap();
     assert!(info.signed_in);
-    let again = block_on(second.account(&hub.id())).unwrap();
-    assert_eq!(again.id, account.id);
-    if let Some(org) = account.orgs.first() {
-        block_on(second.nodes(&hub.id(), &org.id)).unwrap();
-        block_on(second.sessions(&hub.id(), &org.id)).unwrap();
-    }
 
     block_on(second.sign_out(&hub.id())).unwrap();
-    assert!(matches!(
-        block_on(second.account(&hub.id())),
-        Err(HubError::NotSignedIn)
-    ));
     let info = block_on(second.connect(hub.spec())).unwrap();
     assert!(!info.signed_in);
-}
-
-fn request() -> ConnectRequest {
-    ConnectRequest {
-        proxy: Default::default(),
-        launch: Default::default(),
-        target: nocterm_session::Target {
-            host: "hub".into(),
-            port: 7443,
-            user: "hub".into(),
-        },
-        auth: nocterm_session::Auth::Password,
-        term: "xterm-256color".into(),
-        size: Default::default(),
-        connect_timeout: std::time::Duration::from_secs(10),
-        keepalive_interval: None,
-        jumps: Vec::new(),
-    }
-}
-
-/// Reads events until the output contains `needle`; returns the output seen.
-fn read_until(session: &Session, needle: &str) -> String {
-    let mut seen = String::new();
-    block_on(async {
-        while !seen.contains(needle) {
-            match session.next_event().await {
-                Some(Event::Output(bytes) | Event::Restore(bytes)) => {
-                    seen.push_str(&String::from_utf8_lossy(&bytes));
-                }
-                Some(Event::Closed(reason)) => panic!("closed early: {reason:?}"),
-                Some(_) => {}
-                None => panic!("the session ended"),
-            }
-        }
-    });
-    seen
-}
-
-#[test]
-fn a_session_survives_detaching_and_is_restored_when_attached_again() {
-    let Some(hub) = hub() else { return };
-    let dir = tempfile::tempdir().unwrap();
-    let links = links(&dir);
-    sign_in(&links, &hub).unwrap();
-    let account = block_on(links.account(&hub.id())).unwrap();
-    let org = account.orgs.first().expect("an organization").id.clone();
-    let target = HubTerminalTarget::New {
-        org: org.clone(),
-        node: None,
-        title: "hub-io test".into(),
-    };
-
-    let (first_transport, created) = links.terminal(&hub.id(), target).into_parts();
-    let first = first_transport.open(request());
-    first.input("echo nocterm-e2e-marker\r");
-    read_until(&first, "nocterm-e2e-marker");
-    first.close();
-    drop(first);
-
-    let listed = block_on(links.sessions(&hub.id(), &org)).unwrap();
-    let mine = listed
-        .iter()
-        .find(|session| session.title == "hub-io test")
-        .expect("the session outlives its tab");
-
-    let created = block_on(created.expect("a new session reports its id")).unwrap();
-    assert_eq!(
-        created, mine.id,
-        "the id the terminal learned is the listed one"
-    );
-
-    let second = links
-        .terminal(&hub.id(), HubTerminalTarget::Existing(mine.id.clone()))
-        .into_parts()
-        .0
-        .open(request());
-    let screen = read_until(&second, "nocterm-e2e-marker");
-    assert!(screen.contains("nocterm-e2e-marker"));
-
-    block_on(links.end(&hub.id(), &mine.id)).unwrap();
-    block_on(async {
-        while let Some(event) = second.next_event().await {
-            if let Event::Closed(reason) = event {
-                assert!(matches!(
-                    reason,
-                    CloseReason::Exited(_) | CloseReason::Failed(_)
-                ));
-                return;
-            }
-        }
-    });
 }
 
 /// Waits for `future` for a while: a relay that never answers must fail the test, not hang it.
@@ -332,18 +228,8 @@ fn a_relay_through_a_node_reaches_a_server_the_hub_cannot() {
         return;
     };
     let dir = tempfile::tempdir().unwrap();
-    let (links, relay) = signed_in_relay(&hub, &dir);
+    let (_links, relay) = signed_in_relay(&hub, &dir);
     let address = hub.address.to_string();
-    // A relay names its node by id; the variable names it as an administrator does.
-    let account = block_on(links.account(&hub.id())).unwrap();
-    let node = account
-        .orgs
-        .iter()
-        .flat_map(|org| block_on(links.nodes(&hub.id(), &org.id)).unwrap())
-        .find(|found| found.name == node)
-        .unwrap_or_else(|| panic!("no node {node} in the account's organizations"))
-        .id;
-
     let direct = within(relay.dial(&address, None, &target(&host, port)));
     assert!(direct.is_err(), "the hub itself must not reach {host}");
     let stream = within(relay.dial(&address, Some(node.as_str()), &target(&host, port))).unwrap();

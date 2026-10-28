@@ -102,13 +102,3 @@ Chats with coding agents in the side panel
 | Id | Kind | Title | Zone | Order | Group | Auto | Pinned |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `agent.chats` | panel | AI Agents | right | 40 | `assistant` | show | no |
-
-## Hubs
-
-Plugin `hubs`. Required: no. Enabled by default: yes.
-
-Terminal sessions on the machines of a nocterm hub
-
-| Id | Kind | Title | Zone | Order | Group | Auto | Pinned |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `hubs.sessions` | panel | Sessions | left | 70 | `navigation` | tray | no |

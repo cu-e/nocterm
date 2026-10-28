@@ -78,12 +78,20 @@ start) and passed to each window. `startup` starts `HubLinks` with the state dir
 `hubs` folder for private credential files and puts the three ports in `HostServices`; a
 failure to start is logged and leaves hubs off, so local use is unaffected. Bootstrap installs
 the service after the interface and the feature after it; `build_workspace` registers the
-sessions panel and the sign-in commands of the feature in every window
-([ADR 0099](../adr/0099-windows-have-no-environments.md)), and without hubs no window has them.
-`AppHubTerminals` (`src/shell_setup/hub_terminals.rs`) implements the feature's
-`HubTerminalOpener` with `nocterm_terminal::open_attached`, so a hub session is an attached
-tab beside the local ones. The `hubs` system plugin is listed in the plugin catalog of
-`src/shell_setup.rs`; GUI tests use the same `bootstrap` with `FakeHub` or without hubs.
+sign-in commands of the feature in every window, and without hubs no window has them.
+GUI tests use the same `bootstrap` with `FakeHub` or without hubs.
+
+A window shows one environment ([ADR 0104](../adr/0104-a-window-shows-one-environment.md)).
+`src/hub_sources.rs` builds one `HubSource` per hub on first use and shares it between that
+hub's windows: an in-memory connection mirror replicated by `ProfileReplication` (the only
+writer to the hub), a `VaultService` over the account's vault and the terminal installation
+carrying that vault's credentials. `hub_sources/follow.rs` attaches the replication while the
+hub is reachable and, when the device signs out, is revoked or the hub is removed, empties the
+mirror and locks the vault. `Booted::window_sources(environment)` returns the `WindowSources`
+(connections, terminal, vault, settings pages) that `build_workspace` registers; the local set
+has no replication. `src/windows.rs` composes a window and focuses its workspace so the scoped
+`UnlockVault` handler of a hub vault is reached. `HubAccounts` is the port to the encrypted
+account data that tests replace.
 
 ## Menus
 

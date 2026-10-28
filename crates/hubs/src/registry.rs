@@ -11,9 +11,8 @@ use nocterm_store::SettingsHandle;
 
 use crate::error::HubsError;
 use crate::installed::Deps;
-use crate::session_lists::{HubSessionLists, HubSessionListsEvent};
 use crate::sign_in::{SignInEvent, SignInSession};
-use crate::status::{HubStatus, Settled, retry_delay, settle_connect, settle_failure};
+use crate::status::{HubStatus, Settled, retry_delay, settle_connect};
 
 /// What changes in the registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,12 +38,6 @@ struct HubEntry {
     failures: u32,
     /// The connection being made, or the wait before the next attempt.
     attempt: Option<Task<()>>,
-    lists: Option<LiveLists>,
-}
-
-struct LiveLists {
-    entity: Entity<HubSessionLists>,
-    _events: Subscription,
 }
 
 /// The known hubs, in the order of the settings, and the status of each.
@@ -153,7 +146,6 @@ impl Hubs {
                         status: HubStatus::Connecting,
                         failures: 0,
                         attempt: None,
-                        lists: None,
                     }
                 }
             };
@@ -214,8 +206,6 @@ impl Hubs {
                 retry = Some(delay);
             }
         }
-        let online = entry.status.is_online();
-        let window = entry.lists.as_ref().map(|live| live.entity.clone());
         if let Some(delay) = retry {
             let again = hub.clone();
             let waiting = cx.spawn(async move |this, cx| {
@@ -225,9 +215,6 @@ impl Hubs {
             if let Some(entry) = self.entry_mut(hub) {
                 entry.attempt = Some(waiting);
             }
-        }
-        if online && let Some(window) = window {
-            window.update(cx, |window, cx| window.refresh(cx));
         }
         cx.emit(HubsEvent::Changed);
         cx.notify();
@@ -240,52 +227,6 @@ impl Hubs {
             .is_some_and(|status| !matches!(status, HubStatus::Connecting | HubStatus::Online))
         {
             self.connect(hub, cx);
-        }
-    }
-
-    /// The shared lists of a hub's sessions, created on first use. `None` for an unknown
-    /// hub.
-    pub fn session_lists(
-        &mut self,
-        hub: &HubId,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<HubSessionLists>> {
-        let index = self.entries.iter().position(|e| e.record.id() == *hub)?;
-        if let Some(live) = &self.entries[index].lists {
-            return Some(live.entity.clone());
-        }
-        let sessions = std::sync::Arc::clone(&self.deps.sessions);
-        let entity = cx.new(|_| HubSessionLists::new(hub.clone(), sessions));
-        let id = hub.clone();
-        let events = cx.subscribe(&entity, move |hubs, _, event, cx| {
-            if let HubSessionListsEvent::Failed(error) = event {
-                hubs.lists_failed(&id, error, cx);
-            }
-        });
-        let entry = &mut self.entries[index];
-        entry.lists = Some(LiveLists {
-            entity: entity.clone(),
-            _events: events,
-        });
-        if entry.status.is_online() {
-            entity.update(cx, |window, cx| window.refresh(cx));
-        }
-        Some(entity)
-    }
-
-    /// A call of the session lists failed. Only a hub that was online changes its status; a lost
-    /// session sends the hub through a new connection, which finds out why.
-    fn lists_failed(&mut self, hub: &HubId, error: &HubError, cx: &mut Context<Self>) {
-        if !self.status(hub).is_some_and(|status| status.is_online()) {
-            return;
-        }
-        match error {
-            HubError::NotSignedIn => self.connect(hub, cx),
-            other => {
-                if let Some(settled) = settle_failure(other) {
-                    self.rest(hub, settled, cx);
-                }
-            }
         }
     }
 
@@ -426,35 +367,6 @@ impl Hubs {
         self.edit_record(hub, cx, move |settings, hub| {
             settings.set_color(hub, color);
         })
-    }
-
-    /// The server whose account keeps this device's profiles and vault in step with its other
-    /// devices, if one is chosen.
-    pub fn account_hub(&self, cx: &gpui::App) -> Option<HubId> {
-        self.settings.setting::<HubsSettings>(cx).account_hub()
-    }
-
-    /// Chooses the server whose account keeps profiles and vault, or none, in one edit of the
-    /// settings. Choosing only records the choice: whether the account's keys are open is up to
-    /// its sign-in.
-    pub fn set_account(
-        &mut self,
-        hub: Option<&HubId>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), HubsError>> {
-        if let Some(hub) = hub
-            && self.entry(hub).is_none()
-        {
-            return Task::ready(Err(HubsError::Unknown(hub.clone())));
-        }
-        let chosen = hub.cloned();
-        let saving = self
-            .settings
-            .update_checked::<HubsSettings>(cx, move |settings| {
-                settings.set_account_hub(chosen.as_ref());
-                Ok(())
-            });
-        cx.spawn(async move |_, _| saving.await.map(|_| ()).map_err(HubsError::Save))
     }
 
     fn edit_record(

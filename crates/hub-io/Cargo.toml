@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-hub-io"
-description = "Reaches Nocterm hubs through the hub contract: pinned TLS, device credentials, sign-in and session lists."
+description = "Reaches Nocterm hubs through the hub contract: pinned TLS, device credentials and sign-in."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true
@@ -36,9 +36,6 @@ nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
-# The live tests keep an SSH key in an account and sign in to a real sshd with it.
-nocterm-ssh.workspace = true
-nocterm-ssh-keys.workspace = true
 
 [lints]
 workspace = true

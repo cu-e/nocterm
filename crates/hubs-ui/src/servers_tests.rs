@@ -9,7 +9,7 @@ use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
 use nocterm_hubs::{HubStatus, HubSummary};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
 use nocterm_hubs_model::{
-    Fingerprint, HubColor, HubRecord, HubSignIn as _, PendingAdminKey, TrustPolicy,
+    Environment, Fingerprint, HubColor, HubRecord, HubSignIn as _, PendingAdminKey, TrustPolicy,
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
@@ -39,7 +39,7 @@ fn page_on(
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
-    let setup = fixture_over(cx, config, hub, known, signed_in);
+    let setup = fixture_over(cx, config, Environment::Local, hub, known, signed_in);
     let hubs = setup.installed.hubs().clone();
     let (window, _) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
@@ -264,32 +264,6 @@ fn a_change_that_cannot_be_saved_is_reported(cx: &mut TestAppContext) {
     page.render(cx);
     assert_eq!(notices(&page, cx), 1);
     assert_eq!(servers(&page, cx)[0].color, None, "the colour was not kept");
-}
-
-#[gpui_kit::test]
-fn a_signed_in_server_can_become_the_account_server_and_stop_being_it(cx: &mut TestAppContext) {
-    let page = page(cx, vec![pinned_record()]);
-    assert!(page.shows(item("server-account-on", KEY), cx));
-    assert!(!page.shows(item("server-account-off", KEY), cx));
-
-    page.click(item("server-account-on", KEY), cx);
-    cx.run_until_parked();
-    page.render(cx);
-    assert!(page.shows(item("server-account-off", KEY), cx));
-    let chosen = cx.update(|cx| page.installed.hubs().read(cx).account_hub(cx));
-    assert_eq!(chosen, Some(hub_id()));
-
-    page.click(item("server-account-off", KEY), cx);
-    cx.run_until_parked();
-    page.render(cx);
-    assert!(page.shows(item("server-account-on", KEY), cx));
-}
-
-#[gpui_kit::test]
-fn a_server_that_is_not_signed_in_cannot_become_the_account_server(cx: &mut TestAppContext) {
-    let config = SettingsConfig::in_memory(SettingsDocument::default());
-    let page = page_over(cx, config, vec![pinned_record()], None);
-    assert!(!page.shows(item("server-account-on", KEY), cx));
 }
 
 #[gpui_kit::test]

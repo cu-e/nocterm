@@ -17,6 +17,10 @@ const PLUGINS_PAGE: &str = "plugins";
 const APPEARANCE_PAGE: &str = "appearance";
 const LAYOUT_SECTION: &str = "layout";
 
+/// The id of the Vault page, and how many built-in pages come before every other one.
+const VAULT_PAGE: &str = "vault";
+const BUILTIN_PAGES: usize = 5;
+
 /// The id of the page of known hub servers, which exists when the application has hubs.
 const SERVERS_PAGE: &str = "servers";
 
@@ -121,6 +125,23 @@ impl SettingsPages {
             ordinary,
             startup,
             plugins,
+        })
+    }
+    /// The same pages with the Vault page of `vault` instead of the one they had: the pages of
+    /// a window whose vault is another one. Built-in and guest pages stay as they are.
+    pub(crate) fn with_vault(&self, vault: SettingsPageSpec) -> Result<Self, SettingsCatalogError> {
+        let vault = SettingsPageRegistration::lazy(vault);
+        let ordinary = catalog_replacing_vault(self.ordinary.pages(), &vault)?;
+        let startup_base = self.startup.as_ref().map_or_else(
+            || &self.ordinary.pages()[..BUILTIN_PAGES],
+            SettingsCatalog::pages,
+        );
+        let startup = catalog_replacing_vault(startup_base, &vault)?;
+        Ok(Self {
+            installed: self.installed.clone(),
+            ordinary,
+            startup: Some(startup),
+            plugins: self.plugins.clone(),
         })
     }
     pub(crate) fn installed(&self) -> Installed {
@@ -244,6 +265,21 @@ pub(crate) fn guest_pages(
     );
     pages.push(SettingsPageRegistration::lazy(plugins_page));
     GuestPages::new(pages, plugins)
+}
+/// The pages without the Vault page, followed by `vault`.
+fn catalog_replacing_vault(
+    pages: &[SettingsPageRegistration],
+    vault: &SettingsPageRegistration,
+) -> Result<SettingsCatalog, SettingsCatalogError> {
+    SettingsCatalog::new(
+        pages
+            .iter()
+            .filter(|page| page.id() != VAULT_PAGE)
+            .cloned()
+            .chain([vault.clone()])
+            .collect(),
+        APPEARANCE_PAGE,
+    )
 }
 fn catalog(
     builtins: [SettingsPageSpec; 5],

@@ -1,7 +1,8 @@
 //! Keeps the saved profiles and a remote replica of them in agreement.
 //!
-//! The local document stays the one the application reads and writes through
-//! [`ConnectionStore`]. This entity watches its committed publications, reads the
+//! The store stays the one the application reads and writes through
+//! [`ConnectionStore`]; for a hub account it is an in-memory mirror that [`ProfileReplication::detach`]
+//! empties. This entity watches its committed publications, reads the
 //! replica's changes, reconciles the three sides with the pure rules of
 //! `connections-model` and applies the result: remote changes through the store's
 //! checked writes, local ones through the replica port. What the two sides last
@@ -14,7 +15,7 @@ use crate::ConnectionStore;
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_connections_model::{
-    profiles::{Profile, ProfileId},
+    profiles::ProfileId,
     replica::{ProfileReplica, ReplicaScope, ReplicaSpace, ReplicaState},
 };
 use nocterm_store::{Persisted, Publication, SnapshotWriter};
@@ -35,16 +36,6 @@ enum Announced {
     Refused(ProfileId),
 }
 
-/// Why a replica is detached.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Departure {
-    /// No account is used any more; every profile stays on this device.
-    Stopped,
-    /// Another account is used next; what the leaving account agreed to, and the user did
-    /// not change, leaves the device so it is never offered to the other account.
-    Switched,
-}
-
 pub struct ProfileReplication {
     store: Entity<ConnectionStore>,
     state: Entity<Persisted<ReplicaState>>,
@@ -57,9 +48,6 @@ pub struct ProfileReplication {
     /// refused (the cursor stays behind it) and a local profile the replica refused and
     /// never agreed to. Each pass meets them again but says so once.
     refused: HashSet<Announced>,
-    /// Removal of the profiles agreed with a replica that was detached; the next round
-    /// waits for it, so they are never offered to another account's replica.
-    leaving: Option<Task<()>>,
     _publications: Subscription,
 }
 
@@ -84,7 +72,6 @@ impl ProfileReplication {
             rerun: false,
             watcher: None,
             refused: HashSet::new(),
-            leaving: None,
             _publications: subscription,
         }
     }
@@ -114,18 +101,13 @@ impl ProfileReplication {
         self.start(cx);
     }
 
-    /// Stops synchronizing and forgets what was agreed with that replica: the
-    /// agreement and the feed position mean nothing to another account's replica.
-    /// Every profile stays on this device, as a local one, unless `departure` says
-    /// another account takes over: then the profiles that still are what was agreed
-    /// with the leaving account go, since they belong to it and come back when it is
-    /// attached again. A profile edited since, or never agreed, is the user's data
-    /// and stays.
-    pub fn detach(&mut self, departure: Departure, cx: &mut Context<Self>) {
+    /// Stops synchronizing, forgets what was agreed with that replica and empties the store:
+    /// the store is the mirror of one account, so nothing in it may be offered to another
+    /// account's replica or shown after the account left. The agreement and the feed position
+    /// mean nothing to another replica either.
+    pub fn detach(&mut self, cx: &mut Context<Self>) {
         self.stop(cx);
-        if departure == Departure::Switched {
-            self.release_agreed(cx);
-        }
+        self.clear_mirror(cx);
         self.state.update(cx, |state, cx| {
             if let Err(error) = state.update_latest(|state| *state = ReplicaState::default(), cx) {
                 tracing::error!(%error, "could not reset the profile replica state");
@@ -134,33 +116,26 @@ impl ProfileReplication {
         self.set_status(ReplicationStatus::Detached, cx);
     }
 
-    /// Removes the profiles that equal what was agreed with the detached replica. Each
-    /// comparison and removal is one step, so an edit made meanwhile is never removed
-    /// unseen; the next round waits for the removals.
-    fn release_agreed(&mut self, cx: &mut Context<Self>) {
-        let agreed: Vec<(ProfileId, Profile)> = self
-            .state
-            .read(cx)
-            .visible()
-            .entries()
-            .map(|(id, entry)| (id, entry.profile.clone()))
-            .collect();
+    /// Removes every profile from the store. With no replica attached nothing is sent.
+    fn clear_mirror(&mut self, cx: &mut Context<Self>) {
         let removals: Vec<_> = self.store.update(cx, |store, cx| {
-            let mut removals = Vec::new();
-            for (id, profile) in agreed {
-                if store.profiles(cx).get(id) == Some(&profile) {
-                    removals.push(store.delete_profile(id, cx));
-                }
-            }
-            removals
+            let ids: Vec<ProfileId> = store
+                .profiles(cx)
+                .iter()
+                .map(|profile| profile.id)
+                .collect();
+            ids.into_iter()
+                .map(|id| store.delete_profile(id, cx))
+                .collect()
         });
-        self.leaving = Some(cx.spawn(async move |_, _| {
+        cx.spawn(async move |_, _| {
             for removal in removals {
                 if let Err(error) = removal.await {
-                    tracing::error!(%error, "could not remove a profile of the detached account");
+                    tracing::error!(%error, "could not clear a profile of the mirror");
                 }
             }
-        }));
+        })
+        .detach();
     }
 
     pub fn status(&self) -> &ReplicationStatus {
@@ -297,11 +272,7 @@ impl ProfileReplication {
             cx.weak_entity(),
         );
         self.set_status(ReplicationStatus::Syncing, cx);
-        let leaving = self.leaving.take();
         self.run = Some(cx.spawn(async move |this, cx| {
-            if let Some(leaving) = leaving {
-                leaving.await;
-            }
             let outcome = round.run(cx).await;
             if let Some(outcome) = outcome {
                 this.update(cx, |this, cx| this.finish(outcome, cx)).ok();
@@ -345,6 +316,7 @@ impl ProfileReplication {
             Outcome::Synced => ReplicationStatus::Synced,
             Outcome::NeedsNewerClient => ReplicationStatus::NeedsNewerClient,
             Outcome::Offline => ReplicationStatus::Offline,
+            Outcome::Locked => ReplicationStatus::Locked,
             Outcome::Failed(failure) => {
                 cx.emit(ReplicationEvent::Failed(failure.clone()));
                 ReplicationStatus::Failed(failure)

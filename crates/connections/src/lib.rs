@@ -10,7 +10,7 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: views (the panel's sections per organization and the editor's space choice, from the bound replication), editor inputs, session-intent conversion and detected-server image presentation and weak source projection.
+//! Owns: views (the panel's sections per organization, the strip for the account's state and the editor's space choice, from the bound replication; the list may be changed only while the copy is in step with the account), editor inputs and their shared `ConnectionInputs`, the in-memory installation `install_volatile` (no settings, key bindings or shutdown registration), session-intent conversion and detected-server image presentation and weak source projection.
 //! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
 //! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
@@ -31,7 +31,7 @@
 mod installed;
 mod session_intents;
 pub use credential_spaces::CredentialSpaces;
-pub use installed::{Installed, install};
+pub use installed::{Installed, install, install_volatile};
 pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;
 mod credential_spaces;
@@ -46,10 +46,12 @@ pub mod plugin;
 mod prepared;
 mod probe_sources;
 mod spaces;
-pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
+pub use prepared::{ConnectionInputs, ConnectionWriters, EditorInputs, PreparedConnections};
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod volatile_tests;
 
 use gpui_kit::{Context, Window, prelude::*};
 use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};

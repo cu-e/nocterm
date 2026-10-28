@@ -19,12 +19,12 @@ pub(super) struct Section {
 }
 
 impl Section {
-    fn of(space: &ReplicaSpace) -> Self {
+    fn of(space: &ReplicaSpace, editable: bool) -> Self {
         Self {
             id: space_id(&space.scope),
             name: space.name.clone(),
             scope: Some(space.scope.clone()),
-            writable: space.access == ReplicaAccess::Write,
+            writable: editable && space.access == ReplicaAccess::Write,
             members: Vec::new(),
         }
     }
@@ -43,12 +43,17 @@ impl Section {
 
 /// The list as shown: the personal connections filed in folders, then the sections.
 pub(super) struct Listing {
-    pub(super) top: Vec<Profile>,
-    pub(super) groups: Vec<(String, Vec<Profile>)>,
-    pub(super) sections: Vec<Section>,
+    top: Vec<Profile>,
+    groups: Vec<(String, Vec<Profile>)>,
+    sections: Vec<Section>,
 }
 
 impl Listing {
+    /// The ungrouped connections, the folders and the organization sections.
+    pub(super) fn into_parts(self) -> (Vec<Profile>, Vec<(String, Vec<Profile>)>, Vec<Section>) {
+        (self.top, self.groups, self.sections)
+    }
+
     /// Moves the connections of each organization out of the folders into its section.
     /// Folders are the user's own way to file their connections, so a shared connection
     /// is listed flat. Without organizations the list is returned as it came.
@@ -58,7 +63,10 @@ impl Listing {
         groups: Vec<(String, Vec<Profile>)>,
         cx: &App,
     ) -> Self {
-        let mut sections: Vec<Section> = spaces.organizations().map(Section::of).collect();
+        let mut sections: Vec<Section> = spaces
+            .organizations()
+            .map(|space| Section::of(space, spaces.editable()))
+            .collect();
         let mut unreachable = Vec::new();
         let mut file = |profile: Profile| match spaces.scope(profile.id, cx) {
             ReplicaScope::Personal => Some(profile),

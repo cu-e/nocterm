@@ -178,3 +178,22 @@ pub fn install(
         cx,
     )
 }
+/// Installs connections that live only in memory, for a window whose list something else
+/// keeps (the mirror of an account). It registers no settings, no key bindings and nothing
+/// for shutdown: the owner of the list saves it, and `install` already did the rest for the
+/// application.
+pub fn install_volatile(
+    prepared: PreparedConnections,
+    ready: &UiReady,
+    cx: &mut App,
+) -> Result<Installed, StoreError> {
+    let (connections, inputs, facts) = prepared.into_owners();
+    Installed::from_owners(
+        connections,
+        facts,
+        inputs,
+        ready.settings().clone(),
+        &ShutdownCoordinator::default(),
+        cx,
+    )
+}

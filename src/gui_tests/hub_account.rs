@@ -1,8 +1,8 @@
-//! The chosen hub account keeps the saved profiles and the vault in step with its other
-//! devices, and choosing another one (or none) takes effect without a restart.
+//! A hub window shows the account of its hub: its connections, in a mirror that replicates with
+//! the hub, and its vault. The window of this computer shows neither.
 use super::*;
 use crate::bootstrap::Booted;
-use crate::hub_account::{AccountAccess, HubAccounts};
+use crate::hub_sources::{AccountAccess, HubAccounts};
 use crate::shell_setup::UserPluginMode;
 use nocterm_connections_model::{
     profiles::Profile,
@@ -10,21 +10,22 @@ use nocterm_connections_model::{
     test_support::{MemoryReplica, profile_id_for},
 };
 use nocterm_hubs_model::{
-    Fingerprint, HubAddress, HubError, HubId, HubRecord, HubsSettings, TrustPolicy,
+    Environment, Fingerprint, HubAddress, HubError, HubId, HubRecord, HubsSettings, TrustPolicy,
+    testing::{FakeHub, FakeServer},
 };
 use nocterm_session::{Auth, Secret, Target};
 use nocterm_vault::{VaultAccess as _, VaultStatus, testing::ScriptedVaultAccess};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const ADDRESS: &str = "hub.home:7443";
-const OTHER: &str = "hub.work:7443";
-const PASSPHRASE: &str = "test unique master passphrase";
+pub(super) const ADDRESS: &str = "hub.home:7443";
+pub(super) const OTHER: &str = "hub.work:7443";
+pub(super) const PASSPHRASE: &str = "test unique master passphrase";
 
-fn hub_id(address: &str) -> HubId {
+pub(super) fn hub_id(address: &str) -> HubId {
     HubId::from(HubAddress::parse(address).unwrap())
 }
 
-fn record(address: &str) -> HubRecord {
+pub(super) fn record(address: &str) -> HubRecord {
     HubRecord::new(
         HubAddress::parse(address).unwrap(),
         TrustPolicy::Pinned(Fingerprint::from_bytes([7; 32])),
@@ -32,7 +33,7 @@ fn record(address: &str) -> HubRecord {
     )
 }
 
-fn profile(name: &str) -> Profile {
+pub(super) fn profile(name: &str) -> Profile {
     Profile {
         id: profile_id_for(name),
         name: name.into(),
@@ -51,13 +52,13 @@ fn profile(name: &str) -> Profile {
 }
 
 /// An account whose profiles and vault are in memory.
-struct Account {
-    replica: Arc<MemoryReplica>,
-    vault: Arc<ScriptedVaultAccess>,
+pub(super) struct Account {
+    pub(super) replica: Arc<MemoryReplica>,
+    pub(super) vault: Arc<ScriptedVaultAccess>,
 }
 
 impl Account {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let vault = Arc::new(ScriptedVaultAccess::default());
         futures::executor::block_on(vault.create(Secret::new(PASSPHRASE))).unwrap();
         Self {
@@ -68,13 +69,13 @@ impl Account {
 }
 
 /// The accounts of the servers it knows; any other server has none to open.
-struct FakeAccounts {
+pub(super) struct FakeAccounts {
     accounts: Vec<(HubId, Account)>,
     refusing: AtomicBool,
 }
 
 impl FakeAccounts {
-    fn of(accounts: Vec<(HubId, Account)>) -> Arc<Self> {
+    pub(super) fn of(accounts: Vec<(HubId, Account)>) -> Arc<Self> {
         Arc::new(Self {
             accounts,
             refusing: AtomicBool::new(false),
@@ -99,25 +100,34 @@ impl HubAccounts for FakeAccounts {
     }
 }
 
-fn boot_with(accounts: Arc<FakeAccounts>, chosen: Option<&str>, cx: &mut TestAppContext) -> Booted {
+/// The application composed over two known hubs, signed in to both.
+pub(super) struct World {
+    pub(super) booted: Booted,
+    transport: Arc<MockTransport>,
+}
+
+pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> World {
     let settings =
         nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings {
             servers: vec![record(ADDRESS), record(OTHER)],
-            account: chosen.map(str::to_owned),
         });
-    let hub = nocterm_hubs_model::testing::FakeHub::new();
+    let hub = FakeHub::new()
+        .with_server(FakeServer::new(ADDRESS, 7))
+        .with_server(FakeServer::new(OTHER, 7));
+    hub.sign_in_as(&hub_id(ADDRESS), "alice");
+    hub.sign_in_as(&hub_id(OTHER), "alice");
+    let transport = Arc::new(MockTransport::default());
     let booted = cx.update(|cx| {
         let deps = nocterm_hubs::Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
-            sessions: Arc::new(hub.clone()),
             admin_keys: Arc::new(nocterm_hubs_model::testing::FakeAdminKeys::alongside(&hub)),
         };
         boot_with_ports_and_probe(
             tempfile::tempdir().unwrap(),
             settings,
             (
-                Arc::new(MockTransport::default()),
+                transport.clone(),
                 nocterm_terminal::LocalSessions::disabled("/bin/bash".into()),
             ),
             true,
@@ -133,151 +143,288 @@ fn boot_with(accounts: Arc<FakeAccounts>, chosen: Option<&str>, cx: &mut TestApp
         )
     });
     cx.run_until_parked();
-    booted
+    World { booted, transport }
 }
 
-fn choose(booted: &Booted, hub: Option<&str>, cx: &mut TestAppContext) {
-    let hub = hub.map(hub_id);
-    let settings = booted.settings_deps().settings().clone();
+impl World {
+    pub(super) fn open(
+        &self,
+        environment: &Environment,
+        cx: &mut TestAppContext,
+    ) -> (AnyWindowHandle, Entity<Workspace>) {
+        let opened = cx.update(|cx| open_environment(&self.booted, environment, cx));
+        cx.run_until_parked();
+        opened
+    }
+
+    fn store_of(
+        &self,
+        environment: &Environment,
+        cx: &mut TestAppContext,
+    ) -> Entity<nocterm_connections::Connections> {
+        let sources = cx
+            .update(|cx| self.booted.window_sources(environment, cx))
+            .expect("the window's sources");
+        sources.connections().unwrap().connections().clone()
+    }
+
+    fn profiles_of(&self, environment: &Environment, cx: &mut TestAppContext) -> Vec<Profile> {
+        self.store_of(environment, cx)
+            .read_with(cx, |store, cx| store.profiles(cx).iter().cloned().collect())
+    }
+
+    pub(super) fn vault_of(
+        &self,
+        environment: &Environment,
+        cx: &mut TestAppContext,
+    ) -> Arc<dyn nocterm_vault::VaultAccess> {
+        let sources = cx
+            .update(|cx| self.booted.window_sources(environment, cx))
+            .expect("the window's sources");
+        sources.vault().expect("a vault").service()
+    }
+}
+
+fn save(
+    store: &Entity<nocterm_connections::Connections>,
+    profile: Profile,
+    cx: &mut TestAppContext,
+) {
     cx.update(|cx| {
-        settings
-            .update_checked::<HubsSettings>(cx, move |settings| {
-                settings.set_account_hub(hub.as_ref());
-                Ok(())
-            })
-            .detach();
+        store
+            .update(cx, |store, cx| store.save_profile(profile, cx))
+            .now_or_never()
+            .unwrap()
+            .unwrap()
     });
     cx.run_until_parked();
 }
 
-fn vault(booted: &Booted) -> Arc<dyn nocterm_vault::VaultAccess> {
-    booted.vault().expect("the vault opened").service()
-}
-
-fn local_profiles(booted: &Booted, cx: &mut TestAppContext) -> Vec<Profile> {
-    let store = booted.connections().unwrap().connections().clone();
-    store.read_with(cx, |store, cx| store.profiles(cx).iter().cloned().collect())
+pub(super) fn home() -> Environment {
+    Environment::Hub(hub_id(ADDRESS))
 }
 
 #[gpui_kit::test]
-fn the_chosen_account_supplies_the_vault_and_the_profiles(cx: &mut TestAppContext) {
+fn a_hub_window_shows_the_profiles_of_its_account_and_the_local_window_shows_its_own(
+    cx: &mut TestAppContext,
+) {
     let account = Account::new();
     let remote = profile("remote");
     account
         .replica
         .write_remote(ReplicaScope::Personal, remote.clone());
-    let booted = boot_with(
-        FakeAccounts::of(vec![(hub_id(ADDRESS), account)]),
-        Some(ADDRESS),
+    let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
+    let local = profile("local-box");
+    save(
+        &world.booted.connections().unwrap().connections().clone(),
+        local.clone(),
         cx,
     );
+    world.open(&home(), cx);
 
-    assert!(
-        vault(&booted).is_unlocked(),
-        "the vault in use is the account's"
-    );
-    assert_eq!(local_profiles(&booted, cx), [remote]);
+    assert_eq!(world.profiles_of(&home(), cx), [remote]);
+    assert_eq!(world.profiles_of(&Environment::Local, cx), [local]);
 }
 
 #[gpui_kit::test]
-fn without_a_chosen_account_the_vault_and_the_profiles_stay_on_this_device(
+fn a_connection_created_in_a_hub_window_is_saved_on_the_hub_and_not_on_this_computer(
+    cx: &mut TestAppContext,
+) {
+    let account = Account::new();
+    let replica = account.replica.clone();
+    let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
+    world.open(&home(), cx);
+    let created = profile("created");
+
+    save(&world.store_of(&home(), cx), created.clone(), cx);
+
+    assert!(replica.stored(created.id).is_some(), "the hub has it");
+    assert_eq!(world.profiles_of(&home(), cx), [created]);
+    assert!(world.profiles_of(&Environment::Local, cx).is_empty());
+}
+
+#[gpui_kit::test]
+fn two_windows_of_one_hub_share_one_mirror_and_another_hub_has_its_own(cx: &mut TestAppContext) {
+    let world = world(
+        FakeAccounts::of(vec![
+            (hub_id(ADDRESS), Account::new()),
+            (hub_id(OTHER), Account::new()),
+        ]),
+        cx,
+    );
+    world.open(&home(), cx);
+    world.open(&home(), cx);
+    let work = Environment::Hub(hub_id(OTHER));
+    world.open(&work, cx);
+
+    assert_eq!(
+        world.store_of(&home(), cx).entity_id(),
+        world.store_of(&home(), cx).entity_id()
+    );
+    assert_ne!(
+        world.store_of(&home(), cx).entity_id(),
+        world.store_of(&work, cx).entity_id()
+    );
+    save(&world.store_of(&home(), cx), profile("home-box"), cx);
+    assert!(world.profiles_of(&work, cx).is_empty());
+}
+
+#[gpui_kit::test]
+fn a_hub_window_of_an_unreachable_account_cannot_be_composed(cx: &mut TestAppContext) {
+    let accounts = FakeAccounts::of(vec![(hub_id(ADDRESS), Account::new())]);
+    accounts.refusing.store(true, Ordering::SeqCst);
+    let world = world(accounts, cx);
+
+    let result = cx.update(|cx| world.booted.window_sources(&home(), cx));
+
+    assert!(matches!(
+        result,
+        Err(crate::window_sources::WindowSourcesError::Account(_))
+    ));
+}
+
+#[gpui_kit::test]
+fn signing_out_empties_the_hub_window_and_locks_its_vault(cx: &mut TestAppContext) {
+    let account = Account::new();
+    account
+        .replica
+        .write_remote(ReplicaScope::Personal, profile("remote"));
+    let vault_of_account = account.vault.clone();
+    let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
+    world.open(&home(), cx);
+    assert_eq!(world.profiles_of(&home(), cx).len(), 1);
+
+    cx.update(|cx| {
+        let hubs = world.booted.hub_registry(cx).unwrap();
+        hubs.update(cx, |hubs, cx| hubs.sign_out(&hub_id(ADDRESS), cx).detach())
+    });
+    cx.run_until_parked();
+
+    assert!(
+        world.profiles_of(&home(), cx).is_empty(),
+        "nothing of the account stays"
+    );
+    assert_eq!(vault_of_account.status(), VaultStatus::Locked);
+}
+
+#[gpui_kit::test]
+fn a_secret_typed_in_a_hub_window_is_kept_in_the_hub_vault_for_the_hub_connection(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let account = Account::new();
+    let remote = profile("remote");
+    account
+        .replica
+        .write_remote(ReplicaScope::Personal, remote.clone());
+    let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
+    world.open(&home(), cx);
+    let sources = cx
+        .update(|cx| world.booted.window_sources(&home(), cx))
+        .unwrap();
+    let terminal = cx.update(|cx| {
+        cx.new(|cx| {
+            nocterm_terminal::Terminal::new(
+                sources.terminal().clone(),
+                SessionSpec {
+                    profile: Some(remote.id.to_string().into()),
+                    options: Default::default(),
+                    title: "remote".into(),
+                    target: remote.target.clone(),
+                    auth: Auth::Password,
+                    launch: None,
+                    credential: None,
+                    jumps: Vec::new(),
+                },
+                cx,
+            )
+        })
+    });
+    let driver = world
+        .transport
+        .drivers
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    let (reply, answer) = nocterm_session::Reply::channel();
+    assert!(futures::executor::block_on(driver.emit(Event::Prompt(
+        Prompt::Secret {
+            request: SecretRequest::Password {
+                target: remote.target.clone(),
+                retry: false,
+            },
+            reply,
+            hop: None,
+        }
+    ))));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.answer_secret_and_remember(Secret::new("hub box password"), true, cx)
+        })
+    });
+    futures::executor::block_on(answer).unwrap().unwrap();
+    assert!(futures::executor::block_on(driver.emit(Event::Connected)));
+    cx.run_until_parked();
+
+    let kept = futures::executor::block_on(world.vault_of(&home(), cx).list()).unwrap();
+    assert_eq!(kept.len(), 1, "the secret is in the vault of the hub");
+    assert!(
+        world.profiles_of(&home(), cx)[0].credential.is_some(),
+        "and belongs to the connection of the hub"
+    );
+    assert_eq!(
+        world.vault_of(&Environment::Local, cx).status(),
+        VaultStatus::Missing,
+        "the vault of this computer is untouched"
+    );
+}
+
+#[gpui_kit::test]
+fn a_locked_account_asks_for_its_vault_in_the_window_and_lists_after_the_unlock(
     cx: &mut TestAppContext,
 ) {
     let account = Account::new();
     account
         .replica
         .write_remote(ReplicaScope::Personal, profile("remote"));
-    let booted = boot_with(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), None, cx);
+    account.vault.lock();
+    account.replica.set_locked(true);
+    let (replica, vault_of_account) = (account.replica.clone(), account.vault.clone());
+    let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
+    let (handle, _workspace) = world.open(&home(), cx);
+    assert!(world.profiles_of(&home(), cx).is_empty());
 
-    assert_eq!(vault(&booted).status(), VaultStatus::Missing);
-    assert!(local_profiles(&booted, cx).is_empty());
-}
-
-#[gpui_kit::test]
-fn choosing_an_account_takes_effect_without_a_restart(cx: &mut TestAppContext) {
-    let account = Account::new();
-    let remote = profile("remote");
-    account
-        .replica
-        .write_remote(ReplicaScope::Personal, remote.clone());
-    let booted = boot_with(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), None, cx);
-    let service = vault(&booted);
-    let seen = service.revision();
-
-    choose(&booted, Some(ADDRESS), cx);
-
-    assert!(service.is_unlocked());
-    assert!(service.revision() > seen, "observers are told of the move");
-    assert_eq!(local_profiles(&booted, cx), [remote]);
-}
-
-#[gpui_kit::test]
-fn choosing_none_goes_back_to_the_device_vault_and_stops_replicating(cx: &mut TestAppContext) {
-    let account = Account::new();
-    let replica = account.replica.clone();
-    let vault_of_account = account.vault.clone();
-    let booted = boot_with(
-        FakeAccounts::of(vec![(hub_id(ADDRESS), account)]),
-        Some(ADDRESS),
-        cx,
-    );
-
-    choose(&booted, None, cx);
-
-    assert_eq!(
-        vault_of_account.status(),
-        VaultStatus::Locked,
-        "the account's vault does not stay open"
-    );
-    assert_eq!(vault(&booted).status(), VaultStatus::Missing);
-    replica.write_remote(ReplicaScope::Personal, profile("later"));
+    // The window asks for the vault a couple of frames after it is composed.
+    deliver_frames(handle, 4, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("vault-unlock-prompt").is_some(),
+            "the hub window opens the unlock dialog of its own vault"
+        );
+    })
+    .unwrap();
+    cx.simulate_input(handle, PASSPHRASE);
+    cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+        .unwrap();
     cx.run_until_parked();
-    assert!(local_profiles(&booted, cx).is_empty());
-}
-
-#[gpui_kit::test]
-fn switching_accounts_keeps_the_profiles_of_each_account_apart(cx: &mut TestAppContext) {
-    let home = Account::new();
-    let work = Account::new();
-    let at_home = profile("home-box");
-    let at_work = profile("work-box");
-    home.replica
-        .write_remote(ReplicaScope::Personal, at_home.clone());
-    work.replica
-        .write_remote(ReplicaScope::Personal, at_work.clone());
-    let work_replica = work.replica.clone();
-    let booted = boot_with(
-        FakeAccounts::of(vec![(hub_id(ADDRESS), home), (hub_id(OTHER), work)]),
-        Some(ADDRESS),
-        cx,
+    assert!(vault_of_account.is_unlocked());
+    assert_eq!(
+        world.vault_of(&Environment::Local, cx).status(),
+        VaultStatus::Missing,
+        "the vault of this computer was not asked"
     );
-    assert_eq!(local_profiles(&booted, cx), std::slice::from_ref(&at_home));
+    replica.set_locked(false);
+    cx.run_until_parked();
 
-    choose(&booted, Some(OTHER), cx);
-
-    // The profiles that were agreed with the first account are not offered to the second.
-    assert!(
-        work_replica.stored(at_home.id).is_none(),
-        "{} is not copied into another account",
-        at_home.name
-    );
-    assert!(local_profiles(&booted, cx).contains(&at_work));
-}
-
-#[gpui_kit::test]
-fn an_account_that_cannot_be_opened_leaves_the_device_as_it_was(cx: &mut TestAppContext) {
-    let account = Account::new();
-    let accounts = FakeAccounts::of(vec![(hub_id(ADDRESS), account)]);
-    accounts.refusing.store(true, Ordering::SeqCst);
-    let booted = boot_with(accounts, Some(ADDRESS), cx);
-
-    assert_eq!(vault(&booted).status(), VaultStatus::Missing);
-    assert!(local_profiles(&booted, cx).is_empty());
+    assert_eq!(world.profiles_of(&home(), cx).len(), 1);
 }
 
 #[gpui_kit::test]
 fn a_refused_change_to_a_shared_connection_is_undone_and_announced_once(cx: &mut TestAppContext) {
-    use futures::FutureExt as _;
     use nocterm_connections_model::replica::{ReplicaAccess, ReplicaSpace};
     let account = Account::new();
     let acme = ReplicaScope::Organization("acme".into());
@@ -296,28 +443,19 @@ fn a_refused_change_to_a_shared_connection_is_undone_and_announced_once(cx: &mut
     ]);
     account.replica.write_remote(acme.clone(), shared.clone());
     account.replica.refuse_writes_in(acme);
-    let booted = boot_with(
-        FakeAccounts::of(vec![(hub_id(ADDRESS), account)]),
-        Some(ADDRESS),
-        cx,
+    let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
+    let (handle, _workspace) = world.open(&home(), cx);
+    assert_eq!(
+        world.profiles_of(&home(), cx),
+        std::slice::from_ref(&shared)
     );
-    assert_eq!(local_profiles(&booted, cx), std::slice::from_ref(&shared));
-    let (handle, _workspace) = cx.update(|cx| open_workspace(&booted, cx));
 
     let mut edited = shared.clone();
     edited.name = "renamed".into();
-    let store = booted.connections().unwrap().connections().clone();
-    cx.update(|cx| {
-        store
-            .update(cx, |store, cx| store.save_profile(edited, cx))
-            .now_or_never()
-            .unwrap()
-            .unwrap()
-    });
-    cx.run_until_parked();
+    save(&world.store_of(&home(), cx), edited, cx);
 
     assert_eq!(
-        local_profiles(&booted, cx),
+        world.profiles_of(&home(), cx),
         [shared],
         "the shared version is back"
     );

@@ -4,10 +4,17 @@ use super::status_chip;
 use crate::test_support::{fixture, server};
 use gpui_kit::TestAppContext;
 use nocterm_hubs::HubStatus;
+use nocterm_hubs_model::Environment;
 use nocterm_hubs_model::testing::FakeHub;
 
 fn label(status: HubStatus, cx: &mut TestAppContext) -> String {
-    let _page = fixture(cx, FakeHub::new().with_server(server()), Vec::new(), None);
+    let _page = fixture(
+        cx,
+        Environment::Local,
+        FakeHub::new().with_server(server()),
+        Vec::new(),
+        None,
+    );
     cx.update(|cx| status_chip(&status, cx).0.to_string())
 }
 

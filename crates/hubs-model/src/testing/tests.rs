@@ -13,9 +13,6 @@ fn server() -> FakeServer {
     FakeServer::new(ADDRESS, 7)
         .with_user("ada", "secret", "lab")
         .with_provider("corp", "Corporate SSO")
-        .with_node("n1", "build box", true)
-        .with_session("s1", "lab", "n1", "ada", "make")
-        .with_session("s2", "lab", "n1", "bob", "top")
 }
 
 fn endpoint(trust: TrustPolicy) -> HubEndpointSpec {
@@ -192,57 +189,15 @@ fn an_unknown_provider_is_unavailable() {
 }
 
 #[test]
-fn lists_need_a_signed_in_device() {
-    let hub = FakeHub::new().with_server(server());
-    let org = OrgId::new("lab");
-    assert!(matches!(
-        block_on(hub.nodes(&hub_id(), &org)),
-        Err(HubError::NotSignedIn)
-    ));
-    assert!(matches!(
-        block_on(hub.account(&hub_id())),
-        Err(HubError::NotSignedIn)
-    ));
-}
-
-#[test]
-fn signed_in_device_lists_nodes_and_only_running_sessions_of_the_organization() {
-    let hub = signed_in();
-    let org = OrgId::new("lab");
-    assert_eq!(block_on(hub.account(&hub_id())).unwrap().username, "ada");
-    let nodes = block_on(hub.nodes(&hub_id(), &org)).unwrap();
-    assert_eq!(nodes[0].name, "build box");
-    let sessions = block_on(hub.sessions(&hub_id(), &org)).unwrap();
-    assert_eq!(sessions.len(), 2);
-    assert!(
-        block_on(hub.sessions(&hub_id(), &OrgId::new("other")))
-            .unwrap()
-            .is_empty()
-    );
-
-    block_on(hub.end(&hub_id(), &HubSessionId::new("s1"))).unwrap();
-    let sessions = block_on(hub.sessions(&hub_id(), &org)).unwrap();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].id.as_str(), "s2");
-    assert!(matches!(
-        block_on(hub.end(&hub_id(), &HubSessionId::new("missing"))),
-        Err(HubError::NotFound)
-    ));
-}
-
-#[test]
 fn a_revoked_device_loses_its_sign_in() {
     let hub = signed_in();
     hub.revoke_device(&hub_id());
     assert!(matches!(
-        block_on(hub.account(&hub_id())),
+        block_on(hub.connect(endpoint(pinned()))),
         Err(HubError::Revoked)
     ));
     assert!(!hub.is_signed_in(&hub_id()));
-    assert!(matches!(
-        block_on(hub.account(&hub_id())),
-        Err(HubError::NotSignedIn)
-    ));
+    assert!(!block_on(hub.connect(endpoint(pinned()))).unwrap().signed_in);
 }
 
 #[test]
@@ -259,85 +214,23 @@ fn sign_out_and_forget_remove_the_credentials() {
 #[test]
 fn an_injected_failure_hits_one_call_of_that_kind_only() {
     let hub = signed_in();
-    hub.fail_next(FakeOp::Account, HubError::PermissionDenied);
+    hub.fail_next(FakeOp::Connect, HubError::PermissionDenied);
     assert!(matches!(
-        block_on(hub.account(&hub_id())),
+        block_on(hub.connect(endpoint(pinned()))),
         Err(HubError::PermissionDenied)
     ));
-    assert!(block_on(hub.account(&hub_id())).is_ok());
-    assert_eq!(hub.count(FakeOp::Account), 2);
+    assert!(block_on(hub.connect(endpoint(pinned()))).is_ok());
+    assert_eq!(hub.count(FakeOp::Connect), 2);
 }
 
 #[test]
 fn a_held_call_waits_until_released() {
     let hub = signed_in();
-    let release = hub.hold(FakeOp::Nodes);
-    let mut pending = hub.nodes(&hub_id(), &OrgId::new("lab"));
+    let release = hub.hold(FakeOp::Connect);
+    let mut pending = hub.connect(endpoint(pinned()));
     block_on(async { assert!(futures::poll!(&mut pending).is_pending()) });
     release.release();
     assert!(block_on(pending).is_ok());
-}
-
-fn request() -> nocterm_session::ConnectRequest {
-    nocterm_session::ConnectRequest {
-        proxy: Default::default(),
-        launch: Default::default(),
-        target: nocterm_session::Target {
-            host: "hub".into(),
-            port: 7443,
-            user: "ada".into(),
-        },
-        auth: nocterm_session::Auth::Password,
-        term: "xterm".into(),
-        size: Default::default(),
-        connect_timeout: std::time::Duration::from_secs(10),
-        keepalive_interval: None,
-        jumps: Vec::new(),
-    }
-}
-
-#[test]
-fn a_terminal_is_the_scripted_transport_and_the_call_names_its_target() {
-    use nocterm_session::Event;
-
-    let hub = signed_in();
-    let driver = hub.terminals().queue(None, None);
-    let target = HubTerminalTarget::Existing(HubSessionId::new("s1"));
-    let (transport, created) = hub.terminal(&hub_id(), target.clone()).into_parts();
-    assert!(created.is_none());
-    let session = transport.open(request());
-    block_on(async {
-        assert!(driver.emit(Event::Restore(b"screen".to_vec())).await);
-        assert!(matches!(
-            session.next_event().await,
-            Some(Event::Restore(_))
-        ));
-    });
-    assert_eq!(
-        hub.calls().last(),
-        Some(&FakeCall::Terminal(hub_id(), target))
-    );
-    assert_eq!(hub.terminals().requests().len(), 1);
-}
-
-#[test]
-fn a_terminal_that_starts_a_session_learns_the_id_the_hub_gave_it() {
-    let hub = signed_in();
-    hub.create_sessions_as(["made-1"]);
-    let new = || HubTerminalTarget::New {
-        org: OrgId::new("lab"),
-        node: None,
-        title: "shell".into(),
-    };
-
-    let (_, first) = hub.terminal(&hub_id(), new()).into_parts();
-    let (_, second) = hub.terminal(&hub_id(), new()).into_parts();
-
-    assert_eq!(
-        block_on(first.expect("a new session reports its id")),
-        Ok(HubSessionId::new("made-1"))
-    );
-    assert!(block_on(second.expect("a new session reports its id")).is_err());
 }
 
 fn keyed_hub() -> FakeHub {

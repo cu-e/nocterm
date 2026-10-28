@@ -8,7 +8,7 @@ use gpui_kit::{
     MouseButton, SharedString, Subscription, WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
+        ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         dialog::DialogFooter,
         h_flex,
@@ -28,6 +28,8 @@ use crate::{
     spaces::Spaces,
 };
 
+pub(crate) mod account_state;
+mod folder;
 mod group_actions;
 mod row;
 mod sections;
@@ -152,6 +154,11 @@ impl ConnectionsPanel {
         }
     }
 
+    /// Whether the list may be changed now: see [`account_state`].
+    fn editable(&self, cx: &App) -> bool {
+        Spaces::of(&self.installed, cx).editable()
+    }
+
     fn filter_text(&self, cx: &App) -> String {
         self.filter.read(cx).value().to_string()
     }
@@ -260,6 +267,9 @@ impl ConnectionsPanel {
     }
 
     fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
         // The delete only applies while the group still holds these connections.
         let members = self.folder_members(&group, cx);
         let count = members.len();
@@ -320,6 +330,9 @@ impl ConnectionsPanel {
     }
 
     fn start_rename(&mut self, group: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
         if self.renaming.as_ref().is_some_and(|r| r.group == group) {
             return;
         }
@@ -428,6 +441,9 @@ impl ConnectionsPanel {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
+        if !self.editable(cx) {
+            return;
+        }
         let moved = self.installed.connections().update(cx, |connections, cx| {
             connections.place_profile(dragged.0, group, before, cx)
         });
@@ -447,165 +463,6 @@ impl ConnectionsPanel {
         .detach();
     }
 
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    fn render_group_header(
-        &self,
-        group: &str,
-        collapsed: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        let name = group.to_owned();
-        let drop_group = name.clone();
-        let renaming = self.renaming.as_ref().filter(|r| r.group == group);
-        let label = match renaming {
-            Some(rename) => {
-                let group = name.clone();
-                div()
-                    .id(SharedString::from(format!("group-rename-{group}")))
-                    .test_support()
-                    .flex_1()
-                    .min_w_0()
-                    .child(Input::new(&rename.input).small())
-                    .on_click(|_: &ClickEvent, _, cx| cx.stop_propagation())
-                    .on_key_down(
-                        cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                            if event.keystroke.key == "escape" {
-                                cx.stop_propagation();
-                                this.finish_rename(false, true, window, cx);
-                            }
-                        }),
-                    )
-                    .into_any_element()
-            }
-            None => {
-                let group = name.clone();
-                div()
-                    .id(SharedString::from(format!("group-name-{name}")))
-                    .test_support()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(name.clone())
-                    // Keep the header from also treating the second click as a toggle.
-                    .on_mouse_down(MouseButton::Left, |event, _, cx| {
-                        if event.click_count == 2 {
-                            cx.stop_propagation();
-                        }
-                    })
-                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                        if event.click_count() == 2 {
-                            // Undo the first click's toggle, then edit.
-                            cx.stop_propagation();
-                            this.toggle_group(&group, cx);
-                            this.start_rename(&group, window, cx);
-                        }
-                    }))
-                    .into_any_element()
-            }
-        };
-        let toggle_group = name.clone();
-        let delete_group = name.clone();
-        h_flex()
-            .id(SharedString::from(format!("group-{group}")))
-            .test_support()
-            .group(GROUP_HEADER)
-            .gap_1()
-            .mx_1()
-            .px_1()
-            .py_1()
-            .rounded(theme.radius)
-            .cursor_pointer()
-            .text_xs()
-            .font_semibold()
-            .text_color(theme.muted_foreground)
-            .hover(|row| row.bg(theme.sidebar_accent))
-            .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, Some(drop_group.clone()), None, window, cx)
-                }),
-            )
-            .child(
-                Icon::new(if collapsed {
-                    IconName::ChevronRight
-                } else {
-                    IconName::ChevronDown
-                })
-                .xsmall(),
-            )
-            .child(
-                Icon::new(if collapsed {
-                    IconName::FolderClosed
-                } else {
-                    IconName::FolderOpen
-                })
-                .small(),
-            )
-            .child(label)
-            .when(renaming.is_none(), |header| {
-                header.child(
-                    h_flex()
-                        .invisible()
-                        .group_hover(GROUP_HEADER, |buttons| buttons.visible())
-                        .child(
-                            Button::new(SharedString::from(format!("group-toggle-{group}")))
-                                .ghost()
-                                .xsmall()
-                                .icon(if collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .tooltip(if collapsed { "Expand" } else { "Collapse" })
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_group(&toggle_group, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!("group-delete-{group}")))
-                                .ghost()
-                                .xsmall()
-                                .icon(IconName::Trash)
-                                .tooltip("Delete group")
-                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    this.confirm_delete_group(delete_group.clone(), window, cx);
-                                })),
-                        ),
-                )
-            })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_group(&name, cx)))
-    }
-
-    /// The members of a folder, which also takes a profile dropped on it.
-    fn render_folder(
-        &self,
-        group: &str,
-        members: &[Profile],
-        spaces: &Spaces,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let drop_group = group.to_owned();
-        let mut folder = v_flex()
-            .id(SharedString::from(format!("group-members-{group}")))
-            .test_support()
-            .pl_3()
-            .gap_px()
-            .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, Some(drop_group.clone()), None, window, cx)
-                }),
-            );
-        for profile in members {
-            let writable = spaces.writable(profile.id, cx);
-            folder = folder.child(self.render_row(profile, writable, cx));
-        }
-        folder.child(self.render_append_zone(Some(group), cx))
-    }
-
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filter = self.filter_text(cx);
         let filtering = !filter.trim().is_empty();
@@ -622,11 +479,7 @@ impl ConnectionsPanel {
         let empty = profiles.is_empty() && !spaces.shared();
         let listing = Listing::new(&spaces, top, groups, cx);
         let nothing_matches = listing.is_empty(filtering);
-        let Listing {
-            top,
-            groups,
-            sections,
-        } = listing;
+        let (top, groups, sections) = listing.into_parts();
 
         let mut list = v_flex().gap_px().py_1().child(
             h_flex()
@@ -695,6 +548,7 @@ impl ConnectionsPanel {
             .child(
                 Button::new("empty-new-connection")
                     .small()
+                    .disabled(!self.editable(cx))
                     .icon(IconName::ServerPlus)
                     .label("New Connection")
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -741,6 +595,9 @@ impl Render for ConnectionsPanel {
                     .persistence_error(cx)
                     .map(|error| error.to_string())
             });
+        let spaces = Spaces::of(&self.installed, cx);
+        let editable = spaces.editable();
+        let notice = spaces.notice();
         let theme = cx.theme();
         let danger = theme.danger;
 
@@ -764,6 +621,7 @@ impl Render for ConnectionsPanel {
                         Button::new("new-connection")
                             .ghost()
                             .small()
+                            .disabled(!editable)
                             .icon(IconName::ServerPlus)
                             .tooltip("New Connection")
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -777,6 +635,9 @@ impl Render for ConnectionsPanel {
                             })),
                     ),
             )
+            .when_some(notice, |panel, notice| {
+                panel.child(account_state::strip(&notice, cx))
+            })
             .when_some(load_error, |panel, error| {
                 panel.child(
                     div()

@@ -14,6 +14,7 @@ use gpui_kit::{App, AppContext as _, Subscription};
 use nocterm_ui::SettingsPageSpec;
 use nocterm_ui::UiReady;
 use nocterm_vault::VaultAccess;
+use nocterm_workspace::Workspace;
 pub use settings::VaultSettings;
 use std::{sync::Arc, time::Duration};
 pub use view::VaultView;
@@ -38,10 +39,20 @@ impl Installed {
         self.service.clone()
     }
 }
+/// Installs the application's vault: its settings, and `UnlockVault` and
+/// `LockVault` for every window that has no vault of its own.
 pub fn install(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
+    let installed = install_scoped(deps, ready, cx);
+    unlock::bind_app(installed.service(), cx);
+    installed
+}
+
+/// Installs a vault that belongs to some windows only, such as the vault of a
+/// hub account. Nothing is bound to the application: a window opts in with
+/// [`register_scoped`]. The auto-lock policy of the `vault` settings still applies.
+pub fn install_scoped(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
     ready.settings().register::<VaultSettings>(cx);
     let service = deps.service;
-    unlock::init(service.clone(), cx);
     let settings_service = service.clone();
     let policy = ready.settings().clone();
     let settings = ready.settings().observe(cx, move |cx| {
@@ -55,6 +66,13 @@ pub fn install(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
         _settings: settings,
     }
 }
+
+/// Makes `UnlockVault` and `LockVault` in this workspace's window act on the
+/// scoped vault instead of the application's.
+pub fn register_scoped(installed: &Installed, workspace: &mut Workspace) {
+    unlock::bind_workspace(installed.service(), workspace);
+}
+
 pub fn settings_page(installed: &Installed) -> SettingsPageSpec {
     let service = installed.service();
     let settings = installed.settings().clone();

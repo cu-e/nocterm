@@ -69,7 +69,8 @@ transport input and live leases, screen/search presentation, credential candidat
 and output recording. The view keeps independent frame-cache, keyboard/composition,
 cursor-clock and pointer owners. Selection and scrolling use named model actions;
 consumers only receive immutable emulator and painted-frame projections. See [ADR 0038](../adr/0038-private-terminal-state-owners.md).
-`open_attached` opens a tab on an `AttachedSession`, a session reached through its own transport:
+`open_attached` opens a tab on an `AttachedSession`, a session reached through its own transport
+(no feature uses it at present):
 `Event::Restore` repaints a fresh emulator without recording the picture, a repeated `Connected`
 of the same session starts no second automatic recording, and closing the tab detaches
 ([ADR 0095](../adr/0095-attached-sessions-restore-and-detach.md)). Its renderer decorates otherwise unstyled default-color
@@ -718,8 +719,8 @@ runner and expose readable immutable outcomes; sign-in cards retain the original
 
 `nocterm-hubs-ui` holds the views of hubs and depends on `nocterm-hubs` and
 `nocterm-hubs-model` for state, never on `nocterm-terminal` or the application
-([ADR 0099](../adr/0099-windows-have-no-environments.md)). `register` puts its commands and
-panel into a window; the `hubs` system plugin (`plugin::PLUGIN`) declares the panel.
+([ADR 0099](../adr/0099-windows-have-no-environments.md)). `register` puts its commands into a
+window; the crate contributes no panel and no plugin.
 
 - `ServersPage` is the Servers page of the settings (`servers`, composed into the checked catalog by
   the application). Each known server has a name field (saved on Enter or blur), a colour
@@ -728,28 +729,11 @@ panel into a window; the `hubs` system plugin (`plugin::PLUGIN`) declares the pa
   a certificate.
 - The palette commands `ManageServers` (opens that page, handled by the application),
   `SignInToServer` and `SignOutOfServer` (a picker over the signed-in servers) are actions of this
-  crate, with `OpenHubSessions`, which shows or hides the sessions panel.
+  crate.
 - `SignInDialog` draws the steps of a `SignInSession`: address with an optional fingerprint,
   the pinned, public-authority or first-use trust (a self-signed certificate asks for an
   explicit "Trust and pin this certificate" beside the fingerprint, grouped for comparison), then the password
   form and a button for each single sign-on provider. The browser step opens the address from
   the service's event with `cx.open_url` and shows it with a copy button; cancelling or closing
   the dialog ends the wait. The last step is "Done".
-- `SessionsPanel` (`hubs.sessions`, in the tray of the layout until placed) chooses the hub it
-  lists: the one the user picked, else the one it lists already, else the first that answers; a
-  button for each known server appears when there are several, and a button that signs in when
-  there are none. `SessionList` lists the nodes of the selected organization with their
-  sessions. "Open" attaches a tab to an existing session (also a double-click, or Enter on the
-  session chosen with a click or the arrow keys), the "+" button in the header and the one
-  beside an online node start a session on any node or on that node, and the "End session"
-  button asks for confirmation and then terminates the session on its node. A hub that is signed
-  out offers "Sign in"; one with a changed certificate or an unsupported protocol offers an
-  explanation and removal, never acceptance.
-- The feature declares the port it needs and the application implements it, because features
-  do not depend on each other: `HubTerminalOpener` adds a tab on a given transport to the
-  workspace.
 
-A tab opened for a hub session is an attached tab of the terminal feature (see
-[Terminal](#terminal)). Closing it detaches: the process keeps running on its node and the
-session can be opened again, also from another computer. "End session" is the only action that
-terminates it.
