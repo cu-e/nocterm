@@ -130,6 +130,15 @@ fn a_refused_password_is_invalid_credentials_only_when_signing_in() {
 }
 
 #[test]
+fn a_password_too_short_for_any_account_is_invalid_credentials() {
+    let short = || ClientError::Login(LoginError::PasswordTooShort { min: 8 });
+    assert!(matches!(
+        classify_sign_in(&address(), Method::Password, short()),
+        HubError::InvalidCredentials
+    ));
+}
+
+#[test]
 fn a_method_the_hub_does_not_offer_is_unavailable() {
     for method in [Method::Password, Method::Oidc] {
         assert!(matches!(

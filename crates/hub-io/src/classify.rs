@@ -7,6 +7,7 @@ use std::error::Error;
 use nocterm_core::SharedCause;
 use nocterm_hub_client::{ClientError, HubEndpoint, OidcError, ProbeError, StatusCode};
 use nocterm_hubs_model::{Fingerprint, HubAddress, HubEndpointSpec, HubError, TrustPolicy};
+use nocterm_keys::LoginError;
 
 use crate::credentials::CredentialError;
 
@@ -96,6 +97,14 @@ pub(crate) fn classify_sign_in(
     method: Method,
     error: ClientError,
 ) -> HubError {
+    // A password the hub could not have accepted is refused before it is sent.
+    if let (
+        Method::Password,
+        ClientError::Login(LoginError::PasswordTooShort { .. } | LoginError::EmptyUsername),
+    ) = (method, &error)
+    {
+        return HubError::InvalidCredentials;
+    }
     if let ClientError::Status { code, .. } = &error {
         match (method, code) {
             (
