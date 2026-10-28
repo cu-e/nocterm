@@ -73,19 +73,39 @@ impl ReplicaState {
         self.cursor = Some(cursor);
     }
 
-    /// Records agreement on `entry`; the replica's version is readable again.
+    /// Records agreement on `entry` after this client sent it; the replica's version is
+    /// readable again. A request for another scope than the one agreed is kept: the user
+    /// asked for it after the version that was just sent was planned, and the next
+    /// synchronization carries it out.
     pub fn agree(&mut self, id: ProfileId, entry: SyncedEntry) {
+        self.unrecognized.remove(&id);
+        if self.placements.get(&id) == Some(&entry.scope) {
+            self.placements.remove(&id);
+        }
+        self.entries.insert(id, entry);
+    }
+
+    /// Records agreement on `entry` the replica's version won: a request to move the
+    /// profile no longer applies, since the remote change outranks a move.
+    pub fn adopt(&mut self, id: ProfileId, entry: SyncedEntry) {
         self.unrecognized.remove(&id);
         self.placements.remove(&id);
         self.entries.insert(id, entry);
     }
 
-    /// Both sides no longer hold the profile in the scope it was agreed in. A move
-    /// carries its new scope in the action that follows, not in the state.
+    /// Neither side holds the profile any more: the agreement and any request for it go.
     pub fn forget(&mut self, id: ProfileId) {
         self.unrecognized.remove(&id);
         self.placements.remove(&id);
         self.entries.remove(&id);
+    }
+
+    /// The profile left the scope it was agreed in on its way to `arrival`: the agreement
+    /// goes and the request for `arrival` stays, so a pass that ends before the profile is
+    /// created there creates it there, never back in the scope it left.
+    pub fn leave_for(&mut self, id: ProfileId, arrival: ReplicaScope) {
+        self.forget(id);
+        self.placements.insert(id, arrival);
     }
 
     pub fn mark_unrecognized(&mut self, id: ProfileId) {

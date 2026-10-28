@@ -150,6 +150,54 @@ async fn a_remote_edit_wins_over_a_pending_move_and_keeps_the_profile_where_it_w
 }
 
 #[gpui::test]
+async fn a_move_interrupted_between_deleting_and_creating_ends_in_the_target_scope(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mine = profile("mine");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&mine));
+    fixture.attach(cx);
+    fixture.replica.go_offline_after_writes(1);
+    fixture.place(cx, &mine, acme());
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Offline));
+    assert_eq!(in_personal(&fixture, &mine), None);
+    assert_eq!(in_acme(&fixture, &mine), None);
+    assert_eq!(fixture.space_of(cx, &mine), acme(), "the request survives");
+
+    fixture.replica.set_offline(false);
+    cx.run_until_parked();
+    assert_eq!(in_acme(&fixture, &mine), Some(mine.clone()));
+    assert_eq!(in_personal(&fixture, &mine), None);
+    assert_eq!(fixture.space_of(cx, &mine), acme());
+    assert!(fixture.persisted_state().placement(mine.id).is_none());
+    assert!(fixture.events().is_empty());
+}
+
+#[gpui::test]
+async fn a_scope_requested_while_a_round_sends_the_profile_is_not_lost(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mine = profile("mine");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&mine));
+    fixture.attach(cx);
+    let release = fixture.replica.hold_next_write();
+    let edited = at_host(&mine, "edited.example");
+    fixture
+        .store
+        .update(cx, |store, cx| store.save_profile(edited.clone(), cx))
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    fixture.place(cx, &mine, acme());
+    assert_eq!(in_acme(&fixture, &mine), None, "the round is still sending");
+
+    release.send(()).unwrap();
+    cx.run_until_parked();
+    assert_eq!(in_acme(&fixture, &mine), Some(edited));
+    assert_eq!(in_personal(&fixture, &mine), None);
+    assert_eq!(fixture.space_of(cx, &mine), acme());
+}
+
+#[gpui::test]
 async fn a_refused_edit_in_a_group_returns_to_the_remote_version_and_is_reported_once(
     cx: &mut gpui::TestAppContext,
 ) {

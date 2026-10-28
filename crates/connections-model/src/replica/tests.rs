@@ -518,6 +518,33 @@ fn a_placement_lasts_until_the_profile_is_agreed_or_forgotten() {
 }
 
 #[test]
+fn agreeing_on_another_scope_keeps_a_request_the_remote_version_ends() {
+    let mut state = ReplicaState::default();
+    state.place(id(), group());
+    state.agree(id(), synced("a", 3));
+    assert_eq!(
+        state.placement(id()),
+        Some(&group()),
+        "sent before the request"
+    );
+    state.adopt(id(), synced("a", 4));
+    assert_eq!(
+        state.placement(id()),
+        None,
+        "a remote change wins over a move"
+    );
+}
+
+#[test]
+fn leaving_a_scope_for_another_keeps_the_agreement_gone_and_the_arrival_requested() {
+    let mut state = ReplicaState::default();
+    state.agree(id(), synced("a", 3));
+    state.leave_for(id(), group());
+    assert!(state.entry(id()).is_none());
+    assert_eq!(state.placement(id()), Some(&group()));
+}
+
+#[test]
 fn a_placement_survives_serialization() {
     let mut state = ReplicaState::default();
     state.place(id(), group());

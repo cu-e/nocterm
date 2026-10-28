@@ -7,7 +7,10 @@ use crate::{
     },
 };
 use futures::{
-    FutureExt as _, StreamExt as _, channel::mpsc, future::BoxFuture, stream::BoxStream,
+    FutureExt as _, StreamExt as _,
+    channel::{mpsc, oneshot},
+    future::BoxFuture,
+    stream::BoxStream,
 };
 use nocterm_session::CredentialId;
 use std::{
@@ -52,6 +55,10 @@ struct Inner {
     objects: HashMap<(ReplicaScope, ProfileId), Stored>,
     feed: Vec<(u64, ReplicaScope, ProfileId)>,
     offline: bool,
+    /// Successful writes left before the replica goes offline.
+    offline_after: Option<usize>,
+    /// The answer of the next write waits for this signal.
+    held: Option<oneshot::Receiver<()>>,
     forbidden: HashSet<ProfileId>,
     forbidden_scopes: HashSet<ReplicaScope>,
     spaces: Vec<ReplicaSpace>,
@@ -197,6 +204,20 @@ impl MemoryReplica {
         }
     }
 
+    /// The link drops once `writes` more writes succeed, as when it breaks between two
+    /// requests of one operation.
+    pub fn go_offline_after_writes(&self, writes: usize) {
+        self.with(|inner| inner.offline_after = Some(writes));
+    }
+
+    /// The next write is carried out, but its answer reaches the caller only after the
+    /// returned sender is used: whatever happens meanwhile happens during the round.
+    pub fn hold_next_write(&self) -> oneshot::Sender<()> {
+        let (release, held) = oneshot::channel();
+        self.with(|inner| inner.held = Some(held));
+        release
+    }
+
     /// Writes of this profile are refused as `Forbidden`.
     pub fn refuse_writes_of(&self, id: ProfileId) {
         self.with(|inner| inner.forbidden.insert(id));
@@ -339,12 +360,35 @@ impl MemoryReplica {
         let result = self.with(|inner| {
             inner.calls.push(call);
             inner.check_write(&scope, id, expected)?;
-            Ok(inner.store(id, scope, body))
+            let version = inner.store(id, scope, body);
+            if let Some(left) = inner.offline_after.as_mut() {
+                *left = left.saturating_sub(1);
+                if *left == 0 {
+                    inner.offline = true;
+                    inner.offline_after = None;
+                }
+            }
+            Ok(version)
         });
         if result.is_ok() {
             self.notify();
         }
         result
+    }
+
+    /// The answer of a write, after the hold on it is released.
+    fn answered(
+        &self,
+        result: Result<ReplicaVersion, ReplicaError>,
+    ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
+        match self.with(|inner| inner.held.take()) {
+            Some(held) => async move {
+                held.await.ok();
+                result
+            }
+            .boxed(),
+            None => futures::future::ready(result).boxed(),
+        }
     }
 }
 
@@ -383,7 +427,7 @@ impl ProfileReplica for MemoryReplica {
             scope,
             RemoteBody::Present(Box::new(profile)),
         );
-        futures::future::ready(result).boxed()
+        self.answered(result)
     }
 
     fn delete(
@@ -394,7 +438,7 @@ impl ProfileReplica for MemoryReplica {
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
         let call = ReplicaCall::Delete { id, expected };
         let result = self.write(id, call, Some(expected), scope, RemoteBody::Deleted);
-        futures::future::ready(result).boxed()
+        self.answered(result)
     }
 
     fn carry(
