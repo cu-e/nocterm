@@ -487,7 +487,8 @@ mod tests {
                 hub("hub.example.com", None),
             ] {
                 editor.update(cx, |editor, cx| editor.reset(options.clone(), window, cx));
-                assert_eq!(editor.read(cx).options(cx).unwrap(), options);
+                // Without inherit the other fields read back as their defaults.
+                assert_eq!(editor.read(cx).options(cx).unwrap().proxy, options.proxy);
             }
             editor.update(cx, |editor, cx| {
                 editor.reset(Default::default(), window, cx)
