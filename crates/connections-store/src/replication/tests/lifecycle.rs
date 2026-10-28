@@ -33,15 +33,20 @@ async fn a_restart_continues_from_the_persisted_state_without_resending(
     );
 }
 
+impl Fixture {
+    fn detach(&self, cx: &mut gpui::TestAppContext, departure: Departure) {
+        self.replication
+            .update(cx, |replication, cx| replication.detach(departure, cx));
+        cx.run_until_parked();
+    }
+}
+
 #[gpui::test]
-async fn detaching_stops_synchronizing_and_forgets_the_agreement(cx: &mut gpui::TestAppContext) {
+async fn stopping_stops_synchronizing_and_forgets_the_agreement(cx: &mut gpui::TestAppContext) {
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    fixture
-        .replication
-        .update(cx, |replication, cx| replication.detach(cx));
-    cx.run_until_parked();
+    fixture.detach(cx, Departure::Stopped);
     assert!(matches!(fixture.status(cx), ReplicationStatus::Detached));
     let local = profile("local");
     fixture.save(cx, local.clone()).await;
@@ -60,16 +65,27 @@ async fn detaching_stops_synchronizing_and_forgets_the_agreement(cx: &mut gpui::
 }
 
 #[gpui::test]
-async fn detaching_takes_the_profiles_of_that_replica_off_the_device(
+async fn stopping_keeps_every_profile_on_the_device(cx: &mut gpui::TestAppContext) {
+    let (agreed, edited) = (profile("agreed"), profile("edited"));
+    let fixture = Fixture::new(cx, &[agreed.clone(), edited.clone()]);
+    fixture.attach(cx);
+    fixture.replica.set_offline(true);
+    let unsent = at_host(&edited, "unsent.example");
+    fixture.save(cx, unsent.clone()).await;
+    fixture.detach(cx, Departure::Stopped);
+    assert_eq!(fixture.local(cx, &agreed), Some(agreed.clone()));
+    assert_eq!(fixture.local(cx, &edited), Some(unsent));
+    assert_eq!(fixture.replica.profile(agreed.id), Some(agreed));
+}
+
+#[gpui::test]
+async fn switching_takes_the_unchanged_profiles_of_that_replica_off_the_device(
     cx: &mut gpui::TestAppContext,
 ) {
     let agreed = profile("agreed");
     let fixture = Fixture::new(cx, std::slice::from_ref(&agreed));
     fixture.attach(cx);
-    fixture
-        .replication
-        .update(cx, |replication, cx| replication.detach(cx));
-    cx.run_until_parked();
+    fixture.detach(cx, Departure::Switched);
     assert_eq!(fixture.local(cx, &agreed), None);
     assert_eq!(fixture.replica.profile(agreed.id), Some(agreed.clone()));
     fixture.attach(cx);
@@ -77,13 +93,38 @@ async fn detaching_takes_the_profiles_of_that_replica_off_the_device(
 }
 
 #[gpui::test]
+async fn a_profile_edited_but_not_yet_sent_survives_a_switch_and_goes_to_the_next_account(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (agreed, edited) = (profile("agreed"), profile("edited"));
+    let fixture = Fixture::new(cx, &[agreed.clone(), edited.clone()]);
+    fixture.attach(cx);
+    fixture.replica.set_offline(true);
+    let unsent = at_host(&edited, "unsent.example");
+    fixture.save(cx, unsent.clone()).await;
+    fixture.detach(cx, Departure::Switched);
+    assert_eq!(fixture.local(cx, &agreed), None);
+    assert_eq!(fixture.local(cx, &edited), Some(unsent.clone()));
+    let second = Arc::new(MemoryReplica::new());
+    fixture
+        .replication
+        .update(cx, |replication, cx| replication.attach(second.clone(), cx));
+    cx.run_until_parked();
+    assert_eq!(second.profile(edited.id), Some(unsent));
+    assert_eq!(second.profile(agreed.id), None);
+    assert_eq!(
+        fixture.replica.profile(edited.id),
+        Some(edited),
+        "the first account keeps what it was sent"
+    );
+}
+
+#[gpui::test]
 async fn attaching_another_replica_moves_synchronization_to_it(cx: &mut gpui::TestAppContext) {
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    fixture
-        .replication
-        .update(cx, |replication, cx| replication.detach(cx));
+    fixture.detach(cx, Departure::Switched);
     let second = Arc::new(MemoryReplica::new());
     fixture
         .replication

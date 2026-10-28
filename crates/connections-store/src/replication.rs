@@ -14,7 +14,7 @@ use crate::ConnectionStore;
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_connections_model::{
-    profiles::ProfileId,
+    profiles::{Profile, ProfileId},
     replica::{ProfileReplica, ReplicaScope, ReplicaSpace, ReplicaState},
 };
 use nocterm_store::{Persisted, Publication, SnapshotWriter};
@@ -33,6 +33,16 @@ enum Announced {
     Skipped(ProfileId),
     /// The replica refused a local profile that has no agreed version to go back to.
     Refused(ProfileId),
+}
+
+/// Why a replica is detached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Departure {
+    /// No account is used any more; every profile stays on this device.
+    Stopped,
+    /// Another account is used next; what the leaving account agreed to, and the user did
+    /// not change, leaves the device so it is never offered to the other account.
+    Switched,
 }
 
 pub struct ProfileReplication {
@@ -106,23 +116,43 @@ impl ProfileReplication {
 
     /// Stops synchronizing and forgets what was agreed with that replica: the
     /// agreement and the feed position mean nothing to another account's replica.
-    /// The profiles agreed with it leave this device too, since they belong to that
-    /// account and come back when it is attached again; profiles never agreed with it
-    /// stay.
-    pub fn detach(&mut self, cx: &mut Context<Self>) {
+    /// Every profile stays on this device, as a local one, unless `departure` says
+    /// another account takes over: then the profiles that still are what was agreed
+    /// with the leaving account go, since they belong to it and come back when it is
+    /// attached again. A profile edited since, or never agreed, is the user's data
+    /// and stays.
+    pub fn detach(&mut self, departure: Departure, cx: &mut Context<Self>) {
         self.stop(cx);
-        let agreed: Vec<ProfileId> = self
+        if departure == Departure::Switched {
+            self.release_agreed(cx);
+        }
+        self.state.update(cx, |state, cx| {
+            if let Err(error) = state.update_latest(|state| *state = ReplicaState::default(), cx) {
+                tracing::error!(%error, "could not reset the profile replica state");
+            }
+        });
+        self.set_status(ReplicationStatus::Detached, cx);
+    }
+
+    /// Removes the profiles that equal what was agreed with the detached replica. Each
+    /// comparison and removal is one step, so an edit made meanwhile is never removed
+    /// unseen; the next round waits for the removals.
+    fn release_agreed(&mut self, cx: &mut Context<Self>) {
+        let agreed: Vec<(ProfileId, Profile)> = self
             .state
             .read(cx)
             .visible()
             .entries()
-            .map(|(id, _)| id)
+            .map(|(id, entry)| (id, entry.profile.clone()))
             .collect();
         let removals: Vec<_> = self.store.update(cx, |store, cx| {
-            agreed
-                .into_iter()
-                .map(|id| store.delete_profile(id, cx))
-                .collect()
+            let mut removals = Vec::new();
+            for (id, profile) in agreed {
+                if store.profiles(cx).get(id) == Some(&profile) {
+                    removals.push(store.delete_profile(id, cx));
+                }
+            }
+            removals
         });
         self.leaving = Some(cx.spawn(async move |_, _| {
             for removal in removals {
@@ -131,12 +161,6 @@ impl ProfileReplication {
                 }
             }
         }));
-        self.state.update(cx, |state, cx| {
-            if let Err(error) = state.update_latest(|state| *state = ReplicaState::default(), cx) {
-                tracing::error!(%error, "could not reset the profile replica state");
-            }
-        });
-        self.set_status(ReplicationStatus::Detached, cx);
     }
 
     pub fn status(&self) -> &ReplicationStatus {
