@@ -19,7 +19,6 @@ Contributions of the window shell and its core features. They are not plugins an
 
 | Id | Kind | Title | Zone | Order | Group | Auto | Pinned |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `hubs.sessions` | panel | Sessions | left | 5 | `navigation` | show | no |
 | `connections.servers` | panel | Connections | left | 10 | `navigation` | show | no |
 | `files.explorer` | panel | Explorer | left | 20 | `navigation` | show | no |
 | `workspace.notifications` | widget | Notifications | right | 10 | none | show | yes |
@@ -103,3 +102,13 @@ Chats with coding agents in the side panel
 | Id | Kind | Title | Zone | Order | Group | Auto | Pinned |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `agent.chats` | panel | AI Agents | right | 40 | `assistant` | show | no |
+
+## Hubs
+
+Plugin `hubs`. Required: no. Enabled by default: yes.
+
+Terminal sessions on the machines of a nocterm hub
+
+| Id | Kind | Title | Zone | Order | Group | Auto | Pinned |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `hubs.sessions` | panel | Sessions | left | 70 | `navigation` | tray | no |
