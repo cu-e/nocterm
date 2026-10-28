@@ -1,23 +1,19 @@
-//! Fixtures the tests of this crate share: a window over a [`FakeHub`], and a recording
-//! stand-in for the port the application implements.
+//! Fixtures the tests of this crate share: a window over a [`FakeHub`].
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Context, ElementId, Entity, Focusable as _, SharedString,
-    TestAppContext, Window, WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
+    AnyWindowHandle, AppContext as _, ElementId, Entity, Focusable as _, TestAppContext,
+    WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use nocterm_hubs_model::testing::{FakeAdminKeys, FakeHub, FakeServer};
 use nocterm_hubs_model::{HubAddress, HubId, HubRecord, HubsSettings};
-use nocterm_session::{Target, Transport};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
 use nocterm_ui::DesignTokens;
 use nocterm_workspace::{Workspace, test_support::deps_for};
 
-use crate::{HubTabError, HubTerminalOpener, Installed, install, plugin, register};
+use crate::{Installed, install, register};
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
 
@@ -43,40 +39,12 @@ pub(crate) fn pinned_record() -> HubRecord {
     server().pinned_record("Home")
 }
 
-/// Remembers the tabs the views asked for.
-#[derive(Default)]
-pub(crate) struct RecordingTerminals {
-    tabs: RefCell<Vec<(SharedString, Target)>>,
-}
-
-impl RecordingTerminals {
-    pub(crate) fn tabs(&self) -> Vec<(SharedString, Target)> {
-        self.tabs.borrow().clone()
-    }
-}
-
-impl HubTerminalOpener for RecordingTerminals {
-    fn open(
-        &self,
-        _: &mut Workspace,
-        title: SharedString,
-        target: Target,
-        _: Arc<dyn Transport>,
-        _: &mut Window,
-        _: &mut Context<Workspace>,
-    ) -> Result<(), HubTabError> {
-        self.tabs.borrow_mut().push((title, target));
-        Ok(())
-    }
-}
-
 pub(crate) struct Fixture {
     pub(crate) window: AnyWindowHandle,
     pub(crate) workspace: Entity<Workspace>,
     pub(crate) hub: FakeHub,
     pub(crate) admin_keys: FakeAdminKeys,
     pub(crate) installed: Installed,
-    pub(crate) terminals: Rc<RecordingTerminals>,
 }
 
 /// A window over `hub`, with `known` servers in the settings. The hub is signed in to when
@@ -102,7 +70,6 @@ pub(crate) fn fixture_over(
     if let Some(user) = signed_in {
         hub.sign_in_as(&hub_id(), user);
     }
-    let terminals = Rc::new(RecordingTerminals::default());
     let admin_keys = FakeAdminKeys::alongside(&hub);
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -125,7 +92,7 @@ pub(crate) fn fixture_over(
         ));
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| Workspace::new(deps_for(&[&plugin::PLUGIN], cx), window, cx))
+                cx.new(|cx| Workspace::new(deps_for(&[], cx), window, cx))
             })
             .unwrap();
         (window, workspace, installed)
@@ -137,7 +104,6 @@ pub(crate) fn fixture_over(
         hub,
         admin_keys,
         installed,
-        terminals,
     };
     setup.compose(cx);
     cx.run_until_parked();
@@ -146,32 +112,12 @@ pub(crate) fn fixture_over(
 
 impl Fixture {
     fn compose(&self, cx: &mut TestAppContext) {
-        cx.update_window(self.window, |_, window, cx| {
-            self.workspace.update(cx, |workspace, cx| {
-                register(
-                    &self.installed,
-                    self.terminals.clone(),
-                    workspace,
-                    window,
-                    cx,
-                )
-                .unwrap();
+        cx.update_window(self.window, |_, _, cx| {
+            self.workspace.update(cx, |workspace, _| {
+                register(&self.installed, workspace);
             });
         })
         .unwrap();
-    }
-
-    /// Shows the sessions panel and leaves it showing when it already does: the sidebar of
-    /// this window has no other panel, so it opens on this one.
-    pub(crate) fn open_sessions(&self, cx: &mut TestAppContext) {
-        cx.update_window(self.window, |_, window, cx| {
-            self.workspace.update(cx, |workspace, cx| {
-                workspace.open_panel(&plugin::SESSIONS.id, window, cx);
-            });
-        })
-        .unwrap();
-        self.render(cx);
-        self.render(cx);
     }
 
     /// Draws the window.

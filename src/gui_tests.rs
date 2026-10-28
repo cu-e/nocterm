@@ -19,7 +19,6 @@ mod chat_history;
 mod default_shell_geometry;
 mod hub_account;
 mod hub_live;
-mod hub_sessions;
 mod keymap;
 mod menu_layouts;
 mod menu_tabs;
