@@ -59,28 +59,61 @@ impl ConnectionWriters {
         }
     }
 }
+/// What the connections need besides documents and writers: the same for the saved list of
+/// this computer and for a list kept only in memory, so a window can be given either.
+#[derive(Clone)]
+pub struct ConnectionInputs {
+    editor: EditorInputs,
+    clock: Arc<dyn ConnectionClock>,
+    observations: ObservationDeps,
+}
+impl ConnectionInputs {
+    pub fn new(
+        editor: EditorInputs,
+        clock: Arc<dyn ConnectionClock>,
+        observations: ObservationDeps,
+    ) -> Self {
+        Self {
+            editor,
+            clock,
+            observations,
+        }
+    }
+    /// The editor offers the keys of `keys` instead of reporting no vault.
+    pub fn with_keys(mut self, keys: Arc<dyn VaultSshKeys>) -> Self {
+        self.editor = self.editor.with_keys(keys);
+        self
+    }
+}
 pub struct PreparedConnections {
     documents: LoadedConnections,
     writers: Option<ConnectionWriters>,
-    inputs: EditorInputs,
-    clock: Arc<dyn ConnectionClock>,
-    observations: ObservationDeps,
+    inputs: ConnectionInputs,
 }
 impl PreparedConnections {
     pub fn new(
         documents: LoadedConnections,
         writers: ConnectionWriters,
-        inputs: EditorInputs,
-        clock: Arc<dyn ConnectionClock>,
-        observations: ObservationDeps,
+        inputs: ConnectionInputs,
     ) -> Self {
         Self {
             documents,
             writers: Some(writers),
             inputs,
-            clock,
-            observations,
         }
+    }
+    /// An empty list kept only in memory, for a list that something else keeps: it writes
+    /// nothing, and new connections get the identifiers `inputs` supplies.
+    pub fn volatile(inputs: ConnectionInputs) -> Self {
+        Self {
+            documents: LoadedConnections::default(),
+            writers: None,
+            inputs,
+        }
+    }
+    /// The inputs these connections were prepared with, to prepare another list the same way.
+    pub fn inputs(&self) -> ConnectionInputs {
+        self.inputs.clone()
     }
     /// The editor offers the keys of `keys` instead of reporting no vault.
     pub fn with_keys(mut self, keys: Arc<dyn VaultSshKeys>) -> Self {
@@ -92,17 +125,20 @@ impl PreparedConnections {
     }
     pub fn memory_with_keys(defaults: EditorDefaults, keys: Arc<dyn VaultSshKeys>) -> Self {
         let values = Arc::new(SuppliedValues::new(1, 0));
-        Self {
-            documents: LoadedConnections::default(),
-            writers: None,
-            inputs: EditorInputs::new(defaults, values.clone()).with_keys(keys),
-            clock: values,
-            observations: ObservationDeps::offline(),
-        }
+        Self::volatile(ConnectionInputs::new(
+            EditorInputs::new(defaults, values.clone()).with_keys(keys),
+            values,
+            ObservationDeps::offline(),
+        ))
     }
     pub(crate) fn into_owners(self) -> (Connections, EditorInputs, FactsPrepared) {
         let profiles = self.documents.profiles;
         let recents = self.documents.recents;
+        let ConnectionInputs {
+            editor,
+            clock,
+            observations,
+        } = self.inputs;
         let (connections, facts) = match self.writers {
             Some(writers) => (
                 Connections::prepared(
@@ -111,15 +147,15 @@ impl PreparedConnections {
                     writers.profiles,
                     writers.recents,
                     self.documents.read_only,
-                    self.clock,
+                    clock,
                 ),
-                FactsPrepared::new(self.documents.known, writers.facts, self.observations),
+                FactsPrepared::new(self.documents.known, writers.facts, observations),
             ),
             None => (
-                Connections::memory_with_clock(profiles, recents, self.clock),
-                FactsPrepared::in_memory(self.observations),
+                Connections::memory_with_clock(profiles, recents, clock),
+                FactsPrepared::in_memory(observations),
             ),
         };
-        (connections, self.inputs, facts)
+        (connections, editor, facts)
     }
 }

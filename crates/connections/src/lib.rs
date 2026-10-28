@@ -31,7 +31,7 @@
 mod installed;
 mod session_intents;
 pub use credential_spaces::CredentialSpaces;
-pub use installed::{Installed, install};
+pub use installed::{Installed, install, install_volatile};
 pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;
 mod credential_spaces;
@@ -46,10 +46,12 @@ pub mod plugin;
 mod prepared;
 mod probe_sources;
 mod spaces;
-pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
+pub use prepared::{ConnectionInputs, ConnectionWriters, EditorInputs, PreparedConnections};
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod volatile_tests;
 
 use gpui_kit::{Context, Window, prelude::*};
 use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};
