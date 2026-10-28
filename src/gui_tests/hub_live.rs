@@ -81,6 +81,7 @@ fn boot(links: &Arc<HubLinks>, cx: &mut TestAppContext) -> (Booted, Saved) {
         trust: links.clone(),
         sign_in: links.clone(),
         sessions: links.clone(),
+        admin_keys: links.clone(),
     };
     let booted = cx.update(|cx| {
         boot_with_ports_and_probe(
