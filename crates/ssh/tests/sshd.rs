@@ -42,10 +42,10 @@ mod host_keys;
 #[path = "cases/jump.rs"]
 mod jump;
 
-#[path = "cases/vault_key.rs"]
-mod vault_key;
 #[path = "cases/hub_relay.rs"]
 mod hub_relay;
+#[path = "cases/vault_key.rs"]
+mod vault_key;
 
 use nocterm_session::{
     Auth, CloseReason, ConnectRequest, EntryKind, Event, HostKeyDecision, Prompt, Secret,
