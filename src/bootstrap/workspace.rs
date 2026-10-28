@@ -1,0 +1,100 @@
+//! Plugs the features into the workspace of one window.
+
+use std::rc::Rc;
+
+use gpui_kit::{Context, Window};
+use nocterm_workspace::Workspace;
+
+use super::{Booted, report_registration};
+use crate::window_sources::WindowSources;
+
+/// Plugs every feature into a new window's workspace.
+///
+/// What depends on the window's source (connections, terminal, vault and their settings
+/// pages) comes from `sources`; the rest is shared by every window and comes from `booted`.
+pub(crate) fn build_workspace(
+    workspace: &mut Workspace,
+    booted: &Booted,
+    sources: &WindowSources,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let vault = sources.vault().map(Rc::as_ref);
+    nocterm_terminal::register(sources.terminal(), workspace);
+    if let Some(connections) = sources.connections() {
+        report_registration(
+            "connections",
+            nocterm_connections::register(connections, workspace, window, cx),
+        );
+        workspace.set_chat_connection_opener(crate::project_setup::chat_connection_opener(
+            sources.terminal(),
+            connections,
+        ));
+    }
+    sources
+        .settings()
+        .register(workspace, booted.themes().clone());
+    report_registration(
+        "files",
+        nocterm_files::register(&booted.files, workspace, window, cx),
+    );
+    if let Some(snippets) = &booted.snippets {
+        report_registration(
+            "snippets",
+            nocterm_snippets_ui::register(workspace, snippets, window, cx),
+        );
+    }
+    report_registration(
+        "containers",
+        nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx),
+    );
+    // Workspaces, like containers and files, work over the connection the window opened,
+    // whichever source that connection came from.
+    if let Some(projects) = &booted.projects {
+        report_registration(
+            "projects",
+            nocterm_projects::register(workspace, projects, window, cx),
+        );
+    }
+    let user = booted.user_plugins.window(&booted.files);
+    report_registration(
+        "monitor",
+        user.register_monitor(&booted.monitor, workspace, window, cx),
+    );
+    report_registration(
+        "agent",
+        nocterm_agent::register(workspace, booted.agent.clone(), window, cx),
+    );
+    workspace.set_menu_builder(crate::app_menus::build, window, cx);
+    if let Some(hubs) = booted.hubs() {
+        report_registration(
+            "hubs",
+            nocterm_hubs_ui::register(
+                hubs,
+                Rc::new(crate::shell_setup::AppHubTerminals::new(
+                    sources.terminal().clone(),
+                )),
+                workspace,
+                window,
+                cx,
+            ),
+        );
+    }
+    user.attach(workspace, window, cx);
+    if let Some(vault) = vault
+        && vault
+            .settings()
+            .setting::<nocterm_vault_ui::VaultSettings>(cx)
+            .prompt_on_startup
+        && let Some(pages) = sources.settings().startup()
+    {
+        nocterm_settings_ui::open_page(
+            workspace,
+            "vault",
+            pages,
+            sources.settings().installed(),
+            window,
+            cx,
+        );
+    }
+}

@@ -467,7 +467,13 @@ fn open_workspace(
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
-            crate::bootstrap::build_workspace(&mut workspace, booted, window, cx);
+            crate::bootstrap::build_workspace(
+                &mut workspace,
+                booted,
+                &booted.local_sources(),
+                window,
+                cx,
+            );
             workspace
         })
     })
