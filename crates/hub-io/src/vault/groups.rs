@@ -14,7 +14,7 @@ use nocterm_hubs_model::HubError;
 use nocterm_session::Secret;
 use nocterm_vault::{CredentialBinding, CredentialGroup, CredentialInfo, VaultError};
 
-use super::codec::{self, Decoded};
+use super::codec::{self, Decoded, Record};
 use super::ledger::vault_error;
 use crate::cache::ObjectCopy;
 use crate::classify::unreachable;
@@ -139,27 +139,99 @@ impl Groups {
         Ok(listed)
     }
 
-    /// The group that holds `object_id`, if any.
+    /// The group that holds `object_id`, if any. A group that holds it live answers before
+    /// one that only keeps a tombstone of it, such as the group it was moved out of.
     pub(super) fn owner_of(&self, object_id: &str) -> Result<Option<Owner>, VaultError> {
+        let mut deleted = None;
         for snapshot in self.held().values() {
-            let Some(object) = snapshot.objects.get(object_id) else {
+            let Some(owner) = Self::owner_in_snapshot(snapshot, object_id)? else {
                 continue;
             };
-            let held = if object.deleted {
-                Held::Deleted
-            } else {
-                match snapshot.open(object_id, object)? {
-                    Some(Decoded::Known(_)) => Held::Known,
-                    _ => Held::Unreadable,
-                }
-            };
-            return Ok(Some(Owner {
-                group: snapshot.group.clone(),
-                version: object.version,
-                held,
-            }));
+            if !matches!(owner.held, Held::Deleted) {
+                return Ok(Some(owner));
+            }
+            deleted.get_or_insert(owner);
         }
-        Ok(None)
+        Ok(deleted)
+    }
+
+    /// What the group of collection `collection_id` holds under `object_id`, if anything.
+    pub(super) fn owner_in(
+        &self,
+        collection_id: &str,
+        object_id: &str,
+    ) -> Result<Option<Owner>, VaultError> {
+        match self.held().get(collection_id) {
+            Some(snapshot) => Self::owner_in_snapshot(snapshot, object_id),
+            None => Ok(None),
+        }
+    }
+
+    /// A write target in the group of organization `org_id`: what it holds under
+    /// `object_id`, or a fresh record when it holds nothing. `None` when the account holds
+    /// no key of that group.
+    pub(super) fn target(
+        &self,
+        org_id: &str,
+        object_id: &str,
+    ) -> Result<Option<Owner>, VaultError> {
+        let held = self.held();
+        let Some(snapshot) = held
+            .values()
+            .find(|snapshot| snapshot.group.org_id == org_id)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(match Self::owner_in_snapshot(snapshot, object_id)? {
+            Some(owner) => owner,
+            None => Owner {
+                group: snapshot.group.clone(),
+                version: 0,
+                held: Held::Deleted,
+            },
+        }))
+    }
+
+    fn owner_in_snapshot(
+        snapshot: &Snapshot,
+        object_id: &str,
+    ) -> Result<Option<Owner>, VaultError> {
+        let Some(object) = snapshot.objects.get(object_id) else {
+            return Ok(None);
+        };
+        let held = if object.deleted {
+            Held::Deleted
+        } else {
+            match snapshot.open(object_id, object)? {
+                Some(Decoded::Known(_)) => Held::Known,
+                _ => Held::Unreadable,
+            }
+        };
+        Ok(Some(Owner {
+            group: snapshot.group.clone(),
+            version: object.version,
+            held,
+        }))
+    }
+
+    /// The credential `object_id` as the group of `collection_id` holds it, when it is
+    /// held live and readable.
+    pub(super) fn record(
+        &self,
+        collection_id: &str,
+        object_id: &str,
+    ) -> Result<Option<Record>, VaultError> {
+        let held = self.held();
+        let Some(snapshot) = held.get(collection_id) else {
+            return Ok(None);
+        };
+        let Some(object) = snapshot.objects.get(object_id) else {
+            return Ok(None);
+        };
+        Ok(match snapshot.open(object_id, object)? {
+            Some(Decoded::Known(record)) => Some(record),
+            Some(Decoded::Unrecognized) | None => None,
+        })
     }
 
     /// The secret of a group's credential, when it answers for `binding`.

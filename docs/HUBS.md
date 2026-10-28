@@ -88,14 +88,19 @@ change).
   **Folder**. **Personal** keeps the connection to yourself; an organization's name shares it with
   the group. Choosing another space moves the connection: it is removed from the old one and
   written to the new one, and the move yields to a change someone else made in the meantime.
-- Saved vault passwords of a group are listed in the vault with the group's name, and **read-only**
-  for a Guest. Changing one writes it back to its group, never to your own vault. A new password
-  always goes to your own vault.
+- Saved vault passwords and keys of a group are listed in the vault with the group's name, and
+  **read-only** for a Guest. Changing one writes it back to its group, never to your own vault.
+  A key or password you create for a connection starts in your own vault; when the connection is
+  saved in an organization's space it moves into that group's vault, sealed with the group's key,
+  so the other members can use it, and it is no longer in yours. Moving a connection from one
+  space to another moves its keys and passwords with it, before the connection itself; a space
+  you may not write refuses both, and nothing moves. A key or password that a connection shares
+  with another one moves with whichever connection moves first.
 - When the server refuses a change (your role was lowered, or the group was closed), the connection
   returns to the version on the server and a single notice says so; a new connection the server
   refuses stays in your personal space. Nothing is retried in a loop.
-- Folders are a name on the connection, so renaming or deleting a folder also reaches connections
-  of a group that use the same folder name.
+- Renaming, disbanding or deleting a folder acts on the connections of the space you clicked it
+  in; a folder of the same name in another space is left alone.
 
 ## Sessions panel
 

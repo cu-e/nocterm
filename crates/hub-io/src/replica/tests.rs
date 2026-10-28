@@ -26,7 +26,8 @@ struct Device {
 fn device(hub: &Arc<MemoryHub>) -> (Device, nocterm_hub_proto::v1::AccountKeyset) {
     let dir = tempfile::tempdir().unwrap();
     let (_accounts, slot, record) = signed_in(dir.path());
-    let replica = HubProfileReplica::new(Handle::current(), Arc::clone(&slot), hub.clone());
+    let ledger = Arc::new(Ledger::new(Arc::clone(&slot), hub.clone()));
+    let replica = HubProfileReplica::new(Handle::current(), Arc::clone(&slot), hub.clone(), ledger);
     (
         Device {
             replica,
@@ -51,7 +52,8 @@ async fn a_profile_put_on_one_device_arrives_on_another() {
 
     let dir = tempfile::tempdir().unwrap();
     let (_accounts, slot) = second_device(dir.path(), &record);
-    let second = HubProfileReplica::new(Handle::current(), slot, hub.clone());
+    let ledger = Arc::new(Ledger::new(Arc::clone(&slot), hub.clone()));
+    let second = HubProfileReplica::new(Handle::current(), slot, hub.clone(), ledger);
     let page = second.changes(None).await.unwrap();
     assert!(!page.more);
     assert_eq!(page.changes.len(), 1);

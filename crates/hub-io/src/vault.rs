@@ -24,7 +24,7 @@ use nocterm_vault::{
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 
-use self::ledger::Ledger;
+pub(crate) use self::ledger::{Ledger, Space};
 use self::unlock::Unlocker;
 use crate::account::Slot;
 use crate::store::StoreOps;
@@ -102,6 +102,11 @@ impl HubVault {
             handle,
             slot,
         }
+    }
+
+    /// The credentials of the account, which the profile replica moves between spaces.
+    pub(crate) fn ledger(&self) -> Arc<Ledger> {
+        Arc::clone(&self.ledger)
     }
 
     /// Runs `work` on the adapter's threads, then counts it as use of the vault.

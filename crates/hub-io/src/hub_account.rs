@@ -20,13 +20,14 @@ pub struct HubAccount {
 impl HubAccount {
     pub(crate) fn new(handle: Handle, pool: Arc<Pool>, slot: Arc<Slot>) -> Self {
         let ops: Arc<dyn StoreOps> = Arc::new(HubStore::new(pool, slot.hub().clone()));
+        let vault = Arc::new(HubVault::new(
+            handle.clone(),
+            Arc::clone(&slot),
+            Arc::clone(&ops),
+        ));
         Self {
-            replica: Arc::new(HubProfileReplica::new(
-                handle.clone(),
-                Arc::clone(&slot),
-                Arc::clone(&ops),
-            )),
-            vault: Arc::new(HubVault::new(handle, slot, ops)),
+            replica: Arc::new(HubProfileReplica::new(handle, slot, ops, vault.ledger())),
+            vault,
         }
     }
 

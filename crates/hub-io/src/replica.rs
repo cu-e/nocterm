@@ -23,6 +23,8 @@ use nocterm_connections_model::replica::{
 };
 use nocterm_core::SharedCause;
 use nocterm_hubs_model::HubError;
+use nocterm_session::CredentialId;
+use nocterm_vault::VaultError;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
@@ -31,6 +33,7 @@ use crate::account::{OpenKeys, Slot};
 use crate::classify::unreachable;
 use crate::store::{Layout, Located, OpError, PROFILES_KIND, Store, StoreOps};
 use crate::task::spawn;
+use crate::vault::{Ledger, Space};
 
 /// The spaces as the last synchronization found them.
 type Spaces = Arc<Mutex<Vec<ReplicaSpace>>>;
@@ -40,6 +43,8 @@ pub struct HubProfileReplica {
     slot: Arc<Slot>,
     ops: Arc<dyn StoreOps>,
     spaces: Spaces,
+    /// The vaults, which move a profile's secrets with it.
+    ledger: Arc<Ledger>,
 }
 
 /// A failure of a store call as the replica reports it. `id` names the profile a write was
@@ -55,12 +60,18 @@ fn replica_error(error: OpError, id: Option<ProfileId>) -> ReplicaError {
 }
 
 impl HubProfileReplica {
-    pub(crate) fn new(handle: Handle, slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
+    pub(crate) fn new(
+        handle: Handle,
+        slot: Arc<Slot>,
+        ops: Arc<dyn StoreOps>,
+        ledger: Arc<Ledger>,
+    ) -> Self {
         Self {
             handle,
             slot,
             ops,
             spaces: Spaces::default(),
+            ledger,
         }
     }
 
@@ -221,7 +232,41 @@ async fn delete(
     Ok(ReplicaVersion::new(stored.version))
 }
 
+fn space_of(scope: ReplicaScope) -> Space {
+    match scope {
+        ReplicaScope::Personal => Space::Personal,
+        ReplicaScope::Organization(org_id) => Space::Group(org_id),
+    }
+}
+
+/// A failure of a vault call as the replica reports it: a vault that is read-only, or holds
+/// no key of the group, refuses the write like the group's profiles would.
+fn carry_error(error: VaultError, id: ProfileId) -> ReplicaError {
+    match error {
+        VaultError::ReadOnly => ReplicaError::Forbidden { id },
+        VaultError::Locked | VaultError::Offline => ReplicaError::Unavailable,
+        VaultError::Conflict => ReplicaError::Conflict { id },
+        other => ReplicaError::Other(SharedCause::new(other)),
+    }
+}
+
 impl ProfileReplica for HubProfileReplica {
+    fn carry(
+        &self,
+        id: ProfileId,
+        from: ReplicaScope,
+        to: ReplicaScope,
+        credentials: Vec<CredentialId>,
+    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+        let ledger = Arc::clone(&self.ledger);
+        self.run(async move {
+            ledger
+                .carry(&space_of(from), &space_of(to), &credentials)
+                .await
+                .map_err(|error| carry_error(error, id))
+        })
+    }
+
     fn changes(
         &self,
         after: Option<ReplicaCursor>,

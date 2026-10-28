@@ -28,7 +28,7 @@ use crate::store::{Located, OpError, Store, StoreOps, VAULT_KIND};
 /// How often a write retries after another device changed the same record.
 const WRITE_ATTEMPTS: usize = 2;
 
-pub(super) struct Ledger {
+pub(crate) struct Ledger {
     slot: Arc<Slot>,
     ops: Arc<dyn StoreOps>,
     groups: Groups,
@@ -46,7 +46,7 @@ pub(super) fn vault_error(error: OpError) -> VaultError {
 }
 
 impl Ledger {
-    pub(super) fn new(slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
+    pub(crate) fn new(slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
         Self {
             slot,
             ops,
@@ -58,9 +58,10 @@ impl Ledger {
         Store::new(Arc::clone(&self.ops), Arc::clone(keys))
     }
 
+    /// Whether the personal vault holds `object_id` live; a tombstone is held by no one.
     fn in_personal(&self, object_id: &str) -> bool {
         self.cached()
-            .is_some_and(|vault| vault.objects.contains_key(object_id))
+            .is_some_and(|vault| vault.objects.get(object_id).is_some_and(|o| !o.deleted))
     }
 
     /// The group that holds `object_id`, unless the personal vault holds it.
@@ -78,7 +79,7 @@ impl Ledger {
 
     /// Writes (`plaintext`) or deletes (`None`) a record of a group, with that group's key.
     /// A guest's write is refused before any call.
-    async fn write_group(
+    pub(super) async fn write_group(
         &self,
         store: &Store,
         object_id: &str,
@@ -105,7 +106,7 @@ impl Ledger {
                     self.groups.sync(store).await?;
                     owner = self
                         .groups
-                        .owner_of(object_id)?
+                        .owner_in(owner.group.at.id(), object_id)?
                         .ok_or(VaultError::NotFound)?;
                 }
                 Err(error) => return Err(vault_error(error)),
@@ -223,9 +224,12 @@ impl Ledger {
         let keys = self.keys()?;
         self.sync(&keys).await?;
         let object_id = id.to_string();
-        let personal = self
-            .cached()
-            .filter(|vault| vault.objects.contains_key(&object_id));
+        let personal = self.cached().filter(|vault| {
+            vault
+                .objects
+                .get(&object_id)
+                .is_some_and(|object| !object.deleted)
+        });
         let Some(vault) = personal else {
             self.groups.sync(&self.store(&keys)).await?;
             return self.groups.secret(&object_id, &binding);
@@ -261,15 +265,25 @@ impl Ledger {
                 .await?;
             return Ok(id);
         }
+        self.write_personal(&keys, &store, &object_id, &plaintext)
+            .await?;
+        Ok(id)
+    }
+
+    /// Writes a record of the personal vault, whatever a group holds under the same id.
+    pub(super) async fn write_personal(
+        &self,
+        keys: &Arc<OpenKeys>,
+        store: &Store,
+        object_id: &str,
+        plaintext: &[u8],
+    ) -> Result<(), VaultError> {
         for attempt in 1..=WRITE_ATTEMPTS {
             let at = store.ensure(VAULT_KIND).await.map_err(vault_error)?;
-            self.pull(&store, &at).await?;
-            let expected = self.expected(&keys, &object_id, true)?;
-            match store.put(&at, KIND, &object_id, &plaintext, expected).await {
-                Ok(_) => {
-                    self.pull(&store, &at).await?;
-                    return Ok(id);
-                }
+            self.pull(store, &at).await?;
+            let expected = self.expected(keys, object_id, true)?;
+            match store.put(&at, KIND, object_id, plaintext, expected).await {
+                Ok(_) => return self.pull(store, &at).await,
                 Err(OpError::Conflict) if attempt < WRITE_ATTEMPTS => {}
                 Err(error) => return Err(vault_error(error)),
             }
@@ -284,16 +298,26 @@ impl Ledger {
         if let Some(owner) = self.group_owner(&store, &object_id).await? {
             return self.write_group(&store, &object_id, None, owner).await;
         }
+        self.remove_personal(&keys, &store, &object_id).await
+    }
+
+    /// Deletes a record of the personal vault, whatever a group holds under the same id.
+    pub(super) async fn remove_personal(
+        &self,
+        keys: &Arc<OpenKeys>,
+        store: &Store,
+        object_id: &str,
+    ) -> Result<(), VaultError> {
         for attempt in 1..=WRITE_ATTEMPTS {
             let at = store
                 .find(VAULT_KIND)
                 .await
                 .map_err(vault_error)?
                 .ok_or(VaultError::NotFound)?;
-            self.pull(&store, &at).await?;
-            let expected = self.expected(&keys, &object_id, false)?;
-            match store.remove(&at, &object_id, expected).await {
-                Ok(_) => return self.pull(&store, &at).await,
+            self.pull(store, &at).await?;
+            let expected = self.expected(keys, object_id, false)?;
+            match store.remove(&at, object_id, expected).await {
+                Ok(_) => return self.pull(store, &at).await,
                 Err(OpError::Conflict) if attempt < WRITE_ATTEMPTS => {}
                 Err(error) => return Err(vault_error(error)),
             }
@@ -334,6 +358,9 @@ impl Ledger {
         }
     }
 }
+
+mod carry;
+pub(crate) use carry::Space;
 
 #[cfg(test)]
 mod tests;
