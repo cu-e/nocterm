@@ -77,12 +77,7 @@ fn build(
             Some(writer) => SettingsConfig::with_writer(document, writer),
             None => SettingsConfig::in_memory(document),
         };
-        let settings = config
-            .with(HubsSettings {
-                servers: known,
-                ..Default::default()
-            })
-            .install(cx);
+        let settings = config.with(HubsSettings { servers: known }).install(cx);
         let admin_keys = FakeAdminKeys::alongside(&hub);
         let deps = Deps {
             trust: Arc::new(hub.clone()),

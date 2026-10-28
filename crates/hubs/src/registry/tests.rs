@@ -330,46 +330,6 @@ async fn credentials_that_cannot_be_erased_keep_the_server_listed(cx: &mut TestA
     assert_eq!(fx.status(cx), Some(HubStatus::Online));
 }
 
-#[gpui::test]
-async fn the_account_server_is_chosen_in_one_edit_and_cleared_when_it_is_removed(
-    cx: &mut TestAppContext,
-) {
-    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
-    cx.run_until_parked();
-    assert_eq!(fx.hubs.read_with(cx, |hubs, cx| hubs.account_hub(cx)), None);
-    let before = revision(&fx, cx);
-
-    fx.hubs
-        .update(cx, |hubs, cx| hubs.set_account(Some(&id()), cx))
-        .await
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(revision(&fx, cx), before + 1);
-    assert_eq!(
-        fx.hubs.read_with(cx, |hubs, cx| hubs.account_hub(cx)),
-        Some(id())
-    );
-
-    fx.hubs
-        .update(cx, |hubs, cx| hubs.remove(&id(), cx))
-        .await
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(fx.hubs.read_with(cx, |hubs, cx| hubs.account_hub(cx)), None);
-}
-
-#[gpui::test]
-async fn an_unknown_server_cannot_become_the_account_server(cx: &mut TestAppContext) {
-    let fx = fixture(cx, signed_in_hub(), Vec::new());
-    let before = revision(&fx, cx);
-    let result = fx
-        .hubs
-        .update(cx, |hubs, cx| hubs.set_account(Some(&id()), cx))
-        .await;
-    assert!(matches!(result, Err(HubsError::Unknown(_))));
-    assert_eq!(revision(&fx, cx), before);
-}
-
 fn grace_of_acme(fingerprint: &str) -> PendingAdminKey {
     PendingAdminKey {
         organization: "Acme".to_owned(),

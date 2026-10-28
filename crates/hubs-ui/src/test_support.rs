@@ -68,12 +68,7 @@ pub(crate) fn fixture_over(
     let admin_keys = FakeAdminKeys::alongside(&hub);
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
-        let settings = config
-            .with(HubsSettings {
-                servers: known,
-                ..Default::default()
-            })
-            .install(cx);
+        let settings = config.with(HubsSettings { servers: known }).install(cx);
         nocterm_ui::init(DesignTokens::builtin(), settings.clone(), cx);
         let installed = install(nocterm_hubs::install(
             nocterm_hubs::Deps {
@@ -123,6 +118,8 @@ impl Fixture {
 
     /// Runs `action` as if the focused workspace received it.
     pub(crate) fn dispatch(&self, action: impl gpui_kit::Action, cx: &mut TestAppContext) {
+        // Focus belongs to a drawn tree.
+        self.render(cx);
         cx.update_window(self.window, |_, window, cx| {
             window.focus(&self.workspace.read(cx).focus_handle(cx), cx);
             window.dispatch_action(Box::new(action), cx);
