@@ -8,7 +8,6 @@ use nocterm_store::{SettingsHandle, ShutdownCoordinator};
 use nocterm_ui::PluginSource;
 use nocterm_workspace::plugin;
 
-mod hub_terminals;
 mod layout_editor;
 mod plugins;
 #[cfg(test)]
@@ -25,7 +24,6 @@ mod user_plugins;
 #[path = "shell_setup/no_user_plugins.rs"]
 mod user_plugins;
 
-pub(crate) use hub_terminals::AppHubTerminals;
 pub(crate) use plugins::AppPluginToggles;
 pub(crate) use settings::{GuestInputs, install_guest_pages};
 pub(crate) use user_plugins::UserShell;
@@ -41,7 +39,6 @@ const PLUGINS: &[&SystemPlugin] = &[
     &nocterm_monitor_ui::plugin::PLUGIN,
     &nocterm_workspace::clock::PLUGIN,
     &nocterm_agent::plugin::PLUGIN,
-    &nocterm_hubs_ui::plugin::PLUGIN,
 ];
 
 /// Checks the shell's groups and contributions and the system plugins as one catalog.

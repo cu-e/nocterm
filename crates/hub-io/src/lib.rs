@@ -8,8 +8,7 @@
 //! Owns: connections to hubs (one client per hub), the probe of a hub's certificate, password
 //! and browser sign-in, the private credential file of this device for each hub with its
 //! inter-process lock, the mapping of hub failures to `HubError`, the mapping of hub records to
-//! the model's records, and the terminal transport of hub sessions (the contract's terminal
-//! events as session events), and the relayed byte streams of SSH routes that use a hub as
+//! the model's records, and the relayed byte streams of SSH routes that use a hub as
 //! their first step (the pump between the transport's bounded frame channels and the hub's
 //! stream, and the mapping of the hub's refusals to `RelayError`), and the encrypted data of
 //! one signed-in account: the account keys (opened at sign-in and recovery, zeroed on lock), the
@@ -27,10 +26,9 @@
 //! Does not own: which hubs the user knows or trusts (the `[hubs]` settings section and the
 //! trust decision belong to `nocterm-hubs-model` and the callers), connection status, retries,
 //! windows, terminal emulation, or any view.
-//! Ports provided: `HubTrust`, `HubSignIn`, `HubSessions` and `HubAdminKeys` from
+//! Ports provided: `HubTrust`, `HubSignIn` and `HubAdminKeys` from
 //! `nocterm-hubs-model`, all implemented by [`HubLinks`], the `VaultAccess` of `nocterm-vault` and the `ProfileReplica` of
-//! `nocterm-connections-model`, implemented by [`HubVault`] and [`HubProfileReplica`], the `Transport` of `nocterm-session` that `HubSessions::terminal`
-//! returns for one attached hub session, and the `RelayDialer` of `nocterm-session`, implemented
+//! `nocterm-connections-model`, implemented by [`HubVault`] and [`HubProfileReplica`], and the `RelayDialer` of `nocterm-session`, implemented
 //! by [`HubRelay`] over the clients of the hubs this device is signed in to. Ports used: none.
 //! Settings section: none; the callers pass the directory for credentials.
 //! Globals: none.
@@ -40,10 +38,8 @@
 //! account cache and its keys; a recovery key shown and not confirmed is flagged in the cache (a
 //! fact, not a secret) and replaced by a new one through a keyset write conditional on its
 //! version, never by overwriting a record whose key pair is not the open one;
-//! no tonic or prost type crosses the crate boundary, and no text built from a failure does
-//! except the reason a terminal session ended, in the text variants `SessionError` already has;
-//! closing a terminal transport's session detaches from it and never ends the process on its
-//! node; a relay finds its hub only among the hubs signed in to and never signs in; every
+//! no tonic or prost type crosses the crate boundary, and no text built from a failure does;
+//! a relay finds its hub only among the hubs signed in to and never signs in; every
 //! buffer between the transport and the hub's stream is bounded, and dropping either end of a
 //! relayed stream ends both directions, whether or not the target is silent; account keys and
 //! the unlock secret live only in memory and are zeroed on lock, and only ciphertext, non-secret
@@ -68,7 +64,6 @@ mod relay;
 mod replica;
 mod store;
 mod task;
-mod terminal;
 mod vault;
 
 pub use account::{AdminKeyError, AdminKeys, PendingAdminKey};

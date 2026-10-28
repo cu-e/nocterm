@@ -9,7 +9,7 @@ use nocterm_hubs_model::{
 use crate::fixture::{
     address, fixture, fixture_with_known_failing_settings, id, pinned_record, server,
 };
-use crate::{HubStatus, HubsError, Load};
+use crate::{HubStatus, HubsError};
 
 fn signed_in_hub() -> FakeHub {
     let hub = FakeHub::new().with_server(server());
@@ -107,33 +107,8 @@ async fn a_hub_with_another_protocol_asks_for_an_upgrade(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-async fn windows_of_one_hub_share_one_connection_and_one_state(cx: &mut TestAppContext) {
-    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
-    cx.run_until_parked();
-    let first = fx
-        .hubs
-        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
-        .expect("a known hub");
-    let second = fx
-        .hubs
-        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
-        .expect("a known hub");
-    assert_eq!(first, second);
-    cx.run_until_parked();
-    assert_eq!(fx.hub.count(FakeOp::Connect), 1);
-    first.read_with(cx, |window, _| {
-        assert!(matches!(window.load(), Load::Loaded));
-    });
-}
-
-#[gpui::test]
-async fn an_unknown_hub_has_no_window_status_or_removal(cx: &mut TestAppContext) {
+async fn an_unknown_hub_has_no_status_or_removal(cx: &mut TestAppContext) {
     let fx = fixture(cx, signed_in_hub(), Vec::new());
-    assert!(
-        fx.hubs
-            .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
-            .is_none()
-    );
     assert_eq!(fx.status(cx), None);
     let removed = fx.hubs.update(cx, |hubs, cx| hubs.remove(&id(), cx));
     assert!(removed.await.is_err());
@@ -202,38 +177,6 @@ async fn a_changed_trust_in_the_settings_connects_again(cx: &mut TestAppContext)
         fx.status(cx),
         Some(HubStatus::TrustFailed { pinned: None, .. })
     ));
-}
-
-#[gpui::test]
-async fn a_hub_that_loses_the_session_while_online_is_connected_again(cx: &mut TestAppContext) {
-    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
-    cx.run_until_parked();
-    let window = fx
-        .hubs
-        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
-        .unwrap();
-    cx.run_until_parked();
-    fx.hub.fail_next(FakeOp::Nodes, HubError::NotSignedIn);
-    window.update(cx, |window, cx| window.refresh(cx));
-    cx.run_until_parked();
-    assert_eq!(fx.hub.count(FakeOp::Connect), 2);
-    assert_eq!(fx.status(cx), Some(HubStatus::Online));
-}
-
-#[gpui::test]
-async fn a_hub_that_stops_answering_while_online_goes_offline(cx: &mut TestAppContext) {
-    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
-    cx.run_until_parked();
-    let window = fx
-        .hubs
-        .update(cx, |hubs, cx| hubs.session_lists(&id(), cx))
-        .unwrap();
-    cx.run_until_parked();
-    fx.hub
-        .edit_server(&address(), |server| server.online = false);
-    window.update(cx, |window, cx| window.refresh(cx));
-    cx.run_until_parked();
-    assert!(matches!(fx.status(cx), Some(HubStatus::Offline { .. })));
 }
 
 fn revision(fx: &crate::fixture::Fixture, cx: &mut TestAppContext) -> u64 {

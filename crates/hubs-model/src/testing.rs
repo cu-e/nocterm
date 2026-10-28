@@ -1,4 +1,4 @@
-//! An in-memory hub for tests: one fake behind all three access ports.
+//! An in-memory hub for tests: one fake behind the access ports.
 //!
 //! Enable `test-support` in a consumer's dev-dependencies. The fake does no I/O and keeps its
 //! "hubs" in memory. A call completes when it is polled; [`FakeHub::hold`] makes the next call
@@ -11,16 +11,12 @@ use futures::FutureExt as _;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_core::error::SharedCause;
-use nocterm_session::testing::ScriptedTransport;
-use nocterm_session::{Secret, Transport};
+use nocterm_session::Secret;
 
 use crate::address::{HubAddress, HubId};
 use crate::error::HubError;
-use crate::ports::{HubFuture, HubSessions, HubSignIn, HubTerminal, HubTrust, OidcSignIn};
-use crate::records::{
-    Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionState, HubSessionSummary,
-    HubTerminalTarget, KeyStatus, NodeSummary, OrgId, SignedIn,
-};
+use crate::ports::{HubFuture, HubSignIn, HubTrust, OidcSignIn};
+use crate::records::{Account, HubEndpointSpec, HubInfo, KeyStatus, SignedIn};
 use crate::trust::{ProbedHub, TrustPolicy};
 
 mod admin_keys;
@@ -44,10 +40,6 @@ pub enum FakeOp {
     ReissueRecoveryKey,
     SignOut,
     Forget,
-    Account,
-    Nodes,
-    Sessions,
-    End,
 }
 
 /// One call the fake received. Secrets are not recorded.
@@ -62,11 +54,6 @@ pub enum FakeCall {
     ReissueRecoveryKey(HubId),
     SignOut(HubId),
     Forget(HubId),
-    Account(HubId),
-    Nodes(HubId, OrgId),
-    Sessions(HubId, OrgId),
-    End(HubId, HubSessionId),
-    Terminal(HubId, HubTerminalTarget),
 }
 
 /// Why a fake hub did not answer.
@@ -74,13 +61,12 @@ pub enum FakeCall {
 #[error("the fake hub is offline")]
 pub struct FakeOffline;
 
-/// An in-memory hub implementing [`HubTrust`], [`HubSignIn`] and [`HubSessions`].
+/// An in-memory hub implementing [`HubTrust`] and [`HubSignIn`].
 ///
 /// Clones share one state, so a test keeps a handle while a service owns another.
 #[derive(Clone, Default)]
 pub struct FakeHub {
     state: Arc<Mutex<State>>,
-    terminals: ScriptedTransport,
 }
 
 #[derive(Default)]
@@ -94,8 +80,6 @@ struct State {
     holds: Vec<(FakeOp, oneshot::Receiver<()>)>,
     oidc: Option<oneshot::Sender<Result<String, HubError>>>,
     oidc_cancelled: usize,
-    /// The ids the hub gives the sessions that terminals start, in order.
-    created: VecDeque<HubSessionId>,
     /// Keys a sign-in could not open, waiting for the recovery key, and what should open them
     /// afterwards.
     recovering: BTreeMap<HubId, String>,
@@ -205,20 +189,6 @@ impl FakeHub {
         lock(&self.state).credentials.contains_key(hub)
     }
 
-    /// The ids the hub gives the sessions that terminals start, in the order they are asked
-    /// for. A terminal that starts a session when none is left never learns an id.
-    pub fn create_sessions_as<'a>(&self, ids: impl IntoIterator<Item = &'a str>) {
-        lock(&self.state)
-            .created
-            .extend(ids.into_iter().map(HubSessionId::new));
-    }
-
-    /// The transport behind every terminal this hub hands out. Queue sessions on it, in the
-    /// order the terminals will be opened, to script their events.
-    pub fn terminals(&self) -> ScriptedTransport {
-        self.terminals.clone()
-    }
-
     /// Every call received, oldest first.
     pub fn calls(&self) -> Vec<FakeCall> {
         lock(&self.state).calls.clone()
@@ -229,7 +199,7 @@ impl FakeHub {
         lock(&self.state)
             .calls
             .iter()
-            .filter(|call| call.op() == Some(op))
+            .filter(|call| call.op() == op)
             .count()
     }
 
@@ -300,8 +270,8 @@ impl FakeHub {
 }
 
 impl FakeCall {
-    fn op(&self) -> Option<FakeOp> {
-        Some(match self {
+    fn op(&self) -> FakeOp {
+        match self {
             Self::Probe(_) => FakeOp::Probe,
             Self::Connect(_) => FakeOp::Connect,
             Self::Password { .. } => FakeOp::Password,
@@ -311,12 +281,7 @@ impl FakeCall {
             Self::ReissueRecoveryKey(_) => FakeOp::ReissueRecoveryKey,
             Self::SignOut(_) => FakeOp::SignOut,
             Self::Forget(_) => FakeOp::Forget,
-            Self::Terminal(..) => return None,
-            Self::Account(_) => FakeOp::Account,
-            Self::Nodes(..) => FakeOp::Nodes,
-            Self::Sessions(..) => FakeOp::Sessions,
-            Self::End(..) => FakeOp::End,
-        })
+        }
     }
 }
 
@@ -688,91 +653,6 @@ impl Drop for CancelGuard {
             state.oidc = None;
             state.oidc_cancelled += 1;
         }
-    }
-}
-
-impl HubSessions for FakeHub {
-    fn account(&self, hub: &HubId) -> HubFuture<Account> {
-        let hub = hub.clone();
-        self.call(
-            FakeOp::Account,
-            FakeCall::Account(hub.clone()),
-            move |state| {
-                state.authenticate(&hub)?;
-                let username = state.credentials[&hub].clone();
-                state.account_of(&hub, &username)
-            },
-        )
-    }
-
-    fn nodes(&self, hub: &HubId, org: &OrgId) -> HubFuture<Vec<NodeSummary>> {
-        let (hub, org) = (hub.clone(), org.clone());
-        self.call(
-            FakeOp::Nodes,
-            FakeCall::Nodes(hub.clone(), org),
-            move |state| Ok(state.authenticate(&hub)?.nodes.clone()),
-        )
-    }
-
-    fn sessions(&self, hub: &HubId, org: &OrgId) -> HubFuture<Vec<HubSessionSummary>> {
-        let (hub, org) = (hub.clone(), org.clone());
-        self.call(
-            FakeOp::Sessions,
-            FakeCall::Sessions(hub.clone(), org.clone()),
-            move |state| {
-                Ok(state
-                    .authenticate(&hub)?
-                    .sessions
-                    .iter()
-                    .filter(|session| session.org == org)
-                    .filter(|session| {
-                        matches!(
-                            session.state,
-                            HubSessionState::Starting | HubSessionState::Running
-                        )
-                    })
-                    .cloned()
-                    .collect())
-            },
-        )
-    }
-
-    fn end(&self, hub: &HubId, session: &HubSessionId) -> HubFuture<()> {
-        let (hub, session) = (hub.clone(), session.clone());
-        self.call(
-            FakeOp::End,
-            FakeCall::End(hub.clone(), session.clone()),
-            move |state| {
-                state.authenticate(&hub)?;
-                let server = state
-                    .servers
-                    .get_mut(hub.address())
-                    .ok_or(HubError::NotFound)?;
-                let found = server
-                    .sessions
-                    .iter_mut()
-                    .find(|candidate| candidate.id == session)
-                    .ok_or(HubError::NotFound)?;
-                found.state = HubSessionState::Exited;
-                Ok(())
-            },
-        )
-    }
-
-    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> HubTerminal {
-        let mut state = lock(&self.state);
-        let starts = matches!(target, HubTerminalTarget::New { .. });
-        state.calls.push(FakeCall::Terminal(hub.clone(), target));
-        let transport: Arc<dyn Transport> = Arc::new(self.terminals.clone());
-        if !starts {
-            return HubTerminal::attached(transport);
-        }
-        // A session is made as soon as it is asked for; without a scripted id it never is.
-        let (made, created) = oneshot::channel();
-        if let Some(id) = state.created.pop_front() {
-            let _ = made.send(id);
-        }
-        HubTerminal::starting(transport, created)
     }
 }
 

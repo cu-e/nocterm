@@ -67,18 +67,7 @@ pub(crate) fn build_workspace(
     );
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
     if let Some(hubs) = booted.hubs() {
-        report_registration(
-            "hubs",
-            nocterm_hubs_ui::register(
-                hubs,
-                Rc::new(crate::shell_setup::AppHubTerminals::new(
-                    sources.terminal().clone(),
-                )),
-                workspace,
-                window,
-                cx,
-            ),
-        );
+        nocterm_hubs_ui::register(hubs, workspace);
     }
     user.attach(workspace, window, cx);
     if let Some(vault) = vault

@@ -3,11 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::address::HubAddress;
-use crate::records::HubSessionId;
-use crate::records::{
-    Account, AccountId, HubInfo, HubSessionState, HubSessionSummary, NodeId, NodeSummary,
-    OidcProvider, OrgId, OrgSummary,
-};
+use crate::records::{Account, AccountId, HubInfo, OidcProvider, OrgId, OrgSummary};
 use crate::settings::HubRecord;
 use crate::testing::CLIENT_PROTOCOL;
 use crate::trust::{Fingerprint, TrustPolicy};
@@ -49,8 +45,6 @@ pub struct FakeServer {
     pub keyed: bool,
     /// The keys of the users that made them, by user name.
     pub keysets: BTreeMap<String, FakeKeyset>,
-    pub nodes: Vec<NodeSummary>,
-    pub sessions: Vec<HubSessionSummary>,
 }
 
 impl FakeServer {
@@ -69,8 +63,6 @@ impl FakeServer {
             users: Vec::new(),
             keyed: false,
             keysets: BTreeMap::new(),
-            nodes: Vec::new(),
-            sessions: Vec::new(),
         }
     }
 
@@ -154,46 +146,6 @@ impl FakeServer {
                 name: org.into(),
             });
         }
-        self
-    }
-
-    #[must_use]
-    pub fn with_node(mut self, id: &str, name: &str, online: bool) -> Self {
-        self.nodes.push(NodeSummary {
-            id: NodeId::new(id),
-            name: name.into(),
-            online,
-            sessions: 0,
-        });
-        self
-    }
-
-    /// A running session of `owner` on node `node` of organization `org`.
-    #[must_use]
-    pub fn with_session(
-        mut self,
-        id: &str,
-        org: &str,
-        node: &str,
-        owner: &str,
-        title: &str,
-    ) -> Self {
-        let node_name = self
-            .nodes
-            .iter()
-            .find(|candidate| candidate.id.as_str() == node)
-            .map_or_else(|| node.to_owned(), |candidate| candidate.name.clone());
-        self.sessions.push(HubSessionSummary {
-            id: HubSessionId::new(id),
-            org: OrgId::new(org),
-            node: NodeId::new(node),
-            node_name,
-            owner: AccountId::new(format!("account-{owner}")),
-            title: title.into(),
-            state: HubSessionState::Running,
-            node_online: true,
-            created_at_ms: 0,
-        });
         self
     }
 

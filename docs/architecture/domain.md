@@ -466,11 +466,10 @@ refused), `Fingerprint` and `TrustPolicy`, the pure trust decision `decide` for 
 certificate (pinned, public authority, first use that needs a confirmation, or a mismatch that
 can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints,
 labels and an optional `HubColor` from a closed set of six theme-relative names; a colour this
-version does not know leaves the server unmarked and never drops the record; never secrets) and the ports `HubTrust`, `HubSignIn`, `HubSessions` and `HubAdminKeys` (the administrator keys waiting for a person to compare their fingerprints; a `terminal` call returns a `HubTerminal`: the
-transport plus, for a new session, a receiver of the id the hub gives it). Port methods
+version does not know leaves the server unmarked and never drops the record; never secrets) and the ports `HubTrust`, `HubSignIn` and `HubAdminKeys` (the administrator keys waiting for a person to compare their fingerprints). Port methods
 return runtime-agnostic futures and fail with the typed, cloneable `HubError`, which keeps the
-original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind all
-three ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
+original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind the
+access ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
 0096](../adr/0096-hub-contract-outside-the-workspace.md)).
 
 A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-environments.md)), so the crate holds no record of open windows.

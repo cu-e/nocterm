@@ -331,7 +331,7 @@ crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).
 ## Hubs
 
 `nocterm-hubs` owns what the application knows about hubs over time, without views or I/O. It
-reaches a hub only through the `HubTrust`, `HubSignIn`, `HubSessions` and `HubAdminKeys` ports of
+reaches a hub only through the `HubTrust`, `HubSignIn` and `HubAdminKeys` ports of
 `nocterm-hubs-model`, passed in `Deps` by the composition, and reads and edits the `[hubs]`
 section through `SettingsHandle`. `install` registers the section and returns an `Installed`
 with the one `Hubs` entity every window shares ([ADR 0099](../adr/0099-windows-have-no-environments.md)).
@@ -351,11 +351,6 @@ with the one `Hubs` entity every window shares ([ADR 0099](../adr/0099-windows-h
   a known server keeps the certificate it was pinned with, and one whose certificate changed is
   removed before signing in again. Signing in again to a known server goes through its row, with
   a fixed address.
-- `HubSessionLists` serves the sessions panel for one hub: the account and its organizations, the nodes and the
-  sessions of one organization, ending a session, and the transport that attaches a tab to
-  one. The hub has no push for the list of sessions, so the lists are read again every 5
-  seconds while somebody watches them and after each action, and requests in flight are
-  merged.
 - Managing known servers is one call each: `set_label` and `set_color` are one checked edit of
   `[hubs]`; the label is cleaned by the record's own rule and an empty one shows the address.
   `sign_out` erases the credentials and keeps the record, so the status becomes `SignedOut`.

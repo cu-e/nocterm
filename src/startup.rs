@@ -219,7 +219,6 @@ fn hub_dependencies(links: Option<Arc<nocterm_hub_io::HubLinks>>) -> Option<noct
     links.map(|links| nocterm_hubs::Deps {
         trust: links.clone(),
         sign_in: links.clone(),
-        sessions: links.clone(),
         admin_keys: links,
     })
 }

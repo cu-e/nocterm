@@ -110,7 +110,6 @@ fn boot_with(accounts: Arc<FakeAccounts>, chosen: Option<&str>, cx: &mut TestApp
         let deps = nocterm_hubs::Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
-            sessions: Arc::new(hub.clone()),
             admin_keys: Arc::new(nocterm_hubs_model::testing::FakeAdminKeys::alongside(&hub)),
         };
         boot_with_ports_and_probe(

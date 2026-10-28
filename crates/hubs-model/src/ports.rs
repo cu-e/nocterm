@@ -2,18 +2,13 @@
 //!
 //! Every method returns a runtime-agnostic future that can be awaited on any executor.
 
-use std::sync::Arc;
-
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
-use nocterm_session::{Secret, Transport};
+use nocterm_session::Secret;
 
 use crate::address::{HubAddress, HubId};
 use crate::error::HubError;
-use crate::records::{
-    Account, HubEndpointSpec, HubInfo, HubSessionId, HubSessionSummary, HubTerminalTarget,
-    KeyStatus, NodeSummary, OrgId, SignedIn,
-};
+use crate::records::{HubEndpointSpec, HubInfo, KeyStatus, SignedIn};
 use crate::trust::ProbedHub;
 
 /// The outcome of one hub call.
@@ -94,62 +89,4 @@ pub trait HubSignIn: Send + Sync {
 
     /// Erases this device's credentials for the hub without contacting it.
     fn forget(&self, hub: &HubId) -> Result<(), HubError>;
-}
-
-/// What the client reads and does on one hub.
-pub trait HubSessions: Send + Sync {
-    /// The account this device is signed in as, with its organizations.
-    fn account(&self, hub: &HubId) -> HubFuture<Account>;
-
-    fn nodes(&self, hub: &HubId, org: &OrgId) -> HubFuture<Vec<NodeSummary>>;
-
-    /// Sessions that have not ended.
-    fn sessions(&self, hub: &HubId, org: &OrgId) -> HubFuture<Vec<HubSessionSummary>>;
-
-    /// Terminates the process of a session on its node.
-    fn end(&self, hub: &HubId, session: &HubSessionId) -> HubFuture<()>;
-
-    /// A terminal for one hub session, for a tab.
-    ///
-    /// Its transport is bound to its target: it ignores the destination fields of the
-    /// `ConnectRequest` and uses only its size. Opening it attaches (creating the session first
-    /// for [`HubTerminalTarget::New`]); the screen of an existing session arrives as
-    /// `Event::Restore`. Closing the session detaches and leaves the process running on its
-    /// node; [`HubSessions::end`] terminates it. Failures arrive as `Event::Closed`.
-    fn terminal(&self, hub: &HubId, target: HubTerminalTarget) -> HubTerminal;
-}
-
-/// What a terminal tab attaches with: a transport bound to one hub session and, when the tab
-/// starts the session, the id the hub gives it.
-pub struct HubTerminal {
-    transport: Arc<dyn Transport>,
-    created: Option<oneshot::Receiver<HubSessionId>>,
-}
-
-impl HubTerminal {
-    /// A transport for a session that exists already; there is nothing to report.
-    pub fn attached(transport: Arc<dyn Transport>) -> Self {
-        Self {
-            transport,
-            created: None,
-        }
-    }
-
-    /// A transport that starts a session when it is opened. `created` receives its id once the
-    /// hub has made it. The transport holds the sender, so the receiver is cancelled when the
-    /// transport is dropped, which is when the tab that uses it closes.
-    pub fn starting(
-        transport: Arc<dyn Transport>,
-        created: oneshot::Receiver<HubSessionId>,
-    ) -> Self {
-        Self {
-            transport,
-            created: Some(created),
-        }
-    }
-
-    /// The transport, and the id of the session it starts, if it starts one.
-    pub fn into_parts(self) -> (Arc<dyn Transport>, Option<oneshot::Receiver<HubSessionId>>) {
-        (self.transport, self.created)
-    }
 }
