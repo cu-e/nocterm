@@ -125,12 +125,9 @@ fn deleting_a_folder_leaves_the_connections_of_an_organization_with_the_same_nam
     cx: &mut TestAppContext,
 ) {
     let (handle, panel, [own, team, _]) = shared_in(cx, Some("Work"));
-    cx.update_window(handle, |_, window, cx| {
-        window.click("group-delete-Work", cx);
-        window.render_frame(cx);
-        window.click("group-delete-all", cx);
-    })
-    .unwrap();
+    open_group_dialog(cx, handle);
+    cx.update_window(handle, |_, window, cx| window.click("group-delete-all", cx))
+        .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, _, cx| {
         let connections = panel.read(cx).installed.connections().clone();

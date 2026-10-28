@@ -292,9 +292,9 @@ impl ConnectionEditor {
             }
         };
 
-        // Part of the save: staged first so the save's own synchronization carries it, and
-        // withdrawn if the save fails.
-        self.space.stage(profile.id, cx);
+        // Part of the save: carried out once it succeeds, withdrawn if it fails.
+        let is_new = self.edit.original().is_none();
+        self.space.stage(profile.id, is_new, cx);
         let saved = self.deps.connections().update(cx, |connections, cx| {
             connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
         });

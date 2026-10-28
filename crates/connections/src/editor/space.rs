@@ -18,6 +18,8 @@ pub(super) struct SpaceField {
     selected: ReplicaScope,
     /// A move was requested for the save in progress.
     staged: bool,
+    /// The request was recorded before the save, for a new connection.
+    placed_early: bool,
 }
 
 impl SpaceField {
@@ -28,6 +30,7 @@ impl SpaceField {
             spaces,
             selected,
             staged: false,
+            placed_early: false,
         }
     }
 
@@ -67,24 +70,29 @@ impl SpaceField {
         ))
     }
 
-    /// Records the chosen space, when it is not where the connection lives, to be carried
-    /// out by the save that follows.
-    pub(super) fn stage(&mut self, id: ProfileId, cx: &mut App) {
+    /// Records the chosen space, when it is not where the connection lives. Only a new
+    /// connection is placed before its save, so its first synchronization already writes it
+    /// there: nothing can move a connection that does not exist yet. An existing one moves
+    /// once its save succeeded, so a synchronization running meanwhile cannot carry out the
+    /// move of a save that is then refused.
+    pub(super) fn stage(&mut self, id: ProfileId, is_new: bool, cx: &mut App) {
         self.staged = self.selected != self.spaces.scope(id, cx);
-        if self.staged {
+        self.placed_early = self.staged && is_new;
+        if self.placed_early {
             self.spaces.stage(id, self.selected.clone(), cx);
         }
     }
 
-    /// The save is over: a successful one carries out the staged move, a failed one leaves
-    /// no request behind.
+    /// The save is over: a successful one carries out the move, a failed one leaves no
+    /// request behind.
     pub(super) fn settle(&mut self, id: ProfileId, saved: bool, cx: &mut App) {
+        let placed_early = std::mem::take(&mut self.placed_early);
         if !std::mem::take(&mut self.staged) {
             return;
         }
         if saved {
-            self.spaces.sync(cx);
-        } else {
+            self.spaces.place(id, self.selected.clone(), cx);
+        } else if placed_early {
             self.spaces.unstage(id, cx);
         }
     }

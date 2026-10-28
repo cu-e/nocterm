@@ -184,11 +184,6 @@ impl ProfileReplication {
         }
     }
 
-    /// Synchronizes now, or after the round that is running.
-    pub fn sync_now(&mut self, cx: &mut Context<Self>) {
-        self.request_sync(cx);
-    }
-
     fn stop(&mut self, cx: &mut Context<Self>) {
         self.replica = None;
         self.watcher = None;
