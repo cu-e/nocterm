@@ -205,3 +205,89 @@ fn a_failed_save_leaves_no_pending_move(cx: &mut TestAppContext) {
             .is_none()
     );
 }
+
+fn existing(auth: nocterm_session::Auth, credential: bool) -> Profile {
+    Profile {
+        id: nocterm_connections_model::test_support::profile_id_for("secret"),
+        name: "secret".into(),
+        group: None,
+        target: nocterm_session::Target::new("tester", "secret.test", 22),
+        description: String::new(),
+        options: Default::default(),
+        auth,
+        credential: credential.then(|| nocterm_session::CredentialId::from_bytes([7; 16])),
+        launch: None,
+        icon: None,
+        icon_color: None,
+        country: None,
+        jump_hosts: Vec::new(),
+    }
+}
+
+/// Opens `profile` in an editor over an account that writes to "Acme", then chooses `space`
+/// and says whether the note about the shared secret is shown.
+fn note_after_choosing(cx: &mut TestAppContext, profile: Profile, space: &'static str) -> bool {
+    let (handle, workspace, _opened, installed) = workspace(cx);
+    let replica = Arc::new(MemoryReplica::new());
+    replica.set_spaces(vec![
+        space_of(ReplicaScope::Personal, "Personal"),
+        space_of(organization("acme"), "Acme"),
+    ]);
+    cx.update(|cx| {
+        installed.connections().update(cx, |connections, cx| {
+            futures::FutureExt::now_or_never(connections.save_profile(profile.clone(), cx))
+                .unwrap()
+                .unwrap()
+        });
+    });
+    replicate(&installed, replica, cx);
+    cx.update_window(handle, |_, window, cx| {
+        open_editor(
+            installed.clone(),
+            Some(profile),
+            workspace.downgrade(),
+            window,
+            cx,
+        );
+        window.render_frame(cx);
+        window.click(space, cx);
+        window.render_frame(cx);
+        window.try_find("editor-space-secret-note").is_some()
+    })
+    .unwrap()
+}
+
+fn space_of(scope: ReplicaScope, name: &str) -> nocterm_connections_model::replica::ReplicaSpace {
+    space(scope, name, true)
+}
+
+#[gpui_kit::test]
+fn a_saved_password_is_said_to_be_shared_when_an_organization_is_chosen(cx: &mut TestAppContext) {
+    let password = existing(nocterm_session::Auth::Password, true);
+    assert!(note_after_choosing(cx, password, "editor-space-acme"));
+}
+
+#[gpui_kit::test]
+fn a_vault_key_is_said_to_be_shared_when_an_organization_is_chosen(cx: &mut TestAppContext) {
+    let auth = nocterm_session::Auth::VaultKey {
+        credential: nocterm_session::CredentialId::from_bytes([9; 16]),
+        public_key: "ssh-ed25519 AAAA".to_owned(),
+    };
+    assert!(note_after_choosing(
+        cx,
+        existing(auth, false),
+        "editor-space-acme"
+    ));
+}
+
+#[gpui_kit::test]
+fn nothing_is_said_while_the_connection_stays_personal(cx: &mut TestAppContext) {
+    let password = existing(nocterm_session::Auth::Password, true);
+    assert!(!note_after_choosing(cx, password, "editor-space-personal"));
+}
+
+#[gpui_kit::test]
+fn nothing_is_said_about_a_connection_without_a_saved_secret(cx: &mut TestAppContext) {
+    let plain = existing(nocterm_session::Auth::Auto, false);
+    assert!(!note_after_choosing(cx, plain, "editor-space-acme"));
+}

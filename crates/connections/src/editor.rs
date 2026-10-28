@@ -280,7 +280,9 @@ impl ConnectionEditor {
     /// The choice of space, with its note when the connection's secret would be shared.
     fn space_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let editor = cx.weak_entity();
+        let shares_secret = self.authentication.shares_secret(cx);
         self.space.row(
+            shares_secret,
             move |scope, _, cx| {
                 let _ = editor.update(cx, |this, cx| {
                     this.space.select(scope);

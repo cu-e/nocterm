@@ -2,16 +2,22 @@
 use crate::{Installed, spaces::Spaces};
 use gpui_kit::{
     AnyElement, App, SharedString, Window,
+    base::TestSupportExt as _,
     component::{
-        Selectable as _, Sizable as _,
+        ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
-        h_flex,
+        h_flex, v_flex,
     },
+    div,
     prelude::*,
 };
 use nocterm_connections_model::{profiles::ProfileId, replica::ReplicaScope};
 use nocterm_ui::form;
 use std::rc::Rc;
+
+/// Said beside the choice of an organization when the connection signs in with a saved
+/// password or a vault key: saving copies it into the organization's vault.
+const SECRET_NOTE: &str = "This connection's saved password or vault key becomes available to the members of this organization when you save.";
 
 pub(super) struct SpaceField {
     spaces: Spaces,
@@ -38,11 +44,18 @@ impl SpaceField {
         self.selected = scope;
     }
 
+    /// Whether the chosen space is an organization's.
+    fn organization_chosen(&self) -> bool {
+        self.selected != ReplicaScope::Personal
+    }
+
     /// The choice of space, offered only to an account that writes to an organization:
     /// a reader of organizations has nowhere else to put a connection. `on_select` receives
-    /// the space a button stands for.
+    /// the space a button stands for; `shares_secret` says the connection signs in with a
+    /// personal password or key, which an organization's members would then be able to use.
     pub(super) fn row(
         &self,
+        shares_secret: bool,
         on_select: impl Fn(ReplicaScope, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> Option<AnyElement> {
@@ -65,10 +78,21 @@ impl SpaceField {
                 .selected(self.selected == space.scope)
                 .on_click(move |_, window, cx| on_select(scope.clone(), window, cx))
         });
+        let note = (shares_secret && self.organization_chosen()).then(|| {
+            div()
+                .id("editor-space-secret-note")
+                .test_support()
+                .text_xs()
+                .text_color(cx.theme().warning)
+                .child(SECRET_NOTE)
+        });
         Some(form::stacked_row(
             "Space",
             "Personal connections stay with you; an organization's are shared with its members.",
-            h_flex().gap_1().children(buttons),
+            v_flex()
+                .gap_1()
+                .child(h_flex().gap_1().children(buttons))
+                .children(note),
             None,
             cx,
         ))
