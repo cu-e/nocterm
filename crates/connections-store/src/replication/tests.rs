@@ -163,6 +163,14 @@ impl Fixture {
         cx.run_until_parked();
     }
 
+    /// Requests a scope for a profile about to be saved, without synchronizing.
+    fn stage(&self, cx: &mut gpui::TestAppContext, profile: &Profile, scope: ReplicaScope) {
+        let id = profile.id;
+        self.replication.update(cx, |replication, cx| {
+            replication.stage(id, scope, cx);
+        });
+    }
+
     fn space_of(&self, cx: &gpui::TestAppContext, profile: &Profile) -> ReplicaScope {
         let id = profile.id;
         self.replication

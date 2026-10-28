@@ -90,7 +90,9 @@ pub struct RemoteProfile {
     pub body: RemoteBody,
 }
 
-/// Changes after a cursor, in the order the replica made them.
+/// Changes after a cursor, in the order the replica made them. A profile's versions
+/// grow along the feed, but the rules do not rely on it: a change older than the
+/// version already agreed is ignored.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReplicaPage {
     pub changes: Vec<RemoteProfile>,

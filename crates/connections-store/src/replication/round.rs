@@ -1,9 +1,11 @@
 //! One synchronization pass: read remote changes, reconcile, apply, advance the cursor.
 //!
 //! Every action is persisted in the agreed state as soon as it succeeds, and the
-//! cursor moves only after a pass in which nothing was left undone. A pass that
-//! is interrupted or retried therefore re-reads changes it already handled; those
-//! reconcile to nothing because the agreed state already holds them.
+//! cursor moves only after a pass in which nothing was left undone: not after a
+//! conflict, and not after a remote change the local document refused. A pass that
+//! is interrupted, retried or refused re-reads changes it already handled; those
+//! reconcile to nothing because the agreed state already holds them, while a refused
+//! change is offered again instead of being lost.
 use super::{ProfileReplication, ReplicationEvent, ReplicationFailure};
 use crate::{ConnectionStore, ConnectionsError};
 use gpui::{AsyncApp, Entity, WeakEntity};
@@ -30,6 +32,17 @@ pub(super) enum Outcome {
     NeedsNewerClient,
     Offline,
     Failed(ReplicationFailure),
+}
+
+/// What applying the planned actions left behind.
+enum Applied {
+    Done,
+    /// Nothing is left to retry, but the replica refused a profile that stays local.
+    Refused,
+    /// A conflict left something undone: plan again from the same cursor.
+    Retry,
+    /// A remote change could not be written locally: it stays ahead of the cursor.
+    Deferred,
 }
 
 /// The pass cannot continue.
@@ -122,6 +135,14 @@ fn arrivals(actions: &[ReplicaAction]) -> HashMap<ProfileId, Arrival> {
         .collect()
 }
 
+/// The action brings a remote change into the local document.
+fn writes_remote_change(action: &ReplicaAction) -> bool {
+    matches!(
+        action,
+        ReplicaAction::SaveLocal { .. } | ReplicaAction::DeleteLocal { .. }
+    )
+}
+
 pub(super) struct Round {
     replica: Arc<dyn ProfileReplica>,
     store: Entity<ConnectionStore>,
@@ -173,10 +194,17 @@ impl Round {
         self.require_readable_local(cx)?;
         let (changes, cursor) = self.fetch(cx).await?;
         let actions = self.plan(&changes, cx)?;
-        if self.apply(actions, cx).await? {
-            return Ok(true);
+        match self.apply(actions, cx).await? {
+            Applied::Retry => return Ok(true),
+            Applied::Refused => self.record(cx, move |state| state.advance(cursor))?,
+            Applied::Done => {
+                self.record(cx, move |state| state.advance(cursor))?;
+                self.events
+                    .update(cx, |this, _| this.forget_refusals())
+                    .map_err(gone)?;
+            }
+            Applied::Deferred => {}
         }
-        self.record(cx, move |state| state.advance(cursor))?;
         Ok(false)
     }
 
@@ -224,33 +252,41 @@ impl Round {
         Ok(rules::plan(&local, changes, &state))
     }
 
-    /// Whether a conflict left something undone.
-    async fn apply(&self, actions: Vec<ReplicaAction>, cx: &mut AsyncApp) -> Result<bool, Stop> {
+    async fn apply(&self, actions: Vec<ReplicaAction>, cx: &mut AsyncApp) -> Result<Applied, Stop> {
         let mut skipped = HashSet::new();
-        let mut retry = false;
+        let mut applied = Applied::Done;
+        let mut refused = false;
         let arrivals = arrivals(&actions);
         for action in actions {
             let id = action.id();
             if skipped.contains(&id) {
                 continue;
             }
+            let from_remote = writes_remote_change(&action);
             match self.execute(action, &arrivals, cx).await {
                 Ok(()) => {}
                 Err(Flow::Conflict) => {
-                    retry = true;
+                    applied = Applied::Retry;
                     skipped.insert(id);
                 }
                 Err(Flow::Refused) => {
+                    refused = true;
                     skipped.insert(id);
                 }
                 Err(Flow::Skip(failure)) => {
                     skipped.insert(id);
-                    self.emit(ReplicationEvent::Failed(failure), cx)?;
+                    if from_remote && matches!(applied, Applied::Done) {
+                        applied = Applied::Deferred;
+                    }
+                    self.skipped(id, failure, cx)?;
                 }
                 Err(Flow::Stop(stop)) => return Err(stop),
             }
         }
-        Ok(retry)
+        Ok(match applied {
+            Applied::Done if refused => Applied::Refused,
+            other => other,
+        })
     }
 
     async fn execute(
@@ -276,7 +312,10 @@ impl Round {
                 scope,
                 profile,
                 expected,
-            } => self.push(scope, *profile, expected, cx).await,
+            } => {
+                let moved = arrivals.contains_key(&profile.id);
+                self.push(scope, *profile, expected, moved, cx).await
+            }
             ReplicaAction::PushDelete {
                 scope,
                 id,
@@ -340,6 +379,7 @@ impl Round {
         scope: ReplicaScope,
         profile: Profile,
         expected: Option<ReplicaVersion>,
+        moved: bool,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
         let id = profile.id;
@@ -347,6 +387,7 @@ impl Round {
         // that moved there already carried its own before it left the old space.
         let carried = match scope {
             ReplicaScope::Personal => Vec::new(),
+            _ if moved => Vec::new(),
             _ => {
                 self.carry(
                     &profile,
@@ -483,14 +524,14 @@ impl Round {
             }
         }
         let personal = scope == ReplicaScope::Personal;
-        self.emit(
-            ReplicationEvent::Refused {
-                profile: Box::new(profile),
-                scope,
-                restored,
-            },
-            cx,
-        )?;
+        let event = ReplicationEvent::Refused {
+            profile: Box::new(profile),
+            scope,
+            restored,
+        };
+        self.events
+            .update(cx, |this, cx| this.announce_refusal(id, event, cx))
+            .map_err(gone)?;
         if restored || personal {
             Err(Flow::Refused)
         } else {
@@ -523,6 +564,17 @@ impl Round {
             .update(cx, |state, cx| state.update_latest(edit, cx))
             .map(|_| ())
             .map_err(|error| halt(ReplicationFailure::State(error)))
+    }
+
+    fn skipped(
+        &self,
+        id: ProfileId,
+        failure: ReplicationFailure,
+        cx: &mut AsyncApp,
+    ) -> Result<(), Stop> {
+        self.events
+            .update(cx, |this, cx| this.announce_skip(id, failure, cx))
+            .map_err(gone)
     }
 
     fn emit(&self, event: ReplicationEvent, cx: &mut AsyncApp) -> Result<(), Stop> {

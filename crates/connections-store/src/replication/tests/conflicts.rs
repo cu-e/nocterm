@@ -159,3 +159,79 @@ async fn a_remote_profile_the_local_document_refuses_is_reported_and_skipped(
         [ReplicationEvent::Failed(ReplicationFailure::Rejected { id, .. })] if *id == oversized.id
     ));
 }
+
+/// A remote edit of `original` that the local document refuses for its size.
+fn oversized_edit(original: &Profile) -> Profile {
+    let mut edited = original.clone();
+    edited.description = "x".repeat(70 * 1024);
+    edited
+}
+
+fn rejected_ids(events: &[ReplicationEvent]) -> Vec<ProfileId> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ReplicationEvent::Failed(ReplicationFailure::Rejected { id, .. }) => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+#[gpui::test]
+async fn a_remote_change_the_local_document_refuses_keeps_the_cursor_behind_it_and_is_reported_once(
+    cx: &mut gpui::TestAppContext,
+) {
+    let original = profile("a");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&original));
+    fixture.attach(cx);
+    let before = fixture.persisted_state().cursor().cloned();
+    assert!(before.is_some(), "the first pass recorded a position");
+    fixture
+        .replica
+        .write_remote(ReplicaScope::Personal, oversized_edit(&original));
+    cx.run_until_parked();
+    assert_eq!(rejected_ids(&fixture.events()), [original.id]);
+    assert_eq!(fixture.persisted_state().cursor().cloned(), before);
+    let other = profile("b");
+    fixture
+        .replica
+        .write_remote(ReplicaScope::Personal, other.clone());
+    cx.run_until_parked();
+    assert_eq!(fixture.local(cx, &other), Some(other));
+    assert_eq!(fixture.local(cx, &original), Some(original.clone()));
+    assert_eq!(
+        rejected_ids(&fixture.events()),
+        [original.id],
+        "the refused change is read again by every pass but reported once"
+    );
+    assert_eq!(fixture.persisted_state().cursor().cloned(), before);
+}
+
+#[gpui::test]
+async fn a_local_edit_after_a_refused_remote_change_does_not_end_in_conflicts(
+    cx: &mut gpui::TestAppContext,
+) {
+    let original = profile("a");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&original));
+    fixture.attach(cx);
+    fixture
+        .replica
+        .write_remote(ReplicaScope::Personal, oversized_edit(&original));
+    cx.run_until_parked();
+    let puts = fixture.put_count();
+    let edited = at_host(&original, "local.example");
+    fixture.save(cx, edited.clone()).await;
+    assert_eq!(fixture.local(cx, &original), Some(edited));
+    assert_eq!(
+        fixture.put_count(),
+        puts,
+        "nothing is sent over a newer version"
+    );
+    assert!(
+        !matches!(
+            failed_with(fixture.status(cx)),
+            Some(ReplicationFailure::Conflicts)
+        ),
+        "the edit is not stuck retrying against the missed change"
+    );
+}

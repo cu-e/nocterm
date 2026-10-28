@@ -40,7 +40,7 @@ async fn a_new_profile_placed_in_a_group_is_created_in_that_group_only(
     let fixture = Fixture::new(cx, &[]);
     fixture.attach(cx);
     let added = profile("team");
-    fixture.place(cx, &added, acme());
+    fixture.stage(cx, &added, acme());
     fixture.save(cx, added.clone()).await;
     assert_eq!(in_acme(&fixture, &added), Some(added.clone()));
     assert_eq!(in_personal(&fixture, &added), None);
@@ -215,7 +215,7 @@ async fn a_new_profile_refused_in_a_group_is_kept_in_the_personal_space(
     fixture.attach(cx);
     fixture.replica.refuse_writes_in(acme());
     let added = profile("team");
-    fixture.place(cx, &added, acme());
+    fixture.stage(cx, &added, acme());
     fixture.save(cx, added.clone()).await;
     assert_eq!(in_personal(&fixture, &added), Some(added.clone()));
     assert_eq!(in_acme(&fixture, &added), None);
@@ -330,7 +330,7 @@ async fn a_new_group_profile_keeps_no_secret_in_the_personal_vault(cx: &mut gpui
     let fixture = Fixture::new(cx, &[]);
     fixture.replica.keep_secret(ReplicaScope::Personal, secret);
     fixture.attach(cx);
-    fixture.place(cx, &added, acme());
+    fixture.stage(cx, &added, acme());
     fixture.save(cx, added.clone()).await;
     assert_eq!(fixture.replica.secret_scope(secret), Some(acme()));
     assert_eq!(in_acme(&fixture, &added), Some(added.clone()));
@@ -369,7 +369,7 @@ async fn a_secret_kept_in_another_group_is_not_pulled_into_a_profiles_group(
     let fixture = Fixture::new(cx, &[]);
     fixture.replica.keep_secret(other.clone(), secret);
     fixture.attach(cx);
-    fixture.place(cx, &added, acme());
+    fixture.stage(cx, &added, acme());
     fixture.save(cx, added.clone()).await;
     assert_eq!(fixture.replica.secret_scope(secret), Some(other));
 }

@@ -2,7 +2,8 @@
 //!
 //! The rules are pure. They name what must happen and leave doing it, and the order
 //! of side effects, to the caller. A remote change always wins a conflict; the local
-//! edit it replaces is reported so the user can be told.
+//! edit it replaces is reported so the user can be told. A change older than the
+//! agreed version is a late entry of the feed, never a newer state, and is ignored.
 //!
 //! A profile lives in one scope. Moving it to another is a deletion in the scope it
 //! was agreed in followed by a creation in the new one, in that order: the profile is
@@ -75,7 +76,7 @@ impl ReplicaAction {
 /// Reconciles every profile known to any of the three sides.
 ///
 /// `changes` are the remote changes read since the state's cursor; a profile without
-/// one is unchanged remotely. A profile the replica holds unreadably stays untouched
+/// one, or with only changes older than its agreed version, is unchanged remotely. A profile the replica holds unreadably stays untouched
 /// until a readable version of it arrives.
 pub fn plan(
     local: &Profiles,
@@ -119,13 +120,17 @@ pub fn plan(
 /// The change that stands for each profile. A profile moved between scopes shows up twice,
 /// as a tombstone where it was and as a live profile where it is; the live one stands, so
 /// the move is never mistaken for a deletion. Otherwise the later change stands, except that
-/// a change in the scope the profile was agreed in outranks one in another scope.
+/// a change in the scope the profile was agreed in outranks one in another scope. Late entries
+/// older than the agreed version never stand.
 fn latest_changes<'a>(
     changes: &'a [RemoteProfile],
     state: &ReplicaState,
 ) -> HashMap<ProfileId, &'a RemoteProfile> {
     let mut latest: HashMap<ProfileId, &RemoteProfile> = HashMap::new();
     for change in changes {
+        if is_stale(change, state.entry(change.id)) {
+            continue;
+        }
         let home = state.entry(change.id).map(|entry| &entry.scope);
         let stands = latest
             .get(&change.id)
@@ -152,6 +157,13 @@ fn outranks(new: &RemoteProfile, held: &RemoteProfile, home: Option<&ReplicaScop
     !(home == Some(&held.scope) && home != Some(&new.scope))
 }
 
+/// The feed delivered a version older than the one already agreed for the profile in the
+/// same scope. Versions of different scopes are unrelated, so a copy in the scope a profile
+/// was moved to is never stale against the version agreed where it was.
+fn is_stale(change: &RemoteProfile, synced: Option<&SyncedEntry>) -> bool {
+    synced.is_some_and(|synced| change.scope == synced.scope && change.version < synced.version)
+}
+
 /// What to do about one profile. At least one of the three must be present.
 pub fn reconcile(
     local: Option<&Profile>,
@@ -169,6 +181,7 @@ pub fn reconcile_placed(
     synced: Option<&SyncedEntry>,
     wanted: Option<&ReplicaScope>,
 ) -> Vec<ReplicaAction> {
+    let remote = remote.filter(|change| !is_stale(change, synced));
     let Some(id) = local
         .map(|profile| profile.id)
         .or_else(|| remote.map(|change| change.id))

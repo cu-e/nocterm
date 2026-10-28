@@ -19,12 +19,21 @@ use nocterm_connections_model::{
 };
 use nocterm_store::{Persisted, Publication, SnapshotWriter};
 use round::{Outcome, Round};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 pub use status::{ReplicationEvent, ReplicationFailure, ReplicationStatus};
 
 /// Pending writes of the agreed-state document; its edits are coalesced snapshots.
 const STATE_WRITES: usize = 8;
+
+/// A standing refusal that has been reported.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Announced {
+    /// The local document refused a remote change.
+    Skipped(ProfileId),
+    /// The replica refused a local profile that has no agreed version to go back to.
+    Refused(ProfileId),
+}
 
 pub struct ProfileReplication {
     store: Entity<ConnectionStore>,
@@ -34,6 +43,10 @@ pub struct ProfileReplication {
     run: Option<Task<()>>,
     rerun: bool,
     watcher: Option<Task<()>>,
+    /// Refusals already reported and still standing: a remote change the local document
+    /// refused (the cursor stays behind it) and a local profile the replica refused and
+    /// never agreed to. Each pass meets them again but says so once.
+    refused: HashSet<Announced>,
     _publications: Subscription,
 }
 
@@ -57,6 +70,7 @@ impl ProfileReplication {
             run: None,
             rerun: false,
             watcher: None,
+            refused: HashSet::new(),
             _publications: subscription,
         }
     }
@@ -211,6 +225,36 @@ impl ProfileReplication {
                 this.update(cx, |this, cx| this.finish(outcome, cx)).ok();
             }
         }));
+    }
+
+    /// Reports a profile the pass skipped. A refused remote change is read again by
+    /// every pass until it can be applied, but is announced only the first time.
+    fn announce_skip(
+        &mut self,
+        id: ProfileId,
+        failure: ReplicationFailure,
+        cx: &mut Context<Self>,
+    ) {
+        let first = !matches!(failure, ReplicationFailure::Rejected { .. })
+            || self.refused.insert(Announced::Skipped(id));
+        if first {
+            cx.emit(ReplicationEvent::Failed(failure));
+        }
+    }
+
+    /// Reports a refusal of the replica. One that restored the agreed version is news
+    /// once by itself; one that left a never-agreed profile local would repeat with
+    /// every pass, so it is announced only the first time.
+    fn announce_refusal(&mut self, id: ProfileId, event: ReplicationEvent, cx: &mut Context<Self>) {
+        let restored = matches!(event, ReplicationEvent::Refused { restored: true, .. });
+        if restored || self.refused.insert(Announced::Refused(id)) {
+            cx.emit(event);
+        }
+    }
+
+    /// A pass left nothing refused behind it: later refusals are news again.
+    fn forget_refusals(&mut self) {
+        self.refused.clear();
     }
 
     fn finish(&mut self, outcome: Outcome, cx: &mut Context<Self>) {
