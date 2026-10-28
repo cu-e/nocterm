@@ -95,6 +95,9 @@ pub enum HubError {
     /// No recovery is under way for this hub: sign in first.
     #[error("there is nothing to recover for this hub")]
     NoRecoveryPending,
+    /// The account keys are not open on this device: unlock the vault or sign in first.
+    #[error("the account keys are not open on this device")]
+    KeysLocked,
     /// The credential file of this device could not be read or written.
     #[error("the credentials of this device cannot be kept")]
     Credentials {

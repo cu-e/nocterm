@@ -1,11 +1,13 @@
 //! The Servers page lists the known servers and manages them through the service.
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use super::{ServersPage, row::item, settings_page};
 use crate::test_support::{Fixture, fixture_over, hub_id, pinned_record, server};
 use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
 use nocterm_hubs::{HubStatus, HubSummary};
-use nocterm_hubs_model::testing::{FakeCall, FakeHub};
+use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
 use nocterm_hubs_model::{Fingerprint, HubColor, HubRecord, TrustPolicy};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
@@ -19,7 +21,22 @@ fn page_over(
     known: Vec<HubRecord>,
     signed_in: Option<&str>,
 ) -> Fixture {
-    let hub = FakeHub::new().with_server(server());
+    page_on(
+        cx,
+        config,
+        FakeHub::new().with_server(server()),
+        known,
+        signed_in,
+    )
+}
+
+fn page_on(
+    cx: &mut TestAppContext,
+    config: SettingsConfig,
+    hub: FakeHub,
+    known: Vec<HubRecord>,
+    signed_in: Option<&str>,
+) -> Fixture {
     let setup = fixture_over(cx, config, hub, known, signed_in);
     let hubs = setup.installed.hubs().clone();
     let (window, _) = cx.update(|cx| {
@@ -271,4 +288,70 @@ fn a_server_that_is_not_signed_in_cannot_become_the_account_server(cx: &mut Test
     let config = SettingsConfig::in_memory(SettingsDocument::default());
     let page = page_over(cx, config, vec![pinned_record()], None);
     assert!(!page.shows(item("server-account-on", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_server_whose_recovery_key_was_never_confirmed_offers_a_new_one(cx: &mut TestAppContext) {
+    let hub = FakeHub::new().with_server(server().with_keyset("ada", "secret", "recovery-ada"));
+    hub.leave_recovery_key_unconfirmed(&hub_id());
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let page = page_on(cx, config, hub, vec![pinned_record()], Some("ada"));
+    assert!(page.shows(item("server-recovery-issue", KEY), cx));
+
+    page.click(item("server-recovery-issue", KEY), cx);
+    page.settle_dialog(cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(page.shows("sign-in-key-saved", cx));
+    assert_eq!(page.hub.count(FakeOp::ReissueRecoveryKey), 1);
+
+    page.click("sign-in-key-saved", cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(
+        !page.shows(item("server-recovery-issue", KEY), cx),
+        "a saved key is not offered again"
+    );
+}
+
+#[gpui_kit::test]
+fn a_server_with_a_confirmed_recovery_key_offers_no_new_one(cx: &mut TestAppContext) {
+    let page = page(cx, vec![pinned_record()]);
+    assert!(!page.shows(item("server-recovery-issue", KEY), cx));
+}
+
+/// Counts how often the page asks to be drawn again.
+fn count_redraws(page: &Fixture, cx: &mut TestAppContext) -> Rc<Cell<usize>> {
+    let redraws = Rc::new(Cell::new(0));
+    let counted = Rc::clone(&redraws);
+    cx.update_window(page.window, |root, _, cx| {
+        let servers = root.downcast::<ServersPage>().unwrap();
+        cx.observe(&servers, move |_, _| counted.set(counted.get() + 1))
+            .detach();
+    })
+    .unwrap();
+    redraws
+}
+
+#[gpui_kit::test]
+fn the_offer_of_a_new_recovery_key_appears_as_soon_as_the_vault_is_unlocked(
+    cx: &mut TestAppContext,
+) {
+    let hub = FakeHub::new().with_server(server().with_keyset("ada", "secret", "recovery-ada"));
+    hub.leave_recovery_key_unconfirmed(&hub_id());
+    hub.lock_keys(&hub_id());
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let page = page_on(cx, config, hub.clone(), vec![pinned_record()], Some("ada"));
+    assert!(
+        !page.shows(item("server-recovery-issue", KEY), cx),
+        "a locked vault offers nothing"
+    );
+    let redraws = count_redraws(&page, cx);
+
+    hub.unlock_keys(&hub_id());
+    cx.run_until_parked();
+
+    assert!(redraws.get() > 0, "the page is redrawn by the unlock alone");
+    page.render(cx);
+    assert!(page.shows(item("server-recovery-issue", KEY), cx));
 }

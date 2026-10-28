@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use futures::FutureExt as _;
 use futures::channel::oneshot;
+use futures::future::BoxFuture;
 use nocterm_core::error::SharedCause;
 use nocterm_session::testing::ScriptedTransport;
 use nocterm_session::{Secret, Transport};
@@ -38,6 +39,7 @@ pub enum FakeOp {
     Oidc,
     SetVaultPassphrase,
     Recover,
+    ReissueRecoveryKey,
     SignOut,
     Forget,
     Account,
@@ -55,6 +57,7 @@ pub enum FakeCall {
     Oidc { hub: HubId, provider: String },
     SetVaultPassphrase(HubId),
     Recover(HubId),
+    ReissueRecoveryKey(HubId),
     SignOut(HubId),
     Forget(HubId),
     Account(HubId),
@@ -94,6 +97,22 @@ struct State {
     /// Keys a sign-in could not open, waiting for the recovery key, and what should open them
     /// afterwards.
     recovering: BTreeMap<HubId, String>,
+    /// Hubs whose recovery key was shown on this device and not confirmed as saved.
+    unconfirmed: BTreeSet<HubId>,
+    /// Hubs whose account keys are closed, as after a restart until the vault is unlocked.
+    locked: BTreeSet<HubId>,
+    /// How many times the keys of any hub were opened or dropped, and who waits for the next.
+    key_changes: u64,
+    key_waiters: Vec<oneshot::Sender<()>>,
+}
+
+impl State {
+    fn keys_changed(&mut self) {
+        self.key_changes += 1;
+        for waiter in self.key_waiters.drain(..) {
+            let _ = waiter.send(());
+        }
+    }
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -138,6 +157,34 @@ impl FakeHub {
     }
 
     /// Makes the hub revoke this device: its next call finds the device revoked.
+    /// Ends the sign-in of this device as an expired login does: the credentials are gone, the
+    /// account keys it holds are not.
+    pub fn expire_login(&self, hub: &HubId) {
+        lock(&self.state).credentials.remove(hub);
+    }
+
+    /// Marks the recovery key shown on this device for `hub` as never confirmed, as a dialog
+    /// closed on that step leaves it.
+    pub fn leave_recovery_key_unconfirmed(&self, hub: &HubId) {
+        lock(&self.state).unconfirmed.insert(hub.clone());
+    }
+
+    /// Closes the account keys of `hub`, as a restart does until the vault is unlocked.
+    pub fn lock_keys(&self, hub: &HubId) {
+        let mut state = lock(&self.state);
+        if state.locked.insert(hub.clone()) {
+            state.keys_changed();
+        }
+    }
+
+    /// Opens the account keys of `hub`, as unlocking the vault does.
+    pub fn unlock_keys(&self, hub: &HubId) {
+        let mut state = lock(&self.state);
+        if state.locked.remove(hub) {
+            state.keys_changed();
+        }
+    }
+
     pub fn revoke_device(&self, hub: &HubId) {
         lock(&self.state).revoked.insert(hub.clone());
     }
@@ -249,6 +296,7 @@ impl FakeCall {
             Self::Oidc { .. } => FakeOp::Oidc,
             Self::SetVaultPassphrase(_) => FakeOp::SetVaultPassphrase,
             Self::Recover(_) => FakeOp::Recover,
+            Self::ReissueRecoveryKey(_) => FakeOp::ReissueRecoveryKey,
             Self::SignOut(_) => FakeOp::SignOut,
             Self::Forget(_) => FakeOp::Forget,
             Self::Terminal(..) => return None,
@@ -335,9 +383,14 @@ impl State {
                         recovery: recovery.clone(),
                     },
                 );
+                self.unconfirmed.insert(hub.clone());
                 Ok(KeyStatus::Created(Secret::new(recovery)))
             }
-            Some(keyset) if keyset.secret == secret => Ok(KeyStatus::Open),
+            Some(keyset) if keyset.secret == secret => Ok(if self.unconfirmed.contains(hub) {
+                KeyStatus::RecoveryKeyUnconfirmed
+            } else {
+                KeyStatus::Open
+            }),
             Some(_) => {
                 self.recovering.insert(hub.clone(), secret.to_owned());
                 Ok(KeyStatus::RecoveryNeeded)
@@ -518,6 +571,66 @@ impl HubSignIn for FakeHub {
         )
     }
 
+    fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
+        let state = lock(&self.state);
+        state.unconfirmed.contains(hub)
+            && !state.recovering.contains_key(hub)
+            && !state.locked.contains(hub)
+    }
+
+    fn keys_revision(&self) -> u64 {
+        lock(&self.state).key_changes
+    }
+
+    fn keys_changed(&self, seen: u64) -> BoxFuture<'static, u64> {
+        let state = Arc::clone(&self.state);
+        Box::pin(async move {
+            loop {
+                let waiting = {
+                    let mut state = lock(&state);
+                    if state.key_changes != seen {
+                        return state.key_changes;
+                    }
+                    let (sender, receiver) = oneshot::channel();
+                    state.key_waiters.push(sender);
+                    receiver
+                };
+                if waiting.await.is_err() {
+                    return lock(&state).key_changes;
+                }
+            }
+        })
+    }
+
+    fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret> {
+        let hub = hub.clone();
+        self.call(
+            FakeOp::ReissueRecoveryKey,
+            FakeCall::ReissueRecoveryKey(hub.clone()),
+            move |state| {
+                state.authenticate(&hub)?;
+                let username = state.credentials[&hub].clone();
+                if state.recovering.contains_key(&hub) {
+                    return Err(HubError::KeysLocked);
+                }
+                let keyset = state
+                    .servers
+                    .get_mut(hub.address())
+                    .and_then(|server| server.keysets.get_mut(&username))
+                    .ok_or(HubError::KeysLocked)?;
+                keyset.recovery.push('+');
+                let key = Secret::new(keyset.recovery.clone());
+                state.unconfirmed.insert(hub);
+                Ok(key)
+            },
+        )
+    }
+
+    fn confirm_recovery_key(&self, hub: &HubId) -> Result<(), HubError> {
+        lock(&self.state).unconfirmed.remove(hub);
+        Ok(())
+    }
+
     fn sign_out(&self, hub: &HubId) -> HubFuture<()> {
         let hub = hub.clone();
         self.call(
@@ -526,6 +639,7 @@ impl HubSignIn for FakeHub {
             move |state| {
                 state.credentials.remove(&hub);
                 state.recovering.remove(&hub);
+                state.unconfirmed.remove(&hub);
                 Ok(())
             },
         )
@@ -544,6 +658,7 @@ impl HubSignIn for FakeHub {
         }
         state.credentials.remove(hub);
         state.recovering.remove(hub);
+        state.unconfirmed.remove(hub);
         Ok(())
     }
 }

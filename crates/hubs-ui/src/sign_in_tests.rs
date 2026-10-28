@@ -292,3 +292,102 @@ fn a_provider_sign_in_asks_for_the_vault_passphrase(cx: &mut TestAppContext) {
     assert!(window.shows("sign-in-key-saved", cx));
     assert_eq!(window.hub.count(FakeOp::SetVaultPassphrase), 1);
 }
+
+#[gpui_kit::test]
+fn a_new_recovery_key_cannot_be_left_behind_by_closing_the_dialog(cx: &mut TestAppContext) {
+    let window = dialog_over(server().publicly_trusted().keyed(), cx);
+    submit(&window, "hub.home:7443", None, cx);
+    sign_in_with_password(&window, "ada", "secret", cx);
+    assert!(window.shows("sign-in-key-saved", cx));
+    assert!(
+        !window.shows("close", cx),
+        "the close button is not offered"
+    );
+
+    window.press("escape", cx);
+    cx.run_until_parked();
+    window.render(cx);
+
+    assert!(window.has_dialog(cx));
+    assert!(
+        window.shows("sign-in-key-saved", cx),
+        "Escape does not close it"
+    );
+
+    window.click("sign-in-key-saved", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    window.press("escape", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(
+        !window.has_dialog(cx),
+        "once the key is saved Escape closes it"
+    );
+}
+
+/// A dialog over a server this device is signed in to whose recovery key was never confirmed.
+fn unconfirmed_key_dialog(cx: &mut TestAppContext) -> Fixture {
+    let hub = FakeHub::new().with_server(server().publicly_trusted().with_keyset(
+        "ada",
+        "secret",
+        "recovery-ada",
+    ));
+    let id = crate::test_support::hub_id();
+    hub.leave_recovery_key_unconfirmed(&id);
+    let window = fixture(cx, hub, Vec::new(), Some("ada"));
+    window.dispatch(SignInToServer, cx);
+    window.settle_dialog(cx);
+    submit(&window, "hub.home:7443", None, cx);
+    window
+}
+
+#[gpui_kit::test]
+fn an_unconfirmed_recovery_key_is_offered_again_and_the_new_one_must_be_saved(
+    cx: &mut TestAppContext,
+) {
+    let window = unconfirmed_key_dialog(cx);
+    assert!(window.shows("sign-in-offer-issue", cx));
+    assert_eq!(saved(&window, cx), 0);
+
+    window.click("sign-in-offer-issue", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("sign-in-key-saved", cx));
+    assert_eq!(window.hub.count(FakeOp::ReissueRecoveryKey), 1);
+    assert!(!window.shows("close", cx), "the new key is shown once");
+
+    window.click("sign-in-key-saved", cx);
+    cx.run_until_parked();
+    window.render(cx);
+    assert!(window.shows("sign-in-done", cx));
+    assert_eq!(saved(&window, cx), 1);
+}
+
+#[gpui_kit::test]
+fn the_offer_of_a_new_recovery_key_can_wait(cx: &mut TestAppContext) {
+    let window = unconfirmed_key_dialog(cx);
+
+    window.click("sign-in-offer-later", cx);
+    cx.run_until_parked();
+    window.render(cx);
+
+    assert!(window.shows("sign-in-done", cx));
+    assert_eq!(saved(&window, cx), 1);
+    assert_eq!(window.hub.count(FakeOp::ReissueRecoveryKey), 0);
+}
+
+#[gpui_kit::test]
+fn a_failed_reissue_says_why_and_offers_it_again(cx: &mut TestAppContext) {
+    let window = unconfirmed_key_dialog(cx);
+    window
+        .hub
+        .fail_next(FakeOp::ReissueRecoveryKey, HubError::KeysLocked);
+
+    window.click("sign-in-offer-issue", cx);
+    cx.run_until_parked();
+    window.render(cx);
+
+    assert!(window.shows("sign-in-offer-issue", cx));
+    assert!(!window.shows("sign-in-key-saved", cx));
+}

@@ -1,5 +1,7 @@
 //! Every hub this device knows, with the connection status every window shares.
 
+use std::sync::Arc;
+
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
     HubAddress, HubColor, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord, HubsSettings,
@@ -50,6 +52,7 @@ pub struct Hubs {
     deps: Deps,
     entries: Vec<HubEntry>,
     _settings: Subscription,
+    _keys: Task<()>,
 }
 
 impl EventEmitter<HubsEvent> for Hubs {}
@@ -61,14 +64,31 @@ impl Hubs {
         let observed = settings.observe(cx, move |cx| {
             weak.update(cx, |hubs, cx| hubs.sync(cx)).ok();
         });
+        let keys = Self::redraw_on_key_changes(&deps, cx);
         let mut hubs = Self {
             settings,
             deps,
             entries: Vec::new(),
             _settings: observed,
+            _keys: keys,
         };
         hubs.sync(cx);
         hubs
+    }
+
+    /// Tells the observers of the registry whenever account keys open or close, so a view of
+    /// what depends on them (the offer of a new recovery key) follows a vault unlock at once.
+    fn redraw_on_key_changes(deps: &Deps, cx: &mut Context<Self>) -> Task<()> {
+        let sign_in = Arc::clone(&deps.sign_in);
+        let mut seen = sign_in.keys_revision();
+        cx.spawn(async move |this, cx| {
+            loop {
+                seen = sign_in.keys_changed(seen).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        })
     }
 
     /// The known hubs in the order of the settings.
@@ -299,6 +319,32 @@ impl Hubs {
         let (deps, settings) = (self.deps.clone(), self.settings.clone());
         let session = cx.new(|cx| SignInSession::resume(&deps, settings, record, cx));
         self.connect_when_signed_in(&session, cx);
+        Some(session)
+    }
+
+    /// Whether the account keys of `hub` are open and the recovery key made with them was never
+    /// confirmed as saved: a new one can be issued with [`Hubs::start_recovery_key_reissue`].
+    pub fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
+        self.entry(hub).is_some() && self.deps.sign_in.recovery_key_unconfirmed(hub)
+    }
+
+    /// Starts issuing a new recovery key for `hub`, which replaces the unconfirmed one. The
+    /// dialog shows it once; `None` when `hub` is not listed.
+    pub fn start_recovery_key_reissue(
+        &mut self,
+        hub: &HubId,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<SignInSession>> {
+        self.entry(hub)?;
+        let (deps, settings) = (self.deps.clone(), self.settings.clone());
+        let session = cx.new(|cx| SignInSession::reissue(&deps, settings, hub, cx));
+        // Saving the new key ends the offer: whoever shows it is told to look again.
+        cx.subscribe(&session, |_, _, event, cx| {
+            if matches!(event, SignInEvent::Finished(_)) {
+                cx.notify();
+            }
+        })
+        .detach();
         Some(session)
     }
 

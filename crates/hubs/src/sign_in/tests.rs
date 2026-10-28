@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use gpui::{Entity, TestAppContext};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
-use nocterm_hubs_model::{Fingerprint, HubColor, HubError, TrustPolicy};
+use nocterm_hubs_model::{Fingerprint, HubColor, HubError, HubSignIn as _, TrustPolicy};
 use nocterm_session::Secret;
 
 use crate::fixture::{ADDRESS, Fixture, fixture, fixture_with_failing_settings, id, server};
@@ -574,11 +574,202 @@ async fn the_key_steps_do_nothing_out_of_turn(cx: &mut TestAppContext) {
     let session = at_methods(cx, &fx);
     session.update(cx, |session, cx| {
         session.acknowledge_recovery_key(cx);
+        session.issue_recovery_key(cx);
+        session.skip_recovery_offer(cx);
         session.recover(Secret::new("recovery-ada"), cx);
         session.set_vault_passphrase(Secret::new("a long passphrase"), cx);
     });
     cx.run_until_parked();
     assert!(matches!(step(cx, &session), SignInStep::Method { .. }));
     assert_eq!(fx.hub.count(FakeOp::Recover), 0);
+    assert_eq!(fx.hub.count(FakeOp::ReissueRecoveryKey), 0);
     assert_eq!(fx.hub.count(FakeOp::SetVaultPassphrase), 0);
+}
+
+/// The sign-in of a first account, closed on the recovery-key step: the server is not listed and
+/// the key was shown but never confirmed.
+fn closed_on_the_recovery_key(cx: &mut TestAppContext, fx: &Fixture) {
+    let session = at_methods(cx, fx);
+    password(cx, &session, "ada", "secret");
+    assert!(matches!(step(cx, &session), SignInStep::RecoveryKey { .. }));
+    drop(session);
+    cx.run_until_parked();
+}
+
+fn issue(cx: &mut TestAppContext, session: &Entity<SignInSession>) {
+    session.update(cx, |session, cx| session.issue_recovery_key(cx));
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn acknowledging_the_recovery_key_confirms_it_so_it_is_not_offered_again(
+    cx: &mut TestAppContext,
+) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    let session = at_methods(cx, &fx);
+    password(cx, &session, "ada", "secret");
+    assert!(fx.hub.recovery_key_unconfirmed(&id()));
+
+    session.update(cx, |session, cx| session.acknowledge_recovery_key(cx));
+    cx.run_until_parked();
+
+    assert!(!fx.hub.recovery_key_unconfirmed(&id()));
+}
+
+#[gpui::test]
+async fn a_sign_in_closed_on_the_recovery_key_offers_a_new_one_next_time(cx: &mut TestAppContext) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    closed_on_the_recovery_key(cx, &fx);
+    assert!(fx.servers(cx).is_empty());
+
+    let session = start(cx, &fx);
+    submit(
+        cx,
+        &session,
+        ADDRESS,
+        &Fingerprint::from_bytes([7; 32]).to_string(),
+    );
+    assert!(matches!(
+        step(cx, &session),
+        SignInStep::RecoveryOffer { problem: None }
+    ));
+    assert!(
+        fx.servers(cx).is_empty(),
+        "nothing is listed before it is settled"
+    );
+
+    issue(cx, &session);
+    let SignInStep::RecoveryKey { key } = step(cx, &session) else {
+        panic!("expected the new recovery key");
+    };
+    assert_eq!(
+        key,
+        Secret::new("recovery-ada+"),
+        "the old key was replaced"
+    );
+    session.update(cx, |session, cx| session.acknowledge_recovery_key(cx));
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
+    assert_eq!(fx.servers(cx).len(), 1);
+    assert!(!fx.hub.recovery_key_unconfirmed(&id()));
+}
+
+#[gpui::test]
+async fn a_password_sign_in_that_finds_the_key_unconfirmed_offers_a_new_one(
+    cx: &mut TestAppContext,
+) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    closed_on_the_recovery_key(cx, &fx);
+    fx.hub.expire_login(&id());
+
+    let session = at_methods(cx, &fx);
+    password(cx, &session, "ada", "secret");
+
+    assert!(matches!(
+        step(cx, &session),
+        SignInStep::RecoveryOffer { problem: None }
+    ));
+}
+
+#[gpui::test]
+async fn leaving_the_offer_for_later_lists_the_server_and_keeps_the_key_unconfirmed(
+    cx: &mut TestAppContext,
+) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    closed_on_the_recovery_key(cx, &fx);
+    let session = start(cx, &fx);
+    submit(
+        cx,
+        &session,
+        ADDRESS,
+        &Fingerprint::from_bytes([7; 32]).to_string(),
+    );
+
+    session.update(cx, |session, cx| session.skip_recovery_offer(cx));
+    cx.run_until_parked();
+
+    assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
+    assert_eq!(fx.servers(cx).len(), 1);
+    assert!(
+        fx.hubs
+            .read_with(cx, |hubs, _| hubs.recovery_key_unconfirmed(&id()))
+    );
+}
+
+#[gpui::test]
+async fn a_failed_reissue_returns_to_the_offer_and_can_be_tried_again(cx: &mut TestAppContext) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    closed_on_the_recovery_key(cx, &fx);
+    let session = start(cx, &fx);
+    submit(
+        cx,
+        &session,
+        ADDRESS,
+        &Fingerprint::from_bytes([7; 32]).to_string(),
+    );
+    fx.hub
+        .fail_next(FakeOp::ReissueRecoveryKey, HubError::KeysLocked);
+
+    issue(cx, &session);
+    assert!(matches!(
+        step(cx, &session),
+        SignInStep::RecoveryOffer {
+            problem: Some(SignInError::Hub(HubError::KeysLocked))
+        }
+    ));
+
+    issue(cx, &session);
+    assert!(matches!(step(cx, &session), SignInStep::RecoveryKey { .. }));
+}
+
+#[gpui::test]
+async fn the_servers_page_can_issue_a_new_key_for_a_listed_server(cx: &mut TestAppContext) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    closed_on_the_recovery_key(cx, &fx);
+    let first = start(cx, &fx);
+    submit(
+        cx,
+        &first,
+        ADDRESS,
+        &Fingerprint::from_bytes([7; 32]).to_string(),
+    );
+    // Listed, with the key shown but not confirmed.
+    first.update(cx, |session, cx| session.skip_recovery_offer(cx));
+    cx.run_until_parked();
+    assert_eq!(fx.servers(cx).len(), 1);
+    assert!(
+        fx.hubs
+            .read_with(cx, |hubs, _| hubs.recovery_key_unconfirmed(&id()))
+    );
+
+    let session = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.start_recovery_key_reissue(&id(), cx))
+        .expect("a listed server");
+    cx.run_until_parked();
+    assert!(session.read_with(cx, |session, _| session.reissue_only()));
+    let (seen, _keep) = events(cx, &session);
+    let SignInStep::RecoveryKey { key } = step(cx, &session) else {
+        panic!("expected the new recovery key");
+    };
+    assert_eq!(key, Secret::new("recovery-ada+"));
+
+    session.update(cx, |session, cx| session.acknowledge_recovery_key(cx));
+    cx.run_until_parked();
+    assert!(matches!(step(cx, &session), SignInStep::Finished(_)));
+    assert_eq!(*seen.borrow(), vec![SignInEvent::Finished(id())]);
+    assert!(
+        !fx.hubs
+            .read_with(cx, |hubs, _| hubs.recovery_key_unconfirmed(&id()))
+    );
+}
+
+#[gpui::test]
+async fn no_key_is_issued_for_a_server_that_is_not_listed(cx: &mut TestAppContext) {
+    let fx = fixture(cx, keyed_hub(), Vec::new());
+    let session = fx
+        .hubs
+        .update(cx, |hubs, cx| hubs.start_recovery_key_reissue(&id(), cx));
+    assert!(session.is_none());
+    assert_eq!(fx.hub.count(FakeOp::ReissueRecoveryKey), 0);
 }

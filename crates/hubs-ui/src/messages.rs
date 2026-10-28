@@ -56,6 +56,10 @@ pub(crate) fn hub_problem(error: &HubError) -> String {
         HubError::InvalidVaultPassphrase => {
             "The vault passphrase is too short. Use at least eight characters.".to_owned()
         }
+        HubError::KeysLocked => {
+            "The account keys are closed on this device. Unlock the vault or sign in with your password first."
+                .to_owned()
+        }
         HubError::KeysetDamaged { .. } => {
             "The account keys on the server do not verify. The server may have been tampered with; nothing was changed."
                 .to_owned()

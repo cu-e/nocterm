@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use nocterm_hub_client::{ClientError, RelayError as HubRelayError};
 use nocterm_hubs_model::{HubAddress, HubError};
@@ -7,7 +8,11 @@ use tonic::{Code, Status};
 use super::*;
 
 fn pool() -> Pool {
-    Pool::new(PathBuf::new(), "test")
+    Pool::new(
+        PathBuf::new(),
+        "test",
+        Arc::new(crate::account::Accounts::new(PathBuf::new())),
+    )
 }
 
 fn hub() -> HubId {

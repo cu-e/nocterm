@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nocterm_hub_client::{ClientError, DeviceInfo, HubClient};
 use nocterm_hubs_model::{HubAddress, HubError, HubId, TrustPolicy};
 
+use crate::account::Accounts;
 use crate::classify::{classify, credential_file};
 use crate::credentials::{CredentialDir, CredentialFile};
 
@@ -21,17 +22,26 @@ struct Pooled {
 
 /// One client per hub: clients of a hub share the turn in which its tokens are renewed, and
 /// two of them would renew the same refresh token against each other.
+///
+/// The pool also knows the account keys of the hubs, only to wipe them when a hub revokes this
+/// device: whatever the hub no longer trusts leaves nothing of its account behind.
 pub(crate) struct Pool {
     credentials: CredentialDir,
     device: DeviceInfo,
+    accounts: Arc<Accounts>,
     clients: Mutex<HashMap<HubId, Pooled>>,
 }
 
 impl Pool {
-    pub(crate) fn new(credentials_dir: PathBuf, device_name: &str) -> Self {
+    pub(crate) fn new(
+        credentials_dir: PathBuf,
+        device_name: &str,
+        accounts: Arc<Accounts>,
+    ) -> Self {
         Self {
             credentials: CredentialDir::new(credentials_dir),
             device: DeviceInfo::new(device_name, APP_NAME),
+            accounts,
             clients: Mutex::default(),
         }
     }
@@ -79,16 +89,28 @@ impl Pool {
         }
     }
 
-    /// Classifies a failure on a hub; a revoked device loses its credentials on the spot.
+    /// Classifies a failure on a hub; a revoked device loses its credentials, its keys and its
+    /// cache of the account's ciphertext on the spot, as when it signs out.
     pub(crate) fn failed(&self, hub: &HubId, error: ClientError) -> HubError {
         if matches!(error, ClientError::Revoked) {
-            self.evict(hub);
-            if let Ok(file) = self.file(hub.address())
-                && let Err(error) = file.erase()
-            {
-                tracing::warn!(%error, hub = %hub, "cannot erase the credentials of a revoked device");
-            }
+            self.forget_revoked(hub);
         }
         classify(hub.address(), error)
     }
+
+    fn forget_revoked(&self, hub: &HubId) {
+        self.evict(hub);
+        if let Ok(file) = self.file(hub.address())
+            && let Err(error) = file.erase()
+        {
+            tracing::warn!(%error, hub = %hub, "cannot erase the credentials of a revoked device");
+        }
+        let erased = self.accounts.slot(hub).and_then(|slot| slot.erase());
+        if let Err(error) = erased {
+            tracing::warn!(%error, hub = %hub, "cannot erase the account cache of a revoked device");
+        }
+    }
 }
+
+#[cfg(test)]
+mod tests;

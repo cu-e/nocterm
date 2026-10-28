@@ -141,6 +141,11 @@ pub(crate) struct AccountCache {
     pub keyset: KeysetCopy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault: Option<VaultCopy>,
+    /// The keys were created on this device and the person has not yet confirmed saving the
+    /// recovery key shown then. A fact about the device, not a secret: the next time the keys
+    /// open, a new recovery key is offered.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recovery_unconfirmed: bool,
 }
 
 impl AccountCache {
@@ -157,6 +162,7 @@ impl AccountCache {
             method,
             keyset: KeysetCopy::of(record),
             vault: None,
+            recovery_unconfirmed: false,
         }
     }
 }

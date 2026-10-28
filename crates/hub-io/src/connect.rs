@@ -176,7 +176,7 @@ impl Connector {
         // The login password also derives the key that opens the account's keyset.
         let keys = self
             .keys
-            .after_password(&hub, &client, &account, &username, secrets)
+            .after_password(&hub, &client, account.id.as_str(), &username, secrets)
             .await?;
         Ok(SignedIn { account, keys })
     }

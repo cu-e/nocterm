@@ -10,6 +10,10 @@ use nocterm_keys::{AccountKey, AccountKeyPair, KdfParams, RecoveryKey, UnlockKdf
 use super::{Accounts, OpenKeys, Slot};
 use crate::cache::{AccountCache, UnlockMethod};
 
+mod hub;
+
+pub(crate) use hub::MemoryKeysets;
+
 pub(crate) const ACCOUNT_ID: &str = "account-1";
 pub(crate) const HUB_UID: &str = "hub-uid";
 pub(crate) const PASSWORD: &str = "correct horse battery";
@@ -22,22 +26,34 @@ pub(crate) fn unlock(password: &str) -> UnlockKey {
     UnlockKey::from_vault_password(password, &kdf()).expect("a usable password")
 }
 
+/// A keyset record, as a first sign-in seals it, at version 0.
+pub(crate) fn sealed_record(
+    account_id: &str,
+    unlock: &UnlockKey,
+    kdf: &UnlockKdf,
+    account_key: &AccountKey,
+    pair: &AccountKeyPair,
+    recovery: &RecoveryKey,
+) -> v1::AccountKeyset {
+    v1::AccountKeyset {
+        version: 0,
+        kdf: kdf.description(),
+        salt: kdf.salt().to_vec(),
+        wrapped_account_key: account_key.seal(unlock, account_id).unwrap(),
+        updated_at_ms: 0,
+        public_key: pair.public_key().to_bytes().to_vec(),
+        sealed_private_key: pair.seal(account_key, account_id).unwrap(),
+        recovery_wrapped_account_key: recovery.wrap(account_key, account_id).unwrap(),
+    }
+}
+
 /// A keyset record sealed under `unlock`, and the recovery key that also opens it.
 pub(crate) fn record(unlock: &UnlockKey) -> (v1::AccountKeyset, RecoveryKey) {
     let account_key = AccountKey::generate().unwrap();
     let pair = AccountKeyPair::generate().unwrap();
     let recovery = RecoveryKey::generate().unwrap();
-    let kdf = kdf();
-    let record = v1::AccountKeyset {
-        version: 1,
-        kdf: kdf.description(),
-        salt: kdf.salt().to_vec(),
-        wrapped_account_key: account_key.seal(unlock, ACCOUNT_ID).unwrap(),
-        updated_at_ms: 0,
-        public_key: pair.public_key().to_bytes().to_vec(),
-        sealed_private_key: pair.seal(&account_key, ACCOUNT_ID).unwrap(),
-        recovery_wrapped_account_key: recovery.wrap(&account_key, ACCOUNT_ID).unwrap(),
-    };
+    let mut record = sealed_record(ACCOUNT_ID, unlock, &kdf(), &account_key, &pair, &recovery);
+    record.version = 1;
     (record, recovery)
 }
 
@@ -85,9 +101,8 @@ pub(crate) fn hub() -> HubId {
     )
 }
 
-/// A slot whose vault was opened by a sign-in with `PASSWORD`, kept in `dir`.
-pub(crate) fn signed_in(dir: &std::path::Path) -> (Accounts, Arc<Slot>, v1::AccountKeyset) {
-    let accounts = Accounts::new(dir.to_path_buf());
+/// The slot of the test hub in `accounts`, opened as a sign-in with `PASSWORD` opens it.
+pub(crate) fn sign_in(accounts: &Accounts) -> (Arc<Slot>, v1::AccountKeyset) {
     let slot = accounts.slot(&hub()).unwrap();
     let unlock = unlock(PASSWORD);
     let (record, _) = record(&unlock);
@@ -95,6 +110,13 @@ pub(crate) fn signed_in(dir: &std::path::Path) -> (Accounts, Arc<Slot>, v1::Acco
         open(&record, &unlock),
         cache(&record, UnlockMethod::Passphrase),
     );
+    (slot, record)
+}
+
+/// A slot whose vault was opened by a sign-in with `PASSWORD`, kept in `dir`.
+pub(crate) fn signed_in(dir: &std::path::Path) -> (Accounts, Arc<Slot>, v1::AccountKeyset) {
+    let accounts = Accounts::new(dir.to_path_buf());
+    let (slot, record) = sign_in(&accounts);
     (accounts, slot, record)
 }
 

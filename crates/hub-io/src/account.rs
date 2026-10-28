@@ -6,6 +6,7 @@
 //! every change so a vault can report its status without polling.
 
 mod flow;
+mod keyset_hub;
 #[cfg(test)]
 pub(crate) mod testing;
 
@@ -63,6 +64,11 @@ impl OpenKeys {
         self.collections
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The opened keyset.
+    pub(crate) fn keyset(&self) -> &Keyset {
+        &self.keyset
     }
 
     /// The key of a collection, opened from the envelope the hub holds for this account.
@@ -179,6 +185,14 @@ impl Slot {
         read(self.state().cache.as_ref())
     }
 
+    /// Whether the recovery key of `account_id` was shown on this device and never confirmed.
+    /// A cache of another account says nothing about this one.
+    pub(crate) fn recovery_unconfirmed(&self, account_id: &str) -> bool {
+        self.read_cache(|cache| {
+            cache.is_some_and(|cache| cache.account_id == account_id && cache.recovery_unconfirmed)
+        })
+    }
+
     /// Changes the cached account and writes it through. Nothing happens without a cache.
     pub(crate) fn update_cache(
         &self,
@@ -265,7 +279,6 @@ impl Accounts {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn notice(&self) -> &Arc<Notice> {
         &self.notice
     }

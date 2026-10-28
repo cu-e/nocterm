@@ -100,6 +100,10 @@ pub struct Account {
 pub enum KeyStatus {
     /// The keys are open: the account's data on the hub can be read.
     Open,
+    /// The keys are open, but the recovery key made with them was never confirmed as saved
+    /// (the dialog was closed or the client stopped before): a new one can be issued, because
+    /// the open keys may replace the recovery envelope.
+    RecoveryKeyUnconfirmed,
     /// The account had no keys; they were made now. The recovery key is the only way back
     /// after the password is lost, so it must be shown once and kept nowhere by the client.
     Created(Secret),

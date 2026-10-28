@@ -8,6 +8,7 @@ use std::task::{Context, Poll};
 
 use futures::FutureExt as _;
 use futures::channel::oneshot;
+use futures::future::BoxFuture;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
     Account, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
@@ -96,7 +97,11 @@ impl HubLinks {
             .build()
             .map_err(HubStartError)?;
         let accounts = Arc::new(Accounts::new(config.credentials_dir.clone()));
-        let pool = Arc::new(Pool::new(config.credentials_dir, &config.device_name));
+        let pool = Arc::new(Pool::new(
+            config.credentials_dir,
+            &config.device_name,
+            Arc::clone(&accounts),
+        ));
         let keys = Arc::new(KeyFlow::new(Arc::clone(&pool), Arc::clone(&accounts)));
         Ok(Arc::new(Self {
             handle: runtime.handle().clone(),
@@ -213,6 +218,27 @@ impl HubSignIn for HubLinks {
     fn recover(&self, hub: &HubId, recovery_key: Secret) -> HubFuture<()> {
         let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
         self.run_boxed(async move { keys.recover(&hub, recovery_key).await })
+    }
+
+    fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
+        self.keys.recovery_key_unconfirmed(hub)
+    }
+
+    fn keys_revision(&self) -> u64 {
+        self.keys.keys_revision()
+    }
+
+    fn keys_changed(&self, seen: u64) -> BoxFuture<'static, u64> {
+        self.keys.keys_changed(seen)
+    }
+
+    fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret> {
+        let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
+        self.run_boxed(async move { keys.reissue_recovery_key(&hub).await })
+    }
+
+    fn confirm_recovery_key(&self, hub: &HubId) -> Result<(), HubError> {
+        self.keys.confirm_recovery_key(hub)
     }
 
     fn sign_out(&self, hub: &HubId) -> HubFuture<()> {
