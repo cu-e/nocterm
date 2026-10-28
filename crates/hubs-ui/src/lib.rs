@@ -6,7 +6,9 @@
 //! and the Servers page of the settings.
 //!
 //! Owns: the presentation of the known hubs and their status; the Servers page of the settings
-//! ([`settings_page`]) and the palette commands that sign in to and out of a server; the steps of
+//! ([`settings_page`]), including the administrator keys waiting for the person's confirmation
+//! (each with its fingerprint to compare out of band, and a warning when the key changed), and
+//! the palette commands that sign in to and out of a server; the steps of
 //! the sign-in dialog as the service orders them; the sessions panel and the choice of the hub it
 //! lists ([`register`]).
 //!

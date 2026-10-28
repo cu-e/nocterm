@@ -2,7 +2,7 @@
 //! errors; this is the only place that turns them into text.
 
 use nocterm_hubs::{HubsError, SignInError};
-use nocterm_hubs_model::HubError;
+use nocterm_hubs_model::{AdminKeyError, HubError};
 
 /// Why a sign-in step did not work, for the dialog.
 pub(crate) fn sign_in_problem(error: &SignInError) -> String {
@@ -30,6 +30,22 @@ pub(crate) fn hubs_problem(error: &HubsError) -> String {
         HubsError::Hub(error) => hub_problem(error),
         HubsError::Save(_) => {
             "The settings could not be saved, so the server stays listed.".to_owned()
+        }
+    }
+}
+
+/// Why an administrator's key was not confirmed.
+pub(crate) fn admin_key_problem(error: AdminKeyError) -> String {
+    match error {
+        AdminKeyError::Locked => {
+            "The account keys are closed on this device. Unlock the vault first.".to_owned()
+        }
+        AdminKeyError::NotPending => {
+            "That administrator's key is no longer waiting for confirmation.".to_owned()
+        }
+        AdminKeyError::Mismatch => {
+            "The server now offers another key than the one shown. Compare the new fingerprint with the administrator's before confirming."
+                .to_owned()
         }
     }
 }

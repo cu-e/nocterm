@@ -82,6 +82,7 @@ pub(super) fn server_row(
         .child(colors(summary, hubs, &key, cx))
         .child(certificate(summary, record, &key, cx))
         .child(account(summary, hubs, &key, cx))
+        .children(super::admin_keys::admin_keys(summary, hubs, &key, cx))
         .children(recovery_key(summary, hubs, &key, cx))
         .child(actions(summary, hubs, &key))
         .into_any_element()
