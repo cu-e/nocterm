@@ -55,6 +55,8 @@ struct Inner {
     objects: HashMap<(ReplicaScope, ProfileId), Stored>,
     feed: Vec<(u64, ReplicaScope, ProfileId)>,
     offline: bool,
+    /// The account keys are closed: the server is reachable but every call is refused.
+    locked: bool,
     /// Successful writes left before the replica goes offline.
     offline_after: Option<usize>,
     /// The answer of the next write waits for this signal.
@@ -78,6 +80,17 @@ pub struct MemoryReplica {
 }
 
 impl Inner {
+    /// Why a call cannot be served now: closed keys are noticed before the network.
+    fn unserved(&self) -> Option<ReplicaError> {
+        if self.locked {
+            Some(ReplicaError::Locked)
+        } else if self.offline {
+            Some(ReplicaError::Unavailable)
+        } else {
+            None
+        }
+    }
+
     fn store(&mut self, id: ProfileId, scope: ReplicaScope, body: RemoteBody) -> ReplicaVersion {
         self.sequence += 1;
         self.feed.push((self.sequence, scope.clone(), id));
@@ -97,8 +110,8 @@ impl Inner {
         id: ProfileId,
         expected: Option<ReplicaVersion>,
     ) -> Result<(), ReplicaError> {
-        if self.offline {
-            return Err(ReplicaError::Unavailable);
+        if let Some(error) = self.unserved() {
+            return Err(error);
         }
         if let Some((scope, profile)) = self.concurrent.take() {
             let body = RemoteBody::Present(Box::new(profile.clone()));
@@ -201,6 +214,15 @@ impl MemoryReplica {
     pub fn set_offline(&self, offline: bool) {
         self.with(|inner| inner.offline = offline);
         if !offline {
+            self.notify();
+        }
+    }
+
+    /// The account keys: while locked every call answers `Locked`, even when reachable.
+    /// Unlocking tells watchers, as the real replica does when its keys open.
+    pub fn set_locked(&self, locked: bool) {
+        self.with(|inner| inner.locked = locked);
+        if !locked {
             self.notify();
         }
     }
@@ -324,8 +346,8 @@ impl MemoryReplica {
     ) -> Result<Vec<CredentialCopy>, ReplicaError> {
         self.with(|inner| {
             inner.calls.push(call);
-            if inner.offline {
-                return Err(ReplicaError::Unavailable);
+            if let Some(error) = inner.unserved() {
+                return Err(error);
             }
             if inner.forbidden.contains(&id)
                 || inner.forbidden_scopes.contains(&from)
@@ -415,10 +437,9 @@ impl ProfileReplica for MemoryReplica {
             inner.calls.push(ReplicaCall::Changes(
                 after.as_ref().map(|c| c.as_str().to_owned()),
             ));
-            if inner.offline {
-                Err(ReplicaError::Unavailable)
-            } else {
-                Ok(inner.page(after.as_ref()))
+            match inner.unserved() {
+                Some(error) => Err(error),
+                None => Ok(inner.page(after.as_ref())),
             }
         });
         futures::future::ready(result).boxed()
