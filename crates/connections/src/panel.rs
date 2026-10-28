@@ -584,6 +584,7 @@ impl ConnectionsPanel {
         &self,
         group: &str,
         members: &[Profile],
+        spaces: &Spaces,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let drop_group = group.to_owned();
@@ -599,7 +600,8 @@ impl ConnectionsPanel {
                 }),
             );
         for profile in members {
-            folder = folder.child(self.render_row(profile, true, cx));
+            let writable = spaces.writable(profile.id, cx);
+            folder = folder.child(self.render_row(profile, writable, cx));
         }
         folder.child(self.render_append_zone(Some(group), cx))
     }
@@ -645,7 +647,8 @@ impl ConnectionsPanel {
                 })),
         );
         for profile in &top {
-            list = list.child(self.render_row(profile, true, cx));
+            let writable = spaces.writable(profile.id, cx);
+            list = list.child(self.render_row(profile, writable, cx));
         }
         list = list.child(self.render_append_zone(None, cx));
         for (group, members) in &groups {
@@ -653,7 +656,7 @@ impl ConnectionsPanel {
             let collapsed = !filtering && self.collapsed.contains(group);
             list = list.child(self.render_group_header(group, collapsed, cx));
             if !collapsed {
-                list = list.child(self.render_folder(group, members, cx));
+                list = list.child(self.render_folder(group, members, &spaces, cx));
             }
         }
         for section in &sections {
