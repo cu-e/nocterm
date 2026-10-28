@@ -97,10 +97,13 @@ change).
   **read-only** for a Guest. Changing one writes it back to its group, never to your own vault.
   A key or password you create for a connection starts in your own vault; when the connection is
   saved in an organization's space it moves into that group's vault, sealed with the group's key,
-  so the other members can use it, and it is no longer in yours. Moving a connection from one
+  so the other members can use it, and it is no longer in yours (unless a personal
+  connection still uses it, below). Moving a connection from one
   space to another moves its keys and passwords with it, before the connection itself; a space
-  you may not write refuses both, and nothing moves. A key or password that a connection shares
-  with another one moves with whichever connection moves first.
+  you may not write refuses both, and nothing moves. A key or password that another connection
+  staying behind still uses is copied instead of moved, under a new id: the connection that
+  moves follows the copy, and the two vaults then hold independent entries, so editing or
+  deleting one never reaches the other.
 - When the server refuses a change (your role was lowered, or the group was closed), the connection
   returns to the version on the server and a single notice says so; a new connection the server
   refuses stays in your personal space. Nothing is retried in a loop.

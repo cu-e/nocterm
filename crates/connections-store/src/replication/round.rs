@@ -12,8 +12,8 @@ use gpui::{AsyncApp, Entity, WeakEntity};
 use nocterm_connections_model::{
     profiles::{Profile, ProfileError, ProfileId, Profiles},
     replica::{
-        ProfileReplica, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaScope, ReplicaState,
-        ReplicaVersion, SyncedEntry,
+        CredentialCopy, ProfileReplica, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaScope,
+        ReplicaState, ReplicaVersion, SyncedEntry,
         rules::{self, ReplicaAction},
     },
 };
@@ -21,7 +21,7 @@ use nocterm_session::CredentialId;
 use nocterm_store::Persisted;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Mutex, PoisonError},
 };
 
 /// Passes tried before a profile that keeps changing under us is reported.
@@ -56,6 +56,39 @@ enum Stop {
 struct Arrival {
     scope: ReplicaScope,
     credentials: Vec<CredentialId>,
+    /// The secrets that were copied for it, once they were: the profile follows the copies.
+    copies: Mutex<Vec<CredentialCopy>>,
+}
+
+impl Arrival {
+    fn copied(&self, copies: &[CredentialCopy]) {
+        self.copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend_from_slice(copies);
+    }
+
+    fn copies(&self) -> Vec<CredentialCopy> {
+        self.copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// The secrets that went along with a profile into a space.
+#[derive(Default)]
+struct Carried {
+    moved: Vec<CredentialId>,
+    copies: Vec<CredentialCopy>,
+}
+
+impl Carried {
+    /// The ids the secrets go by in the space they arrived in.
+    fn arrived(&self) -> Vec<CredentialId> {
+        let copied = self.copies.iter().map(|copy| copy.to);
+        self.moved.iter().copied().chain(copied).collect()
+    }
 }
 
 /// Why one action did not finish.
@@ -128,6 +161,7 @@ fn arrivals(actions: &[ReplicaAction]) -> HashMap<ProfileId, Arrival> {
                 Arrival {
                     scope: scope.clone(),
                     credentials: profile.credentials(),
+                    copies: Mutex::default(),
                 },
             )),
             _ => None,
@@ -313,8 +347,10 @@ impl Round {
                 profile,
                 expected,
             } => {
-                let moved = arrivals.contains_key(&profile.id);
-                self.push(scope, *profile, expected, moved, cx).await
+                let arrival = arrivals.get(&profile.id);
+                let renamed = arrival.map(Arrival::copies).unwrap_or_default();
+                self.push(scope, *profile, expected, arrival.is_some(), renamed, cx)
+                    .await
             }
             ReplicaAction::PushDelete {
                 scope,
@@ -380,14 +416,15 @@ impl Round {
         profile: Profile,
         expected: Option<ReplicaVersion>,
         moved: bool,
+        renamed: Vec<CredentialCopy>,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
         let id = profile.id;
         // A profile placed in a group brings along the secrets it keeps personally; one
         // that moved there already carried its own before it left the old space.
         let carried = match scope {
-            ReplicaScope::Personal => Vec::new(),
-            _ if moved => Vec::new(),
+            ReplicaScope::Personal => Carried::default(),
+            _ if moved => Carried::default(),
             _ => {
                 self.carry(
                     &profile,
@@ -399,14 +436,25 @@ impl Round {
                 .await?
             }
         };
+        // A secret that was copied goes by a new id there: the profile follows it.
+        let copies = if moved {
+            renamed
+        } else {
+            carried.copies.clone()
+        };
+        let original = profile;
+        let profile = original.clone().rekeyed(&copies);
         let sent = self
             .replica
             .put(scope.clone(), profile.clone(), expected)
             .await;
         match sent {
-            Ok(version) => Ok(self.agree(scope, version, profile, cx)?),
+            Ok(version) => {
+                self.agree(scope, version, profile.clone(), cx)?;
+                self.follow_copies(original, profile, cx).await
+            }
             Err(error) => {
-                self.carry_back(id, &scope, ReplicaScope::Personal, carried)
+                self.carry_back(id, &scope, ReplicaScope::Personal, carried.arrived())
                     .await;
                 match error {
                     ReplicaError::Forbidden { .. } => self.refused(id, profile, scope, cx).await,
@@ -414,6 +462,24 @@ impl Round {
                 }
             }
         }
+    }
+
+    /// The local profile follows the secrets that were copied for it, like the profile that
+    /// was sent does.
+    async fn follow_copies(
+        &self,
+        original: Profile,
+        rekeyed: Profile,
+        cx: &mut AsyncApp,
+    ) -> Result<(), Flow> {
+        if original == rekeyed {
+            return Ok(());
+        }
+        let id = original.id;
+        let saving = self.store.update(cx, |store, cx| {
+            store.save_profile_checked(rekeyed, Some(original), cx)
+        });
+        saving.await.map_err(|error| local_flow(id, error))
     }
 
     /// Moves the `credentials` of `shown` that are kept in `from` into `to`, and answers the
@@ -427,39 +493,68 @@ impl Round {
         from: ReplicaScope,
         to: &ReplicaScope,
         cx: &mut AsyncApp,
-    ) -> Result<Vec<CredentialId>, Flow> {
+    ) -> Result<Carried, Flow> {
         if credentials.is_empty() || from == *to {
-            return Ok(Vec::new());
+            return Ok(Carried::default());
         }
         let id = shown.id;
         let shared = self.shared_secrets(id, &credentials, &from, cx);
         let (copies, moves): (Vec<_>, Vec<_>) = credentials
             .into_iter()
             .partition(|credential| shared.contains(credential));
-        let mut arrived = Vec::new();
-        for (copying, wanted) in [(false, moves), (true, copies)] {
-            if wanted.is_empty() {
-                continue;
-            }
-            let sent = if copying {
-                self.replica.copy(id, from.clone(), to.clone(), wanted)
-            } else {
-                self.replica.carry(id, from.clone(), to.clone(), wanted)
-            };
-            match sent.await {
-                Ok(done) => arrived.extend(done),
-                Err(ReplicaError::Forbidden { .. }) => {
-                    self.carry_back(id, to, from, arrived).await;
-                    self.refused(id, shown.clone(), to.clone(), cx).await?;
-                    return Ok(Vec::new());
-                }
+        let mut arrived = Carried::default();
+        if !moves.is_empty() {
+            match self
+                .replica
+                .carry(id, from.clone(), to.clone(), moves)
+                .await
+            {
+                Ok(done) => arrived.moved = done,
                 Err(error) => {
-                    self.carry_back(id, to, from, arrived).await;
-                    return Err(remote_flow(error));
+                    return self
+                        .carry_failed(error, shown, &from, to, arrived, cx)
+                        .await;
+                }
+            }
+        }
+        if !copies.is_empty() {
+            match self
+                .replica
+                .copy(id, from.clone(), to.clone(), copies)
+                .await
+            {
+                Ok(done) => arrived.copies = done,
+                Err(error) => {
+                    return self
+                        .carry_failed(error, shown, &from, to, arrived, cx)
+                        .await;
                 }
             }
         }
         Ok(arrived)
+    }
+
+    /// A space that refuses the secrets is handled like a refusal of the profile itself;
+    /// the secrets that already arrived go back.
+    async fn carry_failed(
+        &self,
+        error: ReplicaError,
+        shown: &Profile,
+        from: &ReplicaScope,
+        to: &ReplicaScope,
+        arrived: Carried,
+        cx: &mut AsyncApp,
+    ) -> Result<Carried, Flow> {
+        self.carry_back(shown.id, to, from.clone(), arrived.arrived())
+            .await;
+        match error {
+            ReplicaError::Forbidden { .. } => {
+                self.refused(shown.id, shown.clone(), to.clone(), cx)
+                    .await?;
+                Ok(Carried::default())
+            }
+            error => Err(remote_flow(error)),
+        }
     }
 
     /// The `credentials` another profile that stays in `from` still uses.
@@ -504,7 +599,7 @@ impl Round {
             .read_with(cx, |state, _| state.visible().entry(id).cloned());
         // The secrets of a profile that moves go first, so a space that refuses them is
         // found before the profile leaves the one it is in.
-        let mut carried = Vec::new();
+        let mut carried = Carried::default();
         if let (Some(arrival), Some(entry)) = (arrival, &agreed) {
             carried = self
                 .carry(
@@ -515,12 +610,13 @@ impl Round {
                     cx,
                 )
                 .await?;
+            arrival.copied(&carried.copies);
         }
         match self.replica.delete(scope.clone(), id, expected).await {
             Ok(_) => Ok(self.record(cx, move |state| state.forget(id))?),
             Err(ReplicaError::Forbidden { .. }) => {
                 if let Some(arrival) = arrival {
-                    self.carry_back(id, &arrival.scope, scope.clone(), carried)
+                    self.carry_back(id, &arrival.scope, scope.clone(), carried.arrived())
                         .await;
                 }
                 match agreed {

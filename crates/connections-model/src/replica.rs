@@ -23,6 +23,14 @@ pub enum ReplicaScope {
     Organization(String),
 }
 
+/// A secret that was copied, and the id the copy goes by in the space it was copied to.
+/// The profile that follows the copy refers to `to`; the original keeps `from`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CredentialCopy {
+    pub from: CredentialId,
+    pub to: CredentialId,
+}
+
 /// How the account may use a space of the replica.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplicaAccess {
@@ -158,7 +166,9 @@ pub trait ProfileReplica: Send + Sync {
     }
 
     /// Like [`carry`](Self::carry), but the secrets also stay in `from`: another profile that
-    /// stays there still uses them. Answers the ones that were copied. A refused copy
+    /// stays there still uses them. Each copy goes by a new id, so that the two spaces never
+    /// hold one id; answers the ids of the ones that were copied. The profile must refer to
+    /// the new ids ([`Profile::rekeyed`]) before it is written to `to`. A refused copy
     /// leaves nothing behind in `to`.
     fn copy(
         &self,
@@ -166,7 +176,7 @@ pub trait ProfileReplica: Send + Sync {
         from: ReplicaScope,
         to: ReplicaScope,
         credentials: Vec<CredentialId>,
-    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
+    ) -> BoxFuture<'static, Result<Vec<CredentialCopy>, ReplicaError>> {
         let _ = (id, from, to, credentials);
         Box::pin(std::future::ready(Ok(Vec::new())))
     }

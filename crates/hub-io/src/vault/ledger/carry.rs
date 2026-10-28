@@ -6,11 +6,13 @@
 //! and never reaches a vault that was not asked for.
 //!
 //! A credential another profile that stays behind still uses is copied instead: it is written
-//! into the target and left in the space it came from. It then lives in both under one id; a
-//! later edit of the secret reaches the vault that holds it for the profile edited.
+//! into the target under a new id and left in the space it came from. Each space then holds
+//! the secret under an id of its own, so that an edit or a deletion reaches the copy it was
+//! made on and no other; the caller learns the new id and points the profile that follows at it.
 
 use std::sync::Arc;
 
+use nocterm_keys::random_bytes;
 use nocterm_session::CredentialId;
 use nocterm_vault::VaultError;
 
@@ -47,17 +49,19 @@ impl Ledger {
         to: &Space,
         ids: &[CredentialId],
     ) -> Result<Vec<CredentialId>, VaultError> {
-        self.relocate(from, to, ids, Leave::Remove).await
+        let moved = self.relocate(from, to, ids, Leave::Remove).await?;
+        Ok(moved.into_iter().map(|(id, _)| id).collect())
     }
 
-    /// Copies the credentials `ids` that `from` holds into `to`, which leaves them in `from`
-    /// too. When a copy fails, the ones already copied are removed from `to` again.
+    /// Copies the credentials `ids` that `from` holds into `to` under new ids, which leaves
+    /// them in `from` too, and answers each copy as `(id in from, id in to)`. When a copy
+    /// fails, the ones already copied are removed from `to` again.
     pub(crate) async fn copy(
         &self,
         from: &Space,
         to: &Space,
         ids: &[CredentialId],
-    ) -> Result<Vec<CredentialId>, VaultError> {
+    ) -> Result<Vec<(CredentialId, CredentialId)>, VaultError> {
         self.relocate(from, to, ids, Leave::Keep).await
     }
 
@@ -67,28 +71,27 @@ impl Ledger {
         to: &Space,
         ids: &[CredentialId],
         leave: Leave,
-    ) -> Result<Vec<CredentialId>, VaultError> {
+    ) -> Result<Vec<(CredentialId, CredentialId)>, VaultError> {
         let keys = self.keys()?;
         let store = self.store(&keys);
         self.sync(&keys).await?;
         self.groups.sync(&store).await?;
-        let mut moved = Vec::new();
+        let mut moved: Vec<(CredentialId, CredentialId)> = Vec::new();
         for id in ids {
-            match self
-                .carry_one(&keys, &store, from, to, &id.to_string(), leave)
-                .await
-            {
-                Ok(true) => moved.push(*id),
-                Ok(false) => {}
+            match self.carry_one(&keys, &store, from, to, *id, leave).await {
+                Ok(Some(arrived)) => moved.push((*id, arrived)),
+                Ok(None) => {}
                 Err(error) => {
-                    for done in &moved {
-                        let object_id = done.to_string();
+                    for (origin, arrived) in &moved {
                         let _ = match leave {
                             Leave::Remove => self
-                                .carry_one(&keys, &store, to, from, &object_id, leave)
+                                .carry_one(&keys, &store, to, from, *origin, leave)
                                 .await
                                 .map(drop),
-                            Leave::Keep => self.remove_in(&keys, &store, to, &object_id).await,
+                            Leave::Keep => {
+                                self.remove_in(&keys, &store, to, &arrived.to_string())
+                                    .await
+                            }
                         };
                     }
                     return Err(error);
@@ -98,34 +101,43 @@ impl Ledger {
         Ok(moved)
     }
 
-    /// Whether the credential `object_id` was in `from` and is now in `to`, and in `from` no
-    /// more unless `leave` keeps it there.
+    /// The id the credential `id` goes by in `to` when it was in `from` and is now in `to`,
+    /// and in `from` no more unless `leave` keeps it there: a moved credential keeps its id,
+    /// a copied one gets a new id.
     async fn carry_one(
         &self,
         keys: &Arc<OpenKeys>,
         store: &Store,
         from: &Space,
         to: &Space,
-        object_id: &str,
+        id: CredentialId,
         leave: Leave,
-    ) -> Result<bool, VaultError> {
-        let Some(record) = self.read_in(keys, from, object_id)? else {
-            return Ok(false);
+    ) -> Result<Option<CredentialId>, VaultError> {
+        let object_id = id.to_string();
+        let Some(record) = self.read_in(keys, from, &object_id)? else {
+            return Ok(None);
         };
-        self.require_writable(from, object_id)?;
-        self.require_writable(to, object_id)?;
+        let arrived = match leave {
+            Leave::Remove => id,
+            Leave::Keep => {
+                CredentialId::from_bytes(random_bytes::<16>().map_err(|_| VaultError::Randomness)?)
+            }
+        };
+        let target_id = arrived.to_string();
+        self.require_writable(from, &object_id)?;
+        self.require_writable(to, &target_id)?;
         let plaintext = codec::encode(&record.label, &record.binding, &record.secret)
             .map_err(|_| VaultError::Format)?;
-        self.write_in(keys, store, to, object_id, &plaintext)
+        self.write_in(keys, store, to, &target_id, &plaintext)
             .await?;
         if leave == Leave::Keep {
-            return Ok(true);
+            return Ok(Some(arrived));
         }
-        if let Err(error) = self.remove_in(keys, store, from, object_id).await {
-            let _ = self.remove_in(keys, store, to, object_id).await;
+        if let Err(error) = self.remove_in(keys, store, from, &object_id).await {
+            let _ = self.remove_in(keys, store, to, &target_id).await;
             return Err(error);
         }
-        Ok(true)
+        Ok(Some(arrived))
     }
 
     /// The credential as `space` holds it live, if it does.

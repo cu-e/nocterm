@@ -374,8 +374,11 @@ async fn a_secret_kept_in_another_group_is_not_pulled_into_a_profiles_group(
     assert_eq!(fixture.replica.secret_scope(secret), Some(other));
 }
 
-fn scopes(items: &[ReplicaScope]) -> std::collections::HashSet<ReplicaScope> {
-    items.iter().cloned().collect()
+/// The secret the group's copy of `profile` signs in with, which is a copy of `original`.
+fn group_secret(fixture: &Fixture, profile: &Profile, original: CredentialId) -> CredentialId {
+    let credential = in_acme(fixture, profile).and_then(|profile| profile.credential);
+    assert!(credential.is_some_and(|copy| copy != original));
+    credential.unwrap()
 }
 
 /// Two personal profiles that sign in with one secret.
@@ -397,10 +400,16 @@ async fn a_secret_another_profile_still_uses_is_copied_when_a_profile_moves_to_a
     fixture.replica.keep_secret(ReplicaScope::Personal, secret);
     fixture.attach(cx);
     fixture.place(cx, &first, acme());
+    let copy = group_secret(&fixture, &first, secret);
     assert_eq!(
-        fixture.replica.secret_scopes(secret),
-        scopes(&[ReplicaScope::Personal, acme()]),
-        "the group has its copy and the profile that stayed keeps its own"
+        fixture.replica.secret_scope(secret),
+        Some(ReplicaScope::Personal),
+        "the profile that stayed keeps its own"
+    );
+    assert_eq!(
+        fixture.replica.secret_scope(copy),
+        Some(acme()),
+        "the group has its copy, under an id of its own"
     );
     assert!(fixture.replica.writes().iter().any(|call| matches!(
         call,
@@ -414,7 +423,19 @@ async fn a_secret_another_profile_still_uses_is_copied_when_a_profile_moves_to_a
             .any(|call| matches!(call, ReplicaCall::Carry { .. })),
         "nothing was taken from the personal vault"
     );
-    assert_eq!(in_acme(&fixture, &first), Some(first));
+    assert_eq!(
+        fixture.local(cx, &first).and_then(|local| local.credential),
+        Some(copy),
+        "the local profile follows its copy"
+    );
+    cx.run_until_parked();
+    let copies = fixture
+        .replica
+        .writes()
+        .iter()
+        .filter(|call| matches!(call, ReplicaCall::Copy { .. }))
+        .count();
+    assert_eq!(copies, 1, "a settled profile is not copied again");
     assert_eq!(in_personal(&fixture, &second), Some(second));
 }
 
@@ -443,11 +464,17 @@ async fn a_new_group_profile_copies_a_secret_a_personal_profile_uses(
     fixture.attach(cx);
     fixture.stage(cx, &team, acme());
     fixture.save(cx, team.clone()).await;
+    let copy = group_secret(&fixture, &team, secret);
     assert_eq!(
-        fixture.replica.secret_scopes(secret),
-        scopes(&[ReplicaScope::Personal, acme()])
+        fixture.replica.secret_scope(secret),
+        Some(ReplicaScope::Personal)
     );
-    assert_eq!(in_acme(&fixture, &team), Some(team));
+    assert_eq!(fixture.replica.secret_scope(copy), Some(acme()));
+    assert_eq!(
+        fixture.local(cx, &team).and_then(|local| local.credential),
+        Some(copy),
+        "the local profile follows its copy"
+    );
 }
 
 #[gpui::test]
