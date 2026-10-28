@@ -8,14 +8,19 @@ use nocterm_connections_model::{
     profiles::{ProfileId, Profiles},
     replica::{ReplicaAccess, ReplicaScope, ReplicaSpace},
 };
-use nocterm_connections_store::ProfileReplication;
+use nocterm_connections_store::{ProfileReplication, ReplicationStatus};
 
-use crate::Installed;
+use crate::{
+    Installed,
+    panel::account_state::{self, AccountNotice},
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct Spaces {
     replication: Option<Entity<ProfileReplication>>,
     spaces: Vec<ReplicaSpace>,
+    /// Where synchronization stands; none without an account.
+    status: Option<ReplicationStatus>,
 }
 
 impl Spaces {
@@ -25,10 +30,25 @@ impl Spaces {
             .as_ref()
             .map(|replication| replication.read(cx).spaces())
             .unwrap_or_default();
+        let status = replication
+            .as_ref()
+            .map(|replication| replication.read(cx).status().clone());
         Self {
             replication,
             spaces,
+            status,
         }
+    }
+
+    /// Whether the list may be changed at all: always without an account, and with one only
+    /// while the copy is in step with it, because a change that stays here is lost.
+    pub(crate) fn editable(&self) -> bool {
+        self.status.as_ref().is_none_or(account_state::editable)
+    }
+
+    /// What to tell the user about the account above the list.
+    pub(crate) fn notice(&self) -> Option<AccountNotice> {
+        self.status.as_ref().and_then(account_state::notice)
     }
 
     /// The scope the connection lives in, or will once the requested move is carried out.
@@ -52,7 +72,7 @@ impl Spaces {
 
     /// Whether the connection may be edited, deleted, moved or renamed.
     pub(crate) fn writable(&self, id: ProfileId, cx: &App) -> bool {
-        self.access(&self.scope(id, cx)) == ReplicaAccess::Write
+        self.editable() && self.access(&self.scope(id, cx)) == ReplicaAccess::Write
     }
 
     /// Whether the connection is the user's own, filed in folders, rather than an

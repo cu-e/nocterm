@@ -91,6 +91,10 @@ pub fn open_editor(
     window: &mut Window,
     cx: &mut App,
 ) {
+    // A change the account does not receive would be lost.
+    if !crate::spaces::Spaces::of(&installed, cx).editable() {
+        return;
+    }
     let _ = open_editor_view(installed, profile, workspace, window, cx);
 }
 fn open_editor_view(

@@ -18,6 +18,7 @@ fn add_servers(
         .unwrap();
 }
 
+mod account_state;
 mod drag;
 mod rename;
 mod reorder;

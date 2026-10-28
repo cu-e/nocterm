@@ -8,7 +8,7 @@ use gpui_kit::{
     MouseButton, SharedString, Subscription, WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
+        ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         dialog::DialogFooter,
         h_flex,
@@ -28,6 +28,7 @@ use crate::{
     spaces::Spaces,
 };
 
+pub(crate) mod account_state;
 mod folder;
 mod group_actions;
 mod row;
@@ -153,6 +154,11 @@ impl ConnectionsPanel {
         }
     }
 
+    /// Whether the list may be changed now: see [`account_state`].
+    fn editable(&self, cx: &App) -> bool {
+        Spaces::of(&self.installed, cx).editable()
+    }
+
     fn filter_text(&self, cx: &App) -> String {
         self.filter.read(cx).value().to_string()
     }
@@ -261,6 +267,9 @@ impl ConnectionsPanel {
     }
 
     fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
         // The delete only applies while the group still holds these connections.
         let members = self.folder_members(&group, cx);
         let count = members.len();
@@ -321,6 +330,9 @@ impl ConnectionsPanel {
     }
 
     fn start_rename(&mut self, group: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
         if self.renaming.as_ref().is_some_and(|r| r.group == group) {
             return;
         }
@@ -429,6 +441,9 @@ impl ConnectionsPanel {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
+        if !self.editable(cx) {
+            return;
+        }
         let moved = self.installed.connections().update(cx, |connections, cx| {
             connections.place_profile(dragged.0, group, before, cx)
         });
@@ -537,6 +552,7 @@ impl ConnectionsPanel {
             .child(
                 Button::new("empty-new-connection")
                     .small()
+                    .disabled(!self.editable(cx))
                     .icon(IconName::ServerPlus)
                     .label("New Connection")
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -583,6 +599,9 @@ impl Render for ConnectionsPanel {
                     .persistence_error(cx)
                     .map(|error| error.to_string())
             });
+        let spaces = Spaces::of(&self.installed, cx);
+        let editable = spaces.editable();
+        let notice = spaces.notice();
         let theme = cx.theme();
         let danger = theme.danger;
 
@@ -606,6 +625,7 @@ impl Render for ConnectionsPanel {
                         Button::new("new-connection")
                             .ghost()
                             .small()
+                            .disabled(!editable)
                             .icon(IconName::ServerPlus)
                             .tooltip("New Connection")
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -619,6 +639,9 @@ impl Render for ConnectionsPanel {
                             })),
                     ),
             )
+            .when_some(notice, |panel, notice| {
+                panel.child(account_state::strip(&notice, cx))
+            })
             .when_some(load_error, |panel, error| {
                 panel.child(
                     div()

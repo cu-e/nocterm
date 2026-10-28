@@ -19,12 +19,12 @@ pub(super) struct Section {
 }
 
 impl Section {
-    fn of(space: &ReplicaSpace) -> Self {
+    fn of(space: &ReplicaSpace, editable: bool) -> Self {
         Self {
             id: space_id(&space.scope),
             name: space.name.clone(),
             scope: Some(space.scope.clone()),
-            writable: space.access == ReplicaAccess::Write,
+            writable: editable && space.access == ReplicaAccess::Write,
             members: Vec::new(),
         }
     }
@@ -58,7 +58,10 @@ impl Listing {
         groups: Vec<(String, Vec<Profile>)>,
         cx: &App,
     ) -> Self {
-        let mut sections: Vec<Section> = spaces.organizations().map(Section::of).collect();
+        let mut sections: Vec<Section> = spaces
+            .organizations()
+            .map(|space| Section::of(space, spaces.editable()))
+            .collect();
         let mut unreachable = Vec::new();
         let mut file = |profile: Profile| match spaces.scope(profile.id, cx) {
             ReplicaScope::Personal => Some(profile),
