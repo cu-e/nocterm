@@ -38,18 +38,14 @@ internal dependencies and purpose.
 
 ## Hubs
 
-A self-hosted Nocterm server keeps terminal sessions alive on its nodes. Its sessions are a
-plugin of the ordinary window: the `hubs` system plugin offers the panel `hubs.sessions`, which
-lists the nodes and sessions of one hub, with a choice of the hub when several are known, and
-opens a session as an attached terminal tab or starts a new one
-([ADR 0099](adr/0099-windows-have-no-environments.md)). Four crates carry it:
+A self-hosted Nocterm server keeps what an account owns (saved servers, vault passwords) and
+can carry an SSH route. Four crates carry it:
 `nocterm-hubs-model` (domain: addresses, trust rules, the `[hubs]` settings, the ports),
 `nocterm-hub-io` (adapter: the only crate that speaks the hub protocol, which lives in a
 [separate contract repository](adr/0096-hub-contract-outside-the-workspace.md); it keeps device
 credentials in private files), `nocterm-hubs` (service: known hubs, their status, sign-in) and
-`nocterm-hubs-ui` (feature: the sign-in dialog, the Servers settings page and the sessions
-panel). Attached terminal tabs ([ADR 0095](adr/0095-attached-sessions-restore-and-detach.md)) show
-a hub's session and detach when closed. A hub can also be the first step of an SSH route: the
+`nocterm-hubs-ui` (feature: the sign-in dialog, the Servers settings page and the sign-in
+commands). A hub can also be the first step of an SSH route: the
 transport asks the `RelayDialer` port that `nocterm-hub-io` implements for a stream
 ([ADR 0100](adr/0100-the-hub-is-a-route-step.md)). User guide: [hubs](HUBS.md).
 

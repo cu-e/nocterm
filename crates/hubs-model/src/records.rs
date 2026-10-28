@@ -39,14 +39,6 @@ text_id!(
     /// An organization of a hub.
     OrgId
 );
-text_id!(
-    /// A node, the machine that runs sessions for a hub.
-    NodeId
-);
-text_id!(
-    /// A terminal session that lives on a node.
-    HubSessionId
-);
 
 /// A hub and the trust decided for it; the adapter refuses a certificate that does not match.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,56 +111,4 @@ pub enum KeyStatus {
 pub struct SignedIn {
     pub account: Account,
     pub keys: KeyStatus,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NodeSummary {
-    pub id: NodeId,
-    pub name: String,
-    pub online: bool,
-    /// Sessions the node runs.
-    pub sessions: u32,
-}
-
-/// Where a hub session is in its life.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HubSessionState {
-    Starting,
-    Running,
-    Exited,
-    /// The node lost the process.
-    Lost,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HubSessionSummary {
-    pub id: HubSessionId,
-    pub org: OrgId,
-    pub node: NodeId,
-    pub node_name: String,
-    pub owner: AccountId,
-    pub title: String,
-    pub state: HubSessionState,
-    /// The node that owns the session is connected right now.
-    pub node_online: bool,
-    pub created_at_ms: i64,
-}
-
-impl HubSessionSummary {
-    pub fn is_owned_by(&self, account: &Account) -> bool {
-        self.owner == account.id
-    }
-}
-
-/// Which hub session a terminal tab attaches to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HubTerminalTarget {
-    /// Start a shell on a node and attach to it. Without a node the hub picks an online one.
-    New {
-        org: OrgId,
-        node: Option<NodeId>,
-        title: String,
-    },
-    /// Attach to a session that already runs; its screen is restored.
-    Existing(HubSessionId),
 }

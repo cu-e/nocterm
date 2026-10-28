@@ -78,12 +78,9 @@ start) and passed to each window. `startup` starts `HubLinks` with the state dir
 `hubs` folder for private credential files and puts the three ports in `HostServices`; a
 failure to start is logged and leaves hubs off, so local use is unaffected. Bootstrap installs
 the service after the interface and the feature after it; `build_workspace` registers the
-sessions panel and the sign-in commands of the feature in every window
+sign-in commands of the feature in every window
 ([ADR 0099](../adr/0099-windows-have-no-environments.md)), and without hubs no window has them.
-`AppHubTerminals` (`src/shell_setup/hub_terminals.rs`) implements the feature's
-`HubTerminalOpener` with `nocterm_terminal::open_attached`, so a hub session is an attached
-tab beside the local ones. The `hubs` system plugin is listed in the plugin catalog of
-`src/shell_setup.rs`; GUI tests use the same `bootstrap` with `FakeHub` or without hubs.
+GUI tests use the same `bootstrap` with `FakeHub` or without hubs.
 
 ## Menus
 

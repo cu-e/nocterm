@@ -20,7 +20,6 @@ gpui-kit.workspace = true
 [dev-dependencies]
 nocterm-core.workspace = true
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
-nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true
 nocterm-store.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }

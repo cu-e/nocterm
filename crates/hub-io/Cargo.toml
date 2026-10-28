@@ -1,6 +1,6 @@
 [package]
 name = "nocterm-hub-io"
-description = "Reaches Nocterm hubs through the hub contract: pinned TLS, device credentials, sign-in and session lists."
+description = "Reaches Nocterm hubs through the hub contract: pinned TLS, device credentials and sign-in."
 version = "0.0.0"
 edition.workspace = true
 license-file.workspace = true

@@ -33,9 +33,6 @@ pub(crate) fn server() -> FakeServer {
         .named("Home hub")
         .with_user("ada", "secret", "lab")
         .with_provider("corp", "Corporate SSO")
-        .with_node("n1", "build box", true)
-        .with_session("s1", "lab", "n1", "ada", "make")
-        .with_session("s2", "lab", "n1", "bob", "top")
 }
 
 pub(crate) fn pinned_record() -> HubRecord {
