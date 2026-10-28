@@ -48,6 +48,7 @@ pub struct VaultView {
     records: Vec<CredentialInfo>,
     unlocked: bool,
     generation: u64,
+    keys_missing: Option<crate::KeysMissingRemedy>,
     _bindings: ViewBindings,
 }
 impl VaultView {
@@ -103,6 +104,7 @@ impl VaultView {
             records: Vec::new(),
             unlocked: false,
             generation: 0,
+            keys_missing: None,
             _bindings: ViewBindings {
                 _subscriptions: subscriptions,
                 _status: watch,
@@ -114,6 +116,11 @@ impl VaultView {
             this.refresh(cx);
         }
         this
+    }
+    /// Makes the page offer `remedy` instead of creating a vault that cannot be created here.
+    pub(crate) fn with_keys_missing(mut self, remedy: Option<crate::KeysMissingRemedy>) -> Self {
+        self.keys_missing = remedy;
+        self
     }
     /// Follows the vault locking or unlocking, by this page or any other path.
     fn status_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {

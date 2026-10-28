@@ -139,8 +139,12 @@ impl HubSources {
             })?;
         let replication = self.replication(&connections, cx);
         connections.bind_replication(replication.clone());
+        let sign_in_again: nocterm_vault_ui::KeysMissingRemedy = {
+            let (hubs, hub) = (self.hubs.clone(), hub.clone());
+            Rc::new(move |window, cx| nocterm_hubs_ui::sign_in_again(&hubs, &hub, window, cx))
+        };
         let vault_ui = Rc::new(nocterm_vault_ui::install_scoped(
-            nocterm_vault_ui::Deps::new(vault.clone()),
+            nocterm_vault_ui::Deps::new(vault.clone()).with_keys_missing(sign_in_again),
             &self.ready,
             cx,
         ));

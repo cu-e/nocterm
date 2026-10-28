@@ -77,6 +77,25 @@ impl VaultView {
     fn overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let unlocked = self.service.is_unlocked();
         let exists = self.service.exists();
+        if let (false, false, Some(remedy)) = (unlocked, exists, self.keys_missing.clone()) {
+            return form::section(
+                "Status",
+                vec![form::row(
+                    "Keys not on this computer",
+                    "This server account's keys are not on this computer yet. Sign in again to open them.",
+                    Button::new("vault-keys-missing")
+                        .small()
+                        .primary()
+                        .label("Sign in again")
+                        .on_click(move |_, window, cx| {
+                            let remedy = remedy.clone();
+                            window.defer(cx, move |window, cx| remedy(window, cx));
+                        }),
+                    cx,
+                )],
+                cx,
+            );
+        }
         let device = self
             .device
             .clone()

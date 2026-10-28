@@ -7,7 +7,7 @@ use gpui_kit::{
 use nocterm_session::Secret;
 use nocterm_vault::{VaultAccess, testing::ScriptedVaultAccess};
 use nocterm_workspace::{LockVault, UnlockVault, Workspace, test_support::deps_for};
-use std::sync::Arc;
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 const PASSWORD: &str = "master password";
 
@@ -127,4 +127,38 @@ fn lock_in_a_window_with_a_scoped_vault_locks_only_that_vault(cx: &mut TestAppCo
     cx.run_until_parked();
     assert!(!setup.scoped_vault.is_unlocked());
     assert!(setup.app.is_unlocked());
+}
+
+#[gpui_kit::test]
+fn unlock_in_a_scoped_window_without_keys_runs_the_remedy_instead_of_opening_the_vault(
+    cx: &mut TestAppContext,
+) {
+    let calls = Rc::new(Cell::new(0));
+    let vault = Arc::new(ScriptedVaultAccess::default());
+    let window = cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        let ready = nocterm_ui::init(
+            nocterm_ui::DesignTokens::builtin(),
+            nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx),
+            cx,
+        );
+        let counted = calls.clone();
+        let deps = crate::Deps::new(vault.clone())
+            .with_keys_missing(Rc::new(move |_, _| counted.set(counted.get() + 1)));
+        let installed = crate::install_scoped(deps, &ready, cx);
+        open_workspace(Some(&installed), cx)
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.activate_window();
+        window.dispatch_action(Box::new(UnlockVault), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(calls.get(), 1);
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("vault-unlock-prompt").is_none());
+    })
+    .unwrap();
 }

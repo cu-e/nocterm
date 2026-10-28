@@ -10,25 +10,42 @@ mod settings;
 mod unlock;
 mod view;
 pub use credentials::VaultCredentials;
-use gpui_kit::{App, AppContext as _, Subscription};
+use gpui_kit::{App, AppContext as _, Subscription, Window};
 use nocterm_ui::SettingsPageSpec;
 use nocterm_ui::UiReady;
 use nocterm_vault::VaultAccess;
 use nocterm_workspace::Workspace;
 pub use settings::VaultSettings;
-use std::{sync::Arc, time::Duration};
+use std::{rc::Rc, sync::Arc, time::Duration};
 pub use view::VaultView;
+
+/// What a window does when the vault's keys are not on this device and cannot be
+/// created here, such as signing in again to the server that holds them.
+pub type KeysMissingRemedy = Rc<dyn Fn(&mut Window, &mut App)>;
+
 pub struct Deps {
     service: Arc<dyn VaultAccess>,
+    keys_missing: Option<KeysMissingRemedy>,
 }
 impl Deps {
     pub fn new(service: Arc<dyn VaultAccess>) -> Self {
-        Self { service }
+        Self {
+            service,
+            keys_missing: None,
+        }
+    }
+
+    /// A vault that cannot be created locally: while it does not exist, unlocking and the
+    /// settings page run `remedy` instead of offering to create it.
+    pub fn with_keys_missing(mut self, remedy: KeysMissingRemedy) -> Self {
+        self.keys_missing = Some(remedy);
+        self
     }
 }
 pub struct Installed {
     settings: nocterm_store::SettingsHandle,
     service: Arc<dyn VaultAccess>,
+    keys_missing: Option<KeysMissingRemedy>,
     _settings: Subscription,
 }
 impl Installed {
@@ -53,6 +70,7 @@ pub fn install(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
 pub fn install_scoped(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
     ready.settings().register::<VaultSettings>(cx);
     let service = deps.service;
+    let keys_missing = deps.keys_missing;
     let settings_service = service.clone();
     let policy = ready.settings().clone();
     let settings = ready.settings().observe(cx, move |cx| {
@@ -63,6 +81,7 @@ pub fn install_scoped(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
     Installed {
         settings: ready.settings().clone(),
         service,
+        keys_missing,
         _settings: settings,
     }
 }
@@ -70,14 +89,22 @@ pub fn install_scoped(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
 /// Makes `UnlockVault` and `LockVault` in this workspace's window act on the
 /// scoped vault instead of the application's.
 pub fn register_scoped(installed: &Installed, workspace: &mut Workspace) {
-    unlock::bind_workspace(installed.service(), workspace);
+    unlock::bind_workspace(
+        installed.service(),
+        installed.keys_missing.clone(),
+        workspace,
+    );
 }
 
 pub fn settings_page(installed: &Installed) -> SettingsPageSpec {
     let service = installed.service();
     let settings = installed.settings().clone();
+    let keys_missing = installed.keys_missing.clone();
     SettingsPageSpec::new("vault", "Vault", move |window, cx| {
-        cx.new(|cx| VaultView::new(service.clone(), settings.clone(), window, cx))
+        cx.new(|cx| {
+            VaultView::new(service.clone(), settings.clone(), window, cx)
+                .with_keys_missing(keys_missing.clone())
+        })
     })
     .with_icon(nocterm_ui::IconName::Lock)
 }

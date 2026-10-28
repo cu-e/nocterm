@@ -263,7 +263,7 @@ fn enter_submits_password_and_keeps_unlock_dialog_error_visible(cx: &mut TestApp
     drain(cx);
     service.fail_next_unlock(VaultError::Authentication);
     cx.update_window(handle, |_, window, cx| {
-        crate::unlock::open(service.clone(), window, cx)
+        crate::unlock::open(service.clone(), None, window, cx)
     })
     .unwrap();
     cx.simulate_input(handle, "wrong password");
@@ -298,7 +298,7 @@ fn fingerprint_failure_shows_reason_and_allows_password_unlock(cx: &mut TestAppC
     ));
     service.lock();
     cx.update_window(handle, |_, window, cx| {
-        crate::unlock::open(service.clone(), window, cx)
+        crate::unlock::open(service.clone(), None, window, cx)
     })
     .unwrap();
     drain(cx);
@@ -326,7 +326,7 @@ fn unlock_dialog_accepts_enabled_fingerprint(cx: &mut TestAppContext) {
     fingerprint(&service);
     service.lock();
     cx.update_window(handle, |_, window, cx| {
-        crate::unlock::open(service.clone(), window, cx)
+        crate::unlock::open(service.clone(), None, window, cx)
     })
     .unwrap();
     drain(cx);
@@ -340,7 +340,7 @@ fn progress_counts_down_and_locked_dialog_refuses_another_scan(cx: &mut TestAppC
     service.hold_device_unlock();
     service.lock();
     cx.update_window(handle, |_, window, cx| {
-        crate::unlock::open(service.clone(), window, cx)
+        crate::unlock::open(service.clone(), None, window, cx)
     })
     .unwrap();
     drain(cx);
@@ -383,7 +383,7 @@ fn cancel_during_scan_keeps_vault_locked_and_denies_late_completion(cx: &mut Tes
     service.hold_device_unlock();
     service.lock();
     cx.update_window(handle, |_, window, cx| {
-        crate::unlock::open(service.clone(), window, cx)
+        crate::unlock::open(service.clone(), None, window, cx)
     })
     .unwrap();
     drain(cx);
@@ -403,7 +403,7 @@ fn closing_before_capability_probe_finishes_prevents_a_late_native_scan(cx: &mut
     service.hold_device_unlock();
     service.lock();
     cx.update_window(handle, |_, window, cx| {
-        crate::unlock::open(service.clone(), window, cx)
+        crate::unlock::open(service.clone(), None, window, cx)
     })
     .unwrap();
     drain(cx);
@@ -420,5 +420,6 @@ fn closing_before_capability_probe_finishes_prevents_a_late_native_scan(cx: &mut
     .unwrap();
 }
 
+mod keys_missing;
 mod scoped_unlock;
 mod settings_authority;
