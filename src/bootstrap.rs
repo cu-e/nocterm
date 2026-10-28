@@ -394,7 +394,10 @@ fn install_terminal(
     Option<Rc<nocterm_vault_ui::Installed>>,
 ) {
     let association_owner = connections.map(|installed| installed.connections().clone());
-    let vault = vault.map(|vault| install_vault(vault, ready, association_owner, cx));
+    let spaces = connections
+        .map(nocterm_connections::Installed::credential_spaces)
+        .unwrap_or_default();
+    let vault = vault.map(|vault| install_vault(vault, ready, association_owner, spaces, cx));
     let (terminal, vault) = match vault {
         Some(opened) => (
             terminal.with_credentials(opened.credentials),
@@ -626,6 +629,7 @@ fn install_vault(
     vault: Arc<dyn VaultAccess>,
     ready: &nocterm_ui::UiReady,
     connections: Option<gpui_kit::Entity<nocterm_connections::Connections>>,
+    spaces: nocterm_connections::CredentialSpaces,
     cx: &mut App,
 ) -> OpenedVault {
     let credentials = nocterm_terminal::CredentialProvider::new(
@@ -638,18 +642,23 @@ fn install_vault(
             };
             // A secret remembered for a machine behind jump hosts binds only to
             // the connection it was typed for, never to one that merely shares its address.
+            let profile = spec
+                .profile
+                .as_deref()
+                .and_then(|profile| profile.parse().ok());
             let Some(scope) =
                 nocterm_connections_model::credential_scope::CredentialScope::of_session(
                     spec.target.clone(),
                     spec.auth.clone(),
-                    spec.profile
-                        .as_deref()
-                        .and_then(|profile| profile.parse().ok()),
+                    profile,
                     !spec.jumps.is_empty(),
                 )
             else {
                 return gpui_kit::Task::ready(Ok(()));
             };
+            // The password belongs to the space of the connection it was typed for: a
+            // connection of another space that shares the address is left as it is.
+            let scope = spaces.within_space_of(scope, profile, cx);
             let association = connections.update(cx, |connections, cx| {
                 connections.associate_credential(scope, id, cx)
             });

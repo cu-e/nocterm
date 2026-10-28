@@ -30,9 +30,11 @@
 
 mod installed;
 mod session_intents;
+pub use credential_spaces::CredentialSpaces;
 pub use installed::{Installed, install};
 pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;
+mod credential_spaces;
 mod directory;
 mod editor;
 mod facts_presentation;

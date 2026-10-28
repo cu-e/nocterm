@@ -383,11 +383,16 @@ impl Round {
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
         let id = profile.id;
-        // A profile placed in a group brings along the secrets it keeps personally; one
-        // that moved there already carried its own before it left the old space.
+        // A profile the user placed in a group brings along the secrets it keeps personally;
+        // one that moved there already carried its own before it left the old space. A plain
+        // edit of a profile already in the group takes nothing: a secret reaches a group only
+        // when the user chose that space for the profile.
+        let requested = self
+            .state
+            .read_with(cx, |state, _| state.visible().placement(id) == Some(&scope));
         let carried = match scope {
             ReplicaScope::Personal => Vec::new(),
-            _ if moved => Vec::new(),
+            _ if moved || !requested => Vec::new(),
             _ => {
                 self.carry(
                     &profile,

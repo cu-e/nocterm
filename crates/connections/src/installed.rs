@@ -1,5 +1,5 @@
 //! Retained service handles, explicit policy and shared presentation/retry ownership.
-use crate::{Connections, EditorInputs, PreparedConnections};
+use crate::{Connections, CredentialSpaces, EditorInputs, PreparedConnections};
 use gpui_kit::{App, Entity, Image, Subscription};
 use nocterm_connections_model::{
     observation::CountryCode,
@@ -8,7 +8,7 @@ use nocterm_connections_model::{
 use nocterm_connections_store::{FactsEvent, FactsPrepared, FactsService, ProfileReplication};
 use nocterm_store::{SettingsHandle, ShutdownCoordinator, StoreError};
 use nocterm_ui::UiReady;
-use std::{cell::OnceCell, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 #[derive(Clone)]
 pub struct Installed(Rc<Installation>);
 struct Installation {
@@ -19,7 +19,7 @@ struct Installation {
     presentation: Rc<crate::facts_presentation::FactsPresentation>,
     sources: Rc<crate::probe_sources::ProbeSources>,
     /// Created after this installation, once the application knows the account.
-    replication: OnceCell<Entity<ProfileReplication>>,
+    replication: CredentialSpaces,
     _subscriptions: Vec<Subscription>,
 }
 impl Installed {
@@ -86,7 +86,7 @@ impl Installed {
             settings,
             presentation: Rc::new(Default::default()),
             sources,
-            replication: OnceCell::new(),
+            replication: CredentialSpaces::default(),
             _subscriptions: subscriptions,
         })))
     }
@@ -99,10 +99,14 @@ impl Installed {
     /// Tells the views which replication keeps the saved connections in step with an
     /// account, so they show where each lives. Only the first call has an effect.
     pub fn bind_replication(&self, replication: Entity<ProfileReplication>) {
-        let _ = self.0.replication.set(replication);
+        self.0.replication.bind(replication);
+    }
+    /// How a saved password finds the space of the connection it was typed for.
+    pub fn credential_spaces(&self) -> CredentialSpaces {
+        self.0.replication.clone()
     }
     pub(crate) fn replication(&self) -> Option<&Entity<ProfileReplication>> {
-        self.0.replication.get()
+        self.0.replication.replication()
     }
     pub fn settings(&self) -> &SettingsHandle {
         &self.0.settings

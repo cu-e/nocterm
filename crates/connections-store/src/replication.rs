@@ -184,6 +184,20 @@ impl ProfileReplication {
             .unwrap_or(ReplicaScope::Personal)
     }
 
+    /// The profiles that live in the space `id` lives in, itself included; the personal space
+    /// when `id` is none or not a saved profile. A secret typed for one of them is attached to
+    /// these and to no profile of another space.
+    pub fn in_space_of(&self, id: Option<ProfileId>, cx: &App) -> HashSet<ProfileId> {
+        let space = id.map_or(ReplicaScope::Personal, |id| self.space_of(id, cx));
+        self.store
+            .read(cx)
+            .profiles(cx)
+            .iter()
+            .map(|profile| profile.id)
+            .filter(|id| self.space_of(*id, cx) == space)
+            .collect()
+    }
+
     /// The spaces the attached replica serves, with the account's access to each.
     pub fn spaces(&self) -> Vec<ReplicaSpace> {
         self.replica

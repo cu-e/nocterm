@@ -1,5 +1,8 @@
 use super::*;
-use nocterm_connections_model::replica::{ReplicaAccess, ReplicaSpace};
+use nocterm_connections_model::{
+    credential_scope::CredentialScope,
+    replica::{ReplicaAccess, ReplicaSpace},
+};
 use nocterm_session::CredentialId;
 
 fn acme() -> ReplicaScope {
@@ -514,4 +517,71 @@ async fn a_refused_copy_leaves_the_shared_secret_and_the_profile_where_they_are(
         Some(ReplicaScope::Personal)
     );
     assert_eq!(in_personal(&fixture, &first), Some(first));
+}
+
+#[gpui::test]
+async fn a_plain_edit_of_a_group_profile_takes_no_secret_into_the_group(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (shared, secret) = with_secret(&profile("shared"), 16);
+    let fixture = with_group_profile(cx, &shared).await;
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    let edited = at_host(&shared, "edited.example");
+    fixture.save(cx, edited.clone()).await;
+    assert_eq!(in_acme(&fixture, &shared), Some(edited));
+    assert_eq!(
+        fixture.replica.secret_scope(secret),
+        Some(ReplicaScope::Personal)
+    );
+    assert!(
+        !fixture
+            .replica
+            .writes()
+            .iter()
+            .any(|call| matches!(call, ReplicaCall::Carry { .. } | ReplicaCall::Copy { .. }))
+    );
+}
+
+#[gpui::test]
+async fn a_password_saved_for_a_personal_profile_leaves_the_matching_group_profile_alone(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mine = profile("mine");
+    let team = Profile {
+        target: mine.target.clone(),
+        ..profile("team")
+    };
+    let secret = CredentialId::from_bytes([17; 16]);
+    let fixture = with_group_profile(cx, &team).await;
+    fixture.save(cx, mine.clone()).await;
+    fixture.replica.keep_secret(ReplicaScope::Personal, secret);
+    let writes = fixture.replica.writes().len();
+
+    let scope = CredentialScope::direct(mine.target.clone(), mine.auth.clone());
+    let scope = fixture.replication.read_with(cx, |replication, cx| {
+        scope.within(replication.in_space_of(Some(mine.id), cx))
+    });
+    fixture
+        .store
+        .update(cx, |store, cx| {
+            store.associate_credential(scope, secret, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let credential = |profile: &Profile| fixture.local(cx, profile).and_then(|p| p.credential);
+    assert_eq!(credential(&mine), Some(secret));
+    assert_eq!(credential(&team), None);
+    assert_eq!(in_acme(&fixture, &team), Some(team.clone()));
+    assert_eq!(
+        fixture.replica.secret_scope(secret),
+        Some(ReplicaScope::Personal),
+        "nothing reached the group's vault"
+    );
+    assert!(
+        fixture.replica.writes()[writes..]
+            .iter()
+            .all(|call| matches!(call, ReplicaCall::Put { id, .. } if *id == mine.id))
+    );
 }

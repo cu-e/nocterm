@@ -620,6 +620,20 @@ fn remembering_for_one_route_leaves_the_same_address_behind_another_route() {
 }
 
 #[test]
+fn a_credential_limited_to_some_connections_skips_the_others_with_the_same_address() {
+    let mut profiles = Profiles::default();
+    let mine = profile("mine", "box.test", None);
+    let theirs = profile("theirs", "box.test", None);
+    profiles.upsert(mine.clone());
+    profiles.upsert(theirs);
+
+    let scope = CredentialScope::direct(mine.target.clone(), mine.auth.clone())
+        .within(std::iter::once(mine.id).collect());
+
+    assert_eq!(remembered(&profiles, &Recents::default(), &scope), ["mine"]);
+}
+
+#[test]
 fn a_direct_credential_never_reaches_a_routed_connection_with_the_same_address() {
     let mut profiles = Profiles::default();
     let via_a = routed("vm-a", "192.168.122.10", "hyp-a");

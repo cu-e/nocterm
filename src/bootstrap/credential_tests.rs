@@ -71,7 +71,13 @@ fn association_fixture(
             )
             .unwrap(),
         );
-        let opened = install_vault(vault, &ready, Some(connections.clone()), cx);
+        let opened = install_vault(
+            vault,
+            &ready,
+            Some(connections.clone()),
+            nocterm_connections::CredentialSpaces::default(),
+            cx,
+        );
         let service = opened.installed.service().clone();
         let installed = nocterm_terminal::install(
             nocterm_terminal::Deps::new(
