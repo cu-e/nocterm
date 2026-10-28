@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use gpui_kit::{Context, Window};
+use nocterm_hubs_model::Environment;
 use nocterm_workspace::Workspace;
 
 use super::{Booted, report_registration};
@@ -20,6 +21,10 @@ pub(crate) fn build_workspace(
     cx: &mut Context<Workspace>,
 ) {
     let vault = sources.vault().map(Rc::as_ref);
+    if let (Some(vault), Environment::Hub(_)) = (vault, sources.environment()) {
+        // The vault of a hub answers `UnlockVault` in this window only.
+        nocterm_vault_ui::register_scoped(vault, workspace);
+    }
     nocterm_terminal::register(sources.terminal(), workspace);
     if let Some(connections) = sources.connections() {
         report_registration(
@@ -49,11 +54,12 @@ pub(crate) fn build_workspace(
         nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx),
     );
     // Workspaces, like containers and files, work over the connection the window opened,
-    // whichever source that connection came from.
-    if let Some(projects) = &booted.projects {
+    // whichever source that connection came from. The terminals they open and the profiles
+    // they resolve are those of this window's source.
+    if let Some(projects) = booted.projects_of(sources) {
         report_registration(
             "projects",
-            nocterm_projects::register(workspace, projects, window, cx),
+            nocterm_projects::register(workspace, &projects, window, cx),
         );
     }
     let user = booted.user_plugins.window(&booted.files);
@@ -71,6 +77,7 @@ pub(crate) fn build_workspace(
     }
     user.attach(workspace, window, cx);
     if let Some(vault) = vault
+        && sources.environment().is_local()
         && vault
             .settings()
             .setting::<nocterm_vault_ui::VaultSettings>(cx)

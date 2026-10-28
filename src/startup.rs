@@ -90,7 +90,7 @@ impl PreparedApp {
                 ),
                 hubs: hub_dependencies(hub_links.clone()),
                 hub_accounts: hub_links
-                    .map(|links| links as Arc<dyn crate::hub_account::HubAccounts>),
+                    .map(|links| links as Arc<dyn crate::hub_sources::HubAccounts>),
             },
             files: files_dependencies(local_fs.clone())?,
             local_fs,

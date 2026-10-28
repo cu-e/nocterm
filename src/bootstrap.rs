@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use gpui_kit::App;
+use gpui_kit::{App, AppContext as _};
 use nocterm_core::{Paths, clock::WallClock};
 use nocterm_design::DesignTokens;
 use nocterm_session::Transport;
@@ -14,12 +14,14 @@ use nocterm_vault::VaultAccess;
 use std::rc::Rc;
 
 use crate::shell_setup::{GuestInputs, Plugins, UserPluginMode, install_guest_pages};
-use crate::window_sources::WindowSources;
+use crate::window_sources::{WindowSources, WindowSourcesError};
+use nocterm_hubs_model::Environment;
 
 mod error;
 mod vault;
 mod workspace;
 pub(crate) use error::BootstrapError;
+pub(crate) use vault::credential_provider;
 use vault::{install_vault, open_vault};
 pub(crate) use workspace::build_workspace;
 
@@ -61,58 +63,56 @@ pub(crate) struct HostServices {
     pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
     /// The hub access ports; `None` leaves the application without hubs.
     pub(crate) hubs: Option<nocterm_hubs::Deps>,
-    /// The encrypted data of hub accounts; without it a chosen account changes nothing.
-    pub(crate) hub_accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+    /// The encrypted data of hub accounts; without it the hubs cannot open windows.
+    pub(crate) hub_accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
 }
 
-/// The hub servers every window shows, and what keeps them in step with the chosen account.
+/// The hub servers every window shows, and the sources their windows are made from.
 #[derive(Clone)]
-pub(crate) struct HubServices {
+pub(crate) struct HubWindows {
     ui: nocterm_hubs_ui::Installed,
-    _account: Option<gpui_kit::Entity<crate::hub_account::HubAccountSync>>,
+    /// Without access to hub accounts the servers can be listed but no window shows one.
+    sources: Option<gpui_kit::Entity<crate::hub_sources::HubSources>>,
 }
 
-/// The hub servers with the account data they will be kept in step with.
+/// The hub servers with the account data their windows will be made from.
 struct PendingHubs {
     hubs: nocterm_hubs::Installed,
-    accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+    accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
 }
 
 fn start_hubs(
     pending: Option<PendingHubs>,
-    vault: Option<crate::vault_selection::SelectedVault>,
-    connections: &Option<nocterm_connections::Installed>,
-    stored: Option<&Paths>,
+    inputs: nocterm_connections::ConnectionInputs,
+    terminal: &nocterm_terminal::Installed,
+    ready: &nocterm_ui::UiReady,
     shutdown: &nocterm_store::ShutdownCoordinator,
     cx: &mut App,
-) -> Option<HubServices> {
+) -> Option<HubWindows> {
     let PendingHubs { hubs, accounts } = pending?;
-    let sync = install_hub_account(
-        &hubs,
-        accounts,
-        vault,
-        connections.as_ref(),
-        stored,
-        shutdown,
-        cx,
-    );
-    Some(HubServices {
+    let sources = accounts.map(|accounts| {
+        let (hubs, terminal) = (hubs.hubs().clone(), terminal.clone());
+        let (ready, shutdown) = (ready.clone(), shutdown.clone());
+        cx.new(|_| {
+            crate::hub_sources::HubSources::new(accounts, hubs, inputs, terminal, ready, shutdown)
+        })
+    });
+    Some(HubWindows {
         ui: nocterm_hubs_ui::install(hubs),
-        _account: sync,
+        sources,
     })
 }
 
-/// The connection editor offers the keys of the vault; they follow the vault selected later.
+/// The connection editor offers the keys of the vault.
 fn offer_keys(
     connections: nocterm_connections::PreparedConnections,
-    vault: Option<&crate::vault_selection::SelectedVault>,
+    vault: Option<&Arc<dyn VaultAccess>>,
     cx: &App,
 ) -> nocterm_connections::PreparedConnections {
     let Some(vault) = vault else {
         return connections;
     };
-    let selected: Arc<dyn VaultAccess> = Arc::new(vault.clone());
-    connections.with_keys(crate::vault_keys::keys_of(&selected, cx))
+    connections.with_keys(crate::vault_keys::keys_of(vault, cx))
 }
 
 struct ProjectResources {
@@ -169,7 +169,7 @@ pub(crate) struct Booted {
     snippets: Option<nocterm_snippets_ui::Installed>,
     projects: Option<nocterm_projects::Installed>,
     /// The hub servers, shared by every window.
-    hubs: Option<HubServices>,
+    hubs: Option<HubWindows>,
     themes: nocterm_ui::ThemeUi,
     user_plugins: crate::shell_setup::UserShell,
     /// The vault, when it opened; credentials and its settings depend on it.
@@ -185,10 +185,64 @@ impl Booted {
         self.vault.as_ref()
     }
 
-    /// The sources of a window that shows this computer: the local connections, vault and
-    /// terminal capability.
+    /// The sources of a window that shows `environment`: this computer's connections, vault and
+    /// terminal capability, or the account of a hub.
+    pub(crate) fn window_sources(
+        &self,
+        environment: &Environment,
+        cx: &mut App,
+    ) -> Result<WindowSources, WindowSourcesError> {
+        let Environment::Hub(hub) = environment else {
+            return Ok(self.local_sources());
+        };
+        let sources = self
+            .hubs
+            .as_ref()
+            .and_then(|hubs| hubs.sources.clone())
+            .ok_or(WindowSourcesError::NoHubs)?;
+        let source = sources.update(cx, |sources, cx| sources.source(hub, cx))?;
+        let settings = self
+            .settings_ui
+            .with_vault(nocterm_vault_ui::settings_page(source.vault()))?;
+        Ok(WindowSources::new(
+            environment.clone(),
+            Some(source.connections().clone()),
+            source.terminal().clone(),
+            Some(source.vault().clone()),
+            settings,
+        ))
+    }
+
+    /// The saved workspaces as a window of `sources` opens them: with the terminals and the
+    /// saved connections of that source instead of the ones of this computer.
+    pub(crate) fn projects_of(
+        &self,
+        sources: &WindowSources,
+    ) -> Option<nocterm_projects::Installed> {
+        let projects = self.projects.clone()?;
+        let resolver = match crate::project_setup::terminal_resolver(
+            sources.terminal(),
+            sources.connections(),
+        ) {
+            Ok(resolver) => resolver,
+            Err(error) => {
+                tracing::error!(%error, "workspace terminals of this window are unavailable");
+                return None;
+            }
+        };
+        Some(
+            projects
+                .with_terminals(nocterm_terminal::project_terminal_opener(
+                    sources.terminal(),
+                ))
+                .with_terminal_resolver(resolver),
+        )
+    }
+
+    /// The sources of a window that shows this computer.
     pub(crate) fn local_sources(&self) -> WindowSources {
         WindowSources::new(
+            Environment::Local,
             self.connections.clone(),
             self.terminal.clone(),
             self.vault.clone(),
@@ -225,6 +279,12 @@ impl Booted {
         self.hubs.as_ref().map(|hubs| &hubs.ui)
     }
 
+    #[cfg(test)]
+    pub(crate) fn hub_registry(&self, cx: &App) -> Option<gpui_kit::Entity<nocterm_hubs::Hubs>> {
+        let sources = self.hubs.as_ref()?.sources.as_ref()?;
+        Some(sources.read(cx).registry().clone())
+    }
+
     pub(crate) fn workspace_deps(&self) -> nocterm_workspace::Deps {
         self.workspace.clone()
     }
@@ -259,10 +319,10 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     // credentials need the installed connections afterwards.
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
     let connections = offer_keys(connections, vault.as_ref(), cx);
+    let connection_inputs = connections.inputs();
     let connections = install_connections(connections, &ui, &shutdown, cx);
-    let hubs = start_hubs(hubs, vault.clone(), &connections, stored, &shutdown, cx);
-    let vault = vault.map(|vault| Arc::new(vault) as Arc<dyn VaultAccess>);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
+    let hubs = start_hubs(hubs, connection_inputs, &terminal, &ui, &shutdown, cx);
     let projects = install_projects(
         projects,
         &terminal,
@@ -449,33 +509,6 @@ fn install_hubs(
         hubs: nocterm_hubs::install(deps, ui.settings().clone(), cx),
         accounts: hosts.hub_accounts.clone(),
     })
-}
-
-/// Moves the saved profiles and the vault with the account the user chose. Without saved
-/// profiles or account access there is nothing to move, and the hub servers stand alone.
-fn install_hub_account(
-    hubs: &nocterm_hubs::Installed,
-    accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
-    vault: Option<crate::vault_selection::SelectedVault>,
-    connections: Option<&nocterm_connections::Installed>,
-    stored: Option<&Paths>,
-    shutdown: &nocterm_store::ShutdownCoordinator,
-    cx: &mut App,
-) -> Option<gpui_kit::Entity<crate::hub_account::HubAccountSync>> {
-    let accounts = accounts?;
-    let connections = connections?;
-    let store = connections.connections().clone();
-    let replication = crate::hub_account::replication(store, stored, shutdown, cx);
-    // The views show where each connection lives and what the account may do there.
-    connections.bind_replication(replication.clone());
-    let hubs = hubs.hubs().clone();
-    Some(crate::hub_account::HubAccountSync::install(
-        hubs,
-        accounts,
-        vault,
-        replication,
-        cx,
-    ))
 }
 
 /// The shared keymap: the defaults and the user's overrides, when the application keeps files.

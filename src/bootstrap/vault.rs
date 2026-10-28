@@ -1,5 +1,5 @@
-//! The credential vault of this device and the credential provider every terminal
-//! installation binds to it.
+//! The credential vault of this device and the credential provider a terminal installation
+//! binds to a vault and the connections of its source.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -15,12 +15,12 @@ pub(super) struct OpenedVault {
     pub(super) credentials: nocterm_terminal::CredentialProvider,
 }
 
-/// Opens the vault service, or none when it cannot be initialised.
+/// Opens the vault service of this device, or none when it cannot be initialised.
 pub(super) fn open_vault(
     setup: VaultSetup,
     ready: &nocterm_ui::UiReady,
     cx: &mut App,
-) -> Option<crate::vault_selection::SelectedVault> {
+) -> Option<Arc<dyn VaultAccess>> {
     let device = setup.device_unlock.then(nocterm_device_unlock::provider);
     ready
         .settings()
@@ -34,7 +34,7 @@ pub(super) fn open_vault(
         ) * 60,
     );
     match VaultService::new_with_device_unlock(setup.file, duration, device) {
-        Ok(vault) => Some(crate::vault_selection::SelectedVault::new(Arc::new(vault))),
+        Ok(vault) => Some(Arc::new(vault)),
         Err(error) => {
             tracing::error!(%error, "could not initialize the credential vault");
             None
@@ -64,7 +64,7 @@ pub(super) fn install_vault(
 /// The credential candidates of a terminal session and the association of a typed secret
 /// with the connection it was typed for, both through `vault` and the connections of one
 /// source.
-pub(super) fn credential_provider(
+pub(crate) fn credential_provider(
     vault: Arc<dyn VaultAccess>,
     connections: Option<gpui_kit::Entity<nocterm_connections::Connections>>,
     spaces: nocterm_connections::CredentialSpaces,

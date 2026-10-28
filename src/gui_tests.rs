@@ -336,7 +336,7 @@ fn fixture_hosts(
 #[derive(Default)]
 struct HubPorts {
     deps: Option<nocterm_hubs::Deps>,
-    accounts: Option<Arc<dyn crate::hub_account::HubAccounts>>,
+    accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
 }
 
 impl From<Option<nocterm_hubs::Deps>> for HubPorts {
@@ -475,6 +475,21 @@ fn open_workspace(
             );
             workspace
         })
+    })
+    .unwrap()
+}
+
+/// Opens a window that shows `environment`, composed as the application composes it.
+fn open_environment(
+    booted: &crate::bootstrap::Booted,
+    environment: &nocterm_hubs_model::Environment,
+    cx: &mut gpui_kit::App,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    let sources = booted
+        .window_sources(environment, cx)
+        .expect("the window's sources");
+    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        crate::windows::compose(booted, &sources, window, cx)
     })
     .unwrap()
 }

@@ -13,7 +13,7 @@ mod app_menus;
 mod application;
 mod bootstrap;
 mod connection_setup;
-mod hub_account;
+mod hub_sources;
 mod keymap;
 #[cfg(feature = "user-plugins")]
 mod plugin_command;
@@ -22,8 +22,8 @@ mod settings_pages;
 mod shell_setup;
 mod startup;
 mod vault_keys;
-mod vault_selection;
 mod window_sources;
+mod windows;
 
 #[cfg(test)]
 mod agent_history_tests;
@@ -32,12 +32,8 @@ mod gui_tests;
 
 use std::io;
 
-use gpui_kit::{
-    App, AppContext as _, Bounds, Focusable as _, WindowBounds, WindowOptions, component::TitleBar,
-    px, size,
-};
+use gpui_kit::{App, Bounds, WindowBounds, WindowOptions, component::TitleBar, px, size};
 
-use nocterm_workspace::Workspace;
 use tracing_subscriber::EnvFilter;
 
 /// Used by Linux desktops to match the window to its `.desktop` entry.
@@ -119,13 +115,7 @@ fn open_main_window(cx: &mut App, booted: &bootstrap::Booted) -> anyhow::Result<
             .observe_window_appearance(move |_, cx| themes.apply(cx))
             .detach();
 
-        let workspace = cx.new(|cx| {
-            let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
-            bootstrap::build_workspace(&mut workspace, booted, &booted.local_sources(), window, cx);
-            workspace
-        });
-        window.focus(&workspace.focus_handle(cx), cx);
-        workspace
+        windows::compose(booted, &booted.local_sources(), window, cx)
     })?;
     Ok(())
 }
