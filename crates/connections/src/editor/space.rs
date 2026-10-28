@@ -1,8 +1,7 @@
 //! Where the connection lives: the personal space or one of the account's organizations.
-use super::ConnectionEditor;
 use crate::{Installed, spaces::Spaces};
 use gpui_kit::{
-    AnyElement, App, Context, SharedString,
+    AnyElement, App, SharedString, Window,
     component::{
         Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -12,6 +11,7 @@ use gpui_kit::{
 };
 use nocterm_connections_model::{profiles::ProfileId, replica::ReplicaScope};
 use nocterm_ui::form;
+use std::rc::Rc;
 
 pub(super) struct SpaceField {
     spaces: Spaces,
@@ -39,27 +39,31 @@ impl SpaceField {
     }
 
     /// The choice of space, offered only to an account that writes to an organization:
-    /// a reader of organizations has nowhere else to put a connection.
-    pub(super) fn row(&self, cx: &mut Context<ConnectionEditor>) -> Option<AnyElement> {
+    /// a reader of organizations has nowhere else to put a connection. `on_select` receives
+    /// the space a button stands for.
+    pub(super) fn row(
+        &self,
+        on_select: impl Fn(ReplicaScope, &mut Window, &mut App) + 'static,
+        cx: &App,
+    ) -> Option<AnyElement> {
         let choices = self.spaces.choices();
         if choices.len() < 2 {
             return None;
         }
+        let on_select = Rc::new(on_select);
         let buttons = choices.into_iter().map(|space| {
             let id = match &space.scope {
                 ReplicaScope::Personal => "personal".to_owned(),
                 ReplicaScope::Organization(org) => org.clone(),
             };
             let scope = space.scope.clone();
+            let on_select = on_select.clone();
             Button::new(SharedString::from(format!("editor-space-{id}")))
                 .small()
                 .ghost()
                 .label(space.name)
                 .selected(self.selected == space.scope)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.space.select(scope.clone());
-                    cx.notify();
-                }))
+                .on_click(move |_, window, cx| on_select(scope.clone(), window, cx))
         });
         Some(form::stacked_row(
             "Space",
