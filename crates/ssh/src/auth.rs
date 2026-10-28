@@ -603,8 +603,8 @@ mod material_tests {
     }
     #[test]
     fn a_swapped_vault_record_is_not_signed_with() {
-        let first = KeyMaterial::ed25519_from_seed([1; 32], "").unwrap();
-        let second = KeyMaterial::ed25519_from_seed([2; 32], "").unwrap();
+        let first = KeyMaterial::ed25519_from_seed(&[1; 32], "").unwrap();
+        let second = KeyMaterial::ed25519_from_seed(&[2; 32], "").unwrap();
         let named = first.public_key();
         assert!(vault_private_key(&first.to_secret(), named.as_str()).is_some());
         assert!(vault_private_key(&second.to_secret(), named.as_str()).is_none());

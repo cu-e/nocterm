@@ -221,11 +221,6 @@ mod tests {
         assert_eq!(Target::new("a", "h", 22).to_string(), "a@h");
         assert_eq!(Target::new("a", "::1", 2222).to_string(), "a@[::1]:2222");
     }
-}
-
-#[cfg(test)]
-mod auth_tests {
-    use super::*;
 
     #[derive(Serialize, Deserialize, PartialEq, Debug)]
     struct Saved {

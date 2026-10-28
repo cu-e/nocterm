@@ -157,9 +157,9 @@ fn security_keys_are_refused() {
 
 #[test]
 fn ed25519_from_seed_is_deterministic() {
-    let first = KeyMaterial::ed25519_from_seed([9; 32], "me@host").unwrap();
-    let second = KeyMaterial::ed25519_from_seed([9; 32], "me@host").unwrap();
-    let other = KeyMaterial::ed25519_from_seed([8; 32], "me@host").unwrap();
+    let first = KeyMaterial::ed25519_from_seed(&[9; 32], "me@host").unwrap();
+    let second = KeyMaterial::ed25519_from_seed(&[9; 32], "me@host").unwrap();
+    let other = KeyMaterial::ed25519_from_seed(&[8; 32], "me@host").unwrap();
     assert_eq!(first.to_secret(), second.to_secret());
     assert_eq!(first.public_key(), second.public_key());
     assert_ne!(first.public_key(), other.public_key());
@@ -168,7 +168,7 @@ fn ed25519_from_seed_is_deterministic() {
 
 #[test]
 fn a_generated_key_imports_back_unchanged() {
-    let generated = KeyMaterial::ed25519_from_seed([1; 32], "fixture").unwrap();
+    let generated = KeyMaterial::ed25519_from_seed(&[1; 32], "fixture").unwrap();
     let again = KeyMaterial::import(&generated.to_secret(), None).unwrap();
     assert_eq!(again.public_key(), generated.public_key());
     assert_eq!(again.to_secret(), generated.to_secret());

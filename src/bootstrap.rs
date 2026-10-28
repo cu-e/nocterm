@@ -202,9 +202,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     // credentials need the installed connections afterwards.
     let vault = vault.and_then(|setup| open_vault(setup, &ui, cx));
     let connections = match &vault {
-        Some(vault) => connections.with_keys(Arc::new(crate::vault_keys::VaultKeys::new(
-            Arc::new(vault.clone()),
-        ))),
+        Some(vault) => connections.with_keys(crate::vault_keys::keys_of(vault, cx)),
         None => connections,
     };
     let connections = install_connections(connections, &ui, &shutdown, cx);

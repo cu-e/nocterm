@@ -110,7 +110,7 @@ impl VaultSshKeys for MemoryVaultSshKeys {
             Self::unlocked(&state)?;
             let mut seed = [0; 32];
             seed[16..].copy_from_slice(&(lock(&state).next + 1).to_be_bytes());
-            let material = KeyMaterial::ed25519_from_seed(seed, &label)?;
+            let material = KeyMaterial::ed25519_from_seed(&seed, &label)?;
             Self::store(&state, label, &material)
         })
     }

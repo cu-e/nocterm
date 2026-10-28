@@ -1,9 +1,10 @@
 //! SSH keys of the vault: the connection editor's [`VaultSshKeys`] over the
 //! vault, with entropy and key files supplied by the SSH adapter.
 use futures::{FutureExt as _, future::BoxFuture};
+use gpui_kit::BackgroundExecutor;
 use nocterm_core::error::SharedCause;
 use nocterm_session::Secret;
-use nocterm_ssh::keys::{GenerateKeyError, ReadKeyError, generate_ed25519, read_private_key};
+use nocterm_ssh::keys::{GenerateKeyError, generate_ed25519, read_private_key};
 use nocterm_ssh_keys::{
     KeyMaterial, KeySource, PublicKeyText, StoredKey, VaultSshKeys, VaultSshKeysError,
 };
@@ -13,12 +14,23 @@ use std::sync::Arc;
 /// The keys of one vault.
 pub(crate) struct VaultKeys {
     vault: Arc<dyn VaultAccess>,
+    /// Runs the blocking parts (a bounded file read, a slow key derivation).
+    executor: BackgroundExecutor,
 }
 
 impl VaultKeys {
-    pub(crate) fn new(vault: Arc<dyn VaultAccess>) -> Self {
-        Self { vault }
+    pub(crate) fn new(vault: Arc<dyn VaultAccess>, executor: BackgroundExecutor) -> Self {
+        Self { vault, executor }
     }
+}
+
+/// The keys of `vault` for the connection editor; blocking parts run on the
+/// application's background executor.
+pub(crate) fn keys_of(vault: &Arc<dyn VaultAccess>, cx: &gpui_kit::App) -> Arc<dyn VaultSshKeys> {
+    Arc::new(VaultKeys::new(
+        vault.clone(),
+        cx.background_executor().clone(),
+    ))
 }
 
 fn vault_error(error: VaultError) -> VaultSshKeysError {
@@ -70,29 +82,17 @@ fn keep(
     .boxed()
 }
 
-/// Runs blocking work (a bounded file read, a slow key derivation) on its own
-/// thread; `None` means the thread died before answering.
-fn off_thread<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> impl std::future::Future<Output = Option<T>> {
-    let (send, receive) = futures::channel::oneshot::channel();
-    std::thread::spawn(move || {
-        let _ = send.send(work());
-    });
-    async move { receive.await.ok() }
-}
-
-/// The key text of `source`, read within bounds.
-async fn key_text(source: KeySource) -> Result<Secret, VaultSshKeysError> {
+/// The key text of `source`, read within bounds off the calling thread.
+async fn key_text(
+    source: KeySource,
+    executor: &BackgroundExecutor,
+) -> Result<Secret, VaultSshKeysError> {
     match source {
         KeySource::Text(text) => Ok(text),
-        KeySource::File(path) => match off_thread(move || read_private_key(&path)).await {
-            Some(Ok(text)) => Ok(text),
-            Some(Err(error)) => Err(VaultSshKeysError::Read(SharedCause::new(error))),
-            None => Err(VaultSshKeysError::Read(SharedCause::new(ReadKeyError::Io(
-                std::io::Error::other("the key file reader stopped"),
-            )))),
-        },
+        KeySource::File(path) => executor
+            .spawn(async move { read_private_key(&path) })
+            .await
+            .map_err(|error| VaultSshKeysError::Read(SharedCause::new(error))),
     }
 }
 
@@ -136,15 +136,12 @@ impl VaultSshKeys for VaultKeys {
             return futures::future::ready(Err(VaultSshKeysError::Locked)).boxed();
         }
         let vault = self.vault.clone();
+        let executor = self.executor.clone();
         async move {
-            let text = key_text(source).await?;
-            let material = off_thread(move || KeyMaterial::import(&text, passphrase.as_ref()))
-                .await
-                .ok_or_else(|| {
-                    VaultSshKeysError::Read(SharedCause::new(ReadKeyError::Io(
-                        std::io::Error::other("the key reader stopped"),
-                    )))
-                })??;
+            let text = key_text(source, &executor).await?;
+            let material = executor
+                .spawn(async move { KeyMaterial::import(&text, passphrase.as_ref()) })
+                .await?;
             keep(vault.as_ref(), label, &material).await
         }
         .boxed()
