@@ -47,7 +47,10 @@ credentials in private files), `nocterm-hubs` (service: known hubs, their status
 `nocterm-hubs-ui` (feature: the sign-in dialog, the Servers settings page and the sign-in
 commands). A hub can also be the first step of an SSH route: the
 transport asks the `RelayDialer` port that `nocterm-hub-io` implements for a stream
-([ADR 0100](adr/0100-the-hub-is-a-route-step.md)). User guide: [hubs](HUBS.md).
+([ADR 0100](adr/0100-the-hub-is-a-route-step.md)). A window shows one environment, this computer or the account of one hub: the application
+builds one in-memory mirror of the account's connections, its vault and the terminal credentials
+per hub and composes each window from its own sources
+([ADR 0104](adr/0104-a-window-shows-one-environment.md)). User guide: [hubs](HUBS.md).
 
 ## Plugins
 

@@ -19,7 +19,6 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
 | `hubs::ManageServers` | Open the Servers page of the settings, where known servers are renamed, coloured, signed out of or removed. |  |
-| `hubs::OpenHubSessions` | Show the sessions of a hub in the sidebar, or hide the sidebar if it shows them. |  |
 | `hubs::SignInToServer` | Sign in to a server that is not in the list yet. |  |
 | `hubs::SignOutOfServer` | Choose a signed-in server and sign this device out of it. |  |
 | `monitor::OpenMonitorSettings` | Open the host monitor's settings. |  |

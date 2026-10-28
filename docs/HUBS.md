@@ -4,8 +4,8 @@ A hub is a self-hosted Nocterm server. It keeps your saved servers and vault pas
 follow you to your other computers, and it can carry the SSH connection to a host your computer
 cannot reach.
 
-Hubs are an addition to the window you already use: you sign in to a server and manage it on the
-**Servers** page of the settings. A window has no hub of its own.
+A window shows one environment: this computer, or the account of one hub. You sign in to a
+server and manage it on the **Servers** page of the settings.
 
 ## Sign in to a server
 
@@ -57,33 +57,32 @@ a `hubs` folder of Nocterm's state directory, apart from the settings. They stay
 close Nocterm, so you sign in once per server and device. They are deleted when you sign out,
 when the server revokes the device, and when you remove the server.
 
-## Keep your servers and vault passwords on a server
+## The window of a hub
 
-One server can keep your saved servers (connections) and your vault passwords so they follow you
-to your other computers. On **Settings → Servers**, press **Use for my account** on a server you
-are online with; **Stop keeping them here** returns both to this computer alone (the connections
-stay here). The choice is saved as `account = "hub.example.com:7443"` under `[hubs]` and takes
-effect at once.
+A window of a hub shows the connections and the vault of your account on that hub, and only
+those. The window of this computer shows only the connections and the vault of this computer.
+Workspaces, containers, files, the monitor, snippets, the agent and plugins are features of this
+computer in every window; they work over the connections the window shows.
 
+- The connections of a hub window are your own (**Personal**) and those of your organizations.
+  A connection you create there is saved on the hub, encrypted with your account's keys, and the
+  password or key you enter goes into the vault of the hub. They never appear in the window of
+  this computer.
 - The server keeps only encrypted data. The keys come from your account password (or the vault
   passphrase) on your computers; the server cannot read your passwords, keys or connection
   details. If you lose both the password and the recovery key, that data cannot be recovered.
-- While a server is chosen, the vault is the account's: unlock it with the account password (or
-  the vault passphrase). It cannot be created or have its password changed here, and device unlock
-  is not offered. The vault of this computer is locked and comes back when you stop using the
-  account. Credentials can be read while the server is out of reach; changing them needs the
-  server.
-- Saved connections are copied both ways. Something other clients put on the server that this
-  version does not understand is left untouched.
-- A change on the server that does not verify is reported as an error and applied to nothing.
-- **Stop keeping them here**, unchecking **Use for my account** and removing the server never take
-  a connection off this computer: they all stay as local connections, and the vault of this
-  computer comes back. Choosing a server again later, this one or another, sends them to its
-  account like any connection created here.
-- Choosing another server starts the sync again from that server's own data. The connections the
-  previous account kept and you did not change since leave this computer; they come back when you
-  choose that server again. A connection you edited, or created, and that was not sent yet when
-  you switched stays on this computer and goes with you to the Personal space of the new account.
+- When the account's keys are closed (after a restart or an automatic lock) the list shows
+  **Account locked - Unlock**; **Unlock** asks for the password of that hub's vault. If the
+  server cannot be reached the list shows the last one received and cannot be changed; after
+  you sign out it is empty and offers **Sign in**. After a restart the list stays empty until
+  the server answers.
+- Connections are copied both ways while the window is in step with the hub. A change on the
+  server that does not verify is reported as an error and applied to nothing.
+- Signing out of a server, or removing it, empties its windows and locks its vault. Nothing of
+  the account stays on this computer. Profiles that an earlier build copied into the list of
+  this computer remain there as ordinary local connections; remove `hub-replica.json` from the
+  state directory and any such connection you do not want.
+- The recordings of sessions are kept on this computer in plain text, as for any session.
 
 ### Connections and passwords of a group
 
