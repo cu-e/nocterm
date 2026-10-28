@@ -82,7 +82,8 @@ effect at once.
   account like any connection created here.
 - Choosing another server starts the sync again from that server's own data. The connections the
   previous account kept and you did not change since leave this computer; they come back when you
-  choose that server again.
+  choose that server again. A connection you edited, or created, and that was not sent yet when
+  you switched stays on this computer and goes with you to the Personal space of the new account.
 
 ### Connections and passwords of a group
 
