@@ -17,9 +17,7 @@ use nocterm_store::SettingsConfig;
 use nocterm_ui::DesignTokens;
 use nocterm_workspace::{Workspace, test_support::deps_for};
 
-use crate::{
-    HubTabError, HubTerminalOpener, Installed, OpenHubSessions, install, plugin, register,
-};
+use crate::{HubTabError, HubTerminalOpener, Installed, install, plugin, register};
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
 
@@ -154,9 +152,17 @@ impl Fixture {
         .unwrap();
     }
 
-    /// Opens the sessions panel, which waits in the tray until it is asked for.
+    /// Shows the sessions panel and leaves it showing when it already does: the sidebar of
+    /// this window has no other panel, so it opens on this one.
     pub(crate) fn open_sessions(&self, cx: &mut TestAppContext) {
-        self.dispatch(OpenHubSessions, cx);
+        cx.update_window(self.window, |_, window, cx| {
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.open_panel(&plugin::SESSIONS.id, window, cx);
+            });
+        })
+        .unwrap();
+        self.render(cx);
+        self.render(cx);
     }
 
     /// Draws the window.
