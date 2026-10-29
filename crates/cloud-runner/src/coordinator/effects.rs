@@ -167,30 +167,9 @@ impl EffectHost {
             }),
         )];
         let wait = if intent.mutates() {
-            let (sender, receiver) = oneshot::channel();
             let expires = grant.expires();
-            self.run
-                .install_approval(PendingApproval::new(intent.clone(), expires, sender))?;
-            let record = JournalRecord::new(
-                RecordContext::Run(self.run.binding().clone()),
-                JournalRecordKind::Approval {
-                    intent: id,
-                    open: true,
-                },
-                Frame::Approval {
-                    intent: *id.as_bytes(),
-                    expires: expires.as_millis(),
-                }
-                .bytes()?,
-            )?;
-            records.push((
-                record,
-                Some(CoordinatorEvent::Approval {
-                    intent: intent.clone(),
-                    call: call.call().clone(),
-                    expires,
-                }),
-            ));
+            let (record, event, receiver) = self.pending_approval(&intent, call.call(), expires)?;
+            records.push((record, Some(event)));
             Some((receiver, expires))
         } else {
             None
@@ -216,6 +195,42 @@ impl EffectHost {
             }
         }
         self.release(intent, call, grant).await
+    }
+    fn pending_approval(
+        &self,
+        intent: &ToolIntent,
+        call: &TerminalCall,
+        expires: Timestamp,
+    ) -> Result<
+        (
+            JournalRecord,
+            CoordinatorEvent,
+            oneshot::Receiver<ApprovalChoice>,
+        ),
+        CoordinatorError,
+    > {
+        let (sender, receiver) = oneshot::channel();
+        self.run
+            .install_approval(PendingApproval::new(intent.clone(), expires, sender))?;
+        let record = JournalRecord::new(
+            RecordContext::Run(self.run.binding().clone()),
+            JournalRecordKind::Approval {
+                intent: intent.id(),
+                open: true,
+            },
+            Frame::Approval {
+                intent: *intent.id().as_bytes(),
+                expires: expires.as_millis(),
+            }
+            .bytes()?,
+        )?;
+        let event = CoordinatorEvent::Approval {
+            intent: intent.clone(),
+            call: call.clone(),
+            display: ToolDisplay::new(call, None),
+            expires,
+        };
+        Ok((record, event, receiver))
     }
     /// Reuses the original durable intent and its already consumed grant. No
     /// synthetic dispatch permit or second reservation is created on recovery.
@@ -433,7 +448,10 @@ impl EffectHost {
                 ToolObservation::failed(intent.id(), output, display, ToolEffectStatus::Unknown)
             }
         };
-        let unknown = matches!(observation.effect(), ToolEffectStatus::Unknown) && intent.mutates();
+        let unknown = matches!(
+            observation.effect(),
+            nocterm_cloud_model::coordinator::ObservedEffect::Unknown
+        ) && intent.mutates();
         let digest = Sha256::digest(
             serde_json::to_vec(observation.output().value()).map_err(|_| JournalError::Corrupt)?,
         );

@@ -492,3 +492,107 @@ fn unknown_and_partial_usage_replace_cumulative_snapshots_and_reset_for_a_new_ru
     assert_eq!(projection.usage(), partial);
     assert!(projection.transcript().tokens.is_none());
 }
+
+#[test]
+fn descriptive_background_after_new_run_and_delete_preserves_original_unknown_result() {
+    use crate::{
+        coordinator::{BackgroundObservation, ObservedBackground},
+        journal::BackgroundRecordOutcome,
+        run::CommitStamp,
+    };
+    let mut fixture = ProjectionFixture::new();
+    let original = run_binding(1);
+    let next = run_binding(2);
+    let mut projection = ConversationProjection::new(fixture.binding().clone());
+    let call = TerminalCall::ExecCommand(nocterm_ai::ExecCommand {
+        terminal_id: "terminal".into(),
+        program: "true".into(),
+        args: vec![],
+        stdin: None,
+        timeout_ms: None,
+        yield_ms: None,
+    });
+    let intent = ToolIntent::new(
+        IntentId::from_bytes([40; 16]),
+        StepId::from_bytes([40; 16]),
+        execution_authority(original.clone()),
+        Fingerprint::from_bytes([40; 32]),
+        &call,
+    )
+    .unwrap();
+    let display = ToolDisplay::new(&call, None);
+    projection
+        .apply(&fixture.page(vec![
+            prompt(&original, 1),
+            status(&original, RunStatus::Running),
+            CoordinatorEvent::ToolIntent {
+                intent: intent.clone(),
+                call,
+                display: display.clone(),
+            },
+            CoordinatorEvent::ToolResult {
+                run: original.clone(),
+                observation: ToolObservation::failed(
+                    intent.id(),
+                    BoundedJson::new(json!({"error":"unknown"})).unwrap(),
+                    display,
+                    ToolEffectStatus::Unknown,
+                ),
+            },
+            status(&original, RunStatus::Interrupted),
+            prompt(&next, 2),
+            status(&next, RunStatus::Running),
+            CoordinatorEvent::Deleted {
+                command: CommandId::from_bytes([3; 16]),
+            },
+        ]))
+        .unwrap();
+    let entries = serde_json::to_value(&projection.transcript().entries).unwrap();
+    let control = projection.control();
+    let job = ObservedBackground::new(
+        intent.id(),
+        intent.authority().clone(),
+        "terminal".into(),
+        "original-job".into(),
+        None,
+    )
+    .unwrap();
+    let fact = |step| {
+        BackgroundObservation::new(
+            job.clone(),
+            step,
+            intent.arguments(),
+            intent.mutates(),
+            CommitStamp::new(
+                original.clone(),
+                WriterEpoch::new(1).unwrap(),
+                Revision::from_u64(3),
+            ),
+            BackgroundRecordOutcome::ObservedExit(7),
+        )
+        .unwrap()
+    };
+    let good = fixture.page(vec![CoordinatorEvent::BackgroundLifecycle(Box::new(fact(
+        intent.step(),
+    )))]);
+    let mut altered = good.events().to_vec();
+    altered[0].event =
+        CoordinatorEvent::BackgroundLifecycle(Box::new(fact(StepId::from_bytes([99; 16]))));
+    let bad = ProjectionBatch::new(good.binding().clone(), altered, good.known_head()).unwrap();
+    assert_eq!(projection.apply(&bad), Err(ProjectionError::InvalidRecord));
+    projection.apply(&good).unwrap();
+    assert_eq!(projection.control(), control);
+    assert_eq!(projection.phase(), ConversationPhase::Deleted);
+    assert_eq!(projection.run(), Some(&next));
+    assert_eq!(
+        serde_json::to_value(&projection.transcript().entries).unwrap(),
+        entries
+    );
+    let observed = projection.background_observations().collect::<Vec<_>>();
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].job().execution().run(), &original);
+    assert_eq!(
+        observed[0].outcome(),
+        BackgroundRecordOutcome::ObservedExit(7)
+    );
+}

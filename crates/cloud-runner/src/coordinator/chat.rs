@@ -86,7 +86,7 @@ impl Chat {
             (CommandBody::Submit(request), Some(run)) => CoordinatorEvent::PromptAccepted {
                 command: command.acceptance().clone(),
                 run: run.clone(),
-                request: request.clone(),
+                request: nocterm_cloud_model::coordinator::ObservedPrompt::from_request(request),
             },
             _ => CoordinatorEvent::CommandAccepted {
                 command: command.acceptance().clone(),

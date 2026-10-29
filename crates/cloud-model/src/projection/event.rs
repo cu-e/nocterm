@@ -20,6 +20,10 @@ pub struct ProjectionEvent {
     pub event: CoordinatorEvent,
 }
 impl ProjectionEvent {
+    /// Allocation-free conservative native sizing for an admitted deep clone.
+    pub fn resident_bytes(&self) -> Result<usize, ProjectionError> {
+        super::sizing::event_bytes(&self.event)
+    }
     pub fn after(&self) -> Result<ProjectionCursor, ProjectionError> {
         Ok(ProjectionCursor::at(
             self.before

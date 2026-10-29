@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use futures::StreamExt as _;
 use nocterm_core::SharedCause;
@@ -14,6 +14,7 @@ use nocterm_session::testing::Gate;
 use super::{Call, OpError, StoreOps};
 use crate::account::testing::Admin;
 mod accounts;
+mod bounded;
 pub(crate) use accounts::MemoryAccountStores;
 
 #[derive(Default)]
@@ -43,7 +44,11 @@ pub(crate) enum StoreBoundary {
     KeysetReady,
     WatchReady,
     Collections,
+    CreateCollection,
+    CreateCollectionReady,
     ChangesReady,
+    ObjectReady,
+    PutReady,
     Put,
 }
 
@@ -220,6 +225,18 @@ impl MemoryHub {
         id
     }
 
+    /// Simulates legitimate millisecond timestamp ties, independently of insertion order.
+    pub(crate) fn set_collection_created_at(&self, id: &str, timestamp: i64) {
+        if let Some(collection) = self
+            .held()
+            .collections
+            .iter_mut()
+            .find(|row| row.collection_id == id)
+        {
+            collection.created_at_ms = timestamp;
+        }
+    }
+
     /// Every stored object of a collection, tombstones included, as the hub holds them.
     pub(crate) fn objects(&self, collection_id: &str) -> Vec<v1::StoredObject> {
         let held = self.held();
@@ -341,29 +358,41 @@ impl StoreOps for MemoryHub {
 
     fn create_collection(&self, request: v1::CreateCollectionRequest) -> Call<'_, v1::Collection> {
         Box::pin(async move {
+            self.boundary(StoreBoundary::CreateCollection).await?;
             self.reach()?;
-            let mut held = self.held();
-            held.clock += 1;
-            let collection = v1::Collection {
-                collection_id: request.collection_id.clone(),
-                org_id: request.org_id.clone(),
-                personal: request.org_id.is_empty(),
-                kind: request.kind,
-                sealed_name: request.sealed_name,
-                head: 0,
-                created_at_ms: held.clock,
-                deleted: false,
+            let collection = {
+                let mut held = self.held();
+                if held
+                    .collections
+                    .iter()
+                    .any(|row| row.collection_id == request.collection_id)
+                {
+                    return Err(OpError::Conflict);
+                }
+                held.clock += 1;
+                let collection = v1::Collection {
+                    collection_id: request.collection_id.clone(),
+                    org_id: request.org_id.clone(),
+                    personal: request.org_id.is_empty(),
+                    kind: request.kind,
+                    sealed_name: request.sealed_name,
+                    head: 0,
+                    created_at_ms: held.clock,
+                    deleted: false,
+                };
+                held.keys.insert(
+                    request.collection_id.clone(),
+                    v1::CollectionKey {
+                        collection_id: request.collection_id,
+                        key_version: 1,
+                        wrapped_key: request.wrapped_key,
+                        granted_by: String::new(),
+                    },
+                );
+                held.collections.push(collection.clone());
+                collection
             };
-            held.keys.insert(
-                request.collection_id.clone(),
-                v1::CollectionKey {
-                    collection_id: request.collection_id,
-                    key_version: 1,
-                    wrapped_key: request.wrapped_key,
-                    granted_by: String::new(),
-                },
-            );
-            held.collections.push(collection.clone());
+            self.boundary(StoreBoundary::CreateCollectionReady).await?;
             Ok(collection)
         })
     }
@@ -395,17 +424,35 @@ impl StoreOps for MemoryHub {
         })
     }
 
+    fn object(&self, collection_id: &str, object_id: &str) -> Call<'_, Option<v1::StoredObject>> {
+        let collection_id = collection_id.to_owned();
+        let object_id = object_id.to_owned();
+        Box::pin(async move {
+            self.reach()?;
+            let object = self
+                .held()
+                .objects
+                .get(&collection_id)
+                .and_then(|objects| objects.get(&object_id))
+                .cloned();
+            self.boundary(StoreBoundary::ObjectReady).await?;
+            Ok(object)
+        })
+    }
+
     fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion> {
         Box::pin(async move {
             self.boundary(StoreBoundary::Put).await?;
             self.reach()?;
             self.permitted(&request.collection_id)?;
-            self.write(
+            let written = self.write(
                 &request.collection_id,
                 &request.object_id,
                 request.expected_version,
                 Some((request.kind, request.ciphertext)),
-            )
+            )?;
+            self.boundary(StoreBoundary::PutReady).await?;
+            Ok(written)
         })
     }
 

@@ -250,3 +250,5 @@ mod tools;
 mod lifecycle;
 
 mod snapshot;
+
+mod inverse;

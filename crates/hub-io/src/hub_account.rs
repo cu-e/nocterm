@@ -22,6 +22,7 @@ pub struct HubAccount {
     credentials: CredentialCapture,
     relay: crate::relay::RelayCapture,
     operations: Arc<AccountOperations>,
+    cloud_material: crate::cloud::account_material::CloudMaterialCapture,
 }
 
 impl HubAccount {
@@ -29,6 +30,11 @@ impl HubAccount {
         let relay = crate::relay::RelayCapture::new(handle.clone(), pool.clone());
         let source = LocalSourceProvider::new(Arc::clone(&slot), pool.clone());
         let operations = Arc::new(AccountOperations::new(source.clone(), &pool));
+        let cloud_material = crate::cloud::account_material::CloudMaterialCapture::new(
+            handle.clone(),
+            &pool,
+            operations.clone(),
+        );
         let admin_keys = AdminKeys::new(operations.clone());
         let vault = Arc::new(HubVault::new(
             handle.clone(),
@@ -45,7 +51,22 @@ impl HubAccount {
             credentials,
             relay,
             operations,
+            cloud_material,
         }
+    }
+
+    /// Capture Cloud access under the independently retained hub authority pin.
+    /// The source is captured synchronously; later lock or sign-in cannot retarget it.
+    pub fn cloud_material(
+        &self,
+        source: Arc<dyn LocalAccountSource>,
+        authority: [u8; 32],
+        reservations: crate::cloud::AccountMaterialReservations,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<crate::cloud::CloudAccountMaterial, crate::cloud::AccountMaterialError>,
+    > {
+        self.cloud_material.capture(source, authority, reservations)
     }
 
     /// The saved profiles of the account.

@@ -1,6 +1,8 @@
 //! Pure desktop replay rules and ports for an originally captured verified source.
 //! A source implementation owns authentication, signatures, decryption and durable
 //! encrypted client outbox/cache I/O. Coordinate constructors confer no trust.
+mod baseline;
+pub use baseline::{SnapshotBaseline, SnapshotFact};
 mod cursor;
 mod event;
 pub mod ports;
@@ -43,6 +45,8 @@ pub enum ProjectionError {
     OutcomeUnknown,
     #[error("The captured Cloud transport is unavailable.")]
     Unavailable,
+    #[error("The signed observation uses semantics unsupported by this client.")]
+    Unsupported,
     #[error("The verified projection contains an invalid tool or content record.")]
     InvalidRecord,
     #[error("The encrypted client outbox or projection cache could not be persisted.")]

@@ -39,6 +39,19 @@
 //! signed public coordinator observations and exact ciphertext publication metadata.
 //! Publication and argument encoding use the public canonical codec with injected
 //! finite work reservations; native journal framing never supplies a wire payload.
+//! Provider boot announcements/status use guarded SDK RPCs and independently
+//! installed runner signing pins; hub receipt times never establish freshness.
+//! Account Cloud material uses only a dedicated personal encrypted collection.
+//! Capability pinning and actual native membership precede stable scope checks;
+//! normal unlocked account keysets restore wrapped chat keys on another device.
+//! Material facades keep weak key ownership, immutable runner pins and actual
+//! allocation leases; they never retain a plaintext chat key across operations.
+//! Captured Cloud conversations provide the neutral `CapturedConversationSource`
+//! port: nonce-authenticated current heads, bounded signed event replay, durable
+//! exact-command outbox and one encrypted verified-page cache. Installation-owned
+//! finite workers/storage drivers survive a view or original membership ending;
+//! each publication still checks that original membership. Sparse snapshot
+//! activation and first-chat creation are separate consumer transitions.
 //! Does not own: which hubs the user knows or trusts (the `[hubs]` settings section and the
 //! trust decision belong to `nocterm-hubs-model` and the callers), connection status, retries,
 //! windows, terminal emulation, or any view.

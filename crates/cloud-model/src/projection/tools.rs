@@ -4,7 +4,10 @@ use super::{
     runs::{RunKey, key},
 };
 use crate::{
-    authority::RunBinding, coordinator::ToolObservation, identity::IntentId, run::ToolIntent,
+    authority::RunBinding,
+    coordinator::{BackgroundObservation, ObservedBackground, ObservedEffect, ToolObservation},
+    identity::IntentId,
+    run::ToolIntent,
 };
 use nocterm_ai::{
     TerminalCall,
@@ -21,16 +24,21 @@ use std::collections::BTreeMap;
 struct ToolRow {
     index: usize,
     finished: bool,
+    intent: ToolIntent,
+    background: Option<ObservedBackground>,
+    lifecycle: Option<BackgroundObservation>,
+    terminal: Option<String>,
 }
 #[derive(Clone, Default)]
 pub(super) struct ProjectionTools(BTreeMap<(RunKey, IntentId), ToolRow>);
 impl ProjectionTools {
     pub(super) fn bytes(&self) -> usize {
-        self.0.len().saturating_mul(128)
+        self.0.len().saturating_mul(16 * 1024)
     }
     pub(super) fn contains(&self, intent: &ToolIntent) -> bool {
         self.0
-            .contains_key(&(key(intent.authority().run()), intent.id()))
+            .get(&(key(intent.authority().run()), intent.id()))
+            .is_some_and(|row| row.intent == *intent)
     }
     pub(super) fn push(
         &mut self,
@@ -61,6 +69,13 @@ impl ProjectionTools {
             ToolRow {
                 index: transcript.entries.len(),
                 finished: false,
+                intent: intent.clone(),
+                background: None,
+                lifecycle: None,
+                terminal: match call {
+                    TerminalCall::ExecCommand(value) => Some(value.terminal_id.clone()),
+                    _ => None,
+                },
             },
         );
         transcript.apply(SessionUpdate::ToolCall(Box::new(record)), now);
@@ -87,6 +102,15 @@ impl ProjectionTools {
         {
             return Err(ProjectionError::InvalidRecord);
         }
+        if let ObservedEffect::Background(background) = observation.effect() {
+            if background.intent() != row.intent.id()
+                || background.execution() != row.intent.authority()
+                || row.terminal.as_deref() != Some(background.terminal())
+            {
+                return Err(ProjectionError::InvalidRecord);
+            }
+            row.background = Some((**background).clone());
+        }
         record.status = if observation.is_failed() {
             ToolStatus::Failed
         } else {
@@ -96,6 +120,38 @@ impl ProjectionTools {
         observation.display().attach(record);
         row.finished = true;
         Ok(())
+    }
+    pub(super) fn background(
+        &mut self,
+        value: &BackgroundObservation,
+    ) -> Result<(), ProjectionError> {
+        let row = self
+            .0
+            .get_mut(&(key(value.job().execution().run()), value.job().intent()))
+            .ok_or(ProjectionError::InvalidRecord)?;
+        if row.terminal.as_deref() != Some(value.job().terminal())
+            || value.job().execution() != row.intent.authority()
+            || value.step() != row.intent.step()
+            || value.arguments() != row.intent.arguments()
+            || value.mutates() != row.intent.mutates()
+        {
+            return Err(ProjectionError::InvalidRecord);
+        }
+        if row
+            .background
+            .as_ref()
+            .is_some_and(|original| original != value.job())
+            || row.lifecycle.as_ref().is_some_and(|previous| {
+                previous.dispatch() != value.dispatch() || previous.job() != value.job()
+            })
+        {
+            return Err(ProjectionError::InvalidRecord);
+        }
+        row.lifecycle = Some(value.clone());
+        Ok(())
+    }
+    pub(super) fn observations(&self) -> impl Iterator<Item = &BackgroundObservation> {
+        self.0.values().filter_map(|row| row.lifecycle.as_ref())
     }
 }
 fn row_id(run: &RunBinding, id: IntentId) -> String {

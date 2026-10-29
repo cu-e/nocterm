@@ -18,7 +18,6 @@ use crate::account::source::{AccountSubject, AccountSubjects};
 use crate::account::{Accounts, OpenKeys, Slot};
 use crate::classify::credential_file;
 use crate::credentials::{CredentialDir, CredentialFile, CredentialLoginId, LoginPublication};
-use zeroize::Zeroize as _;
 
 /// The application name a hub lists beside the device.
 const APP_NAME: &str = "Nocterm";
@@ -432,15 +431,8 @@ impl AccountSubjects for Pool {
 }
 
 pub(crate) fn subject_of(client: &HubClient) -> Option<AccountSubject> {
-    let mut session = client.session()?;
-    let subject = AccountSubject::new(
-        std::mem::take(&mut session.account_id),
-        std::mem::take(&mut session.device_id),
-    );
-    // session() returns a temporary SDK clone. Keep only public subject metadata.
-    session.access_token.zeroize();
-    session.refresh_token.zeroize();
-    Some(subject)
+    let (account, device) = client.account_subject()?;
+    Some(AccountSubject::new(account, device))
 }
 
 #[cfg(test)]

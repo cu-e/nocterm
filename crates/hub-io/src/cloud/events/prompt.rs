@@ -3,7 +3,7 @@ use super::{encoding_error, values};
 use base64::Engine as _;
 use nocterm_ai::model::content::Content;
 use nocterm_cloud_model::{
-    coordinator::PromptRequest,
+    coordinator::ObservedPrompt,
     journal::{JournalError, PublicationAllocation, PublicationWorkBudget},
 };
 use nocterm_core::allocation::AllocationLease;
@@ -57,7 +57,7 @@ impl DecodedImage {
 }
 
 pub(super) fn with_prompt<T>(
-    request: &PromptRequest,
+    request: &ObservedPrompt,
     work: &dyn PublicationWorkBudget,
     emit: impl for<'a> FnOnce(AcceptedPrompt<'a>) -> Result<T, JournalError>,
 ) -> Result<T, JournalError> {
@@ -102,11 +102,13 @@ pub(super) fn with_prompt<T>(
     let prompt = AcceptedPrompt {
         content,
         model: values::model(request.selection())?,
-        target: Some(values::target(
-            destination.target(),
-            destination.authentication(),
-        )?),
-        existing_session: destination.session().map(values::session).transpose()?,
+        target: destination
+            .map(|value| values::target(value.target(), value.authentication()))
+            .transpose()?,
+        existing_session: destination
+            .and_then(|value| value.session())
+            .map(values::session)
+            .transpose()?,
     };
     emit(prompt)
 }

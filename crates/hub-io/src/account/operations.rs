@@ -8,6 +8,7 @@ use crate::{
     store::{HubStore, StoreOps},
     vault::Ledger,
 };
+use nocterm_core::allocation::AllocationLease;
 use nocterm_hubs_model::{
     HubError,
     source_identity::{LocalAccountPartition, LocalAccountSource, LocalAccountSourceError},
@@ -22,6 +23,13 @@ pub(crate) trait OperationStores: Send + Sync {
         native: &CapturedAccount,
         source: Arc<dyn LocalAccountSource>,
     ) -> Result<Arc<dyn StoreOps>, HubError>;
+    fn opened_bounded(
+        &self,
+        native: &CapturedAccount,
+        source: Arc<dyn LocalAccountSource>,
+        max_response_bytes: usize,
+        allocation: AllocationLease,
+    ) -> Result<Arc<dyn StoreOps>, HubError>;
     fn membership(&self, native: &CapturedMembership) -> Result<Arc<dyn StoreOps>, HubError>;
 }
 
@@ -34,6 +42,22 @@ impl OperationStores for PooledStores {
     ) -> Result<Arc<dyn StoreOps>, HubError> {
         let pool = self.0.upgrade().ok_or(HubError::Stale)?;
         Ok(Arc::new(HubStore::captured(pool, native, source)?))
+    }
+    fn opened_bounded(
+        &self,
+        native: &CapturedAccount,
+        source: Arc<dyn LocalAccountSource>,
+        max_response_bytes: usize,
+        allocation: AllocationLease,
+    ) -> Result<Arc<dyn StoreOps>, HubError> {
+        let pool = self.0.upgrade().ok_or(HubError::Stale)?;
+        Ok(Arc::new(HubStore::captured_bounded(
+            pool,
+            native,
+            source,
+            max_response_bytes,
+            allocation,
+        )?))
     }
     fn membership(&self, native: &CapturedMembership) -> Result<Arc<dyn StoreOps>, HubError> {
         let pool = self.0.upgrade().ok_or(HubError::Stale)?;
@@ -112,6 +136,26 @@ impl BoundOperations {
     pub(crate) fn source(&self) -> &Arc<OpenedSource> {
         &self.source
     }
+    pub(crate) fn capture_bounded(
+        &self,
+        max_response_bytes: usize,
+        allocation: AllocationLease,
+    ) -> Result<OpenedWork, HubError> {
+        self.source.check()?;
+        let keys = self.source.native.keys()?;
+        let ops = self.stores.opened_bounded(
+            &self.source.native,
+            self.source.clone(),
+            max_response_bytes,
+            allocation,
+        )?;
+        self.source.check()?;
+        Ok(OpenedWork {
+            source: self.source.clone(),
+            keys,
+            ops,
+        })
+    }
     pub(crate) fn capture(&self) -> Result<OpenedWork, HubError> {
         self.source.check()?;
         let keys = self.source.native.keys()?;
@@ -135,6 +179,9 @@ pub(crate) struct OpenedWork {
 impl OpenedWork {
     pub(crate) fn source(&self) -> &Arc<OpenedSource> {
         &self.source
+    }
+    pub(crate) fn transient_store(&self) -> crate::store::Store {
+        crate::store::Store::transient(self.ops.clone(), self.keys.clone())
     }
     pub(crate) fn store(&self) -> crate::store::Store {
         crate::store::Store::new(self.ops.clone(), self.keys.clone())

@@ -22,7 +22,13 @@ pub(super) fn event_bytes(event: &CoordinatorEvent) -> Result<usize, ProjectionE
         } => text.text().len().saturating_mul(2),
         CoordinatorEvent::ToolIntent { call, display, .. } => call_bytes(call)?
             .saturating_add(retained_value_bytes(display).map_err(|_| ProjectionError::Capacity)?),
-        CoordinatorEvent::Approval { call, .. } => call_bytes(call)?,
+        CoordinatorEvent::Approval { call, display, .. } => call_bytes(call)?
+            .saturating_add(retained_value_bytes(display).map_err(|_| ProjectionError::Capacity)?),
+        CoordinatorEvent::BackgroundLifecycle(value) => value
+            .job()
+            .terminal()
+            .len()
+            .saturating_add(value.job().command().len()),
         CoordinatorEvent::ToolResult { observation, .. } => {
             retained_value_bytes(observation.output().value())
                 .map_err(|_| ProjectionError::Capacity)?

@@ -95,7 +95,7 @@ impl<'a> History<'a> {
             CoordinatorEvent::PromptAccepted {
                 command,
                 run: run.clone(),
-                request,
+                request: nocterm_cloud_model::coordinator::ObservedPrompt::from_request(&request),
             },
             true,
         );
@@ -175,6 +175,7 @@ impl<'a> History<'a> {
             CoordinatorEvent::Approval {
                 intent: tool.intent.clone(),
                 call: tool.call.clone(),
+                display: nocterm_ai::tool_display::ToolDisplay::new(&tool.call, None),
                 expires: Timestamp::from_millis(self.time + 60000),
             },
             false,

@@ -19,17 +19,38 @@ pub use runner_peer::{
 #[cfg(test)]
 mod runner_test_support;
 
+mod observations;
+pub use observations::{AccountObservationDecoder, ObservationError};
 mod events;
 pub use events::{RunnerArgumentFingerprint, RunnerEventEncoder};
 mod runner_inbox;
 pub use runner_inbox::{
-    InboxResume, MaterialStoreError, RunnerCommandAttachments, RunnerInbox, RunnerInboxFault,
-    RunnerInboxOptions, RunnerInboxPrincipal, RunnerMaterialStore, RunnerProviderBootOffer,
-    RunnerProviderCredentialSource, RunnerSshAnswer, RunnerStagedProvider,
+    BootAnnouncement, InboxResume, MaterialStoreError, RunnerCommandAttachments, RunnerInbox,
+    RunnerInboxFault, RunnerInboxOptions, RunnerInboxPrincipal, RunnerMaterialStore,
+    RunnerProviderBootOffer, RunnerProviderCredentialSource, RunnerSshAnswer, RunnerStagedProvider,
 };
 
 pub(crate) mod account_material;
 pub use account_material::{
-    ACCOUNT_MATERIAL_WORK_BYTES, AccountChatMaterial, AccountMaterialError, ChatMaterialPins,
-    ChatMaterialRequest, CloudAccountMaterial,
+    ACCOUNT_MATERIAL_RESIDENT_BYTES, ACCOUNT_MATERIAL_WORK_BYTES, AccountChatMaterial,
+    AccountMaterialError, AccountMaterialFailure, AccountMaterialReservations, ChatMaterialPins,
+    ChatMaterialRequest, CloudAccountMaterial, account_material_work_bytes,
+};
+
+mod runner_registry;
+pub use runner_registry::{
+    AccountRunnerRegistry, RUNNER_REGISTRY_RESIDENT_BYTES, RunnerRegistration, RunnerRegistryError,
+    RunnerRegistryReservations, TrustedRunnerRoster, runner_registry_work_bytes,
+};
+
+mod conversation_source;
+pub use conversation_source::{
+    CloudConversationSource, ConversationPromptPolicy, ConversationSetup, ConversationStorage,
+    ConversationWorkers,
+};
+
+mod provider_boot;
+pub use provider_boot::{
+    AccountProviderBoot, PROVIDER_BOOT_RESIDENT_BYTES, ProviderBootError, ProviderBootReservations,
+    TrustedProviderBoot, provider_boot_work_bytes,
 };

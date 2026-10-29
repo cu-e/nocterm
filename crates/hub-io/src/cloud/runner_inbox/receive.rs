@@ -54,16 +54,32 @@ pub(super) async fn receive(
         }
         state.budget = Some(budget.clone());
     }
-    owner.prune_pending()?;
-    if acknowledge::sync_confirmed(&owner, &budget).await.is_err() {
-        // ACK loss must not prevent a separately available urgent replay path.
-        // The persisted prefix remains pending and is resent verbatim later.
+    loop {
         owner.check_current()?;
-        owner.fault(RunnerInboxFault::DeliveryUnconfirmed);
+        owner.prune_pending()?;
+        if acknowledge::sync_confirmed(&owner, &budget).await.is_err() {
+            // ACK loss must not prevent a separately available urgent replay path.
+            // The durable prefix stays pending and is resent verbatim later.
+            owner.check_current()?;
+            owner.fault(RunnerInboxFault::DeliveryUnconfirmed);
+        }
+        if let Some(input) = scan_window(&owner, &budget).await? {
+            return Ok(Some(input));
+        }
+        // No assembled/opened payload is retained during this genuine idle wait.
+        // Empty transport replay is not the authenticated source's end-of-stream.
+        owner.check_current()?;
+        owner.timer.delay(owner.options.interval).await;
+        owner.check_current()?;
     }
-    // A receive call does finite work even if the hub sends only inadmissible
-    // ordinary inputs. Forward state is retained across calls, not rewound to
-    // the first capacity hole; periodic prefix probes use a separate position.
+}
+
+/// At most eight records per wake. None is an idle WINDOW, never a source close.
+/// Forward/probe positions survive waits, including unacknowledged capacity holes.
+async fn scan_window(
+    owner: &Arc<InboxOwner>,
+    budget: &CommandReceiveBudget,
+) -> Result<Option<CommandInput>, CoordinatorError> {
     for _ in 0..8 {
         owner.check_current()?;
         let (after, probe) = {
@@ -79,7 +95,7 @@ pub(super) async fn receive(
                 (state.forward, false)
             }
         };
-        match scan(&owner, &budget, after, probe).await {
+        match scan(owner, budget, after, probe).await {
             Ok(Scanned::Input(input)) => return Ok(Some(input)),
             Ok(Scanned::Handled) => {}
             Ok(Scanned::Empty) => {
@@ -113,9 +129,6 @@ pub(super) async fn receive(
             }
         }
     }
-    // All assembled/opened payload locals have dropped before an idle wait.
-    owner.timer.delay(owner.options.interval).await;
-    owner.check_current()?;
     Ok(None)
 }
 

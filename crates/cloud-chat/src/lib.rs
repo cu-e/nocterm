@@ -231,10 +231,8 @@ impl CloudChat {
             return Err(ProjectionError::Unavailable.into());
         }
         self.pending.require_room()?;
-        let bytes = 4096usize.saturating_add(match &action {
-            ConversationAction::Prompt(text) => text.len().saturating_mul(2),
-            ConversationAction::Stop => 0,
-        });
+        let bytes =
+            nocterm_cloud_model::projection::ports::ConversationCommand::action_bytes(&action);
         if bytes > MAX_REPLAY_BYTES {
             return Err(ProjectionError::Capacity.into());
         }
@@ -342,6 +340,7 @@ impl CloudChat {
         let required = self
             .source
             .allocation_requirements(ConversationWork::Replay {
+                after: self.projection().cursor(),
                 maximum_bytes: MAX_REPLAY_BYTES,
             })?;
         let allocation = self.residency.work(required, cx)?;

@@ -166,15 +166,22 @@ impl OpenKeys {
         &self,
         collection_id: &str,
     ) -> Result<(Arc<CollectionKey>, Vec<u8>), HubError> {
+        let (key, envelope) = self.generate_collection(collection_id)?;
+        self.collections()
+            .insert(collection_id.to_owned(), Arc::clone(&key));
+        Ok((key, envelope))
+    }
+    /// Transient owners retain the key themselves rather than populating a cache.
+    pub(crate) fn generate_collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<(Arc<CollectionKey>, Vec<u8>), HubError> {
         let key = CollectionKey::generate().map_err(remote)?;
         let envelope = self
             .keyset
             .seal_collection_key(&key, collection_id)
             .map_err(remote)?;
-        let key = Arc::new(key);
-        self.collections()
-            .insert(collection_id.to_owned(), Arc::clone(&key));
-        Ok((key, envelope))
+        Ok((Arc::new(key), envelope))
     }
 }
 

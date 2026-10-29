@@ -34,7 +34,24 @@ impl CommandOperation {
     pub(crate) fn start(self, cx: &mut Context<CloudChat>) -> Task<()> {
         cx.spawn(async move |chat, cx| {
             let id = self.retained.value().id;
-            let result = self.drive().await;
+            let result = self
+                .drive(|| {
+                    // Observer publication is best effort; losing its entity cannot
+                    // stop delivery of an owner-held durably staged command. The
+                    // source is rechecked independently by drive before transport.
+                    let _ = chat.update(cx, |chat, cx| {
+                        let source = self.source.clone();
+                        let mut changed = false;
+                        let _ = source.with_current(&mut || {
+                            chat.pending.staged(id);
+                            changed = true;
+                        });
+                        if changed {
+                            cx.notify();
+                        }
+                    });
+                })
+                .await;
             let _ = chat.update(cx, |chat, cx| {
                 if matches!(result, Err(ProjectionError::Stale)) {
                     chat.fail(ProjectionError::Stale.into(), cx);
@@ -47,11 +64,17 @@ impl CommandOperation {
             });
         })
     }
-    async fn drive(&self) -> Result<PendingCommandState, ProjectionError> {
+    async fn drive(
+        &self,
+        on_staged: impl FnOnce(),
+    ) -> Result<PendingCommandState, ProjectionError> {
         self.source.check_current()?;
         let command = self.retained.clone();
         if self.retry {
-            let queried = self.source.query(command.value().id).await;
+            let queried = self
+                .source
+                .query(command.value().id, self.work.clone())
+                .await;
             self.source.check_current()?;
             match queried? {
                 CommandDelivery::NotFound => {}
@@ -62,7 +85,12 @@ impl CommandOperation {
         let staged = self.source.stage(command.clone(), self.work.clone()).await;
         self.source.check_current()?;
         staged?;
-        let delivery = self.source.deliver(command.value().id).await;
+        on_staged();
+        self.source.check_current()?;
+        let delivery = self
+            .source
+            .deliver(command.value().id, self.work.clone())
+            .await;
         self.source.check_current()?;
         delivered(delivery?)
     }
@@ -71,6 +99,7 @@ fn delivered(delivery: CommandDelivery) -> Result<PendingCommandState, Projectio
     match delivery {
         CommandDelivery::NotFound => Err(ProjectionError::OutcomeUnknown),
         CommandDelivery::Pending => Ok(PendingCommandState::Pending),
+        CommandDelivery::Delivered => Ok(PendingCommandState::Delivered),
         CommandDelivery::Accepted => Ok(PendingCommandState::Accepted),
         CommandDelivery::Rejected => Ok(PendingCommandState::Rejected),
     }

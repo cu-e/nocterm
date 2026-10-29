@@ -28,7 +28,12 @@ impl ReplaySubscription {
                 let result = self.0.next(cursor, allocation).await;
                 let result = self.0.check_current().and(result);
                 let published = chat.update(cx, |chat, cx| match result {
-                    Ok(batch) => chat.accept_page(batch, cx),
+                    Ok(nocterm_cloud_model::projection::ports::ConversationReplay::Page(batch)) => {
+                        chat.accept_page(*batch, cx)
+                    }
+                    Ok(nocterm_cloud_model::projection::ports::ConversationReplay::Readmission) => {
+                        Ok(())
+                    }
                     Err(error) => Err(CloudChatError::from(error)),
                 });
                 match published {

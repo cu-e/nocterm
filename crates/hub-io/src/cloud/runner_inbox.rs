@@ -7,8 +7,8 @@ mod material_store;
 mod receive;
 use super::RunnerHubConnection;
 pub use attachments::{
-    RunnerCommandAttachments, RunnerProviderBootOffer, RunnerProviderCredentialSource,
-    RunnerSshAnswer, RunnerStagedProvider,
+    BootAnnouncement, RunnerCommandAttachments, RunnerProviderBootOffer,
+    RunnerProviderCredentialSource, RunnerSshAnswer, RunnerStagedProvider,
 };
 use cursor::InboxCursor;
 use futures::future::BoxFuture;

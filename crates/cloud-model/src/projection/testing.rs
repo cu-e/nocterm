@@ -168,6 +168,21 @@ impl ScriptedConversationSource {
             .controls
             .lose_ack = true;
     }
+    /// The shared semantic port supplies an already authenticated runner outcome,
+    /// independently of transport storage. This fake performs no signature check.
+    pub fn runner_receipt(
+        &self,
+        id: CommandId,
+        outcome: CommandDelivery,
+    ) -> Result<(), ProjectionError> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        self.check(&state)?;
+        if !state.staged.contains_key(&id) || outcome == CommandDelivery::Delivered {
+            return Err(ProjectionError::InvalidRecord);
+        }
+        state.statuses.insert(id, outcome);
+        Ok(())
+    }
     pub fn reject_next_command(&self) {
         self.state
             .lock()
@@ -224,7 +239,7 @@ impl CapturedConversationSource for ScriptedConversationSource {
     ) -> Result<AllocationRequirements, ProjectionError> {
         self.check_current()?;
         Ok(match work {
-            ConversationWork::Replay { maximum_bytes } => {
+            ConversationWork::Replay { maximum_bytes, .. } => {
                 AllocationRequirements::new(maximum_bytes, 1)
             }
             // The fake backend stores submitted records as simulated durable
@@ -254,7 +269,8 @@ impl CapturedConversationSource for ScriptedConversationSource {
         &self,
         after: ProjectionCursor,
         allocation: AllocationLease,
-    ) -> BoxFuture<'static, Result<Allocated<ProjectionBatch>, ProjectionError>> {
+    ) -> BoxFuture<'static, Result<crate::projection::ports::ConversationReplay, ProjectionError>>
+    {
         let maximum_bytes = allocation.bytes();
         let source = self.clone();
         self.observe_native(
@@ -277,7 +293,9 @@ impl CapturedConversationSource for ScriptedConversationSource {
                 if maximum_bytes > MAX_REPLAY_BYTES || page.resident_bytes() > maximum_bytes {
                     return Err(ProjectionError::Capacity);
                 }
-                Ok(Allocated::new(page, allocation))
+                Ok(crate::projection::ports::ConversationReplay::Page(
+                    Box::new(Allocated::new(page, allocation)),
+                ))
             }
             .boxed(),
         )
@@ -301,6 +319,11 @@ impl CapturedConversationSource for ScriptedConversationSource {
             id,
             coordinates,
             action,
+            preparation: crate::projection::ports::ConversationPreparation::new(
+                crate::identity::Timestamp::from_millis(1),
+                crate::identity::Timestamp::from_millis(10_000),
+                crate::identity::Fingerprint::from_bytes([1; 32]),
+            )?,
         })
     }
     fn stage(
@@ -324,7 +347,8 @@ impl CapturedConversationSource for ScriptedConversationSource {
                 source.check(&state)?;
                 if let Some(old) = state.staged.get(&command.value().id) {
                     return (old.coordinates == command.value().coordinates
-                        && old.action == command.value().action)
+                        && old.action == command.value().action
+                        && old.preparation == command.value().preparation)
                         .then_some(())
                         .ok_or(ProjectionError::InvalidRecord);
                 }
@@ -346,9 +370,11 @@ impl CapturedConversationSource for ScriptedConversationSource {
     fn deliver(
         &self,
         id: CommandId,
+        work: AllocationLease,
     ) -> BoxFuture<'static, Result<CommandDelivery, ProjectionError>> {
         let source = self.clone();
         async move {
+            let _work = work;
             source.check_current()?;
             let gate = source
                 .state
@@ -367,9 +393,15 @@ impl CapturedConversationSource for ScriptedConversationSource {
             let outcome = if std::mem::take(&mut state.controls.reject_next) {
                 CommandDelivery::Rejected
             } else {
-                CommandDelivery::Accepted
+                CommandDelivery::Delivered
             };
-            state.statuses.insert(id, outcome);
+            // Matching the hub ACK supplies no implicit runner admission. An
+            // explicit rejection control represents a verified R refusal.
+            if outcome == CommandDelivery::Rejected {
+                state.statuses.insert(id, outcome);
+            } else {
+                state.statuses.entry(id).or_insert(CommandDelivery::Pending);
+            }
             if std::mem::take(&mut state.controls.lose_ack) {
                 return Err(ProjectionError::OutcomeUnknown);
             }
@@ -377,9 +409,14 @@ impl CapturedConversationSource for ScriptedConversationSource {
         }
         .boxed()
     }
-    fn query(&self, id: CommandId) -> BoxFuture<'static, Result<CommandDelivery, ProjectionError>> {
+    fn query(
+        &self,
+        id: CommandId,
+        work: AllocationLease,
+    ) -> BoxFuture<'static, Result<CommandDelivery, ProjectionError>> {
         let source = self.clone();
         async move {
+            let _work = work;
             let mut state = source.state.lock().unwrap_or_else(PoisonError::into_inner);
             source.check(&state)?;
             state.effects.queried.push(id);

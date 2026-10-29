@@ -1,7 +1,10 @@
 //! Actual purpose-bound capsule/proof ownership keyed by the original command.
+mod boot;
 mod provider;
+use super::super::provider_boot::BootClock;
 use super::super::{RunnerHubConnection, RunnerHubError};
 use super::{commands, material_store::RunnerMaterialStore};
+pub use boot::BootAnnouncement;
 use nocterm_cloud_model::{
     coordinator::{CommandAcknowledgement, CoordinatorError, ProviderOffer, SessionConsent},
     identity::{CloudChatId, CommandId, Timestamp},
@@ -101,7 +104,7 @@ pub struct RunnerCommandAttachments {
     maximum: usize,
     work: Arc<dyn PublicationWorkBudget>,
     staged: Mutex<StageState>,
-    observed: Mutex<Option<Timestamp>>,
+    observed: Mutex<BootClock>,
 }
 impl RunnerCommandAttachments {
     pub fn new(
@@ -155,8 +158,16 @@ impl RunnerCommandAttachments {
                 entries: BTreeMap::new(),
                 next: 0,
             }),
-            observed: Mutex::new(None),
+            observed: Mutex::default(),
         }))
+    }
+    /// Announce this exact execution runtime's boot, never a control-plane
+    /// capability declaration. The caller supplies one real bounded RPC permit.
+    pub fn announce_boot(
+        self: &Arc<Self>,
+        allocation: AllocationLease,
+    ) -> futures::future::BoxFuture<'static, Result<BootAnnouncement, CoordinatorError>> {
+        boot::announce(self.clone(), allocation)
     }
     pub fn boot_offer(&self) -> RunnerProviderBootOffer {
         self.offer.clone()
@@ -173,16 +184,11 @@ impl RunnerCommandAttachments {
     }
     pub(super) fn check_current(&self) -> Result<Timestamp, CoordinatorError> {
         self.connection.check_source().map_err(source_error)?;
-        let now = self.timer.now();
-        let mut observed = self
-            .observed
+        self.observed
             .lock()
-            .map_err(|_| CoordinatorError::NativeTaskFailed)?;
-        if observed.is_some_and(|old| now < old) {
-            return Err(CoordinatorError::Expired);
-        }
-        *observed = Some(now);
-        Ok(now)
+            .map_err(|_| CoordinatorError::NativeTaskFailed)?
+            .observe(self.timer.now())
+            .map_err(|_| CoordinatorError::Expired)
     }
     pub(super) fn reserve(&self, raw_payload: usize) -> Result<AllocationLease, CoordinatorError> {
         // Original sealed/proof bytes coexist with the parsed native proof and

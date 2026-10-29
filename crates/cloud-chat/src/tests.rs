@@ -169,6 +169,75 @@ fn actions(chat: &Entity<CloudChat>, cx: &mut TestAppContext) -> Rc<dyn Conversa
 }
 
 #[gpui::test]
+async fn durable_stage_hub_delivery_and_runner_acceptance_remain_distinct(cx: &mut TestAppContext) {
+    use nocterm_cloud_model::projection::ports::CommandDelivery;
+    let (source, chat, _) = opened(cx);
+    let stage = source.pause_stage();
+    let delivery = source.pause_delivery();
+    let controls = actions(&chat, cx);
+    let sent = cx.update(|cx| controls.perform(ConversationAction::Prompt("original".into()), cx));
+    cx.run_until_parked();
+    let pending = cx.update(|cx| chat.read(cx).pending_commands());
+    assert_eq!(pending.len(), 1);
+    let id = pending[0].id;
+    assert_eq!(pending[0].state, PendingCommandState::Staging);
+    assert!(source.effects().staged.is_empty());
+    stage.release();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            chat.read(cx).pending_commands()[0].state,
+            PendingCommandState::Pending
+        )
+    });
+    assert_eq!(source.effects().staged, [id]);
+    assert!(source.effects().delivered.is_empty());
+    delivery.release();
+    sent.await.unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            chat.read(cx).pending_commands()[0].state,
+            PendingCommandState::Delivered
+        );
+        assert!(chat.read(cx).projection().transcript().entries.is_empty());
+    });
+    source.runner_receipt(id, CommandDelivery::Pending).unwrap();
+    chat.update(cx, |chat, cx| chat.retry(id, cx))
+        .await
+        .unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            chat.read(cx).pending_commands()[0].state,
+            PendingCommandState::Delivered
+        )
+    });
+    source
+        .runner_receipt(id, CommandDelivery::Accepted)
+        .unwrap();
+    chat.update(cx, |chat, cx| chat.retry(id, cx))
+        .await
+        .unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            chat.read(cx).pending_commands()[0].state,
+            PendingCommandState::Accepted
+        )
+    });
+    assert_eq!(source.effects().staged, [id]);
+    assert_eq!(source.effects().delivered, [id]);
+    assert_eq!(source.effects().queried, [id, id]);
+    let mut fixture = ProjectionFixture::new();
+    source
+        .queue(fixture.page(vec![prompt_event(&run_binding(1), "original", id)]))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(chat.read(cx).pending_commands().is_empty());
+        assert_eq!(chat.read(cx).projection().transcript().entries.len(), 1);
+    });
+}
+
+#[gpui::test]
 async fn lost_ack_retries_the_original_id_and_accepted_replay_adds_one_user_row(
     cx: &mut TestAppContext,
 ) {
@@ -187,6 +256,12 @@ async fn lost_ack_retries_the_original_id_and_accepted_replay_adds_one_user_row(
     );
     let retried = chat.update(cx, |chat, cx| chat.retry(id, cx));
     retried.await.unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            chat.read(cx).pending_commands()[0].state,
+            PendingCommandState::Pending
+        )
+    });
     assert_eq!(source.effects().staged, [id]);
     assert_eq!(source.effects().delivered, [id]);
     assert_eq!(source.effects().queried, [id]);
@@ -278,7 +353,7 @@ async fn dropping_an_action_waiter_does_not_cancel_its_owner_held_delivery(
     cx.update(|cx| {
         assert_eq!(
             chat.read(cx).pending_commands()[0].state,
-            PendingCommandState::Accepted
+            PendingCommandState::Delivered
         )
     });
 }

@@ -332,6 +332,7 @@ gpui-kit = "0.7"
 gpui = { package = "gpui-pre", version = "0.3.7", default-features = false }
 parking_lot = "0.12"
 portable-pty = "0.9"
+prost = "0.14.4"
 regex = "1"
 # Zed's reqwest fork, already in the tree through GPUI.
 reqwest = { package = "gpui-pre-reqwest", version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

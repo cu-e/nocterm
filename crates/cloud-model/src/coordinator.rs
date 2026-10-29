@@ -3,6 +3,10 @@ mod command;
 mod delivery;
 mod error;
 mod event;
+mod observations;
+pub use observations::{
+    BackgroundObservation, ObservedBackground, ObservedEffect, ObservedJobWindow, ObservedPrompt,
+};
 pub(crate) mod intake;
 mod ports;
 mod provider_access;

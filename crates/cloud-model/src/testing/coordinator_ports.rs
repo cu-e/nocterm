@@ -295,6 +295,9 @@ impl CoordinatorEventEncoder for ObservedCoordinatorEvents {
             CoordinatorEvent::ApprovalResolved { answer, .. } => {
                 Some(answer.authority().run().clone())
             }
+            CoordinatorEvent::BackgroundLifecycle(value) => {
+                Some(value.job().execution().run().clone())
+            }
             CoordinatorEvent::Deleted { .. } => None,
         };
         fixture_outbox_with_work(

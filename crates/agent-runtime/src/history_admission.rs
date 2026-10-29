@@ -24,9 +24,11 @@ use eviction::EvictionCandidate;
 pub mod testing;
 
 pub const MAX_HISTORY_PAYLOADS: usize = 32;
-/// The final two payloads and64KiB remain available to original urgent controls.
+/// The final two payloads and 1MiB remain available to original urgent controls.
 pub const MAX_NORMAL_HISTORY_PAYLOADS: usize = MAX_HISTORY_PAYLOADS - 2;
-pub const URGENT_HISTORY_BYTES: usize = 64 * 1024;
+// Guarded fresh-head receipts and upload buffers share this reserved lane.
+// This repartitions the same installation total; normal capacity decreases.
+pub const URGENT_HISTORY_BYTES: usize = 1024 * 1024;
 pub const MAX_NORMAL_HISTORY_BYTES: usize = MAX_RESIDENT_BYTES - URGENT_HISTORY_BYTES;
 
 #[derive(Debug, thiserror::Error)]

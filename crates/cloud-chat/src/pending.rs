@@ -12,6 +12,7 @@ use std::{collections::BTreeMap, sync::Arc};
 pub enum PendingCommandState {
     Staging,
     Pending,
+    Delivered,
     Accepted,
     Rejected,
     OutcomeUnknown,
@@ -96,6 +97,18 @@ impl PendingCommands {
             .map(|entry| entry.retained.clone())
             .ok_or(ProjectionError::InvalidRecord)
     }
+    pub(crate) fn staged(&mut self, id: CommandId) {
+        if let Some(entry) = self.0.get_mut(&id) {
+            if !matches!(
+                entry.state,
+                PendingCommandState::Delivered
+                    | PendingCommandState::Accepted
+                    | PendingCommandState::Rejected
+            ) {
+                entry.state = PendingCommandState::Pending;
+            }
+        }
+    }
     pub(crate) fn attach(&mut self, id: CommandId, task: Task<()>) {
         if let Some(entry) = self.0.get_mut(&id) {
             entry.operation = Some(task);
@@ -109,10 +122,20 @@ impl PendingCommands {
         let rejected = matches!(result, Ok(PendingCommandState::Rejected));
         if let Some(entry) = self.0.get_mut(&id) {
             entry.operation.take();
-            entry.state = result
+            let observed = result
                 .as_ref()
                 .copied()
                 .unwrap_or(PendingCommandState::OutcomeUnknown);
+            // A later runner Unknown/error does not erase an already matched
+            // durable storage ACK. Only authenticated terminal facts supersede it.
+            if entry.state != PendingCommandState::Delivered
+                || matches!(
+                    observed,
+                    PendingCommandState::Accepted | PendingCommandState::Rejected
+                )
+            {
+                entry.state = observed;
+            }
             if let Some(waiter) = entry.waiter.take() {
                 let result = result.and_then(|state| {
                     if state == PendingCommandState::Rejected {

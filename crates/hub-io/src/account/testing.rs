@@ -18,7 +18,9 @@ mod hub;
 mod native_operations;
 mod subjects;
 pub(crate) use accounts::NativeAccounts;
-pub(crate) use native_operations::{NativeVault, native_operations};
+pub(crate) use native_operations::{
+    NativeVault, native_operations, native_operations_with_subjects,
+};
 
 pub(crate) use hub::MemoryKeysets;
 pub(crate) use subjects::ScriptedSubjects;

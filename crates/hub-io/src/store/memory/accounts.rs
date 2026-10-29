@@ -32,6 +32,28 @@ impl OperationStores for MemoryAccountStores {
         source.check_current().map_err(|_| HubError::Stale)?;
         self.account(native.subject()?.account())
     }
+    fn opened_bounded(
+        &self,
+        native: &CapturedAccount,
+        source: Arc<dyn LocalAccountSource>,
+        max_response_bytes: usize,
+        allocation: nocterm_core::allocation::AllocationLease,
+    ) -> Result<Arc<dyn StoreOps>, HubError> {
+        if max_response_bytes == 0 {
+            return Err(HubError::PermissionDenied);
+        }
+        source.check_current().map_err(|_| HubError::Stale)?;
+        let hub = self
+            .0
+            .get(native.subject()?.account())
+            .cloned()
+            .ok_or(HubError::Stale)?;
+        Ok(Arc::new(super::bounded::BoundedMemoryHub::new(
+            hub,
+            max_response_bytes,
+            allocation,
+        )))
+    }
     fn membership(&self, native: &CapturedMembership) -> Result<Arc<dyn StoreOps>, HubError> {
         native.check()?;
         self.account(native.subject()?.account())

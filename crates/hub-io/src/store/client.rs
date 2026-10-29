@@ -12,6 +12,7 @@ use crate::{
 
 pub(super) struct StoreClient {
     fixed: CapturedClient,
+    cloud: bool,
 }
 impl StoreClient {
     pub(super) fn captured(
@@ -20,10 +21,33 @@ impl StoreClient {
         source: Arc<dyn LocalAccountSource>,
     ) -> Result<Self, HubError> {
         let fixed = CapturedClient::account(pool.clone(), native, source)?;
-        Ok(Self { fixed })
+        Ok(Self {
+            fixed,
+            cloud: false,
+        })
+    }
+    pub(super) fn captured_cloud(
+        pool: Arc<Pool>,
+        native: &CapturedAccount,
+        source: Arc<dyn LocalAccountSource>,
+    ) -> Result<Self, HubError> {
+        let fixed = CapturedClient::account(pool, native, source)?;
+        fixed.check_cloud()?;
+        Ok(Self { fixed, cloud: true })
+    }
+    pub(super) fn check(&self) -> Result<(), OpError> {
+        if self.cloud {
+            self.fixed.check_cloud().map_err(OpError::from)
+        } else {
+            Ok(())
+        }
     }
     pub(super) async fn fresh(&self) -> Result<HubClient, OpError> {
-        self.fixed.fresh().await.map_err(OpError::from)
+        if self.cloud {
+            self.fixed.captured_cloud().map_err(OpError::from)
+        } else {
+            self.fixed.fresh().await.map_err(OpError::from)
+        }
     }
 
     pub(super) fn membership(
@@ -36,7 +60,10 @@ impl StoreClient {
             return Err(HubError::Stale);
         }
         native.check()?;
-        Ok(Self { fixed })
+        Ok(Self {
+            fixed,
+            cloud: false,
+        })
     }
 
     pub(super) fn failure(&self, error: ClientError) -> OpError {

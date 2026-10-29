@@ -22,6 +22,8 @@ pub trait AuthenticatedCommandSource: Send + Sync {
     /// allocation. Normal pressure cannot consume urgent capacity. Advancing a
     /// bounded scan must retain/revisit unacknowledged holes without advancing
     /// the durable ACK watermark across them; no unbounded hole list is allowed.
+    /// Empty replay/idle waits internally. `None` means authoritative permanent
+    /// end-of-source; source failures return an error and fence active work.
     fn receive(
         &self,
         budget: CommandReceiveBudget,

@@ -83,7 +83,7 @@ pub fn prompt_event(run: &RunBinding, text: &str, id: CommandId) -> CoordinatorE
     CoordinatorEvent::PromptAccepted {
         command,
         run: run.clone(),
-        request,
+        request: crate::coordinator::ObservedPrompt::from_request(&request),
     }
 }
 

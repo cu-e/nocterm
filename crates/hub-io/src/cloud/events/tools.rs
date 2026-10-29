@@ -85,22 +85,6 @@ impl DisplayJson {
     }
 }
 
-pub(super) fn call_json(
-    call: &TerminalCall,
-    work: &dyn PublicationWorkBudget,
-) -> Result<JsonText, JournalError> {
-    match call {
-        TerminalCall::ListTerminals => JsonText::new(&serde_json::json!({}), work),
-        TerminalCall::OpenTerminal(value) => JsonText::new(value, work),
-        TerminalCall::ReadTerminal(value) => JsonText::new(value, work),
-        TerminalCall::SendInput(value) => JsonText::new(value, work),
-        TerminalCall::RunCommand(value) => JsonText::new(value, work),
-        TerminalCall::ExecCommand(value) => JsonText::new(value, work),
-        TerminalCall::ReadCommand(value) => JsonText::new(value, work),
-        TerminalCall::CancelCommand(value) => JsonText::new(value, work),
-    }
-}
-
 /// The caller admits the borrowed vector/box and principal strings before this
 /// mapping. The sole SDK encoder still validates digest, bounds and wire bytes.
 pub(super) fn intent<'a>(

@@ -15,6 +15,8 @@
 //! grants a group's collection; that is `hubctl`'s job.
 
 mod client;
+mod personal;
+pub(crate) use personal::ExactPersonalCollection;
 mod grpc;
 #[cfg(test)]
 pub(crate) mod memory;
@@ -65,6 +67,7 @@ pub(crate) trait StoreOps: Send + Sync {
     fn members(&self, collection_id: &str) -> Call<'_, Vec<v1::CollectionMember>>;
     /// The organizations the account belongs to, with its role in each.
     fn memberships(&self) -> Call<'_, Vec<v1::Membership>>;
+    fn object(&self, collection_id: &str, object_id: &str) -> Call<'_, Option<v1::StoredObject>>;
     fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion>;
     fn delete_object(&self, request: v1::DeleteObjectRequest) -> Call<'_, v1::ObjectVersion>;
     fn changes(&self, collection_id: &str, after: u64) -> Call<'_, v1::ChangeBatch>;
@@ -197,11 +200,25 @@ fn oldest<'a>(
 pub(crate) struct Store {
     ops: Arc<dyn StoreOps>,
     keys: Arc<OpenKeys>,
+    cache_own_keys: bool,
 }
 
 impl Store {
     pub(crate) fn new(ops: Arc<dyn StoreOps>, keys: Arc<OpenKeys>) -> Self {
-        Self { ops, keys }
+        Self {
+            ops,
+            keys,
+            cache_own_keys: true,
+        }
+    }
+
+    /// A bounded operation owns all opened collection material until its drop.
+    pub(crate) fn transient(ops: Arc<dyn StoreOps>, keys: Arc<OpenKeys>) -> Self {
+        Self {
+            ops,
+            keys,
+            cache_own_keys: false,
+        }
     }
 
     /// The account's personal collection of `kind`, if the hub has one. When several exist
@@ -266,10 +283,23 @@ impl Store {
     /// The account's own collection: the envelope was sealed by this account.
     async fn open(&self, chosen: &v1::Collection) -> Result<Located, OpError> {
         let record = self.ops.collection_key(&chosen.collection_id).await?;
-        let key = self
-            .keys
-            .own_collection(&chosen.collection_id, &record.wrapped_key)
-            .map_err(OpError::Damaged)?;
+        if !self.cache_own_keys
+            && (record.collection_id != chosen.collection_id
+                || !record.granted_by.is_empty()
+                || record.wrapped_key.len() > 256)
+        {
+            return Err(OpError::Hub(HubError::PermissionDenied));
+        }
+        let key = if self.cache_own_keys {
+            self.keys
+                .own_collection(&chosen.collection_id, &record.wrapped_key)
+        } else {
+            self.keys
+                .keyset()
+                .open_own_collection_key(&chosen.collection_id, &record.wrapped_key)
+                .map(Arc::new)
+        }
+        .map_err(OpError::Damaged)?;
         Ok(Located {
             id: chosen.collection_id.clone(),
             key,
@@ -353,7 +383,11 @@ impl Store {
         let id = Builder::from_random_bytes(random_bytes::<16>().map_err(remote)?)
             .into_uuid()
             .to_string();
-        let (key, envelope) = self.keys.new_collection(&id)?;
+        let (key, envelope) = if self.cache_own_keys {
+            self.keys.new_collection(&id)?
+        } else {
+            self.keys.generate_collection(&id)?
+        };
         let sealed_name = key.seal_name(&id, kind).map_err(remote)?;
         self.ops
             .create_collection(v1::CreateCollectionRequest {

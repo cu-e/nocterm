@@ -6,14 +6,13 @@ use super::{
 };
 use nocterm_cloud_model::{
     authority::RunBinding,
-    coordinator::CoordinatorEvent,
+    coordinator::{CoordinatorEvent, ObservedBackground, ObservedEffect as NativeEffect},
     engine::{EngineEvent, TextChannel},
     journal::{JournalError, PublicationWorkBudget},
-    tool::{BackgroundCommand, ToolEffectStatus},
+    tool::BackgroundCommand,
 };
 use nocterm_hub_model::cloud::events::{
-    BackgroundJob, CloudEventPayload, CloudTextChannel, DisplayOutcome, ObservedEffect,
-    ToolObservationPayload, ToolPresentation,
+    BackgroundJob, CloudEventPayload, CloudTextChannel, ObservedEffect, ToolObservationPayload,
 };
 
 pub(super) fn original_run(event: &CoordinatorEvent) -> Option<&RunBinding> {
@@ -27,6 +26,7 @@ pub(super) fn original_run(event: &CoordinatorEvent) -> Option<&RunBinding> {
             Some(intent.authority().run())
         }
         CoordinatorEvent::ApprovalResolved { answer, .. } => Some(answer.authority().run()),
+        CoordinatorEvent::BackgroundLifecycle(value) => Some(value.job().execution().run()),
         CoordinatorEvent::Deleted { .. } => None,
     }
 }
@@ -73,16 +73,11 @@ pub(super) fn with_payload<T>(
         CoordinatorEvent::Approval {
             intent,
             call,
+            display,
             expires,
         } => {
-            let arguments = tools::call_json(call, work)?;
-            let display = ToolPresentation {
-                tool: call.name(),
-                arguments_json: arguments.text(),
-                destination: None,
-                redacted: false,
-                outcome: Some(DisplayOutcome::Pending),
-            };
+            let prepared = DisplayJson::new(display, work)?;
+            let display = prepared.view(display);
             let intent = tools::intent(intent, call, display)?;
             emit(CloudEventPayload::Approval {
                 intent: Box::new(intent),
@@ -98,6 +93,9 @@ pub(super) fn with_payload<T>(
         CoordinatorEvent::ToolResult { run, observation } => {
             with_observation(run, observation, work, emit)
         }
+        CoordinatorEvent::BackgroundLifecycle(value) => emit(
+            CloudEventPayload::BackgroundLifecycle(Box::new(lifecycle(value)?)),
+        ),
         CoordinatorEvent::Deleted { command } => emit(CloudEventPayload::Deleted {
             command: *command.as_bytes(),
         }),
@@ -113,10 +111,10 @@ fn with_observation<T>(
     let output = JsonText::new(observation.output().value(), work)?;
     let display = DisplayJson::new(observation.display(), work)?;
     let effect = match observation.effect() {
-        ToolEffectStatus::Observed => ObservedEffect::Observed,
-        ToolEffectStatus::Unknown => ObservedEffect::Unknown,
-        ToolEffectStatus::Background(command) => {
-            ObservedEffect::Background(Box::new(background(command)?))
+        NativeEffect::Observed => ObservedEffect::Observed,
+        NativeEffect::Unknown => ObservedEffect::Unknown,
+        NativeEffect::Background(command) => {
+            ObservedEffect::Background(Box::new(observed_background(command)?))
         }
     };
     emit(CloudEventPayload::ToolResult {
@@ -193,32 +191,7 @@ pub(super) fn mapping_bytes(event: &CoordinatorEvent) -> Result<usize, JournalEr
         }
         CoordinatorEvent::PromptAccepted {
             command, request, ..
-        } => {
-            let target = request.destination().target().principal().as_str().len();
-            let session = request
-                .destination()
-                .session()
-                .map_or(0, |value| value.target().principal().as_str().len());
-            [
-                command.issuer().device().as_str().len(),
-                target,
-                session,
-                request.selection().provider().as_str().len(),
-                request.selection().model().as_str().len(),
-                request.selection().pricing().as_str().len(),
-                request
-                    .prompt()
-                    .content()
-                    .len()
-                    .checked_mul(std::mem::size_of::<body::PromptPart<'static>>())
-                    .ok_or(JournalError::Capacity)?,
-                std::mem::size_of::<wire::AcceptedPrompt<'static>>(),
-            ]
-            .into_iter()
-            .try_fold(0usize, |sum, value| {
-                sum.checked_add(value).ok_or(JournalError::Capacity)
-            })?
-        }
+        } => prompt_bytes(command, request)?,
         CoordinatorEvent::ToolIntent { intent, call, .. }
         | CoordinatorEvent::Approval { intent, call, .. } => intent_bytes(intent, call)?,
         CoordinatorEvent::ApprovalResolved { answer, .. } => {
@@ -228,9 +201,9 @@ pub(super) fn mapping_bytes(event: &CoordinatorEvent) -> Result<usize, JournalEr
         }
         CoordinatorEvent::ToolResult { observation, .. } => {
             let background = match observation.effect() {
-                ToolEffectStatus::Background(command) => {
+                NativeEffect::Background(command) => {
                     std::mem::size_of::<wire::BackgroundJob<'static>>()
-                        .checked_add(principal(command.dispatch().intent().authority()))
+                        .checked_add(principal(command.execution()))
                         .ok_or(JournalError::Capacity)?
                 }
                 _ => 0,
@@ -239,9 +212,83 @@ pub(super) fn mapping_bytes(event: &CoordinatorEvent) -> Result<usize, JournalEr
                 .checked_add(background)
                 .ok_or(JournalError::Capacity)?
         }
+        CoordinatorEvent::BackgroundLifecycle(value) => {
+            std::mem::size_of::<wire::BackgroundLifecyclePayload<'static>>()
+                .checked_add(principal(value.job().execution()))
+                .ok_or(JournalError::Capacity)?
+        }
         CoordinatorEvent::Status { .. }
         | CoordinatorEvent::Progress { .. }
         | CoordinatorEvent::Deleted { .. } => 0,
     }
     .max(1))
+}
+
+pub(super) fn observed_background(
+    value: &ObservedBackground,
+) -> Result<BackgroundJob<'_>, JournalError> {
+    Ok(BackgroundJob {
+        intent: *value.intent().as_bytes(),
+        execution: values::execution(value.execution())?,
+        terminal: value.terminal(),
+        command: value.command(),
+        window: value
+            .window()
+            .map(|window| nocterm_hub_model::cloud::events::JobWindow {
+                created_at_ms: window.created_at_ms(),
+                deadline_ms: window.deadline_ms(),
+            }),
+    })
+}
+fn lifecycle(
+    value: &nocterm_cloud_model::coordinator::BackgroundObservation,
+) -> Result<nocterm_hub_model::cloud::events::BackgroundLifecyclePayload<'_>, JournalError> {
+    use nocterm_cloud_model::journal::BackgroundRecordOutcome;
+    use nocterm_hub_model::cloud::events::{BackgroundLifecyclePayload, BackgroundOutcome};
+    Ok(BackgroundLifecyclePayload {
+        job: observed_background(value.job())?,
+        step: *value.step().as_bytes(),
+        arguments_digest: *value.arguments().as_bytes(),
+        mutates: value.mutates(),
+        dispatch_writer_epoch: value.dispatch().writer().get(),
+        dispatch_revision: value.dispatch().revision().get(),
+        outcome: match value.outcome() {
+            BackgroundRecordOutcome::Retained => BackgroundOutcome::Retained,
+            BackgroundRecordOutcome::ObservedExit(exit) => BackgroundOutcome::ObservedExit(exit),
+            BackgroundRecordOutcome::Unknown => BackgroundOutcome::Unknown,
+        },
+    })
+}
+
+fn prompt_bytes(
+    command: &nocterm_cloud_model::journal::CommandAcceptance,
+    request: &nocterm_cloud_model::coordinator::ObservedPrompt,
+) -> Result<usize, JournalError> {
+    use nocterm_hub_model::cloud::{events as wire, payload as body};
+    let target = request
+        .destination()
+        .map_or(0, |value| value.target().principal().as_str().len());
+    let session = request
+        .destination()
+        .and_then(|value| value.session())
+        .map_or(0, |value| value.target().principal().as_str().len());
+    [
+        command.issuer().device().as_str().len(),
+        target,
+        session,
+        request.selection().provider().as_str().len(),
+        request.selection().model().as_str().len(),
+        request.selection().pricing().as_str().len(),
+        request
+            .prompt()
+            .content()
+            .len()
+            .checked_mul(std::mem::size_of::<body::PromptPart<'static>>())
+            .ok_or(JournalError::Capacity)?,
+        std::mem::size_of::<wire::AcceptedPrompt<'static>>(),
+    ]
+    .into_iter()
+    .try_fold(0usize, |sum, value| {
+        sum.checked_add(value).ok_or(JournalError::Capacity)
+    })
 }

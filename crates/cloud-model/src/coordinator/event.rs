@@ -1,4 +1,4 @@
-use super::{ApprovalAnswer, PromptRequest};
+use super::{ApprovalAnswer, BackgroundObservation, ObservedEffect, ObservedPrompt};
 use crate::{
     authority::RunBinding,
     engine::EngineEvent,
@@ -31,7 +31,7 @@ pub struct ToolObservation {
     intent: IntentId,
     output: BoundedJson,
     display: ToolDisplay,
-    effect: ToolEffectStatus,
+    effect: ObservedEffect,
     failed: bool,
 }
 impl ToolObservation {
@@ -40,7 +40,7 @@ impl ToolObservation {
             intent: result.intent(),
             output: result.output().clone(),
             display: result.display().clone(),
-            effect: result.effect_status().clone(),
+            effect: result.effect_status().into(),
             failed: false,
         }
     }
@@ -54,8 +54,23 @@ impl ToolObservation {
             intent,
             output,
             display,
-            effect,
+            effect: (&effect).into(),
             failed: true,
+        }
+    }
+    pub fn new(
+        intent: IntentId,
+        output: BoundedJson,
+        display: ToolDisplay,
+        effect: ObservedEffect,
+        failed: bool,
+    ) -> Self {
+        Self {
+            intent,
+            output,
+            display,
+            effect,
+            failed,
         }
     }
     pub fn intent(&self) -> IntentId {
@@ -67,7 +82,7 @@ impl ToolObservation {
     pub fn display(&self) -> &ToolDisplay {
         &self.display
     }
-    pub fn effect(&self) -> &ToolEffectStatus {
+    pub fn effect(&self) -> &ObservedEffect {
         &self.effect
     }
     pub fn is_failed(&self) -> bool {
@@ -88,7 +103,7 @@ pub enum CoordinatorEvent {
     PromptAccepted {
         command: CommandAcceptance,
         run: RunBinding,
-        request: PromptRequest,
+        request: ObservedPrompt,
     },
     Status {
         run: RunBinding,
@@ -109,6 +124,7 @@ pub enum CoordinatorEvent {
     Approval {
         intent: ToolIntent,
         call: TerminalCall,
+        display: ToolDisplay,
         expires: Timestamp,
     },
     ApprovalResolved {
@@ -119,6 +135,7 @@ pub enum CoordinatorEvent {
         run: RunBinding,
         observation: ToolObservation,
     },
+    BackgroundLifecycle(Box<BackgroundObservation>),
     Deleted {
         command: CommandId,
     },

@@ -88,6 +88,12 @@ impl ConversationProjection {
     pub fn usage(&self) -> crate::engine::UsageObservation {
         self.usage.observation()
     }
+    /// Descriptive late facts never rewrite a terminal ToolResult or select a run.
+    pub fn background_observations(
+        &self,
+    ) -> impl Iterator<Item = &crate::coordinator::BackgroundObservation> {
+        self.tools.observations()
+    }
     pub fn updated_at(&self) -> u64 {
         self.updated
     }
@@ -129,7 +135,13 @@ impl ConversationProjection {
             if envelope.control < next.control {
                 return Err(ProjectionError::Rollback);
             }
-            if next.deleted {
+            if next.deleted && !matches!(&envelope.event, CoordinatorEvent::BackgroundLifecycle(_))
+            {
+                return Err(ProjectionError::InvalidRecord);
+            }
+            if matches!(&envelope.event, CoordinatorEvent::BackgroundLifecycle(_))
+                && envelope.control != next.control
+            {
                 return Err(ProjectionError::InvalidRecord);
             }
             let now = envelope.time.as_millis() / 1000;
@@ -249,6 +261,11 @@ impl ConversationProjection {
             CoordinatorEvent::ApprovalResolved { command, answer } => {
                 self.require_current(answer.authority().run())?;
                 accepted.push(*command);
+            }
+            CoordinatorEvent::BackgroundLifecycle(value) => {
+                self.require_stream(value.job().execution().run())?;
+                self.runs.require_known(value.job().execution().run())?;
+                self.tools.background(value)?;
             }
             CoordinatorEvent::Deleted { command } => {
                 self.deleted = true;

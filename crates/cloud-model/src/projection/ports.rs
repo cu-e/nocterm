@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     authority::RunBinding,
-    identity::{ChatControlRevision, CommandId},
+    identity::{ChatControlRevision, CommandId, Fingerprint, Timestamp},
 };
 use futures::future::BoxFuture;
 use nocterm_ai::conversation::ConversationAction;
@@ -19,16 +19,54 @@ pub struct ConversationCoordinates {
     pub control: ChatControlRevision,
 }
 
+/// Immutable native preparation facts; retries may never extend this window or
+/// reinterpret the captured policy. These facts confer no execution authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConversationPreparation {
+    issued: Timestamp,
+    expires: Timestamp,
+    policy: Fingerprint,
+}
+impl ConversationPreparation {
+    pub fn new(
+        issued: Timestamp,
+        expires: Timestamp,
+        policy: Fingerprint,
+    ) -> Result<Self, ProjectionError> {
+        if issued.as_millis() == 0 || expires <= issued {
+            return Err(ProjectionError::InvalidRecord);
+        }
+        Ok(Self {
+            issued,
+            expires,
+            policy,
+        })
+    }
+    pub fn issued(self) -> Timestamp {
+        self.issued
+    }
+    pub fn expires(self) -> Timestamp {
+        self.expires
+    }
+    pub fn policy(self) -> Fingerprint {
+        self.policy
+    }
+}
+
 /// IDs are supplied by the actual native producer, never a UI-local counter.
 #[derive(Clone, Debug)]
 pub struct ConversationCommand {
     pub id: CommandId,
     pub coordinates: ConversationCoordinates,
     pub action: ConversationAction,
+    pub preparation: ConversationPreparation,
 }
 impl ConversationCommand {
     pub fn resident_bytes(&self) -> usize {
-        4096usize.saturating_add(match &self.action {
+        Self::action_bytes(&self.action)
+    }
+    pub fn action_bytes(action: &ConversationAction) -> usize {
+        4096usize.saturating_add(match action {
             ConversationAction::Prompt(text) => text.len().saturating_mul(2),
             ConversationAction::Stop => 0,
         })
@@ -37,7 +75,11 @@ impl ConversationCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandDelivery {
     NotFound,
+    /// Admission remains unknown; this supplies no new hub storage ACK.
     Pending,
+    /// Matching durable hub storage ACK; runner admission is still unknown.
+    Delivered,
+    /// An independently authenticated original runner admission receipt.
     Accepted,
     Rejected,
 }
@@ -60,8 +102,15 @@ impl AllocationRequirements {
         self.payloads
     }
 }
+/// A fresh authenticated head can require a larger real allowance before any
+/// record buffer is materialized. This is neither an event nor an empty page.
+pub enum ConversationReplay {
+    Page(Box<Allocated<ProjectionBatch>>),
+    Readmission,
+}
 pub enum ConversationWork<'a> {
     Replay {
+        after: ProjectionCursor,
         maximum_bytes: usize,
     },
     Stage {
@@ -99,7 +148,7 @@ pub trait CapturedConversationSource: Send + Sync {
         &self,
         after: ProjectionCursor,
         allocation: AllocationLease,
-    ) -> BoxFuture<'static, Result<Allocated<ProjectionBatch>, ProjectionError>>;
+    ) -> BoxFuture<'static, Result<ConversationReplay, ProjectionError>>;
     fn prepare(
         &self,
         coordinates: ConversationCoordinates,
@@ -116,8 +165,13 @@ pub trait CapturedConversationSource: Send + Sync {
     fn deliver(
         &self,
         id: CommandId,
+        work: AllocationLease,
     ) -> BoxFuture<'static, Result<CommandDelivery, ProjectionError>>;
-    fn query(&self, id: CommandId) -> BoxFuture<'static, Result<CommandDelivery, ProjectionError>>;
+    fn query(
+        &self,
+        id: CommandId,
+        work: AllocationLease,
+    ) -> BoxFuture<'static, Result<CommandDelivery, ProjectionError>>;
     /// Persist only to the original encrypted cache. This method must recheck its
     /// capture at physical publication, including after its own internal awaits.
     /// Actual workers retain the charged generation through their final drop.
