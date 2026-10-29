@@ -17,3 +17,9 @@ mod runner_test_support;
 
 mod events;
 pub use events::{RunnerArgumentFingerprint, RunnerEventEncoder};
+mod runner_inbox;
+pub use runner_inbox::{
+    InboxResume, MaterialStoreError, RunnerCommandAttachments, RunnerInbox, RunnerInboxFault,
+    RunnerInboxOptions, RunnerInboxPrincipal, RunnerMaterialStore, RunnerProviderBootOffer,
+    RunnerSshAnswer, RunnerStagedProvider,
+};

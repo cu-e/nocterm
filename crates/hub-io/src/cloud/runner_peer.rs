@@ -138,6 +138,9 @@ impl RunnerHubConnection {
     pub fn binding(&self) -> &JournalCatalogBinding {
         &self.binding
     }
+    pub(super) fn shares_identity(&self, identity: &Arc<CloudRunnerIdentity>) -> bool {
+        Arc::ptr_eq(&self.identity, identity)
+    }
 
     pub fn check_source(&self) -> Result<(), RunnerHubError> {
         self.runner().map(|_| ())
