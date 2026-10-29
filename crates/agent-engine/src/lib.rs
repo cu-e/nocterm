@@ -3,8 +3,10 @@
 //! Owns: provider HTTP I/O, bounded progress, SDK stepping and derived checkpoints.
 //! Does not own: grants, tools, SSH, durable effects, journals, secrets discovery,
 //! account sign-in, pricing, subscription credentials, GPUI or conversation views.
-//! Ports provided: cloud-model AgentEngineFactory/AgentEngine. Ports used:
-//! cloud-model EngineEventSink and ModelCallAdmission; the host persists progress and gates every effect.
+//! Ports provided: cloud-model AgentEngineFactory/AgentEngine and CoordinatorProviders.
+//! Ports used: EngineEventSink, ModelCallAdmission and ProviderCredentialSource;
+//! the host persists progress and gates every effect. The provider catalog binds
+//! trusted endpoint/model/pricing policy to original finite memory-only grants.
 //! Settings sections: none; configuration is injected. Globals: none.
 //! Invariants: SDK tools never execute; only a finished provider turn exposes a
 //! tool batch. Checkpoints carry no provider key and are not an execution ledger.
@@ -23,10 +25,12 @@ mod lease;
 mod limits;
 mod mapping;
 mod progress;
+mod provider_catalog;
 mod state;
 
 pub use config::{ProviderBinding, ProviderEndpoint, ProviderKind, RigEngineFactory};
 pub use lease::{MAX_PROVIDER_LEASE, ProviderLease};
+pub use provider_catalog::{ConfiguredProviderCatalog, ProviderPolicy};
 
 #[cfg(test)]
 mod tests;

@@ -180,7 +180,9 @@ impl AgentEngineFactory for RigEngineFactory {
         config: EngineConfig,
         restore: Option<EngineCheckpoint>,
     ) -> Result<Box<dyn AgentEngine>, EngineError> {
-        if config.run.scope() != &self.binding.scope || !self.binding.models.contains(&config.model)
+        if config.run.scope() != &self.binding.scope
+            || !self.binding.models.contains(&config.model)
+            || !self.lease.allows_run(&config.run)
         {
             return Err(EngineError::Unavailable);
         }

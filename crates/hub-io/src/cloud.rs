@@ -23,5 +23,11 @@ mod runner_inbox;
 pub use runner_inbox::{
     InboxResume, MaterialStoreError, RunnerCommandAttachments, RunnerInbox, RunnerInboxFault,
     RunnerInboxOptions, RunnerInboxPrincipal, RunnerMaterialStore, RunnerProviderBootOffer,
-    RunnerSshAnswer, RunnerStagedProvider,
+    RunnerProviderCredentialSource, RunnerSshAnswer, RunnerStagedProvider,
+};
+
+pub(crate) mod account_material;
+pub use account_material::{
+    ACCOUNT_MATERIAL_WORK_BYTES, AccountChatMaterial, AccountMaterialError, ChatMaterialPins,
+    ChatMaterialRequest, CloudAccountMaterial,
 };

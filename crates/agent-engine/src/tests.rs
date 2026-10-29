@@ -3,6 +3,7 @@ mod fixtures;
 mod history;
 mod model_admission;
 mod provider_access;
+mod provider_catalog;
 mod provider_streams;
 mod recovery;
 mod transport;

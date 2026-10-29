@@ -1,11 +1,13 @@
 //! Explicit scripted ports for consumer behavior tests, never production authorization.
 mod coordinator_ports;
+mod provider_access;
 mod publication;
 pub use coordinator_ports::{
     FixtureArgumentFingerprint, ObservedCoordinatorEvents, RefusedSessionConsent,
     ScriptedCommandSource, ScriptedCoordinatorIdentity, ScriptedCoordinatorProviders,
     UnavailableRunTools, fixture_outbox, fixture_outbox_with_work, fixture_publication_budget,
 };
+pub use provider_access::{RecordingProviderCredentialReceiver, ScriptedProviderCredentials};
 pub use publication::{
     ScriptedPublicationTransport, ScriptedSnapshotEncoder, fixture_snapshot_budget,
 };

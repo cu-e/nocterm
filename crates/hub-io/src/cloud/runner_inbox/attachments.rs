@@ -1,4 +1,5 @@
 //! Actual purpose-bound capsule/proof ownership keyed by the original command.
+mod provider;
 use super::super::{RunnerHubConnection, RunnerHubError};
 use super::{commands, material_store::RunnerMaterialStore};
 use nocterm_cloud_model::{
@@ -20,6 +21,7 @@ use nocterm_keys::cloud::RunnerBootKey;
 use nocterm_ssh_keys::login::{
     InitialHostProof, LoginSignature, UserauthLogin, login_key_from_blob,
 };
+pub use provider::RunnerProviderCredentialSource;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,

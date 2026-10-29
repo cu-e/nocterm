@@ -1,7 +1,10 @@
 //! Explicit memory-only provider access with a finite monotonic deadline.
 use crate::config::{ProviderBinding, ProviderKind};
 use futures::future::{AbortHandle, AbortRegistration};
+use nocterm_cloud_model::coordinator::ProviderCredentialSource;
 use nocterm_cloud_model::engine::EngineError;
+use nocterm_cloud_model::{identity::Timestamp, tool::ToolTimer};
+use nocterm_core::allocation::AllocationLease;
 use rig_core::http_client::HeaderValue;
 use std::{
     collections::BTreeMap,
@@ -26,6 +29,41 @@ impl ProviderLease {
         key: Zeroizing<String>,
         lifetime: Duration,
     ) -> Result<Self, EngineError> {
+        Self::create(binding, key, lifetime, None)
+    }
+    /// The original capsule reservation also owns the copied key through all
+    /// factories and admitted requests. Source fencing runs before every send.
+    pub fn with_residency(
+        binding: ProviderBinding,
+        key: Zeroizing<String>,
+        lifetime: Duration,
+        allocation: AllocationLease,
+        source: Arc<dyn ProviderCredentialSource>,
+        timer: Arc<dyn ToolTimer>,
+        expires: Timestamp,
+    ) -> Result<Self, EngineError> {
+        if allocation.bytes() < key.len() {
+            return Err(EngineError::Unavailable);
+        }
+        Self::create(
+            binding,
+            key,
+            lifetime,
+            Some(LeaseResidency {
+                source,
+                timer,
+                expires,
+                observed: Mutex::new(None),
+                _allocation: allocation,
+            }),
+        )
+    }
+    fn create(
+        binding: ProviderBinding,
+        key: Zeroizing<String>,
+        lifetime: Duration,
+        residency: Option<LeaseResidency>,
+    ) -> Result<Self, EngineError> {
         let runtime =
             tokio::runtime::Handle::try_current().map_err(|_| EngineError::Unavailable)?;
         if lifetime.is_zero()
@@ -45,6 +83,7 @@ impl ProviderLease {
             }),
             deadline: Instant::now() + lifetime,
             expiry: Mutex::new(None),
+            residency,
         });
         let revocation = RevokeOnDrop(Arc::downgrade(&owner));
         let deadline = tokio::time::Instant::from_std(owner.deadline);
@@ -61,11 +100,25 @@ impl ProviderLease {
     pub fn binding(&self) -> &ProviderBinding {
         &self.owner.binding
     }
+    pub(crate) fn allows_run(&self, run: &nocterm_cloud_model::authority::RunBinding) -> bool {
+        self.owner.residency.as_ref().is_none_or(|residency| {
+            let binding = residency.source.binding();
+            run.scope() == binding.scope()
+                && run.runner() == binding.runner()
+                && run.runner_epoch() == binding.epoch()
+        })
+    }
     pub fn revoke(&self) {
         self.owner.revoke();
     }
     pub fn is_available(&self) -> bool {
-        if Instant::now() >= self.owner.deadline {
+        if Instant::now() >= self.owner.deadline
+            || self
+                .owner
+                .residency
+                .as_ref()
+                .is_some_and(|guard| !guard.current())
+        {
             self.owner.revoke();
         }
         self.owner.state().key.is_some()
@@ -127,6 +180,30 @@ struct LeaseOwner {
     state: Mutex<LeaseState>,
     deadline: Instant,
     expiry: Mutex<Option<Expiry>>,
+    residency: Option<LeaseResidency>,
+}
+struct LeaseResidency {
+    source: Arc<dyn ProviderCredentialSource>,
+    timer: Arc<dyn ToolTimer>,
+    expires: Timestamp,
+    observed: Mutex<Option<Timestamp>>,
+    _allocation: AllocationLease,
+}
+impl LeaseResidency {
+    fn current(&self) -> bool {
+        if self.source.check_current().is_err() {
+            return false;
+        }
+        let now = self.timer.now();
+        let Ok(mut observed) = self.observed.lock() else {
+            return false;
+        };
+        if now >= self.expires || observed.is_some_and(|previous| now < previous) {
+            return false;
+        }
+        *observed = Some(now);
+        true
+    }
 }
 impl LeaseOwner {
     fn state(&self) -> MutexGuard<'_, LeaseState> {

@@ -5,6 +5,7 @@ mod error;
 mod event;
 pub(crate) mod intake;
 mod ports;
+mod provider_access;
 mod supervision;
 pub use command::{
     ApprovalAnswer, ApprovalChoice, CommandAcknowledgement, CommandBody, GrantClass,
@@ -17,6 +18,7 @@ pub use ports::{
     AuthenticatedCommandSource, ConfiguredModel, CoordinatorEventEncoder, CoordinatorIdentity,
     CoordinatorJournal, CoordinatorProviders, SessionConsentConsumer,
 };
+pub use provider_access::{ProviderCredentialReceiver, ProviderCredentialSource};
 pub use supervision::{DrainReport, SupervisorLimits, SupervisorPhase, TaskSnapshot};
 
 pub use intake::{
