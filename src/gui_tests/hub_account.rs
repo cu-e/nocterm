@@ -513,7 +513,7 @@ fn a_refused_change_to_a_shared_connection_is_undone_and_announced_once(cx: &mut
     assert_eq!(notices, 1, "one notice for the refusal");
 }
 
-#[gpui::test]
+#[gpui_kit::test]
 fn replacement_logins_attach_new_replica_facades_without_reusing_the_old_capture(
     cx: &mut TestAppContext,
 ) {
