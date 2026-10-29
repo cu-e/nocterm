@@ -36,7 +36,10 @@ fn private_runner_identity_reopens_the_original_keys_and_refuses_replacement() {
     assert!(CloudRunnerIdentity::create_new(directory.path(), expected.clone()).is_err());
     let restored = CloudRunnerIdentity::open_existing(directory.path(), expected).unwrap();
     assert_eq!(restored.public_identity().unwrap(), public);
+    use nocterm_cloud_model::coordinator::CoordinatorIdentity;
+    let id = restored.fresh().unwrap();
     restored.retire();
+    assert!(restored.fresh().is_err());
     assert!(matches!(
         restored.public_identity(),
         Err(CloudRunnerIdentityError::Unavailable)
@@ -44,6 +47,7 @@ fn private_runner_identity_reopens_the_original_keys_and_refuses_replacement() {
     drop(restored);
     let restarted = CloudRunnerIdentity::open_existing(directory.path(), binding(2)).unwrap();
     assert_eq!(restarted.public_identity().unwrap(), public);
+    assert_ne!(restarted.fresh().unwrap(), id);
 }
 
 #[cfg(unix)]

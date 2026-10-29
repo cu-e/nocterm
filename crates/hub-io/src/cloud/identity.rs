@@ -186,5 +186,14 @@ impl fmt::Debug for CloudRunnerIdentity {
     }
 }
 
+impl nocterm_cloud_model::coordinator::CoordinatorIdentity for CloudRunnerIdentity {
+    fn fresh(&self) -> Result<[u8; 16], nocterm_cloud_model::coordinator::CoordinatorError> {
+        use nocterm_cloud_model::coordinator::CoordinatorError;
+        self.with_keys(|_| nocterm_keys::random_bytes::<16>())
+            .map_err(|error| CoordinatorError::Backend(SharedCause::new(error)))?
+            .map_err(|error| CoordinatorError::Backend(SharedCause::new(error)))
+    }
+}
+
 #[cfg(test)]
 mod tests;
