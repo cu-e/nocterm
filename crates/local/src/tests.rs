@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use super::*;
-fn request(launch: ShellLaunch) -> ConnectRequest {
+pub(super) fn request(launch: ShellLaunch) -> ConnectRequest {
     ConnectRequest {
         launch,
         target: nocterm_session::Target::new("user", "localhost", 22),

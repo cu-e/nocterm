@@ -112,3 +112,4 @@ acceptance; a later record supersedes an earlier one.
 | [0114](0114-native-captured-account-operations.md) | Native account workers and displayed confirmations retain their original recipient |
 | [0115](0115-retained-physical-terminals.md) | Physical terminals outlive immutable run views |
 | [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix |
+| [0117](0117-contained-local-tool-processes.md) | Cloud local tools receive an explicit contained process capability |

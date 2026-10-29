@@ -1,6 +1,11 @@
 //! Native local PTY, structured commands, detached external editors and the local wall clock.
 //! Owns: native launch, bounded I/O, exclusive pinned output logs, process ownership and
 //! reading the system time and time zone.
+//! Linux Cloud child containment uses an explicit bubblewrap/prlimit capability
+//! with a successful real namespace probe. It exposes the same contained host
+//! executor for PTY sessions; it mounts only a separate private work directory,
+//! read-only system tools and fresh proc/dev/tmp, with no inherited environment
+//! or network. Account cgroups and supervisor isolation belong to the runner app.
 //! Does not own: session contracts, filesystem traversal, editor selection or views.
 //! Ports used: session channels. Ports provided: Transport, HostExec, ProgramOpener,
 //! recording::OutputLogFactory, nocterm_core::clock::WallClock (`SystemClock`). Output-log
@@ -28,11 +33,15 @@ use nocterm_session::{
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
 mod clock;
+#[cfg(target_os = "linux")]
+mod containment;
 mod exec;
 mod program_opener;
 mod recording;
 
 pub use clock::SystemClock;
+#[cfg(target_os = "linux")]
+pub use containment::{ContainedLocal, ContainmentError, ContainmentLimits};
 pub use exec::LocalExec;
 pub use program_opener::{LocalProgramOpener, MAX_OPEN_PROGRAMS};
 pub use recording::LocalOutputLogFactory;
