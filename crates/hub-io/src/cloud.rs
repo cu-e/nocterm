@@ -8,9 +8,11 @@ mod metadata_crypto;
 pub use metadata_crypto::RunnerMetadataCrypto;
 mod journal_crypto;
 pub use journal_crypto::{RunnerJournalCrypto, RunnerMaterialError};
+mod runner_heads;
 mod runner_peer;
 mod runner_session_file;
 mod runner_transport;
+pub use runner_heads::{RunnerHeadError, RunnerHeadOutcome, RunnerHeadResponder, RunnerHeadWork};
 pub use runner_peer::{RunnerHubConnection, RunnerHubError, RunnerHubPeer, RunnerHubTrust};
 #[cfg(test)]
 mod runner_test_support;
