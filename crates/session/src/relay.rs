@@ -13,7 +13,7 @@
 //! sender ends that direction after the queued frames, dropping a receiver makes
 //! the sender's next send fail, and dropping a whole end closes both directions.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use async_channel::{Receiver, Sender, bounded};
 use futures::future::BoxFuture;
@@ -33,6 +33,18 @@ pub type RelayReceiver = Receiver<Vec<u8>>;
 
 /// Opens relayed streams. Implemented by the application over its hub connections.
 pub trait RelayDialer: Send + Sync {
+    /// Captures the actual requester before a transport spawns background work.
+    /// An implementation must retain that requester and exact route, never
+    /// resolve a later account selection from the supplied strings.
+    fn capture(
+        &self,
+        _hub: &str,
+        _node: Option<&str>,
+        _target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        Err(RelayError::CaptureUnsupported)
+    }
+
     /// Asks the hub known as `hub` (and its node `node`, if named) for a stream to `target`.
     ///
     /// Dropping the returned future abandons the request; a stream already opened
@@ -120,6 +132,8 @@ pub enum RelayRefusal {
 /// Why a relayed stream could not be opened or ended.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum RelayError {
+    #[error("this relay does not support captured requesters")]
+    CaptureUnsupported,
     /// The relay hub is not one the user is signed in to.
     #[error("not signed in to the hub {hub}")]
     NotSignedIn { hub: String },
@@ -144,7 +158,9 @@ impl PartialEq for RelayError {
             (Self::NodeUnavailable { node: a }, Self::NodeUnavailable { node: b }) => a == b,
             // A cause carries no identity of its own; its text is what the user sees.
             (Self::Unreachable(a), Self::Unreachable(b)) => a.to_string() == b.to_string(),
-            (Self::Closed, Self::Closed) => true,
+            (Self::Closed, Self::Closed) | (Self::CaptureUnsupported, Self::CaptureUnsupported) => {
+                true
+            }
             _ => false,
         }
     }

@@ -99,6 +99,15 @@ impl Drop for Abandoned {
 }
 
 impl RelayDialer for ScriptedRelay {
+    fn capture(
+        &self,
+        _hub: &str,
+        _node: Option<&str>,
+        _target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        Ok(capture_relay(Arc::new(self.clone()), _hub, _node, _target))
+    }
+
     fn dial(
         &self,
         hub: &str,
@@ -129,5 +138,59 @@ impl RelayDialer for ScriptedRelay {
                 .boxed()
             }
         }
+    }
+}
+
+/// Bind an existing shared relay fake to one immutable route. Consumers reuse
+/// this view rather than implementing a second capture protocol in each suite.
+pub fn capture_relay(
+    inner: Arc<dyn RelayDialer>,
+    hub: &str,
+    node: Option<&str>,
+    target: &Target,
+) -> Arc<dyn RelayDialer> {
+    Arc::new(CapturedRelay {
+        inner,
+        request: RelayRequest {
+            hub: hub.to_owned(),
+            node: node.map(str::to_owned),
+            target: target.clone(),
+        },
+    })
+}
+#[derive(Clone)]
+struct CapturedRelay {
+    inner: Arc<dyn RelayDialer>,
+    request: RelayRequest,
+}
+impl CapturedRelay {
+    fn matches(&self, hub: &str, node: Option<&str>, target: &Target) -> bool {
+        self.request.hub == hub
+            && self.request.node.as_deref() == node
+            && self.request.target == *target
+    }
+}
+impl RelayDialer for CapturedRelay {
+    fn capture(
+        &self,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        if !self.matches(hub, node, target) {
+            return Err(RelayError::CaptureUnsupported);
+        }
+        Ok(Arc::new(self.clone()))
+    }
+    fn dial(
+        &self,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
+        if !self.matches(hub, node, target) {
+            return async { Err(RelayError::CaptureUnsupported) }.boxed();
+        }
+        self.inner.dial(hub, node, target)
     }
 }

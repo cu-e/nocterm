@@ -70,14 +70,13 @@ pub(crate) fn recolor(
 /// again; a key that is no longer the one on offer is reported.
 pub(crate) fn confirm_admin_key(
     hubs: &Entity<Hubs>,
-    hub: &HubId,
-    account_id: &str,
+    offer: &nocterm_hubs_model::AdminKeyOffer,
     fingerprint: &str,
     window: &mut Window,
     cx: &mut App,
 ) {
     let confirmed = hubs.update(cx, |hubs, cx| {
-        hubs.confirm_admin_key(hub, account_id, fingerprint, cx)
+        hubs.confirm_admin_key(offer, fingerprint, cx)
     });
     if let Err(error) = confirmed {
         nocterm_ui::notice::error(

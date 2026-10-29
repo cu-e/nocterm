@@ -22,6 +22,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 impl AgentThread {
+    pub fn source_current(&self) -> bool {
+        self.deps.runtime().check_current().is_ok()
+    }
     pub(super) fn on_tool_completion(
         &mut self,
         call: BridgeCall,
@@ -33,7 +36,7 @@ impl AgentThread {
     }
 
     pub fn revoke_executions(&mut self, cx: &gpui::App) {
-        if self.tools.active_commands().next().is_none() && self.tools.live_empty() {
+        if !self.tools.has_active_commands() && self.tools.live_empty() {
             return;
         }
         let resolved = self.resolved(cx);
@@ -63,7 +66,7 @@ impl AgentThread {
         } else {
             self.revoke_executions(cx);
         }
-        if self.tools.active_commands().next().is_none() {
+        if !self.tools.has_active_commands() {
             self.tools.finish_watch();
             false
         } else {

@@ -48,25 +48,37 @@ enum Job {
 pub(crate) struct SshExec {
     requests: mpsc::Sender<Job>,
     runtime: runtime::Handle,
+    source: nocterm_session::ConnectionSource,
 }
 
 /// The connection's end of [`SshExec`].
 pub(crate) struct ExecRequests {
     requests: mpsc::Receiver<Job>,
+    source: nocterm_session::ConnectionSource,
 }
 
-pub(crate) fn channel(runtime: runtime::Handle) -> (SshExec, ExecRequests) {
+pub(crate) fn channel(
+    runtime: runtime::Handle,
+    source: nocterm_session::ConnectionSource,
+) -> (SshExec, ExecRequests) {
     let (requests, receiver) = mpsc::channel(REQUEST_BACKLOG);
     (
-        SshExec { requests, runtime },
-        ExecRequests { requests: receiver },
+        SshExec {
+            requests,
+            runtime,
+            source: source.clone(),
+        },
+        ExecRequests {
+            requests: receiver,
+            source,
+        },
     )
 }
 
 impl HostExec for SshExec {
     fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
         let requests = self.requests.clone();
-        Box::pin(async move {
+        self.source.guard(async move {
             let (answer, answered) = oneshot::channel();
             requests
                 .send(Job::Exec { request, answer })
@@ -77,7 +89,7 @@ impl HostExec for SshExec {
     }
 
     fn terminal(&self, request: TerminalRequest) -> Session {
-        let (session, driver) = nocterm_session::channel(None);
+        let (session, driver) = nocterm_session::channel_with_source(None, self.source.clone());
         let requests = self.requests.clone();
         self.runtime.spawn(async move {
             let job = Job::Terminal {
@@ -120,16 +132,22 @@ pub(crate) async fn serve(
                 match job {
                     None => break,
                     Some(Job::Exec { request, answer }) => {
-                        running.spawn(run(handle.clone(), request, answer));
+                        let handle=handle.clone();
+                        let source=requests.source.clone();
+                        running.spawn(async move {
+                            let _=source.guard::<_,ExecError,_>(run(handle, request, answer, source.clone())).await;
+                        });
                     }
                     Some(Job::Terminal { request, driver }) => {
-                        terminals.spawn(terminal(
+                        let source=requests.source.clone();
+                        let handle=handle.clone(); let observed=observed.clone(); let stopped=stopped.clone();
+                        terminals.spawn(async move { let _=source.guard::<_,ExecError,_>(async move { terminal(
                             handle.clone(),
                             observed.clone(),
                             request,
                             driver,
-                            stopped.clone(),
-                        ));
+                            stopped,
+                        ).await; Ok(()) }).await; });
                     }
                 }
             }
@@ -145,31 +163,33 @@ async fn run(
     handle: Arc<Handle<Client>>,
     request: ExecRequest,
     mut answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
-) {
+    source: nocterm_session::ConnectionSource,
+) -> Result<(), ExecError> {
     let started = tokio::select! {
         biased;
-        () = answer.cancellation() => return,
+        () = answer.cancellation() => return Ok(()),
         started = timeout(START_TIMEOUT, start(&handle, &request)) => started,
     };
     let mut channel = match started {
         Ok(Ok(channel)) => channel,
         Ok(Err(error)) => {
             let _ = answer.send(Err(ExecError::Failed(error.to_string())));
-            return;
+            return Ok(());
         }
         Err(_) => {
             let _ = answer.send(Err(ExecError::Failed(
                 "the host did not start the program".into(),
             )));
-            return;
+            return Ok(());
         }
     };
-    let (sink, output) = ExecOutput::channel();
+    let (sink, output) = ExecOutput::channel_with_source(source);
     if answer.send(Ok(output)).is_ok() {
         forward(channel, request.stdin, sink).await;
     } else {
         let _ = channel.channel().close().await;
     }
+    Ok(())
 }
 
 async fn start(

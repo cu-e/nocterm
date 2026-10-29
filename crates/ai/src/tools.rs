@@ -1,7 +1,7 @@
 pub mod catalog;
 mod failure;
 
-pub use failure::{TerminalCallError, ToolFailure};
+pub use failure::{TerminalCallError, ToolArgumentsError, ToolFailure};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,21 @@ pub enum TerminalCall {
     CancelCommand(CancelCommand),
 }
 impl TerminalCall {
+    /// Canonical semantic arguments, using the same DTOs as catalog parsing.
+    /// No execution or provider metadata is included.
+    pub fn arguments(&self) -> Result<serde_json::Value, ToolArgumentsError> {
+        match self {
+            Self::ListTerminals => Ok(serde_json::json!({})),
+            Self::ReadTerminal(v) => serde_json::to_value(v),
+            Self::SendInput(v) => serde_json::to_value(v),
+            Self::RunCommand(v) => serde_json::to_value(v),
+            Self::OpenTerminal(v) => serde_json::to_value(v),
+            Self::ExecCommand(v) => serde_json::to_value(v),
+            Self::ReadCommand(v) => serde_json::to_value(v),
+            Self::CancelCommand(v) => serde_json::to_value(v),
+        }
+        .map_err(ToolArgumentsError::from)
+    }
     pub fn terminal_id(&self) -> Option<&str> {
         match self {
             Self::ListTerminals | Self::OpenTerminal(_) => None,

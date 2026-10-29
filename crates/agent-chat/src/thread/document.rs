@@ -49,7 +49,7 @@ impl ChatDocument {
             identity: Identity::new(
                 agent,
                 key,
-                nocterm_ai::history::TranscriptVersion::SCOPED.wire(),
+                nocterm_ai::history::TranscriptVersion::ENVIRONMENT.wire(),
             ),
             metadata: Metadata::new(updated),
             transcript: Transcript::default(),
@@ -123,7 +123,7 @@ impl ChatDocument {
     pub(super) fn imported_clean(&mut self, chat: &mut SavedChat, pending: bool) {
         self.identity = Identity::new(
             chat.header.agent_id.clone(),
-            ChatKey::new(chat.header.scope, chat.header.id.clone()),
+            ChatKey::from_header(&chat.header),
             chat.version,
         );
         self.metadata = Metadata::restored(
@@ -158,7 +158,7 @@ impl ChatDocument {
     pub(super) fn archived_clean(&mut self, summary: &nocterm_ai::history::ChatSummary) {
         self.identity = Identity::new(
             summary.agent_id.clone(),
-            ChatKey::new(summary.scope, summary.id.clone()),
+            ChatKey::from_summary(summary),
             summary.transcript_version().wire(),
         );
         self.metadata =
@@ -274,11 +274,11 @@ impl ChatDocument {
         self.budget.validate(metadata, encoded, memory)
     }
     pub(super) fn metadata(&self, input: &Inputs<'_>) -> SavedChat {
-        let mut chat = SavedChat::for_scope(
+        let mut chat = SavedChat::for_environment(
             self.agent_id().into(),
             self.chat_id().into(),
             self.updated(),
-            self.key().scope(),
+            self.key().chat_scope(),
         );
         chat.version = self.identity.wire_version();
         chat.header.name = self.name().map(str::to_owned);
@@ -288,6 +288,56 @@ impl ChatDocument {
         chat.times = SavedChat::bounded_times(self.entries().len(), &self.transcript().times);
         input.metadata(&mut chat);
         chat
+    }
+    pub(super) fn fork_capacity(
+        &self,
+        input: &Inputs<'_>,
+        len: usize,
+    ) -> Result<usize, HistoryCodecError> {
+        let end = len.min(self.entries().len());
+        if end > nocterm_ai::history::MAX_SAVED_ENTRIES {
+            return Err(HistoryCodecError::CollectionLimit);
+        }
+        Ok(self.snapshot_capacity(input)?.saturating_add(
+            nocterm_ai::history::retained_value_bytes(&&self.entries()[..end])?,
+        ))
+    }
+    pub(super) fn restart_capacity(&self, input: &Inputs<'_>) -> Result<usize, HistoryCodecError> {
+        let state = self.transcript();
+        let plan = state.plan.as_ref().map_or(0, |plan| {
+            plan.entries.iter().fold(0usize, |total, entry| {
+                total
+                    .saturating_add(512)
+                    .saturating_add(entry.content.len().saturating_mul(2))
+            })
+        });
+        let meta = state
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.meta.as_ref())
+            .map(nocterm_ai::history::retained_value_bytes)
+            .transpose()?
+            .unwrap_or(0);
+        Ok(self
+            .snapshot_capacity(input)?
+            .saturating_add(nocterm_ai::history::retained_value_bytes(&state.entries)?)
+            .saturating_add(plan)
+            .saturating_add(meta))
+    }
+    pub(super) fn snapshot_capacity(&self, input: &Inputs<'_>) -> Result<usize, HistoryCodecError> {
+        use nocterm_ai::history::retained_value_bytes;
+        // Existing history structural counting covers every variable borrowed
+        // row/input. The fixed64KiB covers wire/catalog keys, structs, bounded
+        // preview and metadata framing, before any transcript is cloned.
+        let start = SavedChat::saved_entry_start(self.entries().len());
+        Ok((64usize * 1024)
+            .saturating_add(input.retained_bytes()?)
+            .saturating_add(retained_value_bytes(&&self.entries()[start..])?)
+            .saturating_add(retained_value_bytes(&self.name())?)
+            .saturating_add(retained_value_bytes(&self.transcript().title)?)
+            .saturating_add(self.identity.agent().len().saturating_mul(2))
+            .saturating_add(self.identity.id().len().saturating_mul(2))
+            .saturating_add(self.transcript().times.len().saturating_mul(8)))
     }
     pub(super) fn snapshot(&self, input: &Inputs<'_>) -> Option<Arc<SharedChat>> {
         if !self.pinned()
@@ -313,6 +363,7 @@ impl ChatDocument {
     pub(super) fn existing_offer(&self) -> Option<(Arc<SharedChat>, u64)> {
         self.persistence.capture_pending()
     }
+    #[cfg(test)]
     pub(super) fn propose_candidate(
         &mut self,
         input: &Inputs<'_>,
@@ -323,14 +374,24 @@ impl ChatDocument {
         if self.persistence.has_current_candidate() {
             return self.persistence.capture_pending();
         }
-        let snapshot = self.snapshot(input).or_else(|| {
+        let snapshot = self.candidate_snapshot(input)?;
+        self.adopt_candidate(input, snapshot)
+    }
+    pub(super) fn candidate_snapshot(&self, input: &Inputs<'_>) -> Option<Arc<SharedChat>> {
+        self.snapshot(input).or_else(|| {
             self.history_present().then(|| {
                 Arc::new(SharedChat {
                     metadata: self.metadata(input),
                     queue: Vec::new(),
                 })
             })
-        })?;
+        })
+    }
+    pub(super) fn adopt_candidate(
+        &mut self,
+        input: &Inputs<'_>,
+        snapshot: Arc<SharedChat>,
+    ) -> Option<(Arc<SharedChat>, u64)> {
         self.persistence.remember_inputs(input);
         self.persistence.prepare(snapshot);
         self.persistence.capture_pending()

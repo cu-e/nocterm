@@ -37,6 +37,7 @@ struct CredentialState {
     records: HashMap<CredentialId, Record>,
     next: u128,
     failure: Option<FakeCredentialError>,
+    reads: usize,
 }
 
 /// Saved secrets with binding validation and event-driven availability. Retry
@@ -56,6 +57,7 @@ impl Default for FakeCredentialStore {
                 records: HashMap::new(),
                 next: 1,
                 failure: None,
+                reads: 0,
             })),
         }
     }
@@ -149,6 +151,7 @@ impl FakeCredentialStore {
         request: &SecretRequest,
     ) -> Result<Secret, FakeCredentialError> {
         let mut state = lock(&self.state);
+        state.reads += 1;
         check(&mut state)?;
         let record = state
             .records
@@ -160,6 +163,10 @@ impl FakeCredentialStore {
         Ok(record.secret.clone())
     }
 
+    /// Number of native-style lookup attempts, after any scripted suspension.
+    pub fn reads(&self) -> usize {
+        lock(&self.state).reads
+    }
     pub fn labels(&self) -> Vec<String> {
         let mut labels: Vec<_> = lock(&self.state)
             .records

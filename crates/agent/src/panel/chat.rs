@@ -6,7 +6,9 @@ use super::{
     widgets::entry_is_live,
 };
 use gpui_kit::AnyElement;
+use nocterm_agent_chat::conversation::{ConversationError, ConversationSource, LocalConversation};
 use nocterm_ai::usage::{Breakdown, RateLimit};
+use std::rc::Rc;
 
 impl AgentPanel {
     pub(super) fn sync_approval_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -169,13 +171,16 @@ impl AgentPanel {
         binding: message_list::ActiveListBinding,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.current() else {
+        let Some((_, source)) = self.messages.source() else {
             return;
         };
         let reduced = cx.reduce_motion();
-        let changed =
-            self.messages
-                .advance_reveal(&binding, thread.read(cx).history_entries(), reduced);
+        let mut changed = None;
+        let _ = source.with_view(cx, &mut |view| {
+            changed = self
+                .messages
+                .advance_reveal(&binding, &view.transcript.entries, reduced);
+        });
         if let Some(changed) = changed {
             self.messages.apply_reveal(changed, cx);
             cx.notify();
@@ -242,15 +247,14 @@ impl AgentPanel {
             .update(cx, |thread, _| thread.take_changed_rows())
             .into_iter()
             .collect::<Vec<_>>();
-        self.messages.bind_chat(thread.entity_id(), cx);
-        let rows = self.messages.observe_rows(
+        if let Err(error) = self.observe_source_rows(
+            Rc::new(LocalConversation::new(&thread)),
             thread.entity_id(),
-            thread.read(cx).history_entries(),
             &dirty,
-            thread.read(cx).session_generating(),
-            cx.reduce_motion(),
-        );
-        self.messages.apply_rows(rows, cx);
+            cx,
+        ) {
+            return div().child(error.to_string()).into_any_element();
+        }
         let scroller = self.messages.scroller(cx);
         let navigation = navigation::NavigationRenderer::render(&self.messages, cx);
         let overlay = self
@@ -279,31 +283,37 @@ impl AgentPanel {
         index: usize,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
-        let Some(thread) = self.current() else {
+        let Some((identity, source)) = self.messages.source() else {
             return div().into_any_element();
         };
-        let state = thread.read(cx);
-        let Some(entry) = state.history_entries().get(index) else {
-            return div().into_any_element();
-        };
-        let frame = RowPresentation::new(
-            thread.entity_id(),
-            self.messages.binding(),
-            index,
-            self.messages.expanded(index),
-            entry_is_live(
-                state.history_entries(),
+        let mut rendered = None;
+        let current = source.with_view(cx, &mut |view| {
+            let Some(entry) = view.transcript.entries.get(index) else {
+                return;
+            };
+            let frame = RowPresentation::new(
+                identity,
+                self.messages.binding(),
                 index,
-                state.session_generating() && state.session_accepts_updates(),
-            ),
-            state.session_generating(),
-            state.transcript().time(index),
-            self.settings
-                .setting::<nocterm_ai::AiSettings>(cx)
-                .approval
-                .redact_secrets,
-        );
-        let (row, pending) = EntryRenderer::render(frame, entry, &self.messages, cx);
+                self.messages.expanded(index),
+                entry_is_live(
+                    &view.transcript.entries,
+                    index,
+                    view.generating && view.accepts_updates,
+                ),
+                view.generating,
+                view.transcript.time(index),
+                self.settings
+                    .setting::<nocterm_ai::AiSettings>(cx)
+                    .approval
+                    .redact_secrets,
+            )
+            .with_fork_available(view.can_fork);
+            rendered = Some(EntryRenderer::render(frame, entry, &self.messages, cx));
+        });
+        let Some((row, pending)) = current.ok().and(rendered) else {
+            return div().into_any_element();
+        };
         for (key, data) in pending {
             preview_operation::PreviewOperation::cached(
                 &mut self.messages,
@@ -315,6 +325,33 @@ impl AgentPanel {
             );
         }
         row
+    }
+    /// The visible list retains its original source. Each observer supplies its
+    /// own dirty rows, so one window never consumes another's change tracking.
+    pub(super) fn observe_source_rows(
+        &mut self,
+        source: Rc<dyn ConversationSource>,
+        identity: EntityId,
+        dirty: &[usize],
+        cx: &mut Context<Self>,
+    ) -> Result<(), ConversationError> {
+        self.messages.bind_source(source, identity, cx);
+        let (_, source) = self.messages.source().ok_or(ConversationError::Stale)?;
+        let reduced = cx.reduce_motion();
+        let mut rows = None;
+        source.with_view(cx, &mut |view| {
+            rows = Some(self.messages.observe_rows(
+                identity,
+                &view.transcript.entries,
+                dirty,
+                view.generating,
+                reduced,
+            ));
+        })?;
+        if let Some(rows) = rows {
+            self.messages.apply_rows(rows, cx);
+        }
+        Ok(())
     }
     pub(super) fn jump_to_message(&mut self, first: bool, cx: &mut Context<Self>) {
         self.messages.navigate(first, cx);

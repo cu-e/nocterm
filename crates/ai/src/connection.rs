@@ -198,6 +198,8 @@ pub type ConnectError = AgentError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BridgeRegistrationError {
+    #[error("The original account source is unavailable")]
+    AccountSource(#[from] nocterm_hubs_model::source_identity::LocalAccountSourceError),
     #[error("{0}")]
     Origin(#[from] crate::execution_origin::ExecutionOriginError),
     #[error("The chat is no longer open.")]

@@ -63,6 +63,13 @@ no layout rule. The application places the section in the ordinary Appearance pa
 
 ## Terminal
 
+`CredentialCapture` owns one immutable `CredentialOriginGuard` and connection
+options. New terminals capture once; reconnect and observations preserve owner
+identity. A program tab inherits its host's `SessionSource`, with a fail-closed
+credential store, instead of consulting another window's factory. Native ports
+retain the original source; account equality in AI workspace capabilities applies
+to program tabs as well. A program whose host has no session stays ThisComputer.
+
 `nocterm-terminal` owns the terminal model/view and observes session
 and settings changes. Private model owners separate session/prompt lifecycle,
 transport input and live leases, screen/search presentation, credential candidates
@@ -96,8 +103,8 @@ in [lnav formats](https://docs.lnav.org/en/latest/formats.html).
 Typed session options inherit global TERM, charset, proxy and output-recording
 defaults, with explicit profile/quick-connect overrides. A shared options form in
 `nocterm-ui` keeps settings and connection features independent. Terminal owns
-incremental decoding/encoding at the text boundary. Combining marks retain the
-base cell style. OSC 52 clipboard writes are denied by default; opt-in requires
+text-boundary admission and uses VT’s shared incremental codec and bounded shell
+observer. Combining marks retain the base cell style. OSC 52 clipboard writes are denied by default; opt-in requires
 the actual screen to have focus in the active window. Clipboard reads remain
 denied. Terminal replies and mouse
 protocol bytes bypass conversion. Its output recorder uses a bounded worker,
@@ -587,7 +594,12 @@ Agent presentation receives immutable `Installed`: the actual RuntimeHandle, ima
 capabilities, shared layout/settings handles, metadata and optional terminal auth. Five private feature owners retain
 the actual controls and their subscriptions/tasks: MessageList, ComposerView,
 HistoryColumn, PanelLayout and MenuView. Original chat/input/search/catalog/list
-identities guard deferred completion. MessageList reuses one ImagePipeline for
+identities guard deferred completion. Transcript rows borrow `ConversationSource`
+into the same `EntryRenderer`, preserving original producer activity. Row actions
+offer fork only for a source that explicitly provides the Local operation.
+The installation retains one `CloudChatInstallation`, sharing the runtime's
+history admission across captured environment handles and root windows.
+MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
 validated candidate collection atomically. The feature never decodes image data.
@@ -738,3 +750,13 @@ window; the crate contributes no panel and no plugin.
   the service's event with `cx.open_url` and shows it with a copy button; cancelling or closing
   the dialog ends the wait. The last step is "Done".
 
+
+A terminal CredentialProvider can capture an original native credential store and source lease at
+Terminal construction. Reconnect retains that store, and association requires its
+availability. Hub composition supplies an account-bound native store whose own
+workers fence lookup and publication; a changing window vault is not authentication
+for an existing terminal. See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
+
+### Account confirmation cards
+
+`nocterm-hubs-ui` retains the administrator or recovery offer supplied with a displayed card in its callback. The service receives that same capability when the existing action is clicked; a replacement account receives no confirmation from an old card. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

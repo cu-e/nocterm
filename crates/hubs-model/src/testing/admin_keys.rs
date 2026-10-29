@@ -3,7 +3,9 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::address::HubId;
-use crate::admin_keys::{AdminKeyError, HubAdminKeys, PendingAdminKey};
+use crate::admin_keys::{
+    AdminKeyConfirmation, AdminKeyError, AdminKeyOffer, HubAdminKeys, PendingAdminKey,
+};
 use crate::testing::FakeHub;
 
 /// An in-memory [`HubAdminKeys`]. Clones share one list, so a test keeps a handle while a
@@ -68,41 +70,62 @@ impl FakeAdminKeys {
 }
 
 impl HubAdminKeys for FakeAdminKeys {
-    fn pending_admin_keys(&self, hub: &HubId) -> Vec<PendingAdminKey> {
-        if self.hub.keys_closed(hub) {
+    fn pending_admin_keys(&self, hub: &HubId) -> Vec<AdminKeyOffer> {
+        let mut account = super::lock(&self.hub.state);
+        if account.locked.contains(hub) {
             return Vec::new();
         }
+        let recipient =
+            super::recovery::Recipient::capture(Arc::downgrade(&self.hub.state), &mut account, hub);
         lock(&self.state)
             .pending
             .iter()
             .filter(|(known, _)| known == hub)
-            .map(|(_, key)| key.clone())
+            .map(|(_, key)| {
+                AdminKeyOffer::new(
+                    hub.clone(),
+                    key.clone(),
+                    Arc::new(Confirmation {
+                        recipient: recipient.clone(),
+                        state: Arc::downgrade(&self.state),
+                        hub: hub.clone(),
+                        key: key.clone(),
+                    }),
+                )
+            })
             .collect()
     }
-
-    fn confirm_admin_key(
-        &self,
-        hub: &HubId,
-        account_id: &str,
-        fingerprint: &str,
-    ) -> Result<(), AdminKeyError> {
-        if self.hub.keys_closed(hub) {
-            return Err(AdminKeyError::Locked);
-        }
-        {
-            let mut state = lock(&self.state);
-            let shown = state
-                .pending
-                .iter()
-                .position(|(known, key)| known == hub && key.account_id == account_id)
-                .ok_or(AdminKeyError::NotPending)?;
-            if squash(&state.pending[shown].1.fingerprint) != squash(fingerprint) {
-                return Err(AdminKeyError::Mismatch);
-            }
-            let (_, key) = state.pending.remove(shown);
-            state.confirmed.push((hub.clone(), key));
-        }
-        self.hub.raise_keys_changed();
-        Ok(())
+}
+struct Confirmation {
+    recipient: super::recovery::Recipient,
+    state: std::sync::Weak<Mutex<State>>,
+    hub: HubId,
+    key: PendingAdminKey,
+}
+impl AdminKeyConfirmation for Confirmation {
+    fn confirm(&self, fingerprint: &str) -> Result<(), AdminKeyError> {
+        let mut result = Err(AdminKeyError::Stale);
+        self.recipient
+            .with_current(|account| {
+                let shared = self.state.upgrade().ok_or(crate::HubError::Stale)?;
+                let mut state = lock(&shared);
+                result = (|| {
+                    let shown = state
+                        .pending
+                        .iter()
+                        .position(|(hub, key)| hub == &self.hub && key == &self.key)
+                        .ok_or(AdminKeyError::NotPending)?;
+                    if squash(&self.key.fingerprint) != squash(fingerprint) {
+                        return Err(AdminKeyError::Mismatch);
+                    }
+                    let (_, key) = state.pending.remove(shown);
+                    state.confirmed.push((self.hub.clone(), key));
+                    account.keys_changed();
+                    Ok(())
+                })();
+                Ok(())
+            })
+            .map_err(|_| AdminKeyError::Stale)?;
+        result
     }
 }

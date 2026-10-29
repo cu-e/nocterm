@@ -18,6 +18,7 @@ nocterm-core.workspace = true
 nocterm-session.workspace = true
 futures.workspace = true
 ssh-key.workspace = true
+signature.workspace = true
 thiserror.workspace = true
 
 [lints]

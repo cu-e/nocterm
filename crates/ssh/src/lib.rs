@@ -1,7 +1,7 @@
 //! SSH transport: opens [`Session`]s over SSH, browses the host over SFTP and
 //! runs programs on it beside the shell.
 //!
-//! This is the only crate that knows the SSH protocol exists. It implements
+//! This adapter owns the SSH transport protocol. It implements
 //! [`Transport`] from `nocterm-session`, and everything it has to say to the
 //! rest of the application travels as that crate's events and prompts.
 //!
@@ -18,16 +18,25 @@
 //! always the destination's, and each jump host is verified and authenticated before a
 //! forward is opened through it.
 
+//! Proof-mode login uses only one device-issued consent and a pinned host proof,
+//! direct curve25519-sha256/Ed25519, and no ambient authentication fallback. The
+//! device authorizer is released after authentication; live rekey needs no device.
+//! Captured source and independent closure guard the actual native stream polls,
+//! SFTP/exec workers and retained outputs. Already admitted effects cannot be undone.
+
 mod auth;
 mod connection;
+mod connection_relay;
 mod exec;
 mod file;
 mod host_keys;
 pub mod keys;
 mod login;
+pub mod proof;
 mod proxy;
 mod route;
 mod sftp;
+mod source_stream;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -87,10 +96,26 @@ impl SshTransport {
         self.relay = Some(relay);
         self
     }
-}
-
-impl Transport for SshTransport {
-    fn open(&self, request: ConnectRequest) -> Session {
+    pub fn open_login(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+        attempt: proof::SessionLoginAttempt,
+    ) -> Session {
+        if let Err(error) = attempt.check(&request) {
+            return Session::failed(error);
+        }
+        self.start(request, options, Some(attempt))
+    }
+    fn start(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+        login: Option<proof::SessionLoginAttempt>,
+    ) -> Session {
+        if let Err(error) = options.source().check() {
+            return Session::failed(error.into());
+        }
         let Some(runtime) = &self.runtime else {
             return Session::failed(SessionError::Other("the SSH transport has stopped".into()));
         };
@@ -103,19 +128,42 @@ impl Transport for SshTransport {
                 limit: MAX_JUMP_HOSTS,
             });
         }
-        let (fs, fs_requests) = sftp::channel();
-        let (exec, exec_requests) = exec::channel(runtime.handle().clone());
-        let (session, driver) = nocterm_session::channel(Some(Arc::new(fs)));
+        let relay = match connection_relay::ConnectionRelay::capture(
+            &request,
+            &options,
+            self.relay.clone(),
+        ) {
+            Ok(captured) => captured.into_port(),
+            Err(error) => return Session::failed(error),
+        };
+        let source = options.source().clone();
+        let (fs, fs_requests) = sftp::channel(source.clone());
+        let (exec, exec_requests) = exec::channel(runtime.handle().clone(), source.clone());
+        let (session, driver) = nocterm_session::channel_with_source(Some(Arc::new(fs)), source);
         let session = session.with_exec(Arc::new(exec));
         runtime.spawn(connection::run(
             self.config.clone(),
-            self.relay.clone(),
+            relay,
             request,
             driver,
             fs_requests,
             exec_requests,
+            login,
         ));
         session
+    }
+}
+
+impl Transport for SshTransport {
+    fn open(&self, request: ConnectRequest) -> Session {
+        self.open_with(request, nocterm_session::ConnectionOpenOptions::default())
+    }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        self.start(request, options, None)
     }
 }
 

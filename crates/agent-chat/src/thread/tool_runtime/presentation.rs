@@ -33,6 +33,6 @@ pub(in crate::thread) fn command_payload(
         "stderr": text(state.exit().map(|exit| exit.stderr.clone()).unwrap_or_default()),
         "exit_status": state.exit().and_then(|exit| exit.status),
         "total_bytes": state.total_bytes(), "truncated": state.total_bytes() > state.stdout().len() as u64,
-        "error": state.error().map(nocterm_ai::redact::redact),
+        "error": state.error().map(|error| nocterm_ai::redact::redact(&error.to_string())),
     })
 }

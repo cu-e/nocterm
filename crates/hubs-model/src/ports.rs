@@ -2,7 +2,6 @@
 //!
 //! Every method returns a runtime-agnostic future that can be awaited on any executor.
 
-use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_session::Secret;
 
@@ -24,7 +23,7 @@ pub trait HubTrust: Send + Sync {
 /// A single sign-in through an identity provider, in two parts.
 pub struct OidcSignIn {
     /// Resolves with the address the user must open in a browser, once the sign-in listens.
-    pub browser: oneshot::Receiver<String>,
+    pub browser: HubFuture<String>,
     /// Resolves when the browser sign-in finishes. Dropping it cancels the sign-in and closes
     /// its local listener.
     pub done: HubFuture<SignedIn>,
@@ -75,13 +74,16 @@ pub trait HubSignIn: Send + Sync {
     /// [`HubSignIn::recovery_key_unconfirmed`], should be read again.
     fn keys_changed(&self, seen: u64) -> BoxFuture<'static, u64>;
 
-    /// Issues a new recovery key with the open keys and replaces the hub's copy of the old one;
-    /// the new key is returned once and kept nowhere, but marked unconfirmed until
-    /// [`HubSignIn::confirm_recovery_key`]. [`HubError::KeysLocked`] while the keys are closed.
-    fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret>;
+    /// Captures the current recipient and pending recovery generation for a displayed action.
+    fn recovery_key_offer(&self, hub: &HubId) -> Result<crate::RecoveryKeyReissue, HubError>;
 
-    /// Records that the person saved the recovery key shown last.
-    fn confirm_recovery_key(&self, hub: &HubId) -> Result<(), HubError>;
+    /// Issues through a capability captured before the future is returned.
+    fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<crate::RecoveryKeyOffer> {
+        match self.recovery_key_offer(hub) {
+            Ok(offer) => offer.issue(),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
+    }
 
     /// Ends this device's session on the hub and erases its credentials, even when the hub
     /// cannot be reached.

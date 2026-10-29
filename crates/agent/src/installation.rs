@@ -5,13 +5,16 @@ use nocterm_agent_directory::AgentsHandle;
 use nocterm_store::{SettingsHandle, ShutdownCoordinator, StoreError};
 use nocterm_ui::{LayoutHandle, UiReady};
 use std::{rc::Rc, sync::Arc};
+mod source;
+use source::SourceBinding;
 #[derive(Clone)]
 pub struct Installed {
     inner: Rc<Installation>,
+    source: SourceBinding,
 }
 struct Installation {
-    runtime: runtime::RuntimeHandle,
     agents: AgentsHandle,
+    cloud_chats: nocterm_cloud_chat::CloudChatInstallation,
     settings: SettingsHandle,
     metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     images: ImageDeps,
@@ -21,11 +24,46 @@ struct Installation {
 }
 impl Installed {
     pub fn runtime(&self) -> &runtime::RuntimeHandle {
-        &self.inner.runtime
+        self.source.runtime()
+    }
+    pub fn for_environment(
+        &self,
+        access: nocterm_ai::local_environment::LocalEnvironmentAccess,
+    ) -> Result<Self, nocterm_ai::storage::AgentStorageError> {
+        Ok(Self {
+            inner: self.inner.clone(),
+            source: SourceBinding::fixed(self.runtime().for_environment(access)?),
+        })
+    }
+    /// A hub window without an authenticated capture provider has no Local environment.
+    pub fn unavailable_account(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            source: SourceBinding::fixed(self.runtime().unavailable_account()),
+        }
+    }
+    pub fn with_account_source(
+        &self,
+        factory: Arc<dyn nocterm_hubs_model::source_identity::LocalAccountSourceFactory>,
+    ) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            source: SourceBinding::account(self.runtime(), factory),
+        }
+    }
+    pub(crate) fn capture_runtime(
+        &self,
+    ) -> Result<runtime::RuntimeHandle, nocterm_ai::storage::AgentStorageError> {
+        self.source.capture()
     }
     /// The agents available to start, for other surfaces such as settings.
     pub fn agents(&self) -> &AgentsHandle {
         &self.inner.agents
+    }
+    /// One shared Cloud owner across root windows and their captured environments.
+    /// Native sources still retain and validate their original account membership.
+    pub fn cloud_chats(&self) -> &nocterm_cloud_chat::CloudChatInstallation {
+        &self.inner.cloud_chats
     }
     pub(crate) fn settings(&self) -> &SettingsHandle {
         &self.inner.settings
@@ -59,6 +97,7 @@ pub(crate) fn install(
             agents: agents.clone(),
             connector: services.connector,
             bridge: services.bridge,
+            command_jobs: services.command_jobs,
             storage: services.storage,
             workdir_resolver: services.workdir_resolver,
             workdir: services.workdir,
@@ -69,13 +108,16 @@ pub(crate) fn install(
         cx,
     );
     let observation = runtime.observe_settings(&settings, cx);
+    let cloud_chats =
+        nocterm_cloud_chat::CloudChatInstallation::new(runtime.history_admission(cx), cx);
     let captured = runtime.clone();
     let registered = shutdown.register_capture(move |cx| captured.capture_shutdown(cx));
     (
         Installed {
+            source: SourceBinding::fixed(runtime.clone()),
             inner: Rc::new(Installation {
-                runtime,
                 agents,
+                cloud_chats,
                 settings,
                 metadata: services.metadata,
                 images,

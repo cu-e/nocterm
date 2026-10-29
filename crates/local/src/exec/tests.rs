@@ -149,7 +149,7 @@ fn dropping_the_startup_process_guard_stops_the_whole_group() {
     let request = ExecRequest::new("sh")
         .arg("-c")
         .arg(format!("(sleep 0.3; touch '{}') & wait", marker.display()));
-    let process = process::Process::spawn(&request).unwrap();
+    let process = process::Process::spawn(&request, &Default::default()).unwrap();
     thread::sleep(Duration::from_millis(50));
     // This is also the cleanup path when pipe/worker setup fails.
     drop(process);

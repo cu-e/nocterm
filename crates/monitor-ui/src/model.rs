@@ -302,6 +302,10 @@ async fn watch(
                     this.set_status(Status::Unsupported(name), cx);
                     return false;
                 }
+                Err(ExecError::Source(error)) => {
+                    this.set_status(Status::Failed(error.to_string()), cx);
+                    return false;
+                }
                 Err(ExecError::Disconnected) => "The connection closed.".into(),
                 Err(ExecError::Failed(error)) => error,
                 Err(error @ ExecError::NotFound(_)) => error.to_string(),

@@ -19,6 +19,7 @@ pub(crate) const HUB: &str = "hub.test:7443";
 /// A scripted relay whose opened streams are carried to the destination over local TCP.
 ///
 /// Refusals and silence need no more than a [`ScriptedRelay`] itself.
+#[derive(Clone)]
 pub(crate) struct TcpRelay {
     script: ScriptedRelay,
     ended: Arc<Semaphore>,
@@ -47,6 +48,20 @@ impl TcpRelay {
 }
 
 impl RelayDialer for TcpRelay {
+    fn capture(
+        &self,
+        _hub: &str,
+        _node: Option<&str>,
+        _target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        Ok(nocterm_session::testing::capture_relay(
+            Arc::new(self.clone()),
+            _hub,
+            _node,
+            _target,
+        ))
+    }
+
     fn dial(
         &self,
         hub: &str,

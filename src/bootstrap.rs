@@ -200,7 +200,9 @@ impl Booted {
             .as_ref()
             .and_then(|hubs| hubs.sources.clone())
             .ok_or(WindowSourcesError::NoHubs)?;
-        let source = sources.update(cx, |sources, cx| sources.source(hub, cx))?;
+        let source = sources.update(cx, |sources, cx| {
+            sources.source(hub, self.agent.runtime().clone(), cx)
+        })?;
         let settings = self
             .settings_ui
             .with_vault(nocterm_vault_ui::settings_page(source.vault()))?;
@@ -210,7 +212,8 @@ impl Booted {
             source.terminal().clone(),
             Some(source.vault().clone()),
             settings,
-        ))
+        )
+        .with_agent_source(source.agent_source()))
     }
 
     /// The saved workspaces as a window of `sources` opens them: with the terminals and the

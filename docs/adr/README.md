@@ -102,3 +102,13 @@ acceptance; a later record supersedes an earlier one.
 | [0103](0103-account-data-is-sealed-on-the-device.md) | Account data is sealed on the device: the hub keeps ciphertext, and one chosen server keeps the vault and the profiles |
 | [0104](0104-a-window-shows-one-environment.md) | A window shows one environment: this computer or the account of one hub (supersedes 0099) |
 | [0105](0105-provider-usage-through-acp-only.md) | Provider usage reaches Nocterm only through ACP (partially supersedes 0061) |
+| [0106](0106-shared-terminal-tool-ownership.md) | Terminal byte state and command execution have shared headless owners |
+| [0107](0107-cloud-run-authority-and-host-controlled-ports.md) | Cloud run authority and effects have pure owners and host-controlled ports |
+| [0108](0108-explicit-cloud-api-engine.md) | Cloud API engines expose completed turns to the host |
+| [0109](0109-native-cloud-journal-and-effect-recovery.md) | Cloud commits and retained effects share one native durable journal |
+| [0110](0110-local-history-environment-partitions.md) | Local history captures its device or account environment |
+| [0112](0112-purpose-bound-ssh-login-and-captured-sources.md) | Purpose-bound SSH login and captured connection sources |
+| [0113](0113-account-bound-journal-catalog.md) | A native journal belongs to one account/runner and authenticates its complete chat catalog |
+| [0114](0114-native-captured-account-operations.md) | Native account workers and displayed confirmations retain their original recipient |
+| [0115](0115-retained-physical-terminals.md) | Physical terminals outlive immutable run views |
+| [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix |

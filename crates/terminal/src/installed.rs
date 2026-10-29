@@ -43,8 +43,15 @@ impl LocalSessions {
 
 #[derive(Clone)]
 pub struct CredentialProvider {
-    store: Arc<dyn CredentialStore>,
+    owner: crate::CredentialCapture,
     association: Association,
+    capture: Option<
+        Arc<
+            dyn Fn() -> Result<crate::CredentialCapture, nocterm_session::CredentialStoreError>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 impl CredentialProvider {
     pub fn new(
@@ -59,12 +66,60 @@ impl CredentialProvider {
         + 'static,
     ) -> Self {
         Self {
-            store,
+            owner: crate::CredentialCapture::this_computer(store),
             association: Arc::new(association),
+            capture: None,
+        }
+    }
+    /// Capture native account ownership once when a terminal is constructed.
+    /// The resulting store must fence its own worker lookup and publication.
+    pub fn with_capture(
+        mut self,
+        capture: impl Fn() -> Result<crate::CredentialCapture, nocterm_session::CredentialStoreError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.capture = Some(Arc::new(capture));
+        self
+    }
+    fn inherited_program(source: nocterm_workspace::SessionSource) -> Self {
+        Self {
+            owner: crate::CredentialCapture::inherited_program(source),
+            association: Arc::new(|_, _, _| {
+                Task::ready(Err(CredentialAssociationError::Unavailable))
+            }),
+            capture: None,
+        }
+    }
+    pub(crate) fn captured(&self) -> Self {
+        let Some(capture) = &self.capture else {
+            return self.clone();
+        };
+        let owner = capture().unwrap_or_else(crate::CredentialCapture::failed);
+        let association = self.association.clone();
+        let bound = owner.clone();
+        Self {
+            owner,
+            capture: None,
+            association: Arc::new(move |spec, id, cx| {
+                if !bound.current() || !bound.store().is_available() {
+                    return Task::ready(Err(CredentialAssociationError::Unavailable));
+                }
+                association(spec, id, cx)
+            }),
         }
     }
     pub(crate) fn store(&self) -> &Arc<dyn CredentialStore> {
-        &self.store
+        self.owner.store()
+    }
+    pub(crate) fn source(
+        &self,
+    ) -> Option<nocterm_hubs_model::source_identity::LocalAccountPartition> {
+        self.owner.partition()
+    }
+    pub(crate) fn source_current(&self) -> bool {
+        self.owner.current()
     }
     pub(crate) fn association(&self) -> Association {
         self.association.clone()
@@ -175,6 +230,23 @@ impl Installed {
             container: self.0.container,
         }))
     }
+    pub(crate) fn with_program_source(&self, source: nocterm_workspace::SessionSource) -> Self {
+        self.with_credentials(CredentialProvider::inherited_program(source))
+    }
+    pub(crate) fn session_source(&self) -> nocterm_workspace::SessionSource {
+        self.0
+            .credentials
+            .as_ref()
+            .map_or_else(Default::default, |credentials| {
+                credentials.owner.session_source()
+            })
+    }
+    pub(crate) fn capture_credentials(&self) -> Self {
+        self.0.credentials.as_ref().map_or_else(
+            || self.clone(),
+            |provider| self.with_credentials(provider.captured()),
+        )
+    }
     pub(crate) fn container_transport(
         &self,
         local: bool,
@@ -221,6 +293,28 @@ impl Installed {
     }
     pub(crate) fn credentials(&self) -> Option<&CredentialProvider> {
         self.0.credentials.as_ref()
+    }
+    pub(crate) fn source(
+        &self,
+    ) -> Option<nocterm_hubs_model::source_identity::LocalAccountPartition> {
+        self.0
+            .credentials
+            .as_ref()
+            .and_then(CredentialProvider::source)
+    }
+    pub(crate) fn source_current(&self) -> bool {
+        self.0
+            .credentials
+            .as_ref()
+            .is_none_or(CredentialProvider::source_current)
+    }
+    pub(crate) fn connection_options(&self) -> nocterm_session::ConnectionOpenOptions {
+        self.0
+            .credentials
+            .as_ref()
+            .map_or_else(Default::default, |credentials| {
+                credentials.owner.connection_options()
+            })
     }
     pub(crate) fn recording(&self) -> Option<Arc<nocterm_store::RecordingRegistry>> {
         self.0.recording.clone()

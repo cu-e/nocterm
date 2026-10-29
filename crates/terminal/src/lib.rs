@@ -15,12 +15,17 @@
 //! The crate never names a transport. The application installs one with
 //! [`install`], and the workspace reaches this crate through [`open_session`],
 //! installed as its session opener, and [`open_program`], its program opener.
-//! Text conversion remains here; directory synchronization preserves session
-//! charset errors through the workspace LocalTerminal contract.
+//! VT supplies the incremental text codec and bounded shell observer. Directory
+//! synchronization preserves session charset errors through the workspace
+//! LocalTerminal contract.
 
 //! Input refusals preserve typed charset and queue errors through workspace contracts.
 //! Weak Item and model handles validate original connection and prompt tokens before
 //! input; replacement connections never inherit approval or sign-in authority.
+//! Credential capture factories bind a native store once per terminal; reconnect retains
+//! that store and cannot recapture a replacement account. Native stores fence workers.
+//! The same capture supplies per-open connection options and its scoped relay, so
+//! background transport workers retain the original account through reconnect.
 
 //! Owns: private session lifecycle, admitted input and live leases, screen/search
 //! transitions, credential candidates, output recording and per-view paint/input owners.
@@ -50,7 +55,8 @@
 
 //! Settings pages: terminal, local-shell and SSH controls retain the original Installed settings.
 mod access;
-mod codec;
+mod credential_capture;
+pub use credential_capture::CredentialCapture;
 mod credentials;
 mod file_drop;
 mod recording;
@@ -64,7 +70,6 @@ mod installed;
 pub use installed::{
     AttachedSession, CredentialProvider, Deps, Installed, LocalCommand, LocalSessions,
 };
-mod integration;
 mod session_settings;
 mod terminal;
 mod view;

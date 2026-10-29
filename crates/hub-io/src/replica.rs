@@ -29,28 +29,26 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use self::wire::{KIND, Positions};
-use crate::account::{OpenKeys, Slot};
+use crate::account::operations::{BoundOperations, OpenedWork};
 use crate::classify::unreachable;
-use crate::store::{Layout, Located, OpError, PROFILES_KIND, Store, StoreOps};
+use crate::store::{Layout, Located, OpError, PROFILES_KIND, Store};
 use crate::task::spawn;
-use crate::vault::{Ledger, Space};
+use crate::vault::Space;
 
 /// The spaces as the last synchronization found them.
 type Spaces = Arc<Mutex<Vec<ReplicaSpace>>>;
 
 pub struct HubProfileReplica {
     handle: Handle,
-    slot: Arc<Slot>,
-    ops: Arc<dyn StoreOps>,
+    bound: BoundOperations,
     spaces: Spaces,
-    /// The vaults, which move a profile's secrets with it.
-    ledger: Arc<Ledger>,
 }
 
 /// A failure of a store call as the replica reports it. `id` names the profile a write was
 /// about.
 fn replica_error(error: OpError, id: Option<ProfileId>) -> ReplicaError {
     match (error, id) {
+        (OpError::Hub(HubError::NotSignedIn | HubError::Stale), _) => ReplicaError::Stale,
         (OpError::Conflict, Some(id)) => ReplicaError::Conflict { id },
         (OpError::Hub(HubError::NotFound), Some(id)) => ReplicaError::Conflict { id },
         (OpError::Hub(HubError::PermissionDenied), Some(id)) => ReplicaError::Forbidden { id },
@@ -60,33 +58,47 @@ fn replica_error(error: OpError, id: Option<ProfileId>) -> ReplicaError {
 }
 
 impl HubProfileReplica {
-    pub(crate) fn new(
-        handle: Handle,
-        slot: Arc<Slot>,
-        ops: Arc<dyn StoreOps>,
-        ledger: Arc<Ledger>,
-    ) -> Self {
+    pub(crate) fn new(handle: Handle, bound: BoundOperations) -> Self {
         Self {
             handle,
-            slot,
-            ops,
+            bound,
             spaces: Spaces::default(),
-            ledger,
         }
     }
 
-    fn store(slot: &Slot, ops: &Arc<dyn StoreOps>) -> Result<Store, ReplicaError> {
-        let keys: Arc<OpenKeys> = slot.open().ok_or(ReplicaError::Locked)?;
-        Ok(Store::new(Arc::clone(ops), keys))
-    }
-
-    /// Runs `work` on the adapter's threads.
-    fn run<T: Send + 'static>(
+    fn run<T, F>(
         &self,
-        work: impl std::future::Future<Output = Result<T, ReplicaError>> + Send + 'static,
-    ) -> BoxFuture<'static, Result<T, ReplicaError>> {
-        let task = spawn(&self.handle, work);
-        Box::pin(async move { task.await.unwrap_or(Err(ReplicaError::Unavailable)) })
+        work: impl FnOnce(OpenedWork) -> F + Send + 'static,
+    ) -> BoxFuture<'static, Result<T, ReplicaError>>
+    where
+        T: Send + 'static,
+        F: std::future::Future<Output = Result<T, ReplicaError>> + Send + 'static,
+    {
+        let admitted = match self.bound.capture() {
+            Ok(admitted) => admitted,
+            Err(error) => return Box::pin(async move { Err(native_failure(error)) }),
+        };
+        let source = admitted.source().clone();
+        let returned = source.clone();
+        let task = spawn(&self.handle, async move {
+            source
+                .during(work(admitted))
+                .await
+                .map_err(native_failure)?
+        });
+        Box::pin(async move {
+            let result = task.await.unwrap_or(Err(ReplicaError::Unavailable));
+            returned.check().map_err(native_failure)?;
+            result
+        })
+    }
+}
+
+fn native_failure(error: HubError) -> ReplicaError {
+    match error {
+        HubError::KeysLocked => ReplicaError::Locked,
+        HubError::NotSignedIn | HubError::Stale => ReplicaError::Stale,
+        other => ReplicaError::Other(SharedCause::new(other)),
     }
 }
 
@@ -130,18 +142,17 @@ fn group_unreadable(error: &OpError) -> bool {
 }
 
 async fn changes(
-    slot: Arc<Slot>,
-    ops: Arc<dyn StoreOps>,
+    work: OpenedWork,
     spaces: Spaces,
     after: Option<ReplicaCursor>,
 ) -> Result<ReplicaPage, ReplicaError> {
-    let store = HubProfileReplica::store(&slot, &ops)?;
+    let store = work.store();
     let mut positions = Positions::parse(after.as_ref());
     let layout = store
         .layout(PROFILES_KIND)
         .await
         .map_err(|error| replica_error(error, None))?;
-    *spaces.lock().unwrap_or_else(PoisonError::into_inner) = spaces_of(&layout);
+    let observed_spaces = spaces_of(&layout);
     let mut seen = Vec::new();
     let mut more = false;
     for (scope, at) in scoped(&layout) {
@@ -164,6 +175,11 @@ async fn changes(
         positions.set(at.id(), position);
         more |= batch.more;
     }
+    work.source()
+        .publish(|| {
+            *spaces.lock().unwrap_or_else(PoisonError::into_inner) = observed_spaces;
+        })
+        .map_err(native_failure)?;
     Ok(ReplicaPage {
         changes: seen,
         cursor: positions.cursor(),
@@ -192,14 +208,13 @@ async fn target(
 }
 
 async fn put(
-    slot: Arc<Slot>,
-    ops: Arc<dyn StoreOps>,
+    work: OpenedWork,
     scope: ReplicaScope,
     profile: Profile,
     expected: Option<ReplicaVersion>,
 ) -> Result<ReplicaVersion, ReplicaError> {
     let id = profile.id;
-    let store = HubProfileReplica::store(&slot, &ops)?;
+    let store = work.store();
     let plaintext =
         wire::encode(&profile).map_err(|error| ReplicaError::Other(SharedCause::new(error)))?;
     let at = target(&store, &scope, id, true).await?;
@@ -217,13 +232,12 @@ async fn put(
 }
 
 async fn delete(
-    slot: Arc<Slot>,
-    ops: Arc<dyn StoreOps>,
+    work: OpenedWork,
     scope: ReplicaScope,
     id: ProfileId,
     expected: ReplicaVersion,
 ) -> Result<ReplicaVersion, ReplicaError> {
-    let store = HubProfileReplica::store(&slot, &ops)?;
+    let store = work.store();
     let at = target(&store, &scope, id, false).await?;
     let stored = store
         .remove(&at, &id.to_string(), expected.get())
@@ -245,6 +259,7 @@ fn carry_error(error: VaultError, id: ProfileId) -> ReplicaError {
     match error {
         VaultError::ReadOnly => ReplicaError::Forbidden { id },
         VaultError::Locked => ReplicaError::Locked,
+        VaultError::Stale => ReplicaError::Stale,
         VaultError::Offline => ReplicaError::Unavailable,
         VaultError::Conflict => ReplicaError::Conflict { id },
         other => ReplicaError::Other(SharedCause::new(other)),
@@ -259,8 +274,8 @@ impl ProfileReplica for HubProfileReplica {
         to: ReplicaScope,
         credentials: Vec<CredentialId>,
     ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
-        let ledger = Arc::clone(&self.ledger);
-        self.run(async move {
+        self.run(move |work| async move {
+            let ledger = work.ledger().map_err(native_failure)?;
             ledger
                 .carry(&space_of(from), &space_of(to), &credentials)
                 .await
@@ -275,8 +290,8 @@ impl ProfileReplica for HubProfileReplica {
         to: ReplicaScope,
         credentials: Vec<CredentialId>,
     ) -> BoxFuture<'static, Result<Vec<CredentialCopy>, ReplicaError>> {
-        let ledger = Arc::clone(&self.ledger);
-        self.run(async move {
+        self.run(move |work| async move {
+            let ledger = work.ledger().map_err(native_failure)?;
             let copies = ledger
                 .copy(&space_of(from), &space_of(to), &credentials)
                 .await
@@ -292,12 +307,8 @@ impl ProfileReplica for HubProfileReplica {
         &self,
         after: Option<ReplicaCursor>,
     ) -> BoxFuture<'static, Result<ReplicaPage, ReplicaError>> {
-        self.run(changes(
-            Arc::clone(&self.slot),
-            Arc::clone(&self.ops),
-            Arc::clone(&self.spaces),
-            after,
-        ))
+        let spaces = self.spaces.clone();
+        self.run(move |work| changes(work, spaces, after))
     }
 
     fn put(
@@ -306,13 +317,7 @@ impl ProfileReplica for HubProfileReplica {
         profile: Profile,
         expected: Option<ReplicaVersion>,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
-        self.run(put(
-            Arc::clone(&self.slot),
-            Arc::clone(&self.ops),
-            scope,
-            profile,
-            expected,
-        ))
+        self.run(move |work| put(work, scope, profile, expected))
     }
 
     fn delete(
@@ -321,31 +326,34 @@ impl ProfileReplica for HubProfileReplica {
         id: ProfileId,
         expected: ReplicaVersion,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
-        self.run(delete(
-            Arc::clone(&self.slot),
-            Arc::clone(&self.ops),
-            scope,
-            id,
-            expected,
-        ))
+        self.run(move |work| delete(work, scope, id, expected))
     }
 
     fn spaces(&self) -> Vec<ReplicaSpace> {
-        self.spaces
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.bound
+            .source()
+            .publish(|| {
+                self.spaces
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+            })
+            .unwrap_or_default()
     }
 
     fn watch(&self) -> BoxStream<'static, ()> {
+        let work = match self.bound.capture() {
+            Ok(work) => work,
+            Err(_) => return futures::stream::empty().boxed(),
+        };
         let (ticks, receiver) = mpsc::channel(1);
-        self.handle.spawn(watch::follow(
-            Arc::clone(&self.slot),
-            Arc::clone(&self.ops),
-            ticks,
-        ));
-        futures::stream::unfold(receiver, |mut receiver| async move {
-            receiver.recv().await.map(|tick| (tick, receiver))
+        self.handle.spawn(watch::follow(work, ticks));
+        let source = self.bound.source().clone();
+        futures::stream::unfold((receiver, source), |(mut receiver, source)| async move {
+            source.check().ok()?;
+            let tick = receiver.recv().await?;
+            source.check().ok()?;
+            Some((tick, (receiver, source)))
         })
         .boxed()
     }

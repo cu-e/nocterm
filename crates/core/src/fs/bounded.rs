@@ -47,23 +47,7 @@ impl BoundedReadError {
 /// Parent directories must be trusted: this is not a pinned-directory traversal API. Callers
 /// that hash the content hash the returned buffer, which is the exact content they parse.
 pub fn read_regular_bounded(path: &Path, cap: usize) -> Result<Vec<u8>, BoundedReadError> {
-    let file = open_without_following(path).map_err(|source| {
-        if is_link_refusal(&source) {
-            BoundedReadError::NotRegular {
-                path: path.to_owned(),
-            }
-        } else {
-            BoundedReadError::io(path, source)
-        }
-    })?;
-    let metadata = file
-        .metadata()
-        .map_err(|source| BoundedReadError::io(path, source))?;
-    if !metadata.is_file() || is_reparse_point(&metadata) {
-        return Err(BoundedReadError::NotRegular {
-            path: path.to_owned(),
-        });
-    }
+    let (file, metadata) = open_regular(path)?;
     let limit = u64::try_from(cap).unwrap_or(u64::MAX);
     if metadata.len() > limit {
         return Err(BoundedReadError::TooLarge {
@@ -82,6 +66,27 @@ pub fn read_regular_bounded(path: &Path, cap: usize) -> Result<Vec<u8>, BoundedR
         });
     }
     Ok(bytes)
+}
+
+pub(super) fn open_regular(path: &Path) -> Result<(File, Metadata), BoundedReadError> {
+    let file = open_without_following(path).map_err(|source| {
+        if is_link_refusal(&source) {
+            BoundedReadError::NotRegular {
+                path: path.to_owned(),
+            }
+        } else {
+            BoundedReadError::io(path, source)
+        }
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|source| BoundedReadError::io(path, source))?;
+    if !metadata.is_file() || is_reparse_point(&metadata) {
+        return Err(BoundedReadError::NotRegular {
+            path: path.to_owned(),
+        });
+    }
+    Ok((file, metadata))
 }
 
 #[cfg(unix)]

@@ -87,6 +87,7 @@ pub(crate) fn settle_failure(error: &HubError) -> Option<Settled> {
         | HubError::SignInCancelled
         | HubError::PermissionDenied
         | HubError::NotFound
+        | HubError::Stale
         | HubError::RecoveryKeyInvalid
         | HubError::InvalidVaultPassphrase
         | HubError::KeysetDamaged { .. }

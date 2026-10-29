@@ -13,9 +13,15 @@ use nocterm_keys::{
 use super::{Accounts, OpenKeys, Slot};
 use crate::cache::{AccountCache, UnlockMethod};
 
+mod accounts;
 mod hub;
+mod native_operations;
+mod subjects;
+pub(crate) use accounts::NativeAccounts;
+pub(crate) use native_operations::{NativeVault, native_operations};
 
 pub(crate) use hub::MemoryKeysets;
+pub(crate) use subjects::ScriptedSubjects;
 
 pub(crate) const ACCOUNT_ID: &str = "account-1";
 pub(crate) const HUB_UID: &str = "hub-uid";
@@ -164,11 +170,11 @@ pub(crate) fn granted(
 }
 
 pub(crate) fn hub() -> HubId {
-    HubId::from(
-        "hub.test"
-            .parse::<nocterm_hubs_model::HubAddress>()
-            .unwrap(),
-    )
+    hub_for("hub.test")
+}
+
+pub(crate) fn hub_for(address: &str) -> HubId {
+    HubId::from(address.parse::<nocterm_hubs_model::HubAddress>().unwrap())
 }
 
 /// The slot of the test hub in `accounts`, opened as a sign-in with `PASSWORD` opens it.
@@ -184,10 +190,9 @@ pub(crate) fn sign_in_trusting(
     let slot = accounts.slot(&hub()).unwrap();
     let unlock = unlock(PASSWORD);
     let (record, _) = record(&unlock);
-    slot.install(
-        open_pinned(&record, &unlock, pinned),
-        cache(&record, UnlockMethod::Passphrase),
-    );
+    let mut cached = cache(&record, UnlockMethod::Passphrase);
+    cached.keep_pins(&pinned);
+    slot.install(open_pinned(&record, &unlock, pinned), cached);
     (slot, record)
 }
 

@@ -11,15 +11,14 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
-    AdminKeyError, Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec, HubError, HubFuture,
-    HubId, HubInfo, HubSignIn, HubTrust, KeyStatus, OidcSignIn, PendingAdminKey, ProbedHub,
-    SignedIn,
+    Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
+    HubSignIn, HubTrust, KeyStatus, OidcSignIn, ProbedHub, SignedIn,
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::AbortHandle;
 
-use crate::account::{Accounts, AdminKeys, KeyFlow};
+use crate::account::{Accounts, KeyFlow};
 use crate::classify::{probe_failed, remote};
 use crate::connect::Connector;
 use crate::hub_account::HubAccount;
@@ -99,15 +98,15 @@ impl HubLinks {
             &config.device_name,
             Arc::clone(&accounts),
         ));
-        let keys = Arc::new(KeyFlow::new(Arc::clone(&pool), Arc::clone(&accounts)));
+        let keys = KeyFlow::new(
+            Arc::clone(&pool),
+            Arc::clone(&accounts),
+            runtime.handle().clone(),
+        );
         Ok(Arc::new(Self {
             handle: runtime.handle().clone(),
             runtime: Some(runtime),
-            connector: Arc::new(Connector::new(
-                Arc::clone(&pool),
-                Arc::clone(&accounts),
-                Arc::clone(&keys),
-            )),
+            connector: Arc::new(Connector::new(Arc::clone(&pool), Arc::clone(&keys))),
             pool,
             accounts,
             keys,
@@ -159,6 +158,7 @@ impl HubLinks {
 
 impl Drop for HubLinks {
     fn drop(&mut self) {
+        self.pool.stop();
         // A runtime must not block where it is dropped: that may be a thread that is itself
         // running async code.
         if let Some(runtime) = self.runtime.take() {
@@ -184,8 +184,10 @@ impl HubTrust for HubLinks {
 
 impl HubSignIn for HubLinks {
     fn connect(&self, endpoint: HubEndpointSpec) -> HubFuture<HubInfo> {
-        let connector = Arc::clone(&self.connector);
-        self.run_boxed(async move { connector.connect(endpoint).await })
+        match self.connector.reconnect(endpoint) {
+            Ok(request) => request.start(&self.handle),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
     }
 
     fn password(
@@ -195,25 +197,55 @@ impl HubSignIn for HubLinks {
         password: Secret,
     ) -> HubFuture<SignedIn> {
         let connector = Arc::clone(&self.connector);
-        self.run_boxed(async move { connector.password(endpoint, username, password).await })
+        match connector.begin(endpoint) {
+            Ok(start) => start.start(&self.handle, move |start| async move {
+                connector.password(start, username, password).await
+            }),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
     }
 
     fn oidc(&self, endpoint: HubEndpointSpec, provider: String) -> OidcSignIn {
         let connector = Arc::clone(&self.connector);
-        let (browser_sender, browser) = oneshot::channel();
-        let done =
-            self.run_boxed(async move { connector.oidc(endpoint, provider, browser_sender).await });
-        OidcSignIn { browser, done }
+        let (browser_sender, browser_receiver) = oneshot::channel();
+        match connector.begin(endpoint) {
+            Ok(start) => {
+                let observed = start.observation().clone();
+                let done = start.start(&self.handle, move |start| async move {
+                    connector.oidc(start, provider, browser_sender).await
+                });
+                let browser = Box::pin(async move {
+                    observed.check()?;
+                    let result = observed
+                        .during(browser_receiver)
+                        .await?
+                        .map_err(|_| HubError::Stale)?;
+                    observed.check()?;
+                    Ok(result)
+                });
+                OidcSignIn { browser, done }
+            }
+            Err(error) => OidcSignIn {
+                browser: Box::pin(async { Err(HubError::Stale) }),
+                done: Box::pin(async move { Err(error) }),
+            },
+        }
     }
 
     fn set_vault_passphrase(&self, hub: &HubId, passphrase: Secret) -> HubFuture<KeyStatus> {
-        let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
-        self.run_boxed(async move { keys.passphrase(&hub, passphrase).await })
+        let keys = self.keys.clone();
+        self.keys
+            .run(self.keys.capture(hub), move |owner| async move {
+                keys.passphrase(&owner, passphrase).await
+            })
     }
 
     fn recover(&self, hub: &HubId, recovery_key: Secret) -> HubFuture<()> {
-        let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
-        self.run_boxed(async move { keys.recover(&hub, recovery_key).await })
+        let keys = self.keys.clone();
+        self.keys
+            .run(self.keys.capture(hub), move |owner| async move {
+                keys.recover(&owner, recovery_key).await
+            })
     }
 
     fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
@@ -228,18 +260,18 @@ impl HubSignIn for HubLinks {
         self.keys.keys_changed(seen)
     }
 
-    fn reissue_recovery_key(&self, hub: &HubId) -> HubFuture<Secret> {
-        let (keys, hub) = (Arc::clone(&self.keys), hub.clone());
-        self.run_boxed(async move { keys.reissue_recovery_key(&hub).await })
-    }
-
-    fn confirm_recovery_key(&self, hub: &HubId) -> Result<(), HubError> {
-        self.keys.confirm_recovery_key(hub)
+    fn recovery_key_offer(
+        &self,
+        hub: &HubId,
+    ) -> Result<nocterm_hubs_model::RecoveryKeyReissue, HubError> {
+        self.keys.recovery_offer(hub)
     }
 
     fn sign_out(&self, hub: &HubId) -> HubFuture<()> {
-        let (connector, hub) = (Arc::clone(&self.connector), hub.clone());
-        self.run_boxed(async move { connector.sign_out(&hub).await })
+        match self.connector.sign_out(hub) {
+            Ok(request) => request.start(&self.handle),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
     }
 
     fn forget(&self, hub: &HubId) -> Result<(), HubError> {
@@ -248,21 +280,9 @@ impl HubSignIn for HubLinks {
 }
 
 impl HubAdminKeys for HubLinks {
-    fn pending_admin_keys(&self, hub: &HubId) -> Vec<PendingAdminKey> {
-        self.accounts
-            .slot(hub)
-            .map(|slot| AdminKeys::new(slot).pending())
+    fn pending_admin_keys(&self, hub: &HubId) -> Vec<nocterm_hubs_model::AdminKeyOffer> {
+        self.open_account(hub)
+            .map(|account| account.admin_keys().pending())
             .unwrap_or_default()
-    }
-
-    fn confirm_admin_key(
-        &self,
-        hub: &HubId,
-        account_id: &str,
-        fingerprint: &str,
-    ) -> Result<(), AdminKeyError> {
-        // A hub without a readable cache has no account keys to open.
-        let slot = self.accounts.slot(hub).map_err(|_| AdminKeyError::Locked)?;
-        AdminKeys::new(slot).confirm(account_id, fingerprint)
     }
 }

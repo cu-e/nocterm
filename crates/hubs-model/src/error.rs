@@ -63,6 +63,9 @@ pub enum HubError {
     /// There are no usable credentials for this hub on this device.
     #[error("not signed in to the hub")]
     NotSignedIn,
+    /// The original authenticated account owner was replaced or closed.
+    #[error("the original account is no longer current")]
+    Stale,
     /// The hub revoked this device; its credentials are gone.
     #[error("this device was revoked by the hub")]
     Revoked,

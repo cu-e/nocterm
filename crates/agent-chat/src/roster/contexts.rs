@@ -1,7 +1,7 @@
 //! Selected and retained chat collections keep immutable original dependencies.
 use super::{ChatDeps, ChatList};
 use gpui::EntityId;
-use nocterm_ai::history::ContextId;
+use nocterm_ai::local_environment::ChatScope;
 use std::collections::HashMap;
 
 pub(super) struct ScopeChats {
@@ -27,7 +27,7 @@ impl ScopeChats {
 }
 pub(super) struct ContextChats {
     selected: ScopeChats,
-    hidden: HashMap<ContextId, ScopeChats>,
+    hidden: HashMap<ChatScope, ScopeChats>,
 }
 impl ContextChats {
     pub(super) fn new(host: ChatDeps) -> Self {
@@ -61,11 +61,17 @@ impl ContextChats {
     pub(super) fn origin(&self, id: EntityId) -> Option<&ScopeChats> {
         self.all().find(|scope| scope.chats.contains(id))
     }
-    pub(super) fn scope_mut(&mut self, scope: ContextId) -> Option<&mut ScopeChats> {
-        if self.selected.host.scope() == scope {
+    pub(super) fn scope_mut(&mut self, scope: &ChatScope) -> Option<&mut ScopeChats> {
+        if self
+            .selected
+            .host
+            .chat_scope()
+            .as_ref()
+            .is_ok_and(|current| current == scope)
+        {
             Some(&mut self.selected)
         } else {
-            self.hidden.get_mut(&scope)
+            self.hidden.get_mut(scope)
         }
     }
     pub(super) fn all(&self) -> impl Iterator<Item = &ScopeChats> {
@@ -79,21 +85,23 @@ impl ContextChats {
         });
     }
     pub(super) fn select(&mut self, host: ChatDeps) -> bool {
-        let scope = host.scope();
-        if scope == self.selected.host.scope() {
+        let scope = host.chat_scope().ok();
+        if scope == self.selected.host.chat_scope().ok() {
             self.selected.host = host;
             return false;
         }
-        let mut next = self
-            .hidden
-            .remove(&scope)
+        let mut next = scope
+            .as_ref()
+            .and_then(|scope| self.hidden.remove(scope))
             .unwrap_or_else(|| ScopeChats::new(host.clone()));
         // Future factories use the fresh original surface. Existing entities keep
         // their own previously captured ChatDeps/Seat and are never retargeted.
         next.host = host;
         let previous = std::mem::replace(&mut self.selected, next);
-        if !previous.chats.is_empty() {
-            self.hidden.insert(previous.host.scope(), previous);
+        if !previous.chats.is_empty()
+            && let Ok(scope) = previous.host.chat_scope()
+        {
+            self.hidden.insert(scope, previous);
         }
         true
     }

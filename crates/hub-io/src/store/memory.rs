@@ -9,9 +9,12 @@ use futures::StreamExt as _;
 use nocterm_core::SharedCause;
 use nocterm_hub_proto::v1;
 use nocterm_hubs_model::HubError;
+use nocterm_session::testing::Gate;
 
 use super::{Call, OpError, StoreOps};
 use crate::account::testing::Admin;
+mod accounts;
+pub(crate) use accounts::MemoryAccountStores;
 
 #[derive(Default)]
 struct Held {
@@ -31,9 +34,49 @@ struct Held {
 pub(crate) struct MemoryHub {
     held: Mutex<Held>,
     offline: AtomicBool,
+    pauses: Mutex<HashMap<StoreBoundary, (Gate, Gate, Option<HubError>)>>,
+}
+
+/// Deterministic boundaries around actual MemoryHub behavior.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum StoreBoundary {
+    KeysetReady,
+    WatchReady,
+    Collections,
+    ChangesReady,
+    Put,
 }
 
 impl MemoryHub {
+    /// Returns (entered, release). The next matching operation pauses once.
+    pub(crate) fn pause_next(&self, at: StoreBoundary) -> (Gate, Gate) {
+        self.pause_outcome(at, None)
+    }
+    pub(crate) fn pause_next_error(&self, at: StoreBoundary, error: HubError) -> (Gate, Gate) {
+        self.pause_outcome(at, Some(error))
+    }
+    fn pause_outcome(&self, at: StoreBoundary, error: Option<HubError>) -> (Gate, Gate) {
+        let entered = Gate::pending();
+        let release = Gate::pending();
+        self.pauses
+            .lock()
+            .unwrap()
+            .insert(at, (entered.clone(), release.clone(), error));
+        (entered, release)
+    }
+
+    async fn boundary(&self, at: StoreBoundary) -> Result<(), OpError> {
+        let pause = self.pauses.lock().unwrap().remove(&at);
+        if let Some((entered, release, error)) = pause {
+            entered.release();
+            release.wait().await;
+            if let Some(error) = error {
+                return Err(OpError::Hub(error));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn set_offline(&self, offline: bool) {
         self.offline.store(offline, Ordering::SeqCst);
     }
@@ -275,13 +318,16 @@ impl StoreOps for MemoryHub {
     fn keyset(&self) -> Call<'_, Option<v1::AccountKeyset>> {
         Box::pin(async move {
             self.reach()?;
-            Ok(self.held().keyset.clone())
+            let record = self.held().keyset.clone();
+            self.boundary(StoreBoundary::KeysetReady).await?;
+            Ok(record)
         })
     }
 
     fn collections(&self, kind: &str) -> Call<'_, Vec<v1::Collection>> {
         let kind = kind.to_owned();
         Box::pin(async move {
+            self.boundary(StoreBoundary::Collections).await?;
             self.reach()?;
             Ok(self
                 .held()
@@ -351,6 +397,7 @@ impl StoreOps for MemoryHub {
 
     fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion> {
         Box::pin(async move {
+            self.boundary(StoreBoundary::Put).await?;
             self.reach()?;
             self.permitted(&request.collection_id)?;
             self.write(
@@ -379,24 +426,28 @@ impl StoreOps for MemoryHub {
         let id = collection_id.to_owned();
         Box::pin(async move {
             self.reach()?;
-            let held = self.held();
-            let mut changes: Vec<_> = held
-                .objects
-                .get(&id)
-                .map(|objects| {
-                    objects
-                        .values()
-                        .filter(|object| object.stream_version > after)
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default();
-            changes.sort_by_key(|object: &v1::StoredObject| object.stream_version);
-            Ok(v1::ChangeBatch {
-                changes,
-                head: held.heads.get(&id).copied().unwrap_or(0),
-                more: false,
-            })
+            let batch = {
+                let held = self.held();
+                let mut changes: Vec<_> = held
+                    .objects
+                    .get(&id)
+                    .map(|objects| {
+                        objects
+                            .values()
+                            .filter(|object| object.stream_version > after)
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                changes.sort_by_key(|object: &v1::StoredObject| object.stream_version);
+                v1::ChangeBatch {
+                    changes,
+                    head: held.heads.get(&id).copied().unwrap_or(0),
+                    more: false,
+                }
+            };
+            self.boundary(StoreBoundary::ChangesReady).await?;
+            Ok(batch)
         })
     }
 
@@ -406,6 +457,7 @@ impl StoreOps for MemoryHub {
     ) -> Call<'_, futures::stream::BoxStream<'static, ()>> {
         Box::pin(async move {
             self.reach()?;
+            self.boundary(StoreBoundary::WatchReady).await?;
             Ok(futures::stream::pending().boxed())
         })
     }

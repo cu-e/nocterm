@@ -4,7 +4,7 @@
 //! The application installs those once per environment; a window takes the installation of its
 //! own, so a window never reaches for the ones of another.
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use nocterm_hubs_model::{Environment, HubError};
 use nocterm_settings_ui::SettingsCatalogError;
@@ -19,6 +19,7 @@ pub(crate) struct WindowSources {
     terminal: nocterm_terminal::Installed,
     vault: Option<Rc<nocterm_vault_ui::Installed>>,
     settings: SettingsPages,
+    agent_source: Option<Arc<dyn nocterm_hubs_model::source_identity::LocalAccountSourceFactory>>,
 }
 
 /// Why a window cannot be composed for an environment.
@@ -46,9 +47,27 @@ impl WindowSources {
             terminal,
             vault,
             settings,
+            agent_source: None,
         }
     }
 
+    pub(crate) fn with_agent_source(
+        mut self,
+        source: Arc<dyn nocterm_hubs_model::source_identity::LocalAccountSourceFactory>,
+    ) -> Self {
+        self.agent_source = Some(source);
+        self
+    }
+    pub(crate) fn agent_installation(
+        &self,
+        installed: &nocterm_agent::Installed,
+    ) -> nocterm_agent::Installed {
+        match (&self.environment, &self.agent_source) {
+            (_, Some(source)) => installed.with_account_source(source.clone()),
+            (Environment::Local, None) => installed.clone(),
+            (Environment::Hub(_), None) => installed.unavailable_account(),
+        }
+    }
     pub(crate) fn environment(&self) -> &Environment {
         &self.environment
     }

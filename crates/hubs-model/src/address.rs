@@ -150,7 +150,8 @@ impl<'de> Deserialize<'de> for HubAddress {
 }
 
 /// The identity of a hub on this device: its canonical address.
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct HubId(HubAddress);
 
 impl HubId {

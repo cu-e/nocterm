@@ -38,6 +38,7 @@ pub(super) struct RowPresentation {
     generating: bool,
     time: Option<u64>,
     redact: bool,
+    can_fork: bool,
 }
 pub(super) struct EntryRenderer;
 impl EntryRenderer {
@@ -149,7 +150,7 @@ impl EntryRenderer {
         }
         row.child(bubble).child(
             super::message_actions::MessageRowActions::new(
-                frame.chat,
+                frame.can_fork.then_some(frame.chat),
                 frame.index,
                 text,
                 frame.time,
@@ -173,7 +174,7 @@ impl EntryRenderer {
         if !frame.live {
             row = row.child(
                 super::message_actions::MessageRowActions::new(
-                    frame.chat,
+                    frame.can_fork.then_some(frame.chat),
                     frame.index,
                     text.to_owned(),
                     frame.time,
@@ -302,6 +303,11 @@ impl RowPresentation {
             generating,
             time,
             redact,
+            can_fork: false,
         }
+    }
+    pub(super) fn with_fork_available(mut self, available: bool) -> Self {
+        self.can_fork = available;
+        self
     }
 }

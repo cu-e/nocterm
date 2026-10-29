@@ -18,8 +18,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nocterm_keys::{PinError, PinnedKeys, PublicKey, TrustedKey};
 
-use super::Slot;
+use super::{operations::AccountOperations, source::CapturedAccount};
 
+use nocterm_hubs_model::{AdminKeyConfirmation, AdminKeyOffer, HubError};
 pub use nocterm_hubs_model::{AdminKeyError, PendingAdminKey};
 
 struct Pending {
@@ -116,39 +117,72 @@ fn squash(fingerprint: &str) -> String {
         .collect()
 }
 
-/// Reads and confirms the administrator keys of one hub's account.
+/// Reads the current recipient's keys; every returned offer remains bound to that recipient.
 #[derive(Clone)]
 pub struct AdminKeys {
-    slot: Arc<Slot>,
+    operations: Arc<AccountOperations>,
 }
-
 impl AdminKeys {
-    pub(crate) fn new(slot: Arc<Slot>) -> Self {
-        Self { slot }
+    pub(crate) fn new(operations: Arc<AccountOperations>) -> Self {
+        Self { operations }
     }
-
-    /// The administrators waiting for confirmation, as the last look at the hub found them.
-    /// Empty while the keys are closed.
-    pub fn pending(&self) -> Vec<PendingAdminKey> {
-        self.slot
-            .open()
-            .map(|keys| keys.admins().pending())
-            .unwrap_or_default()
-    }
-
-    /// Pins the key shown with `fingerprint` for `account_id`, after a person compared it with
-    /// the administrator's. The keys notice is raised, so the replica and the vault read the
-    /// groups it unlocks at once.
-    pub fn confirm(&self, account_id: &str, fingerprint: &str) -> Result<(), AdminKeyError> {
-        let keys = self.slot.open().ok_or(AdminKeyError::Locked)?;
-        let pinned = {
-            let mut admins = keys.admins();
-            admins.confirm(account_id, fingerprint)?;
-            admins.pinned().clone()
+    pub fn pending(&self) -> Vec<AdminKeyOffer> {
+        let Ok(source) = self.operations.current_opened_source() else {
+            return Vec::new();
         };
-        self.slot.remember_pins(&pinned);
-        self.slot.notice().raise();
-        Ok(())
+        let native = source;
+        let Ok(keys) = native.keys() else {
+            return Vec::new();
+        };
+        let Ok(slot) = native.slot() else {
+            return Vec::new();
+        };
+        let pending = keys.admins().pending();
+        pending
+            .into_iter()
+            .map(|key| {
+                AdminKeyOffer::new(
+                    slot.hub().clone(),
+                    key.clone(),
+                    Arc::new(Confirmation {
+                        native: native.clone(),
+                        key,
+                    }),
+                )
+            })
+            .collect()
+    }
+}
+struct Confirmation {
+    native: Arc<CapturedAccount>,
+    key: PendingAdminKey,
+}
+impl AdminKeyConfirmation for Confirmation {
+    fn confirm(&self, fingerprint: &str) -> Result<(), AdminKeyError> {
+        let mut confirmed = Err(AdminKeyError::Stale);
+        self.native
+            .with_current(|keys| {
+                let slot = self.native.slot()?;
+                slot.update_cache_if(keys, |cache| {
+                    let mut admins = keys.admins();
+                    // Confirm exactly the offered key, even when another offer appeared meanwhile.
+                    if !admins.pending().contains(&self.key) {
+                        confirmed = Err(AdminKeyError::NotPending);
+                        return;
+                    }
+                    confirmed = admins.confirm(&self.key.account_id, fingerprint);
+                    if confirmed.is_ok() {
+                        cache.keep_pins(admins.pinned());
+                    }
+                })
+                .map_err(|_| HubError::Stale)?;
+                if confirmed.is_ok() {
+                    slot.notice().raise();
+                }
+                Ok(())
+            })
+            .map_err(|_| AdminKeyError::Stale)?;
+        confirmed
     }
 }
 

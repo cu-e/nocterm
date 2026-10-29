@@ -149,7 +149,7 @@ impl Ledger {
     ) -> Result<Option<Record>, VaultError> {
         match space {
             Space::Personal => {
-                let Some(vault) = self.cached() else {
+                let Some(vault) = self.cached()? else {
                     return Ok(None);
                 };
                 let Some(object) = vault.objects.get(object_id) else {

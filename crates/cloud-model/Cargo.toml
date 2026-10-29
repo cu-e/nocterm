@@ -1,0 +1,32 @@
+[package]
+name = "nocterm-cloud-model"
+description = "Pure cloud run authority, effect ordering and bounded admission contracts."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "domain"
+
+[features]
+test-support = ["nocterm-session/test-support", "dep:sha2"]
+
+[dependencies]
+nocterm-ai.workspace = true
+nocterm-session.workspace = true
+nocterm-ssh-keys.workspace = true
+nocterm-core.workspace = true
+nocterm-hubs-model.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+sha2.workspace = true
+nocterm-ssh-keys = {workspace=true,features=["test-support"]}
+nocterm-session = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

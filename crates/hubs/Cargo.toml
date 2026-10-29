@@ -20,6 +20,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-core.workspace = true
 nocterm-settings.workspace = true

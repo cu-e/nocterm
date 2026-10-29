@@ -116,6 +116,8 @@ fn shell_word(word: &str) -> String {
 /// Why a program could not be started.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ExecError {
+    #[error(transparent)]
+    Source(#[from] crate::ConnectionSourceError),
     #[error("running programs is not supported here")]
     Unsupported,
     #[error("the session is not connected")]
@@ -196,11 +198,16 @@ pub struct ExecOutput {
     exit: oneshot::Receiver<ExecExit>,
     // Never sent on: dropping it is what tells the sink to stop the program.
     _alive: async_channel::Sender<()>,
+    source: crate::ConnectionSource,
 }
 
 impl ExecOutput {
     /// The two ends of a program's output. Transports keep the sink.
     pub fn channel() -> (ExecSink, ExecOutput) {
+        Self::channel_with_source(crate::ConnectionSource::default())
+    }
+
+    pub fn channel_with_source(source: crate::ConnectionSource) -> (ExecSink, ExecOutput) {
         let (chunks, receiver) = async_channel::bounded(OUTPUT_BACKLOG);
         let (alive, watcher) = async_channel::bounded(1);
         let (exit, exited) = oneshot::channel();
@@ -214,19 +221,31 @@ impl ExecOutput {
                 chunks: receiver,
                 exit: exited,
                 _alive: alive,
+                source,
             },
         )
     }
 
     /// The next chunk of output, or `None` once the program has finished.
     pub async fn next(&mut self) -> Option<Vec<u8>> {
-        self.chunks.recv().await.ok()
+        let source = self.source.clone();
+        let chunks = &self.chunks;
+        let result = source
+            .guard(async { chunks.recv().await.map_err(|_| ExecError::Disconnected) })
+            .await;
+        if result.is_err() {
+            self._alive.close();
+        }
+        result.ok()
     }
 
     /// How the program ended. Output not read yet is discarded.
     pub async fn exit(mut self) -> ExecExit {
         while self.next().await.is_some() {}
-        self.exit.await.unwrap_or_default()
+        self.source
+            .guard(async { self.exit.await.map_err(|_| ExecError::Disconnected) })
+            .await
+            .unwrap_or_default()
     }
 
     /// The whole output and how the program ended. Output beyond `limit`
@@ -243,7 +262,11 @@ impl ExecOutput {
                 };
             }
         }
-        let exit = self.exit.await.unwrap_or_default();
+        let exit = self
+            .source
+            .guard(async { self.exit.await.map_err(|_| ExecError::Disconnected) })
+            .await
+            .unwrap_or_default();
         Collected { stdout, exit }
     }
 }

@@ -48,7 +48,7 @@ mod pointer;
 mod render;
 #[cfg(test)]
 #[path = "view_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 /// A terminal tab.
 pub struct TerminalView {

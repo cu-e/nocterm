@@ -3,40 +3,33 @@ use super::*;
 use crate::thread::AgentThread;
 use nocterm_ai::model::auth::PermissionOutcome;
 use nocterm_ai::{CancelCommand, ExecCommand, ReadCommand, TerminalCall};
-use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
+use nocterm_session::{ExecFuture, ExecOutput, ExecRequest, HostExec};
 use serde_json::Value;
 use std::time::Duration;
 
-#[derive(Default)]
 struct Programs {
-    requests: Mutex<Vec<ExecRequest>>,
-    sinks: Mutex<Vec<Option<Arc<ExecSink>>>>,
+    jobs: Arc<nocterm_session::testing::ScriptedCommandJobsFactory>,
+    offset: usize,
 }
-
 impl HostExec for Programs {
-    fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
-        self.requests.lock().unwrap().push(request);
-        let (sink, output) = ExecOutput::channel();
-        self.sinks.lock().unwrap().push(Some(Arc::new(sink)));
-        async move { Ok(output) }.boxed()
+    fn exec(&self, _: ExecRequest) -> ExecFuture<ExecOutput> {
+        panic!("the consumer's scripted command port must not perform transport I/O")
     }
 }
-
 impl Programs {
-    fn closed(&self, index: usize) -> bool {
-        self.sinks.lock().unwrap()[index]
-            .as_ref()
-            .unwrap()
-            .is_closed()
+    fn new(jobs: Arc<nocterm_session::testing::ScriptedCommandJobsFactory>) -> Self {
+        let offset = jobs.requests().len();
+        Self { jobs, offset }
     }
-
+    fn requests(&self) -> Vec<ExecRequest> {
+        self.jobs.requests()[self.offset..].to_vec()
+    }
+    fn closed(&self, index: usize) -> bool {
+        !self.jobs.snapshot(self.offset + index).active()
+    }
     fn finish(&self, index: usize, stdout: &[u8], status: u32, stderr: &str) {
-        let sink = self.sinks.lock().unwrap()[index].take().unwrap();
-        assert!(futures::executor::block_on(sink.send(stdout.to_vec())));
-        sink.finish(ExecExit {
-            status: Some(status),
-            stderr: stderr.into(),
-        });
+        self.jobs
+            .finish(self.offset + index, stdout, status, stderr);
     }
 }
 
@@ -108,7 +101,7 @@ fn request(terminal_id: &str) -> ExecCommand {
 
 fn setup(cx: &mut TestAppContext) -> (Fixture, Entity<AgentThread>, Arc<Programs>, String) {
     let f = fixture(cx);
-    let programs = Arc::new(Programs::default());
+    let programs = Arc::new(Programs::new(f._directory.jobs.clone()));
     *f.access.executor().borrow_mut() = Some(programs.clone());
     new_chat(&f, cx);
     let thread = current(&f, cx);
@@ -134,6 +127,12 @@ fn start(
         matches!(payload["state"].as_str(), Some("starting" | "running")),
         "{payload}"
     );
+    let jobs = &f._directory.jobs;
+    let expected = f.access.executor().borrow().as_ref().unwrap().clone();
+    assert!(Arc::ptr_eq(
+        &jobs.executor(jobs.requests().len() - 1),
+        &expected
+    ));
     payload["command_id"].as_str().unwrap().into()
 }
 
@@ -158,17 +157,16 @@ fn read(
 }
 
 #[gpui_kit::test]
-fn structured_requests_preserve_arguments_and_report_real_exit_with_redaction(
+fn structured_requests_preserve_arguments_and_present_port_outcomes_with_redaction(
     cx: &mut TestAppContext,
 ) {
     let (f, thread, programs, terminal) = setup(cx);
     let id = start(&f, &thread, &terminal, cx);
-    let requests = programs.requests.lock().unwrap();
+    let requests = programs.requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].program, request(&terminal).program);
     assert_eq!(requests[0].args, request(&terminal).args);
     assert_eq!(requests[0].stdin.as_deref(), Some(&b"first\nsecond\n"[..]));
-    drop(requests);
     programs.finish(
         0,
         b"output\nDB_PASSWORD=hunter2\n",
@@ -223,7 +221,10 @@ fn a_silent_program_and_an_abandoned_read_remain_running_until_cancelled(cx: &mu
     .unwrap();
     assert_eq!(cancelled["state"], "cancelled");
     cx.run_until_parked();
-    assert!(programs.closed(0), "cancelling drops the transport output");
+    assert!(
+        programs.closed(0),
+        "cancelling reaches the original command port"
+    );
     assert_eq!(
         read(&f, &thread, &terminal, &id, cx).unwrap()["state"],
         "cancelled"
@@ -256,7 +257,7 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
             .message()
             .contains("authentication")
     );
-    assert!(programs.requests.lock().unwrap().is_empty());
+    assert!(programs.requests().is_empty());
     f.access.sign_in().asks().set(false);
     f.access.executor().borrow_mut().take();
     let unsupported = result(submit(
@@ -270,7 +271,7 @@ fn approval_rechecks_authentication_and_unsupported_execution_never_falls_back(
         unsupported.unwrap_err().message(),
         "This terminal does not support structured execution."
     );
-    assert!(programs.requests.lock().unwrap().is_empty());
+    assert!(programs.requests().is_empty());
     assert!(f.access.sent().borrow().is_empty());
 }
 
@@ -313,7 +314,7 @@ fn active_command_limit_and_cancelled_slot_apply_through_bridge_calls(cx: &mut T
         fifth.unwrap_err().message(),
         "This chat already has four active commands. Read or cancel one first."
     );
-    assert_eq!(programs.requests.lock().unwrap().len(), 4);
+    assert_eq!(programs.requests().len(), 4);
     result(submit(
         &f,
         &thread,
@@ -327,7 +328,7 @@ fn active_command_limit_and_cancelled_slot_apply_through_bridge_calls(cx: &mut T
     .unwrap();
     let next = start(&f, &thread, &terminal, cx);
     assert!(!ids.contains(&next));
-    assert_eq!(programs.requests.lock().unwrap().len(), 5);
+    assert_eq!(programs.requests().len(), 5);
     assert!(programs.closed(0));
 }
 
@@ -428,7 +429,7 @@ fn removing_the_active_attachment_cancels_owned_programs(cx: &mut TestAppContext
 fn replacing_a_session_executor_revokes_old_commands_and_allows_new_ones(cx: &mut TestAppContext) {
     let (f, thread, programs, terminal) = setup(cx);
     let old = start(&f, &thread, &terminal, cx);
-    let replacement = Arc::new(Programs::default());
+    let replacement = Arc::new(Programs::new(f._directory.jobs.clone()));
     *f.access.executor().borrow_mut() = Some(replacement.clone());
     cx.executor().advance_clock(Duration::from_millis(150));
     cx.run_until_parked();
@@ -439,7 +440,7 @@ fn replacing_a_session_executor_revokes_old_commands_and_allows_new_ones(cx: &mu
     );
     let new = start(&f, &thread, &terminal, cx);
     assert_ne!(new, old);
-    assert_eq!(replacement.requests.lock().unwrap().len(), 1);
+    assert_eq!(replacement.requests().len(), 1);
     assert!(!replacement.closed(0));
 }
 
@@ -460,7 +461,7 @@ fn disabling_ai_cancels_execution_and_revokes_chat_access(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn deleting_and_releasing_a_chat_drops_its_program_output(cx: &mut TestAppContext) {
+fn deleting_and_releasing_a_chat_cancels_its_command_port(cx: &mut TestAppContext) {
     let (f, thread, programs, terminal) = setup(cx);
     start(&f, &thread, &terminal, cx);
     let id = thread.entity_id();
@@ -529,10 +530,11 @@ fn a_joined_reconnect_command_does_not_hold_input_until_its_process_exits(cx: &m
     ));
     assert!(result(input).is_ok());
     assert_eq!(*f.access.sent().borrow(), ["following input\r"]);
-    assert_eq!(programs.requests.lock().unwrap().len(), 1);
+    assert_eq!(programs.requests().len(), 1);
     assert!(!programs.closed(0), "the first command is still running");
     programs.finish(0, b"finished", 0, "");
     cx.run_until_parked();
 }
 
+mod local_environments;
 mod screenshot_history;

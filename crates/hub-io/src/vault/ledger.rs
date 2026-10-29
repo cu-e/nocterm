@@ -20,16 +20,18 @@ use nocterm_vault::{CredentialBinding, CredentialInfo, VaultError};
 
 use super::codec::{self, Decoded, KIND};
 use super::groups::{Groups, Held, Owner};
-use crate::account::{OpenKeys, Slot};
+use crate::account::{OpenKeys, Slot, source::CapturedAccount};
+mod access;
 use crate::cache::{ObjectCopy, VaultCopy};
 use crate::classify::unreachable;
 use crate::store::{Located, OpError, Store, StoreOps, VAULT_KIND};
+use access::LedgerAccess;
 
 /// How often a write retries after another device changed the same record.
 const WRITE_ATTEMPTS: usize = 2;
 
 pub(crate) struct Ledger {
-    slot: Arc<Slot>,
+    access: LedgerAccess,
     ops: Arc<dyn StoreOps>,
     groups: Groups,
 }
@@ -38,6 +40,7 @@ pub(crate) struct Ledger {
 pub(super) fn vault_error(error: OpError) -> VaultError {
     match error {
         OpError::Conflict => VaultError::Conflict,
+        OpError::Hub(HubError::NotSignedIn | HubError::Stale) => VaultError::Stale,
         OpError::Hub(HubError::PermissionDenied) => VaultError::ReadOnly,
         OpError::Damaged(_) => VaultError::Authentication,
         OpError::Hub(error) if unreachable(&error) => VaultError::Offline,
@@ -46,9 +49,22 @@ pub(super) fn vault_error(error: OpError) -> VaultError {
 }
 
 impl Ledger {
+    #[cfg(test)]
     pub(crate) fn new(slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
         Self {
-            slot,
+            access: LedgerAccess::live(slot),
+            ops,
+            groups: Groups::default(),
+        }
+    }
+
+    pub(crate) fn captured(
+        slot: Arc<Slot>,
+        ops: Arc<dyn StoreOps>,
+        capture: Arc<CapturedAccount>,
+    ) -> Self {
+        Self {
+            access: LedgerAccess::captured(slot, capture),
             ops,
             groups: Groups::default(),
         }
@@ -59,9 +75,10 @@ impl Ledger {
     }
 
     /// Whether the personal vault holds `object_id` live; a tombstone is held by no one.
-    fn in_personal(&self, object_id: &str) -> bool {
-        self.cached()
-            .is_some_and(|vault| vault.objects.get(object_id).is_some_and(|o| !o.deleted))
+    fn in_personal(&self, object_id: &str) -> Result<bool, VaultError> {
+        Ok(self
+            .cached()?
+            .is_some_and(|vault| vault.objects.get(object_id).is_some_and(|o| !o.deleted)))
     }
 
     /// The group that holds `object_id`, unless the personal vault holds it.
@@ -70,7 +87,7 @@ impl Ledger {
         store: &Store,
         object_id: &str,
     ) -> Result<Option<Owner>, VaultError> {
-        if self.in_personal(object_id) {
+        if self.in_personal(object_id)? {
             return Ok(None);
         }
         self.groups.sync(store).await?;
@@ -116,7 +133,7 @@ impl Ledger {
     }
 
     fn keys(&self) -> Result<Arc<OpenKeys>, VaultError> {
-        self.slot.open().ok_or(VaultError::Locked)
+        self.access.keys()
     }
 
     /// Brings the cache up to date when the hub is reachable. Only a reachable hub's failure
@@ -133,11 +150,11 @@ impl Ledger {
 
     /// Reads the changes after the cached position and writes the cache through.
     async fn pull(&self, store: &Store, at: &Located) -> Result<(), VaultError> {
-        let mut copy = self.slot.read_cache(|cache| {
+        let mut copy = self.access.read(|cache| {
             cache
                 .and_then(|cache| cache.vault.clone())
                 .filter(|vault| vault.collection_id == at.id())
-        });
+        })?;
         let mut vault = copy.take().unwrap_or_else(|| VaultCopy {
             collection_id: at.id().to_owned(),
             key_envelope: at.envelope().to_vec(),
@@ -164,9 +181,7 @@ impl Ledger {
                 break;
             }
         }
-        if let Err(error) = self.slot.update_cache(|cache| cache.vault = Some(vault)) {
-            tracing::warn!(%error, "the vault cache cannot be written");
-        }
+        self.access.update(|cache| cache.vault = Some(vault))?;
         Ok(())
     }
 
@@ -187,15 +202,15 @@ impl Ledger {
         codec::open_sealed(&key, &vault.collection_id, object_id, object)
     }
 
-    fn cached(&self) -> Option<VaultCopy> {
-        self.slot
-            .read_cache(|cache| cache.and_then(|cache| cache.vault.clone()))
+    fn cached(&self) -> Result<Option<VaultCopy>, VaultError> {
+        self.access
+            .read(|cache| cache.and_then(|cache| cache.vault.clone()))
     }
 
     pub(super) async fn list(&self) -> Result<Vec<CredentialInfo>, VaultError> {
         let keys = self.keys()?;
         self.sync(&keys).await?;
-        let Some(vault) = self.cached() else {
+        let Some(vault) = self.cached()? else {
             return Ok(Vec::new());
         };
         let mut listed = Vec::new();
@@ -231,7 +246,7 @@ impl Ledger {
         let keys = self.keys()?;
         self.sync(&keys).await?;
         let object_id = id.to_string();
-        let personal = self.cached().filter(|vault| {
+        let personal = self.cached()?.filter(|vault| {
             vault
                 .objects
                 .get(&object_id)
@@ -345,7 +360,7 @@ impl Ledger {
         } else {
             Err(VaultError::NotFound)
         };
-        let Some(vault) = self.cached() else {
+        let Some(vault) = self.cached()? else {
             return missing;
         };
         let Some(object) = vault.objects.get(object_id) else {

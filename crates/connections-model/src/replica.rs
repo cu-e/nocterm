@@ -112,6 +112,9 @@ pub struct ReplicaPage {
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum ReplicaError {
+    /// The original account capture no longer belongs to the current login.
+    #[error("The original profile replica is no longer current.")]
+    Stale,
     /// The replica cannot be reached now; local work continues.
     #[error("The profile replica is not reachable.")]
     Unavailable,

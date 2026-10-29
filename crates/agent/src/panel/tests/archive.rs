@@ -70,7 +70,11 @@ fn catalog_rows_are_idle_and_opening_hydrates_and_connects_with_the_queue_paused
     cx.update(|cx| {
         assert!(thread.read(cx).is_archived());
         assert!(thread.read(cx).history_entries().is_empty());
-        assert!(thread.read(cx).flush_snapshot(cx).is_none());
+        assert!(
+            thread
+                .update(cx, |thread, cx| thread.flush_snapshot(cx).unwrap())
+                .is_none()
+        );
     });
     f.panel
         .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
@@ -700,4 +704,65 @@ fn installation_capacity_refuses_restore_before_mutation_and_keeps_shown_project
     .unwrap();
     cx.run_until_parked();
     assert_eq!(f.connector.connects.load(Ordering::SeqCst), 0);
+}
+
+#[gpui_kit::test]
+fn deleting_a_loading_chat_keeps_its_actual_decoded_native_result_charged_until_drop(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_agent_runtime::history_admission::{
+        MAX_NORMAL_HISTORY_BYTES, MAX_NORMAL_HISTORY_PAYLOADS,
+    };
+    let f = fixture(cx);
+    cx.run_until_parked();
+    let mut chat = saved(&f);
+    chat.entries.push(Entry::Agent("x".repeat(2 * 1024 * 1024)));
+    let thread = archived(&f, &chat, cx);
+    let decoded = f
+        .repository
+        .block_next(nocterm_ai::testing::StorageOperation::Decoded(
+            chat.header.id.clone(),
+        ));
+    f.panel
+        .update(cx, |panel, cx| panel.open_thread(thread.entity_id(), cx));
+    cx.run_until_parked();
+    assert!(
+        f.repository
+            .operations()
+            .contains(&nocterm_ai::testing::StorageOperation::Decoded(
+                chat.header.id.clone()
+            ))
+    );
+    let admission = cx.update(|cx| f.installation.installed.runtime().history_admission(cx));
+    cx.update_window(f.handle, |_, window, cx| {
+        f.panel.update(cx, |panel, cx| {
+            panel.delete_thread(thread.entity_id(), window, cx)
+        })
+    })
+    .unwrap();
+    drop(thread);
+    cx.run_until_parked();
+    let slots = (0..MAX_NORMAL_HISTORY_PAYLOADS)
+        .filter_map(|_| admission.reserve_payload().ok())
+        .collect::<Vec<_>>();
+    assert!(admission.reserve_payload().is_err());
+    cx.update(|cx| {
+        assert!(
+            admission
+                .reserve_unowned_bytes(MAX_NORMAL_HISTORY_BYTES - 2 * 1024 * 1024, cx)
+                .is_err()
+        )
+    });
+    decoded.send(Ok(())).unwrap();
+    cx.run_until_parked();
+    let released = admission.reserve_payload().unwrap();
+    cx.update(|cx| {
+        drop(
+            admission
+                .reserve_unowned_bytes(MAX_NORMAL_HISTORY_BYTES - 2 * 1024 * 1024, cx)
+                .unwrap(),
+        )
+    });
+    assert!(f.repository.transcript(&chat.header.id).is_err());
+    drop((released, slots));
 }

@@ -44,6 +44,12 @@ mod jump;
 
 #[path = "cases/hub_relay.rs"]
 mod hub_relay;
+#[path = "support/login.rs"]
+mod login_fixture;
+#[path = "cases/proof_login.rs"]
+mod proof_login;
+#[path = "cases/source_change.rs"]
+mod source_change;
 #[path = "cases/vault_key.rs"]
 mod vault_key;
 

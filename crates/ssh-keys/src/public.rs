@@ -30,6 +30,15 @@ impl PublicKeyText {
         })
     }
 
+    /// SHA-256 of the canonical SSH public-key blob, for typed host/auth bindings.
+    pub fn fingerprint_bytes(&self) -> Result<[u8; 32], KeyImportError> {
+        let key = PublicKey::from_openssh(&self.text).map_err(KeyImportError::Malformed)?;
+        let hash = key.fingerprint(HashAlg::Sha256);
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(hash.as_bytes());
+        Ok(bytes)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.text
     }

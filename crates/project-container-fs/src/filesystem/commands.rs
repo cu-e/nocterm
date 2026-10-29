@@ -88,6 +88,7 @@ pub(super) fn status(code: Option<u32>, path: &str) -> FsError {
 fn execution(error: ExecError) -> FsError {
     match error {
         ExecError::Disconnected => FsError::NotConnected,
+        ExecError::Source(error) => FsError::Source(error),
         ExecError::NotFound(_) | ExecError::Unsupported => FsError::Unsupported(
             "container execution or required filesystem utilities unavailable".into(),
         ),

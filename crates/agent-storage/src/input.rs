@@ -1,8 +1,9 @@
 //! Bounded reads retain the original opened source and its supplied file facts.
 use crate::namespace::Partition;
 use nocterm_ai::{
-    history::{self, ContextId, FileStamp, HistoryCodecError, MAX_FILE_BYTES},
-    storage::{AgentStorageError, require_chat_scope},
+    history::{self, FileStamp, HistoryCodecError, MAX_FILE_BYTES},
+    local_environment::ChatScope,
+    storage::{AgentStorageError, require_local_scope},
 };
 use nocterm_session::local_fs::{LocalFsError, LocalSource};
 
@@ -59,11 +60,11 @@ impl Input {
     pub(super) fn scoped_record(
         mut self,
         id: &str,
-        scope: ContextId,
+        scope: &ChatScope,
     ) -> Result<Vec<u8>, AgentStorageError> {
         let mut bytes = self.read(history::MAX_HEADER_BYTES)?;
         let header = history::decode_catalog_header(&bytes, id)?;
-        require_chat_scope(scope, header.scope())?;
+        require_local_scope(scope, &header.chat_scope())?;
         self.fill(&mut bytes, MAX_FILE_BYTES as usize + 1)?;
         self.finish(bytes)
     }

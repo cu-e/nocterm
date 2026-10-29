@@ -45,6 +45,7 @@ mod session_driver;
 mod tool_runtime;
 pub use restart::RestartData;
 mod document;
+pub(crate) mod local_payloads;
 mod saved;
 mod sign_in_wait;
 pub use sign_in_wait::SignInWait;
@@ -80,28 +81,8 @@ impl Restore {
         self.fork
     }
 }
-/// What a forked chat starts from.
-pub struct Fork {
-    chat: nocterm_ai::history::SavedChat,
-    restore: Option<Restore>,
-    attachments: Vec<Attachment>,
-}
-
-impl Fork {
-    pub(crate) fn prepared(mut self) -> Result<Self, nocterm_ai::history::HistoryCodecError> {
-        self.chat = nocterm_ai::history::prepare(self.chat)?;
-        Ok(self)
-    }
-    pub(crate) fn resident_bytes(&self) -> usize {
-        self.chat.resident_bytes()
-    }
-    pub(crate) fn key(&self) -> nocterm_ai::execution_origin::ChatKey {
-        nocterm_ai::execution_origin::ChatKey::new(
-            self.chat.header.scope,
-            self.chat.header.id.clone(),
-        )
-    }
-}
+mod fork;
+pub use fork::Fork;
 
 pub struct AgentThread {
     session: session_driver::SessionDriver,
@@ -113,6 +94,7 @@ pub struct AgentThread {
     notice: notice::ThreadNotice,
     deps: crate::chat_deps::ChatDeps,
     bindings: bindings::ThreadBindings,
+    payloads: local_payloads::LocalPayloads,
 }
 
 impl AgentThread {
@@ -346,11 +328,17 @@ impl AgentThread {
     fn on_release(&mut self, id: EntityId, cx: &mut gpui::App) {
         self.cancel_pending();
         self.finalize_tool_displays();
-        let snapshot = self
-            .deps
-            .enabled(cx)
-            .then(|| self.capture_pending(cx))
-            .flatten();
+        let snapshot = if self.deps.enabled(cx) {
+            match self.capture_pending(cx) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(%error, "released chat capture failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         self.cancel_execution();
         // The lease releases its connection when it is dropped.
         self.session.release_lease();
@@ -384,6 +372,7 @@ impl AgentThread {
     fn from_document(
         state: document::ChatDocument,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
         let this = cx.weak_entity();
@@ -397,7 +386,7 @@ impl AgentThread {
         let release = cx.on_release(move |this, cx| this.on_release(id, cx));
         Self {
             session: Default::default(),
-            tools: Default::default(),
+            tools: tool_runtime::ToolRuntime::new(deps.runtime().command_jobs(cx)),
             archive: Default::default(),
             composer: Default::default(),
             state,
@@ -405,39 +394,44 @@ impl AgentThread {
             notice: Default::default(),
             deps,
             bindings: bindings::ThreadBindings::new(release, authority),
+            payloads: local_payloads::LocalPayloads::new(allocation.0, allocation.1, id),
         }
     }
     pub(crate) fn new(
         chat: nocterm_ai::history::SavedChat,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::from_document(
             document::ChatDocument::new(
-                chat.header.agent_id,
-                nocterm_ai::execution_origin::ChatKey::new(chat.header.scope, chat.header.id),
+                chat.header.agent_id.clone(),
+                nocterm_ai::execution_origin::ChatKey::from_header(&chat.header),
                 chat.header.updated,
             ),
             deps,
+            allocation,
             cx,
         )
     }
     pub(crate) fn archived(
         row: nocterm_agent_runtime::CatalogRow,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
         let summary = row.summary();
         let mut state = document::ChatDocument::new(
             summary.agent_id.clone(),
-            nocterm_ai::execution_origin::ChatKey::new(summary.scope, summary.id.clone()),
+            nocterm_ai::execution_origin::ChatKey::from_summary(summary),
             summary.updated,
         );
         state.archived_clean(summary);
-        let mut thread = Self::from_document(state, deps, cx);
+        let mut thread = Self::from_document(state, deps, allocation, cx);
         thread.config.saved_model(summary.model.clone());
         thread.notice.present("Saved chat".into());
         thread.archive = archive::Archive::archived(row);
+        thread.payloads.archive();
         thread
     }
     pub fn is_archived(&self) -> bool {
@@ -532,7 +526,6 @@ impl AgentThread {
     pub fn session_accepts_updates(&self) -> bool {
         self.session.accepts_updates()
     }
-    #[cfg(any(test, feature = "test-support"))]
     pub fn session_stopped(&self) -> bool {
         self.session.stopped()
     }

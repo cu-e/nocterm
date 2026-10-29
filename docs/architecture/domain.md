@@ -4,7 +4,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
-`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
+`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-cloud-model`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
 `nocterm-vault`, `nocterm-ssh-keys`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
@@ -74,12 +74,20 @@ legacy detected-fact strings retain their serialized representation.
 
 ## Sessions and terminal emulation
 
+`ConnectionOpenOptions` carries a captured `ConnectionSource` separately from
+route facts. A synchronous guard checks the original owner; a resumed operation
+rechecks it before each poll and after completion. A transport that cannot retain
+it rejects constrained opens. `SessionDriver::close` wakes independent native
+waiters on cancellation or producer termination. `ConnectionFailure` preserves
+native typed causes and an actionable kind without protocol types in this domain.
+
 `nocterm-session` defines transport-independent targets, authentication,
 commands, events, prompts and the `RemoteFs` contract. Launch and session-override
 validation returns typed field/constraint errors without filesystem access or
 value expansion; native transports reject invalid launches before starting I/O.
 `TextEncodingError` carries the configured `Charset` without retaining input text.
-Text conversion stays in the terminal feature, outside the session domain.
+Incremental text conversion belongs to `nocterm-vt`; the session domain only
+names the charset and typed conversion refusal.
 `Event::Restore` is the screen a host holds when a session is attached again: the owner
 paints it on a fresh emulator and never treats it as output of the program
 ([ADR 0095](../adr/0095-attached-sessions-restore-and-detach.md)).
@@ -114,8 +122,12 @@ was not opened (not signed in, refused, node unavailable, unreachable, closed). 
 type appears in the session domain
 ([ADR 0100](../adr/0100-the-hub-is-a-route-step.md)).
 `nocterm-vt` turns a byte stream into a terminal grid using
-alacritty_terminal and encodes keyboard, mouse and paste input. These domain
-crates do not know the workspace or GPUI.
+alacritty_terminal and encodes keyboard, mouse and paste input. It also owns
+`TextCodec`, the incremental charset decoder/encoder, and `ShellIntegration`,
+the bounded OSC directory and prompt observer. Shell observations grant no session
+or input authority; the caller still validates its captured session and admits
+input before recording it with the observer. These domain crates do not know
+the workspace or GPUI.
 
 Recording diagnostics preserve native I/O through immutable foundation `SharedError`.
 Domain constructors retain operation category, path and physical append offset;
@@ -208,6 +220,14 @@ validated request preserves literal arguments and native cwd; success acknowledg
 spawn. The adapter owns children, not the domain or the view. The same dev-only
 `FakeExec` implements this port with bounded scripted answers and deterministic gates.
 
+`command_jobs::{CommandJobs, CommandJobsFactory}` supplies chat-owned command
+registries and immutable outcome snapshots without exposing an adapter or scheduler.
+Creating a registry or admitting a command starts no program; the host polls the
+returned runner. The dev-only
+`ScriptedCommandJobsFactory` records accepted requests and publishes explicitly
+scripted outcomes without calling `HostExec` or reading transport output. Actual
+execution and retention behavior belong to the adapter's conformance tests.
+
 ## Containers
 
 `nocterm-containers` (domain) speaks the Docker and
@@ -242,10 +262,18 @@ the `VaultSshKeys` port the connection editor uses to list, create and import va
 Its `ssh-key` version is the one `russh` resolves. See
 [ADR 0102](../adr/0102-ssh-keys-are-kept-in-the-vault.md).
 
+Bounded `InitialHostProof`, `UserauthLogin` and `LoginSignature` belong to this
+key-format domain. The complete Ed25519 userauth parser rejects other purposes,
+algorithms and suffixes; the pinned host must have signed the initial session ID.
+`LoginSigningKey` exposes only `sign_login` for this checked action, with no key
+getter or generic signing method. Native SSH observes initial KEX; consent policy
+belongs to cloud-model ([ADR 0112](../adr/0112-purpose-bound-ssh-login-and-captured-sources.md)).
+
 ## Vault
 
 `nocterm-vault` owns the versioned authenticated envelope, bounded codecs,
-credential binding rules and pure prepared/accepted state transitions. Entropy is
+credential binding rules, the pure `CredentialBinding::for_request` mapping shared by
+native adapters and presentation, and pure prepared/accepted state transitions. Entropy is
 supplied as values by adapters. A prepared write leaves state unchanged; acceptance
 is infallible after publication. `VaultAccess` and `DeviceUnlockProvider` declare
 UI/service and native authentication contracts without workers or filesystem I/O.
@@ -279,7 +307,8 @@ agent and `catalog()`, which the application injects.
 
 `nocterm-ai` owns pure transcript codecs, structural/collection validation,
 catalog summary rules and the `ChatRepository`/`AgentStateRepository` contracts.
-Version one remains byte-stable and belongs to General. Version two requires an
+Versions one and two belong only to ThisComputer. Version one remains byte-stable
+and belongs to General. Version two requires an
 explicit `ContextId` and a canonical envelope whose authoritative catalog header
 fits within a 16 KiB prefix. Its bounded display metadata and content/title
 projection precede the payload; full hydration validates their agreement.
@@ -472,4 +501,98 @@ original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub
 access ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
 0096](../adr/0096-hub-contract-outside-the-workspace.md)).
 
+`source_identity` separately owns captured `HubIdentity`, `AccountIdentity` and
+`AccountScope`, shared by Cloud and other domain consumers without a Cloud-to-AI
+cycle. The supplied hub authority and account-key fingerprints participate in equality;
+namespace text is bounded and literal. These descriptive constructors authenticate
+nothing, perform no SDK/crypto work and define no wire serialization. They do not
+replace the existing certificate fingerprint and address trust rules.
+
 A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-environments.md)), so the crate holds no record of open windows.
+
+
+## Cloud run contracts
+
+`LoginConsentLedger` retains at most 32 device-issued SSH login consents for at
+most 60 seconds, consumes the exact original binding before key loading and
+rechecks expiry/clock ordering after awaited work. Missing state after restart
+requires new consent. `SessionLoginAuthorizer` accepts only checked SSH proof
+values; `LoginConsentAuthority` checks actual captured source, run/target and
+credential revision. IDs and wire constructors do not authenticate a caller.
+
+`nocterm-cloud-model` owns pure finite grants, run effect ordering, uncertain-mutation
+fences and bounded account round-robin admission. Immutable authority retains the
+original hub/account source, runner/key epoch, run/epoch, target, selected SSH
+key/credential revision, session/epoch and grant/epoch. Grant origin records the
+original issuer and durable command/control revision. Supplied time rollback fences
+admission; read capability excludes terminal input, execution and connection creation.
+A dispatched uncertain mutation blocks new writes until explicit original-intent
+reconciliation, including after resume. The host preserves unresolved target effects
+across distinct runs; the pure run owner neither performs nor retries I/O.
+
+Its narrow host-controlled ports are `AgentEngine`/`AgentEngineFactory`,
+`ScopedToolExecutor`, `RunJournalWriter` and `JournalReader`. They reuse neutral AI
+content, tool-call and display records. Engine progress permits bounded text/thought
+and optional usage only. Engine `Usage` describes one completed HTTP call after
+its original observation is durably reconciled. `InferenceLedger::reported_usage`
+sums those original observations independently of conservative reservation charges:
+each missing field, including an unobserved call, makes only its cumulative field
+unknown; checked addition rejects overflow. An empty ledger is unknown. The host
+publishes normalized `CoordinatorEvent::Progress` usage in the same transaction
+as each real native Budget reserve/observation record. A reservation therefore
+publishes unknown totals without waiting for HTTP completion, and observation ACK
+already includes the updated cumulative fact. Later SDK Usage validates that
+original step's report and publishes no duplicate. Budget frames retain the full
+original ledger from which restoration derives the same optional cumulative fact;
+no synthetic native Progress body is created for this transition. At that consumer
+port each usage event is a complete optional cumulative run snapshot: it replaces prior values, including clearing known values to unknown.
+Consumers neither add snapshots nor combine fields from different snapshots. Zero
+is known only when all contributing observations report zero. New active runs reset
+usage; a queued prompt does not change the active run's totals. Host step/slot
+identities survive opaque checkpoint restore;
+provider call ids grant no authority. Checkpoints remain derived run/revision-bound
+state. Exact JSON admission reuses AI history's allocation-free sizing owner.
+
+Journal contracts bind expected transactional revision, writer epoch, admitted
+command, records, checkpoint and ciphertext outbox in one durable native transaction.
+`ChatIdentity` is account plus chat; runner authority in `StreamBinding` cannot create
+an alternate partition for that same identity. Run revision, journal stream revision,
+local record cursor, public event cursor and user-facing control revision are distinct.
+Progress/internal budget commits do not stale user commands; two new commands against
+one control revision conflict, while an identical retry returns its original receipt.
+Bounded readers reject wrong-source records and gaps. `OutboxDeliveryId` is the
+persisted transport deduplication identity; `OutboxEntry::id` remains the signed
+record identity. `ResidentPublication` shares one actual allocation generation.
+Public encoders reserve their output/native-envelope allowance through
+`PublicationWorkBudget`; ownership follows the actual native write/upload task.
+`JournalSnapshotPublication` separates stage, stored transport receipt and prefix
+activation. `SnapshotCandidate` contains bounded metadata; the independently
+charged native execution archive and actual signed public baseline remain separate.
+`ResidentSnapshot` retains the returned archive's permit until its last owner drops.
+No constructor authorizes dispatch, validates public cryptography or implies a hub
+has stored a record ([ADR 0116](../adr/0116-signed-cloud-baseline-publication.md)). Value construction does not
+prove persistence, authentication or native cleanup. See
+[ADR 0107](../adr/0107-cloud-run-authority-and-host-controlled-ports.md).
+
+Cloud engine context uses `EngineHistory`: bounded neutral user/assistant records
+and complete historical tool-intent/result pairs supplied by the authoritative
+journal. It excludes execution authority, provider SDK continuation types and
+trusted display metadata. `TerminalCall::arguments` supplies one semantic argument
+encoding from the AI catalog's DTOs; historical calls cannot dispatch themselves.
+`nocterm-ai::local_environment` separates device/account ownership from project or
+General membership. `ChatScope` combines those coordinates and `ChatKey` adds the
+chat ID. `hubs-model::source_identity` supplies authenticated-source consumer ports;
+its identity constructors validate shape, while native adapters authenticate and
+invalidate the retained owners. See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
+
+The Cloud journal's `JournalCatalogBinding` fixes one known account and runner
+identity/key epoch independently from any chat. `JournalCatalogCipher` binds that
+identity and a positive catalog revision to bounded purpose-specific encrypted
+catalog bytes. Composition must inject its implementation; DTO construction does
+not verify cryptography, source authority or durability. The native adapter owns
+complete physical row checks and explicit create/open lifecycle
+([ADR 0113](../adr/0113-account-bound-journal-catalog.md)).
+
+### Displayed account confirmations
+
+`nocterm-hubs-model` owns `AdminKeyOffer`, `RecoveryKeyOffer` and `RecoveryKeyReissue`, opaque consumer capabilities supplied by adapters. Display DTOs remain descriptive. The offers preserve their original recipient and exact recovery action through deferred UI callbacks; typed stale errors cross the port. The domain performs no native source lookup or I/O. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

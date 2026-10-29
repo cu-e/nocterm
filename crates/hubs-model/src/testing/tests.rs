@@ -244,17 +244,20 @@ fn sign_in(hub: &FakeHub, password: &str) -> SignedIn {
 #[test]
 fn a_first_sign_in_creates_the_keys_and_hands_out_the_recovery_key_once() {
     let hub = keyed_hub();
-    assert_eq!(
-        sign_in(&hub, "secret").keys,
-        KeyStatus::Created(Secret::new("recovery-ada"))
-    );
-    // The key was never confirmed as saved, so opening the keys again offers a new one.
+    let KeyStatus::Created(first) = sign_in(&hub, "secret").keys else {
+        panic!("created");
+    };
+    assert_eq!(first.key(), &Secret::new("recovery-ada"));
     assert!(hub.recovery_key_unconfirmed(&hub_id()));
-    assert_eq!(
+    assert!(matches!(
         sign_in(&hub, "secret").keys,
-        KeyStatus::RecoveryKeyUnconfirmed
-    );
-    hub.confirm_recovery_key(&hub_id()).unwrap();
+        KeyStatus::RecoveryKeyUnconfirmed(_)
+    ));
+    assert!(matches!(first.confirm(), Err(HubError::Stale)));
+    block_on(hub.reissue_recovery_key(&hub_id()))
+        .unwrap()
+        .confirm()
+        .unwrap();
     assert!(!hub.recovery_key_unconfirmed(&hub_id()));
     assert_eq!(sign_in(&hub, "secret").keys, KeyStatus::Open);
 }
@@ -262,13 +265,15 @@ fn a_first_sign_in_creates_the_keys_and_hands_out_the_recovery_key_once() {
 #[test]
 fn reissuing_replaces_the_recovery_key_until_it_is_confirmed() {
     let hub = keyed_hub();
-    sign_in(&hub, "secret");
-    hub.confirm_recovery_key(&hub_id()).unwrap();
+    let KeyStatus::Created(first) = sign_in(&hub, "secret").keys else {
+        panic!("created");
+    };
+    first.confirm().unwrap();
 
     let key = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
-    assert_eq!(key, Secret::new("recovery-ada+"));
+    assert_eq!(key.key(), &Secret::new("recovery-ada+"));
     assert!(hub.recovery_key_unconfirmed(&hub_id()));
-    hub.confirm_recovery_key(&hub_id()).unwrap();
+    key.confirm().unwrap();
 
     let again = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
     assert_ne!(again, key);
@@ -314,11 +319,11 @@ fn a_browser_sign_in_needs_the_vault_passphrase_to_open_or_make_the_keys() {
     assert_eq!(result.unwrap().keys, KeyStatus::PassphraseNeeded);
 
     let made = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("a long passphrase")));
-    assert_eq!(
-        made.unwrap(),
-        KeyStatus::Created(Secret::new("recovery-ada"))
-    );
-    hub.confirm_recovery_key(&hub_id()).unwrap();
+    let KeyStatus::Created(key) = made.unwrap() else {
+        panic!("created");
+    };
+    assert_eq!(key.key(), &Secret::new("recovery-ada"));
+    key.confirm().unwrap();
     let again = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("a long passphrase")));
     assert_eq!(again.unwrap(), KeyStatus::Open);
     let other = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("another passphrase")));
@@ -343,7 +348,8 @@ fn a_confirmed_admin_key_leaves_the_pending_list_and_raises_the_keys_notice() {
     let seen = hub.keys_revision();
     assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
 
-    keys.confirm_admin_key(&hub_id(), "grace", "AAAA-BBBB")
+    keys.pending_admin_keys(&hub_id())[0]
+        .confirm("AAAA-BBBB")
         .unwrap();
 
     assert!(keys.pending_admin_keys(&hub_id()).is_empty());
@@ -358,13 +364,13 @@ fn an_admin_key_is_refused_for_another_fingerprint_or_when_nothing_is_pending() 
     keys.offer(&hub_id(), acme_key("aaaa"));
 
     assert_eq!(
-        keys.confirm_admin_key(&hub_id(), "grace", "cccc"),
+        keys.pending_admin_keys(&hub_id())[0].confirm("cccc"),
         Err(AdminKeyError::Mismatch)
     );
-    assert_eq!(
-        keys.confirm_admin_key(&hub_id(), "someone", "aaaa"),
-        Err(AdminKeyError::NotPending)
-    );
+    let old = keys.pending_admin_keys(&hub_id())[0].clone();
+    old.confirm("aaaa").unwrap();
+    assert_eq!(old.confirm("aaaa"), Err(AdminKeyError::NotPending));
+    keys.offer(&hub_id(), acme_key("aaaa"));
     assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
 }
 
@@ -373,11 +379,63 @@ fn closed_keys_list_and_confirm_no_admin_key() {
     let hub = FakeHub::new();
     let keys = FakeAdminKeys::alongside(&hub);
     keys.offer(&hub_id(), acme_key("aaaa"));
+    let shown = keys.pending_admin_keys(&hub_id())[0].clone();
     hub.lock_keys(&hub_id());
-
     assert!(keys.pending_admin_keys(&hub_id()).is_empty());
-    assert_eq!(
-        keys.confirm_admin_key(&hub_id(), "grace", "aaaa"),
-        Err(AdminKeyError::Locked)
-    );
+    assert_eq!(shown.confirm("aaaa"), Err(AdminKeyError::Stale));
+}
+
+#[test]
+fn an_old_recovery_acknowledgement_cannot_confirm_a_new_reissue() {
+    let hub = keyed_hub();
+    let KeyStatus::Created(first) = sign_in(&hub, "secret").keys else {
+        panic!("created");
+    };
+    let second = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
+    assert!(matches!(first.confirm(), Err(HubError::Stale)));
+    assert!(hub.recovery_key_unconfirmed(&hub_id()));
+    second.confirm().unwrap();
+    assert!(!hub.recovery_key_unconfirmed(&hub_id()));
+}
+
+#[test]
+fn an_administrator_offer_keeps_its_recipient_when_the_same_grantor_is_offered_again() {
+    let hub = FakeHub::new();
+    hub.sign_in_as(&hub_id(), "alice");
+    let keys = FakeAdminKeys::alongside(&hub);
+    keys.offer(&hub_id(), acme_key("aaaa"));
+    let old = keys.pending_admin_keys(&hub_id()).pop().unwrap();
+    hub.sign_in_as(&hub_id(), "bob");
+    keys.offer(&hub_id(), acme_key("aaaa"));
+    let current = keys.pending_admin_keys(&hub_id()).pop().unwrap();
+    assert_eq!(old.key(), current.key());
+    assert_eq!(old.confirm("aaaa"), Err(AdminKeyError::Stale));
+    assert!(keys.confirmed().is_empty());
+    current.confirm("aaaa").unwrap();
+    assert_eq!(keys.confirmed().len(), 1);
+}
+
+#[test]
+fn a_held_recovery_issue_does_not_choose_a_replacement_account() {
+    let hub = keyed_hub();
+    sign_in(&hub, "secret");
+    let action = hub.recovery_key_offer(&hub_id()).unwrap();
+    let held = hub.hold(FakeOp::ReissueRecoveryKey);
+    let pending = action.issue();
+    hub.sign_in_as(&hub_id(), "bob");
+    held.release();
+    assert!(matches!(block_on(pending), Err(HubError::Stale)));
+}
+
+#[test]
+fn a_login_receipt_survives_key_lock_and_ordinary_refresh_but_not_a_new_login() {
+    let hub = keyed_hub();
+    let signed = sign_in(&hub, "secret");
+    hub.lock_keys(&hub_id());
+    hub.unlock_keys(&hub_id());
+    block_on(hub.connect(endpoint(pinned()))).unwrap();
+    assert!(signed.login.check_current().is_ok());
+    hub.sign_in_as(&hub_id(), "ada");
+    assert!(matches!(signed.login.discard(), Err(HubError::Stale)));
+    assert!(hub.is_signed_in(&hub_id()));
 }

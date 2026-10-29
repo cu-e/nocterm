@@ -1,0 +1,29 @@
+[package]
+name = "nocterm-cloud-chat"
+description = "Captured Cloud conversations, verified replay and durable command delivery."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "service"
+
+[dependencies]
+nocterm-core.workspace = true
+nocterm-ai.workspace = true
+nocterm-cloud-model.workspace = true
+nocterm-agent-runtime.workspace = true
+nocterm-agent-chat.workspace = true
+gpui.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+nocterm-cloud-model = { workspace = true, features = ["test-support"] }
+nocterm-agent-runtime = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

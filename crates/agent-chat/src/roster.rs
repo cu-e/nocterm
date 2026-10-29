@@ -69,7 +69,7 @@ impl ChatRoster {
     }
     /// Switches the visible collection; retained threads keep original hosts.
     pub fn switch_context(&mut self, host: ChatDeps, cx: &mut App) -> bool {
-        if host.scope() == self.host().scope() {
+        if host.chat_scope().ok() == self.host().chat_scope().ok() {
             return self.contexts.select(host);
         }
         if let Some(previous) = self.current() {
@@ -93,6 +93,35 @@ impl ChatRoster {
         }
         true
     }
+    /// Retain device-local snapshots before removing an unavailable original source.
+    /// This never grants a new account lease or redirects the old writer.
+    pub fn retire_stale_sources(&mut self, cx: &mut App) -> Retained {
+        let stale = self
+            .contexts
+            .all()
+            .flat_map(|scope| {
+                scope
+                    .chats()
+                    .iter()
+                    .filter(|thread| !thread.read(cx).source_current())
+                    .map(|thread| (scope.host().runtime().clone(), thread.entity_id()))
+            })
+            .collect::<Vec<_>>();
+        let mut removed = Vec::new();
+        let mut error = None;
+        for (runtime, id) in stale {
+            match runtime.capture_and_detach_document(id, cx) {
+                Ok(true) => removed.push(id),
+                Ok(false) => {}
+                Err(cause) => {
+                    error = Some(RetainError(cause));
+                    break;
+                }
+            }
+        }
+        self.contexts.remove_all(&removed);
+        Retained { removed, error }
+    }
     pub fn current(&self) -> Option<Entity<AgentThread>> {
         self.contexts.current().chats().current()
     }
@@ -109,12 +138,12 @@ impl ChatRoster {
         cx: &App,
     ) -> Result<bool, nocterm_agent_runtime::ChatOpenError> {
         let thread = slot.thread();
-        let scope = thread.read(cx).document().key().scope();
+        let scope = thread.read(cx).document().key().chat_scope();
         let id = thread.entity_id();
-        let visible = scope == self.host().scope();
+        let visible = Some(&scope) == self.host().chat_scope().ok().as_ref();
         let origin = self
             .contexts
-            .scope_mut(scope)
+            .scope_mut(&scope)
             .ok_or(nocterm_agent_runtime::ChatOpenError::Closed)?;
         origin.chats_mut().append(slot);
         if !visible {
@@ -207,12 +236,12 @@ impl ChatRoster {
             .origin(source.entity_id())
             .ok_or(nocterm_agent_runtime::ChatOpenError::Closed)?
             .host();
-        host.require_scope(source.read(cx).document().key().scope())?;
+        host.require_local_scope(&source.read(cx).document().key().chat_scope())?;
         let fork = match last {
-            Some(last) => source.read(cx).fork_at(last + 1),
-            None => source.read(cx).fork(),
+            Some(last) => source.update(cx, |thread, cx| thread.fork_at(last + 1, cx)),
+            None => source.update(cx, |thread, cx| thread.fork(cx)),
         };
-        let thread = host.fork_chat(fork, cx)?;
+        let thread = host.fork_chat(fork?, cx)?;
         thread.update(cx, |thread, cx| thread.persist(cx));
         Ok(thread)
     }
@@ -347,7 +376,13 @@ impl ChatRoster {
         match self.host().runtime().trim_history(cx) {
             Ok(evicted) => evicted
                 .into_iter()
-                .filter(|key| key.scope() == self.host().scope() && matches.contains(key.id()))
+                .filter(|key| {
+                    self.host()
+                        .chat_scope()
+                        .as_ref()
+                        .is_ok_and(|scope| key.chat_scope() == *scope)
+                        && matches.contains(key.id())
+                })
                 .map(|key| key.id().to_owned())
                 .collect(),
             Err(error) => {

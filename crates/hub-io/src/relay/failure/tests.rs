@@ -1,26 +1,14 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-
+use crate::classify::classify;
 use nocterm_hub_client::{ClientError, RelayError as HubRelayError};
 use nocterm_hubs_model::{HubAddress, HubError};
 use tonic::{Code, Status};
 
 use super::*;
 
-fn pool() -> Pool {
-    Pool::new(
-        PathBuf::new(),
-        "test",
-        Arc::new(crate::account::Accounts::new(PathBuf::new())),
-    )
-}
-
-fn hub() -> HubId {
-    HubId::from(HubAddress::parse("hub.example").unwrap())
-}
-
 fn open(node: Option<&str>, error: HubRelayError) -> RelayError {
-    opening(&pool(), &hub(), "hub.example", node, error)
+    classify_opening("hub.example", node, error, |error| {
+        classify(&HubAddress::parse("hub.example").unwrap(), error)
+    })
 }
 
 fn closed(code: ErrorCode) -> HubRelayError {

@@ -358,11 +358,17 @@ async fn a_pending_admin_key_is_listed_for_a_known_hub_and_confirming_it_redraws
     let listed = fx
         .hubs
         .read_with(cx, |hubs, _| hubs.pending_admin_keys(&id()));
-    assert_eq!(listed, [grace_of_acme("aaaa bbbb")]);
+    assert_eq!(
+        listed
+            .iter()
+            .map(|offer| offer.key().clone())
+            .collect::<Vec<_>>(),
+        [grace_of_acme("aaaa bbbb")]
+    );
 
     let before = redraws.get();
     let confirmed = fx.hubs.update(cx, |hubs, cx| {
-        hubs.confirm_admin_key(&id(), "grace", "AAAA-BBBB", cx)
+        hubs.confirm_admin_key(&listed[0], "AAAA-BBBB", cx)
     });
     cx.run_until_parked();
     assert_eq!(confirmed, Ok(()));
@@ -379,7 +385,7 @@ async fn a_key_that_is_not_the_one_shown_is_not_confirmed(cx: &mut TestAppContex
     fx.admin_keys.offer(&id(), grace_of_acme("aaaa"));
 
     let refused = fx.hubs.update(cx, |hubs, cx| {
-        hubs.confirm_admin_key(&id(), "grace", "ffff", cx)
+        hubs.confirm_admin_key(&hubs.pending_admin_keys(&id())[0], "ffff", cx)
     });
 
     assert_eq!(refused, Err(AdminKeyError::Mismatch));

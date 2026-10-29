@@ -2,7 +2,7 @@
 use super::{CandidateStamp, Client};
 use crate::ChatOpenError;
 use gpui::EntityId;
-use nocterm_ai::execution_origin::ChatKey;
+use nocterm_ai::{execution_origin::ChatKey, local_environment::LocalEnvironmentAccess};
 use nocterm_store::KeyedStamp;
 use std::{
     cell::RefCell,
@@ -24,6 +24,7 @@ pub struct DocumentClaim {
     key: ChatKey,
     owner: DocumentOwner,
     previous: Option<DocumentOwner>,
+    access: LocalEnvironmentAccess,
 }
 impl DocumentClaim {
     pub fn key(&self) -> &ChatKey {
@@ -49,22 +50,44 @@ pub enum DocumentClaimOutcome {
     Deleted,
 }
 
-#[derive(Default)]
+struct RegisteredClient {
+    client: Client,
+    _history: crate::history_admission::HistoryRegistration,
+}
 pub(super) struct DocumentRegistry {
-    clients: HashMap<EntityId, Client>,
+    clients: HashMap<EntityId, RegisteredClient>,
+    admission: crate::history_admission::HistoryAdmissionHandle,
     owners: HashMap<ChatKey, DocumentOwner>,
     deleted: HashSet<ChatKey>,
     stamps: HashMap<ChatKey, (EntityId, u64)>,
     closing: bool,
     sequence: u64,
+    access: HashMap<ChatKey, LocalEnvironmentAccess>,
 }
 impl DocumentRegistry {
+    pub(super) fn new(admission: crate::history_admission::HistoryAdmissionHandle) -> Self {
+        Self {
+            clients: Default::default(),
+            admission,
+            owners: Default::default(),
+            deleted: Default::default(),
+            stamps: Default::default(),
+            closing: false,
+            sequence: 0,
+            access: Default::default(),
+        }
+    }
     pub(super) fn claim(
         registry: &Rc<RefCell<Self>>,
         key: ChatKey,
+        access: LocalEnvironmentAccess,
         window: EntityId,
         replacing: Option<EntityId>,
     ) -> Result<DocumentClaimOutcome, ChatOpenError> {
+        access
+            .check_current()
+            .map_err(nocterm_ai::storage::AgentStorageError::from)?;
+        nocterm_ai::storage::require_local_environment(key.environment(), access.environment())?;
         let mut this = registry.borrow_mut();
         if this.closing {
             return Err(ChatOpenError::Closed);
@@ -80,7 +103,15 @@ impl DocumentRegistry {
             && this
                 .clients
                 .get(&entity)
-                .is_none_or(|client| !client.alive())
+                .is_none_or(|client| !client.client.alive())
+        {
+            this.retire(entity);
+        }
+        if this
+            .access
+            .get(&key)
+            .is_none_or(|access| access.check_current().is_err())
+            && let Some(entity) = this.owners.get(&key).and_then(|owner| owner.entity)
         {
             this.retire(entity);
         }
@@ -111,6 +142,7 @@ impl DocumentRegistry {
             key,
             owner,
             previous,
+            access,
         }))
     }
     fn reservation_current(&self, claim: &DocumentClaim) -> bool {
@@ -124,9 +156,11 @@ impl DocumentRegistry {
         }
         self.owners.remove(&claim.key);
         if let Some(previous) = claim.previous
-            && previous
-                .entity
-                .is_some_and(|id| self.clients.get(&id).is_some_and(|client| client.alive()))
+            && previous.entity.is_some_and(|id| {
+                self.clients
+                    .get(&id)
+                    .is_some_and(|client| client.client.alive())
+            })
         {
             self.owners.insert(claim.key.clone(), previous);
         }
@@ -135,6 +169,10 @@ impl DocumentRegistry {
         if self.closing {
             return Err(ChatOpenError::Closed);
         }
+        claim
+            .access
+            .check_current()
+            .map_err(nocterm_ai::storage::AgentStorageError::from)?;
         if self.deleted.contains(&claim.key) {
             return Err(ChatOpenError::Deleted(claim.key.clone()));
         }
@@ -149,6 +187,10 @@ impl DocumentRegistry {
         client: Client,
     ) -> Result<(), ChatOpenError> {
         self.require_reservation(claim)?;
+        claim
+            .access
+            .check_current()
+            .map_err(nocterm_ai::storage::AgentStorageError::from)?;
         if self
             .owners
             .iter()
@@ -156,6 +198,12 @@ impl DocumentRegistry {
         {
             return Err(ChatOpenError::StaleClaim(claim.key.clone()));
         }
+        let history = self
+            .admission
+            .register(std::rc::Rc::new(
+                crate::history_admission::local::SessionHistory::new(client.clone()),
+            ))
+            .map_err(crate::history_admission::HistoryAdmissionError::into_storage)?;
         if let Some(previous) = claim.previous.and_then(|owner| owner.entity) {
             self.clients.remove(&previous);
             self.stamps.remove(&claim.key);
@@ -169,7 +217,14 @@ impl DocumentRegistry {
                 ..claim.owner
             },
         );
-        self.clients.insert(owner, client);
+        self.access.insert(claim.key.clone(), claim.access.clone());
+        self.clients.insert(
+            owner,
+            RegisteredClient {
+                client,
+                _history: history,
+            },
+        );
         Ok(())
     }
     pub(super) fn retire(&mut self, id: EntityId) -> Vec<ChatKey> {
@@ -181,13 +236,41 @@ impl DocumentRegistry {
             .collect();
         self.clients.remove(&id);
         self.owners.retain(|_, owner| owner.entity != Some(id));
+        self.access.retain(|key, _| self.owners.contains_key(key));
         self.stamps.retain(|_, (owner, _)| *owner != id);
         ids
     }
     pub(super) fn current(&self, id: &ChatKey, owner: EntityId) -> bool {
         !self.closing
+            && self.source_current(id)
             && self.owners.get(id).is_some_and(|current| !current.reserved)
             && self.capture_current(id, owner)
+    }
+    pub(super) fn revoke_stale_sources(&mut self) -> Vec<Client> {
+        let keys = self
+            .access
+            .iter()
+            .filter(|(_, access)| access.check_current().is_err())
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        let mut clients = Vec::new();
+        for key in keys {
+            self.access.remove(&key);
+            if let Some(client) = self
+                .owners
+                .get(&key)
+                .and_then(|owner| owner.entity)
+                .and_then(|id| self.clients.get(&id))
+            {
+                clients.push(client.client.clone());
+            }
+        }
+        clients
+    }
+    pub(super) fn source_current(&self, key: &ChatKey) -> bool {
+        self.access
+            .get(key)
+            .is_some_and(|access| access.check_current().is_ok())
     }
     pub(super) fn capture_current(&self, id: &ChatKey, owner: EntityId) -> bool {
         !self.deleted.contains(id)
@@ -212,6 +295,7 @@ impl DocumentRegistry {
         self.deleted.insert(id.clone());
         self.stamps.remove(&id);
         self.owners.remove(&id);
+        self.access.remove(&id);
     }
     pub(super) fn target(
         &self,
@@ -227,18 +311,28 @@ impl DocumentRegistry {
         if !succeeded && self.stamps.get(stamp.key()) != Some(&(owner, stamp.tag().revision)) {
             return None;
         }
-        self.clients.get(&owner).cloned()
+        self.clients
+            .get(&owner)
+            .map(|registered| registered.client.clone())
     }
-    pub(super) fn scope_of(&self, owner: EntityId) -> Option<nocterm_ai::history::ContextId> {
+    pub(super) fn scope_of(
+        &self,
+        owner: EntityId,
+    ) -> Option<nocterm_ai::local_environment::ChatScope> {
         self.owners
             .iter()
-            .find_map(|(key, current)| (current.entity == Some(owner)).then_some(key.scope()))
+            .find_map(|(key, current)| (current.entity == Some(owner)).then_some(key.chat_scope()))
     }
     pub(super) fn client(&self, id: EntityId) -> Option<Client> {
-        self.clients.get(&id).cloned()
+        self.clients
+            .get(&id)
+            .map(|registered| registered.client.clone())
     }
     pub(super) fn clients(&self) -> Vec<Client> {
-        self.clients.values().cloned().collect()
+        self.clients
+            .values()
+            .map(|registered| registered.client.clone())
+            .collect()
     }
     pub(super) fn contains_deleted(&self, id: &ChatKey) -> bool {
         self.deleted.contains(id)

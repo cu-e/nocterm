@@ -21,6 +21,7 @@ pub(in crate::thread) mod presentation;
 pub(in crate::thread) mod reconnect_dispatch;
 pub(in crate::thread) mod reconnect_operation;
 pub(in crate::thread) mod resolution;
+pub(in crate::thread) mod source_execution;
 mod terminal_sessions;
 mod turn_context;
 use command_jobs::CommandJobs;
@@ -29,7 +30,6 @@ use live_observations::LiveObservations;
 use reconnect_dispatch::{DispatchEffect, DispatchScope, DispatchTicket, ReconnectDispatch};
 use terminal_sessions::TerminalSessions;
 use turn_context::TurnContext;
-#[derive(Default)]
 pub(super) struct ToolRuntime {
     approvals: ApprovalInbox,
     turn: TurnContext,
@@ -40,6 +40,18 @@ pub(super) struct ToolRuntime {
     reconnect_dispatch: ReconnectDispatch,
 }
 impl ToolRuntime {
+    pub(super) fn new(jobs: Box<dyn nocterm_session::command_jobs::CommandJobs>) -> Self {
+        Self {
+            approvals: Default::default(),
+            turn: Default::default(),
+            commands: CommandJobs::new(jobs),
+            live: Default::default(),
+            terminals: Default::default(),
+            displays: Default::default(),
+            reconnect_dispatch: Default::default(),
+        }
+    }
+
     pub(super) fn prepare_reconnect(
         &mut self,
         entry: &nocterm_workspace_ports::TerminalEntry,
@@ -153,8 +165,12 @@ impl ToolRuntime {
         entry: nocterm_workspace_ports::TerminalEntry,
         expected: ExpectedSession,
         redact: bool,
+        available: bool,
         cx: &mut gpui::App,
     ) -> dispatch::DispatchAction {
+        if !available {
+            return dispatch::DispatchAction::Respond(call, Err("Chat is unavailable.".into()), 0);
+        }
         let action = dispatch::TerminalDispatch::new(call, entry, expected).prepare(redact, cx);
         if let dispatch::DispatchAction::Respond(_, _, bytes) = &action {
             self.turn.account_outcome(*bytes);
@@ -206,7 +222,7 @@ impl ToolRuntime {
     }
 
     pub(super) fn busy(&self) -> bool {
-        self.approvals.pending() || self.commands.active().next().is_some() || self.live.active()
+        self.approvals.pending() || self.commands.has_active() || self.live.active()
     }
     pub(super) fn capture_scope(&mut self, scope: Vec<Attachment>) {
         self.turn.capture_scope(scope);
@@ -296,10 +312,8 @@ impl ToolRuntime {
         self.commands.cancel_all();
         self.live.cancel_all();
     }
-    pub(super) fn active_commands(
-        &self,
-    ) -> impl Iterator<Item = (&str, &Arc<dyn nocterm_session::HostExec>)> {
-        self.commands.active()
+    pub(super) fn has_active_commands(&self) -> bool {
+        self.commands.has_active()
     }
     pub(super) fn start_command(
         &mut self,
@@ -441,7 +455,8 @@ mod tests {
     use super::*;
     #[test]
     fn running_scope_does_not_follow_future_defaults_and_detachment_revokes_only_that_scope() {
-        let mut tools = ToolRuntime::default();
+        let mut tools =
+            ToolRuntime::new(Box::<nocterm_session::testing::ScriptedCommandJobs>::default());
         let fixed = Attachment::Group("accepted turn".into());
         let future = vec![Attachment::Group("next turn".into())];
         tools.capture_scope(vec![fixed.clone()]);
@@ -457,7 +472,8 @@ mod tests {
     }
     #[test]
     fn clearing_a_turn_preserves_opaque_terminal_identity_and_usage_accounting() {
-        let mut tools = ToolRuntime::default();
+        let mut tools =
+            ToolRuntime::new(Box::<nocterm_session::testing::ScriptedCommandJobs>::default());
         let id = tools.terminal_id("original item");
         let server = tools.server_id("profile");
         tools.account_context(40);

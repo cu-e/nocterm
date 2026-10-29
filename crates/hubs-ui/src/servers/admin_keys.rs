@@ -15,7 +15,7 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_hubs::{HubSummary, Hubs};
-use nocterm_hubs_model::PendingAdminKey;
+use nocterm_hubs_model::AdminKeyOffer;
 
 use super::row::item;
 use crate::layout::{field, note, problem};
@@ -49,7 +49,7 @@ pub(super) fn admin_keys(
     let cards: Vec<_> = pending
         .iter()
         .enumerate()
-        .map(|(index, pending)| card(summary, hubs, key, index, pending, cx))
+        .map(|(index, pending)| card(hubs, key, index, pending, cx))
         .collect();
     Some(
         field(
@@ -70,17 +70,18 @@ pub(super) fn admin_keys(
 
 /// One administrator: who, the fingerprint, and the button that confirms it.
 fn card(
-    summary: &HubSummary,
     hubs: &Entity<Hubs>,
     key: &str,
     index: usize,
-    pending: &PendingAdminKey,
+    offer: &AdminKeyOffer,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
+    let pending = offer.key();
     let changed = pending.replaces.is_some();
-    let (hubs, id) = (hubs.clone(), summary.id.clone());
-    let (account, fingerprint) = (pending.account_id.clone(), pending.fingerprint.clone());
+    let hubs = hubs.clone();
+    let captured = offer.clone();
+    let fingerprint = pending.fingerprint.clone();
     let confirm =
         Button::new(item(&format!("server-admin-confirm-{index}"), key)).label(if changed {
             "Confirm the changed key"
@@ -89,7 +90,7 @@ fn card(
         });
     let confirm = if changed { confirm.danger() } else { confirm };
     let confirm = confirm.on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-        manage::confirm_admin_key(&hubs, &id, &account, &fingerprint, window, cx);
+        manage::confirm_admin_key(&hubs, &captured, &fingerprint, window, cx);
     });
     v_flex()
         .id(item(&format!("server-admin-key-{index}"), key))

@@ -9,6 +9,8 @@ layer = "domain"
 [features]
 test-support = []
 [dependencies]
+sha2.workspace = true
+nocterm-hubs-model.workspace = true
 nocterm-settings.workspace = true
 nocterm-core.workspace = true
 nocterm-project-model.workspace = true
@@ -25,6 +27,7 @@ toml.workspace = true
 thiserror.workspace = true
 uuid = { version = "1", default-features = false }
 [dev-dependencies]
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 [lints]
 workspace = true

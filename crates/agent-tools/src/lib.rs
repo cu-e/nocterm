@@ -1,0 +1,38 @@
+//! Bounded agent commands and run-scoped native terminal tools without GUI state.
+//!
+//! Owns: per-chat command admission, continuous stdout draining, retained outcomes,
+//! cancellation and absolute deadlines, retaining the original executor for every job;
+//! headless session receipts, physical Session/VT lifetimes, immutable run views
+//! and eight existing catalog handlers.
+//! Does not own: account authentication, approvals, grant policy, SSH authentication,
+//! journal execution, model execution or the supervising native task scheduler.
+//! Ports used: session::HostExec. Ports provided: session::command_jobs::{CommandJobs,
+//! CommandJobsFactory}, cloud-model::ScopedToolExecutor. Headless consumers inject
+//! current ToolAuthority, ToolTimer, ScopedSessionOpener, BackgroundCommandJournal
+//! and supervised ToolTaskSpawner. Retained consumers additionally inject original
+//! BackgroundCommandAuthority, BackgroundCommandCleanup and fresh ToolSessionHandleSource.
+//! Settings sections: none. Globals: none.
+//! Invariants: at most four active and sixteen retained commands per registry;
+//! stdout retains a 64KiB prefix while all bytes are drained and counted;
+//! cancelling never invents a successful exit or replaces an accepted executor.
+//! Headless handles belong to one original run; session retirement and input/poll
+//! admission serialize under the session entry. Geometry is at most 240x120 cells,
+//! history 2000 rows and at most sixteen physical sessions per retained chat owner.
+//! Retained run views have fresh handles and share the same job/session budget;
+//! their detach/drop fences admission without closing physical connections. A
+//! separate supervisor closes the retained owner; ordinary registries still close
+//! on drop. One reader owns each Session. Live observations release only their
+//! original private acquisition token. A background command
+//! is linked to its durable original dispatch before native polling. Only an
+//! observed exit acknowledged by that journal resolves its own effect; other
+//! outcomes remain unknown. Restoring a screen never establishes a shell prompt.
+pub mod headless;
+mod jobs;
+
+#[derive(Default)]
+pub struct JobsFactory;
+impl nocterm_session::command_jobs::CommandJobsFactory for JobsFactory {
+    fn create(&self) -> Box<dyn nocterm_session::command_jobs::CommandJobs> {
+        Box::<jobs::Jobs>::default()
+    }
+}

@@ -5,9 +5,15 @@ use crate::{
 };
 use futures::future::BoxFuture;
 use std::{path::PathBuf, sync::Arc};
+mod prepared;
+pub use prepared::{PreparedChatBytes, PreparedChatLoad};
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum AgentStorageError {
+    #[error("All normal installation history payload slots are retained or loading")]
+    PayloadCapacity,
+    #[error("The history repository cannot prepare a charged decoded load")]
+    AllocationUnsupported,
     #[error(
         "Saved history needs {incoming} bytes with {retained} retained; installation limit is {limit} bytes"
     )]
@@ -29,6 +35,17 @@ pub enum AgentStorageError {
         expected: nocterm_project_model::ContextId,
         actual: nocterm_project_model::ContextId,
     },
+    #[error("Saved chat belongs to another original environment")]
+    EnvironmentMismatch {
+        expected: Arc<crate::local_environment::LocalEnvironment>,
+        actual: Arc<crate::local_environment::LocalEnvironment>,
+    },
+    #[error("This environment requires held native storage directory capabilities")]
+    EnvironmentUnsupported(Arc<crate::local_environment::LocalEnvironment>),
+    #[error("The hub account could not be captured")]
+    AccountCapture(#[from] nocterm_hubs_model::HubError),
+    #[error("The captured account source is no longer available")]
+    AccountSource(#[from] nocterm_hubs_model::source_identity::LocalAccountSourceError),
     #[error("This context requires held native storage directory capabilities: {0:?}")]
     ScopeUnsupported(nocterm_project_model::ContextId),
     #[error("The local history filesystem operation failed: {0}")]
@@ -90,6 +107,25 @@ pub fn require_chat_scope(
     }
     Ok(())
 }
+pub fn require_local_environment(
+    expected: &crate::local_environment::LocalEnvironment,
+    actual: &crate::local_environment::LocalEnvironment,
+) -> Result<(), AgentStorageError> {
+    if expected != actual {
+        return Err(AgentStorageError::EnvironmentMismatch {
+            expected: Arc::new(expected.clone()),
+            actual: Arc::new(actual.clone()),
+        });
+    }
+    Ok(())
+}
+pub fn require_local_scope(
+    expected: &crate::local_environment::ChatScope,
+    actual: &crate::local_environment::ChatScope,
+) -> Result<(), AgentStorageError> {
+    require_local_environment(expected.environment(), actual.environment())?;
+    require_chat_scope(expected.context(), actual.context())
+}
 pub type StorageFuture<T> = BoxFuture<'static, Result<T, AgentStorageError>>;
 /// Futures perform I/O only when polled by the background storage executor.
 pub trait AgentStateRepository: Send + Sync {
@@ -97,6 +133,61 @@ pub trait AgentStateRepository: Send + Sync {
     fn save(&self, state: AgentStateFile) -> StorageFuture<()>;
 }
 pub trait ChatRepository: Send + Sync {
+    /// Read bounded original bytes and preflight their decoded ownership cost.
+    /// Callers must obtain the actual shared allocation before `decode`; an
+    /// implementation without this capability must refuse rather than hydrate
+    /// an uncharged value through the older load API.
+    fn prepare_load_in(
+        &self,
+        _scope: crate::local_environment::ChatScope,
+        _id: String,
+    ) -> StorageFuture<Box<dyn PreparedChatLoad>> {
+        Box::pin(async { Err(AgentStorageError::AllocationUnsupported) })
+    }
+    fn catalog_in(
+        &self,
+        scope: crate::local_environment::ChatScope,
+    ) -> StorageFuture<Vec<ChatSummary>> {
+        if scope.environment().is_this_computer() {
+            self.catalog(scope.context())
+        } else {
+            Box::pin(async move {
+                Err(AgentStorageError::EnvironmentUnsupported(Arc::new(
+                    scope.environment().clone(),
+                )))
+            })
+        }
+    }
+    fn load_in(
+        &self,
+        scope: crate::local_environment::ChatScope,
+        id: String,
+    ) -> StorageFuture<SavedChat> {
+        if scope.environment().is_this_computer() {
+            self.load(scope.context(), id)
+        } else {
+            Box::pin(async move {
+                Err(AgentStorageError::EnvironmentUnsupported(Arc::new(
+                    scope.environment().clone(),
+                )))
+            })
+        }
+    }
+    fn delete_in(
+        &self,
+        scope: crate::local_environment::ChatScope,
+        id: String,
+    ) -> StorageFuture<()> {
+        if scope.environment().is_this_computer() {
+            self.delete(scope.context(), id)
+        } else {
+            Box::pin(async move {
+                Err(AgentStorageError::EnvironmentUnsupported(Arc::new(
+                    scope.environment().clone(),
+                )))
+            })
+        }
+    }
     /// Filter authoritative ownership before applying per-context discovery limits.
     fn catalog(&self, scope: nocterm_project_model::ContextId) -> StorageFuture<Vec<ChatSummary>>;
     fn load(&self, scope: nocterm_project_model::ContextId, id: String)

@@ -37,6 +37,7 @@ pub(crate) fn hubs_problem(error: &HubsError) -> String {
 /// Why an administrator's key was not confirmed.
 pub(crate) fn admin_key_problem(error: AdminKeyError) -> String {
     match error {
+        AdminKeyError::Stale => "The account changed. Compare the key shown for the current account again.".to_owned(),
         AdminKeyError::Locked => {
             "The account keys are closed on this device. Unlock the vault first.".to_owned()
         }
@@ -66,6 +67,7 @@ pub(crate) fn hub_problem(error: &HubError) -> String {
             "This server speaks protocol {hub} and Nocterm speaks {client}. Update the older one."
         ),
         HubError::InvalidCredentials => "The user name or password was not accepted.".to_owned(),
+        HubError::Stale => "The account changed. Start this action again for the current account.".to_owned(),
         HubError::RecoveryKeyInvalid => {
             "That is not the recovery key of this account. Check it and try again.".to_owned()
         }

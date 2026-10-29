@@ -31,7 +31,7 @@ pub(super) fn disk_value(
     // tests separately own byte framing and authoritative-envelope validation.
     let chat = repository.transcript(id).unwrap();
     let mut value = serde_json::to_value(chat).unwrap();
-    if value["version"] == 2 {
+    if matches!(value["version"].as_u64(), Some(2 | 3)) {
         value["chat"].take()
     } else {
         value

@@ -316,3 +316,46 @@ fn catalog_rows_preserve_the_transcript_version_independently_of_cache_schema() 
     changed["transcript_version"] = serde_json::json!(99);
     assert!(serde_json::from_value::<ChatSummary>(changed).is_err());
 }
+
+mod environments;
+
+#[test]
+fn owned_preparation_preserves_the_body_and_matches_existing_format_validation() {
+    let legacy = decode(LEGACY, ID).unwrap();
+    let scoped = SavedChat::for_identity("agent".into(), ID.into(), 10);
+    let environment = SavedChat::for_environment(
+        "agent".into(),
+        ID.into(),
+        10,
+        crate::local_environment::ChatScope::new(
+            crate::local_environment::LocalEnvironment::ThisComputer,
+            ContextId::General,
+        ),
+    );
+    for mut chat in [legacy, scoped, environment] {
+        chat.entries
+            .push(crate::thread::Entry::Agent("kept owned body".into()));
+        let expected = prepare(chat.clone()).unwrap();
+        let rows = chat.entries.as_ptr();
+        let actual = prepare_owned(chat).unwrap();
+        assert_eq!(actual.entries.as_ptr(), rows);
+        assert_eq!(encode(&actual).unwrap(), encode(&expected).unwrap());
+        assert_eq!(actual.resident_bytes(), expected.resident_bytes());
+    }
+    let invalid = SavedChat::for_identity("agent".into(), "invalid".into(), 1);
+    assert!(matches!(
+        prepare_owned(invalid),
+        Err(HistoryCodecError::InvalidId(_))
+    ));
+    let archived = SavedChat::archive_draft(ID.into(), "agent".into(), "draft".into(), 1);
+    assert!(matches!(
+        prepare_owned(archived),
+        Err(HistoryCodecError::ArchivedPatch)
+    ));
+    let mut oversized = SavedChat::for_identity("agent".into(), ID.into(), 1);
+    oversized.entries = vec![crate::thread::Entry::Agent(String::new()); MAX_SAVED_ENTRIES + 1];
+    assert!(matches!(
+        prepare_owned(oversized),
+        Err(HistoryCodecError::CollectionLimit)
+    ));
+}

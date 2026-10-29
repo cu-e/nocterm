@@ -5,6 +5,187 @@ use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::thread::Entry;
 
+/// Hosts the real panel row renderer with either existing conversation service.
+struct SourceRow {
+    panel: Entity<AgentPanel>,
+    source: Rc<dyn nocterm_agent_chat::conversation::ConversationSource>,
+    identity: gpui_kit::EntityId,
+    index: usize,
+}
+impl gpui_kit::Render for SourceRow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.panel.update(cx, |panel, cx| {
+            let mut dirty = Vec::new();
+            let _ = self.source.with_view(cx, &mut |view| {
+                dirty.extend(0..view.transcript.entries.len());
+            });
+            let _ = panel.observe_source_rows(self.source.clone(), self.identity, &dirty, cx);
+            panel.render_entry(self.index, cx)
+        })
+    }
+}
+
+#[gpui_kit::test]
+fn borrowed_local_rows_keep_their_copy_and_fork_actions(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    exchange(&f, "Local question", "Local answer", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("fork-message", 0usize)).is_some());
+        window.hover(("agent-entry", 0usize), cx);
+        window.click(("copy-message", 0usize), cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("Local question")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn borrowed_cloud_rows_copy_their_own_content_and_never_offer_a_local_fork(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_cloud_model::{
+        identity::CommandId,
+        projection::testing::{
+            ProjectionFixture, ScriptedConversationSource, prompt_event, run_binding,
+        },
+    };
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    exchange(&f, "Local question", "Local answer", cx);
+    let local = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let mut projection = ProjectionFixture::new();
+    let source = Arc::new(ScriptedConversationSource::new(
+        projection.binding().clone(),
+    ));
+    let cloud = cx.update(|cx| {
+        f.installation
+            .installed
+            .cloud_chats()
+            .open(source.clone(), cx)
+            .unwrap()
+    });
+    source
+        .queue(projection.page(vec![prompt_event(
+            &run_binding(1),
+            "Original Cloud question",
+            CommandId::from_bytes([31; 16]),
+        )]))
+        .unwrap();
+    cx.run_until_parked();
+    let (window, _view) = cx.update(|cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| SourceRow {
+                panel: f.panel.clone(),
+                source: cloud.clone(),
+                identity: cx.entity_id(),
+                index: 0,
+            })
+        })
+        .unwrap()
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("agent-entry", 0usize)).is_some());
+        assert!(window.try_find(("fork-message", 0usize)).is_none());
+        window.hover(("agent-entry", 0usize), cx);
+        window.click(("copy-message", 0usize), cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("Original Cloud question")
+        );
+    })
+    .unwrap();
+    let _replacement = source.replace_membership();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("agent-entry", 0usize)).is_none());
+    })
+    .unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            f.panel.read(cx).current().unwrap().entity_id(),
+            local.entity_id()
+        );
+        assert_eq!(local.read(cx).history_entries().len(), 2);
+    });
+}
+
+#[gpui_kit::test]
+fn borrowed_cloud_disclosure_does_not_inherit_local_expansion(cx: &mut TestAppContext) {
+    use nocterm_cloud_model::{
+        coordinator::CoordinatorEvent,
+        engine::{EngineEvent, EngineText, TextChannel},
+        identity::CommandId,
+        projection::testing::{
+            ProjectionFixture, ScriptedConversationSource, prompt_event, run_binding,
+        },
+    };
+    let f = fixture(cx);
+    transcript(&f, cx);
+    scroll_to(&f, 1, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("thought", 1usize), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(("thought-output", 1usize)).is_some());
+    })
+    .unwrap();
+    let mut projection = ProjectionFixture::new();
+    let source = Arc::new(ScriptedConversationSource::new(
+        projection.binding().clone(),
+    ));
+    let cloud = cx.update(|cx| {
+        f.installation
+            .installed
+            .cloud_chats()
+            .open(source.clone(), cx)
+            .unwrap()
+    });
+    let run = run_binding(1);
+    source
+        .queue(projection.page(vec![
+            prompt_event(&run, "Cloud question", CommandId::from_bytes([32; 16])),
+            CoordinatorEvent::Progress {
+                run,
+                event: EngineEvent::Text(
+                    EngineText::new(TextChannel::Thought, "Cloud reasoning".into()).unwrap(),
+                ),
+            },
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    let (window, _view) = cx.update(|cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| SourceRow {
+                panel: f.panel.clone(),
+                source: cloud.clone(),
+                identity: cx.entity_id(),
+                index: 1,
+            })
+        })
+        .unwrap()
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("thought", 1usize)).is_some());
+        assert!(window.try_find(("thought-output", 1usize)).is_none());
+        window.click(("thought", 1usize), cx);
+        window.render_frame(cx);
+        assert!(window.try_find(("thought-output", 1usize)).is_some());
+    })
+    .unwrap();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("thought-output", 1usize)).is_none());
+    })
+    .unwrap();
+}
+
 fn transcript(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
     new_chat(f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());

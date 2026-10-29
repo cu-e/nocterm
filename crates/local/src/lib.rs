@@ -23,7 +23,7 @@ use std::{
 use futures::{FutureExt, executor::block_on, select};
 use nocterm_session::{
     CloseReason, Command, ConnectRequest, Event, PtySize, Session, SessionError, ShellLaunch,
-    Transport, channel,
+    Transport,
 };
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
@@ -45,6 +45,19 @@ impl Transport for LocalTransport {
     fn open(&self, request: ConnectRequest) -> Session {
         open(self.0.clone(), false, request.term, request.size)
     }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        open_scoped(
+            self.0.clone(),
+            false,
+            request.term,
+            request.size,
+            options.source().clone(),
+        )
+    }
 }
 
 /// A command PTY with the host environment and platform PTY metadata only.
@@ -55,22 +68,47 @@ impl Transport for IsolatedLocalTransport {
     fn open(&self, request: ConnectRequest) -> Session {
         open(self.0.clone(), true, request.term, request.size)
     }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        open_scoped(
+            self.0.clone(),
+            true,
+            request.term,
+            request.size,
+            options.source().clone(),
+        )
+    }
 }
 
 /// Starts `launch` on a new PTY, on a thread of its own.
 fn open(launch: ShellLaunch, isolated: bool, term: String, pty: PtySize) -> Session {
+    open_scoped(launch, isolated, term, pty, Default::default())
+}
+fn open_scoped(
+    launch: ShellLaunch,
+    isolated: bool,
+    term: String,
+    pty: PtySize,
+    source: nocterm_session::ConnectionSource,
+) -> Session {
+    if let Err(error) = source.check() {
+        return Session::failed(error.into());
+    }
     if let Err(error) = launch.validate() {
         return Session::failed(SessionError::InvalidLaunch(error));
     }
-    let (session, driver) = channel(None);
-    let session = session.with_exec(Arc::new(LocalExec));
+    let (session, driver) = nocterm_session::channel_with_source(None, source.clone());
+    let session = session.with_exec(Arc::new(exec::ScopedLocalExec::new(source)));
     thread::spawn(move || {
         if let Err(error) = start(launch, isolated, term, pty, driver.clone()) {
-            block_on(
-                driver.emit(Event::Closed(CloseReason::Failed(SessionError::Other(
-                    error.to_string(),
-                )))),
-            );
+            let error = match error {
+                LaunchError::Source(error) => SessionError::Source(error),
+                other => SessionError::Other(other.to_string()),
+            };
+            block_on(driver.emit(Event::Closed(CloseReason::Failed(error))));
         }
     });
     session
@@ -87,6 +125,8 @@ fn size(s: PtySize) -> NativeSize {
 
 #[derive(Debug, thiserror::Error)]
 enum LaunchError {
+    #[error(transparent)]
+    Source(#[from] nocterm_session::ConnectionSourceError),
     #[error("native PTY error: {0}")]
     Pty(String),
     #[error("native PTY has no file descriptor")]
@@ -105,6 +145,7 @@ fn start(
     pty: PtySize,
     driver: nocterm_session::SessionDriver,
 ) -> Result<(), LaunchError> {
+    driver.source().check()?;
     let pair = native_pty_system()
         .openpty(size(pty))
         .map_err(|e| LaunchError::Pty(e.to_string()))?;
@@ -138,6 +179,7 @@ fn start(
         .master
         .take_writer()
         .map_err(|e| LaunchError::Pty(e.to_string()))?;
+    driver.source().check()?;
     let mut child = pair
         .slave
         .spawn_command(command)
@@ -194,6 +236,9 @@ fn start(
                     }
                 }
                 Some(Command::Resize(s)) => {
+                    if command_driver.source().check().is_err() {
+                        break;
+                    }
                     let _ = command_master
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -292,6 +337,7 @@ fn write_input(
                 "PTY closed",
             ));
         }
+        driver.source().check().map_err(std::io::Error::other)?;
         match writer.write(&bytes[offset..]) {
             Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
             Ok(count) => offset += count,
@@ -309,6 +355,7 @@ fn write_input(
                 "PTY closed",
             ));
         }
+        driver.source().check().map_err(std::io::Error::other)?;
         match writer.flush() {
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(10))

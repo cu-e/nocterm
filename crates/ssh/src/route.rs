@@ -45,7 +45,7 @@ pub(crate) struct Route {
 }
 
 impl Route {
-    fn new(relay: Option<Arc<dyn RelayDialer>>) -> Self {
+    pub(crate) fn new(relay: Option<Arc<dyn RelayDialer>>) -> Self {
         Self {
             hops: Vec::new(),
             relay,
@@ -169,7 +169,7 @@ async fn link(
             hop: login.hop().map(|hop| hop.index),
         }))
         .await;
-    let mut handle = reach(route, login, &host_keys, request, observed)
+    let mut handle = reach(route, login, &host_keys, request, observed, driver)
         .await
         .map_err(|fault| match fault {
             Fault::Own(error) => own(error),
@@ -197,13 +197,14 @@ async fn reach(
     host_keys: &crate::host_keys::HostKeys,
     request: &ConnectRequest,
     observed: &Arc<Mutex<Observed>>,
+    driver: &SessionDriver,
 ) -> Result<Handle<Client>, Fault> {
     let target = login.target();
     let attempt = async {
         let stream = open_stream(route, target, request).await?;
         login::handshake(
             login,
-            stream,
+            crate::source_stream::SourceStream::new(stream, driver.clone()),
             host_keys,
             request.keepalive_interval,
             observed,

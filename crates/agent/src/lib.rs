@@ -1,8 +1,12 @@
 //! The agent chat panel: views over the chats of `nocterm-agent-chat`.
 //! Installed retains the actual runtime, available agents, image, layout, settings, metadata
-//! and auth collaborators.
+//! and auth collaborators. New hub-window actions capture fresh account sources;
+//! existing chats keep their original source and are withdrawn when it becomes stale.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
 //! disposable presentation transitions and their subscription/task lifetimes.
+//! Transcript rows borrow ConversationSource into the existing EntryRenderer;
+//! original producer activity controls streaming and fork is explicitly source-bound.
+//! Installed retains one CloudChatInstallation with the runtime's shared history admission.
 //! SignInCards owns secret controls and prompt tokens. PanelNotices owns errors, approval
 //! identity and cancellable redraw work; PanelBindings retains installation subscriptions.
 //! Stateless renderers take immutable projections; finite presentation operations return
@@ -64,6 +68,7 @@ pub struct AgentServices {
     pub metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
+    pub command_jobs: Arc<dyn nocterm_session::command_jobs::CommandJobsFactory>,
     pub storage: runtime::AgentStorage,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,

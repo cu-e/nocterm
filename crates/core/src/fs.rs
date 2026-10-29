@@ -4,8 +4,10 @@
 //! directories must be trusted: this is not a pinned-directory traversal API.
 
 mod bounded;
+mod private;
 
 pub use bounded::{BoundedReadError, read_regular_bounded};
+pub use private::{PrivateFileError, open_private_regular, require_private_regular};
 
 use std::{
     fs::{self, File, OpenOptions, Permissions},
@@ -142,12 +144,35 @@ impl AtomicPublication {
         self.temporary
             .persist(&self.destination)
             .map_err(|error| FileError::at(&self.destination, error.error))?;
-        #[cfg(unix)]
-        if let Ok(directory) = File::open(parent_directory(&self.destination)) {
-            let _ = directory.sync_all();
-        }
+        sync_parent_best_effort(&self.destination);
         Ok(())
     }
+
+    /// Publishes only if the final path does not exist, including a dangling link.
+    /// Returns the actual published descriptor; no destination is overwritten.
+    ///
+    /// Success commits the namespace operation. The tempfile fallback can leave
+    /// a second staging hard link, and parent sync is best effort. A private-key
+    /// owner must validate this descriptor and confirm held-parent durability
+    /// before announcing readiness. A postcommit refusal must retain the identity,
+    /// rather than deleting or silently regenerating the destination.
+    pub fn publish_new(self) -> Result<File, FileError> {
+        let file = self
+            .temporary
+            .persist_noclobber(&self.destination)
+            .map_err(|error| FileError::at(&self.destination, error.error))?;
+        sync_parent_best_effort(&self.destination);
+        Ok(file)
+    }
+}
+
+fn sync_parent_best_effort(path: &Path) {
+    #[cfg(unix)]
+    if let Ok(directory) = File::open(parent_directory(path)) {
+        let _ = directory.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 fn parent_directory(path: &Path) -> &Path {

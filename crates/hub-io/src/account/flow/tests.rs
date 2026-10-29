@@ -1,6 +1,8 @@
 use nocterm_keys::OpenError;
+mod source_binding;
 
 use super::*;
+use crate::account::Slot;
 
 #[test]
 fn a_device_that_loses_the_race_opens_the_keyset_that_exists() {
@@ -46,7 +48,8 @@ pub(super) mod race {
 
     /// One device of the account: its own cache directory and its own key flow.
     pub(super) struct Device {
-        pub(super) flow: KeyFlow,
+        pub(super) flow: Arc<KeyFlow>,
+        subjects: Arc<crate::account::testing::ScriptedSubjects>,
         accounts: Arc<Accounts>,
         dir: TempDir,
     }
@@ -58,8 +61,16 @@ pub(super) mod race {
 
         fn in_dir(dir: TempDir) -> Self {
             let accounts = Arc::new(Accounts::new(dir.path().to_path_buf()));
+            let subjects = Arc::new(crate::account::testing::ScriptedSubjects::for_slot(
+                &accounts.slot(&hub()).unwrap(),
+            ));
             Self {
-                flow: KeyFlow::new(pool(dir.path(), &accounts), Arc::clone(&accounts)),
+                flow: KeyFlow::new(
+                    pool(dir.path(), &accounts),
+                    Arc::clone(&accounts),
+                    Handle::current(),
+                ),
+                subjects,
                 accounts,
                 dir,
             }
@@ -75,10 +86,28 @@ pub(super) mod race {
             self.accounts.slot(&hub()).unwrap()
         }
 
+        pub(super) fn owner(&self) -> Arc<KeyAdmission> {
+            if self.subjects.current(&hub()).is_none() {
+                self.subjects.sign_in(hub(), ACCOUNT_ID, "device");
+            }
+            let provider = LocalSourceProvider::new(self.slot(), self.subjects.clone());
+            KeyAdmission::scripted(provider.membership().unwrap())
+        }
+        pub(super) fn confirm(&self) {
+            let owner = self.owner();
+            self.flow
+                .offer(&owner, Secret::new("displayed fixture key"))
+                .unwrap()
+                .confirm()
+                .unwrap();
+        }
+
         pub(super) async fn sign_in(&self, hub_keys: &MemoryKeysets, password: &str) -> KeyStatus {
+            self.subjects.sign_in(hub(), ACCOUNT_ID, "device");
+            let owner = self.owner();
             let secrets = LoginSecrets::derive(password, HUB_UID, "ada").unwrap();
             self.flow
-                .after_password(&hub(), hub_keys, ACCOUNT_ID, "ada", secrets)
+                .after_password(&owner, hub_keys, ACCOUNT_ID, "ada", secrets)
                 .await
                 .unwrap()
         }
@@ -86,7 +115,7 @@ pub(super) mod race {
         async fn with_passphrase(&self, hub_keys: &MemoryKeysets, passphrase: &str) -> KeyStatus {
             let passphrase = Secret::new(passphrase);
             self.flow
-                .open_with_passphrase(&hub(), hub_keys, ACCOUNT_ID, passphrase)
+                .open_with_passphrase(&self.owner(), hub_keys, ACCOUNT_ID, passphrase)
                 .await
                 .unwrap()
         }
@@ -191,7 +220,12 @@ pub(super) mod race {
 
         let refused = second
             .flow
-            .open_with_passphrase(&hub(), &hub_keys, ACCOUNT_ID, Secret::new(PASSPHRASE))
+            .open_with_passphrase(
+                &second.owner(),
+                &hub_keys,
+                ACCOUNT_ID,
+                Secret::new(PASSPHRASE),
+            )
             .await;
 
         assert!(matches!(
@@ -249,7 +283,7 @@ pub(super) mod race {
         // The recovery key made by the winner opens the loser's keys.
         let recovered = loser
             .flow
-            .recover_with(&hub(), &hub_keys, created.clone())
+            .recover_with(&loser.owner(), &hub_keys, created.key().clone())
             .await;
         assert!(recovered.is_ok());
         assert_eq!(loser.slot().status(), VaultStatus::Unlocked);
@@ -269,7 +303,7 @@ mod reissue {
         let KeyStatus::Created(shown) = device.sign_in(&hub_keys, PASSWORD).await else {
             panic!("a first sign-in creates the keys");
         };
-        let key = RecoveryKey::parse(shown.expose()).unwrap();
+        let key = RecoveryKey::parse(shown.key().expose()).unwrap();
         (device, hub_keys, key)
     }
 
@@ -278,7 +312,7 @@ mod reissue {
         let keys = slot.open().ok_or(HubError::KeysLocked)?;
         let shown = device
             .flow
-            .reissue_with(&slot, hub_keys, keys.keyset())
+            .reissue_with(&device.owner(), hub_keys, keys.keyset())
             .await?;
         Ok(RecoveryKey::parse(shown.expose()).unwrap())
     }
@@ -298,7 +332,7 @@ mod reissue {
         let (device, ..) = created().await;
         assert!(device.flow.recovery_key_unconfirmed(&hub()));
 
-        device.flow.confirm_recovery_key(&hub()).unwrap();
+        device.confirm();
 
         assert!(!device.flow.recovery_key_unconfirmed(&hub()));
     }
@@ -313,10 +347,10 @@ mod reissue {
             "nothing is open before the password opens the keys"
         );
         let status = device.sign_in(&hub_keys, PASSWORD).await;
-        assert_eq!(status, KeyStatus::RecoveryKeyUnconfirmed);
+        assert!(matches!(status, KeyStatus::RecoveryKeyUnconfirmed(_)));
         assert!(device.flow.recovery_key_unconfirmed(&hub()));
 
-        device.flow.confirm_recovery_key(&hub()).unwrap();
+        device.confirm();
         let device = device.restarted();
         assert_eq!(device.sign_in(&hub_keys, PASSWORD).await, KeyStatus::Open);
     }
@@ -333,7 +367,7 @@ mod reissue {
     #[tokio::test]
     async fn reissuing_replaces_the_recovery_key_the_hub_can_open_and_keeps_the_password() {
         let (device, hub_keys, old) = created().await;
-        device.flow.confirm_recovery_key(&hub()).unwrap();
+        device.confirm();
         let version = hub_keys.stored().unwrap().version;
 
         let new = reissue(&device, &hub_keys).await.unwrap();
@@ -355,16 +389,16 @@ mod reissue {
     #[tokio::test]
     async fn a_reissued_key_is_unconfirmed_until_confirmed_and_survives_a_restart() {
         let (device, hub_keys, _) = created().await;
-        device.flow.confirm_recovery_key(&hub()).unwrap();
+        device.confirm();
 
         reissue(&device, &hub_keys).await.unwrap();
         assert!(device.flow.recovery_key_unconfirmed(&hub()));
 
         let device = device.restarted();
-        assert_eq!(
+        assert!(matches!(
             device.sign_in(&hub_keys, PASSWORD).await,
-            KeyStatus::RecoveryKeyUnconfirmed
-        );
+            KeyStatus::RecoveryKeyUnconfirmed(_)
+        ));
     }
 
     #[tokio::test]
@@ -386,7 +420,7 @@ mod reissue {
     #[tokio::test]
     async fn a_keyset_that_keeps_changing_leaves_the_old_key_valid_and_the_marker_as_it_was() {
         let (device, hub_keys, old) = created().await;
-        device.flow.confirm_recovery_key(&hub()).unwrap();
+        device.confirm();
         hub_keys.contend_recovery_writes(100);
 
         let result = reissue(&device, &hub_keys).await;
@@ -401,7 +435,7 @@ mod reissue {
         let (device, ..) = created().await;
         let device = device.restarted();
 
-        let result = device.flow.reissue_recovery_key(&hub()).await;
+        let result = device.flow.reissue_recovery_key(&device.owner()).await;
 
         assert!(matches!(result, Err(HubError::KeysLocked)));
     }
@@ -433,7 +467,11 @@ mod reissue {
 
         device
             .flow
-            .recover_with(&hub(), &hub_keys, Secret::new(key.display().as_str()))
+            .recover_with(
+                &device.owner(),
+                &hub_keys,
+                Secret::new(key.display().as_str()),
+            )
             .await
             .unwrap();
 

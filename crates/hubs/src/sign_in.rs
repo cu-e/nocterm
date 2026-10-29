@@ -9,8 +9,8 @@ use futures::FutureExt as _;
 use gpui::{Context, EventEmitter, Task};
 use nocterm_hubs_model::{
     Fingerprint, HubAddress, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord, HubSignIn,
-    HubTrust, HubsSettings, KeyStatus, OidcProvider, OidcSignIn, ProbedHub, SignedIn,
-    TrustDecision, TrustPolicy, decide,
+    HubTrust, HubsSettings, KeyStatus, OidcProvider, OidcSignIn, ProbedHub, RecoveryKeyOffer,
+    RecoveryKeyReissue, SignedIn, TrustDecision, TrustPolicy, decide,
 };
 use nocterm_session::Secret;
 use nocterm_store::SettingsHandle;
@@ -68,12 +68,13 @@ pub enum SignInStep {
     /// The account had no keys and they were made. The recovery key is shown here once and kept
     /// nowhere: it is the only way back after the password is lost.
     RecoveryKey {
-        key: Secret,
+        key: RecoveryKeyOffer,
     },
     /// The keys are open, but the recovery key shown when they were made was never confirmed as
     /// saved (the dialog was closed or the client stopped on that step). A new one can be
     /// issued; the old one stays valid until then.
     RecoveryOffer {
+        offer: RecoveryKeyReissue,
         problem: Option<SignInError>,
     },
     /// Replacing the recovery key. The new key exists on the server before it is shown, so this
@@ -115,8 +116,8 @@ struct Attempt {
     info: Option<HubInfo>,
     /// The label of a server that is already known.
     label: Option<String>,
-    /// This run created the credentials, so a failed save has to erase them.
-    fresh_credentials: bool,
+    /// Authority supplied with this successful login, independent of recovery key actions.
+    login: Option<nocterm_hubs_model::LoginReceipt>,
     /// The address cannot be changed: signing in again to a known server.
     fixed: bool,
     /// The run only issues a new recovery key for a server that is signed in to and listed.
@@ -176,6 +177,7 @@ impl SignInSession {
         deps: &Deps,
         settings: SettingsHandle,
         hub: &HubId,
+        offer: RecoveryKeyReissue,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut session = Self::new(deps, settings);
@@ -185,7 +187,7 @@ impl SignInSession {
             reissue_only: true,
             ..Attempt::default()
         };
-        session.issue(hub.clone(), cx);
+        session.issue(offer, cx);
         session
     }
 
@@ -333,7 +335,20 @@ impl SignInSession {
                 .hub()
                 .is_some_and(|hub| self.sign_in.recovery_key_unconfirmed(&hub));
             if unconfirmed {
-                self.move_to(SignInStep::RecoveryOffer { problem: None }, cx);
+                let offer = self
+                    .hub()
+                    .ok_or(HubError::Stale)
+                    .and_then(|hub| self.sign_in.recovery_key_offer(&hub));
+                match offer {
+                    Ok(offer) => self.move_to(
+                        SignInStep::RecoveryOffer {
+                            offer,
+                            problem: None,
+                        },
+                        cx,
+                    ),
+                    Err(error) => self.move_to(SignInStep::Failed(error.into()), cx),
+                }
             } else {
                 self.publish(cx);
             }
@@ -420,7 +435,7 @@ impl SignInSession {
         self.work = None;
         match result {
             Ok(signed) => {
-                self.attempt.fresh_credentials = true;
+                self.attempt.login = Some(signed.login);
                 self.keys_settled(signed.keys, cx);
             }
             Err(error) => self.show_methods(Some(error.into()), cx),
@@ -429,11 +444,23 @@ impl SignInSession {
 
     /// Goes on from what a sign-in (or a passphrase) did to the account's keys.
     fn keys_settled(&mut self, keys: KeyStatus, cx: &mut Context<Self>) {
+        let displayed = match &keys {
+            KeyStatus::Created(key) => Some(key.hub()),
+            KeyStatus::RecoveryKeyUnconfirmed(offer) => Some(offer.hub()),
+            _ => None,
+        };
+        if displayed.is_some_and(|hub| Some(hub) != self.hub().as_ref()) {
+            return self.move_to(SignInStep::Failed(HubError::Stale.into()), cx);
+        }
         match keys {
             KeyStatus::Open => self.publish(cx),
-            KeyStatus::RecoveryKeyUnconfirmed => {
-                self.move_to(SignInStep::RecoveryOffer { problem: None }, cx)
-            }
+            KeyStatus::RecoveryKeyUnconfirmed(offer) => self.move_to(
+                SignInStep::RecoveryOffer {
+                    offer,
+                    problem: None,
+                },
+                cx,
+            ),
             KeyStatus::Created(key) => self.move_to(SignInStep::RecoveryKey { key }, cx),
             KeyStatus::PassphraseNeeded => {
                 self.move_to(SignInStep::Passphrase { problem: None }, cx)
@@ -449,16 +476,13 @@ impl SignInSession {
     /// The user wrote the recovery key down: it is no longer offered again, and the sign-in
     /// goes on.
     pub fn acknowledge_recovery_key(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.step, SignInStep::RecoveryKey { .. }) {
+        let SignInStep::RecoveryKey { key } = &self.step else {
             return;
+        };
+        if let Err(error) = key.confirm() {
+            return self.move_to(SignInStep::Failed(error.into()), cx);
         }
         let hub = self.hub();
-        if let Some(hub) = &hub
-            && let Err(error) = self.sign_in.confirm_recovery_key(hub)
-        {
-            // The key is shown again the next time the keys open; nothing else is lost.
-            tracing::warn!(%hub, %error, "the saved recovery key could not be recorded");
-        }
         match hub {
             Some(hub) if self.attempt.reissue_only => {
                 self.move_to(SignInStep::Finished(hub.clone()), cx);
@@ -470,36 +494,47 @@ impl SignInSession {
 
     /// Issues a new recovery key, because the one made with the keys was never confirmed.
     pub fn issue_recovery_key(&mut self, cx: &mut Context<Self>) {
-        let (SignInStep::RecoveryOffer { .. }, Some(hub)) = (&self.step, self.hub()) else {
+        let SignInStep::RecoveryOffer { offer, .. } = &self.step else {
             return;
         };
-        self.issue(hub, cx);
+        self.issue(offer.clone(), cx);
     }
 
-    /// The user leaves the unconfirmed recovery key for later: the sign-in goes on, and the
-    /// servers page offers it again.
+    /// Keeps the current recovery envelope without replacing it.
     pub fn skip_recovery_offer(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.step, SignInStep::RecoveryOffer { .. }) && !self.attempt.reissue_only {
+        let SignInStep::RecoveryOffer { offer, .. } = &self.step else {
+            return;
+        };
+        if let Err(error) = offer.check_current() {
+            return self.move_to(SignInStep::Failed(error.into()), cx);
+        }
+        if !self.attempt.reissue_only {
             self.publish(cx);
         }
     }
 
-    fn issue(&mut self, hub: HubId, cx: &mut Context<Self>) {
+    fn issue(&mut self, offer: RecoveryKeyReissue, cx: &mut Context<Self>) {
+        let issuing = offer.issue();
         self.move_to(SignInStep::Issuing, cx);
-        let issuing = self.sign_in.reissue_recovery_key(&hub);
         self.work = Some(cx.spawn(async move |this, cx| {
             let result = issuing.await;
-            this.update(cx, |session, cx| session.issued(result, cx))
+            this.update(cx, |session, cx| session.issued(offer, result, cx))
                 .ok();
         }));
     }
 
-    fn issued(&mut self, result: Result<Secret, HubError>, cx: &mut Context<Self>) {
+    fn issued(
+        &mut self,
+        offer: RecoveryKeyReissue,
+        result: Result<RecoveryKeyOffer, HubError>,
+        cx: &mut Context<Self>,
+    ) {
         self.work = None;
         match result {
             Ok(key) => self.move_to(SignInStep::RecoveryKey { key }, cx),
             Err(error) => self.move_to(
                 SignInStep::RecoveryOffer {
+                    offer,
                     problem: Some(error.into()),
                 },
                 cx,
@@ -593,6 +628,11 @@ impl SignInSession {
 
     /// Adds the server to the settings in one edit.
     fn publish(&mut self, cx: &mut Context<Self>) {
+        if let Some(login) = &self.attempt.login
+            && let Err(error) = login.check_current()
+        {
+            return self.move_to(SignInStep::Failed(error.into()), cx);
+        }
         let (Some(address), Some(trust), Some(info)) = (
             self.attempt.address.clone(),
             self.attempt.trust,
@@ -608,9 +648,15 @@ impl SignInSession {
         let record = HubRecord::new(address, trust, label);
         let hub = record.id();
         self.move_to(SignInStep::Saving, cx);
+        let original = self.attempt.login.clone();
         let saving = self
             .settings
             .update_checked::<HubsSettings>(cx, move |settings| {
+                if let Some(original) = &original {
+                    original
+                        .check_current()
+                        .map_err(nocterm_store::StoreError::backend)?;
+                }
                 // Signing in again to a known server keeps the colour its owner chose.
                 let color = settings.find(&record.id()).and_then(|known| known.color);
                 settings.upsert(record.with_color(color));
@@ -630,17 +676,22 @@ impl SignInSession {
         cx: &mut Context<Self>,
     ) {
         self.work = None;
+        if let Some(login) = &self.attempt.login
+            && let Err(error) = login.check_current()
+        {
+            return self.move_to(SignInStep::Failed(error.into()), cx);
+        }
         match saved {
             Ok(()) => {
                 self.move_to(SignInStep::Finished(hub.clone()), cx);
                 cx.emit(SignInEvent::Finished(hub.clone()));
             }
             Err(error) => {
-                if self.attempt.fresh_credentials {
-                    // The credentials were made for a server that never got listed.
-                    if let Err(forget) = self.sign_in.forget(hub) {
-                        tracing::warn!(%hub, error = %forget, "credentials of an unlisted hub were kept");
-                    }
+                // Only the original login may be discarded after the awaited save.
+                if let Some(login) = &self.attempt.login
+                    && let Err(forget) = login.discard()
+                {
+                    tracing::warn!(%hub,error=%forget,"credentials of the original unlisted login were kept");
                 }
                 self.move_to(SignInStep::Failed(SignInError::Save(error)), cx);
             }
@@ -664,7 +715,7 @@ fn parse_inputs(
 
 /// Waits for a browser sign-in, reporting the address to open as soon as it is known.
 async fn await_browser_sign_in(
-    browser: futures::channel::oneshot::Receiver<String>,
+    browser: nocterm_hubs_model::HubFuture<String>,
     done: nocterm_hubs_model::HubFuture<SignedIn>,
     mut open: impl FnMut(String),
 ) -> Result<SignedIn, HubError> {

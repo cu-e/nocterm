@@ -108,10 +108,10 @@ pub use panel::{Panel, PanelHandle};
 pub use nocterm_workspace_ports::{
     ConnectionFactSession, ConnectionSummary, ExpectedSession, ExplorerSource, FactSessionSnapshot,
     LiveCommandLease, LiveCommands, ProjectCreationSource, ProjectParentCapture,
-    ProjectParentDescriptor, ProjectParentError, RemoteReconnect, SessionContext, SignInPrompt,
-    SignInPrompts, TerminalCapabilities, TerminalCapability, TerminalEntry, TerminalError,
-    TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
-    TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
+    ProjectParentDescriptor, ProjectParentError, RemoteReconnect, SessionContext, SessionSource,
+    SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalCapability, TerminalEntry,
+    TerminalError, TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus,
+    TerminalText, TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
 };
 pub use workspace::{
     ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,

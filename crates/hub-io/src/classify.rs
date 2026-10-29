@@ -24,7 +24,10 @@ pub(crate) fn credentials(error: impl Error + Send + Sync + 'static) -> HubError
 }
 
 pub(crate) fn credential_file(error: CredentialError) -> HubError {
-    credentials(error)
+    match error {
+        CredentialError::StaleLogin => HubError::Stale,
+        other => credentials(other),
+    }
 }
 
 /// Whether the hub cannot be asked now: it does not answer, or this device has no (more)

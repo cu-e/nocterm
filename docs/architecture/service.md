@@ -11,6 +11,11 @@ and synchronous quit capture for layout, settings, snippets, connection state an
 `AgentsHandle`, the one resolution of the injected agent catalog and the `ai`
 settings that the runtime, panel and settings page read; `nocterm-snippets-store` owns
 checked snippet publication over the shared persistence driver.
+`SessionSource` retains an original descriptive account partition and the actual
+immutable `ConnectionSource`. `SessionContext` and program host comparisons retain
+that owner identity across repeated observation. It is not proof of authentication
+and never reads the currently selected account.
+
 `nocterm-workspace-ports` declares the terminal contracts, `SessionContext` and
 `ConnectionSummary` with GPUI core alone; the workspace re-exports those ordinary
 terminal contracts and keeps
@@ -26,6 +31,11 @@ and admission. Parent capture checks the actual view and advertised session epoc
 and the `ChatWorkspace` and
 `SignInTerminal` ports the window shell implements
 ([ADR 0063](../adr/0063-agent-chats-below-the-panel.md)).
+The retained runtime receives a session-domain `CommandJobsFactory`. A chat creates
+its own registry from that installation, and schedules the owned runners returned
+by the injected command port. `nocterm-agent-tools` implements native execution;
+the service retains approvals, original terminal authority and its GPUI watchdog.
+No service depends on that adapter ([ADR 0106](../adr/0106-shared-terminal-tool-ownership.md)).
 
 `nocterm-project-service` owns the durable workspace catalog and the
 open-window registry used to focus an already opened workspace. It uses
@@ -244,7 +254,7 @@ Agent runtime installation exposes immutable scope-bound `RuntimeHandle` views
 of one private Runtime entity. History readers capture the original context before
 async work, while favorites, settings and usage remain installation services.
 Catalog snapshots retain their scope and load generation; stale results cannot
-replace newer ones. The catalog owner reserves at most32 live metadata payloads,
+replace newer ones. The catalog owner reserves at most 32 live metadata payloads,
 including pending requests and caller-retained old snapshot generations. Unretained
 completed entries can be evicted, and capacity refusal leaves the current snapshot
 untouched before I/O. The one shared HistoryGate is independent of that metadata
@@ -267,13 +277,13 @@ one projection; retained threads keep immutable original dependencies. Accepted
 archived forks complete in their original collection while another context is
 visible. Global AI disable captures and releases all retained collections.
 
-Chat factories reserve `(ContextId, chat UUID)` before constructing an entity.
+Chat factories reserve `(LocalEnvironment, ContextId, chat UUID)` before constructing an entity.
 Noncloneable claims bind the original registry, window and incarnation; dropping a
 pending claim rolls back only that reservation. Duplicate opens return the original
 window, deletes seal only their scoped key, and restart requires the exact previous
 owner. Immutable ChatDocument identity, writer keys and completion checks retain the
 same scope. Imported General documents retain their original transcript format
-through edits and restart; new chats and forks use v2. Catalog rows declare a
+through edits and restart; new chats and forks use v3 with captured Local environments. Catalog rows declare a
 typed transcript version separately from the rebuildable cache schema. Activation
 and bridge registration check the original scoped chat owner. Every scope then
 uses the same existing local connector and preparation; terminal tools stay attached to their original workspace membership.
@@ -363,3 +373,18 @@ with the one `Hubs` entity every window shares ([ADR 0099](../adr/0099-windows-h
 The service holds no secrets: device keys and tokens stay in the adapter's private files. It
 installs no global, registers no quit handler and writes the settings through the same
 persistence service as every section.
+
+Local history views retain `LocalEnvironmentAccess` and independent `ContextId`
+coordinates. `RuntimeHandle` views share one installation Runtime and its global
+budgets. Claims, readers and deferred callbacks retain original account leases;
+new actions recapture after unlock through `LocalAccountSourceFactory`.
+See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
+
+TerminalInfo carries captured account provenance independently of vault availability
+and ExpectedSession. Chat workspace providers filter full source equality and
+currentness before exposing state or capabilities to a requester. Native terminal
+providers recheck their retained source immediately before capability effects.
+
+### Original recipients of account confirmations
+
+`nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. The existing acknowledgement flow remains unchanged. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

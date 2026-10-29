@@ -1,23 +1,24 @@
-//! Who a signed-in device is on a hub.
-
+//! Account display values are checked against the original authenticated native subject.
+use crate::{account::key_admission::KeyAdmission, convert};
 use nocterm_hub_client::{ClientError, HubClient};
 use nocterm_hub_proto::v1;
-use nocterm_hubs_model::{Account, HubError, HubId};
+use nocterm_hubs_model::{Account, HubError};
 
-use crate::convert;
-use crate::pool::Pool;
-
-/// Who the device is signed in as on a hub.
 pub(crate) async fn who_am_i(
     client: &HubClient,
-    hub: &HubId,
-    pool: &Pool,
+    owner: &KeyAdmission,
 ) -> Result<Account, HubError> {
-    let me = client
-        .directory()
-        .who_am_i(v1::Empty {})
-        .await
-        .map_err(|status| pool.failed(hub, ClientError::from(status)))?
+    let response = owner
+        .during(client.directory().who_am_i(v1::Empty {}))
+        .await?
+        .map_err(|status| owner.failure(ClientError::from(status)))?
         .into_inner();
-    Ok(convert::account(me))
+    checked_account(owner, convert::account(response))
+}
+pub(crate) fn checked_account(owner: &KeyAdmission, account: Account) -> Result<Account, HubError> {
+    owner.check()?;
+    if account.id.as_str() != owner.member().subject()?.account() {
+        return Err(HubError::Stale);
+    }
+    Ok(account)
 }

@@ -55,6 +55,9 @@ pub(super) fn profile(name: &str) -> Profile {
 pub(super) struct Account {
     pub(super) replica: Arc<MemoryReplica>,
     pub(super) vault: Arc<ScriptedVaultAccess>,
+    source: Arc<nocterm_hubs_model::testing::ScriptedLocalAccountFactory>,
+    captures:
+        Arc<std::sync::Mutex<Vec<nocterm_hubs_model::source_identity::LocalAccountPartition>>>,
 }
 
 impl Account {
@@ -64,8 +67,24 @@ impl Account {
         Self {
             replica: Arc::new(MemoryReplica::new()),
             vault,
+            source: Arc::default(),
+            captures: Arc::default(),
         }
     }
+}
+
+fn partition(
+    hub: &HubId,
+    account: &str,
+) -> nocterm_hubs_model::source_identity::LocalAccountPartition {
+    use nocterm_hubs_model::source_identity::{
+        Fingerprint, LegacyConfiguredAccount, LocalAccountPartition, NamespaceId,
+    };
+    LocalAccountPartition::LegacyConfigured(LegacyConfiguredAccount::new(
+        hub.clone(),
+        NamespaceId::new(account).unwrap(),
+        Fingerprint::from_bytes([8; 32]),
+    ))
 }
 
 /// The accounts of the servers it knows; any other server has none to open.
@@ -76,6 +95,9 @@ pub(super) struct FakeAccounts {
 
 impl FakeAccounts {
     pub(super) fn of(accounts: Vec<(HubId, Account)>) -> Arc<Self> {
+        for (hub, account) in &accounts {
+            account.source.sign_in(partition(hub, "alice"));
+        }
         Arc::new(Self {
             accounts,
             refusing: AtomicBool::new(false),
@@ -93,10 +115,29 @@ impl HubAccounts for FakeAccounts {
             .iter()
             .find(|(id, _)| id == hub)
             .ok_or(HubError::NotSignedIn)?;
-        Ok(AccountAccess {
-            replica: account.replica.clone(),
-            vault: account.vault.clone(),
-        })
+        let source = account.source.clone();
+        Ok(AccountAccess::new(
+            {
+                let replica = account.replica.clone();
+                let captures = account.captures.clone();
+                Arc::new(move |source| {
+                    source.check_current().map_err(|_| HubError::Stale)?;
+                    captures.lock().unwrap().push(source.partition());
+                    Ok(replica.clone()
+                        as Arc<dyn nocterm_connections_model::replica::ProfileReplica>)
+                })
+            },
+            account.vault.clone(),
+            source,
+            {
+                let vault = account.vault.clone();
+                Arc::new(move |_| {
+                    Ok(Arc::new(nocterm_vault_ui::VaultCredentials::new(
+                        vault.clone(),
+                    )))
+                })
+            },
+        ))
     }
 }
 
@@ -104,6 +145,7 @@ impl HubAccounts for FakeAccounts {
 pub(super) struct World {
     pub(super) booted: Booted,
     transport: Arc<MockTransport>,
+    hub: FakeHub,
 }
 
 pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> World {
@@ -143,7 +185,11 @@ pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> Wor
         )
     });
     cx.run_until_parked();
-    World { booted, transport }
+    World {
+        booted,
+        transport,
+        hub,
+    }
 }
 
 impl World {
@@ -465,4 +511,37 @@ fn a_refused_change_to_a_shared_connection_is_undone_and_announced_once(cx: &mut
         })
         .unwrap();
     assert_eq!(notices, 1, "one notice for the refusal");
+}
+
+#[gpui::test]
+fn replacement_logins_attach_new_replica_facades_without_reusing_the_old_capture(
+    cx: &mut TestAppContext,
+) {
+    let account = Account::new();
+    let source = account.source.clone();
+    let captures = account.captures.clone();
+    let accounts = FakeAccounts::of(vec![(hub_id(ADDRESS), account)]);
+    let world = world(accounts, cx);
+    world.open(&home(), cx);
+    assert_eq!(
+        captures.lock().unwrap().as_slice(),
+        &[partition(&hub_id(ADDRESS), "alice")]
+    );
+    for name in ["alice", "bob", "alice"] {
+        source.sign_in(partition(&hub_id(ADDRESS), name));
+        // A native source changed; the existing keys notice makes Follow recapture it.
+        world.hub.lock_keys(&hub_id(ADDRESS));
+        world.hub.unlock_keys(&hub_id(ADDRESS));
+        cx.run_until_parked();
+    }
+    let captured = captures.lock().unwrap().clone();
+    assert_eq!(
+        captured,
+        vec![
+            partition(&hub_id(ADDRESS), "alice"),
+            partition(&hub_id(ADDRESS), "alice"),
+            partition(&hub_id(ADDRESS), "bob"),
+            partition(&hub_id(ADDRESS), "alice")
+        ]
+    );
 }

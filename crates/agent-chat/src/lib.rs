@@ -1,7 +1,7 @@
 //! Agent chats without views: one [`thread::AgentThread`] per chat and the
 //! [`roster::ChatRoster`] of a window's selected and retained context chats.
-//! Command jobs privately assemble their owned runner; snapshots and sign-in waits expose
-//! immutable facts.
+//! Command jobs use a supplied session-domain registry; the chat owns scheduling its runner.
+//! Snapshots and sign-in waits expose immutable facts.
 //!
 //! Owns: AgentThread coordination, private Composer/ChatConfig/ChatDocument owners, private
 //! SessionDriver and ToolRuntime owners, the session-scoped ApprovalInbox for provider
@@ -9,7 +9,7 @@
 //! lifecycle (new, restart, fork, restore and removal admission).
 //! Runtime owns installation-wide history admission. Catalog archives retain an accounted
 //! row reference; quiet hidden archives release their entities and references.
-//! ChatDeps binds an immutable runtime scope and exact per-chat original seat; every entity factory
+//! ChatDeps binds an immutable Local environment lease, context and exact per-chat original seat; every entity factory
 //! acquires a scoped document claim and binds the seat before constructing an entity. ChatDocument identity retains its ChatKey.
 //! ThreadNotice owns status/error presentation facts; ThreadBindings retains the
 //! window/subscriptions. Finite operations return named completions and original-authority
@@ -17,10 +17,11 @@
 //! and delivery residency. BackgroundOpen owns the native-opening handoff and its original
 //! workspace receipt.
 //! Does not own: views, the workspace shell, ACP transport, connection admission,
-//! filesystem storage or image decoding.
+//! filesystem storage, native command execution or image decoding.
 //! Ports used: AgentConnector and ToolBridge through the runtime, terminal ports from
 //! nocterm-workspace-ports, [`seat::ChatWorkspace`], [`sign_in::SignInTerminal`] and
-//! ChatMetadataSource, all supplied with [`chat_deps::ChatDeps`].
+//! ChatMetadataSource, all supplied with [`chat_deps::ChatDeps`]. The retained runtime supplies
+//! CommandJobsFactory; each chat creates its own bounded registry without depending on an adapter.
 //! Ports provided: [`seat::ChatWorkspace`] and [`sign_in::SignInTerminal`] for the window
 //! shell to implement.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
@@ -37,7 +38,8 @@
 //! old publication failures cannot pause a newer desired document.
 //! Session operations carry their original ticket, connection, session and registration
 //! authority. Tool work retains fixed prompt scope, original executor identities and
-//! workspace receipts; cancellation preserves readable job outcomes.
+//! workspace receipts; cancellation preserves readable job outcomes. Actual tool dispatch and
+//! every background runner poll recheck their original account lease.
 //! Joined reconnect calls retain their original busy guards and dispatch in acceptance
 //! order after validating original session, registration, workspace and window authority.
 //! Ordering releases after synchronous launch; direct calls after connection retain
@@ -66,3 +68,5 @@ pub enum TerminalAuthError {
     #[error(transparent)]
     InvalidLaunch(#[from] nocterm_session::LaunchValidationError),
 }
+
+pub mod conversation;

@@ -498,7 +498,7 @@ async fn a_first_sign_in_shows_the_recovery_key_once_and_lists_the_server_when_i
     let SignInStep::RecoveryKey { key } = step(cx, &session) else {
         panic!("expected the recovery key");
     };
-    assert_eq!(key, Secret::new("recovery-ada"));
+    assert_eq!(key.key(), &Secret::new("recovery-ada"));
     assert!(
         fx.servers(cx).is_empty(),
         "the server waits for the key to be written down"
@@ -631,7 +631,7 @@ async fn a_sign_in_closed_on_the_recovery_key_offers_a_new_one_next_time(cx: &mu
     );
     assert!(matches!(
         step(cx, &session),
-        SignInStep::RecoveryOffer { problem: None }
+        SignInStep::RecoveryOffer { problem: None, .. }
     ));
     assert!(
         fx.servers(cx).is_empty(),
@@ -643,8 +643,8 @@ async fn a_sign_in_closed_on_the_recovery_key_offers_a_new_one_next_time(cx: &mu
         panic!("expected the new recovery key");
     };
     assert_eq!(
-        key,
-        Secret::new("recovery-ada+"),
+        key.key(),
+        &Secret::new("recovery-ada+"),
         "the old key was replaced"
     );
     session.update(cx, |session, cx| session.acknowledge_recovery_key(cx));
@@ -667,7 +667,7 @@ async fn a_password_sign_in_that_finds_the_key_unconfirmed_offers_a_new_one(
 
     assert!(matches!(
         step(cx, &session),
-        SignInStep::RecoveryOffer { problem: None }
+        SignInStep::RecoveryOffer { problem: None, .. }
     ));
 }
 
@@ -714,7 +714,8 @@ async fn a_failed_reissue_returns_to_the_offer_and_can_be_tried_again(cx: &mut T
     assert!(matches!(
         step(cx, &session),
         SignInStep::RecoveryOffer {
-            problem: Some(SignInError::Hub(HubError::KeysLocked))
+            problem: Some(SignInError::Hub(HubError::KeysLocked)),
+            ..
         }
     ));
 
@@ -744,7 +745,9 @@ async fn the_servers_page_can_issue_a_new_key_for_a_listed_server(cx: &mut TestA
 
     let session = fx
         .hubs
-        .update(cx, |hubs, cx| hubs.start_recovery_key_reissue(&id(), cx))
+        .update(cx, |hubs, cx| {
+            hubs.start_recovery_key_reissue(&id(), fx.hub.recovery_key_offer(&id()).unwrap(), cx)
+        })
         .expect("a listed server");
     cx.run_until_parked();
     assert!(session.read_with(cx, |session, _| session.reissue_only()));
@@ -752,7 +755,7 @@ async fn the_servers_page_can_issue_a_new_key_for_a_listed_server(cx: &mut TestA
     let SignInStep::RecoveryKey { key } = step(cx, &session) else {
         panic!("expected the new recovery key");
     };
-    assert_eq!(key, Secret::new("recovery-ada+"));
+    assert_eq!(key.key(), &Secret::new("recovery-ada+"));
 
     session.update(cx, |session, cx| session.acknowledge_recovery_key(cx));
     cx.run_until_parked();
@@ -767,9 +770,11 @@ async fn the_servers_page_can_issue_a_new_key_for_a_listed_server(cx: &mut TestA
 #[gpui::test]
 async fn no_key_is_issued_for_a_server_that_is_not_listed(cx: &mut TestAppContext) {
     let fx = fixture(cx, keyed_hub(), Vec::new());
-    let session = fx
-        .hubs
-        .update(cx, |hubs, cx| hubs.start_recovery_key_reissue(&id(), cx));
+    let session = fx.hubs.update(cx, |hubs, cx| {
+        hubs.start_recovery_key_reissue(&id(), fx.hub.recovery_key_offer(&id()).unwrap(), cx)
+    });
     assert!(session.is_none());
     assert_eq!(fx.hub.count(FakeOp::ReissueRecoveryKey), 0);
 }
+
+mod source_binding;

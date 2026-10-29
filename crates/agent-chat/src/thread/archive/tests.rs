@@ -10,10 +10,12 @@ fn saved() -> SavedChat {
         1,
     )
 }
-fn permit(gate: &HistoryGate) -> HistoryPermit {
-    gate.acquire()
-        .now_or_never()
-        .expect("available history delivery")
+fn permit(gate: &HistoryGate) -> Option<HistoryPermit> {
+    Some(
+        gate.acquire()
+            .now_or_never()
+            .expect("available history delivery"),
+    )
 }
 fn begin(archive: &mut Archive, intent: ArchiveIntent) -> LoadId {
     match archive.request(intent, SessionState::default().ticket()) {

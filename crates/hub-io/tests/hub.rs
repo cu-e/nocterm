@@ -24,6 +24,8 @@ use nocterm_session::{RelayDialer as _, RelayError, RelayRefusal, Secret, Target
 mod account;
 #[path = "hub/groups.rs"]
 mod groups;
+#[path = "hub/revocation.rs"]
+mod revocation;
 
 struct Hub {
     address: HubAddress,

@@ -6,6 +6,8 @@
 //! `hubctl` shows). [`HubAdminKeys`] is how the application lists the keys waiting for that
 //! comparison and records the decision.
 
+use std::{fmt, sync::Arc};
+
 /// An organization administrator whose key this device has not confirmed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingAdminKey {
@@ -13,7 +15,7 @@ pub struct PendingAdminKey {
     pub organization: String,
     /// The administrator's name, as the hub lists it.
     pub admin: String,
-    /// The administrator's account, the argument of [`HubAdminKeys::confirm_admin_key`].
+    /// The administrator's account, whose key is being compared.
     pub account_id: String,
     /// The fingerprint of the key the hub offers, to compare with the administrator's own.
     pub fingerprint: String,
@@ -25,6 +27,9 @@ pub struct PendingAdminKey {
 /// Why a pending key could not be confirmed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AdminKeyError {
+    /// The original recipient or displayed action is no longer current.
+    #[error("the displayed administrator key belongs to an earlier account")]
+    Stale,
     /// The account keys are closed on this device.
     #[error("the account keys are not open on this device")]
     Locked,
@@ -37,19 +42,57 @@ pub enum AdminKeyError {
     Mismatch,
 }
 
-/// The administrator keys of a hub's account, waiting for a person to compare them.
-pub trait HubAdminKeys: Send + Sync {
-    /// The administrators of the account's organizations whose keys wait for confirmation, as
-    /// the last look at the hub found them. Empty while the account keys are closed.
-    fn pending_admin_keys(&self, hub: &crate::HubId) -> Vec<PendingAdminKey>;
+/// Authority supplied by the native adapter for one original recipient and offer.
+pub trait AdminKeyConfirmation: Send + Sync {
+    fn confirm(&self, fingerprint: &str) -> Result<(), AdminKeyError>;
+}
 
-    /// Confirms the key of `account_id` that was shown with `fingerprint`, after a person
-    /// compared it with the administrator's own. The groups it unlocks are read again promptly,
-    /// and [`HubSignIn::keys_changed`](crate::HubSignIn::keys_changed) resolves.
-    fn confirm_admin_key(
-        &self,
-        hub: &crate::HubId,
-        account_id: &str,
-        fingerprint: &str,
-    ) -> Result<(), AdminKeyError>;
+/// A displayed key and its original recipient capability.
+#[derive(Clone)]
+pub struct AdminKeyOffer {
+    hub: crate::HubId,
+    key: PendingAdminKey,
+    confirmation: Arc<dyn AdminKeyConfirmation>,
+}
+impl AdminKeyOffer {
+    pub fn new(
+        hub: crate::HubId,
+        key: PendingAdminKey,
+        confirmation: Arc<dyn AdminKeyConfirmation>,
+    ) -> Self {
+        Self {
+            hub,
+            key,
+            confirmation,
+        }
+    }
+    pub fn hub(&self) -> &crate::HubId {
+        &self.hub
+    }
+    pub fn key(&self) -> &PendingAdminKey {
+        &self.key
+    }
+    pub fn confirm(&self, fingerprint: &str) -> Result<(), AdminKeyError> {
+        self.confirmation.confirm(fingerprint)
+    }
+}
+impl fmt::Debug for AdminKeyOffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdminKeyOffer")
+            .field("hub", &self.hub)
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+impl PartialEq for AdminKeyOffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.hub == other.hub
+            && self.key == other.key
+            && Arc::ptr_eq(&self.confirmation, &other.confirmation)
+    }
+}
+
+/// Offers retain their original recipient through delayed confirmation callbacks.
+pub trait HubAdminKeys: Send + Sync {
+    fn pending_admin_keys(&self, hub: &crate::HubId) -> Vec<AdminKeyOffer>;
 }

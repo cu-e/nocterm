@@ -3,23 +3,8 @@ use super::*;
 use nocterm_ai::TerminalCall;
 use nocterm_ai::model::ids::SessionId;
 use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
-use nocterm_session::{ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
 use serde_json::Value;
-
-#[derive(Default)]
-pub(super) struct Program {
-    pub(super) request: Mutex<Option<ExecRequest>>,
-    pub(super) sink: Mutex<Option<ExecSink>>,
-}
-
-impl HostExec for Program {
-    fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
-        *self.request.lock().unwrap() = Some(request);
-        let (sink, output) = ExecOutput::channel();
-        *self.sink.lock().unwrap() = Some(sink);
-        async move { Ok(output) }.boxed()
-    }
-}
+pub(super) type Program = nocterm_session::testing::FakeExec;
 
 pub(super) fn bridge(f: &Fixture, call: TerminalCall, cx: &mut TestAppContext) -> Value {
     let registration_id = cx.update(|cx| {

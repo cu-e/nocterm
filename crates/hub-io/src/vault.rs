@@ -7,11 +7,14 @@
 //! device unlock, so those operations are [`VaultError::Unsupported`].
 
 mod codec;
+pub(crate) mod credentials;
 mod groups;
+mod idle;
 mod ledger;
 mod unlock;
+pub(crate) use idle::Idle;
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::channel::mpsc as progress;
@@ -22,105 +25,63 @@ use nocterm_vault::{
     VaultStatus,
 };
 use tokio::runtime::Handle;
-use tokio::task::AbortHandle;
 
 pub(crate) use self::ledger::{Ledger, Space};
 use self::unlock::Unlocker;
-use crate::account::Slot;
-use crate::store::StoreOps;
+use crate::account::{Slot, operations::AccountOperations};
 use crate::task::spawn;
-
-/// Locks the vault after a quiet period.
-struct Idle {
-    slot: Arc<Slot>,
-    handle: Handle,
-    state: Mutex<IdleState>,
-}
-
-#[derive(Default)]
-struct IdleState {
-    limit: Option<Duration>,
-    timer: Option<AbortHandle>,
-}
-
-impl Idle {
-    fn state(&self) -> std::sync::MutexGuard<'_, IdleState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn set(&self, limit: Duration) {
-        self.state().limit = Some(limit);
-        self.touch();
-    }
-
-    /// Restarts the countdown; nothing runs while the vault is locked.
-    fn touch(&self) {
-        let mut state = self.state();
-        if let Some(timer) = state.timer.take() {
-            timer.abort();
-        }
-        let Some(limit) = state.limit else { return };
-        if self.slot.open().is_none() {
-            return;
-        }
-        let slot = Arc::clone(&self.slot);
-        state.timer = Some(
-            self.handle
-                .spawn(async move {
-                    tokio::time::sleep(limit).await;
-                    slot.lock();
-                })
-                .abort_handle(),
-        );
-    }
-
-    fn stop(&self) {
-        if let Some(timer) = self.state().timer.take() {
-            timer.abort();
-        }
-    }
-}
 
 pub struct HubVault {
     handle: Handle,
     slot: Arc<Slot>,
-    ledger: Arc<Ledger>,
-    unlocker: Arc<Unlocker>,
+    operations: Arc<AccountOperations>,
     idle: Arc<Idle>,
 }
 
 impl HubVault {
-    pub(crate) fn new(handle: Handle, slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
+    pub(crate) fn new(handle: Handle, slot: Arc<Slot>, operations: Arc<AccountOperations>) -> Self {
         Self {
-            ledger: Arc::new(Ledger::new(Arc::clone(&slot), Arc::clone(&ops))),
-            unlocker: Arc::new(Unlocker::new(Arc::clone(&slot), ops)),
-            idle: Arc::new(Idle {
-                slot: Arc::clone(&slot),
-                handle: handle.clone(),
-                state: Mutex::default(),
-            }),
+            idle: Arc::new(Idle::new(handle.clone())),
             handle,
             slot,
+            operations,
         }
     }
 
-    /// The credentials of the account, which the profile replica moves between spaces.
-    pub(crate) fn ledger(&self) -> Arc<Ledger> {
-        Arc::clone(&self.ledger)
+    pub(crate) fn idle(&self) -> Arc<Idle> {
+        self.idle.clone()
     }
 
-    /// Runs `work` on the adapter's threads, then counts it as use of the vault.
-    fn run<T: Send + 'static>(
-        &self,
-        work: impl std::future::Future<Output = Result<T, VaultError>> + Send + 'static,
-    ) -> VaultFuture<T> {
-        let idle = Arc::clone(&self.idle);
+    fn run<T, F>(&self, work: impl FnOnce(Ledger) -> F + Send + 'static) -> VaultFuture<T>
+    where
+        T: Send + 'static,
+        F: std::future::Future<Output = Result<T, VaultError>> + Send + 'static,
+    {
+        let opened = match self.operations.opened() {
+            Ok(opened) => opened,
+            Err(error) => return Box::pin(async move { Err(native_failure(error)) }),
+        };
+        let source = opened.source().clone();
+        let returned = source.clone();
+        let idle = self.idle.clone();
         let task = spawn(&self.handle, async move {
-            let result = work.await;
-            idle.touch();
+            let result = source
+                .during(async {
+                    let ledger = opened.ledger().map_err(native_failure)?;
+                    work(ledger).await
+                })
+                .await
+                .map_err(native_failure)
+                .and_then(|result| result);
+            idle.touch(source.native());
+            drop(opened);
             result
         });
-        Box::pin(async move { task.await.unwrap_or(Err(VaultError::Cancelled)) })
+        Box::pin(async move {
+            let result = task.await.unwrap_or(Err(VaultError::Cancelled));
+            returned.check().map_err(native_failure)?;
+            result
+        })
     }
 
     fn unsupported<T: Send + 'static>() -> VaultFuture<T> {
@@ -158,10 +119,18 @@ impl VaultAccess for HubVault {
     }
 
     fn wait_unlocked(&self) -> BoxFuture<'static, ()> {
+        let member = self.operations.current_membership();
         let slot = Arc::clone(&self.slot);
         let mut changes = slot.notice().subscribe();
         Box::pin(async move {
-            while slot.status() != VaultStatus::Unlocked {
+            let Ok(member) = member else {
+                return;
+            };
+            loop {
+                match member.with_current(|| Ok(slot.status() == VaultStatus::Unlocked)) {
+                    Ok(false) => {}
+                    Ok(true) | Err(_) => return,
+                }
                 if changes.changed().await.is_err() {
                     return;
                 }
@@ -170,12 +139,18 @@ impl VaultAccess for HubVault {
     }
 
     fn set_auto_lock(&self, duration: Duration) {
-        self.idle.set(duration);
+        self.idle
+            .set(duration, self.operations.current_opened_source().ok());
     }
 
     fn lock(&self) {
-        self.idle.stop();
-        self.slot.lock();
+        if let Ok(member) = self.operations.current_membership() {
+            let _ = member.with_current(|| {
+                self.idle.stop();
+                self.slot.lock();
+                Ok(())
+            });
+        }
     }
 
     fn create(&self, _password: Secret) -> VaultFuture<()> {
@@ -183,8 +158,38 @@ impl VaultAccess for HubVault {
     }
 
     fn unlock(&self, password: Secret) -> VaultFuture<()> {
-        let unlocker = Arc::clone(&self.unlocker);
-        self.run(async move { unlocker.unlock(password).await })
+        let work = match self.operations.membership() {
+            Ok(work) => work,
+            Err(error) => return Box::pin(async move { Err(native_failure(error)) }),
+        };
+        let member = work.membership().clone();
+        let returned = member.clone();
+        let slot = match work.slot() {
+            Ok(slot) => slot,
+            Err(error) => return Box::pin(async move { Err(native_failure(error)) }),
+        };
+        let final_slot = slot.clone();
+        let idle = self.idle.clone();
+        let task = spawn(&self.handle, async move {
+            let unlocker = Unlocker::new(work);
+            let receipt = member
+                .during(unlocker.unlock(password))
+                .await
+                .map_err(native_failure)??;
+            member
+                .with_current(|| slot.check_receipt(&member.subject()?, &receipt))
+                .map_err(native_failure)?;
+            if let Ok(native) = member.opened() {
+                idle.touch(&native);
+            }
+            Ok(receipt)
+        });
+        Box::pin(async move {
+            let receipt = task.await.unwrap_or(Err(VaultError::Cancelled))?;
+            returned
+                .with_current(|| final_slot.check_receipt(&returned.subject()?, &receipt))
+                .map_err(native_failure)
+        })
     }
 
     fn probe_device_unlock(&self) -> VaultFuture<DeviceCapability> {
@@ -213,13 +218,11 @@ impl VaultAccess for HubVault {
     }
 
     fn list(&self) -> VaultFuture<Vec<CredentialInfo>> {
-        let ledger = Arc::clone(&self.ledger);
-        self.run(async move { ledger.list().await })
+        self.run(|ledger| async move { ledger.list().await })
     }
 
     fn get(&self, id: CredentialId, binding: CredentialBinding) -> VaultFuture<Secret> {
-        let ledger = Arc::clone(&self.ledger);
-        self.run(async move { ledger.get(id, binding).await })
+        self.run(move |ledger| async move { ledger.get(id, binding).await })
     }
 
     fn put(
@@ -229,13 +232,19 @@ impl VaultAccess for HubVault {
         binding: CredentialBinding,
         secret: Secret,
     ) -> VaultFuture<CredentialId> {
-        let ledger = Arc::clone(&self.ledger);
-        self.run(async move { ledger.put(id, label, binding, secret).await })
+        self.run(move |ledger| async move { ledger.put(id, label, binding, secret).await })
     }
 
     fn delete(&self, id: CredentialId) -> VaultFuture<()> {
-        let ledger = Arc::clone(&self.ledger);
-        self.run(async move { ledger.delete(id).await })
+        self.run(move |ledger| async move { ledger.delete(id).await })
+    }
+}
+
+fn native_failure(error: nocterm_hubs_model::HubError) -> VaultError {
+    match error {
+        nocterm_hubs_model::HubError::KeysLocked => VaultError::Locked,
+        nocterm_hubs_model::HubError::NotFound => VaultError::NotFound,
+        other => ledger::vault_error(crate::store::OpError::Hub(other)),
     }
 }
 

@@ -141,6 +141,21 @@ impl AgentPanel {
             .collect()
     }
     fn on_runtime_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let retired = self.chats.retire_stale_sources(cx);
+        let removed = !retired.removed().is_empty();
+        if let Some(error) = retired.into_error() {
+            self.notices.set_error(Some(error.to_string()));
+        }
+        let switched = self
+            .host
+            .deps_for_source(self.source)
+            .is_ok_and(|deps| self.chats.switch_context(deps, cx));
+        if switched || removed {
+            self.composer.clear();
+            self.history.switch_context(window, cx);
+            self.sign_ins.clear();
+            self.reset_chat_view(cx);
+        }
         self.chats.release_quiet_hidden(cx);
         if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled {
             return;

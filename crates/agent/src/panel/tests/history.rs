@@ -1,3 +1,4 @@
+mod search;
 use super::*;
 use crate::thread::AgentThread;
 use nocterm_ai::model::content::Content;

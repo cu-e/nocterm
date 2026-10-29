@@ -6,10 +6,10 @@
 use nocterm_core::SharedCause;
 use nocterm_hub_client::{ClientError, RelayError as HubRelayError};
 use nocterm_hub_proto::v1::ErrorCode;
-use nocterm_hubs_model::{HubError, HubId};
+use nocterm_hubs_model::HubError;
 use nocterm_session::{RelayError, RelayRefusal};
 
-use crate::pool::Pool;
+use crate::pool::captured::CapturedClient;
 
 /// Why the hub named by `name` has no usable client.
 pub(super) fn without_client(name: &str, error: HubError) -> RelayError {
@@ -25,11 +25,18 @@ pub(super) fn without_client(name: &str, error: HubError) -> RelayError {
 ///
 /// A device the hub revoked is forgotten on the spot, as for any other call.
 pub(super) fn opening(
-    pool: &Pool,
-    hub: &HubId,
+    client: &CapturedClient,
     name: &str,
     node: Option<&str>,
     error: HubRelayError,
+) -> RelayError {
+    classify_opening(name, node, error, |error| client.failure(error))
+}
+fn classify_opening(
+    name: &str,
+    node: Option<&str>,
+    error: HubRelayError,
+    failed: impl FnOnce(ClientError) -> HubError,
 ) -> RelayError {
     if let Some(code) = code_of(&error)
         && let Some(refused) = coded(code, node)
@@ -37,7 +44,7 @@ pub(super) fn opening(
         return refused;
     }
     match error {
-        HubRelayError::Hub(error) => without_client(name, pool.failed(hub, error)),
+        HubRelayError::Hub(error) => without_client(name, failed(error)),
         other => cannot_reach(other),
     }
 }

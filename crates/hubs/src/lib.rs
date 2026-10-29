@@ -19,6 +19,7 @@
 //!
 //! Invariants: a certificate that is not the trusted one is never retried and never
 //! accepted; an unreachable hub is retried with growing delays; a server enters the settings
+//! displayed administrator and recovery offers pass unchanged to their original capabilities;
 //! only after a sign-in worked, in one edit, and credentials made for a server that could not
 //! be saved are erased again; every window shares one status and one connection per hub.
 

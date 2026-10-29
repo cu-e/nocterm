@@ -159,6 +159,8 @@ pub enum EntryKind {
 /// A file system request failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum FsError {
+    #[error(transparent)]
+    Source(#[from] crate::ConnectionSourceError),
     #[error("the session is not connected")]
     NotConnected,
     #[error("{path}: permission denied")]

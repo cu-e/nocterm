@@ -2,7 +2,7 @@
 //! Owns: targets, authentication (including a reference to a key kept in the vault), route values (jump hosts, the hub proxy step), launch/override validation, opaque IDs, text errors and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
 //! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener, RelayDialer,
-//! and recording::{OutputLogFactory, OutputLog}.
+//! command_jobs::{CommandJobs, CommandJobsFactory}, and recording::{OutputLogFactory, OutputLog}.
 //! A relay stream is two bounded frame channels (`RELAY_FRAMES` of at most `RELAY_FRAME_BYTES`);
 //! the hub is named by an opaque address string, so no hub type appears in this crate.
 //! Recording diagnostics use foundation shared typed causes and domain constructors;
@@ -29,9 +29,22 @@
 //! Local filesystem diagnostics use foundation SharedError for immutable typed causes;
 //! native adapters construct partial outcomes through domain methods without core access.
 
-#[cfg(feature = "test-support")]
+//! Runtime connection options retain a captured, non-I/O source guard separately
+//! from descriptive requests. Native producers check it at I/O and on resumed
+//! futures; legacy producers reject constrained opens. Producer closure wakes
+//! retained native stream waiters. Connection failures retain typed causes.
+
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub mod command_jobs;
+
+mod connection_failure;
+mod connection_source;
+pub use connection_failure::{ConnectionFailure, ConnectionFailureKind};
+pub use connection_source::{
+    ConnectionOpenOptions, ConnectionSource, ConnectionSourceError, ConnectionSourceGuard,
+};
 mod credentials;
 pub mod exec;
 pub mod fs;
@@ -64,6 +77,7 @@ pub use secret::Secret;
 pub use session::{
     CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,
     Reply, SecretRequest, Session, SessionDriver, SessionError, Transport, channel,
+    channel_with_source,
 };
 pub use target::{
     Auth, CredentialId, CredentialIdParseError, DEFAULT_PORT, ParseTargetError, Target,

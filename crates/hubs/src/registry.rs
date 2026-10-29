@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
-    AdminKeyError, HubAddress, HubColor, HubEndpointSpec, HubError, HubId, HubInfo, HubRecord,
-    HubsSettings, PendingAdminKey,
+    AdminKeyError, AdminKeyOffer, HubAddress, HubColor, HubEndpointSpec, HubError, HubId, HubInfo,
+    HubRecord, HubsSettings,
 };
 use nocterm_store::SettingsHandle;
 
@@ -274,7 +274,7 @@ impl Hubs {
     /// fingerprints with the administrator's own; their groups stay out of the account until
     /// then. Empty while the account keys are closed. Observers of the registry are told when
     /// the list changes.
-    pub fn pending_admin_keys(&self, hub: &HubId) -> Vec<PendingAdminKey> {
+    pub fn pending_admin_keys(&self, hub: &HubId) -> Vec<AdminKeyOffer> {
         if self.entry(hub).is_none() {
             return Vec::new();
         }
@@ -285,17 +285,27 @@ impl Hubs {
     /// once a person compared it out of band. The account reads the groups it unlocks again.
     pub fn confirm_admin_key(
         &mut self,
-        hub: &HubId,
-        account_id: &str,
+        offer: &AdminKeyOffer,
         fingerprint: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), AdminKeyError> {
-        let confirmed = self
-            .deps
-            .admin_keys
-            .confirm_admin_key(hub, account_id, fingerprint);
+        if self.entry(offer.hub()).is_none() {
+            return Err(AdminKeyError::Stale);
+        }
+        let confirmed = offer.confirm(fingerprint);
         cx.notify();
         confirmed
+    }
+
+    /// Captures the original recipient of a displayed recovery action.
+    pub fn recovery_key_offer(
+        &self,
+        hub: &HubId,
+    ) -> Result<nocterm_hubs_model::RecoveryKeyReissue, nocterm_hubs_model::HubError> {
+        if self.entry(hub).is_none() {
+            return Err(nocterm_hubs_model::HubError::Stale);
+        }
+        self.deps.sign_in.recovery_key_offer(hub)
     }
 
     /// Starts issuing a new recovery key for `hub`, which replaces the unconfirmed one. The
@@ -303,11 +313,15 @@ impl Hubs {
     pub fn start_recovery_key_reissue(
         &mut self,
         hub: &HubId,
+        offer: nocterm_hubs_model::RecoveryKeyReissue,
         cx: &mut Context<Self>,
     ) -> Option<Entity<SignInSession>> {
         self.entry(hub)?;
+        if offer.hub() != hub || offer.check_current().is_err() {
+            return None;
+        }
         let (deps, settings) = (self.deps.clone(), self.settings.clone());
-        let session = cx.new(|cx| SignInSession::reissue(&deps, settings, hub, cx));
+        let session = cx.new(|cx| SignInSession::reissue(&deps, settings, hub, offer, cx));
         // Saving the new key ends the offer: whoever shows it is told to look again.
         cx.subscribe(&session, |_, _, event, cx| {
             if matches!(event, SignInEvent::Finished(_)) {

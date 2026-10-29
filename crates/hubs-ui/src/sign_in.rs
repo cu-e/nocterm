@@ -53,8 +53,16 @@ pub fn sign_in_again(hubs: &Entity<Hubs>, hub: &HubId, window: &mut Window, cx: 
 }
 
 /// Shows the dialog that issues a new recovery key for the listed, signed-in server `hub`.
-pub(crate) fn start_reissue(hubs: &Entity<Hubs>, hub: &HubId, window: &mut Window, cx: &mut App) {
-    let session = hubs.update(cx, |hubs, cx| hubs.start_recovery_key_reissue(hub, cx));
+pub(crate) fn start_reissue(
+    hubs: &Entity<Hubs>,
+    hub: &HubId,
+    offer: nocterm_hubs_model::RecoveryKeyReissue,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let session = hubs.update(cx, |hubs, cx| {
+        hubs.start_recovery_key_reissue(hub, offer, cx)
+    });
     if let Some(session) = session {
         open(session, None, window, cx);
     }
@@ -280,8 +288,8 @@ impl SignInDialog {
                 problem,
             } => self.render_method(&hub_name, password, &providers, note, problem.as_ref(), cx),
             SignInStep::Browser { provider, url } => self.render_browser(&provider, url, cx),
-            SignInStep::RecoveryKey { key } => self.render_recovery_key(&key, cx),
-            SignInStep::RecoveryOffer { problem } => {
+            SignInStep::RecoveryKey { key } => self.render_recovery_key(key.key(), cx),
+            SignInStep::RecoveryOffer { problem, .. } => {
                 self.render_recovery_offer(problem.as_ref(), cx)
             }
             SignInStep::Issuing => v_flex()

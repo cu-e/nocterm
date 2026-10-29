@@ -10,6 +10,8 @@ use nocterm_workspace::{ProjectSurface, test_support::ProjectSurfaceProbe};
 use nocterm_workspace_ports::ContextSelectionError;
 use std::{rc::Rc, sync::Arc};
 
+mod credential_owners;
+
 struct Fixture {
     window: AnyWindowHandle,
     workspace: Entity<Workspace>,

@@ -11,3 +11,14 @@ pub enum SubmitError {
     #[error(transparent)]
     Storage(#[from] nocterm_ai::history::HistoryCodecError),
 }
+
+impl SubmitError {
+    pub(crate) fn into_conversation(self) -> crate::conversation::ConversationError {
+        use crate::conversation::ConversationError;
+        match self {
+            Self::Storage(error) => ConversationError::History(error),
+            Self::TooMany => ConversationError::Capacity,
+            Self::Loading | Self::AlreadySent => ConversationError::Unavailable,
+        }
+    }
+}

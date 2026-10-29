@@ -1,8 +1,6 @@
 //! Unlocking the vault: the typed password opens the keyset, from the hub's record when the
 //! hub answers and from the cached record when it does not.
 
-use std::sync::Arc;
-
 use nocterm_hub_client::{Keyset, KeysetError, UnlockMethod as KeysetUnlock};
 use nocterm_hub_proto::v1;
 use nocterm_keys::{LoginError, LoginSecrets, UnlockKey};
@@ -10,50 +8,50 @@ use nocterm_session::Secret;
 use nocterm_vault::VaultError;
 
 use super::ledger::vault_error;
-use crate::account::{OpenKeys, Slot};
+use super::native_failure as failure;
+use crate::account::{OpenKeys, SlotReceipt, operations::MembershipWork};
 use crate::cache::{AccountCache, KeysetCopy, UnlockMethod};
 use crate::classify::unreachable;
-use crate::store::{OpError, StoreOps};
+use crate::store::OpError;
 
 pub(super) struct Unlocker {
-    slot: Arc<Slot>,
-    ops: Arc<dyn StoreOps>,
+    work: MembershipWork,
 }
 
 impl Unlocker {
-    pub(super) fn new(slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
-        Self { slot, ops }
+    pub(super) fn new(work: MembershipWork) -> Self {
+        Self { work }
     }
 
-    pub(super) async fn unlock(&self, password: Secret) -> Result<(), VaultError> {
-        if self.slot.open().is_some() {
-            return Ok(());
+    pub(super) async fn unlock(&self, password: Secret) -> Result<SlotReceipt, VaultError> {
+        self.work.check().map_err(failure)?;
+        let slot = self.work.slot().map_err(failure)?;
+        let member = self.work.membership();
+        let subject = member.subject().map_err(failure)?;
+        if slot.open_for(&subject).is_ok() {
+            return Ok(self.work.receipt().clone());
         }
-        let cached = self
-            .slot
-            .read_cache(|cache| cache.cloned())
-            .ok_or(VaultError::NotFound)?;
+        let mut cached = member
+            .with_current(|| slot.cache_for(&subject, self.work.receipt()))
+            .map_err(failure)?;
         let record = self.record(&cached).await?;
         let unlock = derive(&cached, &record, password).await?;
+        self.work.check().map_err(failure)?;
         let keyset =
             Keyset::open(&record, &cached.account_id, &unlock).map_err(|error| match error {
                 KeysetError::WrongUnlockKey | KeysetError::Damaged(_) => VaultError::Authentication,
                 _ => VaultError::Format,
             })?;
-        let fresh = KeysetCopy::of(&record);
-        if fresh != cached.keyset
-            && let Err(error) = self.slot.update_cache(|cache| cache.keyset = fresh)
-        {
-            tracing::warn!(%error, "the account cache cannot be written");
-        }
-        self.slot
-            .unlocked(OpenKeys::pinning(keyset, cached.pinned()));
-        Ok(())
+        cached.keyset = KeysetCopy::of(&record);
+        let keys = OpenKeys::pinning(keyset, cached.pinned());
+        member
+            .with_current(|| slot.install_if(&subject, self.work.receipt(), keys, cached))
+            .map_err(failure)
     }
 
     /// The keyset record to open: the hub's when it answers, else the cached copy.
     async fn record(&self, cached: &AccountCache) -> Result<v1::AccountKeyset, VaultError> {
-        match self.ops.keyset().await {
+        match self.work.ops().keyset().await {
             Ok(Some(record)) => Ok(record),
             Ok(None) => Ok(cached.keyset.record()),
             Err(OpError::Hub(error)) if unreachable(&error) => Ok(cached.keyset.record()),

@@ -4,13 +4,11 @@ use super::{
     background_open::BackgroundOpen,
     bound_call::BoundToolCall,
     connection_wait::{ConnectionWaitError, WaitTarget},
-    execution::jobs,
 };
 use gpui::{App, Context, EntityId, Task};
 use nocterm_ai::history::{SavedAttachment, SavedPrompt};
 use nocterm_ai::model::content::Content;
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
-use nocterm_session::ExecRequest;
 
 use nocterm_workspace_ports::{ExpectedSession, TerminalEntry, TerminalStatus};
 use std::sync::{
@@ -165,43 +163,14 @@ impl AgentThread {
         let TerminalCall::ExecCommand(request) = &call.call else {
             return;
         };
-        let executor = match entry
-            .capabilities
-            .execution()
-            .ok_or(nocterm_workspace_ports::TerminalError::Unsupported(
-                nocterm_workspace_ports::TerminalCapability::StructuredExecution,
-            ))
-            .and_then(|port| port.executor(expected, cx))
+        let source =
+            super::tool_runtime::source_execution::SourceExecution::capture(self.deps.runtime());
+        let (id, run) = match source
+            .and_then(|source| source.start(entry, expected, request, &mut self.tools, cx))
         {
-            Ok(executor) => executor,
-            Err(error) => {
-                self.finish(call, Err(error.to_string().into()));
-                return;
-            }
+            Ok(started) => started,
+            Err(error) => return self.finish(call, Err(error)),
         };
-        let program = ExecRequest {
-            program: request.program.clone(),
-            args: request.args.clone(),
-            stdin: request
-                .stdin
-                .as_ref()
-                .map(|stdin| stdin.as_bytes().to_vec()),
-        };
-        let timer = cx
-            .background_executor()
-            .timer(jobs::timeout(request.timeout_ms));
-        let started =
-            match self
-                .tools
-                .start_command(request.terminal_id.clone(), executor, program, timer)
-            {
-                Ok(started) => started,
-                Err(error) => {
-                    self.finish(call, Err(error));
-                    return;
-                }
-            };
-        let (id, run) = started.into_run();
         cx.background_executor().spawn(run).detach();
         self.start_execution_watch(cx);
         let terminal = request.terminal_id.clone();
@@ -219,6 +188,9 @@ impl AgentThread {
             .bindings
             .window()
             .ok_or(ConnectionWaitError::WorkspaceClosed)?;
+        if !self.deps.enabled(cx) {
+            return Err(ConnectionWaitError::Stopped);
+        }
         let receipt = self.tools.prepare_reconnect(entry, expected, cx)?;
         Ok(WaitTarget::new(
             self.deps.seat().clone(),
@@ -377,7 +349,9 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         let redact = self.deps.ai(cx).approval.redact_secrets;
-        let action = self.tools.dispatch(call, entry, expected, redact, cx);
+        let action = self
+            .tools
+            .dispatch(call, entry, expected, redact, self.deps.enabled(cx), cx);
         self.apply_dispatch_action(action, cx);
     }
 
@@ -558,6 +532,9 @@ impl AgentThread {
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
+        if !self.deps.enabled(cx) {
+            return self.finish_unreachable(call, "Chat is unavailable.");
+        }
         let mut operation =
             match super::live::LiveCommandOperation::acquire(entry, expected, request, cx) {
                 Ok(operation) => operation,

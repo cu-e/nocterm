@@ -7,7 +7,14 @@
 
 mod admin_keys;
 mod flow;
+pub(crate) mod key_admission;
 mod keyset_hub;
+mod lifecycle;
+mod recovery;
+mod slot;
+pub(crate) use slot::Slot;
+pub(crate) mod operations;
+pub(crate) mod source;
 #[cfg(test)]
 pub(crate) mod testing;
 
@@ -20,15 +27,15 @@ use nocterm_hubs_model::{HubError, HubId};
 use nocterm_keys::{
     CollectionKey, OpenError, PinError, PinnedKeys, PublicKey, TrustedKey, UnlockKdf, UnlockKey,
 };
-use nocterm_vault::VaultStatus;
 use tokio::sync::watch;
 
 use self::admin_keys::{AdminPins, Admins};
-use crate::cache::{AccountCache, CacheError, CacheFile, UnlockMethod};
+use crate::cache::{CacheFile, UnlockMethod};
 use crate::classify::{credentials, remote};
 
 pub use admin_keys::{AdminKeyError, AdminKeys, PendingAdminKey};
 pub(crate) use flow::KeyFlow;
+pub(crate) use lifecycle::SlotReceipt;
 
 /// Raises a counter whenever keys are opened, dropped or replaced.
 pub(crate) struct Notice(watch::Sender<u64>);
@@ -177,164 +184,6 @@ pub(crate) struct Recovery {
     unlock: UnlockKey,
     kdf: UnlockKdf,
     method: UnlockMethod,
-}
-
-enum KeyState {
-    Locked,
-    Open(Arc<OpenKeys>),
-    Recovering(Arc<Recovery>),
-}
-
-struct SlotState {
-    keys: KeyState,
-    cache: Option<AccountCache>,
-}
-
-/// Everything this device knows of one hub's account keys.
-pub(crate) struct Slot {
-    hub: HubId,
-    file: CacheFile,
-    notice: Arc<Notice>,
-    state: Mutex<SlotState>,
-}
-
-impl Slot {
-    fn new(hub: HubId, file: CacheFile, notice: Arc<Notice>) -> Self {
-        let cache = match file.load() {
-            Ok(cache) => cache,
-            Err(error) => {
-                tracing::warn!(%error, hub = %hub, "the account cache is not usable; it is read again from the hub");
-                None
-            }
-        };
-        Self {
-            hub,
-            file,
-            notice,
-            state: Mutex::new(SlotState {
-                keys: KeyState::Locked,
-                cache,
-            }),
-        }
-    }
-
-    fn state(&self) -> MutexGuard<'_, SlotState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    pub(crate) fn hub(&self) -> &HubId {
-        &self.hub
-    }
-
-    pub(crate) fn notice(&self) -> &Arc<Notice> {
-        &self.notice
-    }
-
-    /// The keys, while the vault is unlocked.
-    pub(crate) fn open(&self) -> Option<Arc<OpenKeys>> {
-        match &self.state().keys {
-            KeyState::Open(keys) => Some(Arc::clone(keys)),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn status(&self) -> VaultStatus {
-        let state = self.state();
-        match (&state.keys, &state.cache) {
-            (KeyState::Open(_), _) => VaultStatus::Unlocked,
-            (_, Some(_)) => VaultStatus::Locked,
-            _ => VaultStatus::Missing,
-        }
-    }
-
-    /// Reads the cached account, if the hub has one on this device.
-    pub(crate) fn read_cache<R>(&self, read: impl FnOnce(Option<&AccountCache>) -> R) -> R {
-        read(self.state().cache.as_ref())
-    }
-
-    /// Whether the recovery key of `account_id` was shown on this device and never confirmed.
-    /// A cache of another account says nothing about this one.
-    pub(crate) fn recovery_unconfirmed(&self, account_id: &str) -> bool {
-        self.read_cache(|cache| {
-            cache.is_some_and(|cache| cache.account_id == account_id && cache.recovery_unconfirmed)
-        })
-    }
-
-    /// Changes the cached account and writes it through. Nothing happens without a cache.
-    pub(crate) fn update_cache(
-        &self,
-        change: impl FnOnce(&mut AccountCache),
-    ) -> Result<(), CacheError> {
-        let mut state = self.state();
-        let Some(cache) = state.cache.as_mut() else {
-            return Ok(());
-        };
-        change(cache);
-        self.file.save(cache)
-    }
-
-    /// Writes the pinned administrator keys through to the cache.
-    pub(crate) fn remember_pins(&self, pinned: &PinnedKeys) {
-        if let Err(error) = self.update_cache(|cache| cache.keep_pins(pinned)) {
-            tracing::warn!(%error, hub = %self.hub, "the pinned keys cannot be written");
-        }
-    }
-
-    /// Opens the vault with `keys`, remembering `cache` on disk. A cache that cannot be
-    /// written is logged: the account still works, but cannot unlock without the hub.
-    pub(crate) fn install(&self, keys: OpenKeys, cache: AccountCache) {
-        {
-            let mut state = self.state();
-            if let Err(error) = self.file.save(&cache) {
-                tracing::warn!(%error, hub = %self.hub, "the account cache cannot be written");
-            }
-            state.cache = Some(cache);
-            state.keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
-        }
-        self.notice.raise();
-    }
-
-    /// Opens the vault with `keys` from a cache that is already kept.
-    pub(crate) fn unlocked(&self, keys: OpenKeys) {
-        self.state().keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
-        self.notice.raise();
-    }
-
-    fn await_recovery(&self, recovery: Recovery) {
-        self.state().keys = KeyState::Recovering(Arc::new(recovery));
-        self.notice.raise();
-    }
-
-    fn recovery(&self) -> Option<Arc<Recovery>> {
-        match &self.state().keys {
-            KeyState::Recovering(recovery) => Some(Arc::clone(recovery)),
-            _ => None,
-        }
-    }
-
-    /// Drops the keys: the vault is locked, the cache stays.
-    pub(crate) fn lock(&self) {
-        let was_unlocked = {
-            let mut state = self.state();
-            let was = !matches!(state.keys, KeyState::Locked);
-            state.keys = KeyState::Locked;
-            was
-        };
-        if was_unlocked {
-            self.notice.raise();
-        }
-    }
-
-    /// Drops the keys and erases the cache: the account is signed out of this device.
-    pub(crate) fn erase(&self) -> Result<(), HubError> {
-        {
-            let mut state = self.state();
-            state.keys = KeyState::Locked;
-            state.cache = None;
-        }
-        self.notice.raise();
-        self.file.erase().map_err(credentials)
-    }
 }
 
 /// The slots of the hubs this device knows, and where their caches are kept.

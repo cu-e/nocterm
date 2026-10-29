@@ -267,6 +267,7 @@ fn agent_services(
     storage: nocterm_agent_runtime::AgentStorage,
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
+        command_jobs: Arc::new(nocterm_agent_tools::JobsFactory),
         catalog: nocterm_agent_providers::catalog(),
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),

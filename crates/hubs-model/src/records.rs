@@ -2,8 +2,6 @@
 
 use std::fmt;
 
-use nocterm_session::Secret;
-
 use crate::address::HubAddress;
 use crate::trust::TrustPolicy;
 
@@ -95,10 +93,10 @@ pub enum KeyStatus {
     /// The keys are open, but the recovery key made with them was never confirmed as saved
     /// (the dialog was closed or the client stopped before): a new one can be issued, because
     /// the open keys may replace the recovery envelope.
-    RecoveryKeyUnconfirmed,
+    RecoveryKeyUnconfirmed(crate::RecoveryKeyReissue),
     /// The account had no keys; they were made now. The recovery key is the only way back
     /// after the password is lost, so it must be shown once and kept nowhere by the client.
-    Created(Secret),
+    Created(crate::RecoveryKeyOffer),
     /// A browser sign-in cannot open the keys: the user types the vault passphrase.
     PassphraseNeeded,
     /// The keys exist but the password does not open them (it was reset): the recovery key
@@ -111,4 +109,6 @@ pub enum KeyStatus {
 pub struct SignedIn {
     pub account: Account,
     pub keys: KeyStatus,
+    /// Original login authority for delayed publication or conditional cleanup.
+    pub login: crate::LoginReceipt,
 }

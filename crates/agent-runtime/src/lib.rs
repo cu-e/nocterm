@@ -4,15 +4,17 @@
 //! keyed write admission, lazy history hydration and usage projections.
 //! Does not own: settings storage, history/favorites files, ACP subprocesses or views.
 //! Ports used: AgentConnector, ToolBridge, AgentStateRepository, ChatRepository,
-//! WorkdirResolver, explicit SettingsHandle and host-supplied ShutdownCoordinator
+//! WorkdirResolver, CommandJobsFactory, explicit SettingsHandle and host-supplied ShutdownCoordinator
 //! at installation.
 //! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
 //! Settings section: ai consumer. Globals: none.
 //! Invariants: one current document owner per scoped ChatKey; noncloneable reservations
 //! precede entity construction, and explicit restart replaces only its expected owner.
 //! Scope-bound handles/readers and callbacks retain original ownership. Catalog payloads
-//! share one installation32-slot limit, including retained snapshots, archived row references
-//! and pending work. Hydration admission includes all contexts/windows, remaining prepared
+//! share one installation 32-slot limit, including retained snapshots, archived row references
+//! and pending work across every Local environment. Handles retain authenticated account
+//! leases independently of General/Project context; unavailable accounts have no fallback.
+//! Hydration admission includes all contexts/windows/accounts, remaining prepared
 //! records and immutable active/latest writer values; shown chats cannot be evicted.
 //! All contexts use the same local agent launcher. Delete seals
 //! only its scoped key; persistence
@@ -34,8 +36,8 @@ mod admission;
 mod bridge;
 mod catalog;
 mod client;
+pub mod history_admission;
 mod releases;
-mod residency;
 mod usage;
 pub use catalog::{CatalogLoadError, CatalogRow, CatalogSnapshot, PreparedHistory};
 mod connections;
@@ -56,7 +58,9 @@ use nocterm_ai::{
     ToolBridge,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-pub use storage::{AgentPersistenceError, AgentStorage, HistoryReader};
+pub use storage::{
+    AgentPersistenceError, AgentStorage, HistoryReader, LoadedHistory, PreparedHistoryRead,
+};
 
 pub struct TerminalAuthRequest {
     pub program: String,
@@ -72,6 +76,7 @@ pub struct RuntimeServices {
     pub agents: nocterm_agent_directory::AgentsHandle,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
+    pub command_jobs: Arc<dyn nocterm_session::command_jobs::CommandJobsFactory>,
     pub storage: AgentStorage,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
@@ -263,11 +268,12 @@ impl Runtime {
         self.state.error(cx)
     }
     pub fn history_reader(&self) -> HistoryReader {
-        self.chats.reader(nocterm_ai::history::ContextId::General)
+        self.chats
+            .reader(nocterm_ai::history::ContextId::General.into())
     }
     pub(crate) fn scoped_history_reader(
         &self,
-        scope: nocterm_ai::history::ContextId,
+        scope: nocterm_ai::local_environment::ChatScope,
     ) -> HistoryReader {
         self.chats.reader(scope)
     }
@@ -287,18 +293,18 @@ impl Runtime {
         client: &Client,
         cx: &mut Context<Self>,
     ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
-        self.register_scoped_bridge(nocterm_ai::history::ContextId::General, client, cx)
+        self.register_scoped_bridge(nocterm_ai::history::ContextId::General.into(), client, cx)
     }
     pub(crate) fn register_scoped_bridge(
         &mut self,
-        scope: nocterm_ai::history::ContextId,
+        scope: nocterm_ai::local_environment::ChatScope,
         client: &Client,
         cx: &mut Context<Self>,
     ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
         let state = client
             .state(cx)
             .ok_or(nocterm_ai::connection::BridgeRegistrationError::ClientClosed)?;
-        state.origin().require_scope(scope)?;
+        state.origin().require_chat_scope(&scope)?;
         if !self.ai_enabled(cx) {
             return Err(nocterm_ai::connection::BridgeRegistrationError::AiDisabled);
         }
@@ -347,7 +353,7 @@ impl Runtime {
         cx: &mut Context<Self>,
     ) -> Result<(), AgentActivationError> {
         self.connect_scoped(
-            nocterm_ai::history::ContextId::General,
+            nocterm_ai::history::ContextId::General.into(),
             client,
             chat_id,
             launch,
@@ -356,14 +362,14 @@ impl Runtime {
     }
     pub(crate) fn connect_scoped(
         &mut self,
-        scope: nocterm_ai::history::ContextId,
+        scope: nocterm_ai::local_environment::ChatScope,
         client: Client,
         chat_id: String,
         launch: AgentLaunch,
         cx: &mut Context<Self>,
     ) -> Result<(), AgentActivationError> {
         let state = client.state(cx).ok_or(AgentActivationError::ClientClosed)?;
-        documents::ChatStore::require_client_scope(scope, &client, cx)?;
+        documents::ChatStore::require_client_scope(scope.clone(), &client, cx)?;
         let origin = execution::admitted_origin(state.origin(), &chat_id)?;
         if self.shutting_down || !self.ai_enabled(cx) {
             return Ok(());
@@ -450,6 +456,13 @@ impl Runtime {
         effective: PathBuf,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self
+            .connections
+            .get(key)
+            .is_some_and(|connection| self.chats.source_current(connection.identity.key()))
+        {
+            return false;
+        }
         if !self
             .connections
             .get(key)

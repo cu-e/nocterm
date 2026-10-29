@@ -14,6 +14,7 @@
 //! reported as pending with the fingerprint to compare. This client never creates, deletes or
 //! grants a group's collection; that is `hubctl`'s job.
 
+mod client;
 mod grpc;
 #[cfg(test)]
 pub(crate) mod memory;

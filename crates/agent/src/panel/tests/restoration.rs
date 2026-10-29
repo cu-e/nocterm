@@ -610,7 +610,7 @@ fn restored_project_data_keeps_its_scope_after_edits_and_refuses_a_general_hydra
     assert_eq!(f.commands.sessions.load(Ordering::SeqCst), 0);
 }
 #[gpui_kit::test]
-fn legacy_general_restore_edits_and_restart_keep_wire_version_while_forks_use_v2(
+fn legacy_general_restore_edits_and_restart_keep_wire_version_while_forks_use_v3(
     cx: &mut TestAppContext,
 ) {
     let mut f = fixture(cx);
@@ -639,5 +639,5 @@ fn legacy_general_restore_edits_and_restart_keep_wire_version_while_forks_use_v2
             f.panel.read(cx).current().unwrap()
         })
         .unwrap();
-    cx.update(|cx| assert_eq!(fork.read(cx).snapshot(cx).unwrap().version, 2));
+    cx.update(|cx| assert_eq!(fork.read(cx).snapshot(cx).unwrap().version, 3));
 }

@@ -1,5 +1,6 @@
 //! Upload and download handles that forward to the session's SFTP worker.
 use super::*;
+use futures::FutureExt as _;
 pub(super) struct Writer {
     pub(super) id: Uuid,
     pub(super) fs: SshFs,

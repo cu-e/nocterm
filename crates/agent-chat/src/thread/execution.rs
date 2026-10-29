@@ -2,7 +2,6 @@
 use super::AgentThread;
 use nocterm_ai::{BridgeCall, ToolFailure};
 use std::time::{Duration, Instant};
-pub(in crate::thread) mod jobs;
 
 /// Read waits retain the original ticket and never take a replacement executor.
 pub(super) struct CommandWaitOperation {

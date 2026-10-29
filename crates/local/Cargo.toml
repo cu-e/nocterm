@@ -27,5 +27,8 @@ nix = { version = "0.28", features = ["signal", "fs", "event"] }
 [target.'cfg(windows)'.dependencies]
 process-wrap = { version = "9.1.0", default-features = false, features = ["std", "job-object", "creation-flags"] }
 
+[dev-dependencies]
+nocterm-session = {workspace=true,features=["test-support"]}
+
 [lints]
 workspace = true

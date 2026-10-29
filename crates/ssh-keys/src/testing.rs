@@ -138,3 +138,6 @@ impl VaultSshKeys for MemoryVaultSshKeys {
         })
     }
 }
+
+mod login;
+pub use login::LoginProofFixture;

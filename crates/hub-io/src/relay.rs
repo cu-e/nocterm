@@ -20,14 +20,16 @@ use std::task::{Context, Poll};
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
-use nocterm_hub_client::{HubClient, RelayTarget};
+use nocterm_hub_client::RelayTarget;
 use nocterm_hubs_model::{HubAddress, HubId};
 use nocterm_session::{RelayDialer, RelayError, RelayStream, Target};
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 
+use crate::account::source::LocalSourceProvider;
 use crate::links::HubLinks;
-use crate::pool::Pool;
+use crate::pool::{Pool, captured::CapturedClient};
+use nocterm_hubs_model::{HubError, source_identity::LocalAccountSource};
 
 /// Opens relayed streams through the hubs this device is signed in to.
 pub struct HubRelay {
@@ -45,31 +47,213 @@ impl HubRelay {
     }
 }
 
-/// Everything one dial needs, owned by its task.
-struct Opening {
-    pool: Arc<Pool>,
+/// Capture capability for an account-bound terminal, composed by the application.
+pub(crate) struct RelayCapture {
     handle: Handle,
+    pool: Arc<Pool>,
+}
+impl RelayCapture {
+    pub(crate) fn new(handle: Handle, pool: Arc<Pool>) -> Self {
+        Self { handle, pool }
+    }
+    pub(crate) fn account(
+        &self,
+        provider: &LocalSourceProvider,
+        source: Arc<dyn LocalAccountSource>,
+    ) -> Result<Arc<dyn RelayDialer>, HubError> {
+        let native = provider.capture_native()?;
+        let client = CapturedClient::account(self.pool.clone(), &native, source)?;
+        Ok(Arc::new(AccountRelay {
+            handle: self.handle.clone(),
+            client: Arc::new(client),
+        }))
+    }
+}
+struct AccountRelay {
+    handle: Handle,
+    client: Arc<CapturedClient>,
+}
+struct CapturedRelay {
+    handle: Handle,
+    client: Arc<CapturedClient>,
     hub: String,
     target: RelayTarget,
+    principal: String,
 }
-
+impl HubRelay {
+    fn captured(
+        &self,
+        name: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        if self.pool.is_stopped() {
+            return Err(RelayError::Closed);
+        }
+        let missing = || RelayError::NotSignedIn {
+            hub: name.to_owned(),
+        };
+        let hub = HubId::from(HubAddress::parse(name).map_err(|_| missing())?);
+        let client = CapturedClient::current(self.pool.clone(), hub)
+            .map_err(|error| failure::without_client(name, error))?;
+        Ok(Arc::new(CapturedRelay::new(
+            self.handle.clone(),
+            Arc::new(client),
+            name,
+            node,
+            target,
+        )))
+    }
+}
 impl RelayDialer for HubRelay {
+    fn capture(
+        &self,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        self.captured(hub, node, target)
+    }
     fn dial(
         &self,
         hub: &str,
         node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
-        let opening = Opening {
-            pool: Arc::clone(&self.pool),
-            handle: self.handle.clone(),
+        match self.capture(hub, node, target) {
+            Ok(captured) => captured.dial(hub, node, target),
+            Err(error) => async move { Err(error) }.boxed(),
+        }
+    }
+}
+impl RelayDialer for AccountRelay {
+    fn capture(
+        &self,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        let valid =
+            HubAddress::parse(hub).ok().map(HubId::from).as_ref() == Some(self.client.hub());
+        if !valid {
+            return Err(RelayError::NotSignedIn {
+                hub: hub.to_owned(),
+            });
+        }
+        self.client
+            .check()
+            .map_err(|error| failure::without_client(hub, error))?;
+        Ok(Arc::new(CapturedRelay::new(
+            self.handle.clone(),
+            self.client.clone(),
+            hub,
+            node,
+            target,
+        )))
+    }
+    fn dial(
+        &self,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
+        match self.capture(hub, node, target) {
+            Ok(captured) => captured.dial(hub, node, target),
+            Err(error) => async move { Err(error) }.boxed(),
+        }
+    }
+}
+impl CapturedRelay {
+    fn new(
+        handle: Handle,
+        client: Arc<CapturedClient>,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> Self {
+        Self {
+            handle,
+            client,
             hub: hub.to_owned(),
+            principal: target.user.clone(),
             target: RelayTarget {
                 host: target.host.clone(),
                 port: target.port,
                 node: node.map(str::to_owned),
             },
+        }
+    }
+    fn matches(&self, hub: &str, node: Option<&str>, target: &Target) -> bool {
+        self.hub == hub
+            && self.target.node.as_deref() == node
+            && self.target.host == target.host
+            && self.target.port == target.port
+            && self.principal == target.user
+    }
+    async fn open(self) -> Result<RelayStream, RelayError> {
+        let client = self
+            .client
+            .fresh()
+            .await
+            .map_err(|error| failure::without_client(&self.hub, error))?;
+        // The SDK and membership are already captured; this never selects B.
+        self.client
+            .check()
+            .map_err(|error| failure::without_client(&self.hub, error))?;
+        let conn = self
+            .client
+            .during(client.relay(&self.target))
+            .await
+            .map_err(|error| failure::without_client(&self.hub, error))?
+            .map_err(|error| {
+                failure::opening(&self.client, &self.hub, self.target.node.as_deref(), error)
+            })?;
+        self.client
+            .check()
+            .map_err(|error| failure::without_client(&self.hub, error))?;
+        let (stream, peer) = RelayStream::pair();
+        let (writer, reader) = conn.split();
+        let client = self.client.clone();
+        self.handle.spawn(async move {
+            let _ = client.during(pump::carry(peer, writer, reader)).await;
+        });
+        Ok(stream)
+    }
+}
+impl RelayDialer for CapturedRelay {
+    fn capture(
+        &self,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        if !self.matches(hub, node, target) {
+            return Err(RelayError::CaptureUnsupported);
+        }
+        self.client
+            .check()
+            .map_err(|error| failure::without_client(hub, error))?;
+        Ok(Arc::new(Self::new(
+            self.handle.clone(),
+            self.client.clone(),
+            hub,
+            node,
+            target,
+        )))
+    }
+    fn dial(
+        &self,
+        hub: &str,
+        node: Option<&str>,
+        target: &Target,
+    ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
+        let captured = match self.capture(hub, node, target) {
+            Ok(value) => value,
+            Err(error) => return async move { Err(error) }.boxed(),
         };
+        // Recreate only an immutable exact-route view; no account lookup occurs.
+        drop(captured);
+        let opening = Self::new(self.handle.clone(), self.client.clone(), hub, node, target);
         let (sender, result) = oneshot::channel();
         let task = self
             .handle
@@ -82,43 +266,6 @@ impl RelayDialer for HubRelay {
             task: Some(task),
         }
         .boxed()
-    }
-}
-
-impl Opening {
-    /// Opens the hub's stream and starts carrying frames between it and the returned stream.
-    async fn open(self) -> Result<RelayStream, RelayError> {
-        let (hub, client) = self.client().await?;
-        let conn = match client.relay(&self.target).await {
-            Ok(conn) => conn,
-            Err(error) => {
-                return Err(failure::opening(
-                    &self.pool,
-                    &hub,
-                    &self.hub,
-                    self.target.node.as_deref(),
-                    error,
-                ));
-            }
-        };
-        tracing::debug!(hub = %hub, peer = %conn.peer_ip(), "relay opened");
-        let (stream, peer) = RelayStream::pair();
-        let (writer, reader) = conn.split();
-        self.handle.spawn(pump::carry(peer, writer, reader));
-        Ok(stream)
-    }
-
-    /// The client of the hub named by `self.hub`, if this device is signed in to it.
-    async fn client(&self) -> Result<(HubId, HubClient), RelayError> {
-        let not_signed_in = || RelayError::NotSignedIn {
-            hub: self.hub.clone(),
-        };
-        let address = HubAddress::parse(&self.hub).map_err(|_| not_signed_in())?;
-        let hub = HubId::from(address);
-        match self.pool.fresh(&hub).await {
-            Ok(client) => Ok((hub, client)),
-            Err(error) => Err(failure::without_client(&self.hub, error)),
-        }
     }
 }
 

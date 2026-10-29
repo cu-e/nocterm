@@ -67,14 +67,12 @@ fn group() -> Option<Group> {
 /// first read finds the grants of keys this device has not pinned yet.
 fn trusting_replica(device: &Device, hub: &Hub) -> Arc<dyn ProfileReplica> {
     let account = device.account(hub);
-    let replica = account.replica();
+    let replica = account.replica().unwrap();
     block_on(replica.changes(None)).unwrap();
     let admins = account.admin_keys();
     for pending in admins.pending() {
-        assert!(pending.replaces.is_none(), "{pending:?}");
-        admins
-            .confirm(&pending.account_id, &pending.fingerprint)
-            .unwrap();
+        assert!(pending.key().replaces.is_none(), "{pending:?}");
+        pending.confirm(&pending.key().fingerprint).unwrap();
     }
     block_on(replica.changes(None)).unwrap();
     replica

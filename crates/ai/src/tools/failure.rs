@@ -61,3 +61,18 @@ impl From<TerminalCallError> for ToolFailure {
         error.to_string().into()
     }
 }
+
+/// Serialization failed without discarding its original concrete cause.
+#[derive(Clone, thiserror::Error)]
+#[error("Terminal tool arguments could not be encoded")]
+pub struct ToolArgumentsError(#[source] nocterm_core::SharedError<serde_json::Error>);
+impl From<serde_json::Error> for ToolArgumentsError {
+    fn from(error: serde_json::Error) -> Self {
+        Self(nocterm_core::SharedError::from_error(error))
+    }
+}
+impl std::fmt::Debug for ToolArgumentsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ToolArgumentsError")
+    }
+}

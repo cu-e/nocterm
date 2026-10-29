@@ -34,7 +34,7 @@ impl Runtime {
     }
     pub(crate) fn unregister_scoped_document(
         &mut self,
-        scope: nocterm_ai::history::ContextId,
+        scope: nocterm_ai::local_environment::ChatScope,
         id: EntityId,
         cx: &mut Context<Self>,
     ) -> Result<(), nocterm_ai::storage::AgentStorageError> {
@@ -44,15 +44,15 @@ impl Runtime {
     }
     pub(crate) fn request_scoped_activation(
         &mut self,
-        scope: nocterm_ai::history::ContextId,
+        scope: nocterm_ai::local_environment::ChatScope,
         client: Client,
         cx: &mut Context<Self>,
     ) -> Result<(), crate::AgentActivationError> {
         let state = client
             .state(cx)
             .ok_or(crate::AgentActivationError::ClientClosed)?;
-        state.origin().require_scope(scope)?;
-        documents::ChatStore::require_client_scope(scope, &client, cx)?;
+        state.origin().require_chat_scope(&scope)?;
+        documents::ChatStore::require_client_scope(scope.clone(), &client, cx)?;
         self.request_activation(client, cx);
         Ok(())
     }
@@ -70,7 +70,24 @@ impl Runtime {
         self.start_session_maintenance(cx);
         self.maintain_sessions(cx);
     }
+    pub(crate) fn refresh_environment_sources(&mut self, cx: &mut Context<Self>) {
+        self.revalidate_sources(cx);
+        // An explicit native notification can make fresh source captures available.
+        cx.notify();
+    }
+    fn revalidate_sources(&mut self, cx: &mut Context<Self>) -> bool {
+        let revoked = self.chats.revoke_stale_sources();
+        let changed = !revoked.is_empty();
+        for client in revoked {
+            self.admission.withdraw(client.id());
+            client.emit(SessionEvent::Shutdown, cx);
+        }
+        changed
+    }
     fn maintain_sessions(&mut self, cx: &mut Context<Self>) {
+        if self.revalidate_sources(cx) {
+            cx.notify();
+        }
         if self.shutting_down || !self.ai_enabled(cx) {
             self.admission.clear();
             return;
@@ -147,7 +164,7 @@ impl Runtime {
             }
             if let Some(agent) = self.services.agents.get(state.agent_id(), cx) {
                 if let Err(error) = self.connect_scoped(
-                    state.origin().scope(),
+                    state.origin().key().chat_scope(),
                     client.clone(),
                     state.origin().key().id().to_owned(),
                     agent.launch().clone(),

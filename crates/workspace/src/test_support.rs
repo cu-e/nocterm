@@ -222,6 +222,7 @@ impl crate::ConnectionFactSession for ProbeState {
         let owner = self.owner.upgrade()?;
         let probe = owner.read(cx);
         Some(crate::FactSessionSnapshot {
+            source: None,
             expected: ExpectedSession::new(owner.entity_id(), probe.generation),
             session: SessionContext::new(
                 probe.spec.target.clone(),
@@ -238,6 +239,8 @@ impl TerminalState for ProbeState {
         let owner = self.owner.upgrade()?;
         let probe = owner.read(cx);
         Some(TerminalInfo {
+            source: None,
+            source_current: true,
             title: probe.spec.title.clone(),
             local: false,
             target: Some(probe.spec.target.clone()),

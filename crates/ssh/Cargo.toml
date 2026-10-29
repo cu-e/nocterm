@@ -11,6 +11,7 @@ layer = "adapter"
 
 [dependencies]
 nocterm-core.workspace = true
+nocterm-cloud-model.workspace = true
 nocterm-session.workspace = true
 nocterm-ssh-keys.workspace = true
 
@@ -30,6 +31,8 @@ thiserror.workspace = true
 rustix = { version = "1.1", features = ["fs"] }
 
 [dev-dependencies]
+nocterm-cloud-model = {workspace=true,features=["test-support"]}
+nocterm-ssh-keys = {workspace=true,features=["test-support"]}
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 

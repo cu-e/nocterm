@@ -187,6 +187,7 @@ fn recovery_key(
     if !hubs.read(cx).recovery_key_unconfirmed(&summary.id) {
         return None;
     }
+    let offer = hubs.read(cx).recovery_key_offer(&summary.id).ok()?;
     let (hubs, id) = (hubs.clone(), summary.id.clone());
     Some(
         field(
@@ -204,7 +205,7 @@ fn recovery_key(
                         Button::new(item("server-recovery-issue", key))
                             .label("Issue a new recovery key")
                             .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                crate::sign_in::start_reissue(&hubs, &id, window, cx);
+                                crate::sign_in::start_reissue(&hubs, &id, offer.clone(), window, cx);
                             }),
                     ),
                 ),

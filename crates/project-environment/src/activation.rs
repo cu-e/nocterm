@@ -76,15 +76,22 @@ struct WorkspaceTransport {
     base: LaunchBase,
 }
 impl Transport for WorkspaceTransport {
-    fn open(&self, mut request: ConnectRequest) -> Session {
+    fn open(&self, request: ConnectRequest) -> Session {
+        self.open_with(request, Default::default())
+    }
+    fn open_with(
+        &self,
+        mut request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
         let session = match &self.base {
             LaunchBase::Remote(base) => {
                 request.launch = activate_launch(request.launch);
-                base.open(request)
+                base.open_with(request, options)
             }
             LaunchBase::Local(factory) => {
                 activate_local_environment(&mut request.launch);
-                factory(request.launch.clone()).open(request)
+                factory(request.launch.clone()).open_with(request, options)
             }
         };
         match session.exec() {

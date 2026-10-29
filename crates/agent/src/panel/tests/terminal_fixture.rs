@@ -3,6 +3,7 @@ use super::*;
 pub(super) struct Access {
     item: std::cell::Cell<Option<gpui_kit::EntityId>>,
     executor: std::cell::RefCell<Option<Arc<dyn nocterm_session::HostExec>>>,
+    source: std::cell::RefCell<Option<nocterm_ai::local_environment::LocalEnvironmentAccess>>,
     lease: std::cell::RefCell<Option<Arc<AtomicBool>>>,
     at_prompt: std::cell::Cell<bool>,
     sent: std::cell::RefCell<Vec<String>>,
@@ -36,6 +37,7 @@ impl Access {
         Rc::new(Self {
             item: Default::default(),
             executor: Default::default(),
+            source: Default::default(),
             lease: Default::default(),
             at_prompt: std::cell::Cell::new(true),
             sent: Default::default(),
@@ -45,6 +47,12 @@ impl Access {
         })
     }
 
+    pub(super) fn bind_source(
+        &self,
+        source: nocterm_ai::local_environment::LocalEnvironmentAccess,
+    ) {
+        *self.source.borrow_mut() = Some(source);
+    }
     pub(super) fn replace_connection(&self) {
         self.link.epoch.set(self.link.epoch.get() + 1);
         self.link.closed.set(false);
@@ -66,6 +74,21 @@ impl Access {
 impl TerminalState for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
         Some(TerminalInfo {
+            source: self
+                .source
+                .borrow()
+                .as_ref()
+                .and_then(|access| match access.environment() {
+                    nocterm_ai::local_environment::LocalEnvironment::HubAccount(partition) => {
+                        Some(partition.clone())
+                    }
+                    _ => None,
+                }),
+            source_current: self
+                .source
+                .borrow()
+                .as_ref()
+                .is_none_or(|access| access.check_current().is_ok()),
             expected: ExpectedSession::new(self.item.get()?, self.link.epoch.get()),
             title: "Terminal".into(),
             local: !self.link.remote.get(),

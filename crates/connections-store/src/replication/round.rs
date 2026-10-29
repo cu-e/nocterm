@@ -121,7 +121,7 @@ fn halt(failure: ReplicationFailure) -> Stop {
 fn remote_stop(error: ReplicaError) -> Stop {
     match error {
         ReplicaError::Unavailable => Stop::Halt(Outcome::Offline),
-        ReplicaError::Locked => Stop::Halt(Outcome::Locked),
+        ReplicaError::Locked | ReplicaError::Stale => Stop::Halt(Outcome::Locked),
         error => halt(error.into()),
     }
 }

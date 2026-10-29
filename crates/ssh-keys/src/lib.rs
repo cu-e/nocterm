@@ -1,7 +1,9 @@
 //! Rules of SSH key material: import, normalization, public half and fingerprint.
 //! Owns: OpenSSH private and public key formats, the accepted algorithms, the
 //! canonical public key text, and the `VaultSshKeys` port the connection editor uses.
-//! Does not own: entropy, files, the vault, SSH connections or any view.
+//! Owns: bounded initial host proof and exact Ed25519 userauth action validation;
+//! a purpose-specific device login key can sign only a checked SSH login action.
+//! Does not own: consent, entropy, files, the vault, SSH connections or any view.
 //! Ports provided: VaultSshKeys (implemented by the application over the vault).
 //! Ports used: none. Settings: none. Globals: none.
 //! Invariants: private key material is held in `Secret`/`Zeroizing` and never
@@ -12,6 +14,7 @@
 //! [`KeyMaterial`] produces is read back by the SSH adapter without conversion.
 
 mod error;
+pub mod login;
 mod material;
 mod port;
 mod public;

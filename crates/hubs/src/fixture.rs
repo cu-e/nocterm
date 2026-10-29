@@ -65,6 +65,16 @@ pub(crate) fn fixture_with_known_failing_settings(
     build(cx, hub, known, Some(writer))
 }
 
+/// Installs the ordinary shared snapshot writer supplied by a behavior test.
+pub(crate) fn fixture_with_writer(
+    cx: &mut TestAppContext,
+    hub: FakeHub,
+    known: Vec<HubRecord>,
+    writer: nocterm_store::SnapshotWriter<SettingsDocument>,
+) -> Fixture {
+    build(cx, hub, known, Some(writer))
+}
+
 fn build(
     cx: &mut TestAppContext,
     hub: FakeHub,

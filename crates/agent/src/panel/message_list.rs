@@ -9,11 +9,12 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, EntityId, Image, Task,
     component::message_scroller::{MessageScroller, MessageScrollerState},
 };
+use nocterm_agent_chat::conversation::ConversationSource;
 use nocterm_ai::{
     images::{ImageInspector, ImageThumbnailer},
     thread::Entry,
 };
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub(super) struct ActiveListBinding {
@@ -39,6 +40,7 @@ pub(super) struct MessageList {
     navigation: MessageNavigation,
     expanded: HashSet<usize>,
     binding: Option<ActiveListBinding>,
+    source: Option<Rc<dyn ConversationSource>>,
 }
 impl MessageList {
     pub(super) fn new(images: crate::ImageDeps, cx: &mut Context<AgentPanel>) -> Self {
@@ -51,6 +53,7 @@ impl MessageList {
             navigation: MessageNavigation::default(),
             expanded: HashSet::new(),
             binding: None,
+            source: None,
         }
     }
     pub(super) fn bind_chat(&mut self, chat: EntityId, cx: &mut Context<AgentPanel>) {
@@ -70,6 +73,26 @@ impl MessageList {
     pub(super) fn binding(&self) -> Option<ActiveListBinding> {
         self.binding.clone()
     }
+    pub(super) fn bind_source(
+        &mut self,
+        source: Rc<dyn ConversationSource>,
+        chat: EntityId,
+        cx: &mut Context<AgentPanel>,
+    ) {
+        if self.bound_to(chat) && self.source.is_some() {
+            return;
+        }
+        self.bind_chat(chat, cx);
+        self.source = Some(source);
+    }
+    pub(super) fn bound_to(&self, chat: EntityId) -> bool {
+        self.binding
+            .as_ref()
+            .is_some_and(|binding| binding.chat == chat)
+    }
+    pub(super) fn source(&self) -> Option<(EntityId, Rc<dyn ConversationSource>)> {
+        Some((self.binding.as_ref()?.chat, self.source.as_ref()?.clone()))
+    }
     fn current(&self, binding: &ActiveListBinding) -> bool {
         self.binding
             .as_ref()
@@ -84,6 +107,7 @@ impl MessageList {
         self.expanded.clear();
         self.pipeline.clear();
         self.binding = None;
+        self.source = None;
     }
     pub(super) fn observe_rows(
         &mut self,

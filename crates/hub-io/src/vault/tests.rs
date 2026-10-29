@@ -5,20 +5,22 @@ use std::time::Duration;
 use nocterm_session::Target;
 
 use super::*;
+use crate::account::testing::NativeVault;
 use crate::account::testing::{Admin, PASSWORD, signed_in, signed_in_trusting};
-use crate::store::VAULT_KIND;
 use crate::store::memory::MemoryHub;
+use crate::store::{StoreOps as _, VAULT_KIND};
+use nocterm_connections_model::{
+    replica::{ProfileReplica as _, ReplicaError, ReplicaScope},
+    test_support::profile_id_for,
+};
+mod source_binding;
 
-fn vault() -> (HubVault, Arc<MemoryHub>, tempfile::TempDir) {
+fn vault() -> (NativeVault, Arc<MemoryHub>, tempfile::TempDir) {
     let hub = Arc::new(MemoryHub::default());
     let dir = tempfile::tempdir().unwrap();
     let (_accounts, slot, record) = signed_in(dir.path());
     hub.set_keyset(Some(record));
-    (
-        HubVault::new(Handle::current(), slot, hub.clone()),
-        hub,
-        dir,
-    )
+    (NativeVault::new(slot, hub.clone()), hub, dir)
 }
 
 fn binding() -> CredentialBinding {
@@ -145,7 +147,7 @@ const ACME_VAULT: &str = "acme-vault";
 fn vault_in_acme(
     role: nocterm_hub_proto::v1::Role,
 ) -> (
-    HubVault,
+    NativeVault,
     Arc<MemoryHub>,
     nocterm_keys::CollectionKey,
     tempfile::TempDir,
@@ -160,7 +162,7 @@ fn vault_in_groups(
     role: nocterm_hub_proto::v1::Role,
     groups: &[(&str, &str, &str)],
 ) -> (
-    HubVault,
+    NativeVault,
     Arc<MemoryHub>,
     Vec<nocterm_keys::CollectionKey>,
     tempfile::TempDir,
@@ -181,12 +183,7 @@ fn vault_in_groups(
         .map(|(org_id, name, _)| (*org_id, *name, role))
         .collect();
     hub.set_memberships(&memberships);
-    (
-        HubVault::new(Handle::current(), slot, hub.clone()),
-        hub,
-        keys,
-        dir,
-    )
+    (NativeVault::new(slot, hub.clone()), hub, keys, dir)
 }
 
 /// Another member stores a credential in the group's vault.
@@ -385,8 +382,8 @@ async fn a_group_record_this_client_cannot_read_is_never_overwritten_or_deleted(
     assert!(vault.list().await.unwrap().is_empty());
 }
 
-fn in_acme() -> Space {
-    Space::Group("acme".to_owned())
+fn in_acme() -> ReplicaScope {
+    ReplicaScope::Organization("acme".to_owned())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -397,8 +394,13 @@ async fn a_personal_credential_moved_into_a_group_is_sealed_with_the_groups_key_
         .await
         .unwrap();
     let moved = vault
-        .ledger()
-        .carry(&Space::Personal, &in_acme(), &[id])
+        .replica()
+        .carry(
+            profile_id_for("credential-move"),
+            ReplicaScope::Personal,
+            in_acme(),
+            vec![id],
+        )
         .await
         .unwrap();
     assert_eq!(moved, [id]);
@@ -434,8 +436,13 @@ async fn a_group_credential_moved_out_becomes_personal_and_leaves_the_group() {
     let (vault, hub, key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
     member_saves(&hub, &key, shared_id(), "Team", "team-pw");
     let moved = vault
-        .ledger()
-        .carry(&in_acme(), &Space::Personal, &[shared_id()])
+        .replica()
+        .carry(
+            profile_id_for("credential-move"),
+            in_acme(),
+            ReplicaScope::Personal,
+            vec![shared_id()],
+        )
         .await
         .unwrap();
     assert_eq!(moved, [shared_id()]);
@@ -457,10 +464,15 @@ async fn a_guest_cannot_move_a_credential_into_the_group_and_nothing_is_copied()
         .await
         .unwrap();
     let moved = vault
-        .ledger()
-        .carry(&Space::Personal, &in_acme(), &[id])
+        .replica()
+        .carry(
+            profile_id_for("credential-move"),
+            ReplicaScope::Personal,
+            in_acme(),
+            vec![id],
+        )
         .await;
-    assert!(matches!(moved, Err(VaultError::ReadOnly)));
+    assert!(matches!(moved, Err(ReplicaError::Forbidden { .. })));
     assert!(hub.objects(ACME_VAULT).is_empty());
     let listed = vault.list().await.unwrap();
     assert!(listed.len() == 1 && listed[0].group.is_none());
@@ -471,8 +483,13 @@ async fn a_credential_the_source_does_not_hold_stays_where_it_is() {
     let (vault, hub, key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
     member_saves(&hub, &key, shared_id(), "Team", "team-pw");
     let moved = vault
-        .ledger()
-        .carry(&Space::Personal, &Space::Personal, &[shared_id()])
+        .replica()
+        .carry(
+            profile_id_for("credential-move"),
+            ReplicaScope::Personal,
+            ReplicaScope::Personal,
+            vec![shared_id()],
+        )
         .await
         .unwrap();
     assert!(moved.is_empty());
@@ -487,12 +504,17 @@ async fn a_copied_credential_is_in_the_group_under_a_new_id_and_stays_in_the_per
         .await
         .unwrap();
     let copied = vault
-        .ledger()
-        .copy(&Space::Personal, &in_acme(), &[id])
+        .replica()
+        .copy(
+            profile_id_for("credential-copy"),
+            ReplicaScope::Personal,
+            in_acme(),
+            vec![id],
+        )
         .await
         .unwrap();
     assert_eq!(copied.len(), 1);
-    let (from, copy) = copied[0];
+    let (from, copy) = (copied[0].from, copied[0].to);
     assert_eq!(from, id);
     assert_ne!(copy, id, "the two spaces never hold one id");
     let stored = hub.objects(ACME_VAULT);
@@ -525,17 +547,22 @@ async fn a_copied_credential_is_in_the_group_under_a_new_id_and_stays_in_the_per
 }
 
 /// A credential used by a personal profile and copied into Acme: `(personal id, group id)`.
-async fn copied_into_acme(vault: &HubVault) -> (CredentialId, CredentialId) {
+async fn copied_into_acme(vault: &NativeVault) -> (CredentialId, CredentialId) {
     let id = vault
         .put(None, "Own".into(), binding(), Secret::new("own-pw"))
         .await
         .unwrap();
     let copied = vault
-        .ledger()
-        .copy(&Space::Personal, &in_acme(), &[id])
+        .replica()
+        .copy(
+            profile_id_for("credential-copy"),
+            ReplicaScope::Personal,
+            in_acme(),
+            vec![id],
+        )
         .await
         .unwrap();
-    (id, copied[0].1)
+    (id, copied[0].to)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -589,8 +616,13 @@ async fn moving_a_group_copy_back_keeps_the_personal_credential_it_was_copied_fr
     let (vault, hub, _key, _dir) = vault_in_acme(nocterm_hub_proto::v1::Role::Member);
     let (personal, group) = copied_into_acme(&vault).await;
     let back = vault
-        .ledger()
-        .carry(&in_acme(), &Space::Personal, &[group])
+        .replica()
+        .carry(
+            profile_id_for("credential-move"),
+            in_acme(),
+            ReplicaScope::Personal,
+            vec![group],
+        )
         .await
         .unwrap();
     assert_eq!(back, [group]);
@@ -611,10 +643,15 @@ async fn a_guest_cannot_copy_a_credential_into_the_group() {
         .await
         .unwrap();
     let copied = vault
-        .ledger()
-        .copy(&Space::Personal, &in_acme(), &[id])
+        .replica()
+        .copy(
+            profile_id_for("credential-copy"),
+            ReplicaScope::Personal,
+            in_acme(),
+            vec![id],
+        )
         .await;
-    assert!(matches!(copied, Err(VaultError::ReadOnly)));
+    assert!(matches!(copied, Err(ReplicaError::Forbidden { .. })));
     assert!(hub.objects(ACME_VAULT).is_empty());
 }
 

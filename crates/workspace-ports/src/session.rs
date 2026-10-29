@@ -16,6 +16,7 @@ pub struct SessionContext {
     /// Whether the session is up. A disconnected session keeps its context,
     /// so views can show what they showed before, greyed out.
     pub connected: bool,
+    source: crate::SessionSource,
 }
 
 impl SessionContext {
@@ -26,7 +27,16 @@ impl SessionContext {
             fs,
             exec: None,
             connected,
+            source: Default::default(),
         }
+    }
+
+    pub fn with_source(mut self, source: crate::SessionSource) -> Self {
+        self.source = source;
+        self
+    }
+    pub fn source(&self) -> &crate::SessionSource {
+        &self.source
     }
 
     /// The same context, reached through `via`.
@@ -56,6 +66,7 @@ impl SessionContext {
         self.target == other.target
             && self.via == other.via
             && self.connected == other.connected
+            && self.source.same_as(&other.source)
             && same_handle(&self.fs, &other.fs)
             && same_handle(&self.exec, &other.exec)
     }

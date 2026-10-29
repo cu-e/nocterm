@@ -53,7 +53,10 @@ impl Access {
             .ok_or(TerminalError::Gone)
     }
     fn check(&self, expected: ExpectedSession, terminal: &Terminal) -> Result<(), TerminalError> {
-        if self.item()? != expected.item() || terminal.connection_epoch() != expected.epoch() {
+        if !terminal.installed().source_current()
+            || self.item()? != expected.item()
+            || terminal.connection_epoch() != expected.epoch()
+        {
             return Err(TerminalError::StaleSession);
         }
         Ok(())
@@ -65,10 +68,11 @@ impl nocterm_workspace::ConnectionFactSession for Access {
         let item = self.item().ok()?;
         let entity = self.terminal.upgrade()?;
         let terminal = entity.read(cx);
-        if terminal.is_local() {
+        if terminal.is_local() || !terminal.installed().source_current() {
             return None;
         }
         Some(nocterm_workspace::FactSessionSnapshot {
+            source: terminal.installed().source(),
             expected: ExpectedSession::new(item, terminal.connection_epoch()),
             session: terminal.session_context(),
             profile: terminal.spec().profile.clone(),
@@ -83,6 +87,8 @@ impl TerminalState for Access {
         let terminal = entity.read(cx);
         let expected = ExpectedSession::new(item, terminal.connection_epoch());
         Some(TerminalInfo {
+            source: terminal.installed().source(),
+            source_current: terminal.installed().source_current(),
             expected,
             title: terminal.spec().title.clone(),
             local: terminal.is_local(),

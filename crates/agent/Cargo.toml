@@ -10,10 +10,12 @@ publish = false
 layer = "feature"
 
 [dependencies]
+nocterm-hubs-model.workspace = true
 nocterm-ai.workspace = true
 nocterm-plugin-model.workspace = true
 nocterm-project-model.workspace = true
 nocterm-agent-chat.workspace = true
+nocterm-cloud-chat.workspace = true
 nocterm-agent-runtime.workspace = true
 nocterm-agent-directory.workspace = true
 nocterm-store.workspace = true
@@ -48,6 +50,8 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+nocterm-cloud-model = { workspace = true, features = ["test-support"] }
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-workspace-ports.workspace = true
 nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-project-model = { workspace = true, features = ["test-support"] }

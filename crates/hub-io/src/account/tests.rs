@@ -1,6 +1,7 @@
 use super::testing::*;
 use super::*;
 use crate::cache::CacheFile;
+use nocterm_vault::VaultStatus;
 
 #[test]
 fn a_signed_in_account_is_unlocked_and_locking_drops_its_keys() {

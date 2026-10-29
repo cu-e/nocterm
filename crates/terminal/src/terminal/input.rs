@@ -15,9 +15,8 @@ use std::{
     },
 };
 
-use crate::{codec::TextCodec, integration::ShellIntegration};
 use nocterm_session::{Charset, TextEncodingError};
-use nocterm_vt::Modes;
+use nocterm_vt::{Modes, ShellIntegration, TextCodec};
 use std::cell::RefCell;
 
 #[derive(Clone, Copy)]
@@ -417,9 +416,11 @@ impl Terminal {
     }
     pub fn vault_unlocked(&self, cx: &App) -> bool {
         let _ = cx;
-        self.deps
-            .credentials()
-            .is_some_and(|provider| provider.store().is_available())
+        self.deps.source_current()
+            && self
+                .deps
+                .credentials()
+                .is_some_and(|provider| provider.store().is_available())
     }
     /// Whether unlocking the vault would answer the current prompt.
     pub fn awaiting_vault(&self) -> bool {
@@ -433,6 +434,9 @@ impl Terminal {
         cx.emit(TerminalEvent::Changed);
     }
     pub(crate) fn retrieve_credential(&mut self, cx: &mut Context<Self>) {
+        if !self.deps.source_current() {
+            return;
+        }
         self.credentials.begin_lookup();
         let Some(Prompt::Secret { request, hop, .. }) = self.prompt() else {
             return;
@@ -560,6 +564,9 @@ impl Terminal {
         self.credentials.cancel_candidate();
     }
     pub(crate) fn save_authenticated_credential(&mut self, cx: &mut Context<Self>) {
+        if !self.deps.source_current() {
+            return;
+        }
         let Some((request, secret)) = self.credentials.take_candidate() else {
             return;
         };

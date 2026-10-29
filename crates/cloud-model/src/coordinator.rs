@@ -1,0 +1,26 @@
+//! Host command/control contracts; plain values do not verify signatures or fsync.
+mod command;
+mod delivery;
+mod error;
+mod event;
+pub(crate) mod intake;
+mod ports;
+mod supervision;
+pub use command::{
+    ApprovalAnswer, ApprovalChoice, CommandAcknowledgement, CommandBody, GrantClass,
+    GrantReference, IssuerRevocation, IssuerSubject, PromptAllowance, PromptRequest, ProviderOffer,
+    ReceivedCommand, RunDestination, SessionConsent,
+};
+pub use error::CoordinatorError;
+pub use event::{CoordinatorEvent, RunStatus, ToolObservation};
+pub use ports::{
+    AuthenticatedCommandSource, ConfiguredModel, CoordinatorEventEncoder, CoordinatorIdentity,
+    CoordinatorJournal, CoordinatorProviders, SessionConsentConsumer,
+};
+pub use supervision::{DrainReport, SupervisorLimits, SupervisorPhase, TaskSnapshot};
+
+pub use intake::{
+    CommandReceiveBudget, IntakeError, IntakeLane, IntakeLimits, IntakePoolLimits, IntakeUsage,
+};
+
+pub use delivery::{CommandInput, CommandRefusal, CommandReply, ResidentCommand, RetryReason};

@@ -157,6 +157,7 @@ impl HistoryColumn {
         &mut self,
         ids: Vec<String>,
         reader: HistoryReader,
+        admission: nocterm_agent_runtime::history_admission::HistoryAdmissionHandle,
         catalog: Vec<(EntityId, bool)>,
         cx: &mut Context<AgentPanel>,
     ) {
@@ -166,29 +167,31 @@ impl HistoryColumn {
         let cancellation = Arc::new(AtomicBool::new(false));
         let flag = cancellation.clone();
         let query = ticket.query.clone();
-        let work = cx.background_executor().spawn(async move {
+        let cancellation = SearchCancellation(cancellation);
+        self.search.task = Some(cx.spawn(async move |panel, cx| {
+            let _cancel = cancellation;
             let mut matches = HashSet::new();
             for id in ids {
                 if flag.load(Ordering::Acquire) {
                     break;
                 }
-                let (loaded, _permit) = reader.load(id.clone()).await;
-                if let Ok(chat) = loaded {
-                    let transcript = nocterm_ai::thread::ThreadState {
-                        entries: chat.entries,
-                        ..Default::default()
-                    };
-                    if transcript.mentions(&query) {
-                        matches.insert(id);
+                let loading =
+                    cx.update(|cx| reader.load_admitted(id.clone(), admission.clone(), cx));
+                let loaded = loading.await;
+                let mut found = false;
+                loaded.publish(|loaded, _permit, _payload| {
+                    if let Ok(chat) = loaded {
+                        let transcript = nocterm_ai::thread::ThreadState {
+                            entries: chat.entries,
+                            ..Default::default()
+                        };
+                        found = transcript.mentions(&query);
                     }
+                });
+                if found {
+                    matches.insert(id);
                 }
             }
-            matches
-        });
-        let cancellation = SearchCancellation(cancellation);
-        self.search.task = Some(cx.spawn(async move |panel, cx| {
-            let _cancel = cancellation;
-            let matches = work.await;
             let _ = panel.update(cx, |panel, cx| {
                 panel.on_archive_search_completed(ticket, matches, cx)
             });

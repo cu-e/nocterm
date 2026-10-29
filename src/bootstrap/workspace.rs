@@ -67,9 +67,10 @@ pub(crate) fn build_workspace(
         "monitor",
         user.register_monitor(&booted.monitor, workspace, window, cx),
     );
+    let agent = sources.agent_installation(&booted.agent);
     report_registration(
         "agent",
-        nocterm_agent::register(workspace, booted.agent.clone(), window, cx),
+        nocterm_agent::register(workspace, agent, window, cx),
     );
     workspace.set_menu_builder(crate::app_menus::build, window, cx);
     if let Some(hubs) = booted.hubs() {

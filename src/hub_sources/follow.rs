@@ -4,35 +4,65 @@
 //! hub signs the device out, revokes it or disappears, the mirror is emptied and the account's
 //! vault is locked. Nothing restarts: the entity follows the registry of hubs.
 use gpui_kit::{Context, Entity, Subscription};
-use nocterm_connections_model::replica::ProfileReplica;
 use nocterm_connections_store::{ProfileReplication, ReplicationEvent, ReplicationStatus};
 use nocterm_hubs::{HubStatus, Hubs};
-use nocterm_hubs_model::HubId;
+use nocterm_hubs_model::{HubId, source_identity::LocalAccountSourceFactory as _};
 use nocterm_vault::VaultAccess;
 use std::sync::Arc;
 
 use super::notices::{notify, refusal_message, space_name};
 
+pub(super) struct FollowInputs {
+    replica: super::AccountReplicas,
+    vault: Arc<dyn VaultAccess>,
+    replication: Entity<ProfileReplication>,
+    agent_source: Arc<super::agent::AgentSourceAvailability>,
+    runtime: nocterm_agent_runtime::RuntimeHandle,
+}
+impl FollowInputs {
+    pub(super) fn new(
+        replica: super::AccountReplicas,
+        vault: Arc<dyn VaultAccess>,
+        replication: Entity<ProfileReplication>,
+        agent_source: Arc<super::agent::AgentSourceAvailability>,
+        runtime: nocterm_agent_runtime::RuntimeHandle,
+    ) -> Self {
+        Self {
+            replica,
+            vault,
+            replication,
+            agent_source,
+            runtime,
+        }
+    }
+}
 pub(super) struct Follow {
     hub: HubId,
     hubs: Entity<Hubs>,
-    replica: Arc<dyn ProfileReplica>,
+    replica: super::AccountReplicas,
     vault: Arc<dyn VaultAccess>,
     replication: Entity<ProfileReplication>,
     attached: bool,
     _hubs: Subscription,
     _refusals: Subscription,
+    agent_source: Arc<super::agent::AgentSourceAvailability>,
+    runtime: nocterm_agent_runtime::RuntimeHandle,
 }
 
 impl Follow {
     pub(super) fn new(
         hub: HubId,
         hubs: Entity<Hubs>,
-        replica: Arc<dyn ProfileReplica>,
-        vault: Arc<dyn VaultAccess>,
-        replication: Entity<ProfileReplication>,
+        inputs: FollowInputs,
         cx: &mut Context<Self>,
     ) -> Self {
+        let FollowInputs {
+            replica,
+            vault,
+            replication,
+            agent_source,
+            runtime,
+        } = inputs;
         let observed = cx.observe(&hubs, |this, _, cx| this.follow(cx));
         let refusals = cx.subscribe(&replication, |_, replication, event, cx| {
             if let ReplicationEvent::Refused {
@@ -55,6 +85,8 @@ impl Follow {
             attached: false,
             _hubs: observed,
             _refusals: refusals,
+            agent_source,
+            runtime,
         };
         follow.follow(cx);
         follow
@@ -62,21 +94,38 @@ impl Follow {
 
     fn follow(&mut self, cx: &mut Context<Self>) {
         let status = self.hubs.read(cx).status(&self.hub);
+        let allowed = !matches!(
+            status,
+            None | Some(HubStatus::SignedOut | HubStatus::Revoked)
+        );
+        let lock_original = !allowed && self.agent_source.native_current();
+        let changed = self.agent_source.refresh(allowed);
+        if changed && self.attached {
+            self.detach_mirror(cx);
+        }
+        if changed {
+            self.runtime.refresh_environment_sources(cx);
+        }
+        if lock_original {
+            self.vault.lock();
+        }
         match status {
             Some(HubStatus::Online | HubStatus::Connecting | HubStatus::Offline { .. }) => {
-                if !self.attached {
+                if self.agent_source.native_current() && !self.attached {
                     self.attach(cx);
-                } else if matches!(
-                    self.replication.read(cx).status(),
-                    ReplicationStatus::Locked
-                ) {
+                } else if self.agent_source.native_current()
+                    && matches!(
+                        self.replication.read(cx).status(),
+                        ReplicationStatus::Locked
+                    )
+                {
                     // The keys of the account may have opened since the last round.
                     self.attach(cx);
                 }
             }
             None | Some(HubStatus::SignedOut | HubStatus::Revoked) => {
                 if self.attached {
-                    self.detach(cx);
+                    self.detach_mirror(cx);
                 }
             }
             Some(HubStatus::TrustFailed { .. } | HubStatus::UpgradeRequired { .. }) => {}
@@ -84,17 +133,29 @@ impl Follow {
     }
 
     fn attach(&mut self, cx: &mut Context<Self>) {
-        let replica = Arc::clone(&self.replica);
-        self.replication
-            .update(cx, |replication, cx| replication.attach(replica, cx));
-        self.attached = true;
+        let captured = self
+            .agent_source
+            .capture()
+            .and_then(|source| (self.replica)(source));
+        match captured {
+            Ok(replica) => {
+                self.replication
+                    .update(cx, |replication, cx| replication.attach(replica, cx));
+                self.attached = true;
+            }
+            Err(error) => {
+                if self.attached {
+                    self.detach_mirror(cx);
+                }
+                tracing::debug!(%error, "the original native replica is unavailable");
+            }
+        }
     }
 
     /// Nothing of the account stays: not its profiles, not an open vault.
-    fn detach(&mut self, cx: &mut Context<Self>) {
+    fn detach_mirror(&mut self, cx: &mut Context<Self>) {
         self.replication
             .update(cx, |replication, cx| replication.detach(cx));
-        self.vault.lock();
         self.attached = false;
     }
 }

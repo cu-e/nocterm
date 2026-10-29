@@ -37,7 +37,14 @@ struct LocalLaunchTransport {
 }
 impl Transport for LocalLaunchTransport {
     fn open(&self, request: ConnectRequest) -> Session {
-        (self.factory)(request.launch.clone()).open(request)
+        self.open_with(request, Default::default())
+    }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        (self.factory)(request.launch.clone()).open_with(request, options)
     }
 }
 struct ContainerTransport {
@@ -46,7 +53,14 @@ struct ContainerTransport {
     activation: Arc<dyn WorkspaceCommandActivation>,
 }
 impl Transport for ContainerTransport {
-    fn open(&self, mut request: ConnectRequest) -> Session {
+    fn open(&self, request: ConnectRequest) -> Session {
+        self.open_with(request, Default::default())
+    }
+    fn open_with(
+        &self,
+        mut request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
         let command = shell(&self.location, self.activation.as_ref());
         request.launch = ShellLaunch {
             program: Some(command.program),
@@ -54,7 +68,7 @@ impl Transport for ContainerTransport {
             integration: false,
             ..Default::default()
         };
-        let session = self.base.open(request).with_fs(None);
+        let session = self.base.open_with(request, options).with_fs(None);
         match session.exec() {
             Some(base) => {
                 let fs: Arc<dyn RemoteFs> = Arc::new(crate::filesystem::ContainerFilesystem::new(

@@ -237,7 +237,7 @@ async fn download_closes_handle_when_fstat_rejects_object_changed_after_lstat() 
         atomic_replace: false,
     };
     let downloads: Downloads = Arc::default();
-    let (fs, _requests) = channel();
+    let (fs, _requests) = channel(Default::default());
     assert!(matches!(
         timeout(
             Duration::from_secs(3),

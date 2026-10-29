@@ -1,6 +1,8 @@
 use crate::DeviceUnlockError;
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
+    #[error("The captured account is no longer current.")]
+    Stale,
     #[error("The vault is locked.")]
     Locked,
     #[error("The vault password is incorrect or the vault was modified.")]

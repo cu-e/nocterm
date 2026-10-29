@@ -157,6 +157,7 @@ impl Terminal {
         command_completion: Option<CommandCompletion>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let deps = deps.capture_credentials();
         let options = emulator_options(deps.settings().setting::<nocterm_ui::TerminalSettings>(cx));
         let weak = cx.entity().downgrade();
         let mut this = Self {
@@ -252,6 +253,13 @@ impl Terminal {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn connect(&mut self, cx: &mut Context<Self>) {
         self.close(cx);
+        if !self.deps.source_current() {
+            self.set_status(
+                Status::Closed(CloseReason::Failed(SessionError::Cancelled)),
+                cx,
+            );
+            return;
+        }
         if let Err(error) = self.lifecycle.spec().options.validate() {
             self.set_status(
                 Status::Closed(CloseReason::Failed(SessionError::InvalidOptions(error))),
@@ -354,7 +362,14 @@ impl Terminal {
                 .map(|secs| Duration::from_secs(secs.into())),
         };
 
-        let session = transport.open(request);
+        if !self.deps.source_current() {
+            self.set_status(
+                Status::Closed(CloseReason::Failed(SessionError::Cancelled)),
+                cx,
+            );
+            return;
+        }
+        let session = transport.open_with(request, self.deps.connection_options());
         self.lifecycle.accept_session(session.clone());
         self.set_status(
             Status::Connecting(ConnectStage::Connecting { hop: None }),

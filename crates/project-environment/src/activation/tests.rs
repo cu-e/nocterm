@@ -110,3 +110,25 @@ fn default_workspace_shell_is_resolved_on_its_original_host() {
     assert!(requests[0].launch.args[1].contains("${SHELL:-/bin/sh}"));
     assert!(!requests[0].launch.args[1].contains("/etc/profile"));
 }
+
+#[test]
+fn workspace_activation_forwards_original_connection_source_to_the_native_transport() {
+    use nocterm_session::{ConnectionOpenOptions, testing::ScriptedConnectionSource};
+    let revoker = ScriptedConnectionSource::default();
+    let source = revoker.source();
+    let base = ScriptedTransport::default();
+    let driver = base.queue_with_source(None, None, source.clone());
+    let transport = NativeWorkspaceSessions.wrap(Arc::new(base.clone()));
+    let session = transport.open_with(
+        connection(Default::default()),
+        ConnectionOpenOptions::new(source),
+    );
+    assert_eq!(base.requests().len(), 1);
+    assert!(session.input("original account"));
+    assert!(matches!(
+        block_on(driver.next_command()),
+        Some(nocterm_session::Command::Input(_))
+    ));
+    revoker.revoke();
+    assert!(!session.input("replacement account"));
+}

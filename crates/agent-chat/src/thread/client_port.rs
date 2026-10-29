@@ -53,17 +53,38 @@ impl SessionClient for ThreadClient {
             thread.session.shown(),
         ))
     }
+    fn history_payload(&self, cx: &App) -> Option<u64> {
+        let thread = self.0.upgrade()?;
+        let thread = thread.read(cx);
+        (!thread.is_archived() && thread.history_eviction_gate().is_permitted())
+            .then(|| thread.payloads.order())
+            .flatten()
+    }
     fn evict_history(&self, cx: &mut App) -> bool {
         self.0
             .upgrade()
             .is_some_and(|thread| thread.update(cx, |thread, cx| thread.evict_history(cx)))
     }
-    fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
-        self.0.upgrade()?.read(cx).flush_snapshot(cx)
+    fn snapshot(
+        &self,
+        cx: &mut App,
+    ) -> Result<Option<Arc<nocterm_ai::history::SharedChat>>, nocterm_ai::storage::AgentStorageError>
+    {
+        let Some(thread) = self.0.upgrade() else {
+            return Ok(None);
+        };
+        thread.update(cx, |thread, cx| thread.flush_snapshot(cx))
     }
-    fn capture(&self, cx: &mut App) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)> {
-        self.0
-            .upgrade()?
-            .update(cx, |thread, cx| thread.capture_pending(cx))
+    fn capture(
+        &self,
+        cx: &mut App,
+    ) -> Result<
+        Option<(Arc<nocterm_ai::history::SharedChat>, u64)>,
+        nocterm_ai::storage::AgentStorageError,
+    > {
+        let Some(thread) = self.0.upgrade() else {
+            return Ok(None);
+        };
+        thread.update(cx, |thread, cx| thread.capture_pending(cx))
     }
 }

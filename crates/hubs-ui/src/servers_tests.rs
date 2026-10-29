@@ -9,7 +9,8 @@ use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
 use nocterm_hubs::{HubStatus, HubSummary};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
 use nocterm_hubs_model::{
-    Environment, Fingerprint, HubColor, HubRecord, HubSignIn as _, PendingAdminKey, TrustPolicy,
+    Environment, Fingerprint, HubAdminKeys as _, HubColor, HubRecord, HubSignIn as _,
+    PendingAdminKey, TrustPolicy,
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
@@ -435,13 +436,14 @@ fn a_changed_administrator_key_is_shown_with_a_warning_and_both_fingerprints(
 #[gpui_kit::test]
 fn a_key_the_account_no_longer_offers_is_reported_and_stays_unconfirmed(cx: &mut TestAppContext) {
     let page = page_with_pending_key(cx, None);
+    let shown = page.admin_keys.pending_admin_keys(&hub_id())[0].clone();
     // The key on offer changed after the person read the fingerprint of the old one.
     page.admin_keys.offer(&hub_id(), grace("FFFF-FFFF", None));
     let before = notices(&page, cx);
     let hubs = page.installed.hubs().clone();
 
     cx.update_window(page.window, |_, window, cx| {
-        crate::manage::confirm_admin_key(&hubs, &hub_id(), "grace", GRACE_KEY, window, cx);
+        crate::manage::confirm_admin_key(&hubs, &shown, GRACE_KEY, window, cx);
     })
     .unwrap();
 

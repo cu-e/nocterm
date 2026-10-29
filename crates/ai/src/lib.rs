@@ -7,7 +7,7 @@
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: metadata::ChatMetadataSource,
 //! AgentConnector, ToolBridge,
-//! AgentStateRepository, ChatRepository,
+//! AgentStateRepository, ChatRepository and bounded PreparedChatLoad,
 //! workspace::WorkdirResolver, sandbox::SandboxProbe and
 //! images::{ImageInspector, ImageThumbnailer}.
 //! Image preflight and encoded admission are pure; native decoding is injected.
@@ -20,7 +20,9 @@
 //! Native chat allocation and wall-clock facts are provided by ChatMetadataSource.
 //! No agent protocol SDK type appears in this crate; `nocterm-acp` maps the SDK to neutral records.
 //! Legacy transcripts preserve their version-one bytes. Newly framed documents use version
-//! two with checked explicit context ownership; saved ownership never grants execution access.
+//! three with explicit device/account environment and independent context ownership.
+//! LocalAccountSource leases are captured from an authenticated native owner; persistence identity
+//! never grants execution access. Version-two records remain ThisComputer only.
 //! Agent launch settings validation is pure; native text parsing and page controls belong to Agent.
 //! No concrete agent is named here: built-in profiles are injected as an `AgentCatalog`.
 pub mod agents;
@@ -33,6 +35,7 @@ pub mod execution_origin;
 pub mod favorites;
 pub mod history;
 pub mod images;
+pub mod local_environment;
 pub mod mcp;
 pub mod metadata;
 pub mod redact;
@@ -61,3 +64,5 @@ mod tests;
 pub mod storage;
 
 pub mod model;
+
+pub mod conversation;

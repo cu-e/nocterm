@@ -64,7 +64,7 @@ impl From<ExecError> for ContainersError {
             ExecError::NotFound(_) => Self::NotInstalled,
             ExecError::Disconnected => Self::Disconnected,
             ExecError::Unsupported => Self::Unsupported,
-            error @ ExecError::Failed(_) => Self::Execution(error),
+            error @ (ExecError::Failed(_) | ExecError::Source(_)) => Self::Execution(error),
         }
     }
 }

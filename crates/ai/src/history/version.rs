@@ -7,12 +7,19 @@ use serde::{Deserialize, Serialize};
 pub struct TranscriptVersion(u32);
 impl TranscriptVersion {
     pub const LEGACY: Self = Self(super::LEGACY_VERSION);
+    pub const ENVIRONMENT: Self = Self(super::ENVIRONMENT_VERSION);
     pub const SCOPED: Self = Self(super::VERSION);
     pub const fn wire(self) -> u32 {
         self.0
     }
     pub(super) fn observed(version: u32) -> Self {
         Self(version)
+    }
+    pub(super) fn require_environment(
+        self,
+        environment: &crate::local_environment::LocalEnvironment,
+    ) -> Result<(), HistoryCodecError> {
+        super::header::validate_environment(self.0, environment)
     }
     pub(super) fn require_scope(self, scope: ContextId) -> Result<(), HistoryCodecError> {
         super::header::resolve_scope(self.0, Some(scope)).map(|_| ())
@@ -22,7 +29,9 @@ impl TryFrom<u32> for TranscriptVersion {
     type Error = HistoryCodecError;
     fn try_from(version: u32) -> Result<Self, Self::Error> {
         match version {
-            super::LEGACY_VERSION | super::VERSION => Ok(Self(version)),
+            super::LEGACY_VERSION | super::VERSION | super::ENVIRONMENT_VERSION => {
+                Ok(Self(version))
+            }
             other => Err(HistoryCodecError::UnsupportedVersion(other)),
         }
     }

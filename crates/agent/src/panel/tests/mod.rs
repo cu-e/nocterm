@@ -60,6 +60,7 @@ mod terminal_fixture;
 use terminal_fixture::{Access, FakeTerminal, SignIn};
 
 struct HostEnvironment {
+    jobs: Arc<nocterm_session::testing::ScriptedCommandJobsFactory>,
     directory: tempfile::TempDir,
     metadata: Arc<nocterm_ai::testing::ScriptedChatMetadata>,
 }
@@ -128,6 +129,7 @@ fn fixture_with_width(
     images: crate::ImageDeps,
 ) -> Fixture {
     let directory = HostEnvironment {
+        jobs: Arc::new(nocterm_session::testing::ScriptedCommandJobsFactory::default()),
         directory: tempfile::tempdir().unwrap(),
         metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
     };
@@ -182,6 +184,7 @@ fn fixture_with_width(
             let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
             let (installed, registration) = crate::init(
                 AgentServices {
+                    command_jobs: directory.jobs.clone(),
                     catalog: nocterm_agent_providers::catalog(),
                     metadata: directory.metadata.clone(),
                     terminal_auth: None,
@@ -237,6 +240,7 @@ fn fixture_with_width(
 }
 fn fixture_services(f: &Fixture) -> AgentServices {
     AgentServices {
+        command_jobs: f._directory.jobs.clone(),
         catalog: nocterm_agent_providers::catalog(),
         metadata: f._directory.metadata.clone(),
         connector: f.connector.clone(),

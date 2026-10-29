@@ -18,6 +18,8 @@ toml.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+nocterm-ai = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 tempfile.workspace = true
 

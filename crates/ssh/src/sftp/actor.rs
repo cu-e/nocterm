@@ -29,12 +29,17 @@ pub(crate) async fn serve(
                 let Some(request) = request else { break; };
                 let sftp = match &opened {
                     Some(result) => result.clone(),
-                    None => opened.insert(open(&handle).await.map(Arc::new)).clone(),
+                    None => opened.insert(requests.sender.source.guard(open(&handle)).await.map(Arc::new)).clone(),
                 };
                 let uploads = uploads.clone();
                 let downloads = downloads.clone();
                 let sender = requests.sender.clone();
-                workers.spawn(async move { dispatch(request, sftp, uploads, downloads, sender).await });
+                let source = sender.source.clone();
+                workers.spawn(async move {
+                    let _ = source.guard::<_, FsError, _>(async move {
+                        dispatch(request, sftp, uploads, downloads, sender).await; Ok(())
+                    }).await;
+                });
             }
         }
     }

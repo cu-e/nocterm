@@ -29,7 +29,9 @@ impl AgentPanel {
             .iter()
             .map(|thread| (thread.entity_id(), thread.read(cx).is_archived()))
             .collect();
-        self.history.start_search(ids, reader, catalog, cx);
+        let admission = self.chats.host().runtime().history_admission(cx);
+        self.history
+            .start_search(ids, reader, admission, catalog, cx);
         cx.notify();
     }
     pub(super) fn on_archive_search_completed(
@@ -393,7 +395,14 @@ impl AgentPanel {
         // Release ACP even if another observer still holds the old document entity.
         old.update(cx, |thread, cx| thread.release_resources(cx));
         // Edits and provider tool statuses are final before taking the restart snapshot.
-        let data = old.read(cx).restart_data();
+        let data = match old.update(cx, |thread, cx| thread.restart_data(cx)) {
+            Ok(data) => data,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        };
         self.open_started(
             ChatStart::Restart {
                 data: Box::new(data),

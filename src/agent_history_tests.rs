@@ -11,6 +11,7 @@ use std::{
     sync::Arc,
 };
 mod catalog;
+mod environments;
 mod namespaces;
 mod transcripts;
 fn repository(dir: &Path) -> FileChatRepository {

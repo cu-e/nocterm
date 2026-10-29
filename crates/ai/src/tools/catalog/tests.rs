@@ -209,3 +209,17 @@ fn both_metadata_versions_use_the_same_shape_parser_without_losing_outcomes() {
         }
     }
 }
+
+#[test]
+fn canonical_tool_arguments_round_trip_through_every_existing_catalog_schema() {
+    let fixtures: Value = serde_json::from_str(include_str!("../fixtures/calls.json")).unwrap();
+    for fixture in fixtures.as_array().unwrap() {
+        let name = fixture["name"].as_str().unwrap();
+        let spec = get(name).unwrap();
+        let call = (spec.parse)(fixture["arguments"].clone()).unwrap();
+        let arguments = call.arguments().unwrap();
+        let restored = (spec.parse)(arguments.clone()).unwrap();
+        assert_eq!(restored.arguments().unwrap(), arguments);
+        assert_eq!(restored.name(), name);
+    }
+}

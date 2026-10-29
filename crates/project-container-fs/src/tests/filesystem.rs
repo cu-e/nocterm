@@ -284,3 +284,41 @@ fn abandoned_download_read_cancels_held_output_without_starving_other_operations
         download.close().await.unwrap();
     });
 }
+
+#[test]
+fn container_sessions_preserve_the_original_native_connection_source() {
+    use nocterm_session::{ConnectionOpenOptions, testing::ScriptedConnectionSource};
+    let revoker = ScriptedConnectionSource::default();
+    let source = revoker.source();
+    let base = ScriptedTransport::default();
+    let driver = base.queue_with_source(None, None, source.clone());
+    let location = ContainerLocation::new(
+        HostLocator::Local,
+        Engine::Docker,
+        id(),
+        RootPath::parse("/workspace").unwrap(),
+        ContainerOrigin::Attached,
+    )
+    .unwrap();
+    let transport = container_sessions().wrap(Arc::new(base.clone()), location);
+    let request = ConnectRequest {
+        target: Target::new("user", "remote-engine", 22),
+        auth: Auth::Auto,
+        jumps: Vec::new(),
+        term: "xterm".into(),
+        size: Default::default(),
+        proxy: Default::default(),
+        launch: Default::default(),
+        connect_timeout: Duration::from_secs(5),
+        keepalive_interval: None,
+    };
+    let session = transport.open_with(request, ConnectionOpenOptions::new(source));
+    assert_eq!(base.requests().len(), 1);
+    assert!(session.input("original account"));
+    assert!(matches!(
+        block_on(driver.next_command()),
+        Some(nocterm_session::Command::Input(_))
+    ));
+    revoker.revoke();
+    assert!(!session.input("replacement account"));
+}

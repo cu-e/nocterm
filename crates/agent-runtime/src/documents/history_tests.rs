@@ -11,6 +11,7 @@ use std::{
 };
 mod closing;
 mod contexts;
+mod environments;
 mod local_launch;
 mod ownership;
 mod preferences;
@@ -101,7 +102,7 @@ impl SessionClient for ProbeClient {
         }
         let chat = self.chat.borrow();
         let origin = nocterm_ai::execution_origin::ExecutionOrigin::new(
-            nocterm_ai::execution_origin::ChatKey::new(chat.header.scope, chat.header.id.clone()),
+            nocterm_ai::execution_origin::ChatKey::from_header(&chat.header),
             None,
         );
         Some(ClientState::new(
@@ -126,11 +127,17 @@ impl SessionClient for ProbeClient {
         self.history.set(None);
         true
     }
-    fn snapshot(&self, _: &App) -> Option<Arc<SharedChat>> {
-        Some(self.chat.borrow().clone())
+    fn snapshot(
+        &self,
+        _: &mut App,
+    ) -> Result<Option<Arc<SharedChat>>, nocterm_ai::storage::AgentStorageError> {
+        Ok(Some(self.chat.borrow().clone()))
     }
-    fn capture(&self, _: &mut App) -> Option<(Arc<SharedChat>, u64)> {
-        Some((self.chat.borrow().clone(), self.revision.get()))
+    fn capture(
+        &self,
+        _: &mut App,
+    ) -> Result<Option<(Arc<SharedChat>, u64)>, nocterm_ai::storage::AgentStorageError> {
+        Ok(Some((self.chat.borrow().clone(), self.revision.get())))
     }
 }
 fn fixture(
@@ -200,6 +207,7 @@ fn runtime_services(
         cx,
     );
     RuntimeServices {
+        command_jobs: Arc::new(nocterm_session::testing::ScriptedCommandJobsFactory::default()),
         settings,
         agents,
         connector,
