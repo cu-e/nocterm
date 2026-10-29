@@ -3,6 +3,7 @@ mod commands;
 mod dispatch;
 mod error;
 mod executor;
+mod initial;
 mod live;
 mod pending_open;
 mod physical;
@@ -16,6 +17,10 @@ mod terminal_failure;
 mod view;
 pub use error::HeadlessError;
 pub use executor::{HeadlessToolServices, HeadlessTools};
+pub use initial::{
+    InitialSessionCandidate, SessionGeneration, SessionLifecycleEvent, SessionObservation,
+    SessionObservations,
+};
 pub use registry::{
     HeadlessSessionInfo, HeadlessSessionStatus, HeadlessSessionTask, HeadlessTerminalOptions,
     SessionRegistry,

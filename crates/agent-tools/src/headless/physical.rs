@@ -1,6 +1,7 @@
 //! Exactly one native session and bounded VT state, independent of run views.
 use super::{
     HeadlessError, HeadlessSessionStatus,
+    initial::InitialLifecycle,
     projection::{LiveOwner, TerminalProjection},
     terminal_failure::TerminalFailure,
 };
@@ -21,6 +22,7 @@ pub(super) struct PhysicalTerminal {
     publication: Publication,
     retirement: async_channel::Sender<()>,
     failure: TerminalFailure,
+    lifecycle: Option<InitialLifecycle>,
 }
 impl PhysicalTerminal {
     pub(super) fn new(
@@ -28,38 +30,55 @@ impl PhysicalTerminal {
         session: Session,
         options: super::HeadlessTerminalOptions,
         retirement: async_channel::Sender<()>,
-        pending: bool,
+        publication: PhysicalPublication,
     ) -> Self {
+        let (publication, lifecycle) = match publication {
+            PhysicalPublication::Published => (Publication::Published, None),
+            PhysicalPublication::Pending => (Publication::Pending, None),
+            PhysicalPublication::Initial(lifecycle) => {
+                (Publication::InitialPending, Some(lifecycle))
+            }
+        };
         Self {
             receipt,
             session,
             projection: TerminalProjection::new(options.size, options.charset),
             status: HeadlessSessionStatus::Connecting,
             prompt: None,
-            publication: if pending {
-                Publication::Pending
-            } else {
-                Publication::Published
-            },
+            publication,
             retirement,
             failure: Default::default(),
+            lifecycle,
         }
     }
     /// Transfer this connected candidate to its physical supervisor. Publication
     /// and abandoned-candidate retirement serialize on this same physical lock.
     pub(super) fn publish(&mut self) -> Result<(), HeadlessError> {
         match self.publication {
-            Publication::Retired => Err(HeadlessError::StaleSession),
+            Publication::Retired | Publication::RetiredPending => Err(HeadlessError::StaleSession),
             Publication::Published => Ok(()),
             Publication::Pending if self.status == HeadlessSessionStatus::Connected => {
                 self.publication = Publication::Published;
                 Ok(())
             }
-            Publication::Pending => Err(HeadlessError::NotConnected),
+            Publication::Pending | Publication::InitialPending => Err(HeadlessError::NotConnected),
         }
     }
+    pub(super) fn publish_initial(&mut self) -> Result<(), HeadlessError> {
+        if self.publication != Publication::InitialPending {
+            return Err(HeadlessError::StaleSession);
+        }
+        if self.status != HeadlessSessionStatus::Connected {
+            return Err(HeadlessError::NotConnected);
+        }
+        self.publication = Publication::Published;
+        Ok(())
+    }
     pub(super) fn retire_pending(&mut self) -> bool {
-        if self.publication != Publication::Pending {
+        if !matches!(
+            self.publication,
+            Publication::Pending | Publication::InitialPending | Publication::RetiredPending
+        ) {
             return false;
         }
         self.retire();
@@ -72,7 +91,13 @@ impl PhysicalTerminal {
         super::HeadlessSessionInfo::new(
             terminal_id,
             self.receipt.clone(),
-            self.status,
+            if self.publication == Publication::InitialPending
+                && self.status == HeadlessSessionStatus::Connected
+            {
+                HeadlessSessionStatus::Connecting
+            } else {
+                self.status
+            },
             self.session.exec().is_some(),
             self.session.fs().is_some(),
             self.failure.error(),
@@ -82,15 +107,18 @@ impl PhysicalTerminal {
         &mut self,
         receipt: &SessionReceipt,
     ) -> Result<Option<Prompt>, HeadlessError> {
-        if self.publication == Publication::Retired || &self.receipt != receipt {
+        if self.is_retired() || &self.receipt != receipt {
             return Err(HeadlessError::StaleSession);
         }
         Ok(self.prompt.take())
     }
 
     pub(super) fn check(&self, authority: &ExecutionAuthority) -> Result<(), HeadlessError> {
-        if self.publication == Publication::Retired || &self.receipt != authority.session() {
+        if self.is_retired() || &self.receipt != authority.session() {
             return Err(HeadlessError::StaleSession);
+        }
+        if self.publication == Publication::InitialPending {
+            return Err(HeadlessError::NotConnected);
         }
         if let Some(error) = self.failure.error() {
             return Err(HeadlessError::Session(error));
@@ -102,7 +130,7 @@ impl PhysicalTerminal {
         }
     }
     pub(super) fn event(&mut self, event: Event, now: Timestamp) {
-        if self.publication == Publication::Retired {
+        if self.is_retired() {
             return;
         }
         let replies = match event {
@@ -112,6 +140,9 @@ impl PhysicalTerminal {
             }
             Event::Connected => {
                 self.status = HeadlessSessionStatus::Connected;
+                if let Some(lifecycle) = &mut self.lifecycle {
+                    lifecycle.connected();
+                }
                 Vec::new()
             }
             Event::Output(bytes) => self.projection.output(&bytes, false, now.as_millis()),
@@ -126,11 +157,14 @@ impl PhysicalTerminal {
             }
             Event::Closed(reason) => {
                 self.status = self.failure.observe(reason);
+                if let Some(lifecycle) = &mut self.lifecycle {
+                    lifecycle.lost(self.status, self.failure.error());
+                }
                 self.prompt = None;
                 self.projection.output(&[], true, now.as_millis())
             }
         };
-        if self.publication != Publication::Retired {
+        if !self.is_retired() {
             for reply in replies {
                 if !self.session.input(reply) {
                     self.retire();
@@ -140,11 +174,27 @@ impl PhysicalTerminal {
         }
     }
     pub(super) fn retire(&mut self) {
+        if let Some(lifecycle) = &mut self.lifecycle {
+            lifecycle.lost(HeadlessSessionStatus::Closed, self.failure.error());
+        }
         self.retirement.close();
-        self.publication = Publication::Retired;
+        self.publication = if matches!(
+            self.publication,
+            Publication::Pending | Publication::InitialPending | Publication::RetiredPending
+        ) {
+            Publication::RetiredPending
+        } else {
+            Publication::Retired
+        };
         self.status = HeadlessSessionStatus::Closed;
         self.prompt = None;
         self.session.close();
+    }
+    fn is_retired(&self) -> bool {
+        matches!(
+            self.publication,
+            Publication::Retired | Publication::RetiredPending
+        )
     }
     pub(super) fn read(&self, lines: usize, since: Option<u64>) -> nocterm_vt::TextTail {
         self.projection.text(lines, since)
@@ -186,6 +236,14 @@ impl PhysicalTerminal {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Publication {
     Pending,
+    InitialPending,
+    RetiredPending,
     Published,
     Retired,
+}
+
+pub(super) enum PhysicalPublication {
+    Published,
+    Pending,
+    Initial(InitialLifecycle),
 }

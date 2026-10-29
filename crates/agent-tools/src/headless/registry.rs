@@ -1,5 +1,10 @@
 //! Run-local handles retain the exact receipt and native session that were attached.
-use super::{HeadlessError, physical::PhysicalTerminal, retained::RetainedOwner, view::ViewFence};
+use super::{
+    HeadlessError,
+    physical::{PhysicalPublication, PhysicalTerminal},
+    retained::RetainedOwner,
+    view::ViewFence,
+};
 use futures::future::BoxFuture;
 use nocterm_cloud_model::{
     authority::{RunBinding, SessionReceipt},
@@ -159,7 +164,14 @@ impl SessionRegistry {
         options: HeadlessTerminalOptions,
         timer: Arc<dyn ToolTimer>,
     ) -> Result<HeadlessSessionTask, HeadlessError> {
-        self.attach_physical(handle, receipt, session, options, timer, false)
+        self.attach_physical(
+            handle,
+            receipt,
+            session,
+            options,
+            timer,
+            PhysicalPublication::Published,
+        )
     }
     pub(super) fn attach_pending(
         &mut self,
@@ -169,7 +181,55 @@ impl SessionRegistry {
         options: HeadlessTerminalOptions,
         timer: Arc<dyn ToolTimer>,
     ) -> Result<HeadlessSessionTask, HeadlessError> {
-        self.attach_physical(handle, receipt, session, options, timer, true)
+        self.attach_physical(
+            handle,
+            receipt,
+            session,
+            options,
+            timer,
+            PhysicalPublication::Pending,
+        )
+    }
+    pub(super) fn attach_initial(
+        &mut self,
+        handle: RemoteSessionId,
+        receipt: SessionReceipt,
+        session: Session,
+        options: HeadlessTerminalOptions,
+        timer: Arc<dyn ToolTimer>,
+        lifecycle: super::initial::InitialLifecycle,
+    ) -> Result<HeadlessSessionTask, HeadlessError> {
+        if self.retained_owner().is_none() {
+            session.close();
+            return Err(HeadlessError::Closed);
+        }
+        self.attach_physical(
+            handle,
+            receipt,
+            session,
+            options,
+            timer,
+            PhysicalPublication::Initial(lifecycle),
+        )
+    }
+    pub(super) fn publish_initial(
+        &self,
+        terminal: &str,
+        original: &Arc<Mutex<PhysicalTerminal>>,
+    ) -> Result<(), HeadlessError> {
+        if self.fence.is_closed() {
+            return Err(HeadlessError::Closed);
+        }
+        let current = self
+            .entries
+            .get(terminal)
+            .ok_or(HeadlessError::StaleSession)?;
+        if !Arc::ptr_eq(current, original) {
+            return Err(HeadlessError::StaleSession);
+        }
+        self.retained_owner()
+            .ok_or(HeadlessError::Closed)?
+            .publish_initial(original)
     }
     fn attach_physical(
         &mut self,
@@ -178,7 +238,7 @@ impl SessionRegistry {
         session: Session,
         options: HeadlessTerminalOptions,
         timer: Arc<dyn ToolTimer>,
-        pending: bool,
+        publication: PhysicalPublication,
     ) -> Result<HeadlessSessionTask, HeadlessError> {
         if let Err(error) = options.validate() {
             session.close();
@@ -203,7 +263,7 @@ impl SessionRegistry {
             session.clone(),
             options,
             retirement,
-            pending,
+            publication,
         )));
         if let Some(owner) = &self.retained {
             let Some(owner) = owner.upgrade() else {

@@ -1,5 +1,5 @@
 use crate::headless_support::*;
-use futures::FutureExt as _;
+use futures::{FutureExt as _, task::LocalSpawnExt as _};
 use nocterm_ai::{CancelCommand, ReadCommand, RunCommand, SendInput, TerminalCall};
 use nocterm_cloud_model::{
     authority::RunBinding,
@@ -7,6 +7,7 @@ use nocterm_cloud_model::{
     tool::{BackgroundCommandOutcome, ScopedToolExecutor, ToolExecutionError},
 };
 use nocterm_session::{Charset, Command, ExecExit};
+use std::sync::Arc;
 
 fn live(terminal: &str) -> TerminalCall {
     TerminalCall::RunCommand(RunCommand {
@@ -531,4 +532,205 @@ fn duplicate_command_intent_preserves_the_original_job_and_observation() {
         .unwrap();
     assert_eq!(read.output().value()["exit_status"], 7);
     assert_eq!(read.output().value()["stderr"], "original stderr");
+}
+
+#[test]
+fn initial_session_connected_requires_explicit_publication_then_reports_original_loss() {
+    use nocterm_agent_tools::headless::{
+        HeadlessTerminalOptions, InitialSessionCandidate, SessionLifecycleEvent,
+    };
+    use nocterm_session::{CloseReason, Event};
+    let (mut host, retained, _) = Harness::retained(Charset::Utf8);
+    retained.remove(host.authority.session()).unwrap();
+    let (session, driver) = nocterm_session::channel(None);
+    let (candidate, mut observations, task) = InitialSessionCandidate::prepare(
+        host.registry.clone(),
+        RemoteSessionId::from_bytes([31; 16]),
+        host.authority.session().clone(),
+        session,
+        HeadlessTerminalOptions::default(),
+        host.timer.clone(),
+        Arc::new(()),
+    )
+    .unwrap();
+    let terminal = task.terminal().to_owned();
+    let generation = candidate.generation().clone();
+    host.pool.spawner().spawn_local(task.into_run()).unwrap();
+    assert!(observations.next().now_or_never().is_none());
+    host.pool.run_until(driver.emit(Event::Connected));
+    host.pump();
+    let connected = observations
+        .next()
+        .now_or_never()
+        .expect("lifecycle fact pending")
+        .unwrap();
+    assert!(matches!(
+        connected.event(),
+        SessionLifecycleEvent::Connected
+    ));
+    assert_eq!(connected.receipt(), candidate.receipt());
+    assert_eq!(connected.generation(), &generation);
+    let mut other = retained.view(host.authority.run().clone()).unwrap();
+    assert!(
+        other
+            .attach_retained(RemoteSessionId::from_bytes([32; 16]), candidate.receipt())
+            .is_err()
+    );
+    let input = || {
+        TerminalCall::SendInput(SendInput {
+            terminal_id: terminal.clone(),
+            text: "admitted".into(),
+            press_enter: false,
+        })
+    };
+    assert!(host.call(40, input()).is_err());
+    candidate.publish().unwrap();
+    host.call(41, input()).unwrap();
+    assert_eq!(
+        host.pool.run_until(driver.next_command()),
+        Some(Command::Input(b"admitted".to_vec()))
+    );
+    other
+        .attach_retained(
+            RemoteSessionId::from_bytes([32; 16]),
+            host.authority.session(),
+        )
+        .unwrap();
+    assert!(driver.closed().now_or_never().is_none());
+    host.pool.run_until(driver.emit(Event::Connected));
+    host.pool
+        .run_until(driver.emit(Event::Output(b"output is not a lifecycle fact".to_vec())));
+    host.pool
+        .run_until(driver.emit(Event::Closed(CloseReason::ClosedByUser)));
+    host.pump();
+    let lost = observations
+        .next()
+        .now_or_never()
+        .expect("lifecycle fact pending")
+        .unwrap();
+    assert_eq!(lost.receipt(), connected.receipt());
+    assert_eq!(lost.generation(), &generation);
+    assert!(matches!(lost.event(), SessionLifecycleEvent::Lost { .. }));
+    assert!(matches!(observations.next().now_or_never(), Some(None)));
+}
+
+#[test]
+fn initial_session_pending_drop_and_unpolled_reader_release_only_the_original_candidate() {
+    use nocterm_agent_tools::headless::{
+        HeadlessTerminalOptions, InitialSessionCandidate, SessionLifecycleEvent,
+    };
+    for order in 0..3 {
+        let (host, retained, _) = Harness::retained(Charset::Utf8);
+        retained.remove(host.authority.session()).unwrap();
+        let resource = Arc::new(());
+        let weak = Arc::downgrade(&resource);
+        let (session, driver) = nocterm_session::channel(None);
+        let (candidate, mut observations, task) = InitialSessionCandidate::prepare(
+            host.registry.clone(),
+            RemoteSessionId::from_bytes([33; 16]),
+            host.authority.session().clone(),
+            session,
+            HeadlessTerminalOptions::default(),
+            host.timer.clone(),
+            resource,
+        )
+        .unwrap();
+        let original = candidate.generation().clone();
+        match order {
+            0 => {
+                drop(candidate);
+                drop(task);
+            }
+            1 => {
+                drop(task);
+                drop(candidate);
+            }
+            _ => {
+                assert!(candidate.publish().is_err());
+                drop(task);
+            }
+        }
+        assert!(driver.closed().now_or_never().is_some());
+        let lost = observations
+            .next()
+            .now_or_never()
+            .expect("lifecycle fact pending")
+            .unwrap();
+        assert_eq!(lost.generation(), &original);
+        assert!(matches!(lost.event(), SessionLifecycleEvent::Lost { .. }));
+        assert!(matches!(observations.next().now_or_never(), Some(None)));
+        assert!(
+            weak.upgrade().is_none(),
+            "observation cannot retain the physical resource"
+        );
+        let (session, replacement) = nocterm_session::channel(None);
+        let (candidate, _, task) = InitialSessionCandidate::prepare(
+            host.registry.clone(),
+            RemoteSessionId::from_bytes([33; 16]),
+            host.authority.session().clone(),
+            session,
+            HeadlessTerminalOptions::default(),
+            host.timer.clone(),
+            Arc::new(()),
+        )
+        .unwrap();
+        assert_ne!(candidate.generation(), &original);
+        assert!(replacement.closed().now_or_never().is_none());
+        drop(candidate);
+        drop(task);
+    }
+}
+
+#[test]
+fn initial_session_reader_abort_reports_loss_and_closed_view_cannot_publish() {
+    for close_view in [false, true] {
+        use nocterm_agent_tools::headless::{
+            HeadlessTerminalOptions, InitialSessionCandidate, SessionLifecycleEvent,
+        };
+        use nocterm_session::Event;
+        let (mut host, retained, _) = Harness::retained(Charset::Utf8);
+        retained.remove(host.authority.session()).unwrap();
+        let (session, driver) = nocterm_session::channel(None);
+        let (candidate, mut observations, task) = InitialSessionCandidate::prepare(
+            host.registry.clone(),
+            RemoteSessionId::from_bytes([34; 16]),
+            host.authority.session().clone(),
+            session,
+            HeadlessTerminalOptions::default(),
+            host.timer.clone(),
+            Arc::new(()),
+        )
+        .unwrap();
+        let generation = candidate.generation().clone();
+        let (reader, abort) = futures::future::abortable(task.into_run());
+        host.pool.spawner().spawn_local(reader.map(|_| ())).unwrap();
+        host.pool.run_until(driver.emit(Event::Connected));
+        host.pump();
+        assert!(matches!(
+            observations
+                .next()
+                .now_or_never()
+                .expect("lifecycle fact pending")
+                .unwrap()
+                .event(),
+            SessionLifecycleEvent::Connected
+        ));
+        if close_view {
+            host.registry.lock().unwrap().close();
+            assert!(candidate.publish().is_err());
+        } else {
+            candidate.publish().unwrap();
+        }
+        abort.abort();
+        host.pump();
+        let lost = observations
+            .next()
+            .now_or_never()
+            .expect("lifecycle fact pending")
+            .unwrap();
+        assert_eq!(lost.generation(), &generation);
+        assert!(matches!(lost.event(), SessionLifecycleEvent::Lost { .. }));
+        assert!(driver.closed().now_or_never().is_some());
+        assert!(matches!(observations.next().now_or_never(), Some(None)));
+    }
 }

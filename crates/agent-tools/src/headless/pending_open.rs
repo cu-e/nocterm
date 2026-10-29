@@ -22,6 +22,14 @@ impl PendingOpen {
             connected: false,
         }
     }
+    pub(super) fn publish_initial(mut self) -> Result<(), HeadlessError> {
+        self.registry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .publish_initial(&self.terminal, &self.original)?;
+        self.connected = true;
+        Ok(())
+    }
     pub(super) fn connected(mut self) -> Result<(), HeadlessError> {
         self.original
             .lock()

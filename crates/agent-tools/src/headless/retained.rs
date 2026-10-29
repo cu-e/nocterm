@@ -77,6 +77,24 @@ impl RetainedOwner {
         }
         Ok(entry.clone())
     }
+    pub(super) fn publish_initial(
+        &self,
+        original: &Arc<Mutex<PhysicalTerminal>>,
+    ) -> Result<(), HeadlessError> {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.closed {
+            return Err(HeadlessError::Closed);
+        }
+        let mut physical = original.lock().unwrap_or_else(PoisonError::into_inner);
+        if !state
+            .entries
+            .get(&physical.receipt().id())
+            .is_some_and(|entry| Arc::ptr_eq(entry, original))
+        {
+            return Err(HeadlessError::StaleSession);
+        }
+        physical.publish_initial()
+    }
     pub(super) fn discard_pending(&self, original: &Arc<Mutex<PhysicalTerminal>>) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let mut physical = original.lock().unwrap_or_else(PoisonError::into_inner);

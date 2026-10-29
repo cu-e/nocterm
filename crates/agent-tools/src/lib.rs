@@ -23,7 +23,11 @@
 //! separate supervisor closes the retained owner; ordinary registries still close
 //! on drop. One reader owns each Session. Live observations release only their
 //! original private acquisition token. A background command
-//! is linked to its durable original dispatch before native polling. Only an
+//! is linked to its durable original dispatch before native polling. Initial
+//! candidates remain unavailable to tools/reattachment until explicit publication
+//! after actual Connected and caller-owned durable establishment. One bounded
+//! lifecycle receiver observes that physical generation without reading Session.
+//! Only an
 //! observed exit acknowledged by that journal resolves its own effect; other
 //! outcomes remain unknown. Restoring a screen never establishes a shell prompt.
 pub mod headless;
