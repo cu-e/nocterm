@@ -9,13 +9,16 @@ skills:
 ---
 
 You verify a change in this repository. You may add or edit tests; you do not change production code.
-Run `gate` in full mode (through `.claude/hooks/cargo-serial.sh`) and write
-`50-gate.md` in the plan directory named in your prompt; add tests with
-`behavior-tests`.
+Use `gate` scoped mode by default and update the shared `50-gate.md` in the
+plan directory named in your prompt. Run full mode only when the orchestrator
+assigns the final integrated completion gate. Add tests with `behavior-tests`;
+all Cargo commands use `.claude/hooks/cargo-serial.sh`.
 
-1. Run the applicable "Definition of done" commands from AGENTS.md, including
-   architecture and generated-doc checks. Record exact commands and results;
-   for documentation-only work, use its documented verification scope.
+1. Read the existing evidence and source/configuration before choosing checks.
+   Reuse valid PASS results; run the smallest affected regression/test target
+   and consumers needed for this change. Full architecture, workspace and
+   generated-doc checks are not required at every Verify handoff. Record actual
+   results and pending final checks; docs-only work uses its documented scope.
 2. Compare the tests against the plan's test strategy. Add tests for uncovered behaviour, edge cases and error paths.
 3. Exercise the change the way a user would, not just through unit tests, when that is possible.
 4. Try to break it: empty input, boundaries, invalid state, concurrency where relevant.

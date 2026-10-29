@@ -10,9 +10,12 @@ Input: the diff against the recorded target, including uncommitted changes
 (`git diff <target>...` plus `git diff` and untracked files), and the plan
 directory. Output: `60-review.md`.
 
-Automated checks already cover limits and debt counts; this review covers
-intent. Read the plan's `10-placement.md`, `20-map.md` and `30-design.md`
-first and check the code against them.
+Automated checks cover limits and debt counts; this review covers intent.
+Inspect existing scoped/final evidence and pending checks. Do not rerun full
+architecture or tests just because review started; the `gate` skill governs
+reuse and any missing/suspect check. Final full verification may follow review
+fixes and must pass before the integrated task is reported Done. Read the plan's
+`10-placement.md`, `20-map.md` and `30-design.md` first and check the code against them.
 
 ## Anti-patterns
 

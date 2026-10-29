@@ -37,7 +37,9 @@ methods of the parent into another file is not an extraction and fails review.
    `pub(crate)` getters that expose the owner's internals.
 5. **Test the owner directly** with unit tests for its invariants; keep the
    characterization tests unchanged and green.
-6. Run `gate` in quick mode.
+6. Use `gate` scoped mode for the owner/characterization behavior after the
+   coherent extraction when needed. Reuse unchanged results; no command bundle
+   after each moved method and no full gate for each extracted owner.
 
 ## Done when
 

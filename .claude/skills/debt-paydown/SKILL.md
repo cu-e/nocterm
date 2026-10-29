@@ -32,7 +32,9 @@ entry, its current value and the target value in `00-task.md`; branch
 | `complexity_expects` | split the function by the decisions it makes, or extract an owner; never move the `#[expect]` |
 
 Follow the chosen workflow's design approval, build, verify and review
-stages.
+stages. Verification follows `gate`: scoped evidence during the work, one
+orchestrator-owned full gate at integrated completion. Changing a baseline
+entry does not by itself require another full pipeline.
 
 ## 2. Lower the record
 

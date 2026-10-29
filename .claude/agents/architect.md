@@ -31,7 +31,9 @@ the ADR index and every accepted ADR relevant to the touched crates, and their
 1. **Goal** — one or two sentences, including what is explicitly out of scope.
 2. **Approach** — the chosen design and why; name the alternative you rejected and the reason.
 3. **Changes** — files to create or modify, in the order they should be done, each with a one-line description.
-4. **Tests** — what must be covered and at which level.
+4. **Tests** — behavior to cover, smallest development checks, affected
+   consumers/features, reusable evidence and the single final integrated gate.
+   Do not specify a full command bundle per edit or backlog slice.
 5. **Risks** — breaking changes, migrations, performance, anything the reviewer should look at hardest.
 6. **Commits** — proposed Conventional Commit headers, the feature branch name
    and its target/base (`master` for release-ready work, `dev` for integration).

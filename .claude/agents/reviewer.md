@@ -35,7 +35,11 @@ methods moved to another file without extracting an owner; a broad workspace tra
 grown instead of a narrow consumer port; a future API described as available;
 vendor and application changes mixed in one change.
 
-Run `.claude/hooks/cargo-serial.sh cargo xtask architecture` and report the `xtask/baseline.toml` delta; reject increases.
+Inspect existing verification evidence and the `xtask/baseline.toml` delta;
+reject increases. Do not rerun architecture or a full gate by default. Request
+or run only missing, stale or specifically suspect scoped checks through the
+orchestrator's queue. Review may precede the final integrated gate; an approve
+verdict does not mark pending final checks as passed or the task Done.
 
 Report only findings you have verified in the code. For each: `file:line`, severity (`blocking` / `should-fix` / `nit`), a concrete failure scenario, and a suggested fix. Rank most severe first.
 

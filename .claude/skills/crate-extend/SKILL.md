@@ -38,14 +38,19 @@ Show `30-design.md` to the user and wait for approval.
 ## 2. Build (implementer)
 
 Make room first (`behavior-tests` characterize → `owner-extract`), then the
-change with `behavior-tests` cover. `gate` quick after each step; `40-steps.md`.
+change with `behavior-tests` cover. Use `gate` scoped mode after coherent
+changes when needed; record results/pending checks in `40-steps.md`.
 
-## 3. Verify (tester) — `gate` full; add missing tests.
+## 3. Verify (tester)
+
+Use `gate` scoped mode and add missing behavior tests. After a failure, rerun
+that target first; do not repeat a full workspace pipeline for each fix.
 
 ## 4. Review (reviewer) — `design-review` → `60-review.md`; two-round limit.
 
 ## 5. Wrap up
 
-Report gate results, verdict, baseline delta, early warnings before/after, and
+The orchestrator assigns the full `gate` once at integrated task completion,
+after review fixes. Report gate results, verdict, baseline delta, early warnings before/after, and
 proposed commits (refactor commits separate from the feature commit). Commit
 only if the user asked.

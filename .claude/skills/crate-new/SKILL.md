@@ -16,7 +16,7 @@ target branch and the verification scope to every subagent.
 
 Create `.claude/plans/<slug>/00-task.md`: responsibility, target (`master`
 unless the user says `dev`), branch `feat/<slug>` or `refactor/<slug>`,
-verification scope (full gate), success metric (crate exists with a card,
+verification scope (scoped development checks; final integrated gate), success metric (crate exists with a card,
 layer and tests; the code it replaces, if any, is gone from the old crate).
 
 ## 1. Design (architect)
@@ -51,14 +51,16 @@ Skeleton, in one step:
 - `test-support` fakes behind a feature, used only from dev-dependencies.
 
 Then each behaviour with `behavior-tests` (cover), `wiring` if the crate is
-installed by the app, and `gate` quick after each step. Run `cargo xtask docs`
-(dependency graph changes) and record steps in `40-steps.md`.
+installed by the app. Use `gate` scoped mode after coherent edits when needed;
+record evidence/pending checks in `40-steps.md`, not a command bundle per step.
+Run `cargo xtask docs` once the dependency graph changes have settled.
 
 ## 3. Verify (tester)
 
-`gate` full, `behavior-tests` cover for gaps, plus `cargo machete
---skip-target-dir` and the license-notice check (new manifest). If notices are
-stale, regenerate them (`python3 scripts/generate-license-notices.py`).
+Use `gate` scoped mode and `behavior-tests` for gaps; reuse valid evidence.
+Include dependency/notice checks for the new manifest at the final integrated
+checkpoint. If notices are stale, regenerate them once inputs have settled
+(`python3 scripts/generate-license-notices.py`).
 
 ## 4. Review (reviewer)
 
@@ -67,6 +69,8 @@ implementer; after two failed rounds escalate.
 
 ## 5. Wrap up
 
-Report each gate command with its result, the review verdict, the baseline
+The orchestrator assigns one full `gate` for the integrated task after review
+fixes; creating this crate does not require a separate per-slice full run.
+Report each actual gate command with its result, the review verdict, the baseline
 delta, and proposed commits (`feat(<name>): …` / `refactor(<name>): …`, ADR as
 `docs: …`). Commit only if the user asked.

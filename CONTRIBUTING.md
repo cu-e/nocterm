@@ -111,6 +111,30 @@ constrains large structs, implementation spread, public state, globals, shutdown
 hooks, string errors and domain I/O. Lower or remove entries when code improves;
 never regenerate or raise the inventory. See [architecture guardrails](docs/architecture/guardrails.md).
 
+## Verification
+
+During development, choose the smallest check that answers the current question:
+one regression test, one test target, a library or an affected package. Batch a
+coherent edit before checking it. Do not run a fixed build/lint/test/architecture
+bundle after every edit or extraction. A test compiles its target; running both
+`cargo check` and `cargo build` first is usually redundant.
+
+Run the full [Definition of done](AGENTS.md#definition-of-done) at the end of the
+integrated task, after review fixes. A backlog item, worktree or pipeline handoff
+does not create another final gate. Preserve valid PASS results and rerun a
+failed check first; expand coverage when changed inputs or a concrete failure
+require it. Keep results tied to the checked source and configuration.
+
+For parallel agent work, the orchestrator owns one verification queue and assigns
+one final-gate executor. Use a stable target directory per worktree; do not
+invalidate caches by touching all sources or cleaning for each check. Report
+queue wait separately from compilation/test time where available. Detailed
+scope selection is in the [gate procedure](.claude/skills/gate/SKILL.md).
+
+Documentation/instruction-only changes need reference/link checks and relevant
+configuration validators, not Cargo checks unless executable/generator inputs
+also changed. These scheduling rules do not change CI checks or lint thresholds.
+
 ## Pull requests
 
 Vendored forks have reproducible binary patches against checksum-pinned published

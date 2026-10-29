@@ -11,8 +11,8 @@ directory, the next step does not know it.
 | `10-placement.md` | `placement` | crate, layer, reason, card check, new-crate decision |
 | `20-map.md` | `responsibility-map` | survey facts, matrix interpretation, candidate owners with draft cards |
 | `30-design.md` | architect / workflow | owners, ports, errors, wiring, tests, docs/ADR, commit plan; approved by the user |
-| `40-steps.md` | implementer | ordered steps with `- [ ]` / `- [x]`, one transformation each, gate result per step |
-| `50-gate.md` | `gate` | each command, its result, baseline delta, early warnings before/after |
+| `40-steps.md` | implementer | ordered steps with `- [ ]` / `- [x]`, one transformation each, relevant scoped evidence or pending check |
+| `50-gate.md` | `gate` | shared scoped/final evidence, source/configuration, reused results, pending final checks, baseline delta |
 | `60-review.md` | `design-review` / reviewer | findings (`file:line`, severity, scenario, fix) and verdict |
 
 Rules:
@@ -20,6 +20,10 @@ Rules:
 - Create the directory in the first step; never write plans into `docs/`.
 - Append, do not rewrite, earlier decisions; a changed decision records why.
 - A step is complete only when its file exists with the sections above filled.
+- A planning/build step does not require a fresh full gate. One shared
+  verification record follows the integrated task across agents and slices;
+  command frequency and result reuse follow the `gate` skill. Record queue
+  wait separately from build/test execution when available.
 
 ## Result block
 

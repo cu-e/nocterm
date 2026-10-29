@@ -110,6 +110,51 @@ errors. See [architecture guardrails](docs/architecture/guardrails.md) and
   `Does not own:`, ports used/provided, settings section, globals and invariants.
   Describe actual boundaries; existing crates gain cards when their boundaries change.
 
+## Verification policy
+
+Use [the gate procedure](.claude/skills/gate/SKILL.md) to choose checks by changed
+inputs and the failure being investigated. Verification has two different scopes:
+
+- **During implementation and fixes:** finish a coherent edit, then run the
+  smallest useful check (one test/filter, test target, library or package).
+  A test already compiles its target; do not routinely precede it with both
+  `check` and `build`. There is no mandatory command bundle after every edit,
+  extraction, backlog item or agent handoff.
+- **At completion:** run the full Definition of done once on the integrated
+  deliverable, after review fixes and before reporting Done. Intermediate
+  slices and worktrees are not separate final gates. For a multi-repository
+  task, each changed repository has its own final gate.
+
+These are local agent-work rules; required CI checks run independently.
+Older plans that prescribe quick/full checks after each step follow this policy:
+quick means a selected scoped check, not the old fixed bundle.
+
+The orchestrator owns the shared verification queue and assigns one executor
+for the final gate. Subagents report scoped evidence; they do not independently
+queue full pipelines. Do not queue speculative checks while their source or
+dependency graph is still being edited. Reviewers inspect existing evidence
+instead of repeating successful commands on unchanged inputs.
+
+After a failure, rerun the failing target first. Expand only when an affected
+consumer, dependency/feature change or unresolved failure requires it. Preserve
+successful results whose relevant inputs and configuration are unchanged;
+neither a new stage nor a new report invalidates them. A failed final gate does
+not automatically restart every earlier command: identify which results the
+fix actually invalidates. Never reuse evidence from a different source snapshot
+or configuration without establishing that it covers the current change.
+
+Keep a stable Cargo target directory per worktree. Do not routinely touch all
+sources, clean caches or create a new cold target for another verification run.
+Investigate a concrete stale-artifact problem before forcing a rebuild.
+Record command, scope, source snapshot, result and log once; distinguish queue
+wait from compilation and test execution when reporting duration. Reuse that
+record across stages rather than re-running commands to produce a new report.
+
+Documentation/instruction-only edits use link/reference checks and applicable
+configuration validators. Run Cargo/generated-doc checks only if their inputs
+(Rust, manifests, schemas or generator inputs) changed; prose alone does not
+require workspace builds, tests or architecture scans.
+
 ## Pipeline
 
 Non-trivial work goes through four stages. Each stage is a subagent in `.claude/agents/`; the main session orchestrates (run it with `/feature <task>`).
@@ -124,8 +169,11 @@ Non-trivial work goes through four stages. Each stage is a subagent in `.claude/
 Gates:
 
 - **Design → Build**: the user approves the plan.
-- **Verify → Review**: build, lint and tests are green.
-- **Review → Done**: no blocking findings. Blocking findings go back to `implementer`; after two failed rounds, stop and escalate to the user.
+- **Verify → Review**: the scoped checks needed for the change are green;
+  reuse existing results on unchanged inputs. The full gate is deferred to completion.
+- **Review → Done**: no blocking findings and the final integrated Definition
+  of done passes. Blocking findings go back to `implementer`; after two failed
+  review rounds, stop and escalate to the user.
 
 Trivial changes (typos, one-line fixes, docs) skip the pipeline.
 
@@ -140,10 +188,11 @@ uncommitted changes as well as commits so it can finish before commit authorizat
 
 ## Definition of done
 
-Code changes require `cargo fmt --all --check`,
+At the end of a code task, the integrated result requires `cargo fmt --all --check`,
 `cargo build --workspace --all-targets`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
-`cargo xtask architecture` and `cargo xtask docs --check` to pass. Run additional
+`cargo xtask architecture` and `cargo xtask docs --check` to pass. This is the
+final gate, not an implementation-loop checklist. Run additional
 checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes, or the
 hub end-to-end test for `nocterm-hub-io` changes). Changes to
 user plugins (`nocterm-plugin-*`, `plugins-ui`, `src/shell_setup/user_plugin*`) also run
@@ -151,9 +200,11 @@ user plugins (`nocterm-plugin-*`, `plugins-ui`, `src/shell_setup/user_plugin*`) 
 `cargo test --workspace --features nocterm/user-plugins`: the default build compiles the feature out.
 Changes to the plugin SDK or the example (`nocterm-plugin-sdk`, `examples/plugins/`) also build and
 test the example and run the gated guest test (see Commands).
-For documentation-only changes, check links, stale references and generated-doc
-freshness; architecture checks still apply. Build, lint and runtime tests may be
-omitted because executable inputs did not change.
+For documentation/instruction-only changes, check links and stale references;
+run `python3 scripts/check-claude-config.py` when skills or agent instructions
+change. Check generated-doc freshness only when generator inputs changed.
+Cargo build, lint, runtime tests and architecture scans are not required when
+their executable inputs did not change.
 
 Report each command and its result. Report omitted or unavailable checks with the
 reason. No blocking review findings may remain; commit, push and PR creation

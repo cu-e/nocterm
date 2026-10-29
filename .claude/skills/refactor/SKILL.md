@@ -34,20 +34,25 @@ Show the map and design to the user and wait for approval.
 
 1. `behavior-tests` characterize — pass on unchanged code; names recorded.
 2. `owner-extract` — one owner per step.
-3. `gate` quick; tick the step in `40-steps.md` with before/after counts.
+3. Use `gate` scoped mode for the affected behavior after a coherent extraction,
+   when needed; tick `40-steps.md` with counts and reused/new evidence. No fixed
+   command bundle per method or owner.
 
 Never mix behaviour changes into these steps. If a step needs one, stop and
 report.
 
 ## 3. Verify (tester)
 
-`gate` full. Rerun the survey and compare with the metric in `00-task.md`;
-characterization tests unchanged and green.
+Use `gate` scoped mode; compare the relevant survey with the metric in
+`00-task.md` once the extraction is complete. Reuse passing characterization
+results until their inputs change.
 
 ## 4. Review (reviewer) — `design-review`; two-round limit.
 
 ## 5. Wrap up
 
-Report the metric before/after, gate results, baseline entries lowered and the
+The orchestrator assigns one full `gate` for integrated task completion after
+review fixes, not one per extracted owner. Report the metric before/after,
+gate results, baseline entries lowered and the
 verdict. One `refactor(<scope>): …` commit per extracted owner is preferred.
 Commit only if the user asked.

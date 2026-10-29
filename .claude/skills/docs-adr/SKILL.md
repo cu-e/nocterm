@@ -58,7 +58,9 @@ No session status, dates of work, or "implemented by" notes.
   or leaves the layer or a port between layers changes.
 - `cargo xtask docs` regenerates `docs/reference/*` and
   `docs/architecture/dependencies.md`; run it after changing settings, tokens,
-  actions, keymap or internal Cargo dependencies.
+  actions, keymap or internal Cargo dependencies, once the combined inputs
+  settle. Prose-only changes do not require Cargo generators or architecture
+  scans; use the documentation scope in `gate`.
 
 ## 4. Stale references
 

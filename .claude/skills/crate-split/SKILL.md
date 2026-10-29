@@ -61,18 +61,23 @@ Show the design to the user and wait for approval.
    one; move code in compiling steps; re-export nothing from the old crate as
    a compatibility shim unless the design says so, with a removal step.
 3. Move tests with the code they cover; the characterization tests stay green.
-4. Update both cards, the layer note, `cargo xtask docs`, and write the ADR.
-5. `gate` quick after each step; `40-steps.md`.
+4. Update both cards, the layer note and ADR; regenerate `cargo xtask docs`
+   once the combined dependency changes settle.
+5. Use `gate` scoped mode for affected code/consumers after coherent changes
+   when needed; record results in `40-steps.md`. No per-step full bundle.
 
 ## 3. Verify (tester)
 
-`gate` full plus `cargo machete --skip-target-dir` and the license-notice
-check. Rerun the survey on both crates against the metric.
+Use `gate` scoped mode for both sides of the changed API. Compare surveys with
+the metric once the move is complete; reuse unchanged evidence. Dependency and
+notice checks belong to the final integrated checkpoint.
 
 ## 4. Review (reviewer) — `design-review`; two-round limit.
 
 ## 5. Wrap up
 
-Report metric before/after, gate results, ADR number, baseline delta, verdict
+The orchestrator assigns one full `gate` after the integrated changes and
+review fixes are complete, not one per move. Report metric before/after,
+gate results, ADR number, baseline delta, verdict
 and proposed commits (crate creation, each move, ADR). Commit only if the user
 asked.
