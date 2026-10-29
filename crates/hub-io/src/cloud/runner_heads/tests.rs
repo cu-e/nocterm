@@ -310,3 +310,29 @@ async fn actual_head_read_cancellation_and_unclaimed_results_keep_slot_and_quota
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn closing_head_work_keeps_actual_admissions_until_last_carrier_drop() -> TestResult {
+    let bytes = RunnerHeadWork::operation_bytes();
+    let budget = Arc::new(PublicationBudget::maintenance(IntakePoolLimits::new(
+        2 * bytes,
+        2,
+        2,
+    )?));
+    let work = RunnerHeadWork::with_max_reads(budget, tokio::runtime::Handle::current(), 1)?;
+    let original = reservation(&work)?;
+    let output = work
+        .spawn_read(original.clone(), || Ok(vec![1; 32]))?
+        .await?;
+    work.close();
+    assert!(reservation(&work).is_err());
+    assert_eq!(work.in_flight_reads(), 1);
+    assert_eq!(work.in_flight_operations(), 1);
+    assert!(work.spawn_read(original.clone(), || Ok(())).is_err());
+    drop(output);
+    assert_eq!(work.in_flight_reads(), 0);
+    assert_eq!(work.in_flight_operations(), 1);
+    drop(original);
+    assert_eq!(work.in_flight_operations(), 0);
+    Ok(())
+}

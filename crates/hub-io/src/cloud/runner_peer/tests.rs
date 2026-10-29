@@ -2,7 +2,6 @@
 use super::*;
 use nocterm_cloud_model::{
     coordinator::{IntakeLane, IntakeLimits},
-    identity::*,
     journal::PublicationBudget,
 };
 use nocterm_hubs_model::{HubAddress, TrustPolicy};
@@ -11,22 +10,19 @@ use nocterm_hubs_model::{HubAddress, TrustPolicy};
 fn runner_hub_setup_requires_original_authority_namespace_identity_and_private_owner() {
     let directory = tempfile::tempdir().unwrap();
     let authority = DeviceKey::generate().unwrap().public_key();
-    let fingerprint: [u8; 32] = Sha256::digest(authority).into();
-    let hub = hub_namespace_id("original-hub", fingerprint).unwrap();
-    let binding = JournalCatalogBinding::new(
-        AccountScope::new(
-            HubIdentity::new(
-                NamespaceId::new(hub.as_str()).unwrap(),
-                Fingerprint::from_bytes(fingerprint),
-            ),
-            AccountIdentity::new(
-                NamespaceId::new("account").unwrap(),
-                Fingerprint::from_bytes([2; 32]),
-            ),
-        ),
-        RunnerId::from_bytes([3; 16]),
-        RunnerKeyEpoch::new(4).unwrap(),
-    );
+    let account = nocterm_keys::AccountKeyPair::generate().unwrap();
+    let endpoint = || HubEndpointSpec {
+        address: HubAddress::parse("localhost:7443").unwrap(),
+        trust: TrustPolicy::PublicCa,
+    };
+    let binding = RunnerHubTrust::new(endpoint(), "original-hub".into(), authority)
+        .binding(
+            "account",
+            account.public_key().to_bytes(),
+            RunnerId::from_bytes([3; 16]),
+            RunnerKeyEpoch::new(4).unwrap(),
+        )
+        .unwrap();
     let identity = Arc::new(
         CloudRunnerIdentity::create_new(&directory.path().join("identity"), binding.clone())
             .unwrap(),
@@ -34,10 +30,6 @@ fn runner_hub_setup_requires_original_authority_namespace_identity_and_private_o
     let budget = Arc::new(PublicationBudget::maintenance(
         IntakeLimits::default().pool(IntakeLane::Ordinary),
     ));
-    let endpoint = || HubEndpointSpec {
-        address: HubAddress::parse("localhost:7443").unwrap(),
-        trust: TrustPolicy::PublicCa,
-    };
     let private = directory.path().join("session");
     assert!(matches!(
         RunnerHubConnection::new(

@@ -30,14 +30,18 @@ use tokio::{
 pub struct RunnerHeadWork {
     budget: Arc<dyn PublicationWorkBudget>,
     active: Arc<Semaphore>,
+    operations: Arc<Semaphore>,
     runtime: Handle,
+    maximum_reads: usize,
 }
 impl RunnerHeadWork {
     pub fn new(budget: Arc<dyn PublicationWorkBudget>, runtime: Handle) -> Arc<Self> {
         Arc::new(Self {
             budget,
             active: Arc::new(Semaphore::new(2)),
+            operations: Arc::new(Semaphore::new(MAX_HEAD_PROBES_GLOBAL)),
             runtime,
+            maximum_reads: 2,
         })
     }
     pub fn with_max_reads(
@@ -51,8 +55,25 @@ impl RunnerHeadWork {
         Ok(Arc::new(Self {
             budget,
             active: Arc::new(Semaphore::new(maximum)),
+            operations: Arc::new(Semaphore::new(MAX_HEAD_PROBES_GLOBAL)),
             runtime,
+            maximum_reads: maximum,
         }))
+    }
+    /// Stop fresh operations and reads. Existing bodies/results keep their
+    /// original permits until actual destruction; this does not cancel them.
+    pub fn close(&self) {
+        self.operations.close();
+        self.active.close();
+    }
+    pub fn in_flight_reads(&self) -> usize {
+        self.maximum_reads
+            .saturating_sub(self.active.available_permits())
+    }
+    /// Includes remote bodies and unclaimed task outputs as well as reads.
+    /// Stop and join producers before using zero as a shutdown observation.
+    pub fn in_flight_operations(&self) -> usize {
+        MAX_HEAD_PROBES_GLOBAL.saturating_sub(self.operations.available_permits())
     }
     /// SDK work plus returned native/mapped pages and actual signing/sealing
     /// generations. Internal SQLite/catalog scratch belongs to JournalLimits;
@@ -88,12 +109,18 @@ impl RunnerHeadWork {
         &self,
         turn: OwnedSemaphorePermit,
     ) -> Result<Arc<HeadReservation>, RunnerHeadError> {
+        let operation = self
+            .operations
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| JournalError::Busy)?;
         let allocation = self
             .budget
             .try_reserve(PublicationAllocation::new(Self::operation_bytes(), 1)?)?;
         Ok(Arc::new(HeadReservation {
             _turn: turn,
             _allocation: allocation,
+            _operation: operation,
         }))
     }
     pub(super) fn runtime(&self) -> &Handle {
@@ -134,6 +161,7 @@ impl<T> ReadOutput<T> {
 pub(super) struct HeadReservation {
     _turn: OwnedSemaphorePermit,
     _allocation: AllocationLease,
+    _operation: OwnedSemaphorePermit,
 }
 impl fmt::Debug for RunnerHeadWork {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

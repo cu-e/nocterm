@@ -1,0 +1,28 @@
+[package]
+name = "nocterm-runner"
+description = "Independent persistent Cloud runner control plane."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "app"
+
+[dependencies]
+nocterm-core.workspace = true
+nocterm-hubs-model.workspace = true
+nocterm-cloud-model.workspace = true
+nocterm-hub-io.workspace = true
+nocterm-cloud-runner.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

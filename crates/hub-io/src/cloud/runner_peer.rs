@@ -1,6 +1,12 @@
 //! Independent runner credentials; desktop membership never owns this lifetime.
 use super::{CloudRunnerIdentity, CloudRunnerIdentityError};
-use nocterm_cloud_model::journal::{JournalCatalogBinding, PublicationWorkBudget};
+use nocterm_cloud_model::{
+    identity::{
+        AccountIdentity, AccountScope, Fingerprint, HubIdentity, NamespaceId, RunnerId,
+        RunnerKeyEpoch,
+    },
+    journal::{JournalCatalogBinding, PublicationWorkBudget},
+};
 use nocterm_core::SharedCause;
 use nocterm_hub_client::{
     HubEndpoint,
@@ -60,6 +66,52 @@ impl RunnerHubTrust {
             raw_hub_id,
             authority,
         }
+    }
+
+    /// Derive native identity from independently pinned setup facts through the
+    /// canonical public namespace codec. A relay reply never selects these pins.
+    pub fn binding(
+        &self,
+        account_id: &str,
+        account_public: [u8; 32],
+        runner: RunnerId,
+        epoch: RunnerKeyEpoch,
+    ) -> Result<JournalCatalogBinding, RunnerHubError> {
+        let raw = CloudTextId::new(&self.raw_hub_id).map_err(remote)?;
+        let account = CloudTextId::new(account_id).map_err(remote)?;
+        nocterm_keys::PublicKey::from_bytes(&account_public).map_err(remote)?;
+        let authority_digest: [u8; 32] = Sha256::digest(self.authority).into();
+        let instance = hub_namespace_id(raw.as_str(), authority_digest).map_err(remote)?;
+        Ok(JournalCatalogBinding::new(
+            AccountScope::new(
+                HubIdentity::new(
+                    NamespaceId::new(instance.as_str()).map_err(remote)?,
+                    Fingerprint::from_bytes(authority_digest),
+                ),
+                AccountIdentity::new(
+                    NamespaceId::new(account.as_str()).map_err(remote)?,
+                    Fingerprint::from_bytes(Sha256::digest(account_public).into()),
+                ),
+            ),
+            runner,
+            epoch,
+        ))
+    }
+}
+
+/// Public scheduling facts from the current actual R session. No credential
+/// string or mutable authentication authority crosses this boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunnerCredentialDeadlines {
+    access: i64,
+    refresh: i64,
+}
+impl RunnerCredentialDeadlines {
+    pub fn access_expires_at_ms(self) -> i64 {
+        self.access
+    }
+    pub fn refresh_expires_at_ms(self) -> i64 {
+        self.refresh
     }
 }
 
@@ -144,6 +196,11 @@ impl RunnerHubConnection {
 
     pub fn check_source(&self) -> Result<(), RunnerHubError> {
         self.runner().map(|_| ())
+    }
+
+    pub fn credential_deadlines(&self) -> Result<RunnerCredentialDeadlines, RunnerHubError> {
+        let (access, refresh) = self.runner()?.credential_deadlines().map_err(sdk_error)?;
+        Ok(RunnerCredentialDeadlines { access, refresh })
     }
 
     pub async fn redeem(
