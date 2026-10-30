@@ -57,6 +57,18 @@ impl Transport for MockTransport {
         self.drivers.lock().unwrap().push(Arc::new(driver));
         session
     }
+    /// A hub window opens with its account's captured source. Like a real
+    /// producer, the mock enforces that source instead of discarding it.
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        match options.source().check() {
+            Ok(()) => self.open(request),
+            Err(error) => Session::failed(error.into()),
+        }
+    }
 }
 
 fn spec(host: &str) -> SessionSpec {

@@ -386,6 +386,7 @@ fn a_secret_typed_in_a_hub_window_is_kept_in_the_hub_vault_for_the_hub_connectio
             )
         })
     });
+    cx.run_until_parked();
     let driver = world
         .transport
         .drivers
