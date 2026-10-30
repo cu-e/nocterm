@@ -174,7 +174,7 @@ server carries only the first connection.
 **Settings → Servers** (or the command **Hubs: Manage servers**) shows the known servers in a
 list on the left (colour mark, name and a dot in the colour of the status) with **Sign in to a
 server…** below it. The first server is selected; choosing another shows it from its first tab.
-The selected server has three tabs:
+The selected server has four tabs:
 
 - **Overview**
   - **Name** is what the server is called. Edit it and press Enter, or leave the field, to
@@ -199,8 +199,23 @@ The selected server has three tabs:
   band, and confirm only when they are identical. A changed key is shown with a warning and
   both fingerprints.
 
-While this device is not signed in to a server, **Devices** and **Keys & trust** only offer
-**Sign in**.
+- **Agent access (SSH)** controls how cloud agents sign in to your own servers. A personal CA
+  (shown with its fingerprint and date) signs certificates that are valid for hours at most,
+  only from the runner's address, with a terminal and no forwarding. The CA key stays in your
+  encrypted account data; the hub never reads it.
+  - **Servers that trust the CA** lists each server with `user@host`, when it was added and by
+    which device, when it was last checked, and its state: *Trusted*, *Removal pending* (access
+    was denied while the server was out of reach; the line is removed the next time you
+    connect to it), *Drifted* (the line vanished without you asking) or removed. **Deny
+    access** acts on one row; tick several rows and use **Deny on selected**.
+  - **Allow on servers…** lists the servers you are connected to now; ticked ones get the CA
+    line in the `authorized_keys` of the session's user, over that session. Other lines are
+    kept. **Copy CA line** copies the line to add by hand on any other server.
+  - **Reissue CA…** asks, then replaces the CA; servers that can be reached move to the new one.
+  - **Active chat accesses** lists the accesses agents hold, each with **Revoke**.
+
+While this device is not signed in to a server, **Devices**, **Keys & trust** and **Agent
+access (SSH)** only offer **Sign in**.
 
 A change that cannot be saved to `settings.toml` is reported and leaves the list as it was.
 

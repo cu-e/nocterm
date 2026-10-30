@@ -483,3 +483,6 @@ async fn rejected_write_batch_invalidates_its_prefix_and_cannot_publish_partial_
     session.close();
     closed(&session, no_prompts).await;
 }
+
+#[path = "cases/vault_certificate.rs"]
+mod vault_certificate;

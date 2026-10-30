@@ -114,3 +114,4 @@ acceptance; a later record supersedes an earlier one.
 | [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix |
 | [0117](0117-contained-local-tool-processes.md) | Cloud local tools receive an explicit contained process capability |
 | [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account |
+| [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers |

@@ -136,6 +136,15 @@ pub enum Auth {
         credential: CredentialId,
         public_key: String,
     },
+    /// A private key kept in the credential vault, offered together with an OpenSSH user
+    /// certificate for it. The certificate is public text; the key is asked for through the
+    /// driver like a vault key and is refused unless it is the one the certificate names.
+    /// Used for short-lived logins, so a profile never saves it.
+    VaultCertificate {
+        credential: CredentialId,
+        public_key: String,
+        certificate: String,
+    },
 }
 
 #[cfg(test)]

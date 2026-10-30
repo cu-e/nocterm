@@ -7,7 +7,8 @@
 //!
 //! Owns: the presentation of the known hubs and their status ([`register`] installs the menu);
 //! the Servers page of the settings ([`settings_page`]), a list of servers and, for the chosen
-//! one, the tabs Overview, Devices (listed and revoked through the service) and Keys & trust
+//! one, the tabs Overview, Devices (listed and revoked through the service), Agent access (SSH)
+//! (the agent CA, the servers that trust it and the chat accesses, through the service) and Keys & trust
 //! with the administrator keys waiting for the person's confirmation (each with its
 //! fingerprint to compare out of band, and a warning when the key changed), and the palette
 //! commands; the steps of the sign-in dialog as

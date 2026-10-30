@@ -18,7 +18,7 @@
 //! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
 //! Ports provided: ConnectionDirectory, checked original-workspace parent
 //! SessionSpec resolution for app composition and the core `connections.servers`
-//! contribution (`plugin::CORE`). Settings section: none.
+//! contribution (`plugin::CORE`); `HostObserver`, told once per freshly connected session (the application supplies it through `Installed::bind_host_observer`). Settings section: none.
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
