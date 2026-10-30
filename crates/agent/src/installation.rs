@@ -57,12 +57,12 @@ impl Installed {
         }
     }
     /// The Cloud agents of the signed-in hubs, offered in the new-chat menu of every window
-    /// made from this installation.
-    pub fn with_cloud_agents(&self, access: CloudAgentsAccess) -> Self {
+    /// made from this installation. `None` keeps the menu local-only.
+    pub fn with_cloud_agents(&self, access: Option<CloudAgentsAccess>) -> Self {
         Self {
             inner: self.inner.clone(),
             source: self.source.clone(),
-            cloud: Some(access),
+            cloud: access,
         }
     }
     /// A window of one hub offers only that hub's Cloud agents.

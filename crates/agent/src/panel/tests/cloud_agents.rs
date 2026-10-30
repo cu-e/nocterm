@@ -103,7 +103,7 @@ fn cloud_window(
     cx: &mut TestAppContext,
 ) -> (AnyWindowHandle, Entity<AgentPanel>) {
     let (handle, _workspace, panel, _terminal) = cx.update(|cx| {
-        let installed = f.installation.installed.with_cloud_agents(access);
+        let installed = f.installation.installed.with_cloud_agents(Some(access));
         open_host(
             &f._directory,
             &installed,

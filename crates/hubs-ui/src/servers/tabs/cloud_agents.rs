@@ -378,15 +378,12 @@ fn row(agent: &CloudAgent, key: &str, view: &Entity<CloudAgentsTab>, cx: &App) -
         })
 }
 
-fn render_form(
+fn provider_buttons(
     form: &Form,
     key: &str,
     view: &Entity<CloudAgentsTab>,
-    cx: &mut Context<CloudAgentsTab>,
-) -> impl IntoElement {
-    let [name, endpoint, model, secret] = form.inputs();
-    let theme = cx.theme().clone();
-    let provider_buttons = ProviderKind::ALL.map(|kind| {
+) -> impl IntoIterator<Item = Button> {
+    ProviderKind::ALL.map(|kind| {
         let view = view.clone();
         Button::new(item(&format!("cloud-agent-provider-{}", kind.id()), key))
             .label(kind.label())
@@ -399,9 +396,12 @@ fn render_form(
                     cx.notify();
                 });
             })
-    });
+    })
+}
+
+fn offline_checkbox(form: &Form, key: &str, view: &Entity<CloudAgentsTab>) -> Checkbox {
     let offline_view = view.clone();
-    let offline = Checkbox::new(item("cloud-agent-offline", key))
+    Checkbox::new(item("cloud-agent-offline", key))
         .label("Agents work when I'm offline")
         .checked(form.work_offline())
         .on_click(move |checked: &bool, _: &mut Window, cx: &mut App| {
@@ -412,8 +412,11 @@ fn render_form(
                 }
                 cx.notify();
             });
-        });
-    let pools = form.work_offline().then(|| {
+        })
+}
+
+fn pool_choices(form: &Form, key: &str, view: &Entity<CloudAgentsTab>) -> Option<impl IntoElement> {
+    form.work_offline().then(|| {
         let buttons = form
             .pools()
             .iter()
@@ -435,10 +438,17 @@ fn render_form(
                     })
             });
         field("Pool", h_flex().gap_2().children(buttons))
-    });
-    let submit_view = view.clone();
-    let cancel_view = view.clone();
-    let trust = form.waiting_offer().map(|offer| {
+    })
+}
+
+fn trust_block(
+    form: &Form,
+    key: &str,
+    view: &Entity<CloudAgentsTab>,
+    cx: &App,
+) -> Option<impl IntoElement> {
+    let theme = cx.theme().clone();
+    form.waiting_offer().map(|offer| {
         let view = view.clone();
         v_flex()
             .id(item("cloud-agent-trust", key))
@@ -467,7 +477,27 @@ fn render_form(
                         view.update(cx, |tab, cx| tab.trust_and_save(cx));
                     }),
             )
-    });
+    })
+}
+
+fn render_form(
+    form: &Form,
+    key: &str,
+    view: &Entity<CloudAgentsTab>,
+    cx: &mut Context<CloudAgentsTab>,
+) -> impl IntoElement {
+    let [name, endpoint, model, secret] = form.inputs();
+    let theme = cx.theme().clone();
+    let submit_view = view.clone();
+    let cancel_view = view.clone();
+    let (provider_buttons, offline) = (
+        provider_buttons(form, key, view),
+        offline_checkbox(form, key, view),
+    );
+    let (pools, trust) = (
+        pool_choices(form, key, view),
+        trust_block(form, key, view, cx),
+    );
     v_flex()
         .id(item("cloud-agent-form", key))
         .test_support()
