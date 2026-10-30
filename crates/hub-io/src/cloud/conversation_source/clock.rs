@@ -21,11 +21,11 @@ impl SourceClock {
         }
     }
     pub(super) fn now(&self) -> Result<Timestamp, ProjectionError> {
-        let now = self.timer.now();
         let mut state = self
             .observed
             .lock()
             .map_err(|_| ProjectionError::Unavailable)?;
+        let now = self.timer.now();
         if now.as_millis() == 0 || state.failed || state.last.is_some_and(|last| now < last) {
             state.failed = true;
             return Err(ProjectionError::Rollback);
