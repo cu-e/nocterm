@@ -5370,6 +5370,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-cloud-agents"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-cloud-agents-model",
+ "nocterm-hubs-model",
+ "tracing",
+]
+
+[[package]]
+name = "nocterm-cloud-agents-model"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-core",
+ "nocterm-hubs-model",
+ "nocterm-session",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "nocterm-cloud-chat"
 version = "0.0.0"
 dependencies = [

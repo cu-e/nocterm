@@ -260,6 +260,8 @@ nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
 nocterm-hubs-model = { path = "crates/hubs-model" }
+nocterm-cloud-agents-model = { path = "crates/cloud-agents-model" }
+nocterm-cloud-agents = { path = "crates/cloud-agents" }
 nocterm-hub-io = { path = "crates/hub-io" }
 nocterm-hubs = { path = "crates/hubs" }
 nocterm-hubs-ui = { path = "crates/hubs-ui" }

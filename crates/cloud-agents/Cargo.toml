@@ -1,0 +1,25 @@
+[package]
+name = "nocterm-cloud-agents"
+description = "The Cloud agents of the known hubs: catalog per hub with change watching, and the orchestration of a start."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "service"
+
+[dependencies]
+nocterm-cloud-agents-model.workspace = true
+nocterm-hubs-model.workspace = true
+
+futures.workspace = true
+gpui.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+nocterm-cloud-agents-model = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
