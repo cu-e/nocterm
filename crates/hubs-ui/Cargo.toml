@@ -12,6 +12,8 @@ layer = "feature"
 [dependencies]
 nocterm-core.workspace = true
 nocterm-hubs.workspace = true
+nocterm-cloud-agents.workspace = true
+nocterm-cloud-agents-model.workspace = true
 nocterm-hubs-model.workspace = true
 nocterm-session.workspace = true
 nocterm-ui.workspace = true
@@ -20,6 +22,7 @@ gpui-kit.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+nocterm-cloud-agents-model = { workspace = true, features = ["test-support"] }
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true
 nocterm-store.workspace = true

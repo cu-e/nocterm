@@ -2,6 +2,7 @@
 
 pub(super) mod admin_keys;
 pub(super) mod agent_access;
+pub(super) mod cloud_agents;
 pub(super) mod devices;
 pub(super) mod names;
 pub(super) mod overview;

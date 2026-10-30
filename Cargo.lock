@@ -5764,6 +5764,8 @@ name = "nocterm-hubs-ui"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
+ "nocterm-cloud-agents",
+ "nocterm-cloud-agents-model",
  "nocterm-core",
  "nocterm-hubs",
  "nocterm-hubs-model",

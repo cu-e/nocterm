@@ -339,6 +339,13 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     }
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let hubs = start_hubs(hubs, connection_inputs, &terminal, &ui, &shutdown, cx);
+    let hubs = match (hubs, &cloud_agents) {
+        (Some(mut hubs), Some(access)) => {
+            hubs.ui = hubs.ui.with_cloud_agents(access.service().clone());
+            Some(hubs)
+        }
+        (hubs, _) => hubs,
+    };
     let projects = install_projects(
         projects,
         &terminal,

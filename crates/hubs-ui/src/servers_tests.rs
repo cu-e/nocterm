@@ -60,7 +60,7 @@ fn page_on(
     let hubs = setup.installed.hubs().clone();
     let (window, _) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(|cx| ServersPage::new(hubs, cx))
+            cx.new(|cx| ServersPage::new(hubs, None, cx))
         })
         .unwrap()
     });

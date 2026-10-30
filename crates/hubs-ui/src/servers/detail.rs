@@ -15,7 +15,10 @@ use gpui_kit::{
 use nocterm_hubs::{HubStatus, HubSummary, Hubs};
 use nocterm_ui::SettingsTextField;
 
-use super::tabs::{agent_access::AgentAccess, devices::Devices, overview::overview, trust::trust};
+use super::tabs::{
+    agent_access::AgentAccess, cloud_agents::CloudAgentsTab, devices::Devices, overview::overview,
+    trust::trust,
+};
 use super::{ServersPage, item};
 use crate::color::tint;
 use crate::layout::note;
@@ -28,10 +31,17 @@ pub(super) enum Tab {
     Devices,
     Keys,
     AgentAccess,
+    CloudAgents,
 }
 
 impl Tab {
-    const ALL: [Self; 4] = [Self::Overview, Self::Devices, Self::Keys, Self::AgentAccess];
+    const ALL: [Self; 5] = [
+        Self::Overview,
+        Self::Devices,
+        Self::Keys,
+        Self::AgentAccess,
+        Self::CloudAgents,
+    ];
 
     fn title(self) -> &'static str {
         match self {
@@ -39,6 +49,7 @@ impl Tab {
             Self::Devices => "Devices",
             Self::Keys => "Keys & trust",
             Self::AgentAccess => "Agent access (SSH)",
+            Self::CloudAgents => "Cloud agents",
         }
     }
 }
@@ -71,6 +82,7 @@ pub(super) fn detail(
     tab: Tab,
     devices: &Entity<Devices>,
     agents: &Entity<AgentAccess>,
+    cloud_agents: Option<&Entity<CloudAgentsTab>>,
     page: WeakEntity<ServersPage>,
     hubs: &Entity<Hubs>,
     cx: &App,
@@ -99,6 +111,12 @@ pub(super) fn detail(
         (Tab::Devices, Access::SignedIn) => devices.clone().into_any_element(),
         (Tab::Keys, Access::SignedIn) => trust(summary, hubs, cx),
         (Tab::AgentAccess, Access::SignedIn) => agents.clone().into_any_element(),
+        (Tab::CloudAgents, Access::SignedIn) => match cloud_agents {
+            Some(tab) => tab.clone().into_any_element(),
+            None => div()
+                .child(note("This build has no Cloud agents.", cx))
+                .into_any_element(),
+        },
     };
     v_flex()
         .id(item("server", &key))

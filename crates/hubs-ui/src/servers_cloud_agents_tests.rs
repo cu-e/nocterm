@@ -1,0 +1,154 @@
+//! The Cloud agents tab lists the agents of the account and manages the personal ones.
+use std::sync::Arc;
+
+use super::{ServersPage, item};
+use crate::test_support::{Fixture, fixture_over, hub_id, pinned_record, server};
+use gpui_kit::{AppContext as _, TestAppContext, WindowOptions, test::TestWindowExt as _};
+use nocterm_cloud_agents_model::{
+    AgentId, AgentLimits, AgentScope, AgentStatus, CloudAgent, PoolChoice, PoolId,
+    testing::{FakeCloudAgents, FakeFailure},
+};
+use nocterm_hubs_model::Environment;
+use nocterm_hubs_model::testing::FakeHub;
+use nocterm_settings::SettingsDocument;
+use nocterm_store::SettingsConfig;
+
+const KEY: &str = "hub.home:7443";
+const CLOUD_AGENTS: usize = 3;
+
+fn agent(id: &str, name: &str, scope: AgentScope) -> CloudAgent {
+    CloudAgent {
+        id: AgentId::new(id).unwrap(),
+        scope,
+        version: 1,
+        name: name.into(),
+        description: String::new(),
+        icon: String::new(),
+        provider: "openai_chat".into(),
+        models: vec!["gpt-x".into()],
+        limits: AgentLimits {
+            cpu_milli: 500,
+            mem_mib: 256,
+            disk_mib: 512,
+            max_parallel_runs: 1,
+            idle_ttl_s: 600,
+        },
+        status: AgentStatus::Ready,
+        pools: Vec::new(),
+    }
+}
+
+fn page(cx: &mut TestAppContext, fake: &FakeCloudAgents) -> Fixture {
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let setup = fixture_over(
+        cx,
+        config,
+        Environment::Local,
+        FakeHub::new().with_server(server()),
+        vec![pinned_record()],
+        Some("ada"),
+    );
+    let hubs = setup.installed.hubs().clone();
+    let fake = fake.clone();
+    let (window, _) = cx.update(|cx| {
+        let service = nocterm_cloud_agents::install(
+            nocterm_cloud_agents::Deps {
+                catalog: Arc::new(fake.clone()),
+                launcher: Arc::new(fake.clone()),
+                personal: Arc::new(fake),
+            },
+            cx,
+        );
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|cx| ServersPage::new(hubs, Some(service.agents().clone()), cx))
+        })
+        .unwrap()
+    });
+    let page = Fixture { window, ..setup };
+    page.render(cx);
+    cx.update_window(page.window, |_, window, cx| {
+        window.within("servers-tabs").click(CLOUD_AGENTS, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    page.render(cx);
+    page
+}
+
+fn type_into(page: &Fixture, field: &str, text: &str, cx: &mut TestAppContext) {
+    page.click(item(field, KEY), cx);
+    page.type_text(text, cx);
+}
+
+#[gpui_kit::test]
+fn only_personal_agents_can_be_edited_or_deleted_here(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(
+        &hub_id(),
+        vec![
+            agent("mine", "Scribe", AgentScope::Personal),
+            agent("theirs", "Auditor", AgentScope::Server),
+        ],
+    );
+    let page = page(cx, &fake);
+    assert!(page.shows(item("cloud-agent-mine", KEY), cx));
+    assert!(page.shows(item("cloud-agent-edit-mine", KEY), cx));
+    assert!(page.shows(item("cloud-agent-theirs", KEY), cx));
+    assert!(!page.shows(item("cloud-agent-edit-theirs", KEY), cx));
+    assert!(!page.shows(item("cloud-agent-delete-theirs", KEY), cx));
+    assert!(page.shows(item("cloud-agents-web", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_server_without_managed_agents_says_so(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.fail(&hub_id(), FakeFailure::Unsupported);
+    let page = page(cx, &fake);
+    assert!(page.shows(item("cloud-agents-unsupported", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_personal_agent_is_saved_with_its_key_working_offline_by_default(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    fake.set_pools(
+        &hub_id(),
+        vec![PoolChoice {
+            pool: PoolId::new("p1").unwrap(),
+            name: "Shared".into(),
+            accepts_personal: true,
+        }],
+    );
+    let page = page(cx, &fake);
+    page.click(item("cloud-agents-new", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    type_into(&page, "cloud-agent-name", "Scribe", cx);
+    type_into(&page, "cloud-agent-model", "gpt-x", cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    let saved = fake.saved();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].name, "Scribe");
+    assert!(saved[0].work_offline);
+    assert!(!page.shows(item("cloud-agent-form", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_form_missing_its_key_is_refused_before_anything_is_sent(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    let page = page(cx, &fake);
+    page.click(item("cloud-agents-new", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    type_into(&page, "cloud-agent-name", "Scribe", cx);
+    type_into(&page, "cloud-agent-model", "gpt-x", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(fake.saved().is_empty());
+    assert!(page.shows(item("cloud-agents-problem", KEY), cx));
+}

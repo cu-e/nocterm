@@ -37,7 +37,8 @@ impl CloudAgentsAccess {
         }
     }
 
-    pub(crate) fn service(&self) -> &Entity<CloudAgents> {
+    /// The shared service, for the other surfaces that manage the same agents.
+    pub fn service(&self) -> &Entity<CloudAgents> {
         &self.agents
     }
 
