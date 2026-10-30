@@ -1,5 +1,11 @@
 # Nocterm's GPUI Base zoom patch
 
+The input engine exposes its existing synchronous document revision through a
+read-only getter. Programmatic value replacement advances it even when Change
+events are suppressed. The existing counter wraps at u64::MAX; consumers that
+need stale-operation fencing must bind the input instance and reject observed
+revision regression. No input state, event timing or edit semantics change.
+
 This vendored fork, including Nocterm's local modifications, is distributed
 under Apache-2.0, as declared by its original Cargo manifest. Upstream copyright
 notices and LICENSE-APACHE remain in force; the application's PolyForm Perimeter

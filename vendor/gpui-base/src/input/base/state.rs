@@ -1273,6 +1273,13 @@ impl<M: InputModeKind> InputBaseState<M> {
         &self.text
     }
 
+    /// Synchronous document edit generation, including programmatic value
+    /// replacement. This is independent of deferred `InputEvent::Change`.
+    /// The existing counter wraps at `u64::MAX`; it is not an unbounded clock.
+    pub fn document_revision(&self) -> u64 {
+        self.document_revision
+    }
+
     /// Return the (0-based) [`Position`] of the cursor.
     pub fn cursor_position(&self) -> Position {
         let offset = self.cursor();
