@@ -178,7 +178,8 @@ pub(super) struct RunRecord {
     approval: SyncMutex<Option<PendingApproval>>,
     grants: SyncMutex<Grants>,
     recovery: SyncMutex<Option<super::recovery::RecoveryPlan>>,
-    wake: AtomicBool,
+    wake: Arc<AtomicBool>,
+    sessions: Arc<super::run_session::RunSessionOwner>,
 }
 impl RunRecord {
     pub(super) fn new(
@@ -193,6 +194,13 @@ impl RunRecord {
             allowance.spend_micros(),
             allowance.window(),
         )?;
+        let wake = Arc::new(AtomicBool::new(false));
+        let sessions = super::run_session::RunSessionOwner::new(
+            binding.clone(),
+            prompt.destination().target().clone(),
+            prompt.destination().authentication().clone(),
+            wake.clone(),
+        );
         Ok(Self {
             binding,
             context: (&prompt).into(),
@@ -204,11 +212,26 @@ impl RunRecord {
             approval: SyncMutex::new(None),
             grants: SyncMutex::new(Grants::default()),
             recovery: SyncMutex::new(None),
-            wake: AtomicBool::new(false),
+            wake,
+            sessions,
         })
     }
     pub(super) fn binding(&self) -> &RunBinding {
         &self.binding
+    }
+    pub(super) fn sessions(&self) -> &Arc<super::run_session::RunSessionOwner> {
+        &self.sessions
+    }
+    pub(super) fn selected_session(&self) -> Option<SessionReceipt> {
+        if let Some(fact) = self.sessions.live() {
+            if let SessionOutcome::Established(receipt) = fact.value().outcome() {
+                return Some(receipt.clone());
+            }
+        }
+        self.sessions
+            .permits_initial_reference()
+            .then(|| self.context.destination().session().cloned())
+            .flatten()
     }
     pub(super) fn context(&self) -> &super::run_context::RunContext {
         &self.context
@@ -261,6 +284,10 @@ impl RunRecord {
         answer: &ApprovalAnswer,
         now: Timestamp,
     ) -> Result<(), CoordinatorError> {
+        if self.selected_session().as_ref() != Some(answer.authority().session()) {
+            return Err(CoordinatorError::NeedsUnlock);
+        }
+        self.control.require_runtime_current()?;
         if self
             .approval
             .lock()
@@ -279,6 +306,10 @@ impl RunRecord {
             .take()
             .ok_or(CoordinatorError::Conflict)?;
         pending.resolve(answer.choice())
+    }
+    pub(super) fn invalidate_session_approval(&self) {
+        let previous = self.approval.lock().take();
+        drop(previous);
     }
     pub(super) async fn status(
         &self,

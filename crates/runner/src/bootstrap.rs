@@ -1,3 +1,4 @@
+mod durable;
 use crate::{
     RunnerError,
     config::{Configuration, ControlLimits},
@@ -6,22 +7,20 @@ use nocterm_cloud_model::{
     coordinator::IntakePoolLimits,
     journal::{PublicationBudget, PublicationWorkBudget},
 };
-use nocterm_cloud_runner::{DurableRunJournal, JournalLimits};
-use nocterm_hub_io::cloud::{
-    CloudRunnerIdentity, RunnerHubConnection, RunnerMaterialStore, RunnerMetadataCrypto,
-};
+use nocterm_cloud_runner::DurableRunJournal;
+use nocterm_hub_io::cloud::{CloudRunnerIdentity, RunnerHubConnection, RunnerMaterialStore};
 use std::{path::PathBuf, sync::Arc};
 
 /// Exact private native owners survive the whole process. No desktop login,
 /// account private key or provider credential is an input to this bootstrap.
 pub(crate) struct State {
     identity: Arc<CloudRunnerIdentity>,
-    _material: Arc<RunnerMaterialStore>,
-    journal: DurableRunJournal,
+    durable: durable::DurableState,
     connection: Arc<RunnerHubConnection>,
     account: [u8; 32],
     directory: PathBuf,
     limits: ControlLimits,
+    execution: Option<crate::execution::ExecutionSetup>,
 }
 impl State {
     pub(crate) fn open(config: Configuration, create: bool) -> Result<Self, RunnerError> {
@@ -33,60 +32,27 @@ impl State {
         } else {
             CloudRunnerIdentity::open_existing(&identity_path, config.binding.clone())?
         });
-        let materials = config.state.join("material");
-        let maximum =
-            usize::try_from(config.limits.chats).map_err(|_| RunnerError::Value("limits.chats"))?;
-        let material = if create {
-            RunnerMaterialStore::create_new(
-                &materials,
-                config.binding.clone(),
-                identity.clone(),
-                maximum,
-            )?
-        } else {
-            RunnerMaterialStore::open_existing(
-                &materials,
-                config.binding.clone(),
-                identity.clone(),
-                maximum,
-            )?
-        };
-        let metadata = Arc::new(RunnerMetadataCrypto::new(identity.clone()));
-        let limits = JournalLimits::new(
-            config.limits.database_bytes,
-            config.limits.chat_bytes,
-            config.limits.records_per_chat,
-            config.limits.chats,
+        let durable = durable::DurableState::open(&config, identity.clone(), create)?;
+        let execution = crate::execution::ExecutionSetup::capture(
+            config.execution,
+            config.session_targets,
+            durable.cleanup_work_bytes(),
         )?;
-        let journal_path = config.state.join("journal");
-        let journal = if create {
-            nocterm_core::paths::ensure_private_dir(&journal_path).map_err(|error| {
-                RunnerError::Configuration(nocterm_core::SharedCause::new(error))
-            })?;
-            DurableRunJournal::create_new(
-                &journal_path,
-                config.binding.clone(),
-                material.journal_cipher(),
-                metadata.clone(),
-                metadata,
-                limits,
-            )?
-        } else {
-            DurableRunJournal::open_existing(
-                &journal_path,
-                config.binding.clone(),
-                material.journal_cipher(),
-                metadata.clone(),
-                metadata,
-                limits,
-            )?
-        };
+        if create && execution.is_some() {
+            nocterm_hub_io::cloud::RunnerInbox::initialize_storage(
+                &config.state.join("inbox"),
+                &identity,
+            )?;
+        }
         // Session/rotation work is a finite separate native owner. No model or
         // transcript upload is admitted by this control-plane process.
-        let work: Arc<dyn PublicationWorkBudget> = Arc::new(PublicationBudget::maintenance(
-            IntakePoolLimits::new(64 * 1024, 2, 2)
-                .map_err(|_| RunnerError::Value("session work budget"))?,
-        ));
+        let work: Arc<dyn PublicationWorkBudget> = match &execution {
+            Some(execution) => execution.transport_work(),
+            None => Arc::new(PublicationBudget::maintenance(
+                IntakePoolLimits::new(64 * 1024, 2, 2)
+                    .map_err(|_| RunnerError::Value("session work budget"))?,
+            )),
+        };
         let connection = RunnerHubConnection::new(
             config.trust,
             config.binding,
@@ -96,13 +62,22 @@ impl State {
         )?;
         Ok(Self {
             identity,
-            _material: material,
-            journal,
+            durable,
             connection,
             account: config.account,
             directory: config.state,
             limits: config.limits,
+            execution,
         })
+    }
+    pub(crate) fn take_execution(&mut self) -> Option<crate::execution::ExecutionSetup> {
+        self.execution.take()
+    }
+    pub(crate) fn material(&self) -> Arc<RunnerMaterialStore> {
+        self.durable.material()
+    }
+    pub(crate) fn journal(&self) -> DurableRunJournal {
+        self.durable.journal()
     }
     pub(crate) fn connection(&self) -> &Arc<RunnerHubConnection> {
         &self.connection
@@ -111,7 +86,7 @@ impl State {
         self.identity.clone()
     }
     pub(crate) fn heads(&self) -> nocterm_cloud_runner::DurableCurrentCloudHeads {
-        self.journal.current_heads()
+        self.durable.journal().current_heads()
     }
     pub(crate) fn account(&self) -> [u8; 32] {
         self.account

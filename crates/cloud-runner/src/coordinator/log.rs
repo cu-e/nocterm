@@ -120,6 +120,21 @@ impl ChatLog {
         self.append_with(None, records, None, None, Some(kind))
             .await
     }
+    pub(super) async fn append_after_command_resident(
+        &self,
+        original: &CommandReceipt,
+        records: Vec<(JournalRecord, Option<CoordinatorEvent>)>,
+        allocation: nocterm_core::allocation::AllocationLease,
+    ) -> Result<CommitOutcome, CoordinatorError> {
+        let kind = original.acceptance().kind();
+        if original.lease().stream() != self.lease.stream()
+            || !crate::CoordinatorPublicationBudgets::is_urgent(kind)
+        {
+            return Err(JournalError::InvalidBatch.into());
+        }
+        self.append_with(None, records, None, Some(allocation), Some(kind))
+            .await
+    }
     async fn append_with(
         &self,
         command: Option<CommandAcceptance>,

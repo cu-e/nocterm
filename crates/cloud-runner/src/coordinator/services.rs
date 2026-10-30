@@ -123,6 +123,7 @@ pub struct CoordinatorExecution {
     sessions: Arc<dyn SessionConsentConsumer>,
     tools: Arc<dyn RunToolRuntimeFactory>,
     arguments: Arc<dyn ArgumentFingerprint>,
+    session_setup: Option<super::session_services::CoordinatorSessions>,
 }
 impl CoordinatorExecution {
     pub fn new(
@@ -136,7 +137,12 @@ impl CoordinatorExecution {
             sessions,
             tools,
             arguments,
+            session_setup: None,
         }
+    }
+    pub fn with_sessions(mut self, setup: super::session_services::CoordinatorSessions) -> Self {
+        self.session_setup = Some(setup);
+        self
     }
 }
 /// Explicit native composition. Constructor equality checks do not replace the
@@ -157,6 +163,13 @@ impl CoordinatorServices {
         timer: Arc<dyn ToolTimer>,
     ) -> Result<Self, CoordinatorError> {
         if source.binding() != storage.binding() {
+            return Err(CoordinatorError::StaleSource);
+        }
+        if execution
+            .session_setup
+            .as_ref()
+            .is_some_and(|setup| setup.binding() != storage.binding())
+        {
             return Err(CoordinatorError::StaleSource);
         }
         Ok(Self {
@@ -199,6 +212,17 @@ impl CoordinatorServices {
     }
     pub(super) fn sessions(&self) -> &Arc<dyn SessionConsentConsumer> {
         &self.execution.sessions
+    }
+    pub(super) fn session_setup(
+        &self,
+    ) -> Result<&super::session_services::CoordinatorSessions, CoordinatorError> {
+        self.execution
+            .session_setup
+            .as_ref()
+            .ok_or(CoordinatorError::Unsupported)
+    }
+    pub(super) fn storage(&self) -> &CoordinatorStorage {
+        &self.storage
     }
     pub(super) fn tools(&self) -> &Arc<dyn RunToolRuntimeFactory> {
         &self.execution.tools

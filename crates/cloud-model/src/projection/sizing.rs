@@ -30,6 +30,15 @@ pub(super) fn event_bytes(event: &CoordinatorEvent) -> Result<usize, ProjectionE
             .terminal()
             .len()
             .saturating_add(value.job().command().len()),
+        CoordinatorEvent::AuthenticationRequested { request, .. } => request
+            .host()
+            .host_key_blob()
+            .len()
+            .saturating_add(request.host().signature_blob().len())
+            .saturating_add(request.login().payload().len())
+            .saturating_add(request.binding().user_key().as_str().len())
+            .saturating_add(request.login().user_key().as_str().len())
+            .saturating_add(request.login().principal().len()),
         CoordinatorEvent::ToolResult { observation, .. } => {
             retained_value_bytes(observation.output().value())
                 .map_err(|_| ProjectionError::Capacity)?

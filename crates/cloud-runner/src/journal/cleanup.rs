@@ -15,6 +15,33 @@ impl DurableJournalCleanup {
         Self { journal }
     }
 }
+impl RunSessionFactCleanup for DurableJournalCleanup {
+    fn binding(&self) -> &JournalCatalogBinding {
+        self.journal.binding()
+    }
+    fn work_bytes(&self) -> usize {
+        super::session_loss::work_bytes()
+    }
+    fn finish_session_loss(
+        &self,
+        batch: SessionLossCleanup,
+        allocation: nocterm_core::allocation::AllocationLease,
+    ) -> JournalFuture<()> {
+        let journal = self.journal.clone();
+        Box::pin(async move {
+            if allocation.bytes() < super::session_loss::work_bytes() || allocation.payloads() == 0
+            {
+                return Err(JournalError::Capacity);
+            }
+            // Actual blocking caller owns this future, batch and guard through
+            // transaction completion, including cancellation of its receiver.
+            let resident = nocterm_core::allocation::Allocated::new(batch, allocation);
+            journal.with_stream(resident.value().lease().writer().stream(), |driver| {
+                super::session_loss::finish(driver, resident.value())
+            })
+        })
+    }
+}
 impl RunJournalCleanup for DurableJournalCleanup {
     fn claim_cleanup(&self, claim: WriterClaim) -> JournalFuture<CleanupLease> {
         let journal = self.journal.clone();

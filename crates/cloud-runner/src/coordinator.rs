@@ -21,7 +21,14 @@ mod recovery;
 mod replay;
 mod run;
 mod run_context;
+mod run_session;
 mod services;
+mod session_commands;
+pub(crate) mod session_fact;
+mod session_publication;
+mod session_request;
+mod session_services;
+pub use session_services::CoordinatorSessions;
 mod supervisor;
 mod worker;
 

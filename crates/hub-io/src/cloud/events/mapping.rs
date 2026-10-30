@@ -27,6 +27,8 @@ pub(super) fn original_run(event: &CoordinatorEvent) -> Option<&RunBinding> {
         }
         CoordinatorEvent::ApprovalResolved { answer, .. } => Some(answer.authority().run()),
         CoordinatorEvent::BackgroundLifecycle(value) => Some(value.job().execution().run()),
+        CoordinatorEvent::AuthenticationRequested { request, .. } => Some(request.binding().run()),
+        CoordinatorEvent::SessionState(value) => Some(value.binding().run()),
         CoordinatorEvent::Deleted { .. } => None,
     }
 }
@@ -96,6 +98,11 @@ pub(super) fn with_payload<T>(
         CoordinatorEvent::BackgroundLifecycle(value) => emit(
             CloudEventPayload::BackgroundLifecycle(Box::new(lifecycle(value)?)),
         ),
+        CoordinatorEvent::AuthenticationRequested { .. } | CoordinatorEvent::SessionState(_) => {
+            // The installed SDK predates the negotiated session-start feature.
+            // Never encode a real session fact as unrelated display/status data.
+            Err(JournalError::UnsupportedFormat)
+        }
         CoordinatorEvent::Deleted { command } => emit(CloudEventPayload::Deleted {
             command: *command.as_bytes(),
         }),
@@ -216,6 +223,9 @@ pub(super) fn mapping_bytes(event: &CoordinatorEvent) -> Result<usize, JournalEr
             std::mem::size_of::<wire::BackgroundLifecyclePayload<'static>>()
                 .checked_add(principal(value.job().execution()))
                 .ok_or(JournalError::Capacity)?
+        }
+        CoordinatorEvent::AuthenticationRequested { .. } | CoordinatorEvent::SessionState(_) => {
+            return Err(JournalError::UnsupportedFormat);
         }
         CoordinatorEvent::Status { .. }
         | CoordinatorEvent::Progress { .. }

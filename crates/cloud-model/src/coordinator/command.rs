@@ -354,6 +354,7 @@ pub enum CommandBody {
     ProviderGrant(ProviderOffer),
     RevokeGrant(GrantReference),
     SessionConsent(SessionConsent),
+    BeginSession(Box<super::SessionRequest>),
     DeleteChat,
     RevokeIssuer(IssuerRevocation),
 }
@@ -368,6 +369,7 @@ impl CommandBody {
             }
             Self::RevokeGrant(_) => CommandKind::RevokeGrant,
             Self::SessionConsent(_) => CommandKind::AuthenticationConsent,
+            Self::BeginSession(_) => CommandKind::BeginSession,
             Self::DeleteChat => CommandKind::DeleteChat,
             Self::RevokeIssuer(_) => CommandKind::RevokeIssuer,
         }
@@ -408,6 +410,7 @@ impl ReceivedCommand {
             CommandBody::InferenceGrant(grant) => Some(grant.allowance().run()),
             CommandBody::ToolGrant(grant) => Some(grant.authority().run()),
             CommandBody::SessionConsent(consent) => Some(consent.run()),
+            CommandBody::BeginSession(request) => Some(request.binding().run()),
             _ => None,
         };
         if expected.is_some_and(|expected| run.as_ref() != Some(expected))
@@ -415,6 +418,15 @@ impl ReceivedCommand {
             || (matches!(body, CommandBody::Submit(_)) && run.is_some())
         {
             return Err(CoordinatorError::InvalidCommand);
+        }
+        if let CommandBody::BeginSession(request) = &body {
+            let start = request.binding().window();
+            if window.issued() < start.issued()
+                || window.issued() >= start.expires()
+                || hard_expires.is_some_and(|hard| start.expires() > hard)
+            {
+                return Err(CoordinatorError::InvalidCommand);
+            }
         }
         if let CommandBody::RevokeIssuer(revoke) = &body {
             if revoke.issuer().device() != acceptance.issuer().device()

@@ -45,6 +45,10 @@ impl RunAuthority {
         }
         let run = self.run.upgrade().ok_or(CoordinatorError::Stopped)?;
         let chat = self.chat.upgrade().ok_or(CoordinatorError::Stopped)?;
+        if run.selected_session().as_ref() != Some(request.permit().intent().authority().session())
+        {
+            return Err(CoordinatorError::NeedsUnlock);
+        }
         run.control().check(self.services.source().as_ref())?;
         chat.check()?;
         chat.log().require_current()?;
@@ -122,14 +126,12 @@ impl EffectHost {
         self.attach().await?;
         let session = self
             .run
-            .context()
-            .destination()
-            .session()
+            .selected_session()
             .ok_or(CoordinatorError::NeedsUnlock)?;
         let mut grant = self
             .run
             .grants()
-            .select_tool(session, call.call(), self.services.timer().now())
+            .select_tool(&session, call.call(), self.services.timer().now())
             .ok_or(CoordinatorError::NeedsGrant)?;
         let original_authority = grant.authority().clone();
         grant.authorize(
@@ -327,10 +329,7 @@ impl EffectHost {
         }
         let session = self
             .run
-            .context()
-            .destination()
-            .session()
-            .cloned()
+            .selected_session()
             .ok_or(CoordinatorError::NeedsUnlock)?;
         let runtime = self
             .services
@@ -368,6 +367,9 @@ impl EffectHost {
         call: &TerminalCall,
         grant: &mut GrantState,
     ) -> Result<(), CoordinatorError> {
+        if self.run.selected_session().as_ref() != Some(intent.authority().session()) {
+            return Err(CoordinatorError::NeedsUnlock);
+        }
         self.services.tasks().check_healthy()?;
         if !self.services.tasks().running() {
             return Err(CoordinatorError::Stopped);

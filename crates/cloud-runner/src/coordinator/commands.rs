@@ -45,10 +45,12 @@ impl CommandHandler {
                 CommandBody::Stop | CommandBody::RevokeGrant(_) => {
                     let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
                     run.control().stop();
+                    run.sessions().cancel_pending();
                 }
                 CommandBody::RevokeIssuer(_) | CommandBody::DeleteChat => {
                     for run in chat.runs() {
                         run.control().stop();
+                        run.sessions().cancel_pending();
                     }
                 }
                 _ => {}
@@ -168,6 +170,9 @@ impl CommandHandler {
                 for run in chat.runs() {
                     self.queue.cancel(run.binding());
                 }
+                if let Ok(setup) = self.services.session_setup() {
+                    setup.broker().close_chat(chat.log().lease().stream());
+                }
                 let record = JournalRecord::new(
                     RecordContext::Chat,
                     JournalRecordKind::Tombstone {
@@ -207,6 +212,11 @@ impl CommandHandler {
                 Ok(receipt)
             }
             CommandBody::SessionConsent(answer) => {
+                if let Ok(setup) = self.services.session_setup() {
+                    setup
+                        .broker()
+                        .check_answer(&command.acknowledgement(), answer)?;
+                }
                 let receipt = chat.accept(command, None, vec![], &self.work).await?;
                 drop(command_guard);
                 if !self.services.tasks().running() {
@@ -217,6 +227,11 @@ impl CommandHandler {
                     .answer(command.acknowledgement(), answer.clone())
                     .await?;
                 Ok(receipt)
+            }
+            CommandBody::BeginSession(request) => {
+                super::session_commands::SessionCommands::new(self.services.clone())
+                    .begin(&chat, command, request, &self.work)
+                    .await
             }
         }
     }

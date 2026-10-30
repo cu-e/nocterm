@@ -26,6 +26,13 @@ pub enum RunnerError {
     Journal(#[from] nocterm_cloud_model::journal::JournalError),
     #[error("the bounded native head responder failed")]
     Head(#[from] nocterm_hub_io::cloud::RunnerHeadError),
+    #[error("the configured Cloud execution runtime failed")]
+    Execution(#[from] nocterm_cloud_model::coordinator::CoordinatorError),
+    #[cfg(target_os = "linux")]
+    #[error("required native tool containment is unavailable")]
+    Containment(#[from] nocterm_local::ContainmentError),
+    #[error("the configured API model provider is unavailable")]
+    Inference(#[from] nocterm_cloud_model::engine::EngineError),
     #[error("the runner clock is unavailable or moved backwards")]
     Clock,
     #[error("the pinned runner refresh credential has expired")]

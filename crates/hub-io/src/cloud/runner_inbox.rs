@@ -140,6 +140,19 @@ pub struct RunnerInbox {
     owner: Arc<InboxOwner>,
 }
 impl RunnerInbox {
+    /// Explicit fresh-identity initialization. Daemon restore always uses
+    /// OpenExisting; a missing cursor never selects this creation path.
+    pub fn initialize_storage(
+        directory: &std::path::Path,
+        identity: &super::CloudRunnerIdentity,
+    ) -> Result<(), CoordinatorError> {
+        let public = identity.public_identity().map_err(backend)?;
+        let cursor =
+            InboxCursor::open(directory, identity.binding(), public.encryption_key(), true)
+                .map_err(backend)?;
+        drop(cursor);
+        Ok(())
+    }
     pub fn new(
         connection: Arc<RunnerHubConnection>,
         material: Arc<RunnerMaterialStore>,

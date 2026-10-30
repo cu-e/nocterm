@@ -5232,6 +5232,7 @@ dependencies = [
  "nocterm-agent-runtime",
  "nocterm-ai",
  "nocterm-core",
+ "nocterm-hubs-model",
  "nocterm-session",
  "nocterm-store",
  "nocterm-workspace-ports",
@@ -6134,11 +6135,19 @@ dependencies = [
 name = "nocterm-runner"
 version = "0.0.0"
 dependencies = [
+ "futures",
+ "nocterm-agent-engine",
+ "nocterm-agent-tools",
  "nocterm-cloud-model",
  "nocterm-cloud-runner",
  "nocterm-core",
  "nocterm-hub-io",
  "nocterm-hubs-model",
+ "nocterm-local",
+ "nocterm-session",
+ "nocterm-ssh",
+ "nocterm-ssh-keys",
+ "parking_lot",
  "serde",
  "tempfile",
  "thiserror 2.0.21",

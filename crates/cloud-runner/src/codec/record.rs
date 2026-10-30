@@ -249,6 +249,7 @@ pub(crate) fn command_tag(kind: CommandKind) -> u8 {
         CommandKind::AuthenticationConsent => 6,
         CommandKind::DeleteChat => 7,
         CommandKind::RevokeIssuer => 8,
+        CommandKind::BeginSession => 9,
     }
 }
 pub(crate) fn command_kind(tag: u8) -> Result<CommandKind, JournalError> {
@@ -261,6 +262,7 @@ pub(crate) fn command_kind(tag: u8) -> Result<CommandKind, JournalError> {
         6 => Ok(CommandKind::AuthenticationConsent),
         7 => Ok(CommandKind::DeleteChat),
         8 => Ok(CommandKind::RevokeIssuer),
+        9 => Ok(CommandKind::BeginSession),
         _ => Err(JournalError::Corrupt),
     }
 }

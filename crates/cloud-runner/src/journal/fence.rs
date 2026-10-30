@@ -99,6 +99,9 @@ pub(super) struct ReadFence {
     heads: HeadCells,
 }
 impl ReadFence {
+    pub(super) fn binding(&self) -> &JournalCatalogBinding {
+        self.catalog.binding()
+    }
     pub(super) fn new(
         root: &Path,
         catalog: CatalogOwner,

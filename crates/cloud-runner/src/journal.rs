@@ -15,6 +15,7 @@ mod retention;
 mod snapshot_publication;
 pub use snapshot_publication::DurableSnapshotPublication;
 mod run_heads;
+mod session_loss;
 
 use crate::{
     codec,
@@ -115,6 +116,9 @@ pub struct DurableRunJournal {
     current_heads: DurableCurrentCloudHeads,
 }
 impl DurableRunJournal {
+    pub fn binding(&self) -> &JournalCatalogBinding {
+        self.fence.binding()
+    }
     /// A narrow terminal-fact/declaration facade; it cannot append new effects.
     pub fn cleanup(&self) -> DurableJournalCleanup {
         DurableJournalCleanup::new(self.clone())

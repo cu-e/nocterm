@@ -175,6 +175,22 @@ impl JournalIo {
         })
         .await
     }
+    pub(super) async fn session_loss_locked(
+        &self,
+        guard: &JournalGuard,
+        cleanup: Arc<dyn nocterm_cloud_model::journal::RunSessionFactCleanup>,
+        batch: nocterm_cloud_model::journal::SessionLossCleanup,
+        allocation: AllocationLease,
+    ) -> Result<(), CoordinatorError> {
+        if !Arc::ptr_eq(&self.owner, &guard.publication.owner) {
+            return Err(CoordinatorError::Conflict);
+        }
+        self.execute(guard.publication.clone(), move || {
+            futures::executor::block_on(cleanup.finish_session_loss(batch, allocation))
+                .map_err(CoordinatorError::from)
+        })
+        .await
+    }
     pub(super) fn tool<T: Send + 'static>(
         &self,
         make: impl FnOnce(

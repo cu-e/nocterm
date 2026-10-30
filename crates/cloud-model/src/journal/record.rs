@@ -17,6 +17,7 @@ pub enum CommandKind {
     AuthenticationConsent,
     DeleteChat,
     RevokeIssuer,
+    BeginSession,
 }
 
 impl CommandKind {

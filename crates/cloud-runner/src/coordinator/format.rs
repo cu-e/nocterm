@@ -184,7 +184,7 @@ impl From<&RunDestination> for Destination {
     }
 }
 impl Destination {
-    fn selection(
+    pub(super) fn selection(
         target: &TargetBinding,
         authentication: &AuthenticationBinding,
         session: Option<&SessionReceipt>,
@@ -416,6 +416,7 @@ enum Body {
     Consent([u8; 16], [u8; 32], Run, Destination, String, bool, u64),
     Delete,
     Issuer(String, [u8; 32], u64, Vec<Reference>),
+    Begin(super::session_request::SessionStart),
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -473,6 +474,7 @@ impl From<&ReceivedCommand> for Command {
                 consent.approved(),
                 consent.expires().as_millis(),
             ),
+            CommandBody::BeginSession(request) => Body::Begin(request.as_ref().into()),
             CommandBody::DeleteChat => Body::Delete,
             CommandBody::RevokeIssuer(revoke) => Body::Issuer(
                 revoke.issuer().device().as_str().into(),
@@ -547,6 +549,7 @@ impl Command {
                 ))
             }
             Body::Delete => CommandBody::DeleteChat,
+            Body::Begin(request) => CommandBody::BeginSession(Box::new(request.restore()?)),
             Body::Issuer(device, key, cutoff, grants) => {
                 CommandBody::RevokeIssuer(IssuerRevocation::new(
                     IssuerSubject::new(namespace(device)?, fp(key)),

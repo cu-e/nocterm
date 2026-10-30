@@ -212,6 +212,15 @@ impl ReplayedRun {
                 self.choice = None;
             }
             (JournalRecordKind::RunStatus, Frame::Status(tag)) => self.status = status(tag)?,
+            (JournalRecordKind::RunStatus, Frame::Session(fact)) => {
+                let observation = fact.restore()?;
+                self.record.sessions().restore_lost(observation.binding())?;
+            }
+            (JournalRecordKind::RunStatus, Frame::Authentication { attempt, nonce }) => {
+                if attempt == [0; 16] || nonce == [0; 32] {
+                    return Err(JournalError::Corrupt.into());
+                }
+            }
             (JournalRecordKind::Progress { .. }, Frame::Progress(progress)) => {
                 progress.restore()?;
             }
@@ -231,6 +240,9 @@ impl ReplayedRun {
     fn command(&mut self, command: &ReceivedCommand) -> Result<(), CoordinatorError> {
         let mut grants = self.record.grants();
         match command.body() {
+            CommandBody::BeginSession(request) => {
+                self.record.sessions().restore_lost(request.binding())?;
+            }
             CommandBody::InferenceGrant(grant) => grants.install_inference(grant.clone())?,
             CommandBody::ToolGrant(grant) => grants.install_tool(grant.clone())?,
             CommandBody::RevokeGrant(reference) => {

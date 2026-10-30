@@ -15,7 +15,9 @@ mod cli;
 mod config;
 mod control;
 mod error;
+mod execution;
 mod public_setup;
+mod sessions;
 pub use error::RunnerError;
 
 /// CLI entrypoint. Only static typed top-level diagnostics are printed; native

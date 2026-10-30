@@ -8,7 +8,7 @@ use zeroize::Zeroizing;
 
 const MAGIC: &[u8] = b"NCRA\x02";
 pub(crate) const MAX_ARCHIVE_BYTES: usize = 16 * 1024 * 1024;
-const MAX_RECORDS: usize = 4096;
+pub(crate) const MAX_RECORDS: usize = 4096;
 const MAX_STREAM_BYTES: usize = 2048;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

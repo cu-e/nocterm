@@ -270,6 +270,11 @@ impl PlannedCall {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) enum Frame {
+    Session(super::session_fact::SessionFact),
+    Authentication {
+        attempt: [u8; 16],
+        nonce: [u8; 32],
+    },
     Accepted {
         command: Command,
         allocated: Option<Run>,

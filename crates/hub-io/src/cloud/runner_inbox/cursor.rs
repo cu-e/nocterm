@@ -214,4 +214,27 @@ mod tests {
             2
         );
     }
+    #[test]
+    fn explicit_identity_inbox_initialization_never_resets_an_existing_prefix() {
+        use crate::cloud::{CloudRunnerIdentity, RunnerInbox};
+        let directory = tempfile::tempdir().unwrap();
+        let binding = binding("original");
+        let identity =
+            CloudRunnerIdentity::create_new(&directory.path().join("identity"), binding.clone())
+                .unwrap();
+        let inbox = directory.path().join("inbox");
+        RunnerInbox::initialize_storage(&inbox, &identity).unwrap();
+        let public = identity.public_identity().unwrap();
+        let mut cursor =
+            InboxCursor::open(&inbox, &binding, public.encryption_key(), false).unwrap();
+        cursor.advance(1).unwrap();
+        drop(cursor);
+        assert!(RunnerInbox::initialize_storage(&inbox, &identity).is_err());
+        assert_eq!(
+            InboxCursor::open(&inbox, &binding, public.encryption_key(), false)
+                .unwrap()
+                .confirmed(),
+            1
+        );
+    }
 }

@@ -298,6 +298,10 @@ impl CoordinatorEventEncoder for ObservedCoordinatorEvents {
             CoordinatorEvent::BackgroundLifecycle(value) => {
                 Some(value.job().execution().run().clone())
             }
+            CoordinatorEvent::AuthenticationRequested { request, .. } => {
+                Some(request.binding().run().clone())
+            }
+            CoordinatorEvent::SessionState(value) => Some(value.binding().run().clone()),
             CoordinatorEvent::Deleted { .. } => None,
         };
         fixture_outbox_with_work(

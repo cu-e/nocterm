@@ -387,6 +387,44 @@ impl RunnerCommandAttachments {
             _allocation: entry.allocation,
         }))
     }
+    /// Borrow-check the actual staged KEX and one-use device answer before
+    /// durable admission. This neither consumes the proof nor authorizes login.
+    pub fn check_ssh(
+        &self,
+        command: &CommandAcknowledgement,
+        consent: &SessionConsent,
+        expected: &LoginProofRequest,
+    ) -> Result<(), CoordinatorError> {
+        let now = self.check_current()?;
+        if now >= consent.expires() {
+            return Err(CoordinatorError::Expired);
+        }
+        let staged = self
+            .staged
+            .lock()
+            .map_err(|_| CoordinatorError::NativeTaskFailed)?;
+        let entry = staged
+            .entries
+            .get(&key(command))
+            .ok_or(CoordinatorError::Conflict)?;
+        if entry.command.acceptance() != command.acceptance() {
+            return Err(CoordinatorError::Conflict);
+        }
+        let Attachment::Ssh {
+            request,
+            consent: original,
+            ..
+        } = &entry.body
+        else {
+            return Err(CoordinatorError::InvalidCommand);
+        };
+        if request != expected {
+            return Err(CoordinatorError::Conflict);
+        }
+        require_consent(original, consent)?;
+        self.check_current()?;
+        Ok(())
+    }
     pub fn take_ssh(
         self: &Arc<Self>,
         command: &CommandAcknowledgement,
@@ -409,18 +447,7 @@ impl RunnerCommandAttachments {
         else {
             return Err(CoordinatorError::InvalidCommand);
         };
-        if original.run() != consent.run()
-            || original.attempt() != consent.attempt()
-            || original.nonce() != consent.nonce()
-            || original.target() != consent.target()
-            || original.authentication() != consent.authentication()
-            || original.session() != consent.session()
-            || original.algorithm() != consent.algorithm()
-            || original.approved() != consent.approved()
-            || original.expires() != consent.expires()
-        {
-            return Err(CoordinatorError::Conflict);
-        }
+        require_consent(original, consent)?;
         let entry = staged
             .entries
             .remove(&key(command))
@@ -502,6 +529,24 @@ impl RunnerSshAnswer {
 }
 fn key(command: &CommandAcknowledgement) -> (CloudChatId, CommandId) {
     (command.stream().chat(), command.acceptance().id())
+}
+fn require_consent(
+    original: &SessionConsent,
+    consent: &SessionConsent,
+) -> Result<(), CoordinatorError> {
+    if original.run() != consent.run()
+        || original.attempt() != consent.attempt()
+        || original.nonce() != consent.nonce()
+        || original.target() != consent.target()
+        || original.authentication() != consent.authentication()
+        || original.session() != consent.session()
+        || original.algorithm() != consent.algorithm()
+        || original.approved() != consent.approved()
+        || original.expires() != consent.expires()
+    {
+        return Err(CoordinatorError::Conflict);
+    }
+    Ok(())
 }
 fn source_error(error: RunnerHubError) -> CoordinatorError {
     CoordinatorError::Backend(SharedCause::new(error))

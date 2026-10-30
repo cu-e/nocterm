@@ -10,6 +10,7 @@ pub use observations::{
 pub(crate) mod intake;
 mod ports;
 mod provider_access;
+mod session;
 mod supervision;
 pub use command::{
     ApprovalAnswer, ApprovalChoice, CommandAcknowledgement, CommandBody, GrantClass,
@@ -23,6 +24,11 @@ pub use ports::{
     CoordinatorJournal, CoordinatorProviders, SessionConsentConsumer,
 };
 pub use provider_access::{ProviderCredentialReceiver, ProviderCredentialSource};
+pub use session::{
+    PreparedRunSession, PublishedRunSession, RunSessionBroker, SessionAttempt,
+    SessionAttemptCancellation, SessionFactSink, SessionFailure, SessionObservation,
+    SessionOutcome, SessionRequest, SessionStartup,
+};
 pub use supervision::{DrainReport, SupervisorLimits, SupervisorPhase, TaskSnapshot};
 
 pub use intake::{

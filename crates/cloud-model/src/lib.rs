@@ -12,6 +12,9 @@
 //! task retention, background effect journal, original-job liveness, cleanup and
 //! durable model-call admission collaborators. RunToolRuntimeFactory attaches
 //! immutable run views without reconnecting; cleanup cannot authorize a dispatch.
+//! RunSessionBroker receives bounded original-run connection requests. Its fact
+//! sink separates durable Established from actual physical publication and live
+//! activation; descriptive session facts and recovery grant no execution access.
 //! The mandatory JournalCatalogCipher binds a complete native catalog to one known
 //! account/runner independently of chat keys. CurrentCloudHeads observes bounded
 //! revision-bound native head metadata; JournalChatHeadCipher protects it after

@@ -51,6 +51,17 @@ impl ContainedLocal {
             source,
         }
     }
+    /// Opens the configured contained shell under the original captured source.
+    /// No SSH request, credential lookup or uncontained fallback is synthesized.
+    pub fn open_shell(
+        &self,
+        launch: ShellLaunch,
+        term: String,
+        size: nocterm_session::PtySize,
+        source: ConnectionSource,
+    ) -> Session {
+        self.scoped(source).shell(launch, term, size)
+    }
     fn terminal_request(&self, request: TerminalRequest) -> Session {
         let launch = ShellLaunch {
             program: Some(request.program.program),

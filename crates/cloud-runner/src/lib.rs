@@ -30,6 +30,11 @@
 //! admitted control commands keep urgent publication capacity, and terminal facts
 //! use a separate finite cleanup reserve that snapshots cannot consume.
 //! All blocking work is polled off UI threads.
+//! Initial sessions use an injected native broker. Durable Established precedes
+//! actual physical publication, current-source/writer activation and original-run
+//! wake. Native recovery restores descriptions as Lost; no receipt restores live
+//! execution authority. Terminal session loss uses the same SQLite writer/gate
+//! through a separate fact-only cleanup port, without changing control revision.
 
 mod codec;
 pub mod coordinator;

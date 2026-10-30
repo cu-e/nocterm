@@ -220,6 +220,9 @@ impl ConversationProjection {
     ) -> Result<(), ProjectionError> {
         let previous_run = self.runs.selected().map(super::runs::key);
         match event {
+            CoordinatorEvent::AuthenticationRequested { .. } | CoordinatorEvent::SessionState(_) => {
+                return Err(ProjectionError::Unsupported);
+            }
             CoordinatorEvent::CommandAccepted { command, run } => {
                 if let Some(run) = run {
                     self.require_stream(run)?;

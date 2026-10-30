@@ -36,6 +36,7 @@ impl RunAuthorities {
         runs.into_iter()
             .map(|run| {
                 run.control().stop();
+                run.sessions().retire();
                 run.binding().clone()
             })
             .collect()

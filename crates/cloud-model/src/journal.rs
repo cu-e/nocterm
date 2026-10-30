@@ -10,6 +10,7 @@ mod position;
 mod publication;
 mod reader;
 mod record;
+mod session;
 mod snapshot_publication;
 mod storage;
 mod writer;
@@ -43,6 +44,9 @@ pub use reader::{
     StoredRecord,
 };
 pub use record::{CommandAcceptance, CommandKind, JournalRecord, JournalRecordKind, RecordContext};
+pub use session::{
+    MAX_SESSION_FACT_BYTES, RunSessionFactCleanup, SessionEstablishedAnchor, SessionLossCleanup,
+};
 pub use snapshot_publication::*;
 pub use storage::{
     JournalCipher, JournalCipherContext, JournalStorageClass, MAX_STORED_JOURNAL_BYTES,

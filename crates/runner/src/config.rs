@@ -24,6 +24,10 @@ struct Document {
     state: PathBuf,
     #[serde(default)]
     limits: ControlLimits,
+    #[serde(default)]
+    execution: Option<crate::execution::config::ExecutionConfig>,
+    #[serde(default)]
+    session_targets: Option<crate::sessions::config::SessionTargetConfiguration>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +110,8 @@ pub(crate) struct Configuration {
     pub(crate) account: [u8; 32],
     pub(crate) state: PathBuf,
     pub(crate) limits: ControlLimits,
+    pub(crate) execution: Option<crate::execution::config::ExecutionConfig>,
+    pub(crate) session_targets: Option<crate::sessions::config::SessionTargetConfiguration>,
 }
 impl Configuration {
     pub(crate) fn read(path: &Path) -> Result<Self, RunnerError> {
@@ -124,6 +130,12 @@ impl Configuration {
     }
     fn prepare(document: Document) -> Result<Self, RunnerError> {
         document.limits.validate()?;
+        if document.execution.is_some() != document.session_targets.is_some() {
+            return Err(RunnerError::Value("execution/session_targets"));
+        }
+        if let Some(targets) = &document.session_targets {
+            targets.default_destination()?;
+        }
         if !document.state.is_absolute()
             || document
                 .state
@@ -167,13 +179,18 @@ impl Configuration {
             account,
             state: document.state,
             limits: document.limits,
+            execution: document.execution,
+            session_targets: document.session_targets,
         })
     }
 }
 fn configuration(error: impl std::error::Error + Send + Sync + 'static) -> RunnerError {
     RunnerError::Configuration(SharedCause::new(error))
 }
-fn fixed_hex<const N: usize>(text: &str, field: &'static str) -> Result<[u8; N], RunnerError> {
+pub(crate) fn fixed_hex<const N: usize>(
+    text: &str,
+    field: &'static str,
+) -> Result<[u8; N], RunnerError> {
     if text.len() != 2 * N {
         return Err(RunnerError::Value(field));
     }
@@ -213,6 +230,8 @@ pub(crate) fn fixture(state: PathBuf) -> Configuration {
         },
         state,
         limits: ControlLimits::default(),
+        execution: None,
+        session_targets: None,
     })
     .unwrap()
 }

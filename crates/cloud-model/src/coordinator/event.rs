@@ -136,6 +136,11 @@ pub enum CoordinatorEvent {
         observation: ToolObservation,
     },
     BackgroundLifecycle(Box<BackgroundObservation>),
+    AuthenticationRequested {
+        request: Box<crate::login::LoginProofRequest>,
+        startup: super::SessionStartup,
+    },
+    SessionState(Box<super::SessionObservation>),
     Deleted {
         command: CommandId,
     },

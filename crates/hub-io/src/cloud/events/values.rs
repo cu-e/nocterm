@@ -78,6 +78,7 @@ pub(super) fn accepted(value: &CommandAcceptance) -> Result<AcceptedCommand, Jou
         CommandKind::AuthenticationConsent => wire::CommandKind::AnswerSshConsent,
         CommandKind::DeleteChat => wire::CommandKind::DeleteChat,
         CommandKind::RevokeIssuer => wire::CommandKind::RevokeIssuerGrants,
+        CommandKind::BeginSession => return Err(JournalError::UnsupportedFormat),
     };
     Ok(AcceptedCommand {
         id: *value.id().as_bytes(),

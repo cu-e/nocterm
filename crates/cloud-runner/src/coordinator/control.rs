@@ -80,6 +80,14 @@ impl RunControl {
         *current = Some(runtime);
         Ok(())
     }
+    pub(super) fn require_runtime_current(&self) -> Result<(), CoordinatorError> {
+        let runtime = self
+            .runtime
+            .lock()
+            .clone()
+            .ok_or(CoordinatorError::NeedsUnlock)?;
+        runtime.check_current().map_err(CoordinatorError::from)
+    }
     pub(super) fn can_resume(&self) -> bool {
         !self.stopped.load(Ordering::Acquire)
     }
