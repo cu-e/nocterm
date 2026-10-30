@@ -68,7 +68,7 @@ impl ConversationRegistry {
         }
         let retained = self.chats.iter().position(|entry| {
             let chat = entry.chat.read(cx);
-            chat.source.binding() == source.binding() && chat.check_current().is_ok()
+            Arc::ptr_eq(&chat.source, &source) && chat.check_current().is_ok()
         });
         let index = match retained {
             Some(index) => index,

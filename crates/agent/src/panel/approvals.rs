@@ -18,7 +18,9 @@ use nocterm_ui::IconName;
 use nocterm_workspace::UnlockVault;
 
 use super::{AgentPanel, widgets::menu_variant};
-use crate::thread::{AgentThread, PermissionCard, ToolApprovalCard};
+use crate::thread::{AgentThread, PermissionCard};
+use nocterm_agent_chat::conversation::{ConversationToolApproval, ToolApprovalChoice};
+use std::rc::Rc;
 
 fn sign_in_text(wait: &crate::thread::SignInWait) -> (String, String) {
     let heading = if wait.vault() {
@@ -54,6 +56,45 @@ fn card(cx: &Context<AgentPanel>) -> gpui_kit::Div {
 
 pub(super) struct ApprovalCardsRenderer;
 impl ApprovalCardsRenderer {
+    pub(super) fn list(
+        cards: Vec<AnyElement>,
+        window: &gpui_kit::Window,
+        cx: &Context<AgentPanel>,
+    ) -> Option<AnyElement> {
+        let pending = cards.len();
+        if pending == 0 {
+            return None;
+        }
+        Some(
+            v_flex()
+                .id("agent-approvals")
+                .test_support()
+                .w_full()
+                .min_w_0()
+                .flex_shrink_0()
+                .px_3()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().warning)
+                        .child(format!("Waiting for you · {pending}")),
+                )
+                .child(
+                    v_flex()
+                        .id("agent-approval-list")
+                        .test_support()
+                        .w_full()
+                        .min_w_0()
+                        .min_h_0()
+                        .max_h(window.viewport_size().height * 0.35)
+                        .overflow_y_scroll()
+                        .gap_2()
+                        .children(cards),
+                )
+                .into_any_element(),
+        )
+    }
     /// A background session asks for a secret. The user types it here, or
     /// unlocks the vault when a saved secret answers it; the session never
     /// becomes a tab.
@@ -193,59 +234,82 @@ impl ApprovalCardsRenderer {
             .into_any_element()
     }
     pub(super) fn tool_card(
-        thread: &Entity<AgentThread>,
-        approval: ToolApprovalCard,
-        target: String,
-        reusable: bool,
+        approval: Rc<dyn ConversationToolApproval>,
+        identity: gpui_kit::EntityId,
         index: usize,
         cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
-        let token = approval.token();
-        let call = approval.call().clone();
-        let owner = thread.downgrade();
-        let (heading, exact, grant) = Self::tool_text(&call, &target);
+    ) -> Option<AnyElement> {
+        let mut details = None;
+        approval
+            .with_view(cx, &mut |view| details = Some(Self::tool_details(view)))
+            .ok()?;
+        let (heading, exact, grant, reusable) = details?;
         let exact = nocterm_ai::redact::redact(&exact);
-        card(cx)
-            .child(div().min_w_0().truncate().text_sm().child(heading))
-            .child(
-                h_flex().w_full().min_w_0().flex_wrap().gap_1().children(
-                    [
-                        (false, false, "Deny"),
-                        (true, false, "Allow once"),
-                        (true, true, grant),
-                    ]
-                    .into_iter()
-                    .filter(|(_, grant, _)| !grant || reusable)
-                    .map(|(allow, grant, label)| {
-                        let owner = owner.clone();
-                        Button::new((SharedString::from(format!("tool-{label}")), index))
-                            .custom(menu_variant(cx))
-                            .small()
-                            .max_w_full()
-                            .label(label)
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                if let Some(thread) = owner.upgrade() {
-                                    thread.update(cx, |thread, cx| {
-                                        thread.approve_tool(token, allow, grant, cx)
-                                    });
-                                }
-                            }))
-                    }),
-                ),
-            )
-            .child(
-                div()
-                    .id(("approval-command", index))
-                    .test_support()
-                    .w_full()
-                    .min_w_0()
-                    .max_h(px(64.))
-                    .overflow_x_scroll()
-                    .overflow_y_scroll()
-                    .text_xs()
-                    .child(exact),
-            )
-            .into_any_element()
+        Some(
+            card(cx)
+                .child(div().min_w_0().truncate().text_sm().child(heading))
+                .child(
+                    h_flex().w_full().min_w_0().flex_wrap().gap_1().children(
+                        [
+                            (ToolApprovalChoice::Deny, false, "Deny"),
+                            (ToolApprovalChoice::AllowOnce, false, "Allow once"),
+                            (ToolApprovalChoice::AllowForSession, true, grant),
+                        ]
+                        .into_iter()
+                        .filter(|(_, grant, _)| !grant || reusable)
+                        .map(|(choice, _, label)| {
+                            let approval = approval.clone();
+                            Button::new((SharedString::from(format!("tool-{label}")), index))
+                                .custom(menu_variant(cx))
+                                .small()
+                                .max_w_full()
+                                .label(label)
+                                .on_click(cx.listener(move |panel, _, _, cx| {
+                                    panel.choose_conversation_tool(
+                                        identity,
+                                        approval.clone(),
+                                        choice,
+                                        cx,
+                                    );
+                                }))
+                        }),
+                    ),
+                )
+                .child(
+                    div()
+                        .id(("approval-command", index))
+                        .test_support()
+                        .w_full()
+                        .min_w_0()
+                        .max_h(px(64.))
+                        .overflow_x_scroll()
+                        .overflow_y_scroll()
+                        .text_xs()
+                        .child(exact),
+                )
+                .into_any_element(),
+        )
+    }
+    fn tool_details(
+        view: nocterm_agent_chat::conversation::ToolApprovalView<'_>,
+    ) -> (&'static str, String, &'static str, bool) {
+        let (heading, mut exact, grant) = Self::tool_text(view.call, view.target);
+        if let Some(principal) = view.principal {
+            exact.push_str(&format!("\nPrincipal: {principal}"));
+        }
+        if let Some(expires) = view.expires_ms {
+            let date = i64::try_from(expires)
+                .ok()
+                .and_then(chrono::DateTime::from_timestamp_millis);
+            match date {
+                Some(date) => exact.push_str(&format!(
+                    "\nExpires: {}",
+                    date.format("%Y-%m-%d %H:%M:%S UTC")
+                )),
+                None => exact.push_str("\nExpiry cannot be displayed"),
+            }
+        }
+        (heading, exact, grant, view.reusable)
     }
     fn tool_text(call: &TerminalCall, target: &str) -> (&'static str, String, &'static str) {
         match call {

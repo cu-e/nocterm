@@ -7,7 +7,51 @@ use gpui_kit::{
     component::input::{InputEvent, Textarea, TextareaState},
     px,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+
+#[derive(Clone)]
+pub(super) struct InputTicket {
+    revision: u64,
+    reset: Rc<()>,
+}
+impl PartialEq for InputTicket {
+    fn eq(&self, other: &Self) -> bool {
+        self.revision == other.revision && Rc::ptr_eq(&self.reset, &other.reset)
+    }
+}
+impl Eq for InputTicket {}
+struct InputGeneration {
+    observed: u64,
+    reset: Rc<()>,
+    fenced: bool,
+}
+impl Default for InputGeneration {
+    fn default() -> Self {
+        Self {
+            observed: 0,
+            reset: Rc::new(()),
+            fenced: false,
+        }
+    }
+}
+impl InputGeneration {
+    fn ticket(
+        &mut self,
+        revision: u64,
+    ) -> Result<InputTicket, nocterm_agent_chat::conversation::ConversationError> {
+        // The native counter wraps. Once an observed generation regresses,
+        // only a new input instance can restore this fence.
+        self.fenced |= revision < self.observed;
+        self.observed = self.observed.max(revision);
+        if self.fenced {
+            return Err(nocterm_agent_chat::conversation::ConversationError::Stale);
+        }
+        Ok(InputTicket {
+            revision,
+            reset: self.reset.clone(),
+        })
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct ComposerBinding {
@@ -54,6 +98,7 @@ pub(super) struct ComposerView {
     commands: CommandState,
     _bindings: Vec<Subscription>,
     binding: Option<ComposerBinding>,
+    input_generation: RefCell<InputGeneration>,
 }
 impl ComposerView {
     pub(super) fn new(window: &mut Window, cx: &mut Context<AgentPanel>) -> Self {
@@ -78,6 +123,7 @@ impl ComposerView {
             commands: CommandState::default(),
             _bindings: vec![submit, observe],
             binding: None,
+            input_generation: RefCell::new(InputGeneration::default()),
         }
     }
     pub(super) fn text(&self, cx: &App) -> SharedString {
@@ -100,6 +146,17 @@ impl ComposerView {
     }
     pub(super) fn revision(&self) -> u64 {
         self.state.revision
+    }
+    pub(super) fn input_ticket(
+        &self,
+        cx: &App,
+    ) -> Result<InputTicket, nocterm_agent_chat::conversation::ConversationError> {
+        let revision = self.input.read(cx).document_revision();
+        self.input_generation.borrow_mut().ticket(revision)
+    }
+    pub(super) fn input_current(&self, ticket: &InputTicket, cx: &App) -> bool {
+        self.input_ticket(cx)
+            .is_ok_and(|current| &current == ticket)
     }
     pub(super) fn editing(&self) -> bool {
         self.state.edit.is_some()
@@ -140,6 +197,7 @@ impl ComposerView {
         }
     }
     pub(super) fn clear(&mut self) {
+        self.input_generation.borrow_mut().reset = Rc::new(());
         self.commands.reset();
         self.state = ComposerState::default();
         self.queue = QueueView::default();

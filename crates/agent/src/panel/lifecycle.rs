@@ -272,6 +272,10 @@ impl AgentPanel {
         self.menus.reset();
     }
     pub(super) fn select_thread(&mut self, id: gpui_kit::EntityId, cx: &mut Context<Self>) {
+        if let Some(previous) = self.conversation.take() {
+            previous.detach(cx);
+            self.composer.clear();
+        }
         self.chats.select(id, cx);
         self.reset_chat_view(cx);
         if let Some(thread) = self
@@ -315,6 +319,11 @@ impl AgentPanel {
         cx.notify();
     }
     pub(super) fn clear_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(previous) = self.conversation.take() {
+            previous.detach(cx);
+            self.composer.clear();
+            self.composer.set_text("", window, cx);
+        }
         let draft = self.original_composer_text(cx);
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.set_draft(draft, cx));

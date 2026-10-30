@@ -591,19 +591,26 @@ file publication or destination directory preparation, including transfers that 
 or cancel. Empty-directory copies therefore refresh without being counted as completed files.
 
 Agent presentation receives immutable `Installed`: the actual RuntimeHandle, image
-capabilities, shared layout/settings handles, metadata and optional terminal auth. Five private feature owners retain
+capabilities, shared layout/settings handles, metadata and optional terminal auth. Private feature owners retain
 the actual controls and their subscriptions/tasks: MessageList, ComposerView,
-HistoryColumn, PanelLayout and MenuView. Original chat/input/search/catalog/list
+HistoryColumn, PanelLayout, MenuView and ConversationSurface. Original chat/input/search/catalog/list
 identities guard deferred completion. Transcript rows borrow `ConversationSource`
 into the same `EntryRenderer`, preserving original producer activity. Row actions
 offer fork only for a source that explicitly provides the Local operation.
+The weak `ConversationPanel` handle returned by `register_with_conversations`
+selects a caller-supplied captured source in its original window. Local and captured
+sources use the same transcript, input, send control and immutable approval cards;
+configuration, attachment and sign-in controls require their actual Local thread.
+Selection deselects the Local roster through its normal visibility transition.
+Detaching a captured observer never sends Stop. Original source identity and input
+tickets fence deferred action errors and successful composer clearing.
 The installation retains one `CloudChatInstallation`, sharing the runtime's
 history admission across captured environment handles and root windows.
 MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
 validated candidate collection atomically. The feature never decodes image data.
-Panel coordination retains twelve private fields across four implementation files.
+Panel coordination retains fourteen private fields.
 ChatList binds selection and per-chat observation to the original entity; removal
 commits only after existing document admission. SignInCards retains original-token
 secret inputs, PanelBindings installation lifetimes, and PanelNotices the actual

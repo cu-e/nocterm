@@ -11,6 +11,271 @@ use nocterm_ai::usage::{Breakdown, RateLimit};
 use std::rc::Rc;
 
 impl AgentPanel {
+    pub(crate) fn open_conversation(
+        &mut self,
+        source: Rc<dyn ConversationSource>,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ConversationError> {
+        source.with_view(cx, &mut |_| {})?;
+        if self
+            .conversation
+            .as_ref()
+            .is_some_and(|view| view.identity() == source.identity())
+        {
+            return Ok(());
+        }
+        let previous_local = self.current().map(|thread| thread.entity_id()).or_else(|| {
+            self.conversation
+                .as_ref()
+                .and_then(|view| view.previous_local())
+        });
+        let selected = super::conversation_surface::ConversationSurface::attach(
+            source,
+            title,
+            previous_local,
+            cx.weak_entity(),
+            cx,
+        )?;
+        self.leave_composer(cx);
+        self.chats.deselect(cx);
+        if let Some(previous) = self.conversation.replace(selected) {
+            previous.detach(cx);
+        }
+        self.reset_chat_view(cx);
+        self.composer.clear();
+        self.composer.set_text("", window, cx);
+        self.notices.set_error(None);
+        cx.notify();
+        Ok(())
+    }
+    pub(crate) fn close_conversation(&mut self, cx: &mut Context<Self>) {
+        if let Some(previous) = self.conversation.take() {
+            previous.detach(cx);
+            self.reset_chat_view(cx);
+            self.composer.clear();
+            if let Some(local) = previous
+                .previous_local()
+                .filter(|id| self.chats.contains(*id))
+            {
+                self.chats.select(local, cx);
+                self.load_composer(cx);
+            }
+            cx.notify();
+        }
+    }
+    pub(super) fn on_conversation_changed(&mut self, identity: EntityId, cx: &mut Context<Self>) {
+        if let Some(selected) = self
+            .conversation
+            .as_mut()
+            .filter(|view| view.identity() == identity)
+        {
+            selected.changed();
+            cx.notify();
+        }
+    }
+    pub(super) fn submit_conversation(
+        &mut self,
+        stop_when_empty: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use nocterm_ai::conversation::ConversationAction;
+        let text = self.composer.text(cx).to_string();
+        let action = if text.trim().is_empty() {
+            if !stop_when_empty {
+                return;
+            }
+            ConversationAction::Stop
+        } else {
+            ConversationAction::Prompt(text)
+        };
+        self.perform_conversation_action(action, Some(window), cx);
+    }
+    pub(super) fn perform_conversation_action(
+        &mut self,
+        action: nocterm_ai::conversation::ConversationAction,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
+        let input = match self.composer.input_ticket(cx) {
+            Ok(input) => input,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        };
+        let Some(selected) = self.conversation.as_mut() else {
+            return;
+        };
+        let identity = selected.identity();
+        let clear = matches!(
+            &action,
+            nocterm_ai::conversation::ConversationAction::Prompt(_)
+        )
+        .then(|| window.map(|window| (window.window_handle(), input.clone())))
+        .flatten();
+        let work = match selected.submit(action, input, cx) {
+            Ok(Some(work)) => work,
+            Ok(None) => return,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        };
+        self.retain_conversation_action(identity, work, clear, cx);
+    }
+    pub(super) fn perform_rendered_stop(
+        &mut self,
+        identity: EntityId,
+        actions: Rc<dyn nocterm_agent_chat::conversation::ConversationActions>,
+        input: super::composer_view::InputTicket,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conversation_identity() != Some(identity)
+            || !self.composer.input_current(&input, cx)
+        {
+            return;
+        }
+        let work = actions.perform(nocterm_ai::conversation::ConversationAction::Stop, cx);
+        self.retain_conversation_action(identity, work, None, cx);
+    }
+    pub(super) fn capture_rendered_stop(
+        &self,
+        cx: &App,
+    ) -> Option<Rc<super::conversation_surface::RenderedStop>> {
+        let source: Rc<dyn ConversationSource> = match &self.conversation {
+            Some(selected) => selected.source(),
+            None => Rc::new(LocalConversation::new(&self.current()?)),
+        };
+        let mut can_stop = false;
+        source
+            .with_view(cx, &mut |view| can_stop = view.can_stop)
+            .ok()?;
+        if !can_stop || !self.composer.text(cx).trim().is_empty() {
+            return None;
+        }
+        super::conversation_surface::RenderedStop::capture(
+            source,
+            self.composer.input_ticket(cx).ok()?,
+            cx,
+        )
+        .ok()
+    }
+    pub(super) fn choose_conversation_tool(
+        &mut self,
+        identity: EntityId,
+        approval: Rc<dyn nocterm_agent_chat::conversation::ConversationToolApproval>,
+        choice: nocterm_agent_chat::conversation::ToolApprovalChoice,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conversation_identity() != Some(identity) {
+            return;
+        }
+        let work = approval.choose(choice, cx);
+        self.retain_conversation_action(identity, work, None, cx);
+    }
+    fn retain_conversation_action(
+        &mut self,
+        identity: EntityId,
+        work: gpui_kit::Task<Result<(), ConversationError>>,
+        clear: Option<(gpui_kit::AnyWindowHandle, super::composer_view::InputTicket)>,
+        cx: &mut Context<Self>,
+    ) {
+        let ticket = self.composer.input_ticket(cx).ok();
+        cx.spawn(async move |panel, cx| {
+            let result = work.await;
+            let _ = panel.update(cx, |panel, cx| {
+                if panel.conversation_identity() != Some(identity) {
+                    return;
+                }
+                let Some(ticket) = &ticket else {
+                    return;
+                };
+                if !panel.composer.input_current(ticket, cx) {
+                    return;
+                }
+                if clear.is_some()
+                    && let Some(selected) = &mut panel.conversation
+                {
+                    selected.completed(ticket, result.is_err());
+                }
+                match result {
+                    Err(error) => panel.notices.set_error(Some(error.to_string())),
+                    Ok(()) => {
+                        panel.notices.set_error(None);
+                        if let Some((window, input)) = clear {
+                            let weak = cx.weak_entity();
+                            cx.defer(move |cx| {
+                                let _ = window.update(cx, |_, window, cx| {
+                                    let _ = weak.update(cx, |panel, cx| {
+                                        if panel.conversation_identity() == Some(identity)
+                                            && panel.composer.input_current(&input, cx)
+                                        {
+                                            panel.composer.set_text("", window, cx);
+                                        }
+                                    });
+                                });
+                            });
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    pub(super) fn render_conversation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(selected) = self.conversation.as_mut() else {
+            return div().into_any_element();
+        };
+        let source = selected.source();
+        let busy = self
+            .composer
+            .input_ticket(cx)
+            .ok()
+            .and_then(|ticket| selected.pending(&ticket))
+            .is_some_and(|(_, busy)| busy);
+        let mut dirty = Vec::new();
+        let changed = selected.take_dirty();
+        let mut status = None;
+        if let Err(error) = source.with_view(cx, &mut |view| {
+            status = Some(TranscriptView::conversation_status(&view));
+            if changed {
+                dirty.extend(0..view.transcript.entries.len());
+            }
+        }) {
+            return div().child(error.to_string()).into_any_element();
+        }
+        let body = match self.render_transcript(source.clone(), &dirty, cx) {
+            Ok(body) => body,
+            Err(error) => return div().child(error.to_string()).into_any_element(),
+        };
+        let approvals = self.render_source_approvals(source.clone(), window, cx);
+        let stop = self.capture_rendered_stop(cx);
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .min_w_0()
+            .child(body)
+            .children(approvals)
+            .children(status.map(|text| TranscriptView::status(source.identity(), text, false, cx)))
+            .child(composer_renderer::ComposerRenderer::render_conversation(
+                &self.composer,
+                source,
+                busy,
+                stop,
+                cx,
+            ))
+            .into_any_element()
+    }
     pub(super) fn sync_approval_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let attention = self
             .chats
@@ -87,7 +352,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let permissions = thread.read(cx).permission_cards();
-        let tools = thread.read(cx).tool_cards();
+        let tools = LocalConversation::new(thread)
+            .tool_approvals(cx)
+            .unwrap_or_default();
         let pending = permissions.len() + tools.len() + thread.read(cx).sign_in_waits().len();
         let asking: Vec<EntityId> = self
             .chats
@@ -104,53 +371,44 @@ impl AgentPanel {
         if pending == 0 {
             return None;
         }
-        let mut list = v_flex()
-            .id("agent-approval-list")
-            .test_support()
-            .w_full()
-            .min_w_0()
-            .min_h_0()
-            .max_h(window.viewport_size().height * 0.35)
-            .overflow_y_scroll()
-            .gap_2();
+        let mut list = Vec::new();
         for index in 0..thread.read(cx).sign_in_waits().len() {
             let wait = thread.read(cx).sign_in_waits()[index].clone();
             let (input, submission) = self.sign_ins.input_for(thread, &wait, window, cx);
-            list = list.child(approvals::ApprovalCardsRenderer::sign_in_card(
+            list.push(approvals::ApprovalCardsRenderer::sign_in_card(
                 wait, input, submission, index, cx,
             ));
         }
         for (index, permission) in permissions.into_iter().enumerate() {
-            list = list.child(approvals::ApprovalCardsRenderer::permission_card(
+            list.push(approvals::ApprovalCardsRenderer::permission_card(
                 thread, permission, index, cx,
             ));
         }
         for (index, tool) in tools.into_iter().enumerate() {
-            let call = tool.call();
-            let target = thread.update(cx, |thread, cx| thread.describe_target(call, cx));
-            let reusable = thread.update(cx, |thread, cx| !thread.unsafe_live_input(call, cx));
-            list = list.child(approvals::ApprovalCardsRenderer::tool_card(
-                thread, tool, target, reusable, index, cx,
-            ));
+            if let Some(card) =
+                approvals::ApprovalCardsRenderer::tool_card(tool, thread.entity_id(), index, cx)
+            {
+                list.push(card);
+            }
         }
-        Some(
-            v_flex()
-                .id("agent-approvals")
-                .test_support()
-                .w_full()
-                .min_w_0()
-                .flex_shrink_0()
-                .px_3()
-                .gap_1()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().warning)
-                        .child(format!("Waiting for you · {pending}")),
-                )
-                .child(list)
-                .into_any_element(),
-        )
+        approvals::ApprovalCardsRenderer::list(list, window, cx)
+    }
+    fn render_source_approvals(
+        &mut self,
+        source: Rc<dyn ConversationSource>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let cards = source
+            .tool_approvals(cx)
+            .ok()?
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, card)| {
+                approvals::ApprovalCardsRenderer::tool_card(card, source.identity(), index, cx)
+            })
+            .collect();
+        approvals::ApprovalCardsRenderer::list(cards, window, cx)
     }
     pub(super) fn submit_sign_in(
         &mut self,
@@ -240,31 +498,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut body = v_flex().size_full().min_w_0().min_h_0();
-        let plan = thread.read(cx).transcript().plan.clone();
         let usage = thread.read(cx).transcript().usage.clone();
         let dirty = thread
             .update(cx, |thread, _| thread.take_changed_rows())
             .into_iter()
             .collect::<Vec<_>>();
-        if let Err(error) = self.observe_source_rows(
-            Rc::new(LocalConversation::new(&thread)),
-            thread.entity_id(),
-            &dirty,
-            cx,
-        ) {
-            return div().child(error.to_string()).into_any_element();
-        }
-        let scroller = self.messages.scroller(cx);
-        let navigation = navigation::NavigationRenderer::render(&self.messages, cx);
-        let overlay = self
-            .menus
-            .is_open(&MenuKind::Usage)
-            .then(|| self.render_usage(cx));
-        body = body.child(TranscriptView::area(scroller, navigation, overlay, cx));
-        if let Some(plan) = &plan {
-            body = body.child(TranscriptView::plan(plan, cx));
-        }
+        let transcript =
+            match self.render_transcript(Rc::new(LocalConversation::new(&thread)), &dirty, cx) {
+                Ok(body) => body,
+                Err(error) => return div().child(error.to_string()).into_any_element(),
+            };
+        let mut body = v_flex().size_full().min_w_0().min_h_0().child(transcript);
         if let Some(approvals) = self.render_approvals(&thread, window, cx) {
             body = body.child(approvals);
         }
@@ -277,6 +521,35 @@ impl AgentPanel {
             .children(self.render_commands(window, cx))
             .child(composer);
         body.into_any_element()
+    }
+    fn render_transcript(
+        &mut self,
+        source: Rc<dyn ConversationSource>,
+        dirty: &[usize],
+        cx: &mut Context<Self>,
+    ) -> Result<AnyElement, ConversationError> {
+        self.observe_source_rows(source.clone(), source.identity(), dirty, cx)?;
+        let scroller = self.messages.scroller(cx);
+        let navigation = navigation::NavigationRenderer::render(&self.messages, cx);
+        let overlay = self
+            .menus
+            .is_open(&MenuKind::Usage)
+            .then(|| self.render_usage(cx));
+        let mut plan = None;
+        source.with_view(cx, &mut |view| {
+            plan = view
+                .transcript
+                .plan
+                .as_ref()
+                .map(|plan| TranscriptView::plan(plan, cx));
+        })?;
+        let body = v_flex()
+            .w_full()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .child(TranscriptView::area(scroller, navigation, overlay, cx));
+        Ok(body.children(plan).into_any_element())
     }
     pub(super) fn render_entry(
         &mut self,

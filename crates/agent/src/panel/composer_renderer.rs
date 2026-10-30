@@ -15,6 +15,7 @@ use gpui_kit::{
 use nocterm_ai::model::auth::AuthFlow;
 use nocterm_ai::model::usage::ContextUsage;
 use nocterm_ui::IconName;
+use std::rc::Rc;
 
 use super::{
     AgentPanel, MenuKind,
@@ -65,6 +66,48 @@ pub(super) fn paste(
 
 pub(super) struct ComposerRenderer;
 impl ComposerRenderer {
+    /// Uses the same input, send button and frame as Local. Configuration and
+    /// attachments remain on their actual Local capability path.
+    pub(super) fn render_conversation(
+        composer: &super::composer_view::ComposerView,
+        source: std::rc::Rc<dyn nocterm_agent_chat::conversation::ConversationSource>,
+        busy: bool,
+        captured: Option<Rc<super::conversation_surface::RenderedStop>>,
+        cx: &mut Context<AgentPanel>,
+    ) -> AnyElement {
+        let mut can_prompt = false;
+        let mut can_stop = false;
+        let _ = source.with_view(cx, &mut |view| {
+            can_prompt = view.can_prompt;
+            can_stop = view.can_stop;
+        });
+        let empty = composer.text(cx).trim().is_empty();
+        let stop = empty && can_stop;
+        let send = Self::send_button(
+            source.identity(),
+            stop,
+            if empty {
+                !can_stop
+            } else {
+                !can_prompt || busy
+            },
+            captured,
+            composer.input_ticket(cx).ok(),
+            cx,
+        );
+        let footer = h_flex()
+            .gap_1()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .when(!can_prompt, |item| item.child("New prompts unavailable")),
+            )
+            .child(send)
+            .into_any_element();
+        let input = Self::render_input(composer, cx);
+        Self::compose(None, None, input, footer, Vec::new(), Vec::new(), cx)
+    }
     /// Removable chips for the attached terminals and servers.
     pub(super) fn render_attachment_chips(
         thread: &Entity<AgentThread>,
@@ -226,6 +269,7 @@ impl ComposerRenderer {
         menus: &super::menu_view::MenuView,
         thread: &Entity<AgentThread>,
         usage: Option<&ContextUsage>,
+        stop: Option<Rc<super::conversation_surface::RenderedStop>>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let context_tooltip = format!(
@@ -268,7 +312,7 @@ impl ComposerRenderer {
                 usage,
                 cx,
             ))
-            .child(Self::render_send(composer, thread, cx))
+            .child(Self::render_send(composer, thread, stop, cx))
             .into_any_element()
     }
     /// Whether the send button stops the running turn instead.
@@ -285,10 +329,27 @@ impl ComposerRenderer {
     pub(super) fn render_send(
         composer: &super::composer_view::ComposerView,
         thread: &Entity<AgentThread>,
+        captured: Option<Rc<super::conversation_surface::RenderedStop>>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let origin = thread.entity_id();
         let stop = Self::stops(composer, thread, cx);
+        Self::send_button(
+            thread.entity_id(),
+            stop,
+            thread.read(cx).session_sign_in_required() || composer.preparing(),
+            captured,
+            composer.input_ticket(cx).ok(),
+            cx,
+        )
+    }
+    fn send_button(
+        origin: gpui_kit::EntityId,
+        stop: bool,
+        disabled: bool,
+        captured: Option<Rc<super::conversation_surface::RenderedStop>>,
+        input: Option<super::composer_view::InputTicket>,
+        cx: &mut Context<AgentPanel>,
+    ) -> AnyElement {
         Button::new("agent-send")
             .primary()
             .small()
@@ -305,10 +366,22 @@ impl ComposerRenderer {
             })
             .flex_shrink_0()
             .tooltip(if stop { "Stop" } else { "Send" })
-            .disabled(thread.read(cx).session_sign_in_required() || composer.preparing())
-            .on_click(
-                cx.listener(move |panel, _, window, cx| panel.on_send_clicked(origin, window, cx)),
-            )
+            .disabled(disabled || input.is_none() || (stop && captured.is_none()))
+            .on_click(cx.listener(move |panel, _, window, cx| {
+                if input
+                    .as_ref()
+                    .is_none_or(|input| !panel.composer.input_current(input, cx))
+                {
+                    return;
+                }
+                if stop {
+                    if let Some(captured) = &captured {
+                        captured.activate(panel, cx);
+                    }
+                } else {
+                    panel.on_send_clicked(origin, window, cx);
+                }
+            }))
             .into_any_element()
     }
     /// Image preparation, restart and sign-in rows under the controls.

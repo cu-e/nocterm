@@ -4,120 +4,343 @@ use nocterm_ai::model::controls::{ConfigChoice, ConfigOption};
 use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
-#[gpui_kit::test]
-fn usage_card_shows_context_tokens_and_plan_limits(cx: &mut TestAppContext) {
-    let f = fixture(cx);
-    panel_actions::new_agent_chat(&f, "claude", cx);
-    let session = cx.update(|cx| {
-        let thread = f.panel.read(cx).current().unwrap();
-        thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
-        thread.read(cx).session().clone().unwrap()
-    });
-    cx.run_until_parked();
-    for (kind, used) in [("seven_day", 0.38), ("five_hour", 0.12)] {
-        f.events
-            .try_send(AgentEvent::Session(SessionNotice::new(
-                session.clone(),
-                SessionUpdate::UsageUpdate(plan_usage(kind, used)),
-            )))
-            .unwrap();
-    }
-    cx.run_until_parked();
-    let finish = f.commands.pending.lock().unwrap().take().unwrap();
-    finish
-        .send(PromptOutcome {
-            usage: Some(TokenTotals {
-                cache_read: Some(20_000),
-                ..TokenTotals::new(30_000, 25_000, 5_000)
-            }),
-            ..PromptOutcome::new(StopReason::EndTurn)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        let runtime = f.installation.installed.runtime();
-        let limits: Vec<_> = runtime
-            .limits("claude", cx)
+fn captured_panel(
+    f: &Fixture,
+    cx: &mut TestAppContext,
+) -> (
+    Arc<nocterm_cloud_model::projection::testing::ScriptedConversationSource>,
+    nocterm_cloud_model::projection::testing::ProjectionFixture,
+    crate::ConversationPanel,
+) {
+    use nocterm_cloud_model::projection::testing::{ProjectionFixture, ScriptedConversationSource};
+    let projection = ProjectionFixture::new();
+    let source = Arc::new(ScriptedConversationSource::new(
+        projection.binding().clone(),
+    ));
+    let facade = cx.update(|cx| {
+        f.installation
+            .installed
+            .cloud_chats()
+            .open(source.clone(), cx)
             .unwrap()
-            .iter()
-            .cloned()
-            .collect();
-        assert_eq!(limits.len(), 2);
-        assert_eq!(limits[0].window, nocterm_ai::usage::Window::FiveHour);
-        let thread = f.panel.read(cx).current().unwrap();
-        assert_eq!(
-            thread.read(cx).transcript().tokens.as_ref().unwrap().total,
-            30_000
-        );
     });
+    let selector = crate::ConversationPanel::new(f.panel.downgrade(), f.handle);
     cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("agent-context-usage", cx);
-        window.render_frame(cx);
-        let card = window.find("agent-usage").bounds();
-        let composer = window.find("agent-composer").bounds();
-        // Over the chat, above the composer.
-        assert!(card.bottom() <= composer.origin.y + gpui_kit::px(1.));
-        window.click("agent-usage-close", cx);
-        window.render_frame(cx);
-        assert!(window.try_find("agent-usage").is_none());
+        selector
+            .open(facade, "Cloud task".into(), window, cx)
+            .unwrap();
     })
     .unwrap();
+    (source, projection, selector)
 }
 
 #[gpui_kit::test]
-fn context_tokens_and_cost_remain_available_without_plan_limits(cx: &mut TestAppContext) {
+fn captured_conversation_uses_existing_rows_and_exact_approval_then_stop(cx: &mut TestAppContext) {
+    use nocterm_cloud_model::{
+        identity::{CommandId, Timestamp},
+        projection::{
+            ConversationIntent,
+            testing::{approval_events, prompt_event, run_binding},
+        },
+    };
     let f = fixture(cx);
     new_chat(&f, cx);
-    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    thread.update(cx, |thread, cx| thread.send("hello".into(), cx));
-    cx.run_until_parked();
-    let session = thread.read_with(cx, |thread, _| thread.session().clone().unwrap());
-    let mut usage = ContextUsage::new(50, 100);
-    usage.cost = Some(nocterm_ai::model::usage::Cost {
-        amount: 1.25,
-        currency: "USD".into(),
-    });
-    f.events
-        .try_send(AgentEvent::Session(SessionNotice::new(
-            session,
-            SessionUpdate::UsageUpdate(usage.clone()),
-        )))
-        .unwrap();
-    cx.run_until_parked();
-    f.commands
-        .pending
-        .lock()
-        .unwrap()
-        .take()
-        .unwrap()
-        .send(PromptOutcome {
-            usage: Some(TokenTotals::new(30, 20, 10)),
-            ..PromptOutcome::new(StopReason::EndTurn)
-        })
-        .unwrap();
-    cx.run_until_parked();
-    thread.read_with(cx, |thread, _| {
-        assert_eq!(thread.transcript().usage, Some(usage));
-        assert_eq!(
-            thread.transcript().tokens,
-            Some(TokenTotals::new(30, 20, 10))
-        );
-    });
+    exchange(&f, "Local question", "Local answer", cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("agent-context-usage", cx);
-        window.render_frame(cx);
-        assert!(window.try_find("agent-usage").is_some());
-        assert!(
-            f.installation
-                .installed
-                .runtime()
-                .limits("codex", cx)
-                .is_none()
+        window.hover(("agent-entry", 0usize), cx);
+        window.click(("copy-message", 0usize), cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("Local question")
         );
     })
     .unwrap();
+    let (source, mut projection, _selector) = captured_panel(&f, cx);
+    let run = run_binding(1);
+    let (intent, mut events) = approval_events(&run, 7, Timestamp::from_millis(20_000));
+    events.insert(
+        0,
+        prompt_event(&run, "Cloud question", CommandId::from_bytes([22; 16])),
+    );
+    source.queue(projection.page(events)).unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(f.panel.read(cx).current().is_none());
+        window.hover(("agent-entry", 0usize), cx);
+        window.click(("copy-message", 0usize), cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("Cloud question")
+        );
+        assert!(window.try_find(("fork-message", 0usize)).is_none());
+        assert!(window.try_find("agent-attach-context").is_none());
+        let approvals = window.find("agent-approvals").bounds();
+        assert!(approvals.bottom() <= window.find("agent-composer").bounds().origin.y);
+        window.click(("tool-Allow once", 0usize), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let id = source.effects().staged[0];
+    let answer = source.staged(id).unwrap();
+    let ConversationIntent::AnswerApproval(request) = &answer.action else {
+        panic!("expected actual approval answer");
+    };
+    assert_eq!(request.answer().intent(), intent.id());
+    assert_eq!(request.answer().authority(), intent.authority());
+    assert_eq!(request.answer().arguments(), intent.arguments());
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-send", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let effects = source.effects();
+    assert_eq!(effects.delivered.len(), 2);
+    assert_eq!(
+        source.staged(effects.delivered[1]).unwrap().action,
+        nocterm_ai::conversation::ConversationAction::Stop
+    );
+    assert_eq!(
+        source.staged(effects.delivered[1]).unwrap().coordinates.run,
+        Some(run)
+    );
+}
+
+#[gpui_kit::test]
+fn captured_conversation_preserves_edited_draft_and_delivery_after_detach(cx: &mut TestAppContext) {
+    use nocterm_ai::conversation::ConversationAction;
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let local = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    let (source, _projection, selector) = captured_panel(&f, cx);
+    let delivery = source.pause_delivery();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let focus = f.panel.read(cx).composer_focus(cx);
+        replace_composer_value(focus, "original prompt", window, cx);
+        window.render_frame(cx);
+        window.click("agent-send", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        let focus = f.panel.read(cx).composer_focus(cx);
+        replace_composer_value(focus, "new unsent draft", window, cx);
+    })
+    .unwrap();
+    delivery.release();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            f.panel.read(cx).composer_text(cx).as_ref(),
+            "new unsent draft"
+        )
+    });
+    let delivery = source.pause_delivery();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-send", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| selector.close(cx).unwrap());
+    delivery.release();
+    cx.run_until_parked();
+    let effects = source.effects();
+    assert_eq!(effects.staged.len(), 2);
+    assert_eq!(effects.delivered, effects.staged);
+    for (id, text) in effects
+        .staged
+        .iter()
+        .zip(["original prompt", "new unsent draft"])
+    {
+        assert_eq!(
+            source.staged(*id).unwrap().action,
+            ConversationAction::Prompt(text.into())
+        );
+    }
+    cx.update(|cx| {
+        assert_eq!(
+            f.panel.read(cx).current().unwrap().entity_id(),
+            local.entity_id()
+        )
+    });
+}
+
+mod context_usage;
+
+#[gpui_kit::test]
+fn captured_conversation_retries_one_original_prompt_after_pending_and_lost_ack(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let (source, mut projection, _selector) = captured_panel(&f, cx);
+    let delivery = source.pause_delivery();
+    source.lose_next_ack();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let focus = f.panel.read(cx).composer_focus(cx);
+        replace_composer_value(focus, "same original input", window, cx);
+        window.click("agent-send", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let id = source.effects().staged[0];
+    let original = source.staged(id).unwrap();
+    cx.update_window(f.handle, |_, window, cx| window.click("agent-send", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        source.effects().staged,
+        [id],
+        "pending repeat must not prepare a new command"
+    );
+    delivery.release();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            f.panel.read(cx).composer_text(cx).as_ref(),
+            "same original input"
+        )
+    });
+    cx.update_window(f.handle, |_, window, cx| window.click("agent-send", cx))
+        .unwrap();
+    cx.run_until_parked();
+    let effects = source.effects();
+    assert_eq!(
+        effects.staged,
+        [id],
+        "lost ACK retry must keep its original durable M"
+    );
+    assert_eq!(effects.queried, [id]);
+    assert!(effects.delivered.iter().all(|delivered| delivered == &id));
+    let retried = source.staged(id).unwrap();
+    assert_eq!(retried.action, original.action);
+    assert_eq!(retried.coordinates, original.coordinates);
+    assert_eq!(retried.preparation, original.preparation);
+    assert_late_admission_finishes_original_input(&f, &source, &mut projection, cx);
+}
+
+fn assert_late_admission_finishes_original_input(
+    f: &Fixture,
+    source: &nocterm_cloud_model::projection::testing::ScriptedConversationSource,
+    projection: &mut nocterm_cloud_model::projection::testing::ProjectionFixture,
+    cx: &mut TestAppContext,
+) {
+    use nocterm_cloud_model::projection::testing::{prompt_event, run_binding};
+    source.lose_next_ack();
+    cx.update_window(f.handle, |_, window, cx| {
+        let focus = f.panel.read(cx).composer_focus(cx);
+        replace_composer_value(focus, "accepted original", window, cx);
+        window.click("agent-send", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let before = source.effects().staged;
+    let id = *before.last().unwrap();
+    source
+        .queue(projection.page(vec![prompt_event(&run_binding(1), "accepted original", id)]))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| window.click("agent-send", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(source.effects().staged, before);
+    cx.update(|cx| assert!(f.panel.read(cx).composer_text(cx).is_empty()));
+}
+
+fn assert_local_rendered_stop_ignores_replacement_turn(f: &Fixture, cx: &mut TestAppContext) {
+    new_chat(f, cx);
+    let local = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    local.update(cx, |thread, cx| thread.send("Local A".into(), cx));
+    cx.run_until_parked();
+    let original = cx.update(|cx| {
+        use nocterm_agent_chat::conversation::{ConversationSource, LocalConversation};
+        LocalConversation::new(&local).capture_actions(cx).unwrap()
+    });
+    let rendered = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            f.panel.read(cx).capture_rendered_stop(cx).unwrap()
+        })
+        .unwrap();
+    complete_active(f, cx);
+    local.update(cx, |thread, cx| thread.send("Local B".into(), cx));
+    cx.run_until_parked();
+    let cancels = f.commands.cancels.load(Ordering::SeqCst);
+    let stale =
+        cx.update(|cx| original.perform(nocterm_ai::conversation::ConversationAction::Stop, cx));
+    assert!(cx.foreground_executor().block_test(stale).is_err());
+    f.panel.update(cx, |panel, cx| rendered.activate(panel, cx));
+    cx.run_until_parked();
+    assert_eq!(f.commands.cancels.load(Ordering::SeqCst), cancels);
+    cx.update(|cx| assert!(local.read(cx).session_generating()));
+    cx.update_window(f.handle, |_, window, cx| window.click("agent-send", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(f.commands.cancels.load(Ordering::SeqCst), cancels + 1);
+    complete_active(f, cx);
+}
+
+#[gpui_kit::test]
+fn captured_conversation_obsolete_rendered_stop_never_stops_the_replacement_run(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_cloud_model::{
+        coordinator::{CoordinatorEvent, RunStatus},
+        identity::CommandId,
+        projection::testing::{prompt_event, run_binding},
+    };
+    let f = fixture(cx);
+    assert_local_rendered_stop_ignores_replacement_turn(&f, cx);
+    let (source, mut projection, _selector) = captured_panel(&f, cx);
+    let a = run_binding(1);
+    source
+        .queue(projection.page(vec![prompt_event(
+            &a,
+            "Cloud A",
+            CommandId::from_bytes([44; 16]),
+        )]))
+        .unwrap();
+    cx.run_until_parked();
+    let rendered = cx
+        .update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            f.panel.read(cx).capture_rendered_stop(cx).unwrap()
+        })
+        .unwrap();
+    let b = run_binding(2);
+    source
+        .queue(projection.page(vec![
+            CoordinatorEvent::Status {
+                run: a,
+                status: RunStatus::Completed,
+            },
+            prompt_event(&b, "Cloud B", CommandId::from_bytes([45; 16])),
+        ]))
+        .unwrap();
+    cx.run_until_parked();
+    f.panel.update(cx, |panel, cx| rendered.activate(panel, cx));
+    cx.run_until_parked();
+    assert!(
+        source.effects().staged.is_empty(),
+        "the old A callback must never prepare a B Stop"
+    );
+    cx.update_window(f.handle, |_, window, cx| window.click("agent-send", cx))
+        .unwrap();
+    cx.run_until_parked();
+    let effects = source.effects();
+    assert_eq!(
+        effects.staged.len(),
+        1,
+        "fresh rendered B Stop remains usable"
+    );
+    assert_eq!(
+        source.staged(effects.staged[0]).unwrap().coordinates.run,
+        Some(b)
+    );
 }
 
 #[gpui_kit::test]
@@ -552,61 +775,4 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
         }
     })
     .unwrap();
-}
-
-fn plan_usage(kind: &str, used: f64) -> ContextUsage {
-    let meta = serde_json::json!({"_claude/rateLimit": {
-        "rateLimitType": kind,
-        "utilization": used,
-        "resetsAt": 1_791_588_105u64,
-        "status": "allowed"
-    }});
-    ContextUsage::new(25_900, 256_000).meta(
-        meta.as_object()
-            .cloned()
-            .map(nocterm_ai::model::extensions::Extensions::from),
-    )
-}
-
-#[gpui_kit::test]
-fn received_plan_limits_stay_with_their_original_installation_after_prompt_completion(
-    cx: &mut TestAppContext,
-) {
-    let first = fixture(cx);
-    panel_actions::new_agent_chat(&first, "claude", cx);
-    let thread = cx.update(|cx| first.panel.read(cx).current().unwrap());
-    thread.update(cx, |thread, cx| thread.send("original prompt".into(), cx));
-    cx.run_until_parked();
-    let finish = first.commands.pending.lock().unwrap().take().unwrap();
-    let second = fixture(cx);
-    panel_actions::new_agent_chat(&second, "claude", cx);
-    let session = thread.read_with(cx, |thread, _| thread.session().clone().unwrap());
-    first
-        .events
-        .try_send(AgentEvent::Session(SessionNotice::new(
-            session,
-            SessionUpdate::UsageUpdate(plan_usage("seven_day", 0.38)),
-        )))
-        .unwrap();
-    finish
-        .send(PromptOutcome::new(StopReason::EndTurn))
-        .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        let limits = first
-            .installation
-            .installed
-            .runtime()
-            .limits("claude", cx)
-            .unwrap();
-        assert_eq!(limits.iter().next().unwrap().used, Some(0.38));
-        assert!(
-            second
-                .installation
-                .installed
-                .runtime()
-                .limits("claude", cx)
-                .is_none()
-        );
-    });
 }

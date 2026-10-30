@@ -31,6 +31,10 @@ impl AgentPanel {
         self.send(window, cx);
     }
     pub(super) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.conversation.is_some() {
+            self.submit_conversation(false, window, cx);
+            return;
+        }
         if self.preparing_images() {
             return;
         }
@@ -184,11 +188,13 @@ impl AgentPanel {
             cx,
         );
         let input = composer_renderer::ComposerRenderer::render_input(&self.composer, cx);
+        let stop = self.capture_rendered_stop(cx);
         let footer = composer_renderer::ComposerRenderer::render_footer(
             &self.composer,
             &self.menus,
             thread,
             usage,
+            stop,
             cx,
         );
         let notices = composer_renderer::ComposerRenderer::render_notices(
@@ -623,6 +629,14 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .conversation
+            .as_ref()
+            .is_some_and(|source| source.identity() == chat)
+        {
+            self.submit_conversation(false, window, cx);
+            return;
+        }
         if let Some(thread) = self.current().filter(|thread| thread.entity_id() == chat) {
             if composer_renderer::ComposerRenderer::stops(&self.composer, &thread, cx) {
                 thread.update(cx, |thread, cx| thread.stop(cx));

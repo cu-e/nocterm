@@ -22,8 +22,21 @@ pub enum ConversationError {
     History(#[from] nocterm_ai::history::HistoryCodecError),
 }
 
+/// One admitted action, whose retries preserve its original identity and body.
+pub trait ConversationSubmission {
+    fn retry(&self, cx: &mut App) -> Task<Result<(), ConversationError>>;
+}
+pub type ConversationSubmissionStart = (
+    Rc<dyn ConversationSubmission>,
+    Task<Result<(), ConversationError>>,
+);
 /// Returned actions retain the original source and displayed control revision.
 pub trait ConversationActions {
+    fn submit(
+        &self,
+        action: ConversationAction,
+        cx: &mut App,
+    ) -> Result<ConversationSubmissionStart, ConversationError>;
     fn perform(
         &self,
         action: ConversationAction,

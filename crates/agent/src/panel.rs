@@ -2,7 +2,7 @@ use crate::thread::AgentThread;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, SharedString,
     Subscription, TestSupportExt as _, Window,
-    component::{ActiveTheme as _, v_flex},
+    component::v_flex,
     div,
     prelude::*,
 };
@@ -20,6 +20,7 @@ pub(crate) mod commands;
 mod composer;
 mod composer_renderer;
 mod composer_view;
+mod conversation_surface;
 mod entries;
 mod history;
 mod history_column;
@@ -70,6 +71,7 @@ pub(crate) struct AgentPanel {
     menus: menu_view::MenuView,
     settings: nocterm_store::SettingsHandle,
     source: nocterm_workspace::ProjectSurfaceReceipt,
+    conversation: Option<conversation_surface::ConversationSurface>,
 }
 impl EventEmitter<PanelRequest> for AgentPanel {}
 
@@ -109,6 +111,7 @@ impl AgentPanel {
             layout,
             menus,
             settings,
+            conversation: None,
         }
     }
     fn bind_panel(
@@ -151,6 +154,9 @@ impl AgentPanel {
             .deps_for_source(self.source)
             .is_ok_and(|deps| self.chats.switch_context(deps, cx));
         if switched || removed {
+            if switched && let Some(previous) = self.conversation.take() {
+                previous.detach(cx);
+            }
             self.composer.clear();
             self.history.switch_context(window, cx);
             self.sign_ins.clear();
@@ -184,6 +190,9 @@ impl AgentPanel {
             }
         };
         self.leave_composer(cx);
+        if let Some(previous) = self.conversation.take() {
+            previous.detach(cx);
+        }
         self.chats.switch_context(deps, cx);
         self.source = source;
         self.composer.clear();
@@ -307,7 +316,16 @@ impl AgentPanel {
         }
     }
     pub(crate) fn current(&self) -> Option<Entity<AgentThread>> {
-        self.chats.current()
+        self.conversation
+            .is_none()
+            .then(|| self.chats.current())
+            .flatten()
+    }
+    pub(super) fn conversation_identity(&self) -> Option<EntityId> {
+        self.conversation
+            .as_ref()
+            .map(|view| view.identity())
+            .or_else(|| self.current().map(|thread| thread.entity_id()))
     }
     #[cfg(test)]
     pub(crate) fn chat_documents(&self) -> impl ExactSizeIterator<Item = &Entity<AgentThread>> {
@@ -372,6 +390,14 @@ impl AgentPanel {
         }
     }
     fn stop_generation(&mut self, cx: &mut Context<Self>) {
+        if self.conversation.is_some() {
+            self.perform_conversation_action(
+                nocterm_ai::conversation::ConversationAction::Stop,
+                None,
+                cx,
+            );
+            return;
+        }
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.stop(cx));
         }
@@ -428,6 +454,9 @@ impl Focusable for AgentPanel {
 
 impl Panel for AgentPanel {
     fn title(&self, cx: &App) -> SharedString {
+        if let Some(conversation) = &self.conversation {
+            return conversation.title();
+        }
         self.current()
             .map(|thread| thread.read(cx).title())
             .unwrap_or_else(|| "New Agent".into())
@@ -437,10 +466,19 @@ impl Panel for AgentPanel {
         IconName::Bot
     }
     fn attention(&self, cx: &App) -> Option<SharedString> {
-        self.chats
-            .iter()
-            .any(|thread| thread.read(cx).has_pending_approvals())
-            .then(|| "An agent needs permission to continue.".into())
+        let mut captured = false;
+        if let Some(selected) = &self.conversation {
+            let _ = selected.source().with_view(cx, &mut |view| {
+                captured =
+                    view.phase == nocterm_ai::conversation::ConversationPhase::WaitingApproval;
+            });
+        }
+        (captured
+            || self
+                .chats
+                .iter()
+                .any(|thread| thread.read(cx).has_pending_approvals()))
+        .then(|| "An agent needs permission to continue.".into())
     }
 }
 
@@ -472,19 +510,28 @@ impl Render for AgentPanel {
             cx,
         );
         let mut body = shell::ShellRenderer::body(&self.focus, cx).child(header);
-        body = match current {
-            None => body.child(history::HistoryProjection::render(
-                &self.chats,
-                &self.history,
-                self.host.agents(),
-                self.host.timestamp(),
-                cx,
-            )),
-            Some(thread) if self.layout.history() => {
-                let chat = self.render_chat(thread, window, cx);
+        body = if self.conversation.is_some() {
+            let chat = self.render_conversation(window, cx);
+            if self.layout.history() {
                 body.child(self.render_split(chat, window, cx))
+            } else {
+                body.child(chat)
             }
-            Some(thread) => body.child(self.render_chat(thread, window, cx)),
+        } else {
+            match current {
+                None => body.child(history::HistoryProjection::render(
+                    &self.chats,
+                    &self.history,
+                    self.host.agents(),
+                    self.host.timestamp(),
+                    cx,
+                )),
+                Some(thread) if self.layout.history() => {
+                    let chat = self.render_chat(thread, window, cx);
+                    body.child(self.render_split(chat, window, cx))
+                }
+                Some(thread) => body.child(self.render_chat(thread, window, cx)),
+            }
         };
         if let Some(error) = self.notices.error() {
             body = body.child(

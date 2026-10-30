@@ -7,6 +7,8 @@
 //! Transcript rows borrow ConversationSource into the existing EntryRenderer;
 //! original producer activity controls streaming and fork is explicitly source-bound.
 //! Installed retains one CloudChatInstallation with the runtime's shared history admission.
+//! ConversationPanel selects an already captured source in the same renderer;
+//! its weak handle and original window fence deferred UI actions. Detach never sends Stop.
 //! SignInCards owns secret controls and prompt tokens. PanelNotices owns errors, approval
 //! identity and cancellable redraw work; PanelBindings retains installation subscriptions.
 //! Stateless renderers take immutable projections; finite presentation operations return
@@ -20,7 +22,7 @@
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,
 //! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
 //! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel,
-//! and the TerminalAuthOpener composition callback.
+//! its narrow ConversationPanel selector, and the TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: none.
 //! Invariants: preview cache generations reject stale same-key delivery after clear or chat
@@ -31,6 +33,8 @@
 
 mod agent_icon;
 mod chat_host;
+mod conversation_panel;
+pub use conversation_panel::ConversationPanel;
 mod image_deps;
 mod installation;
 pub use installation::Installed;
@@ -117,13 +121,23 @@ pub fn register(
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
 ) -> Result<(), nocterm_workspace::RegistrationError> {
+    register_with_conversations(workspace, installed, window, cx).map(|_| ())
+}
+
+/// Registers the existing panel and returns its narrow captured-source selector.
+pub fn register_with_conversations(
+    workspace: &mut nocterm_workspace::Workspace,
+    installed: Installed,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
+) -> Result<Option<ConversationPanel>, nocterm_workspace::RegistrationError> {
     let owner = cx.entity().downgrade();
     let source = workspace.context_source(cx);
     let host = match chat_host::ChatHost::new(owner, installed, source) {
         Ok(host) => host,
         Err(error) => {
             tracing::warn!(%error, "could not bind agent panel context");
-            return Ok(());
+            return Ok(None);
         }
     };
     let enabled = host
@@ -131,11 +145,12 @@ pub fn register(
         .setting::<nocterm_ai::AiSettings>(cx)
         .enabled;
     let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, window, panel_cx));
+    let conversations = ConversationPanel::new(panel.downgrade(), window.window_handle());
     workspace.register_panel(
         nocterm_workspace::PanelRegistration::with_entity(&plugin::CHATS, panel).expandable(),
         window,
         cx,
     )?;
     workspace.set_panel_available(&plugin::CHATS.id, enabled, window, cx);
-    Ok(())
+    Ok(Some(conversations))
 }

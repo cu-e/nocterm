@@ -11,6 +11,33 @@ use super::widgets::activity_text;
 
 pub(super) struct TranscriptView;
 impl TranscriptView {
+    pub(super) fn conversation_status(
+        view: &nocterm_ai::conversation::ConversationView<'_>,
+    ) -> String {
+        use nocterm_ai::conversation::ConversationPhase::*;
+        let phase = match view.phase {
+            Idle => "Ready",
+            Queued => "Queued",
+            Running => "Running",
+            WaitingApproval => "Waiting for approval",
+            NeedsGrant => "Waiting for permission",
+            NeedsUnlock => "Unlock the session to continue",
+            NeedsProviderAccess => "Provider access required",
+            OutcomeUnknown => "Tool outcome unknown",
+            Interrupted => "Interrupted",
+            Stopped => "Stopped",
+            Completed => "Completed",
+            Deleted => "Deleted",
+        };
+        let mut text = phase.to_owned();
+        if view.pending_commands != 0 {
+            text.push_str(&format!(" · {} pending commands", view.pending_commands));
+        }
+        if let Some(tokens) = &view.transcript.tokens {
+            text.push_str(&format!(" · {} tokens", tokens.total));
+        }
+        text
+    }
     pub(super) fn area(
         scroller: gpui_kit::component::message_scroller::MessageScroller,
         navigation: Option<AnyElement>,

@@ -163,6 +163,14 @@ impl ChatRoster {
     pub fn is_empty(&self) -> bool {
         self.contexts.current().chats().is_empty()
     }
+    /// Leaves the Local roster with no selected document when another captured
+    /// conversation is presented. Uses the same Local visibility transition.
+    pub fn deselect(&mut self, cx: &mut App) {
+        if let Some(previous) = self.current() {
+            previous.update(cx, |thread, cx| thread.set_shown(false, cx));
+        }
+        self.contexts.current_mut().chats_mut().deselect();
+    }
     /// Opens chat `id`, hiding the chat open before.
     pub fn select(&mut self, id: EntityId, cx: &mut App) {
         if let Some(previous) = self.current() {

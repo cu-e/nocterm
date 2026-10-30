@@ -6,7 +6,7 @@ use nocterm_cloud_model::{
     projection::{MAX_PENDING_COMMANDS, ProjectionError, ports::ConversationCommand},
 };
 use nocterm_core::allocation::{Allocated, AllocationLease};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingCommandState {
@@ -25,12 +25,14 @@ pub struct PendingCommandView {
 
 pub(crate) type CommandWaiter = oneshot::Sender<Result<(), ProjectionError>>;
 pub(crate) type RetainedCommand = Allocated<ConversationCommand>;
+pub(crate) type SubmissionReceipt = Rc<Cell<Option<bool>>>;
 
 struct PendingCommand {
     retained: Arc<RetainedCommand>,
     state: PendingCommandState,
     operation: Option<Task<()>>,
     waiter: Option<CommandWaiter>,
+    receipt: SubmissionReceipt,
 }
 #[derive(Default)]
 pub(crate) struct PendingCommands(BTreeMap<CommandId, PendingCommand>);
@@ -69,6 +71,7 @@ impl PendingCommands {
                 state: PendingCommandState::Staging,
                 operation: None,
                 waiter: Some(waiter),
+                receipt: Rc::new(Cell::new(None)),
             },
         );
         Ok(())
@@ -100,6 +103,12 @@ impl PendingCommands {
             .map(|entry| entry.retained.clone())
             .ok_or(ProjectionError::InvalidRecord)
     }
+    pub(crate) fn receipt(&self, id: CommandId) -> Result<SubmissionReceipt, ProjectionError> {
+        self.0
+            .get(&id)
+            .map(|entry| entry.receipt.clone())
+            .ok_or(ProjectionError::InvalidRecord)
+    }
     pub(crate) fn staged(&mut self, id: CommandId) {
         if let Some(entry) = self.0.get_mut(&id) {
             if !matches!(
@@ -129,6 +138,11 @@ impl PendingCommands {
                 .as_ref()
                 .copied()
                 .unwrap_or(PendingCommandState::OutcomeUnknown);
+            match observed {
+                PendingCommandState::Accepted => entry.receipt.set(Some(true)),
+                PendingCommandState::Rejected => entry.receipt.set(Some(false)),
+                _ => {}
+            }
             // A later runner Unknown/error does not erase an already matched
             // durable storage ACK. Only authenticated terminal facts supersede it.
             if entry.state != PendingCommandState::Delivered
@@ -158,10 +172,11 @@ impl PendingCommands {
     }
     pub(crate) fn accepted(&mut self, accepted: &[CommandId]) {
         for id in accepted {
-            if let Some(mut entry) = self.0.remove(id)
-                && let Some(waiter) = entry.waiter.take()
-            {
-                let _ = waiter.send(Ok(()));
+            if let Some(mut entry) = self.0.remove(id) {
+                entry.receipt.set(Some(true));
+                if let Some(waiter) = entry.waiter.take() {
+                    let _ = waiter.send(Ok(()));
+                }
             }
         }
     }

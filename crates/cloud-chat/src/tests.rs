@@ -130,6 +130,35 @@ async fn installation_same_account_login_creates_a_new_capture_without_retargeti
 }
 
 #[gpui::test]
+async fn installation_independent_policy_captures_keep_original_actions_with_the_same_binding(
+    cx: &mut TestAppContext,
+) {
+    let (old, installed, first) = installation(cx);
+    let second = Arc::new(ScriptedConversationSource::new(
+        ProjectionFixture::new().binding().clone(),
+    ));
+    let current = cx.update(|cx| installed.open(second.clone(), cx).unwrap());
+    let before = cx.update(|cx| first.capture_actions(cx).unwrap());
+    let after = cx.update(|cx| current.capture_actions(cx).unwrap());
+    cx.update(|cx| before.perform(ConversationAction::Prompt("old policy".into()), cx))
+        .await
+        .unwrap();
+    cx.update(|cx| after.perform(ConversationAction::Prompt("new policy".into()), cx))
+        .await
+        .unwrap();
+    assert_eq!(old.effects().staged.len(), 1);
+    assert_eq!(second.effects().staged.len(), 1);
+    assert_eq!(
+        old.staged(old.effects().staged[0]).unwrap().action,
+        ConversationAction::Prompt("old policy".into())
+    );
+    assert_eq!(
+        second.staged(second.effects().staged[0]).unwrap().action,
+        ConversationAction::Prompt("new policy".into())
+    );
+}
+
+#[gpui::test]
 fn installation_observer_capacity_is_reclaimed_only_after_the_last_rc_drops(
     cx: &mut TestAppContext,
 ) {

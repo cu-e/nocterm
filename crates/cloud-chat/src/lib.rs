@@ -201,11 +201,22 @@ impl CloudChat {
         action: ConversationAction,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), ConversationError>> {
-        let (waiter, receive) = oneshot::channel();
-        if let Err(error) = self.enqueue(coordinates, action, waiter, cx) {
-            return Task::ready(Err(error.into_conversation()));
+        match self.submit(coordinates, action, cx) {
+            Ok((_, completion)) => completion,
+            Err(error) => Task::ready(Err(error)),
         }
-        Self::wait_for_command(receive, cx)
+    }
+    fn submit(
+        &mut self,
+        coordinates: ConversationCoordinates,
+        action: ConversationAction,
+        cx: &mut Context<Self>,
+    ) -> Result<(CommandId, Task<Result<(), ConversationError>>), ConversationError> {
+        let (waiter, receive) = oneshot::channel();
+        let id = self
+            .enqueue(coordinates, action, waiter, cx)
+            .map_err(CloudChatError::into_conversation)?;
+        Ok((id, Self::wait_for_command(receive, cx)))
     }
     fn perform_approval(
         &mut self,
@@ -253,6 +264,7 @@ impl CloudChat {
             control,
         };
         self.enqueue_intent(coordinates, action, allocation, waiter, cx)
+            .map(|_| ())
     }
     fn wait_for_command(
         receive: oneshot::Receiver<Result<(), ProjectionError>>,
@@ -271,7 +283,7 @@ impl CloudChat {
         action: ConversationAction,
         waiter: pending::CommandWaiter,
         cx: &mut Context<Self>,
-    ) -> Result<(), CloudChatError> {
+    ) -> Result<CommandId, CloudChatError> {
         self.source.check_current()?;
         if coordinates != self.coordinates() {
             return Err(ProjectionError::Stale.into());
@@ -306,7 +318,7 @@ impl CloudChat {
         allocation: AllocationLease,
         waiter: pending::CommandWaiter,
         cx: &mut Context<Self>,
-    ) -> Result<(), CloudChatError> {
+    ) -> Result<CommandId, CloudChatError> {
         self.source.check_current()?;
         let bytes = action.resident_bytes();
         let urgent = matches!(action, ConversationIntent::Stop);
@@ -342,7 +354,7 @@ impl CloudChat {
         let operation = CommandOperation::new(source, retained, work, false).start(cx);
         self.pending.attach(id, operation);
         cx.notify();
-        Ok(())
+        Ok(id)
     }
     fn finish_command(
         &mut self,

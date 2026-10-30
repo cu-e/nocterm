@@ -96,14 +96,25 @@ impl ConversationSource for LocalConversation {
         Ok(Rc::new(LocalActions {
             thread: self.0.clone(),
             key: thread.read(cx).document().key().clone(),
+            ticket: thread.read(cx).session_ticket(),
         }))
     }
 }
 struct LocalActions {
     thread: WeakEntity<AgentThread>,
     key: nocterm_ai::execution_origin::ChatKey,
+    ticket: nocterm_ai::session::Ticket,
 }
 impl ConversationActions for LocalActions {
+    fn submit(
+        &self,
+        action: ConversationAction,
+        cx: &mut App,
+    ) -> Result<super::ConversationSubmissionStart, ConversationError> {
+        // ACP supplies no durable Cloud ID/query port. Preserve one actual
+        // dispatch; an ambiguous retry cannot silently redispatch it.
+        Ok((Rc::new(LocalSubmission), self.perform(action, cx)))
+    }
     fn perform(
         &self,
         action: ConversationAction,
@@ -123,11 +134,20 @@ impl ConversationActions for LocalActions {
                     Err(error) => Err(error.into_conversation()),
                 },
                 ConversationAction::Stop => {
+                    if thread.session_ticket() != self.ticket {
+                        return Err(ConversationError::Stale);
+                    }
                     thread.stop(cx);
                     Ok(())
                 }
             }
         }))
+    }
+}
+struct LocalSubmission;
+impl super::ConversationSubmission for LocalSubmission {
+    fn retry(&self, _: &mut App) -> Task<Result<(), ConversationError>> {
+        Task::ready(Err(ConversationError::Unavailable))
     }
 }
 

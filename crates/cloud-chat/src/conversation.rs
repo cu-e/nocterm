@@ -101,6 +101,31 @@ struct CloudActions {
     coordinates: ConversationCoordinates,
 }
 impl ConversationActions for CloudActions {
+    fn submit(
+        &self,
+        action: ConversationAction,
+        cx: &mut App,
+    ) -> Result<nocterm_agent_chat::conversation::ConversationSubmissionStart, ConversationError>
+    {
+        let chat = self.chat.upgrade().ok_or(ConversationError::Stale)?;
+        let (id, receipt, completion) =
+            chat.update(cx, |chat, cx| -> Result<_, ConversationError> {
+                let (id, completion) = chat.submit(self.coordinates.clone(), action, cx)?;
+                let receipt = chat
+                    .pending
+                    .receipt(id)
+                    .map_err(|error| CloudChatError::from(error).into_conversation())?;
+                Ok((id, receipt, completion))
+            })?;
+        Ok((
+            Rc::new(CloudSubmission {
+                chat: self.chat.clone(),
+                id,
+                receipt,
+            }),
+            completion,
+        ))
+    }
     fn perform(
         &self,
         action: ConversationAction,
@@ -112,6 +137,27 @@ impl ConversationActions for CloudActions {
         chat.update(cx, |chat, cx| {
             chat.perform(self.coordinates.clone(), action, cx)
         })
+    }
+}
+struct CloudSubmission {
+    chat: WeakEntity<CloudChat>,
+    id: nocterm_cloud_model::identity::CommandId,
+    receipt: super::pending::SubmissionReceipt,
+}
+impl nocterm_agent_chat::conversation::ConversationSubmission for CloudSubmission {
+    fn retry(&self, cx: &mut App) -> Task<Result<(), ConversationError>> {
+        let Some(chat) = self.chat.upgrade() else {
+            return Task::ready(Err(ConversationError::Stale));
+        };
+        if let Err(error) = chat.read(cx).check_current() {
+            return Task::ready(Err(error.into_conversation()));
+        }
+        match self.receipt.get() {
+            Some(true) => return Task::ready(Ok(())),
+            Some(false) => return Task::ready(Err(ConversationError::Unavailable)),
+            None => {}
+        }
+        chat.update(cx, |chat, cx| chat.retry(self.id, cx))
     }
 }
 
