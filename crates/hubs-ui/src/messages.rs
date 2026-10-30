@@ -121,3 +121,27 @@ mod tests {
         );
     }
 }
+
+/// Why an agent access change did not work.
+pub(crate) fn agent_problem(error: &nocterm_hubs_model::AgentAccessError) -> String {
+    use nocterm_hubs_model::AgentAccessError as Error;
+    match error {
+        Error::Hub(error) => hub_problem(error),
+        Error::NotConnected { connection } => format!(
+            "No session to {connection} is open. Connect to the server first, then try again."
+        ),
+        Error::HostChanged => {
+            "The server's authorized_keys changed while it was edited. Nothing was written; try again."
+                .to_owned()
+        }
+        Error::HostUnsupported => {
+            "The server's authorized_keys cannot be edited here. Add or remove the line by hand."
+                .to_owned()
+        }
+        Error::Host { .. } => "The server could not be edited.".to_owned(),
+        Error::Unknown { connection } => format!("No server is registered for {connection}."),
+        Error::Records { .. } => {
+            "The agent access records on this device are unusable.".to_owned()
+        }
+    }
+}

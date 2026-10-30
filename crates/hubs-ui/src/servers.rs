@@ -27,7 +27,7 @@ use crate::installation::Installed;
 use crate::layout::note;
 use detail::{Access, Tab, detail};
 use list::server_list;
-use tabs::{devices::Devices, names::NameFields};
+use tabs::{agent_access::AgentAccess, devices::Devices, names::NameFields};
 
 /// The Servers page of the settings, listed with the other pages by the application.
 pub fn settings_page(installed: &Installed) -> SettingsPageSpec {
@@ -55,6 +55,7 @@ pub(crate) struct ServersPage {
     tab: Tab,
     names: NameFields,
     devices: Entity<Devices>,
+    agents: Entity<AgentAccess>,
     focus: FocusHandle,
     _redraw: Task<()>,
     _hubs: Subscription,
@@ -80,6 +81,7 @@ impl ServersPage {
             tab: Tab::Overview,
             names: NameFields::new(hubs.clone()),
             devices: cx.new(|_| Devices::new(hubs.clone())),
+            agents: cx.new(|_| AgentAccess::new(hubs.clone())),
             focus: cx.focus_handle(),
             _redraw: redraw,
             _hubs: cx.observe(&hubs, |_, _, cx| cx.notify()),
@@ -143,6 +145,15 @@ impl Render for ServersPage {
                 Some(hub) => devices.show(hub, cx),
                 None => devices.hide(),
             });
+        let agents_on_show = shown
+            .filter(|summary| {
+                self.tab == Tab::AgentAccess && Access::of(&summary.status) == Access::SignedIn
+            })
+            .map(|summary| summary.id.clone());
+        self.agents.update(cx, |agents, cx| match &agents_on_show {
+            Some(hub) => agents.show(hub, cx),
+            None => agents.hide(),
+        });
         let body = shown.and_then(|summary| {
             let name = self.names.get(&summary.id)?;
             Some(detail(
@@ -150,6 +161,7 @@ impl Render for ServersPage {
                 &name,
                 self.tab,
                 &self.devices,
+                &self.agents,
                 cx.weak_entity(),
                 &self.hubs,
                 cx,

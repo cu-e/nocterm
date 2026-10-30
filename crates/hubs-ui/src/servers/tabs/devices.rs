@@ -285,7 +285,7 @@ fn kind(platform: &str) -> String {
 }
 
 /// A moment as `2023-11-14 22:13 UTC`, so a list reads the same wherever it is shown.
-fn utc(ms: i64) -> String {
+pub(in crate::servers) fn utc(ms: i64) -> String {
     let seconds = ms.div_euclid(1000);
     let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
     let z = days + 719_468;

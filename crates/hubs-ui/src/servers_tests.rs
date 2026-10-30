@@ -683,3 +683,6 @@ fn a_server_that_is_not_signed_in_offers_signing_in_instead_of_devices_and_keys(
     page.settle_dialog(cx);
     assert!(page.has_dialog(cx), "the sign-in dialog opens");
 }
+
+#[path = "servers_agent_access_tests.rs"]
+mod agent_access;

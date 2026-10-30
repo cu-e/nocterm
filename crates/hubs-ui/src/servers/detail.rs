@@ -15,7 +15,7 @@ use gpui_kit::{
 use nocterm_hubs::{HubStatus, HubSummary, Hubs};
 use nocterm_ui::SettingsTextField;
 
-use super::tabs::{devices::Devices, overview::overview, trust::trust};
+use super::tabs::{agent_access::AgentAccess, devices::Devices, overview::overview, trust::trust};
 use super::{ServersPage, item};
 use crate::color::tint;
 use crate::layout::note;
@@ -27,16 +27,18 @@ pub(super) enum Tab {
     Overview,
     Devices,
     Keys,
+    AgentAccess,
 }
 
 impl Tab {
-    const ALL: [Self; 3] = [Self::Overview, Self::Devices, Self::Keys];
+    const ALL: [Self; 4] = [Self::Overview, Self::Devices, Self::Keys, Self::AgentAccess];
 
     fn title(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
             Self::Devices => "Devices",
             Self::Keys => "Keys & trust",
+            Self::AgentAccess => "Agent access (SSH)",
         }
     }
 }
@@ -68,6 +70,7 @@ pub(super) fn detail(
     name: &SettingsTextField,
     tab: Tab,
     devices: &Entity<Devices>,
+    agents: &Entity<AgentAccess>,
     page: WeakEntity<ServersPage>,
     hubs: &Entity<Hubs>,
     cx: &App,
@@ -95,6 +98,7 @@ pub(super) fn detail(
         (_, Access::Blocked) => blocked(&key, cx),
         (Tab::Devices, Access::SignedIn) => devices.clone().into_any_element(),
         (Tab::Keys, Access::SignedIn) => trust(summary, hubs, cx),
+        (Tab::AgentAccess, Access::SignedIn) => agents.clone().into_any_element(),
     };
     v_flex()
         .id(item("server", &key))
