@@ -172,14 +172,7 @@ impl ConversationToolApproval for LocalApproval {
         let call = thread
             .tool_approval_call(self.token)
             .ok_or(ConversationError::Unavailable)?;
-        visitor(ToolApprovalView {
-            call,
-            display: None,
-            target: &self.target,
-            principal: None,
-            expires_ms: None,
-            reusable: self.reusable,
-        });
+        visitor(ToolApprovalView::new(call, &self.target, self.reusable));
         Ok(())
     }
     fn choose(

@@ -25,6 +25,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 nocterm-cloud-model = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

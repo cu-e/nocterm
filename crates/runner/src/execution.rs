@@ -7,11 +7,13 @@ pub(crate) mod config;
 mod publisher;
 #[cfg(target_os = "linux")]
 mod runtime;
+#[cfg(not(target_os = "linux"))]
+#[path = "execution/unsupported.rs"]
+mod runtime;
 use crate::{RunnerError, sessions::config::SessionTargetConfiguration};
 use budgets::ExecutionBudgets;
 use config::ExecutionConfig;
 use nocterm_cloud_model::journal::PublicationWorkBudget;
-#[cfg(target_os = "linux")]
 pub(crate) use runtime::ExecutionRuntime;
 use std::sync::Arc;
 
@@ -44,30 +46,6 @@ impl ExecutionSetup {
     }
     pub(crate) fn transport_work(&self) -> Arc<dyn PublicationWorkBudget> {
         self.budgets.transport()
-    }
-}
-
-/// Execution needs native containment, which exists only on Linux. A configured
-/// non-Linux daemon is refused rather than served without it.
-#[cfg(not(target_os = "linux"))]
-pub(crate) enum ExecutionRuntime {}
-#[cfg(not(target_os = "linux"))]
-impl ExecutionRuntime {
-    pub(crate) async fn start(
-        _: ExecutionSetup,
-        _: &crate::bootstrap::State,
-        _: nocterm_hub_io::cloud::RunnerHubPeer,
-    ) -> Result<Self, RunnerError> {
-        Err(RunnerError::Platform)
-    }
-    pub(crate) fn readiness(&self) -> Arc<std::sync::atomic::AtomicBool> {
-        match *self {}
-    }
-    pub(crate) async fn stopped(&mut self) -> Result<(), RunnerError> {
-        match *self {}
-    }
-    pub(crate) async fn drain(self, _: nocterm_core::persist::ShutdownDeadline) -> bool {
-        match self {}
     }
 }
 

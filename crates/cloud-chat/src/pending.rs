@@ -19,8 +19,16 @@ pub enum PendingCommandState {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingCommandView {
-    pub id: CommandId,
-    pub state: PendingCommandState,
+    id: CommandId,
+    state: PendingCommandState,
+}
+impl PendingCommandView {
+    pub fn id(&self) -> CommandId {
+        self.id
+    }
+    pub fn state(&self) -> PendingCommandState {
+        self.state
+    }
 }
 
 pub(crate) type CommandWaiter = oneshot::Sender<Result<(), ProjectionError>>;

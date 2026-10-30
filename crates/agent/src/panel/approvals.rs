@@ -293,11 +293,11 @@ impl ApprovalCardsRenderer {
     fn tool_details(
         view: nocterm_agent_chat::conversation::ToolApprovalView<'_>,
     ) -> (&'static str, String, &'static str, bool) {
-        let (heading, mut exact, grant) = Self::tool_text(view.call, view.target);
-        if let Some(principal) = view.principal {
+        let (heading, mut exact, grant) = Self::tool_text(view.call(), view.target());
+        if let Some(principal) = view.principal() {
             exact.push_str(&format!("\nPrincipal: {principal}"));
         }
-        if let Some(expires) = view.expires_ms {
+        if let Some(expires) = view.expires_ms() {
             let date = i64::try_from(expires)
                 .ok()
                 .and_then(chrono::DateTime::from_timestamp_millis);
@@ -309,7 +309,7 @@ impl ApprovalCardsRenderer {
                 None => exact.push_str("\nExpiry cannot be displayed"),
             }
         }
-        (heading, exact, grant, view.reusable)
+        (heading, exact, grant, view.reusable())
     }
     fn tool_text(call: &TerminalCall, target: &str) -> (&'static str, String, &'static str) {
         match call {

@@ -208,14 +208,14 @@ async fn durable_stage_hub_delivery_and_runner_acceptance_remain_distinct(cx: &m
     cx.run_until_parked();
     let pending = cx.update(|cx| chat.read(cx).pending_commands());
     assert_eq!(pending.len(), 1);
-    let id = pending[0].id;
-    assert_eq!(pending[0].state, PendingCommandState::Staging);
+    let id = pending[0].id();
+    assert_eq!(pending[0].state(), PendingCommandState::Staging);
     assert!(source.effects().staged.is_empty());
     stage.release();
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            chat.read(cx).pending_commands()[0].state,
+            chat.read(cx).pending_commands()[0].state(),
             PendingCommandState::Pending
         )
     });
@@ -225,7 +225,7 @@ async fn durable_stage_hub_delivery_and_runner_acceptance_remain_distinct(cx: &m
     sent.await.unwrap();
     cx.update(|cx| {
         assert_eq!(
-            chat.read(cx).pending_commands()[0].state,
+            chat.read(cx).pending_commands()[0].state(),
             PendingCommandState::Delivered
         );
         assert!(chat.read(cx).projection().transcript().entries.is_empty());
@@ -236,7 +236,7 @@ async fn durable_stage_hub_delivery_and_runner_acceptance_remain_distinct(cx: &m
         .unwrap();
     cx.update(|cx| {
         assert_eq!(
-            chat.read(cx).pending_commands()[0].state,
+            chat.read(cx).pending_commands()[0].state(),
             PendingCommandState::Delivered
         )
     });
@@ -248,7 +248,7 @@ async fn durable_stage_hub_delivery_and_runner_acceptance_remain_distinct(cx: &m
         .unwrap();
     cx.update(|cx| {
         assert_eq!(
-            chat.read(cx).pending_commands()[0].state,
+            chat.read(cx).pending_commands()[0].state(),
             PendingCommandState::Accepted
         )
     });
@@ -277,8 +277,8 @@ async fn lost_ack_retries_the_original_id_and_accepted_replay_adds_one_user_row(
     assert!(matches!(sent.await, Err(ConversationError::OutcomeUnknown)));
     let pending = cx.update(|cx| chat.read(cx).pending_commands());
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].state, PendingCommandState::OutcomeUnknown);
-    let id = pending[0].id;
+    assert_eq!(pending[0].state(), PendingCommandState::OutcomeUnknown);
+    let id = pending[0].id();
     assert_eq!(
         source.staged(id).unwrap().action,
         ConversationAction::Prompt("question".into())
@@ -287,7 +287,7 @@ async fn lost_ack_retries_the_original_id_and_accepted_replay_adds_one_user_row(
     retried.await.unwrap();
     cx.update(|cx| {
         assert_eq!(
-            chat.read(cx).pending_commands()[0].state,
+            chat.read(cx).pending_commands()[0].state(),
             PendingCommandState::Pending
         )
     });
@@ -381,7 +381,7 @@ async fn dropping_an_action_waiter_does_not_cancel_its_owner_held_delivery(
     assert_eq!(effects.delivered, effects.staged);
     cx.update(|cx| {
         assert_eq!(
-            chat.read(cx).pending_commands()[0].state,
+            chat.read(cx).pending_commands()[0].state(),
             PendingCommandState::Delivered
         )
     });
@@ -715,10 +715,10 @@ async fn captured_approval_keeps_actual_intent_and_one_durable_answer_until_reso
     let card = cx.update(|cx| facade.tool_approvals(cx).unwrap().pop().unwrap());
     cx.update(|cx| {
         card.with_view(cx, &mut |view| {
-            assert_eq!(view.target, "original target");
-            assert_eq!(view.principal, Some("user"));
-            assert_eq!(view.expires_ms, Some(20_000));
-            assert!(!view.reusable);
+            assert_eq!(view.target(), "original target");
+            assert_eq!(view.principal(), Some("user"));
+            assert_eq!(view.expires_ms(), Some(20_000));
+            assert!(!view.reusable());
         })
         .unwrap()
     });

@@ -183,21 +183,17 @@ impl ConversationToolApproval for CloudApproval {
             .projection()
             .approval(self.key)
             .ok_or(ConversationError::Unavailable)?;
-        visitor(ToolApprovalView {
-            call: card.call(),
-            display: Some(card.display()),
-            target: card.display().destination.as_deref().unwrap_or(""),
-            principal: Some(
-                card.intent()
-                    .authority()
-                    .session()
-                    .target()
-                    .principal()
-                    .as_str(),
-            ),
-            expires_ms: Some(self.key.expires().as_millis()),
-            reusable: false,
-        });
+        let principal = card.intent().authority().session().target().principal();
+        visitor(
+            ToolApprovalView::new(
+                card.call(),
+                card.display().destination.as_deref().unwrap_or(""),
+                false,
+            )
+            .with_display(card.display())
+            .with_principal(principal.as_str())
+            .with_expiry(Some(self.key.expires().as_millis())),
+        );
         Ok(())
     }
     fn choose(
