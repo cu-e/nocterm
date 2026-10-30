@@ -2,6 +2,7 @@
 mod capture;
 mod codec;
 mod operation;
+mod setup;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -63,6 +64,11 @@ pub struct CloudRunnerSetup {
     runner: RunnerRegistration,
 }
 impl CloudRunnerSetup {
+    /// Decode the bounded public CLI setup document. The caller owns the input
+    /// and setup allocation; original-account validation still happens at import.
+    pub fn from_public_toml(bytes: &[u8], label: String) -> Result<Self, CloudTrustError> {
+        setup::decode(bytes, label)
+    }
     pub fn new(
         origin: nocterm_hubs_model::HubId,
         raw_hub: String,
