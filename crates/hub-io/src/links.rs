@@ -131,6 +131,11 @@ impl HubLinks {
         (self.handle.clone(), Arc::clone(&self.pool))
     }
 
+    /// What the Cloud agents adapter needs of the links.
+    pub(crate) fn agent_parts(&self) -> (Handle, Arc<Pool>) {
+        (self.handle.clone(), Arc::clone(&self.pool))
+    }
+
     /// Runs `work` on the adapter's threads.
     fn run<T: Send + 'static>(
         &self,

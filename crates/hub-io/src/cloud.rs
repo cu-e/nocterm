@@ -37,6 +37,9 @@ pub use account_material::{
     ChatMaterialRequest, CloudAccountMaterial, account_material_work_bytes,
 };
 
+mod runner_enrolment;
+pub use runner_enrolment::{EnrolmentError, enrol};
+
 mod runner_registry;
 pub use runner_registry::{
     AccountRunnerRegistry, RUNNER_REGISTRY_RESIDENT_BYTES, RunnerRegistration, RunnerRegistryError,

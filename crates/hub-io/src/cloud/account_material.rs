@@ -94,7 +94,9 @@ pub struct CloudAccountMaterial {
 impl CloudAccountMaterial {
     /// Read-only original owners for the native conversation adapter. No keys,
     /// selectors, new capture or replacement-login lookup crosses this seam.
-    pub(super) fn conversation_parts(&self) -> (BoundOperations, Arc<CloudClient>, [u8; 32]) {
+    pub(in crate::cloud) fn conversation_parts(
+        &self,
+    ) -> (BoundOperations, Arc<CloudClient>, [u8; 32]) {
         (self.bound.clone(), self.cloud.clone(), self.authority)
     }
 

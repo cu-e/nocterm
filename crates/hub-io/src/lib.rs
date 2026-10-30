@@ -106,6 +106,7 @@
 
 mod account;
 pub mod agent_access;
+mod agents;
 mod cache;
 mod classify;
 pub mod cloud;
@@ -125,6 +126,7 @@ mod task;
 mod vault;
 
 pub use account::{AdminKeyError, AdminKeys, PendingAdminKey};
+pub use agents::CloudAgentsLink;
 pub use hub_account::HubAccount;
 pub use links::{HubLinks, HubLinksConfig, HubStartError};
 pub use relay::HubRelay;

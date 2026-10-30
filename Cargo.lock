@@ -5675,6 +5675,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "nocterm-ai",
+ "nocterm-cloud-agents-model",
  "nocterm-cloud-model",
  "nocterm-connections-model",
  "nocterm-core",
