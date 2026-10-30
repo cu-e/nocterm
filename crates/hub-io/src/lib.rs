@@ -34,6 +34,9 @@
 //! Slot lifecycle receipts fence key installation, and native admission makes cache, spaces
 //! and idle-timer publication conditional. Administrator and recovery offers retain the
 //! original recipient and exact displayed action ([ADR 0114](../../../docs/adr/0114-native-captured-account-operations.md)).
+//! The personal SSH CA for cloud agents lives in `agent_access`: its seed and the registry of
+//! trusting servers are objects of the account's own `agent_ssh_trust` collection, and the
+//! `AgentHostTrust` and `AgentGrants` ports are implemented there ([ADR 0119](../../../docs/adr/0119-agent-ssh-ca.md)).
 //! Native Cloud adapter owners also keep the runner's three purpose-specific keys,
 //! original enrolled source and durable rotated session, authenticated chat material,
 //! signed public coordinator observations and exact ciphertext publication metadata.
@@ -102,6 +105,7 @@
 //! and neutral cipher ports, never a generic signer, private seed or SDK wire type.
 
 mod account;
+pub mod agent_access;
 mod cache;
 mod classify;
 pub mod cloud;

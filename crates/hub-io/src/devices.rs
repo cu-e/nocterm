@@ -16,14 +16,14 @@ use crate::pool::{Pool, observation::LoginObservation};
 use crate::task::spawn;
 
 /// The captured membership and its client.
-struct Captured {
-    observed: Arc<LoginObservation>,
-    client: HubClient,
-    hub: HubId,
+pub(crate) struct Captured {
+    pub(crate) observed: Arc<LoginObservation>,
+    pub(crate) client: HubClient,
+    pub(crate) hub: HubId,
 }
 
 impl Captured {
-    fn new(pool: Arc<Pool>, hub: &HubId) -> Result<Self, HubError> {
+    pub(crate) fn new(pool: Arc<Pool>, hub: &HubId) -> Result<Self, HubError> {
         let observed = LoginObservation::capture(pool.clone(), hub.clone())?;
         let subject = observed.original_subject()?.ok_or(HubError::NotSignedIn)?;
         let client = pool.captured(hub, &subject)?;
@@ -76,7 +76,11 @@ pub(crate) fn revoke(pool: Arc<Pool>, handle: &Handle, hub: &HubId, device: &str
 
 /// Runs `work` on the adapter's threads once the membership was captured, and checks it again
 /// before the result is returned.
-fn run<T, F, Fut>(captured: Result<Captured, HubError>, handle: &Handle, work: F) -> HubFuture<T>
+pub(crate) fn run<T, F, Fut>(
+    captured: Result<Captured, HubError>,
+    handle: &Handle,
+    work: F,
+) -> HubFuture<T>
 where
     T: Send + 'static,
     F: FnOnce(Arc<Captured>) -> Fut,

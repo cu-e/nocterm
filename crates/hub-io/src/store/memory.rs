@@ -237,6 +237,16 @@ impl MemoryHub {
         }
     }
 
+    /// The ids of the collections of `kind`.
+    pub(crate) fn collections_of_kind(&self, kind: &str) -> Vec<String> {
+        self.held()
+            .collections
+            .iter()
+            .filter(|c| c.kind == kind)
+            .map(|c| c.collection_id.clone())
+            .collect()
+    }
+
     /// Every stored object of a collection, tombstones included, as the hub holds them.
     pub(crate) fn objects(&self, collection_id: &str) -> Vec<v1::StoredObject> {
         let held = self.held();

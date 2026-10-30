@@ -108,6 +108,11 @@ impl HubAccount {
         self.admin_keys.clone()
     }
 
+    /// The encrypted store of the account, captured from its current signed-in membership.
+    pub(crate) fn work(&self) -> Result<crate::account::operations::OpenedWork, HubError> {
+        self.operations.opened()
+    }
+
     /// The vault of the account.
     pub fn vault(&self) -> Arc<HubVault> {
         Arc::clone(&self.vault)

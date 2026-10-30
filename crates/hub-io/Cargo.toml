@@ -45,6 +45,7 @@ nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
+nocterm-ssh-keys = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
