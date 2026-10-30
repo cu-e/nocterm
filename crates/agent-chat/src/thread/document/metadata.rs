@@ -136,22 +136,6 @@ impl<'a> Inputs<'a> {
             resume,
         }
     }
-    pub(super) fn retained_bytes(&self) -> Result<usize, nocterm_ai::history::HistoryCodecError> {
-        use nocterm_ai::history::{prompt_memory, retained_value_bytes};
-        let mut bytes = retained_value_bytes(&self.composer.draft())?
-            .saturating_add(retained_value_bytes(self.config.choices())?)
-            .saturating_add(retained_value_bytes(&self.config.model_ref())?)
-            .saturating_add(retained_value_bytes(
-                &self.config.mode_choice().map(|mode| mode.as_str()),
-            )?)
-            .saturating_add(retained_value_bytes(&self.attachments)?)
-            .saturating_add(retained_value_bytes(&self.resume.session)?)
-            .saturating_add(retained_value_bytes(&self.resume.workdir)?);
-        for prompt in self.composer.queue() {
-            bytes = bytes.saturating_add(prompt_memory(prompt.saved())?);
-        }
-        Ok(bytes)
-    }
     pub(super) fn metadata(&self, chat: &mut nocterm_ai::history::SavedChat) {
         chat.draft = self.composer.draft().cloned();
         chat.attachments = self.attachments.to_vec();

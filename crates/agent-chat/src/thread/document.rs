@@ -326,18 +326,19 @@ impl ChatDocument {
     }
     pub(super) fn snapshot_capacity(&self, input: &Inputs<'_>) -> Result<usize, HistoryCodecError> {
         use nocterm_ai::history::retained_value_bytes;
-        // Existing history structural counting covers every variable borrowed
-        // row/input. The fixed64KiB covers wire/catalog keys, structs, bounded
-        // preview and metadata framing, before any transcript is cloned.
+        // The transcript-free snapshot uses the same counter as the retained
+        // snapshot, so header, scope, environment, inputs, queue and times are
+        // exact. Rows are counted in place, before any transcript is cloned; the
+        // fixed 64KiB covers the catalog preview drawn from them.
         let start = SavedChat::saved_entry_start(self.entries().len());
+        let frame = SharedChat {
+            metadata: self.metadata(input),
+            queue: input.queue(),
+        }
+        .retained_bytes()?;
         Ok((64usize * 1024)
-            .saturating_add(input.retained_bytes()?)
-            .saturating_add(retained_value_bytes(&&self.entries()[start..])?)
-            .saturating_add(retained_value_bytes(&self.name())?)
-            .saturating_add(retained_value_bytes(&self.transcript().title)?)
-            .saturating_add(self.identity.agent().len().saturating_mul(2))
-            .saturating_add(self.identity.id().len().saturating_mul(2))
-            .saturating_add(self.transcript().times.len().saturating_mul(8)))
+            .saturating_add(frame)
+            .saturating_add(retained_value_bytes(&&self.entries()[start..])?))
     }
     pub(super) fn snapshot(&self, input: &Inputs<'_>) -> Option<Arc<SharedChat>> {
         if !self.pinned()

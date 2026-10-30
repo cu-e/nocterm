@@ -33,6 +33,7 @@ gpui = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-agent-runtime = { workspace = true, features = ["test-support"] }
+nocterm-hubs-model.workspace = true
 tempfile.workspace = true
 
 [lints]

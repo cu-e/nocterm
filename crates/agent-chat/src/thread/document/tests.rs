@@ -328,3 +328,56 @@ fn disabled_release_retains_unadmitted_or_failed_input_and_an_old_ack_cannot_rel
         "failure retains the original input after releasing presentation"
     );
 }
+
+#[test]
+fn snapshot_capacity_covers_a_long_transcript_with_entry_times() {
+    let composer = Composer::default();
+    let config = ChatConfig::default();
+    let inputs = input(&composer, &config);
+    let mut saved = SavedChat::for_identity("agent".into(), ID.into(), 40);
+    saved.entries = (0..400).map(|_| Entry::Agent("a".into())).collect();
+    saved.times = (0..400).collect();
+    let mut document = ChatDocument::new(
+        "agent".into(),
+        nocterm_ai::execution_origin::ChatKey::new(
+            nocterm_ai::history::ContextId::General,
+            ID.into(),
+        ),
+        40,
+    );
+    document.imported_clean(&mut saved, false);
+    let snapshot = document.snapshot(&inputs).expect("non-empty chat");
+    assert!(document.snapshot_capacity(&inputs).unwrap() >= snapshot.retained_bytes().unwrap());
+}
+
+#[test]
+fn snapshot_capacity_covers_a_hub_account_header_and_draft() {
+    use nocterm_ai::local_environment::{ChatScope, LocalEnvironment};
+    use nocterm_hubs_model::source_identity::{
+        AccountIdentity, AccountScope, Fingerprint, HubIdentity, LocalAccountPartition, NamespaceId,
+    };
+    let fingerprint = Fingerprint::from_bytes([7; 32]);
+    let partition = LocalAccountPartition::Stable(AccountScope::new(
+        HubIdentity::new(NamespaceId::new("hub").unwrap(), fingerprint),
+        AccountIdentity::new(NamespaceId::new("account").unwrap(), fingerprint),
+    ));
+    let scope = ChatScope::new(
+        LocalEnvironment::HubAccount(partition),
+        nocterm_ai::history::ContextId::General,
+    );
+    let mut saved = SavedChat::for_environment("agent".into(), ID.into(), 40, scope.clone());
+    saved.entries = vec![Entry::Agent("a".into())];
+    saved.times = vec![1];
+    let mut document = ChatDocument::new(
+        "agent".into(),
+        nocterm_ai::execution_origin::ChatKey::in_environment(scope, ID.into()),
+        40,
+    );
+    document.imported_clean(&mut saved, false);
+    let mut composer = Composer::default();
+    composer.set_draft("draft".into());
+    let config = ChatConfig::default();
+    let inputs = input(&composer, &config);
+    let snapshot = document.snapshot(&inputs).expect("non-empty chat");
+    assert!(document.snapshot_capacity(&inputs).unwrap() >= snapshot.retained_bytes().unwrap());
+}
