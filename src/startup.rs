@@ -47,6 +47,9 @@ impl PreparedApp {
         );
         let catalog = library.scan();
         let hub_links = hub_links(&paths);
+        let agent_hosts = Arc::new(nocterm_ssh::authorized_keys::HostDirectory::new(
+            &ssh_config(&paths),
+        ));
         let transport = ssh_transport(&paths, hub_links.as_deref())?;
         let local_fs = Arc::new(
             nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
@@ -88,7 +91,8 @@ impl PreparedApp {
                 container_actions: Arc::new(
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
-                hubs: hub_dependencies(hub_links.clone()),
+                hubs: hub_dependencies(hub_links.clone(), agent_hosts.clone()),
+                agent_hosts: hub_links.is_some().then_some(agent_hosts as _),
                 hub_accounts: hub_links
                     .map(|links| links as Arc<dyn crate::hub_sources::HubAccounts>),
             },
@@ -215,12 +219,23 @@ fn hub_links(paths: &Paths) -> Option<Arc<nocterm_hub_io::HubLinks>> {
 }
 
 /// The hub access ports of the links, if there are any.
-fn hub_dependencies(links: Option<Arc<nocterm_hub_io::HubLinks>>) -> Option<nocterm_hubs::Deps> {
-    links.map(|links| nocterm_hubs::Deps {
-        trust: links.clone(),
-        sign_in: links.clone(),
-        admin_keys: links.clone(),
-        devices: links,
+fn hub_dependencies(
+    links: Option<Arc<nocterm_hub_io::HubLinks>>,
+    hosts: Arc<nocterm_ssh::authorized_keys::HostDirectory>,
+) -> Option<nocterm_hubs::Deps> {
+    links.map(|links| {
+        let agent_access = Arc::new(nocterm_hub_io::agent_access::AgentAccess::new(
+            links.clone(),
+            hosts,
+        ));
+        nocterm_hubs::Deps {
+            trust: links.clone(),
+            sign_in: links.clone(),
+            admin_keys: links.clone(),
+            devices: links,
+            agent_trust: agent_access.clone(),
+            agent_grants: agent_access,
+        }
     })
 }
 

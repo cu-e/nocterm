@@ -65,6 +65,8 @@ pub(crate) struct HostServices {
     pub(crate) hubs: Option<nocterm_hubs::Deps>,
     /// The encrypted data of hub accounts; without it the hubs cannot open windows.
     pub(crate) hub_accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
+    /// Receives the sessions of saved connections for the agent SSH CA; `None` without hubs.
+    pub(crate) agent_hosts: Option<Arc<dyn nocterm_ssh_keys::authorized_keys::ConnectedHosts>>,
 }
 
 /// The hub servers every window shows, and the sources their windows are made from.
@@ -317,6 +319,10 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
     let hubs = install_hubs(&hosts, &ui, cx);
+    let observed_hosts = hosts
+        .agent_hosts
+        .clone()
+        .zip(hubs.as_ref().map(|pending| pending.hubs.hubs().clone()));
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     // The vault opens first: the connection editor offers its keys, and its
     // credentials need the installed connections afterwards.
@@ -324,6 +330,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let connections = offer_keys(connections, vault.as_ref(), cx);
     let connection_inputs = connections.inputs();
     let connections = install_connections(connections, &ui, &shutdown, cx);
+    if let (Some((sessions, hubs)), Some(connections)) = (observed_hosts, connections.as_ref()) {
+        crate::agent_hosts::observe(sessions, hubs, connections);
+    }
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let hubs = start_hubs(hubs, connection_inputs, &terminal, &ui, &shutdown, cx);
     let projects = install_projects(

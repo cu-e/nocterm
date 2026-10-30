@@ -165,6 +165,8 @@ pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> Wor
             sign_in: Arc::new(hub.clone()),
             admin_keys: Arc::new(nocterm_hubs_model::testing::FakeAdminKeys::alongside(&hub)),
             devices: Arc::new(nocterm_hubs_model::testing::FakeAccountDevices::default()),
+            agent_trust: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
+            agent_grants: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
         };
         boot_with_ports_and_probe(
             tempfile::tempdir().unwrap(),

@@ -342,6 +342,7 @@ fn fixture_hosts(
         workspace_sessions: activation,
         hubs: None,
         hub_accounts: None,
+        agent_hosts: None,
     }
 }
 

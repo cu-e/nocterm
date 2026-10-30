@@ -9,6 +9,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod agent_auth;
+mod agent_hosts;
 mod app_menus;
 mod application;
 mod bootstrap;
