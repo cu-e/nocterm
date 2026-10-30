@@ -20,6 +20,7 @@ use crate::records::{Account, HubEndpointSpec, HubInfo, KeyStatus, SignedIn};
 use crate::trust::{ProbedHub, TrustPolicy};
 
 mod admin_keys;
+mod agent_access;
 mod devices;
 mod local_source;
 mod login;
@@ -28,6 +29,7 @@ mod server;
 pub use local_source::ScriptedLocalAccountFactory;
 
 pub use admin_keys::FakeAdminKeys;
+pub use agent_access::FakeAgentAccess;
 pub use devices::FakeAccountDevices;
 pub use server::{FakeKeyset, FakeServer, FakeUser};
 

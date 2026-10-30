@@ -14,7 +14,8 @@
 //! only by `nocterm-hub-io`), device keys and tokens (private adapter files), connection
 //! state over time (`nocterm-hubs`), views.
 //! Ports provided: HubTrust, HubSignIn, HubAdminKeys, AccountDevices (the devices of an
-//! account, listed and revoked). Ports used: nocterm-session
+//! account, listed and revoked), AgentHostTrust (the servers that trust the agent CA) and
+//! AgentGrants (active chat accesses, listed and revoked). Ports used: nocterm-session
 //! `Secret`.
 //! Settings section: `hubs`. Globals: none.
 //! Invariants: no I/O; no protocol types; a hub is identified by its canonical address;
@@ -33,6 +34,7 @@
 //! lease checks prevent old owners from returning after sign-out or key replacement.
 
 pub mod address;
+pub mod agent_access;
 pub mod admin_keys;
 pub mod color;
 pub mod devices;
@@ -54,6 +56,10 @@ pub mod trust;
 pub mod testing;
 
 pub use address::{DEFAULT_PORT, HubAddress, HubId};
+pub use agent_access::{
+    AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentGrants, AgentHostTrust,
+    AgentTrustOverview, ServerTrust, TrustedServer,
+};
 pub use admin_keys::{
     AdminKeyConfirmation, AdminKeyError, AdminKeyOffer, HubAdminKeys, PendingAdminKey,
 };
