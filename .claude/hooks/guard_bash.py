@@ -7,7 +7,7 @@
   cherry-picks, reverts or patches on them, and no pushes to them.
 - Tags are created by release automation only.
 - Compiling Cargo commands run through `cargo-serial.sh`, which applies
-  `CARGO_BUILD_JOBS=2` and one lock shared by every agent of the user.
+  `CARGO_BUILD_JOBS=4` and one lock shared by every agent of the user.
 - Release files and debt inventories are changed with Edit/Write, where
   `guard_files.py` can check them, not with shell redirection.
 
@@ -454,7 +454,7 @@ def check_cargo(state, assignments, words):
         suggestion = " ".join([*map(shlex.quote, assignments), shlex.quote(str(wrapper)), shlex.join(words)])
         hooklib.deny(
             EVENT,
-            "Compiling Cargo commands run through the shared lock with CARGO_BUILD_JOBS=2 "
+            "Compiling Cargo commands run through the shared lock with CARGO_BUILD_JOBS=4 "
             f"(AGENTS.md, Hard rules). Run it as (keeping any pipes and redirections):\n{suggestion}",
         )
 

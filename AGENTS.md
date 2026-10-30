@@ -7,7 +7,7 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `master` or `dev` directly. Record the target (`master` release / `dev` integration) and branch from it.
 - Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
-- Run every Cargo command with `CARGO_BUILD_JOBS=2` and serialize top-level Cargo
+- Run every Cargo command with `CARGO_BUILD_JOBS=4` and serialize top-level Cargo
   commands, including those from other agents, to stay within available memory:
   prefix them with `.claude/hooks/cargo-serial.sh`, which does both.
 - Commit, push and open PRs only when the user asks.
@@ -219,7 +219,7 @@ A commit scope is the crate directory name under `crates/` (`agent-runtime`,
 
 ```sh
 # Agents prefix each cargo command with .claude/hooks/cargo-serial.sh.
-export CARGO_BUILD_JOBS=2
+export CARGO_BUILD_JOBS=4
 cargo run
 cargo fmt --all --check
 cargo build --workspace --all-targets

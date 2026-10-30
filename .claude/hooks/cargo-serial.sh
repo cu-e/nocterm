@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs one Cargo command with CARGO_BUILD_JOBS=2 under one lock shared by every
+# Runs one Cargo command with CARGO_BUILD_JOBS=4 under one lock shared by every
 # agent of this user on the machine (AGENTS.md, Hard rules). The lock is held
 # by this script only: the command and anything it leaves running in the
 # background do not inherit it.
@@ -10,7 +10,7 @@ if [ "$#" -eq 0 ]; then
   echo "usage: $0 cargo <arguments>" >&2
   exit 64
 fi
-export CARGO_BUILD_JOBS=2
+export CARGO_BUILD_JOBS=4
 lock="${NOCTERM_CARGO_LOCK:-/tmp/nocterm-cargo-$(id -u).lock}"
 waiting() { echo "cargo-serial: waiting for another Cargo command to finish" >&2; }
 # Runs the command as a child that a signal to this script reaches too, and

@@ -179,7 +179,7 @@ class ShellGuard(HookCase):
         self.assertIsNone(self.command("git tag --contains HEAD"))
 
     def test_compiling_cargo_runs_through_the_shared_lock(self):
-        denied = self.command("cd crates && CARGO_BUILD_JOBS=2 cargo test -p nocterm-vt")
+        denied = self.command("cd crates && CARGO_BUILD_JOBS=4 cargo test -p nocterm-vt")
         self.assertEqual(denied["permissionDecision"], "deny")
         self.assertIn("cargo-serial.sh cargo test -p nocterm-vt", denied["permissionDecisionReason"])
         wrapper = HOOKS / "cargo-serial.sh"
@@ -202,7 +202,7 @@ class ShellGuard(HookCase):
     def test_cargo_hidden_behind_prefixes_and_shells_is_found(self):
         for command in [
             "time cargo build --workspace",
-            "env CARGO_BUILD_JOBS=2 nice -n 5 cargo +nightly clippy",
+            "env CARGO_BUILD_JOBS=4 nice -n 5 cargo +nightly clippy",
             "bash -c 'cd crates && cargo test'",
             "cargo --locked test",
             "echo start\ncargo check",
