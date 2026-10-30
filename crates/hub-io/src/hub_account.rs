@@ -23,6 +23,7 @@ pub struct HubAccount {
     relay: crate::relay::RelayCapture,
     operations: Arc<AccountOperations>,
     cloud_material: crate::cloud::account_material::CloudMaterialCapture,
+    cloud_trust: crate::cloud::hub_trust::CloudTrustCapture,
 }
 
 impl HubAccount {
@@ -36,6 +37,11 @@ impl HubAccount {
             operations.clone(),
         );
         let admin_keys = AdminKeys::new(operations.clone());
+        let cloud_trust = crate::cloud::hub_trust::CloudTrustCapture::new(
+            handle.clone(),
+            &pool,
+            operations.clone(),
+        );
         let vault = Arc::new(HubVault::new(
             handle.clone(),
             Arc::clone(&slot),
@@ -52,7 +58,18 @@ impl HubAccount {
             relay,
             operations,
             cloud_material,
+            cloud_trust,
         }
+    }
+
+    /// Opens the original normal account trust owner before a Cloud pin is known.
+    /// Only explicit independently compared setup may create its encrypted record.
+    pub fn cloud_trust(
+        &self,
+        source: Arc<dyn LocalAccountSource>,
+        resident: nocterm_core::allocation::AllocationLease,
+    ) -> Result<crate::cloud::AccountCloudTrust, crate::cloud::CloudTrustError> {
+        self.cloud_trust.capture(source, resident)
     }
 
     /// Capture Cloud access under the independently retained hub authority pin.

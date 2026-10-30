@@ -1,19 +1,15 @@
 //! Fresh account/R nonce witnesses; hub replay cursors never establish authority.
 use super::{capture::NativeSource, clock::SourceClock, sdk_error};
 use nocterm_cloud_model::{
-    authority::RunBinding,
     identity::*,
-    journal::{CurrentChatHead, CurrentHeadFacts, HeadAnchor, HeadAnchorKind, HeadRecordPosition},
+    journal::{CurrentChatHead, HeadAnchor},
     projection::ProjectionError,
 };
 use nocterm_core::allocation::{Allocated, AllocationLease};
 use nocterm_hub_client::cloud::{DeviceHeadProbes, ResidentHeadWitness};
-use nocterm_hub_model::cloud::{
-    RecordKind,
-    head::{
-        ChatHead, HeadProbeKeys, HeadProbeScope, HeadRecordAnchor, HeadTarget, HeadValue,
-        MAX_HEAD_CATALOG_CHATS, MAX_HEAD_CATALOG_PAGE,
-    },
+use nocterm_hub_model::cloud::head::{
+    ChatHead, HeadProbeKeys, HeadProbeScope, HeadRecordAnchor, HeadTarget, HeadValue,
+    MAX_HEAD_CATALOG_CHATS, MAX_HEAD_CATALOG_PAGE,
 };
 use std::sync::Arc;
 
@@ -170,68 +166,14 @@ fn native(source: &NativeSource, value: &ChatHead) -> Result<CurrentChatHead, Pr
     {
         return Err(ProjectionError::WrongSource);
     }
-    CurrentChatHead::new(
-        request.stream.clone(),
-        request.epoch,
-        CurrentHeadFacts {
-            writer: value
-                .current_writer
-                .map(WriterEpoch::new)
-                .transpose()
-                .map_err(|_| ProjectionError::InvalidRecord)?,
-            control: ChatControlRevision::from_u64(value.control_revision),
-            deleted: value.deleted,
-            head: value
-                .head
-                .as_ref()
-                .map(|value| anchor(source, value))
-                .transpose()?,
-            event_floor: EventSequence::from_u64(value.retained_from),
-            snapshot: value
-                .snapshot
-                .as_ref()
-                .map(|value| anchor(source, value))
-                .transpose()?,
-        },
-    )
-    .map_err(|_| ProjectionError::InvalidRecord)
+    crate::cloud::head_mapping::PinnedHeadMapper::for_stream(&request.stream).head(value)
 }
 pub(super) fn anchor(
     source: &NativeSource,
     value: &HeadRecordAnchor,
 ) -> Result<HeadAnchor, ProjectionError> {
     let stream = &source.material().request().stream;
-    let run = value
-        .run
-        .map(|run| {
-            Ok::<_, ProjectionError>(RunBinding::new(
-                stream.scope().clone(),
-                stream.runner(),
-                stream.runner_epoch(),
-                stream.chat(),
-                RunId::from_bytes(run.id),
-                RunEpoch::new(run.expected_epoch).map_err(|_| ProjectionError::InvalidRecord)?,
-            ))
-        })
-        .transpose()?;
-    let position = value.position;
-    let position = HeadRecordPosition::new(
-        WriterEpoch::new(position.writer_epoch).map_err(|_| ProjectionError::InvalidRecord)?,
-        EventSequence::from_u64(position.sequence),
-        JournalSequence::from_u64(position.journal_sequence),
-        StreamRevision::from_u64(position.revision),
-    )
-    .map_err(|_| ProjectionError::InvalidRecord)?;
-    Ok(HeadAnchor::new(
-        match value.kind {
-            RecordKind::Event => HeadAnchorKind::Event,
-            RecordKind::Snapshot => HeadAnchorKind::Snapshot,
-        },
-        position,
-        EventId::from_bytes(value.id),
-        run,
-        Fingerprint::from_bytes(value.ciphertext_digest),
-    ))
+    crate::cloud::head_mapping::PinnedHeadMapper::for_stream(stream).anchor(stream, value)
 }
 pub(super) fn require_monotonic(
     previous: &CurrentChatHead,

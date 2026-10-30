@@ -10,6 +10,7 @@ enum Command {
     Run,
     Health,
     Refresh,
+    ShowPublic,
 }
 struct Arguments {
     command: Command,
@@ -23,6 +24,7 @@ impl Arguments {
             Some("run") => Command::Run,
             Some("health") => Command::Health,
             Some("refresh") => Command::Refresh,
+            Some("show-public") => Command::ShowPublic,
             _ => return Err(RunnerError::Arguments),
         };
         if args.next().as_deref() != Some(std::ffi::OsStr::new("--config")) {
@@ -80,9 +82,17 @@ async fn command(
     if matches!(command, Command::Health) {
         return control::health(&config.state).await;
     }
+    let public_setup = config.public_setup.clone();
     let state = State::open(config, matches!(command, Command::Init))?;
     match command {
         Command::Init => state.print_identity(),
+        Command::ShowPublic => {
+            print!(
+                "{}",
+                public_setup.encode(&state.identity().public_identity()?)?
+            );
+            Ok(())
+        }
         Command::Enrol => {
             let ticket = ticket.ok_or(RunnerError::TicketFormat)?;
             tokio::time::timeout(

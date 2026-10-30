@@ -24,6 +24,8 @@ use nocterm_session::{RelayDialer as _, RelayError, RelayRefusal, Secret, Target
 
 #[path = "hub/account.rs"]
 mod account;
+#[path = "hub/account_cloud.rs"]
+mod account_cloud;
 #[path = "hub/cloud_runtime.rs"]
 mod cloud_runtime;
 #[path = "hub/groups.rs"]

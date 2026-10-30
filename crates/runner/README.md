@@ -36,8 +36,17 @@ arguments or the environment:
 ```sh
 cargo run -p nocterm-runner -- init --config /private/path/runner.toml
 cargo run -p nocterm-runner -- enrol --config /private/path/runner.toml
+cargo run -p nocterm-runner -- show-public --config /private/path/runner.toml
 cargo run -p nocterm-runner -- run --config /private/path/runner.toml
 ```
+
+`show-public` emits a bounded TOML document containing the hub origin/authority,
+account public-key fingerprint, runner assignment and its three public keys.
+Compare these setup values through a trusted channel before registering them on
+the account. The document contains no enrollment ticket, private key, credential
+or state path. Export it before `run`: both commands require the same exclusive
+identity owner, so export refuses while the daemon is running. Keep the private
+configuration and session files private; they are not setup documents.
 
 `init` refuses existing identity state. `run` restores the durable runner session,
 services head probes and serializes credential refresh with those probes. Closing

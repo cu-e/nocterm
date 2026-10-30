@@ -100,6 +100,7 @@ impl ControlLimits {
     }
 }
 pub(crate) struct Configuration {
+    pub(crate) public_setup: crate::public_setup::PublicSetup,
     pub(crate) trust: RunnerHubTrust,
     pub(crate) binding: JournalCatalogBinding,
     pub(crate) account: [u8; 32],
@@ -146,12 +147,21 @@ impl Configuration {
             None => TrustPolicy::PublicCa,
         };
         let trust = RunnerHubTrust::new(
-            HubEndpointSpec { address, trust },
-            document.hub.instance,
+            HubEndpointSpec {
+                address: address.clone(),
+                trust,
+            },
+            document.hub.instance.clone(),
             authority,
         );
         let binding = trust.binding(&document.account.id, account, runner, epoch)?;
         Ok(Self {
+            public_setup: crate::public_setup::PublicSetup::new(
+                &address,
+                &document.hub.instance,
+                authority,
+                binding.clone(),
+            )?,
             trust,
             binding,
             account,

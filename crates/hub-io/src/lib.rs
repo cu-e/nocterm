@@ -43,7 +43,12 @@
 //! finite work reservations; native journal framing never supplies a wire payload.
 //! Provider boot announcements/status use guarded SDK RPCs and independently
 //! installed runner signing pins; hub receipt times never establish freshness.
+//! Account/R catalog pages use the original normal unlocked account and trusted
+//! runner registration before any ChatKey; opaque resident pages bind fresh
+//! signed revisions/cursors and preserve deleted and zero-event heads.
 //! Account Cloud material uses only a dedicated personal encrypted collection.
+//! Normal account keys also open an immutable hub-authority bootstrap record;
+//! explicit setup verifies the candidate capability before creating trust.
 //! Capability pinning and actual native membership precede stable scope checks;
 //! normal unlocked account keysets restore wrapped chat keys on another device.
 //! Material facades keep weak key ownership, immutable runner pins and actual

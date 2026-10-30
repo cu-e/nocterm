@@ -3,7 +3,7 @@ use nocterm_core::SharedCause;
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
     #[error(
-        "usage: nocterm-runner <init|enrol|run|health|refresh> --config <private.toml>; enrol reads its ticket from stdin"
+        "usage: nocterm-runner <init|enrol|run|health|refresh|show-public> --config <private.toml>; enrol reads its ticket from stdin"
     )]
     Arguments,
     #[error("the private runner configuration could not be read")]

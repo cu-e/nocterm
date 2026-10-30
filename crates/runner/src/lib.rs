@@ -7,6 +7,7 @@
 //! Ports used: hub-io runner identity/session/head responder, cloud-runner native
 //! journal/current heads and cloud-model finite budgets. Provided port: CLI.
 //! Settings: a bounded private runner TOML file. Globals: none.
+//! show-public exports an explicit bounded setup allowlist, never private configuration.
 //! Invariants: independent process lifetime; no implicit reset, secret argv/env,
 //! fake execution collaborators or claims of complete tool/account containment.
 mod bootstrap;
@@ -14,6 +15,7 @@ mod cli;
 mod config;
 mod control;
 mod error;
+mod public_setup;
 pub use error::RunnerError;
 
 /// CLI entrypoint. Only static typed top-level diagnostics are printed; native

@@ -113,3 +113,4 @@ acceptance; a later record supersedes an earlier one.
 | [0115](0115-retained-physical-terminals.md) | Physical terminals outlive immutable run views |
 | [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix |
 | [0117](0117-contained-local-tool-processes.md) | Cloud local tools receive an explicit contained process capability |
+| [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account |

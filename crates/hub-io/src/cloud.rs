@@ -42,6 +42,18 @@ pub use runner_registry::{
     AccountRunnerRegistry, RUNNER_REGISTRY_RESIDENT_BYTES, RunnerRegistration, RunnerRegistryError,
     RunnerRegistryReservations, TrustedRunnerRoster, runner_registry_work_bytes,
 };
+pub(crate) mod hub_trust;
+pub use hub_trust::{
+    AccountCloudTrust, CLOUD_TRUST_RESIDENT_BYTES, CloudRunnerSetup, CloudTrustError,
+    CloudTrustReservations, TrustedCloudHub, cloud_trust_work_bytes,
+};
+
+mod head_mapping;
+mod runner_catalog;
+pub use runner_catalog::{
+    AccountRunnerCatalog, RUNNER_CATALOG_RESIDENT_BYTES, RunnerCatalogError, RunnerCatalogPage,
+    runner_catalog_page_bytes, runner_catalog_work_bytes,
+};
 
 mod conversation_source;
 pub use conversation_source::{
