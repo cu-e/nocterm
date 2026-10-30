@@ -329,6 +329,19 @@ impl<'a> Authenticator<'a> {
             },
             _ => None,
         };
+        self.offer_vault_key(named.key_data().clone(), key, hash, certificate)
+            .await
+    }
+
+    /// Offers `key`, with `certificate` when the profile has one. A certificate that does not
+    /// certify this very key is never sent, and the key is then not offered either.
+    async fn offer_vault_key(
+        &mut self,
+        named: KeyData,
+        key: PrivateKey,
+        hash: Option<HashAlg>,
+        certificate: Option<&str>,
+    ) -> Result<bool, SessionError> {
         let certificate = match certificate.map(|text| certificate_for(text, &key)) {
             Some(Err(reason)) => {
                 tracing::warn!(reason, "the certificate cannot be offered");
@@ -337,7 +350,7 @@ impl<'a> Authenticator<'a> {
             Some(Ok(certificate)) => Some(certificate),
             None => None,
         };
-        self.offered.push(named.key_data().clone());
+        self.offered.push(named);
         let result = match certificate {
             Some(certificate) => {
                 self.handle

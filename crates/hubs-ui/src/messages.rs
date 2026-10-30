@@ -102,26 +102,6 @@ fn capitalize(text: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nocterm_hubs_model::HubAddressError;
-
-    #[test]
-    fn a_refused_address_reads_as_a_sentence() {
-        let error = SignInError::Address(HubAddressError::Empty);
-        assert_eq!(sign_in_problem(&error), "The hub address is empty.");
-    }
-
-    #[test]
-    fn refused_credentials_name_the_user_name_and_password() {
-        assert_eq!(
-            hub_problem(&HubError::InvalidCredentials),
-            "The user name or password was not accepted."
-        );
-    }
-}
-
 /// Why an agent access change did not work.
 pub(crate) fn agent_problem(error: &nocterm_hubs_model::AgentAccessError) -> String {
     use nocterm_hubs_model::AgentAccessError as Error;
@@ -143,5 +123,25 @@ pub(crate) fn agent_problem(error: &nocterm_hubs_model::AgentAccessError) -> Str
         Error::Records { .. } => {
             "The agent access records on this device are unusable.".to_owned()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_hubs_model::HubAddressError;
+
+    #[test]
+    fn a_refused_address_reads_as_a_sentence() {
+        let error = SignInError::Address(HubAddressError::Empty);
+        assert_eq!(sign_in_problem(&error), "The hub address is empty.");
+    }
+
+    #[test]
+    fn refused_credentials_name_the_user_name_and_password() {
+        assert_eq!(
+            hub_problem(&HubError::InvalidCredentials),
+            "The user name or password was not accepted."
+        );
     }
 }
