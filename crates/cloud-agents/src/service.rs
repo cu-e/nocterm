@@ -8,8 +8,8 @@ use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{AppContext as _, Context, EventEmitter};
 use nocterm_cloud_agents_model::{
-    AgentId, CloudAgent, CloudAgentError, PersonalAgentDraft, PoolChoice, PoolOffer, SaveOutcome,
-    StartOutcome, StartStep, StepSink,
+    AgentId, CloudAgent, CloudAgentError, PersonalAgentDraft, PinnedPool, PoolChoice, PoolId,
+    PoolOffer, SaveOutcome, StartOutcome, StartStep, StepSink,
 };
 use nocterm_hubs_model::HubId;
 
@@ -190,6 +190,25 @@ impl CloudAgents {
     ) -> gpui::Task<Result<Vec<PoolChoice>, CloudAgentError>> {
         let call = self.deps.catalog.pools(hub);
         cx.background_spawn(call)
+    }
+
+    /// The pools pinned on this device for `hub`.
+    pub fn pinned_pools(
+        &self,
+        hub: &HubId,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<Vec<PinnedPool>, CloudAgentError>> {
+        cx.background_spawn(self.deps.pins.pinned(hub))
+    }
+
+    /// Forgets the pin of `pool` on `hub`; the next start on that pool asks for trust again.
+    pub fn forget_pool(
+        &self,
+        hub: &HubId,
+        pool: &PoolId,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<(), CloudAgentError>> {
+        cx.background_spawn(self.deps.pins.forget(hub, pool))
     }
 
     /// Saves a personal agent; the catalog refreshes through the hub's change hint.

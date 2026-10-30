@@ -77,6 +77,7 @@ fn access(
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
+                pins: Arc::new(fake.clone()),
             },
             cx,
         );

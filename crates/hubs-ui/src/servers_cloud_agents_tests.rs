@@ -55,7 +55,8 @@ fn page(cx: &mut TestAppContext, fake: &FakeCloudAgents) -> Fixture {
             nocterm_cloud_agents::Deps {
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
-                personal: Arc::new(fake),
+                personal: Arc::new(fake.clone()),
+                pins: Arc::new(fake),
             },
             cx,
         );
@@ -151,4 +152,23 @@ fn a_form_missing_its_key_is_refused_before_anything_is_sent(cx: &mut TestAppCon
     page.render(cx);
     assert!(fake.saved().is_empty());
     assert!(page.shows(item("cloud-agents-problem", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_forgotten_pool_key_leaves_the_list_and_is_no_longer_trusted(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    let (kept, dropped) = (PoolId::new("p1").unwrap(), PoolId::new("p2").unwrap());
+    fake.seed_pin(&hub_id(), &kept, "AA:AA");
+    fake.seed_pin(&hub_id(), &dropped, "BB:BB");
+    let page = page(cx, &fake);
+    assert!(page.shows(item("cloud-agents-pinned-p1", KEY), cx));
+    assert!(page.shows(item("cloud-agents-pinned-p2", KEY), cx));
+    page.click(item("cloud-agents-forget-p2", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(!page.shows(item("cloud-agents-pinned-p2", KEY), cx));
+    assert!(page.shows(item("cloud-agents-pinned-p1", KEY), cx));
+    assert!(!fake.is_pinned(&hub_id(), &dropped));
+    assert!(fake.is_pinned(&hub_id(), &kept));
 }

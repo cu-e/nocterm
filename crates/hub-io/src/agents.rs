@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 use nocterm_cloud_agents_model::{
     AgentHints, AgentId, CloudAgent, CloudAgentCatalog, CloudAgentError, CloudAgentLauncher,
-    CloudFuture, PersonalAgentDraft, PersonalAgents, PoolChoice, PoolOffer, SaveOutcome,
-    StartOutcome, StepSink,
+    CloudFuture, PersonalAgentDraft, PersonalAgents, PinnedPool, PoolChoice, PoolId, PoolOffer,
+    PoolPinStore, SaveOutcome, StartOutcome, StepSink,
 };
 use nocterm_hubs_model::HubId;
 use tokio::runtime::Handle;
@@ -101,6 +101,33 @@ impl CloudAgentLauncher for CloudAgentsLink {
     fn pin_pool(&self, hub: &HubId, offer: &PoolOffer) -> CloudFuture<()> {
         let (pins, offer) = (self.pins.clone(), offer.clone());
         self.call(hub, move |captured| launch::pin(captured, pins, offer))
+    }
+}
+
+impl PoolPinStore for CloudAgentsLink {
+    fn pinned(&self, hub: &HubId) -> CloudFuture<Vec<PinnedPool>> {
+        let pins = self.pins.clone();
+        let hub = hub.clone();
+        let task = spawn(&self.handle, async move {
+            pins.list(&hub)?
+                .into_iter()
+                .map(|(pool, keys)| {
+                    Ok(PinnedPool {
+                        pool: PoolId::new(pool).map_err(|_| CloudAgentError::Stale)?,
+                        fingerprint: keys.fingerprint(),
+                    })
+                })
+                .collect()
+        });
+        Box::pin(async move { task.await.unwrap_or(Err(CloudAgentError::Stale)) })
+    }
+
+    fn forget(&self, hub: &HubId, pool: &PoolId) -> CloudFuture<()> {
+        let (pins, hub, pool) = (self.pins.clone(), hub.clone(), pool.clone());
+        let task = spawn(&self.handle, async move {
+            pins.forget(&hub, pool.as_str())
+        });
+        Box::pin(async move { task.await.unwrap_or(Err(CloudAgentError::Stale)) })
     }
 }
 

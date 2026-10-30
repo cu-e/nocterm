@@ -44,7 +44,8 @@ fn install_with(fake: &FakeCloudAgents, cx: &mut TestAppContext) -> crate::Insta
             Deps {
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
-                personal: Arc::new(fake),
+                personal: Arc::new(fake.clone()),
+                pins: Arc::new(fake),
             },
             cx,
         )

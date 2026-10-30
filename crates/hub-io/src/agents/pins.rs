@@ -63,6 +63,36 @@ impl PoolPins {
         }))
     }
 
+    /// Every pool pinned on `hub`, ordered by pool id, with the fingerprint of its keys.
+    pub(super) fn list(&self, hub: &HubId) -> Result<Vec<(String, PoolKeys)>, CloudAgentError> {
+        let _guard = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(self
+            .read(hub)?
+            .pools
+            .into_iter()
+            .map(|(pool, pin)| {
+                (
+                    pool,
+                    PoolKeys {
+                        encryption: pin.encryption,
+                        signing: pin.signing,
+                    },
+                )
+            })
+            .collect())
+    }
+
+    /// Removes the pin of `pool`; a pool that is not pinned is already forgotten.
+    pub(super) fn forget(&self, hub: &HubId, pool: &str) -> Result<(), CloudAgentError> {
+        let _guard = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut file = self.read(hub)?;
+        if file.pools.remove(pool).is_none() {
+            return Ok(());
+        }
+        let bytes = serde_json::to_vec(&file).map_err(storage)?;
+        nocterm_core::fs::write_private_atomic(&self.path(hub), &bytes).map_err(storage)
+    }
+
     /// Pins `keys` for `pool`, replacing nothing: an existing different pin is refused by the
     /// caller before this is reached.
     pub(super) fn pin(
@@ -135,6 +165,25 @@ mod tests {
                 .expect("get")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_forgotten_pin_leaves_the_others_and_forgetting_twice_is_fine() {
+        let dir = tempfile::tempdir().expect("dir");
+        let pins = PoolPins::new(dir.path().to_owned());
+        let on = hub("a.example.org");
+        pins.pin(&on, "p1", &keys(1)).expect("pin");
+        pins.pin(&on, "p2", &keys(3)).expect("pin");
+        let listed = pins.list(&on).expect("list");
+        assert_eq!(
+            listed.iter().map(|(pool, _)| pool.as_str()).collect::<Vec<_>>(),
+            ["p1", "p2"]
+        );
+        pins.forget(&on, "p1").expect("forget");
+        pins.forget(&on, "p1").expect("forget again");
+        assert!(pins.get(&on, "p1").expect("get").is_none());
+        assert_eq!(pins.get(&on, "p2").expect("get"), Some(keys(3)));
+        assert!(pins.list(&hub("b.example.org")).expect("list").is_empty());
     }
 
     #[test]

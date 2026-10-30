@@ -6,6 +6,7 @@
 //! again; the service seals the definition to the pool and the hub stays blind to it.
 
 mod form;
+mod pinned;
 
 use gpui_kit::{
     App, ClickEvent, Context, Entity, Subscription, Task, TestSupportExt as _, Window,
@@ -23,13 +24,14 @@ use gpui_kit::{
 };
 use nocterm_cloud_agents::{CatalogStatus, CloudAgents};
 use nocterm_cloud_agents_model::{
-    AgentScope, CloudAgent, CloudAgentError, ProviderKind, SaveOutcome, web_panel_url,
+    AgentScope, CloudAgent, CloudAgentError, PinnedPool, PoolId, ProviderKind, SaveOutcome, web_panel_url,
 };
 use nocterm_hubs_model::HubId;
 
 use crate::layout::{field, note, problem};
 use crate::servers::item;
 use form::{Form, Prefill};
+use pinned::pinned_section;
 
 /// The agents of the server that is shown, and the form of one of them.
 pub(in crate::servers) struct CloudAgentsTab {
@@ -38,6 +40,8 @@ pub(in crate::servers) struct CloudAgentsTab {
     form: Option<Form>,
     working: Option<Task<()>>,
     problem: Option<String>,
+    pinned: Vec<PinnedPool>,
+    pinning: Option<Task<()>>,
     _service: Subscription,
 }
 
@@ -50,6 +54,8 @@ impl CloudAgentsTab {
             form: None,
             working: None,
             problem: None,
+            pinned: Vec::new(),
+            pinning: None,
         }
     }
 
@@ -60,16 +66,60 @@ impl CloudAgentsTab {
             self.form = None;
             self.working = None;
             self.problem = None;
+            self.pinned.clear();
             self.service
                 .update(cx, |service, cx| service.track(hub, cx));
+            self.refresh_pinned(cx);
             cx.notify();
         }
     }
 
     pub(in crate::servers) fn hide(&mut self) {
         self.hub = None;
+        self.pinning = None;
         self.form = None;
         self.working = None;
+    }
+
+    fn refresh_pinned(&mut self, cx: &mut Context<Self>) {
+        let Some(hub) = self.hub.clone() else {
+            return;
+        };
+        let listing = self
+            .service
+            .update(cx, |service, cx| service.pinned_pools(&hub, cx));
+        self.pinning = Some(cx.spawn(async move |this, cx| {
+            let result = listing.await;
+            this.update(cx, |tab, cx| {
+                match result {
+                    Ok(pinned) => tab.pinned = pinned,
+                    Err(error) => tab.problem = Some(describe(&error)),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn forget_pool(&mut self, pool: &PoolId, cx: &mut Context<Self>) {
+        let Some(hub) = self.hub.clone() else {
+            return;
+        };
+        self.problem = None;
+        let forgetting = self
+            .service
+            .update(cx, |service, cx| service.forget_pool(&hub, pool, cx));
+        self.pinning = Some(cx.spawn(async move |this, cx| {
+            let result = forgetting.await;
+            this.update(cx, |tab, cx| {
+                match result {
+                    Ok(()) => tab.refresh_pinned(cx),
+                    Err(error) => tab.problem = Some(describe(&error)),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     fn open_form(&mut self, prefill: Option<Prefill>, window: &mut Window, cx: &mut Context<Self>) {
@@ -300,6 +350,7 @@ impl Render for CloudAgentsTab {
                     .map(|form| render_form(form, &key, &view, cx)),
             )
             .child(body)
+            .children(pinned_section(&self.pinned, &key, &view, cx))
             .into_any_element()
     }
 }

@@ -74,6 +74,25 @@ pub trait CloudAgentLauncher: Send + Sync {
     fn pin_pool(&self, hub: &HubId, offer: &PoolOffer) -> CloudFuture<()>;
 }
 
+/// A pool whose keys this device pinned.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinnedPool {
+    /// The pool.
+    pub pool: PoolId,
+    /// The fingerprint of the keys that were pinned, as the person compared it.
+    pub fingerprint: String,
+}
+
+/// The pool keys this device trusts, per hub. Forgetting a pin makes the next start of an
+/// agent on that pool ask the person to compare the fingerprint again.
+pub trait PoolPinStore: Send + Sync {
+    /// The pools pinned for `hub`, in a stable order.
+    fn pinned(&self, hub: &HubId) -> CloudFuture<Vec<PinnedPool>>;
+
+    /// Removes the pin of `pool` on `hub`; forgetting a pool that is not pinned succeeds.
+    fn forget(&self, hub: &HubId, pool: &PoolId) -> CloudFuture<()>;
+}
+
 /// What saving a personal agent came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SaveOutcome {

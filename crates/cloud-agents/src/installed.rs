@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Entity};
-use nocterm_cloud_agents_model::{CloudAgentCatalog, CloudAgentLauncher, PersonalAgents};
+use nocterm_cloud_agents_model::{
+    CloudAgentCatalog, CloudAgentLauncher, PersonalAgents, PoolPinStore,
+};
 
 use crate::service::CloudAgents;
 
@@ -13,6 +15,7 @@ pub struct Deps {
     pub catalog: Arc<dyn CloudAgentCatalog>,
     pub launcher: Arc<dyn CloudAgentLauncher>,
     pub personal: Arc<dyn PersonalAgents>,
+    pub pins: Arc<dyn PoolPinStore>,
 }
 
 /// The entity shared by every window, kept alive by whoever composes the application.

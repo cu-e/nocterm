@@ -3,7 +3,7 @@
 //! Enable `test-support` in a dev-dependency. A call completes when it is polled. Clones share
 //! one state, so a test keeps a handle while the code under test holds another.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use futures::FutureExt as _;
@@ -17,8 +17,8 @@ use crate::error::CloudAgentError;
 use crate::ids::{AgentId, InstanceId, PoolId};
 use crate::personal::PersonalAgentDraft;
 use crate::ports::{
-    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, PersonalAgents, PoolChoice,
-    SaveOutcome, StartOutcome, StepSink,
+    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, PersonalAgents, PinnedPool,
+    PoolChoice, PoolPinStore, SaveOutcome, StartOutcome, StepSink,
 };
 use crate::start::{PoolOffer, StartStep, StartedAgent};
 
@@ -77,7 +77,7 @@ struct State {
     failing: BTreeMap<HubId, FakeFailure>,
     watchers: Vec<(HubId, mpsc::UnboundedSender<u64>)>,
     pools: BTreeMap<HubId, Vec<PoolChoice>>,
-    pinned: BTreeSet<(HubId, PoolId)>,
+    pinned: BTreeMap<(HubId, PoolId), String>,
     offers: BTreeMap<AgentId, PoolOffer>,
     scripts: BTreeMap<AgentId, VecDeque<StartScript>>,
     starts: Vec<AgentId>,
@@ -137,9 +137,16 @@ impl FakeCloudAgents {
             .push_back(script);
     }
 
+    /// Pins `pool` on `hub` as if the person had trusted it earlier.
+    pub fn seed_pin(&self, hub: &HubId, pool: &PoolId, fingerprint: &str) {
+        self.state()
+            .pinned
+            .insert((hub.clone(), pool.clone()), fingerprint.to_owned());
+    }
+
     /// Whether the pool's keys were pinned through the launcher.
     pub fn is_pinned(&self, hub: &HubId, pool: &PoolId) -> bool {
-        self.state().pinned.contains(&(hub.clone(), pool.clone()))
+        self.state().pinned.contains_key(&(hub.clone(), pool.clone()))
     }
 
     /// Agents started so far, in order, including repeated attempts.
@@ -209,7 +216,7 @@ impl CloudAgentLauncher for FakeCloudAgents {
                 return Err(failure.error());
             }
             if let Some(offer) = state.offers.get(agent)
-                && !state.pinned.contains(&(hub.clone(), offer.pool.clone()))
+                && !state.pinned.contains_key(&(hub.clone(), offer.pool.clone()))
             {
                 let offer = offer.clone();
                 steps(StartStep::TrustingPool(offer.clone()));
@@ -229,9 +236,34 @@ impl CloudAgentLauncher for FakeCloudAgents {
 
     fn pin_pool(&self, hub: &HubId, offer: &PoolOffer) -> CloudFuture<()> {
         let result = self.check(hub).map(|()| {
+            self.state().pinned.insert(
+                (hub.clone(), offer.pool.clone()),
+                offer.fingerprint.clone(),
+            );
+        });
+        async move { result }.boxed()
+    }
+}
+
+impl PoolPinStore for FakeCloudAgents {
+    fn pinned(&self, hub: &HubId) -> CloudFuture<Vec<PinnedPool>> {
+        let result = self.check(hub).map(|()| {
             self.state()
                 .pinned
-                .insert((hub.clone(), offer.pool.clone()));
+                .iter()
+                .filter(|((pinned_on, _), _)| pinned_on == hub)
+                .map(|((_, pool), fingerprint)| PinnedPool {
+                    pool: pool.clone(),
+                    fingerprint: fingerprint.clone(),
+                })
+                .collect()
+        });
+        async move { result }.boxed()
+    }
+
+    fn forget(&self, hub: &HubId, pool: &PoolId) -> CloudFuture<()> {
+        let result = self.check(hub).map(|()| {
+            self.state().pinned.remove(&(hub.clone(), pool.clone()));
         });
         async move { result }.boxed()
     }

@@ -42,8 +42,8 @@ pub use personal::{
     PersonalAgentDraft, ProviderKind,
 };
 pub use ports::{
-    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, PersonalAgents, PoolChoice,
-    SaveOutcome, StartOutcome, StepSink, web_panel_url,
+    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, PersonalAgents, PinnedPool,
+    PoolChoice, PoolPinStore, SaveOutcome, StartOutcome, StepSink, web_panel_url,
 };
 pub use scope::AgentScope;
 pub use sections::{Audience, HubAgents, Section, SectionTitle, arrange};
