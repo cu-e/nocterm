@@ -72,6 +72,7 @@ impl Endpoint {
     pub(super) async fn serve(
         self,
         ready: Arc<AtomicBool>,
+        executing: Arc<AtomicBool>,
         work: Arc<RunnerHeadWork>,
     ) -> Result<(), RunnerError> {
         loop {
@@ -80,7 +81,7 @@ impl Endpoint {
                 let mut request = [0u8; 7];
                 socket.read_exact(&mut request).await?;
                 if &request != b"health\n" { return Ok::<_, std::io::Error>(()); }
-                let response = format!("nocterm-runner-health-v1\nmode=control-plane\nexecution_ready=false\nready={}\nhead_reads={}\nhead_operations={}\n", ready.load(Ordering::Acquire), work.in_flight_reads(), work.in_flight_operations());
+                let response = format!("nocterm-runner-health-v1\nmode=control-plane\nexecution_ready={}\nready={}\nhead_reads={}\nhead_operations={}\n", executing.load(Ordering::Acquire), ready.load(Ordering::Acquire), work.in_flight_reads(), work.in_flight_operations());
                 socket.write_all(response.as_bytes()).await?;
                 socket.shutdown().await
             }).await;
@@ -113,9 +114,11 @@ async fn read(directory: &Path) -> Result<String, RunnerError> {
             .map_err(RunnerError::Control)?;
         let text = String::from_utf8(bytes).map_err(|_| RunnerError::Value("control response"))?;
         if text.len() > RESPONSE_BYTES
-            || !text.starts_with(
-                "nocterm-runner-health-v1\nmode=control-plane\nexecution_ready=false\n",
-            )
+            || !["true", "false"].iter().any(|ready| {
+                text.starts_with(&format!(
+                    "nocterm-runner-health-v1\nmode=control-plane\nexecution_ready={ready}\n"
+                ))
+            })
             || !text
                 .bytes()
                 .all(|value| value == b'\n' || value.is_ascii_graphic())
@@ -137,10 +140,14 @@ mod tests {
         let endpoint = Endpoint::bind(directory.path()).unwrap();
         let work = super::super::worker::work().unwrap();
         let ready = Arc::new(AtomicBool::new(true));
-        let task = tokio::spawn(endpoint.serve(ready, work));
+        let executing = Arc::new(AtomicBool::new(false));
+        let task = tokio::spawn(endpoint.serve(ready, executing.clone(), work));
         let response = read(directory.path()).await.unwrap();
         assert!(response.contains("ready=true\n"));
         assert!(response.contains("execution_ready=false\n"));
+        executing.store(true, Ordering::Release);
+        let response = read(directory.path()).await.unwrap();
+        assert!(response.contains("execution_ready=true\n"));
         task.abort();
         let _ = task.await;
         assert!(!directory.path().join(SOCKET).exists());

@@ -14,6 +14,7 @@ pub(super) struct ExecutionBudgets {
     snapshots: Arc<dyn PublicationWorkBudget>,
     attachments: Arc<dyn PublicationWorkBudget>,
     sessions: Arc<dyn PublicationWorkBudget>,
+    capture: Arc<dyn PublicationWorkBudget>,
     arguments: Arc<dyn PublicationWorkBudget>,
 }
 impl ExecutionBudgets {
@@ -43,6 +44,7 @@ impl ExecutionBudgets {
             snapshots: pool(256 * 1024 * 1024, 4)?,
             attachments: pool(8 * 1024 * 1024, 64)?,
             sessions: pool(8 * 1024 * 1024, 128)?,
+            capture: pool(32 * 1024 * 1024, 512)?,
             arguments: pool(2 * 1024 * 1024, 32)?,
         })
     }
@@ -63,6 +65,9 @@ impl ExecutionBudgets {
     }
     pub(super) fn sessions(&self) -> Arc<dyn PublicationWorkBudget> {
         self.sessions.clone()
+    }
+    pub(super) fn capture(&self) -> Arc<dyn PublicationWorkBudget> {
+        self.capture.clone()
     }
     pub(super) fn arguments(&self) -> Arc<dyn PublicationWorkBudget> {
         self.arguments.clone()

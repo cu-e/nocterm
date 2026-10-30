@@ -1,9 +1,12 @@
 //! Independent persistent Cloud control-plane executable.
 //!
 //! Owns: explicit private R initialization/enrollment/restoration, configured
-//! native collaborators, bounded fresh-head service and graceful task drain.
-//! Does not own: GPUI, model/tool execution, device/account root keys, provider
-//! credentials, protocol codecs or server implementation. Execution is disabled.
+//! native collaborators, bounded fresh-head service, explicit execution
+//! composition (command inbox, coordinator, providers, session broker, outbox
+//! delivery) when configured, and graceful task drain.
+//! Does not own: GPUI, model/tool engines, device/account root keys, provider
+//! credentials, protocol codecs or server implementation. Execution stays disabled
+//! unless both `[execution]` and `[session_targets]` are configured.
 //! Ports used: hub-io runner identity/session/head responder, cloud-runner native
 //! journal/current heads and cloud-model finite budgets. Provided port: CLI.
 //! Settings: a bounded private runner TOML file. Globals: none.

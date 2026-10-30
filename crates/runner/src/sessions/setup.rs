@@ -9,7 +9,7 @@ use nocterm_cloud_model::{
         ToolExecutionError, ToolSessionHandleSource, ToolTaskSpawner, ToolTimer,
     },
 };
-use nocterm_cloud_runner::CoordinatorStorage;
+use nocterm_cloud_runner::coordinator::CoordinatorStorage;
 use nocterm_core::SharedCause;
 use nocterm_hub_io::cloud::{RunnerCommandAttachments, RunnerHubConnection};
 use std::sync::Arc;
