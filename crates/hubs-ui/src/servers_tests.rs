@@ -3,19 +3,35 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::{ServersPage, row::item, settings_page};
+use super::{ServersPage, item, settings_page};
 use crate::test_support::{Fixture, fixture_over, hub_id, pinned_record, server};
-use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
+use gpui_kit::{AppContext as _, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_hubs::{HubStatus, HubSummary};
-use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
+use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp, FakeServer};
 use nocterm_hubs_model::{
-    Environment, Fingerprint, HubAdminKeys as _, HubColor, HubRecord, HubSignIn as _,
-    PendingAdminKey, TrustPolicy,
+    DeviceSummary, Environment, Fingerprint, HubAdminKeys as _, HubColor, HubError, HubRecord,
+    HubSignIn as _, PendingAdminKey, TrustPolicy,
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
 
 const KEY: &str = "hub.home:7443";
+const OTHER: &str = "hub.work:7443";
+
+const OVERVIEW: usize = 0;
+const DEVICES: usize = 1;
+const KEYS: usize = 2;
+
+/// Opens the tab `index` of the selected server.
+fn open_tab(page: &Fixture, index: usize, cx: &mut TestAppContext) {
+    page.render(cx);
+    cx.update_window(page.window, |_, window, cx| {
+        window.within("servers-tabs").click(index, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    page.render(cx);
+}
 
 /// The page in a window of its own, over a hub that `signed_in` names a user of.
 fn page_over(
@@ -273,6 +289,7 @@ fn a_server_whose_recovery_key_was_never_confirmed_offers_a_new_one(cx: &mut Tes
     hub.leave_recovery_key_unconfirmed(&hub_id());
     let config = SettingsConfig::in_memory(SettingsDocument::default());
     let page = page_on(cx, config, hub, vec![pinned_record()], Some("ada"));
+    open_tab(&page, KEYS, cx);
     assert!(page.shows(item("server-recovery-issue", KEY), cx));
 
     page.click(item("server-recovery-issue", KEY), cx);
@@ -294,6 +311,7 @@ fn a_server_whose_recovery_key_was_never_confirmed_offers_a_new_one(cx: &mut Tes
 #[gpui_kit::test]
 fn a_server_with_a_confirmed_recovery_key_offers_no_new_one(cx: &mut TestAppContext) {
     let page = page(cx, vec![pinned_record()]);
+    open_tab(&page, KEYS, cx);
     assert!(!page.shows(item("server-recovery-issue", KEY), cx));
 }
 
@@ -326,6 +344,7 @@ fn the_offer_of_a_new_recovery_key_appears_as_soon_as_the_vault_is_unlocked(
     hub.lock_keys(&hub_id());
     let config = SettingsConfig::in_memory(SettingsDocument::default());
     let page = page_on(cx, config, hub.clone(), vec![pinned_record()], Some("ada"));
+    open_tab(&page, KEYS, cx);
     assert!(
         !page.shows(item("server-recovery-issue", KEY), cx),
         "a locked vault offers nothing"
@@ -355,6 +374,7 @@ const GRACE_KEY: &str = "AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-0000-1111-2222-3333";
 /// The page over a signed-in server, with Grace's key waiting for confirmation.
 fn page_with_pending_key(cx: &mut TestAppContext, replaces: Option<&str>) -> Fixture {
     let page = page(cx, vec![pinned_record()]);
+    open_tab(&page, KEYS, cx);
     page.admin_keys.offer(&hub_id(), grace(GRACE_KEY, replaces));
     cx.run_until_parked();
     page.render(cx);
@@ -364,7 +384,9 @@ fn page_with_pending_key(cx: &mut TestAppContext, replaces: Option<&str>) -> Fix
 #[gpui_kit::test]
 fn a_server_with_no_pending_administrator_key_shows_no_confirmation(cx: &mut TestAppContext) {
     let page = page(cx, vec![pinned_record()]);
+    open_tab(&page, KEYS, cx);
     assert!(!page.shows(item("server-admin-keys", KEY), cx));
+    assert!(page.shows(item("server-keys-settled", KEY), cx));
 }
 
 #[gpui_kit::test]
@@ -372,6 +394,7 @@ fn a_pending_administrator_key_appears_with_its_fingerprint_as_soon_as_it_is_fou
     cx: &mut TestAppContext,
 ) {
     let page = page(cx, vec![pinned_record()]);
+    open_tab(&page, KEYS, cx);
     assert!(!page.shows(item("server-admin-keys", KEY), cx));
 
     page.admin_keys.offer(&hub_id(), grace(GRACE_KEY, None));
@@ -386,10 +409,10 @@ fn a_pending_administrator_key_appears_with_its_fingerprint_as_soon_as_it_is_fou
 #[test]
 fn the_fingerprint_is_grouped_for_reading() {
     assert_eq!(
-        super::admin_keys::grouped(GRACE_KEY),
+        super::tabs::admin_keys::grouped(GRACE_KEY),
         "AAAA BBBB CCCC DDDD EEEE FFFF 0000 1111\n2222 3333"
     );
-    assert_eq!(super::admin_keys::grouped("short"), "short");
+    assert_eq!(super::tabs::admin_keys::grouped("short"), "short");
 }
 
 #[gpui_kit::test]
@@ -461,4 +484,202 @@ fn closed_account_keys_hide_the_pending_administrators(cx: &mut TestAppContext) 
     page.render(cx);
 
     assert!(!page.shows(item("server-admin-keys", KEY), cx));
+}
+
+fn two_servers() -> (FakeHub, Vec<HubRecord>) {
+    let other = FakeServer::new(OTHER, 7)
+        .named("Work hub")
+        .with_user("ada", "secret", "lab");
+    let records = vec![pinned_record(), other.pinned_record("Work")];
+    (
+        FakeHub::new().with_server(server()).with_server(other),
+        records,
+    )
+}
+
+fn device(id: &str, name: &str, seen: i64, current: bool) -> DeviceSummary {
+    DeviceSummary {
+        id: id.into(),
+        name: name.into(),
+        platform: "desktop".into(),
+        created_at_ms: 1_000,
+        last_seen_at_ms: seen,
+        is_current: current,
+    }
+}
+
+/// The page over a signed-in server whose account has a laptop (this device) and a phone.
+fn page_with_devices(cx: &mut TestAppContext) -> Fixture {
+    let page = page(cx, vec![pinned_record()]);
+    page.devices.set(
+        &hub_id(),
+        vec![
+            device("phone", "Pixel", 1_700_000_000_000, false),
+            device("laptop", "Laptop", 1_700_000_500_000, true),
+        ],
+    );
+    page
+}
+
+#[gpui_kit::test]
+fn the_first_server_is_selected_and_choosing_another_shows_its_overview(cx: &mut TestAppContext) {
+    let (hub, records) = two_servers();
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let page = page_on(cx, config, hub, records, Some("ada"));
+    assert!(page.shows(item("server-select", KEY), cx));
+    assert!(page.shows(item("server-select", OTHER), cx));
+    assert!(page.shows(item("server-overview", KEY), cx));
+    assert!(!page.shows(item("server-overview", OTHER), cx));
+
+    page.click(item("server-select", OTHER), cx);
+
+    assert!(page.shows(item("server-overview", OTHER), cx));
+    assert!(!page.shows(item("server-overview", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn the_tabs_switch_between_the_overview_the_devices_and_the_keys(cx: &mut TestAppContext) {
+    let page = page_with_devices(cx);
+    assert!(page.shows(item("server-overview", KEY), cx));
+
+    open_tab(&page, DEVICES, cx);
+    assert!(page.shows("devices-tab", cx));
+    assert!(!page.shows(item("server-overview", KEY), cx));
+
+    open_tab(&page, KEYS, cx);
+    assert!(page.shows(item("server-trust-tab", KEY), cx));
+    assert!(!page.shows("devices-tab", cx));
+
+    open_tab(&page, OVERVIEW, cx);
+    assert!(page.shows(item("server-overview", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn choosing_another_server_starts_at_its_overview(cx: &mut TestAppContext) {
+    let (hub, records) = two_servers();
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let page = page_on(cx, config, hub, records, Some("ada"));
+    open_tab(&page, KEYS, cx);
+
+    page.click(item("server-select", OTHER), cx);
+
+    assert!(page.shows(item("server-overview", OTHER), cx));
+}
+
+#[gpui_kit::test]
+fn the_devices_tab_lists_the_account_devices_and_marks_this_one(cx: &mut TestAppContext) {
+    let page = page_with_devices(cx);
+    open_tab(&page, DEVICES, cx);
+
+    assert!(page.shows(item("device", "phone"), cx));
+    assert!(page.shows(item("device", "laptop"), cx));
+    assert!(page.shows(item("device-current", "laptop"), cx));
+    assert!(!page.shows(item("device-current", "phone"), cx));
+    assert!(page.shows(item("device-seen", "phone"), cx));
+}
+
+#[gpui_kit::test]
+fn the_devices_tab_says_so_while_the_list_is_read_and_when_there_is_none(cx: &mut TestAppContext) {
+    let page = page(cx, vec![pinned_record()]);
+    let release = page.devices.hold_next_list();
+    open_tab(&page, DEVICES, cx);
+    assert!(page.shows("devices-loading", cx));
+
+    drop(release);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(!page.shows("devices-loading", cx));
+    assert!(page.shows("devices-empty", cx));
+}
+
+#[gpui_kit::test]
+fn a_device_list_that_cannot_be_read_is_reported_and_read_again_on_request(
+    cx: &mut TestAppContext,
+) {
+    let page = page_with_devices(cx);
+    page.devices.fail_with(HubError::PermissionDenied);
+    open_tab(&page, DEVICES, cx);
+    assert!(page.shows("devices-error", cx));
+    assert!(!page.shows(item("device", "phone"), cx));
+
+    page.devices.recover();
+    page.click("devices-retry", cx);
+    cx.run_until_parked();
+    page.render(cx);
+
+    assert!(!page.shows("devices-error", cx));
+    assert!(page.shows(item("device", "phone"), cx));
+}
+
+#[gpui_kit::test]
+fn revoking_a_device_asks_first_and_keeping_it_changes_nothing(cx: &mut TestAppContext) {
+    let page = page_with_devices(cx);
+    open_tab(&page, DEVICES, cx);
+
+    page.click(item("device-revoke", "phone"), cx);
+    page.settle_dialog(cx);
+    assert!(page.has_dialog(cx), "revoking asks first");
+    assert!(page.devices.revoked().is_empty());
+    page.click("revoke-device-keep", cx);
+    cx.run_until_parked();
+
+    assert!(page.devices.revoked().is_empty());
+    assert!(page.shows(item("device", "phone"), cx));
+}
+
+#[gpui_kit::test]
+fn confirming_revokes_the_device_and_the_list_is_read_again(cx: &mut TestAppContext) {
+    let page = page_with_devices(cx);
+    open_tab(&page, DEVICES, cx);
+
+    page.click(item("device-revoke", "phone"), cx);
+    page.settle_dialog(cx);
+    page.click("revoke-device-confirm", cx);
+    cx.run_until_parked();
+    page.render(cx);
+
+    assert_eq!(page.devices.revoked(), vec![(hub_id(), "phone".to_owned())]);
+    assert!(!page.shows(item("device", "phone"), cx));
+    assert!(page.shows(item("device", "laptop"), cx));
+}
+
+#[gpui_kit::test]
+fn revoking_this_device_signs_out_of_the_server(cx: &mut TestAppContext) {
+    let page = page_with_devices(cx);
+    open_tab(&page, DEVICES, cx);
+
+    page.click(item("device-revoke", "laptop"), cx);
+    page.settle_dialog(cx);
+    page.click("revoke-device-confirm", cx);
+    cx.run_until_parked();
+    page.render(cx);
+
+    assert!(
+        page.devices.revoked().is_empty(),
+        "the sign-out path ends the session"
+    );
+    assert_eq!(page.hub.count(FakeOp::SignOut), 1);
+    assert_eq!(servers(&page, cx)[0].status, HubStatus::SignedOut);
+    assert!(page.shows(item("server-tab-signed-out", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_server_that_is_not_signed_in_offers_signing_in_instead_of_devices_and_keys(
+    cx: &mut TestAppContext,
+) {
+    let config = SettingsConfig::in_memory(SettingsDocument::default());
+    let page = page_over(cx, config, vec![pinned_record()], None);
+
+    open_tab(&page, DEVICES, cx);
+    assert!(page.shows(item("server-tab-signed-out", KEY), cx));
+    assert!(page.shows(item("server-tab-sign-in", KEY), cx));
+    assert!(!page.shows("devices-tab", cx));
+
+    open_tab(&page, KEYS, cx);
+    assert!(page.shows(item("server-tab-signed-out", KEY), cx));
+    assert!(!page.shows(item("server-trust-tab", KEY), cx));
+
+    page.click(item("server-tab-sign-in", KEY), cx);
+    page.settle_dialog(cx);
+    assert!(page.has_dialog(cx), "the sign-in dialog opens");
 }

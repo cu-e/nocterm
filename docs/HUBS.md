@@ -171,20 +171,36 @@ server carries only the first connection.
 
 ## Manage servers
 
-**Settings → Servers** (or the command **Hubs: Manage servers**) lists every known server:
+**Settings → Servers** (or the command **Hubs: Manage servers**) shows the known servers in a
+list on the left (colour mark, name and a dot in the colour of the status) with **Sign in to a
+server…** below it. The first server is selected; choosing another shows it from its first tab.
+The selected server has three tabs:
 
-- **Name** is what the server is called. Edit it and press Enter, or leave the
-  field, to save. An empty name shows the address again.
-- **Colour** marks the server: its icon takes the colour in the current
-  theme. **None** clears it.
-- The status reads as above, with the **certificate** below: the pinned fingerprint, or a
-  note that a public authority vouches for the server. When the certificate changed, the
-  fingerprint the server presents is shown next to the trusted one. Fingerprints are only shown;
-  nothing on this page accepts a certificate.
-- **Sign out** deletes this device's credentials for the server and keeps it in the list, so the
-  page offers to sign in again. It is offered while this device is signed in.
-- **Remove…** asks, then deletes the credentials and the entry. For a changed certificate this is the only way forward: remove the server and sign in
-  again, comparing the new fingerprint with the one the server prints.
+- **Overview**
+  - **Name** is what the server is called. Edit it and press Enter, or leave the field, to
+    save. An empty name shows the address again.
+  - **Colour** marks the server: its icon takes the colour in the current theme. **None** clears
+    it.
+  - The status reads as above, with **Try again** while the server is offline, and the
+    **certificate** below: the pinned fingerprint, or a note that a public authority vouches for
+    the server. When the certificate changed, the fingerprint the server presents is shown next
+    to the trusted one. Fingerprints are only shown; nothing on this page accepts a certificate.
+  - **Sign out** deletes this device's credentials for the server and keeps it in the list, so
+    the page offers to sign in again. It is offered while this device is signed in.
+  - **Remove…** asks, then deletes the credentials and the entry. For a changed certificate this
+    is the only way forward: remove the server and sign in again, comparing the new fingerprint
+    with the one the server prints.
+- **Devices** lists the devices signed in to your account on the server: name, kind, when it
+  was last seen and a **This device** marker. **Revoke** asks first, then signs the device out of
+  the account; revoking this device signs it out of the server like **Sign out**.
+- **Keys & trust** offers **Issue a new recovery key** while the recovery key made with your
+  account keys was never confirmed as saved, and the administrator keys that wait for your
+  confirmation: compare each fingerprint with the one the administrator sees in `hubctl`, out of
+  band, and confirm only when they are identical. A changed key is shown with a warning and
+  both fingerprints.
+
+While this device is not signed in to a server, **Devices** and **Keys & trust** only offer
+**Sign in**.
 
 A change that cannot be saved to `settings.toml` is reported and leaves the list as it was.
 

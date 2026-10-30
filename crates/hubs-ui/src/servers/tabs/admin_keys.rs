@@ -1,4 +1,4 @@
-//! The administrators whose key waits for the person's confirmation, on the row of a server.
+//! The administrators whose key waits for the person's confirmation, on the Keys & trust tab of a server.
 //!
 //! The page only shows what the account offers and passes the decision on: it never judges
 //! whether a fingerprint is right. A person compares it with the one the administrator sees in
@@ -17,16 +17,16 @@ use gpui_kit::{
 use nocterm_hubs::{HubSummary, Hubs};
 use nocterm_hubs_model::AdminKeyOffer;
 
-use super::row::item;
 use crate::layout::{field, note, problem};
 use crate::manage;
+use crate::servers::item;
 
 /// Fingerprint groups on one line.
 const GROUPS_PER_LINE: usize = 8;
 
 /// A fingerprint as lines of groups, which are easier to compare by eye. A text without groups
 /// is shown as it is.
-pub(super) fn grouped(fingerprint: &str) -> String {
+pub(in crate::servers) fn grouped(fingerprint: &str) -> String {
     let groups: Vec<&str> = fingerprint.split(['-', ' ']).collect();
     groups
         .chunks(GROUPS_PER_LINE)

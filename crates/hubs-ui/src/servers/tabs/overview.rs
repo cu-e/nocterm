@@ -1,9 +1,9 @@
-//! One server on the Servers page.
+//! The Overview tab of a server on the Servers page.
 
 use gpui_kit::{
-    App, ClickEvent, ElementId, Entity, TestSupportExt as _, Window,
+    App, ClickEvent, Entity, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Icon, Selectable as _, Sizable as _, StyledExt as _,
+        ActiveTheme as _, Icon, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex, v_flex,
     },
@@ -19,15 +19,12 @@ use crate::color::tint;
 use crate::commands::can_sign_out;
 use crate::layout::{field, fingerprint_block, note, problem};
 use crate::manage;
-use crate::status::{status_chip, status_icon};
+use crate::servers::item;
+use crate::status::status_chip;
 
-/// The id of the element of kind `kind` in the row of the server at `address`.
-pub(super) fn item(kind: &str, address: &str) -> ElementId {
-    ElementId::Name(format!("{kind}-{address}").into())
-}
-
-/// The row of one server: name, colour, status, certificate and what can be done to it.
-pub(super) fn server_row(
+/// Everything about the server itself: status, address, name, colour, certificate and what can
+/// be done to it.
+pub(in crate::servers) fn overview(
     summary: &HubSummary,
     record: &HubRecord,
     name: &SettingsTextField,
@@ -35,32 +32,15 @@ pub(super) fn server_row(
     cx: &App,
 ) -> gpui_kit::AnyElement {
     let key = summary.address.to_string();
-    let theme = cx.theme();
     let (status, status_color) = status_chip(&summary.status, cx);
-    let icon_color = summary
-        .color
-        .map_or(theme.muted_foreground, |color| tint(color, cx));
     v_flex()
-        .id(item("server", &key))
+        .id(item("server-overview", &key))
         .test_support()
         .gap_3()
-        .p_3()
-        .rounded(theme.radius)
-        .border_1()
-        .border_color(theme.border)
         .child(
             h_flex()
                 .gap_2()
                 .items_center()
-                .child(Icon::new(status_icon(&summary.status)).text_color(icon_color))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .font_semibold()
-                        .child(summary.label.clone()),
-                )
                 .child(
                     div()
                         .id(item("server-status", &key))
@@ -68,7 +48,8 @@ pub(super) fn server_row(
                         .text_xs()
                         .text_color(status_color)
                         .child(status),
-                ),
+                )
+                .children(retry(summary, hubs, &key)),
         )
         .child(note(summary.address.to_string(), cx))
         .child(field(
@@ -81,10 +62,24 @@ pub(super) fn server_row(
         .children(name.error(cx).map(|error| problem(error.to_string(), cx)))
         .child(colors(summary, hubs, &key, cx))
         .child(certificate(summary, record, &key, cx))
-        .children(super::admin_keys::admin_keys(summary, hubs, &key, cx))
-        .children(recovery_key(summary, hubs, &key, cx))
         .child(actions(summary, hubs, &key))
         .into_any_element()
+}
+
+/// The button that connects at once while the server waits for the next attempt.
+fn retry(summary: &HubSummary, hubs: &Entity<Hubs>, key: &str) -> Option<impl IntoElement> {
+    if !matches!(summary.status, HubStatus::Offline { .. }) {
+        return None;
+    }
+    let (hubs, id) = (hubs.clone(), summary.id.clone());
+    Some(
+        Button::new(item("server-retry", key))
+            .xsmall()
+            .label("Try again")
+            .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                hubs.update(cx, |hubs, cx| hubs.retry(&id, cx));
+            }),
+    )
 }
 
 /// The chooser of the colour that marks the server.
@@ -174,44 +169,6 @@ fn certificate(summary: &HubSummary, record: &HubRecord, key: &str, cx: &App) ->
             );
     }
     section
-}
-
-/// The offer of a new recovery key, while the one made with the account keys on this device was
-/// never confirmed as saved and the keys are open.
-fn recovery_key(
-    summary: &HubSummary,
-    hubs: &Entity<Hubs>,
-    key: &str,
-    cx: &App,
-) -> Option<gpui_kit::AnyElement> {
-    if !hubs.read(cx).recovery_key_unconfirmed(&summary.id) {
-        return None;
-    }
-    let offer = hubs.read(cx).recovery_key_offer(&summary.id).ok()?;
-    let (hubs, id) = (hubs.clone(), summary.id.clone());
-    Some(
-        field(
-            "Recovery key",
-            v_flex()
-                .id(item("server-recovery", key))
-                .test_support()
-                .gap_2()
-                .child(note(
-                    "The recovery key made with your account keys was never confirmed as saved. Issue a new one so you can still open them if you lose your password.",
-                    cx,
-                ))
-                .child(
-                    h_flex().justify_end().child(
-                        Button::new(item("server-recovery-issue", key))
-                            .label("Issue a new recovery key")
-                            .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                crate::sign_in::start_reissue(&hubs, &id, offer.clone(), window, cx);
-                            }),
-                    ),
-                ),
-        )
-        .into_any_element(),
-    )
 }
 
 /// Sign out and remove.
