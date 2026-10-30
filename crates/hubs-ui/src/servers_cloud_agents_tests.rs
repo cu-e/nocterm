@@ -14,7 +14,7 @@ use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
 
 const KEY: &str = "hub.home:7443";
-const CLOUD_AGENTS: usize = 3;
+const CLOUD_AGENTS: usize = 4;
 
 fn agent(id: &str, name: &str, scope: AgentScope) -> CloudAgent {
     CloudAgent {
