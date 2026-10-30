@@ -108,6 +108,58 @@ impl ScriptedEngineFactory {
             .clone()
     }
 }
+impl ScriptedEngineFactory {
+    fn next_transition(
+        &self,
+        input: &EngineInput,
+    ) -> Result<ScriptedEngineTransition, EngineError> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.inputs.push(input.clone());
+        state.turns.pop_front().ok_or(EngineError::Unavailable)
+    }
+    fn take_reserve_pause(&self) -> (usize, Option<ScriptedPause>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let call = state.calls + 1;
+        let due = state
+            .after_reserve
+            .as_ref()
+            .is_some_and(|(at, _, _)| *at == call);
+        (
+            call,
+            if due {
+                state.after_reserve.take()
+            } else {
+                None
+            },
+        )
+    }
+    /// Counts the admitted call and returns its scripted failure, if any.
+    fn count_call(&self, call: usize) -> Option<EngineError> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.calls += 1;
+        let due = state
+            .failure_after_reserve
+            .as_ref()
+            .is_some_and(|(at, _)| *at == call);
+        if due {
+            state.failure_after_reserve.take().map(|(_, error)| error)
+        } else {
+            None
+        }
+    }
+    fn take_reconcile_pause(&self, call: usize) -> Option<ScriptedPause> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let due = state
+            .after_reconcile
+            .as_ref()
+            .is_some_and(|(at, _, _)| *at == call);
+        if due {
+            state.after_reconcile.take()
+        } else {
+            None
+        }
+    }
+}
 impl AgentEngineFactory for ScriptedEngineFactory {
     fn create(
         &self,
@@ -128,6 +180,7 @@ impl AgentEngineFactory for ScriptedEngineFactory {
         }))
     }
 }
+type ScriptedPause = (usize, Gate, Gate);
 struct ScriptedEngine {
     factory: ScriptedEngineFactory,
     config: EngineConfig,
@@ -141,15 +194,7 @@ impl AgentEngine for ScriptedEngine {
         _cancellation: AbortRegistration,
     ) -> BoxFuture<'a, Result<EngineAction, EngineError>> {
         async move {
-            let transition = {
-                let mut state = self
-                    .factory
-                    .state
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                state.inputs.push(input.clone());
-                state.turns.pop_front().ok_or(EngineError::Unavailable)?
-            };
+            let transition = self.factory.next_transition(&input)?;
             let turn = match transition {
                 ScriptedEngineTransition::Model(turn) => turn,
                 ScriptedEngineTransition::Local(completion) => {
@@ -163,51 +208,13 @@ impl AgentEngine for ScriptedEngine {
                 turn.output_cap,
             )?;
             admission.reserve(request.clone()).await?;
-            let (call, pause) = {
-                let mut state = self
-                    .factory
-                    .state
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                let call = state.calls + 1;
-                let pause = if state
-                    .after_reserve
-                    .as_ref()
-                    .is_some_and(|(at, _, _)| *at == call)
-                {
-                    state.after_reserve.take()
-                } else {
-                    None
-                };
-                (call, pause)
-            };
+            let (call, pause) = self.factory.take_reserve_pause();
             if let Some((_, entered, release)) = pause {
                 entered.release();
                 release.wait().await;
             }
             admission.check_current(&request)?;
-            self.factory
-                .state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .calls += 1;
-            let failure = {
-                let mut state = self
-                    .factory
-                    .state
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                if state
-                    .failure_after_reserve
-                    .as_ref()
-                    .is_some_and(|(at, _)| *at == call)
-                {
-                    state.failure_after_reserve.take().map(|(_, error)| error)
-                } else {
-                    None
-                }
-            };
-            if let Some(error) = failure {
+            if let Some(error) = self.factory.count_call(call) {
                 return Err(error);
             }
             for event in &turn.events {
@@ -218,22 +225,7 @@ impl AgentEngine for ScriptedEngine {
             admission
                 .reconcile(request.clone(), turn.observation)
                 .await?;
-            let pause = {
-                let mut state = self
-                    .factory
-                    .state
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                if state
-                    .after_reconcile
-                    .as_ref()
-                    .is_some_and(|(at, _, _)| *at == call)
-                {
-                    state.after_reconcile.take()
-                } else {
-                    None
-                }
-            };
+            let pause = self.factory.take_reconcile_pause(call);
             if let Some((_, entered, release)) = pause {
                 entered.release();
                 release.wait().await;

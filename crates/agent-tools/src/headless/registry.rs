@@ -209,7 +209,7 @@ impl SessionRegistry {
             session,
             options,
             timer,
-            PhysicalPublication::Initial(lifecycle),
+            PhysicalPublication::Initial(Box::new(lifecycle)),
         )
     }
     pub(super) fn publish_initial(
@@ -374,10 +374,8 @@ impl SessionRegistry {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retire_initial(owner);
-        if retired {
-            if let Some(retained) = self.retained_owner() {
-                retained.remove_if_original(original);
-            }
+        if retired && let Some(retained) = self.retained_owner() {
+            retained.remove_if_original(original);
         }
         self.entries.remove(terminal);
     }

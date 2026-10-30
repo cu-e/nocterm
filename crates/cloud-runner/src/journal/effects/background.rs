@@ -7,6 +7,49 @@ use nocterm_cloud_model::{
 };
 use nocterm_core::SharedCause;
 use rusqlite::TransactionBehavior;
+use std::sync::Arc;
+
+/// The single background-command record and its encoded event, appended after
+/// the current head.
+fn observation_batch(
+    events: &(
+        Arc<dyn JournalEventEncoder>,
+        crate::CoordinatorPublicationBudgets,
+    ),
+    lease: WriterLease,
+    current: &head::Head,
+    next: JournalPosition,
+    command: &BackgroundCommand,
+    outcome: BackgroundRecordOutcome,
+) -> Result<JournalBatch, JournalError> {
+    let intent = command.dispatch().intent();
+    let record = JournalRecord::new(
+        RecordContext::Run(intent.authority().run().clone()),
+        JournalRecordKind::BackgroundCommand {
+            intent: intent.id(),
+            terminal: command.terminal().to_owned(),
+            command: command.command().to_owned(),
+            outcome,
+        },
+        OpaqueBytes::new(Vec::<u8>::new())?,
+    )?;
+    let work = if outcome == BackgroundRecordOutcome::Retained {
+        events.1.ordinary()
+    } else {
+        events.1.cleanup()
+    };
+    let event = events
+        .0
+        .encode(&lease, next, command, outcome, work.as_ref())?;
+    JournalBatch::new(
+        lease,
+        current.position(),
+        None,
+        vec![record],
+        None,
+        vec![event],
+    )
+}
 
 fn observe(
     driver: &mut Driver,
@@ -43,33 +86,8 @@ fn observe(
     if !effect.background(command, outcome)? {
         return Ok(());
     }
-    let record = JournalRecord::new(
-        RecordContext::Run(intent.authority().run().clone()),
-        JournalRecordKind::BackgroundCommand {
-            intent: intent.id(),
-            terminal: command.terminal().to_owned(),
-            command: command.command().to_owned(),
-            outcome,
-        },
-        OpaqueBytes::new(Vec::<u8>::new())?,
-    )?;
     let next = current.position().next(1, 1, false)?;
-    let work = if outcome == BackgroundRecordOutcome::Retained {
-        events.1.ordinary()
-    } else {
-        events.1.cleanup()
-    };
-    let event = events
-        .0
-        .encode(&lease, next, command, outcome, work.as_ref())?;
-    let batch = JournalBatch::new(
-        lease,
-        current.position(),
-        None,
-        vec![record],
-        None,
-        vec![event],
-    )?;
+    let batch = observation_batch(events, lease, &current, next, command, outcome)?;
     let charge = current.budget().appended(&batch)?;
     if charge.total() > driver.limits.chat_bytes
         || next

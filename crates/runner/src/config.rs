@@ -195,7 +195,7 @@ pub(crate) fn fixed_hex<const N: usize>(
         return Err(RunnerError::Value(field));
     }
     let mut result = [0; N];
-    for (out, pair) in result.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+    for (out, pair) in result.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
         let high = digit(pair[0]).ok_or(RunnerError::Value(field))?;
         let low = digit(pair[1]).ok_or(RunnerError::Value(field))?;
         *out = high * 16 + low;

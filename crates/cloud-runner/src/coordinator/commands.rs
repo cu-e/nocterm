@@ -6,7 +6,9 @@ use nocterm_cloud_model::{
     admission::{QueuedRun, RunAccess},
     authority::RunBinding,
     coordinator::*,
+    grant::*,
     identity::*,
+    inference::*,
     journal::*,
 };
 use std::sync::Arc;
@@ -33,182 +35,27 @@ impl CommandHandler {
         chat: Arc<Chat>,
         command: &ReceivedCommand,
     ) -> Result<CommandReceipt, CoordinatorError> {
-        // Current authenticated stop/revoke fencing never waits behind disk or
-        // a staged provider/session operation. The immutable receipt lookup in
-        // RunCoordinator precedes this admission, including substitutions.
-        if command.body().high_priority()
-            && command.acceptance().expected_control() == chat.log().position().control()
-        {
-            self.services.source().check_current()?;
-            chat.log().require_current()?;
-            match command.body() {
-                CommandBody::Stop | CommandBody::RevokeGrant(_) => {
-                    let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
-                    run.control().stop();
-                    run.sessions().cancel_pending();
-                }
-                CommandBody::RevokeIssuer(_) | CommandBody::DeleteChat => {
-                    for run in chat.runs() {
-                        run.control().stop();
-                        run.sessions().cancel_pending();
-                    }
-                }
-                _ => {}
-            }
-        }
+        self.fence_urgent(&chat, command)?;
         let command_guard = chat.commands().lock().await;
         if let Some(receipt) = chat.log().receipt(command.acceptance().clone()).await? {
             return Ok(receipt);
         }
-        chat.log().synchronize().await?;
-        self.services.source().check_current()?;
-        chat.check()?;
-        chat.log().require_current()?;
-        if command.acceptance().expected_control() != chat.log().position().control() {
-            return Err(CoordinatorError::Conflict);
-        }
-        let now = self.services.timer().now();
-        if now < command.window().issued()
-            || now >= command.window().expires()
-            || command.hard_expires().is_some_and(|expires| now >= expires)
-        {
-            return Err(CoordinatorError::Expired);
-        }
+        let now = self.admit(&chat, command).await?;
         match command.body() {
             CommandBody::Submit(prompt) => self.submit(&chat, command, prompt.clone()).await,
-            CommandBody::InferenceGrant(grant) => {
-                let run = chat.run(grant.allowance().run())?;
-                let mut grants = run.grants();
-                grants.install_inference(grant.clone())?;
-                let receipt = chat.accept(command, None, vec![], &self.work).await?;
-                run.set_grants(grants);
-                run.wake();
-                self.queue
-                    .activate(run.binding(), self.services.timer().now())?;
-                Ok(receipt)
-            }
-            CommandBody::ToolGrant(grant) => {
-                let run = chat.run(grant.authority().run())?;
-                let mut grants = run.grants();
-                grants.install_tool(grant.clone())?;
-                let receipt = chat.accept(command, None, vec![], &self.work).await?;
-                run.set_grants(grants);
-                run.wake();
-                Ok(receipt)
-            }
-            CommandBody::Approval(answer) => {
-                if matches!(answer.choice(), ApprovalChoice::ReconcileKnown(_)) {
-                    return Err(CoordinatorError::Unsupported);
-                }
-                let run = chat.run(answer.authority().run())?;
-                run.check_approval(answer, now)?;
-                let record = JournalRecord::new(
-                    RecordContext::Run(run.binding().clone()),
-                    JournalRecordKind::Approval {
-                        intent: answer.intent(),
-                        open: false,
-                    },
-                    Frame::Approval {
-                        intent: *answer.intent().as_bytes(),
-                        expires: now.as_millis(),
-                    }
-                    .bytes()?,
-                )?;
-                let event = CoordinatorEvent::ApprovalResolved {
-                    command: command.acceptance().id(),
-                    answer: answer.clone(),
-                };
-                let receipt = chat
-                    .accept(command, None, vec![(record, Some(event))], &self.work)
-                    .await?;
-                run.resolve_approval(answer)?;
-                Ok(receipt)
-            }
-            CommandBody::Stop => {
-                let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
-                run.control().stop();
-                self.queue.cancel(run.binding());
-                let receipt = chat.accept(command, None, vec![], &self.work).await?;
-                run.status_after_command(chat.log(), RunStatus::Stopped, &receipt)
-                    .await?;
-                Ok(receipt)
-            }
+            CommandBody::InferenceGrant(grant) => self.inference_grant(&chat, command, grant).await,
+            CommandBody::ToolGrant(grant) => self.tool_grant(&chat, command, grant).await,
+            CommandBody::Approval(answer) => self.approval(&chat, command, answer, now).await,
+            CommandBody::Stop => self.stop(&chat, command).await,
             CommandBody::RevokeGrant(reference) => {
-                let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
-                run.control().stop();
-                self.queue.cancel(run.binding());
-                let mut grants = run.grants();
-                grants.revoke(*reference);
-                let receipt = chat.accept(command, None, vec![], &self.work).await?;
-                run.set_grants(grants);
-                self.services.providers().revoke(*reference);
-                run.status_after_command(chat.log(), RunStatus::Stopped, &receipt)
-                    .await?;
-                Ok(receipt)
+                self.revoke_grant(&chat, command, *reference).await
             }
-            CommandBody::RevokeIssuer(revoke) => {
-                let runs = chat.runs();
-                for run in &runs {
-                    run.control().stop();
-                    self.queue.cancel(run.binding());
-                }
-                let receipt = chat.accept(command, None, vec![], &self.work).await?;
-                for run in runs {
-                    let mut grants = run.grants();
-                    grants.revoke_issuer(revoke);
-                    run.set_grants(grants);
-                    run.status_after_command(chat.log(), RunStatus::Stopped, &receipt)
-                        .await?;
-                }
-                for reference in revoke.grants() {
-                    self.services.providers().revoke(*reference);
-                }
-                Ok(receipt)
-            }
-            CommandBody::DeleteChat => {
-                chat.delete();
-                for run in chat.runs() {
-                    self.queue.cancel(run.binding());
-                }
-                if let Ok(setup) = self.services.session_setup() {
-                    setup.broker().close_chat(chat.log().lease().stream());
-                }
-                let record = JournalRecord::new(
-                    RecordContext::Chat,
-                    JournalRecordKind::Tombstone {
-                        command: command.acceptance().id(),
-                    },
-                    Frame::Status(8).bytes()?,
-                )?;
-                chat.accept(
-                    &command,
-                    None,
-                    vec![(
-                        record,
-                        Some(CoordinatorEvent::Deleted {
-                            command: command.acceptance().id(),
-                        }),
-                    )],
-                    &self.work,
-                )
-                .await
-            }
+            CommandBody::RevokeIssuer(revoke) => self.revoke_issuer(&chat, command, revoke).await,
+            CommandBody::DeleteChat => self.delete_chat(&chat, command).await,
             CommandBody::ProviderGrant(offer) => {
                 let receipt = chat.accept(command, None, vec![], &self.work).await?;
                 drop(command_guard);
-                if !self.services.tasks().running() {
-                    return Err(CoordinatorError::Stopped);
-                }
-                self.services
-                    .providers()
-                    .install(command.acknowledgement(), offer.clone())
-                    .await?;
-                self.services.source().check_current()?;
-                for run in chat.runs() {
-                    if run.context().selection().provider() == offer.provider() {
-                        run.wake();
-                    }
-                }
+                self.install_provider(&chat, command, offer).await?;
                 Ok(receipt)
             }
             CommandBody::SessionConsent(answer) => {
@@ -234,6 +81,230 @@ impl CommandHandler {
                     .await
             }
         }
+    }
+    /// Current authenticated stop/revoke fencing never waits behind disk or
+    /// a staged provider/session operation. The immutable receipt lookup in
+    /// RunCoordinator precedes this admission, including substitutions.
+    fn fence_urgent(&self, chat: &Chat, command: &ReceivedCommand) -> Result<(), CoordinatorError> {
+        if !command.body().high_priority()
+            || command.acceptance().expected_control() != chat.log().position().control()
+        {
+            return Ok(());
+        }
+        self.services.source().check_current()?;
+        chat.log().require_current()?;
+        match command.body() {
+            CommandBody::Stop | CommandBody::RevokeGrant(_) => {
+                let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
+                run.control().stop();
+                run.sessions().cancel_pending();
+            }
+            CommandBody::RevokeIssuer(_) | CommandBody::DeleteChat => {
+                for run in chat.runs() {
+                    run.control().stop();
+                    run.sessions().cancel_pending();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    /// Synchronizes the chat and checks the command is current and unexpired;
+    /// returns the admission time.
+    async fn admit(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+    ) -> Result<Timestamp, CoordinatorError> {
+        chat.log().synchronize().await?;
+        self.services.source().check_current()?;
+        chat.check()?;
+        chat.log().require_current()?;
+        if command.acceptance().expected_control() != chat.log().position().control() {
+            return Err(CoordinatorError::Conflict);
+        }
+        let now = self.services.timer().now();
+        if now < command.window().issued()
+            || now >= command.window().expires()
+            || command.hard_expires().is_some_and(|expires| now >= expires)
+        {
+            return Err(CoordinatorError::Expired);
+        }
+        Ok(now)
+    }
+    async fn inference_grant(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+        grant: &InferenceGrant,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        let run = chat.run(grant.allowance().run())?;
+        let mut grants = run.grants();
+        grants.install_inference(grant.clone())?;
+        let receipt = chat.accept(command, None, vec![], &self.work).await?;
+        run.set_grants(grants);
+        run.wake();
+        self.queue
+            .activate(run.binding(), self.services.timer().now())?;
+        Ok(receipt)
+    }
+    async fn tool_grant(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+        grant: &GrantPolicy,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        let run = chat.run(grant.authority().run())?;
+        let mut grants = run.grants();
+        grants.install_tool(grant.clone())?;
+        let receipt = chat.accept(command, None, vec![], &self.work).await?;
+        run.set_grants(grants);
+        run.wake();
+        Ok(receipt)
+    }
+    async fn approval(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+        answer: &ApprovalAnswer,
+        now: Timestamp,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        if matches!(answer.choice(), ApprovalChoice::ReconcileKnown(_)) {
+            return Err(CoordinatorError::Unsupported);
+        }
+        let run = chat.run(answer.authority().run())?;
+        run.check_approval(answer, now)?;
+        let record = JournalRecord::new(
+            RecordContext::Run(run.binding().clone()),
+            JournalRecordKind::Approval {
+                intent: answer.intent(),
+                open: false,
+            },
+            Frame::Approval {
+                intent: *answer.intent().as_bytes(),
+                expires: now.as_millis(),
+            }
+            .bytes()?,
+        )?;
+        let event = CoordinatorEvent::ApprovalResolved {
+            command: command.acceptance().id(),
+            answer: answer.clone(),
+        };
+        let receipt = chat
+            .accept(command, None, vec![(record, Some(event))], &self.work)
+            .await?;
+        run.resolve_approval(answer)?;
+        Ok(receipt)
+    }
+    async fn stop(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
+        run.control().stop();
+        self.queue.cancel(run.binding());
+        let receipt = chat.accept(command, None, vec![], &self.work).await?;
+        run.status_after_command(chat.log(), RunStatus::Stopped, &receipt)
+            .await?;
+        Ok(receipt)
+    }
+    async fn revoke_grant(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+        reference: GrantReference,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
+        run.control().stop();
+        self.queue.cancel(run.binding());
+        let mut grants = run.grants();
+        grants.revoke(reference);
+        let receipt = chat.accept(command, None, vec![], &self.work).await?;
+        run.set_grants(grants);
+        self.services.providers().revoke(reference);
+        run.status_after_command(chat.log(), RunStatus::Stopped, &receipt)
+            .await?;
+        Ok(receipt)
+    }
+    async fn revoke_issuer(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+        revoke: &IssuerRevocation,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        let runs = chat.runs();
+        for run in &runs {
+            run.control().stop();
+            self.queue.cancel(run.binding());
+        }
+        let receipt = chat.accept(command, None, vec![], &self.work).await?;
+        for run in runs {
+            let mut grants = run.grants();
+            grants.revoke_issuer(revoke);
+            run.set_grants(grants);
+            run.status_after_command(chat.log(), RunStatus::Stopped, &receipt)
+                .await?;
+        }
+        for reference in revoke.grants() {
+            self.services.providers().revoke(*reference);
+        }
+        Ok(receipt)
+    }
+    async fn delete_chat(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        chat.delete();
+        for run in chat.runs() {
+            self.queue.cancel(run.binding());
+        }
+        if let Ok(setup) = self.services.session_setup() {
+            setup.broker().close_chat(chat.log().lease().stream());
+        }
+        let record = JournalRecord::new(
+            RecordContext::Chat,
+            JournalRecordKind::Tombstone {
+                command: command.acceptance().id(),
+            },
+            Frame::Status(8).bytes()?,
+        )?;
+        chat.accept(
+            command,
+            None,
+            vec![(
+                record,
+                Some(CoordinatorEvent::Deleted {
+                    command: command.acceptance().id(),
+                }),
+            )],
+            &self.work,
+        )
+        .await
+    }
+    /// Runs after the command lock is released: provider installation may wait
+    /// on external work that must not hold the chat's command order.
+    async fn install_provider(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+        offer: &ProviderOffer,
+    ) -> Result<(), CoordinatorError> {
+        if !self.services.tasks().running() {
+            return Err(CoordinatorError::Stopped);
+        }
+        self.services
+            .providers()
+            .install(command.acknowledgement(), offer.clone())
+            .await?;
+        self.services.source().check_current()?;
+        for run in chat.runs() {
+            if run.context().selection().provider() == offer.provider() {
+                run.wake();
+            }
+        }
+        Ok(())
     }
     async fn submit(
         &self,

@@ -127,10 +127,10 @@ impl CatalogState {
         }))
     }
     pub(super) fn abort(&mut self, ticket: &InstallTicket) {
-        if let Some(fact) = self.grants.get_mut(&ticket.reference.id()) {
-            if fact.generation == ticket.generation {
-                fact.pending = false;
-            }
+        if let Some(fact) = self.grants.get_mut(&ticket.reference.id())
+            && fact.generation == ticket.generation
+        {
+            fact.pending = false;
         }
     }
     pub(super) fn commit(
@@ -199,10 +199,10 @@ impl CatalogState {
             .entry(reference.id())
             .and_modify(|epoch| *epoch = (*epoch).max(reference.epoch()))
             .or_insert(reference.epoch());
-        if let Some(fact) = self.grants.get_mut(&reference.id()) {
-            if fact.reference == reference {
-                fact.pending = false;
-            }
+        if let Some(fact) = self.grants.get_mut(&reference.id())
+            && fact.reference == reference
+        {
+            fact.pending = false;
         }
         let mut retired = Vec::new();
         for slot in self.providers.values_mut() {
@@ -210,10 +210,9 @@ impl CatalogState {
                 .active
                 .as_ref()
                 .is_some_and(|active| active.reference == reference)
+                && let Some(active) = slot.active.take()
             {
-                if let Some(active) = slot.active.take() {
-                    retired.push(active.lease);
-                }
+                retired.push(active.lease);
             }
         }
         retired

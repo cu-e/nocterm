@@ -94,8 +94,7 @@ impl Endpoint {
 }
 pub(super) async fn query(directory: &Path) -> Result<(), RunnerError> {
     let response = read(directory).await?;
-    print!("{response}");
-    Ok(())
+    crate::output::report(&response)
 }
 async fn read(directory: &Path) -> Result<String, RunnerError> {
     tokio::time::timeout(WAIT, async {

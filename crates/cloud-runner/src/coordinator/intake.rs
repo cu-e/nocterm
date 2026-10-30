@@ -141,7 +141,7 @@ pub(super) fn reply(result: Result<CommandReceipt, CoordinatorError>) -> Command
     use CoordinatorError as Error;
     use RetryReason as Retry;
     match result {
-        Ok(receipt) => CommandReply::Accepted(receipt),
+        Ok(receipt) => CommandReply::Accepted(Box::new(receipt)),
         Err(error) => match error {
             Error::InvalidCommand => CommandReply::Refused(Refused::InvalidCommand),
             Error::Conflict => CommandReply::Refused(Refused::Conflict),

@@ -176,7 +176,7 @@ impl StoredDelivery {
         .map_err(sql_error)?;
         // Snapshot ACK is atomic with its durable retention descriptor.
         if self.resident.anchor().kind() == HeadAnchorKind::Snapshot {
-            let mut state = storage::load(db, cipher, &head)?;
+            let mut state = storage::load(db, cipher, head)?;
             let candidate = state
                 .pending
                 .take()

@@ -131,10 +131,10 @@ impl Grants {
             .cloned()
     }
     pub(super) fn revoke_issuer(&mut self, revoke: &IssuerRevocation) {
-        if let Some(grant) = &self.inference {
-            if revoked_origin(grant.origin(), revoke) {
-                self.revoked.insert(grant.id(), grant.epoch());
-            }
+        if let Some(grant) = &self.inference
+            && revoked_origin(grant.origin(), revoke)
+        {
+            self.revoked.insert(grant.id(), grant.epoch());
         }
         for state in self.tools.values_mut() {
             if revoked_origin(state.origin(), revoke) {
@@ -223,10 +223,10 @@ impl RunRecord {
         &self.sessions
     }
     pub(super) fn selected_session(&self) -> Option<SessionReceipt> {
-        if let Some(fact) = self.sessions.live() {
-            if let SessionOutcome::Established(receipt) = fact.value().outcome() {
-                return Some(receipt.clone());
-            }
+        if let Some(fact) = self.sessions.live()
+            && let SessionOutcome::Established(receipt) = fact.value().outcome()
+        {
+            return Some(receipt.clone());
         }
         self.sessions
             .permits_initial_reference()

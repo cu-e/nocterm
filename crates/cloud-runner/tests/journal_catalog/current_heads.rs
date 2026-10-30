@@ -48,16 +48,11 @@ fn current_heads_keep_real_material_original_anchor_and_revision_bound_pages() {
     assert!(fresh.revision() > page.revision());
     assert_ne!(fresh.root(), page.root());
 }
-#[test]
-fn deleted_head_cold_open_needs_no_content_key_and_receipts_never_invent_acceptance() {
-    let root = private_root();
-    let cipher = Arc::new(TestCipher::default());
-    let store = journal(root.path(), cipher.clone());
-    let lease = claim(&store, None);
-    let position = commit(
-        &store,
-        admission(&lease, JournalPosition::default(), acceptance(1, 0)),
-    );
+fn commit_original_tombstone(
+    store: &DurableRunJournal,
+    lease: WriterLease,
+    position: JournalPosition,
+) {
     let tombstone = JournalRecord::new(
         RecordContext::Chat,
         JournalRecordKind::Tombstone {
@@ -75,7 +70,7 @@ fn deleted_head_cold_open_needs_no_content_key_and_receipts_never_invent_accepta
         bytes(b"actual original tombstone ciphertext"),
     );
     commit(
-        &store,
+        store,
         JournalBatch::new(
             lease,
             position,
@@ -86,6 +81,18 @@ fn deleted_head_cold_open_needs_no_content_key_and_receipts_never_invent_accepta
         )
         .unwrap(),
     );
+}
+#[test]
+fn deleted_head_cold_open_needs_no_content_key_and_receipts_never_invent_acceptance() {
+    let root = private_root();
+    let cipher = Arc::new(TestCipher::default());
+    let store = journal(root.path(), cipher.clone());
+    let lease = claim(&store, None);
+    let position = commit(
+        &store,
+        admission(&lease, JournalPosition::default(), acceptance(1, 0)),
+    );
+    commit_original_tombstone(&store, lease, position);
     let heads = store.current_heads();
     let query = OriginalCommandReceiptQuery {
         stream: stream(),

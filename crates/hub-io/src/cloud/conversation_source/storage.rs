@@ -94,7 +94,7 @@ impl OutboxFile {
                 return Err(ProjectionError::Persistence);
             }
             let mut id = [0u8; 16];
-            for (slot, pair) in id.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+            for (slot, pair) in id.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
                 *slot = u8::from_str_radix(
                     std::str::from_utf8(pair).map_err(|_| ProjectionError::Persistence)?,
                     16,

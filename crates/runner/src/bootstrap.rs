@@ -99,14 +99,13 @@ impl State {
     }
     pub(crate) fn print_identity(&self) -> Result<(), RunnerError> {
         let identity = self.identity.public_identity()?;
-        println!(
-            "mode=control-plane\nexecution_ready=false\nrunner={}\nencryption={}\nsigning={}\nproof={}",
+        crate::output::report(&format!(
+            "mode=control-plane\nexecution_ready=false\nrunner={}\nencryption={}\nsigning={}\nproof={}\n",
             hex(identity.binding().runner().as_bytes()),
             hex(identity.encryption_key()),
             hex(identity.signing_key()),
             hex(identity.proof_key())
-        );
-        Ok(())
+        ))
     }
 }
 fn hex(bytes: &[u8]) -> String {

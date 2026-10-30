@@ -226,13 +226,12 @@ impl StepProgress {
             }
             return self.run.control().check(self.services.source().as_ref());
         }
-        if let EngineEvent::Text(text) = &event {
-            if text.channel() == TextChannel::Assistant
-                && self.text.lock().len().saturating_add(text.text().len())
-                    > nocterm_cloud_model::payload::MAX_LOGICAL_PAYLOAD_BYTES
-            {
-                return Err(EngineError::BudgetExceeded.into());
-            }
+        if let EngineEvent::Text(text) = &event
+            && text.channel() == TextChannel::Assistant
+            && self.text.lock().len().saturating_add(text.text().len())
+                > nocterm_cloud_model::payload::MAX_LOGICAL_PAYLOAD_BYTES
+        {
+            return Err(EngineError::BudgetExceeded.into());
         }
         let record = JournalRecord::new(
             RecordContext::Run(self.run.binding().clone()),
@@ -253,10 +252,10 @@ impl StepProgress {
                 None,
             )
             .await?;
-        if let EngineEvent::Text(text) = event {
-            if text.channel() == TextChannel::Assistant {
-                self.text.lock().push_str(text.text());
-            }
+        if let EngineEvent::Text(text) = event
+            && text.channel() == TextChannel::Assistant
+        {
+            self.text.lock().push_str(text.text());
         }
         self.run.control().check(self.services.source().as_ref())
     }

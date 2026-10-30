@@ -34,7 +34,7 @@ enum Connector {
     },
     Ssh {
         transport: Arc<SshTransport>,
-        request: ConnectRequest,
+        request: Box<ConnectRequest>,
         host: PublicKeyText,
     },
 }
@@ -89,7 +89,7 @@ impl ConfiguredSessionTarget {
             authentication,
             connector: Connector::Ssh {
                 transport,
-                request,
+                request: Box::new(request),
                 host,
             },
         })
@@ -194,7 +194,7 @@ impl ConfiguredSessionTargets {
                 // open_login is the exclusive purpose-bound path. Its Auto DTO
                 // field never enters legacy password/file/agent authentication.
                 Ok(transport.open_login(
-                    connect.clone(),
+                    (**connect).clone(),
                     ConnectionOpenOptions::new(source),
                     attempt,
                 ))

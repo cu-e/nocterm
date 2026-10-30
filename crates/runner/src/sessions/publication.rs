@@ -133,11 +133,11 @@ impl CancelPending {
 }
 impl SessionAttemptCancellation for CancelPending {
     fn cancel(&self) {
-        if let Ok(mut phase) = self.0.phase.lock() {
-            if matches!(*phase, PendingPhase::Pending) {
-                *phase = PendingPhase::Cancelled;
-                self.0.changed.send_replace(());
-            }
+        if let Ok(mut phase) = self.0.phase.lock()
+            && matches!(*phase, PendingPhase::Pending)
+        {
+            *phase = PendingPhase::Cancelled;
+            self.0.changed.send_replace(());
         }
     }
 }

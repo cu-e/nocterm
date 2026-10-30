@@ -77,7 +77,7 @@ fn hex<const N: usize>(text: &str) -> Result<[u8; N], CloudTrustError> {
         return Err(CloudTrustError::Format);
     }
     let mut decoded = [0; N];
-    for (slot, pair) in decoded.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+    for (slot, pair) in decoded.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
         let digit = |byte: u8| match byte {
             b'0'..=b'9' => Ok(byte - b'0'),
             b'a'..=b'f' => Ok(byte - b'a' + 10),

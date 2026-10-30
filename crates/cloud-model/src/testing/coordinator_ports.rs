@@ -118,7 +118,7 @@ impl AuthenticatedCommandSource for ScriptedCommandSource {
                             Err(error) => return Err(error.into()),
                         };
                         return Ok(Some(CommandInput::Deferred {
-                            command: command.acknowledgement(),
+                            command: Box::new(command.acknowledgement()),
                             reason: RetryReason::Capacity,
                             allocation,
                         }));

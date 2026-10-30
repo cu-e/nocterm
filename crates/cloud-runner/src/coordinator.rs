@@ -377,7 +377,7 @@ impl RunCoordinator {
                     self.expire();
                     tick=self.services.timer().delay(Duration::from_millis(50));
                 },
-                result=workers.next(),if !workers.is_empty()=> {if let Some(Err(error))=result {if matches!(error,CoordinatorError::Journal(_)) {return Err(error);}}},
+                result=workers.next(),if !workers.is_empty()=> {if let Some(Err(error))=result&& matches!(error,CoordinatorError::Journal(_)) {return Err(error);}},
                 admitted=ordinary.next(),if !ordinary.is_empty()=> {
                     if let Some((command,reply,allocation))=admitted {
                         deliveries.push(intake::deliver(self.services.source().clone(),command,reply,allocation));
@@ -388,7 +388,7 @@ impl RunCoordinator {
                     let Some(input)=next? else {return Ok(());};
                     match input {
                         CommandInput::Deferred{command,reason,allocation} => {
-                            deliveries.push(intake::deliver(self.services.source().clone(),command,CommandReply::RetryLater(reason),allocation));
+                            deliveries.push(intake::deliver(self.services.source().clone(),*command,CommandReply::RetryLater(reason),allocation));
                         },
                         CommandInput::Ready(command) => {
                             // ACK reservation precedes admission and is independent
@@ -419,12 +419,10 @@ impl RunCoordinator {
                 .lock()
                 .get(&lease.request().binding().stream())
                 .cloned()
+                && let Some(chat) = slot.get()
+                && let Ok(run) = chat.run(lease.request().binding())
             {
-                if let Some(chat) = slot.get() {
-                    if let Ok(run) = chat.run(lease.request().binding()) {
-                        run.control().stop();
-                    }
-                }
+                run.control().stop();
             }
         }
     }

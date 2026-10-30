@@ -230,10 +230,10 @@ impl InboxOwner {
         Ok(())
     }
     fn fault(&self, fault: RunnerInboxFault) {
-        if let Ok(mut state) = self.progress.lock() {
-            if !state.fault.is_some_and(RunnerInboxFault::fatal) {
-                state.fault = Some(fault);
-            }
+        if let Ok(mut state) = self.progress.lock()
+            && !state.fault.is_some_and(RunnerInboxFault::fatal)
+        {
+            state.fault = Some(fault);
         }
     }
     async fn io<T>(

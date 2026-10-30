@@ -1,11 +1,12 @@
 //! Bounded authenticated journal replay. No replay path repeats dispatched I/O.
 use super::{
     chat::Chat,
-    frame::{Frame, PlannedCall},
+    frame::{Call, Frame, Grant, Ledger, PlannedCall},
     queue::RunQueue,
     run::RunRecord,
     services::CoordinatorServices,
 };
+use crate::codec::record::Intent;
 use nocterm_cloud_model::{
     admission::{QueuedRun, RunAccess},
     authority::RunBinding,
@@ -81,16 +82,7 @@ impl ReplayedRun {
         }
         match (stored.record().kind(), frame) {
             (JournalRecordKind::BudgetReserved { .. }, Frame::Budget(ledger)) => {
-                let ledger = ledger.restore()?;
-                if ledger.task().run() != self.record.binding() {
-                    return Err(JournalError::Corrupt.into());
-                }
-                self.unfinalized = ledger
-                    .snapshot()
-                    .calls()
-                    .iter()
-                    .any(|call| !call.finalized());
-                self.record.state().lock().await.set_ledger(ledger);
+                self.budget(ledger).await?;
             }
             (
                 JournalRecordKind::ModelAction { step },
@@ -100,29 +92,7 @@ impl ReplayedRun {
                     complete,
                     ..
                 },
-            ) => {
-                if self.pending.is_some()
-                    || self.action.as_ref().is_some_and(|(_, old)| {
-                        old.iter()
-                            .any(|call| !self.known.contains_key(&call.intent()))
-                    })
-                {
-                    return Err(JournalError::Corrupt.into());
-                }
-                let ledger = ledger.restore()?;
-                if ledger.task().run() != self.record.binding() {
-                    return Err(JournalError::Corrupt.into());
-                }
-                self.record.state().lock().await.set_ledger(ledger);
-                self.unfinalized = false;
-                self.known.clear();
-                self.action = if complete { None } else { Some((*step, calls)) };
-                self.status = if complete {
-                    RunStatus::Completed
-                } else {
-                    RunStatus::Running
-                };
-            }
+            ) => self.model_action(*step, ledger, calls, complete).await?,
             (
                 JournalRecordKind::Intent(expected),
                 Frame::Intent {
@@ -130,60 +100,14 @@ impl ReplayedRun {
                     call,
                     grant,
                 },
-            ) => {
-                let intent = intent.restore()?;
-                let call = call.restore()?;
-                let grant = grant.restore()?;
-                if intent != **expected
-                    || self.pending.is_some()
-                    || grant.authority() != intent.authority()
-                    || intent.mutates() != call.writes()
-                {
-                    return Err(JournalError::Corrupt.into());
-                }
-                let planned = self
-                    .action
-                    .as_ref()
-                    .and_then(|(_, calls)| {
-                        calls.iter().find(|planned| planned.intent() == intent.id())
-                    })
-                    .ok_or(JournalError::Corrupt)?;
-                let actual = planned.call()?;
-                if actual.name() != call.name()
-                    || actual.arguments().map_err(EngineError::from)?
-                        != call.arguments().map_err(EngineError::from)?
-                {
-                    return Err(JournalError::Corrupt.into());
-                }
-                let mut grants = self.record.grants();
-                grants.replace_tool(grant);
-                self.record.set_grants(grants);
-                self.pending = Some((intent, EffectStage::IntentCommitted));
-                self.choice = None;
-            }
+            ) => self.intent_committed(expected, intent, call, grant)?,
             (
                 JournalRecordKind::Dispatched { intent },
                 Frame::Dispatch {
                     intent: original,
                     grant,
                 },
-            ) => {
-                let pending = self.pending.as_mut().ok_or(JournalError::Corrupt)?;
-                if *intent.as_bytes() != original
-                    || pending.0.id() != *intent
-                    || pending.1 != EffectStage::IntentCommitted
-                {
-                    return Err(JournalError::Corrupt.into());
-                }
-                let grant = grant.restore()?;
-                if grant.authority() != pending.0.authority() {
-                    return Err(JournalError::Corrupt.into());
-                }
-                let mut grants = self.record.grants();
-                grants.replace_tool(grant);
-                self.record.set_grants(grants);
-                pending.1 = EffectStage::DispatchCommitted;
-            }
+            ) => self.dispatched(intent, original, grant)?,
             (
                 JournalRecordKind::Outcome { intent, .. } | JournalRecordKind::Declined { intent },
                 Frame::Result {
@@ -193,24 +117,7 @@ impl ReplayedRun {
                     unknown,
                     ..
                 },
-            ) => {
-                let pending = self.pending.take().ok_or(JournalError::Corrupt)?;
-                if *intent.as_bytes() != original || pending.0.id() != *intent {
-                    return Err(JournalError::Corrupt.into());
-                }
-                let (step, calls) = self.action.as_ref().ok_or(JournalError::Corrupt)?;
-                let call = calls
-                    .iter()
-                    .find(|call| call.intent() == *intent)
-                    .ok_or(JournalError::Corrupt)?
-                    .restore(*step)?;
-                self.known.insert(
-                    *intent,
-                    EngineToolResult::new(call.slot(), BoundedJson::new(output)?, failed),
-                );
-                self.unknown |= unknown && pending.0.mutates();
-                self.choice = None;
-            }
+            ) => self.resulted(intent, original, output, failed, unknown)?,
             (JournalRecordKind::RunStatus, Frame::Status(tag)) => self.status = status(tag)?,
             (JournalRecordKind::RunStatus, Frame::Session(fact)) => {
                 let observation = fact.restore()?;
@@ -237,6 +144,134 @@ impl ReplayedRun {
         }
         Ok(())
     }
+    async fn budget(&mut self, ledger: Ledger) -> Result<(), CoordinatorError> {
+        let ledger = ledger.restore()?;
+        if ledger.task().run() != self.record.binding() {
+            return Err(JournalError::Corrupt.into());
+        }
+        self.unfinalized = ledger
+            .snapshot()
+            .calls()
+            .iter()
+            .any(|call| !call.finalized());
+        self.record.state().lock().await.set_ledger(ledger);
+        Ok(())
+    }
+    async fn model_action(
+        &mut self,
+        step: StepId,
+        ledger: Ledger,
+        calls: Vec<PlannedCall>,
+        complete: bool,
+    ) -> Result<(), CoordinatorError> {
+        if self.pending.is_some()
+            || self.action.as_ref().is_some_and(|(_, old)| {
+                old.iter()
+                    .any(|call| !self.known.contains_key(&call.intent()))
+            })
+        {
+            return Err(JournalError::Corrupt.into());
+        }
+        let ledger = ledger.restore()?;
+        if ledger.task().run() != self.record.binding() {
+            return Err(JournalError::Corrupt.into());
+        }
+        self.record.state().lock().await.set_ledger(ledger);
+        self.unfinalized = false;
+        self.known.clear();
+        self.action = if complete { None } else { Some((step, calls)) };
+        self.status = if complete {
+            RunStatus::Completed
+        } else {
+            RunStatus::Running
+        };
+        Ok(())
+    }
+    fn intent_committed(
+        &mut self,
+        expected: &ToolIntent,
+        intent: Intent,
+        call: Call,
+        grant: Grant,
+    ) -> Result<(), CoordinatorError> {
+        let intent = intent.restore()?;
+        let call = call.restore()?;
+        let grant = grant.restore()?;
+        if intent != *expected
+            || self.pending.is_some()
+            || grant.authority() != intent.authority()
+            || intent.mutates() != call.writes()
+        {
+            return Err(JournalError::Corrupt.into());
+        }
+        let planned = self
+            .action
+            .as_ref()
+            .and_then(|(_, calls)| calls.iter().find(|planned| planned.intent() == intent.id()))
+            .ok_or(JournalError::Corrupt)?;
+        let actual = planned.call()?;
+        if actual.name() != call.name()
+            || actual.arguments().map_err(EngineError::from)?
+                != call.arguments().map_err(EngineError::from)?
+        {
+            return Err(JournalError::Corrupt.into());
+        }
+        let mut grants = self.record.grants();
+        grants.replace_tool(grant);
+        self.record.set_grants(grants);
+        self.pending = Some((intent, EffectStage::IntentCommitted));
+        self.choice = None;
+        Ok(())
+    }
+    fn dispatched(
+        &mut self,
+        intent: &IntentId,
+        original: [u8; 16],
+        grant: Grant,
+    ) -> Result<(), CoordinatorError> {
+        let pending = self.pending.as_mut().ok_or(JournalError::Corrupt)?;
+        if *intent.as_bytes() != original
+            || pending.0.id() != *intent
+            || pending.1 != EffectStage::IntentCommitted
+        {
+            return Err(JournalError::Corrupt.into());
+        }
+        let grant = grant.restore()?;
+        if grant.authority() != pending.0.authority() {
+            return Err(JournalError::Corrupt.into());
+        }
+        let mut grants = self.record.grants();
+        grants.replace_tool(grant);
+        self.record.set_grants(grants);
+        pending.1 = EffectStage::DispatchCommitted;
+        Ok(())
+    }
+    fn resulted(
+        &mut self,
+        intent: &IntentId,
+        original: [u8; 16],
+        output: serde_json::Value,
+        failed: bool,
+        unknown: bool,
+    ) -> Result<(), CoordinatorError> {
+        let pending = self.pending.take().ok_or(JournalError::Corrupt)?;
+        if *intent.as_bytes() != original || pending.0.id() != *intent {
+            return Err(JournalError::Corrupt.into());
+        }
+        let (step, calls) = self.action.as_ref().ok_or(JournalError::Corrupt)?;
+        let call = calls
+            .iter()
+            .find(|call| call.intent() == *intent)
+            .ok_or(JournalError::Corrupt)?
+            .restore(*step)?;
+        self.known.insert(
+            *intent,
+            EngineToolResult::new(call.slot(), BoundedJson::new(output)?, failed),
+        );
+        self.unknown |= unknown && pending.0.mutates();
+        self.choice = None;
+        Ok(())
+    }
     fn command(&mut self, command: &ReceivedCommand) -> Result<(), CoordinatorError> {
         let mut grants = self.record.grants();
         match command.body() {
@@ -254,19 +289,19 @@ impl ReplayedRun {
                 self.status = RunStatus::Stopped;
             }
             CommandBody::Stop | CommandBody::DeleteChat => self.status = RunStatus::Stopped,
-            CommandBody::Approval(answer) => {
-                if !matches!(answer.choice(), ApprovalChoice::ReconcileKnown(_)) {
-                    let (intent, stage) = self.pending.as_ref().ok_or(JournalError::Corrupt)?;
-                    if *stage != EffectStage::IntentCommitted
-                        || intent.id() != answer.intent()
-                        || intent.authority() != answer.authority()
-                        || intent.arguments() != answer.arguments()
-                        || self.choice.is_some()
-                    {
-                        return Err(JournalError::Corrupt.into());
-                    }
-                    self.choice = Some(answer.choice());
+            CommandBody::Approval(answer)
+                if !matches!(answer.choice(), ApprovalChoice::ReconcileKnown(_)) =>
+            {
+                let (intent, stage) = self.pending.as_ref().ok_or(JournalError::Corrupt)?;
+                if *stage != EffectStage::IntentCommitted
+                    || intent.id() != answer.intent()
+                    || intent.authority() != answer.authority()
+                    || intent.arguments() != answer.arguments()
+                    || self.choice.is_some()
+                {
+                    return Err(JournalError::Corrupt.into());
                 }
+                self.choice = Some(answer.choice());
             }
             _ => {}
         }

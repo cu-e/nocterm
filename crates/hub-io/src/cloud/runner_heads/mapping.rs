@@ -196,8 +196,8 @@ pub(super) enum HeadRead {
     Receipt(OriginalCommandReceiptQuery),
 }
 pub(super) enum HeadReadValue {
-    Catalog(CurrentHeadsPage),
-    Chat(Option<CurrentChatHead>),
+    Catalog(Box<CurrentHeadsPage>),
+    Chat(Option<Box<CurrentChatHead>>),
     Receipt(OriginalCommandReceiptObservation),
 }
 impl HeadRead {
@@ -206,10 +206,10 @@ impl HeadRead {
         reader: Arc<dyn CurrentCloudHeads>,
     ) -> Result<HeadReadValue, RunnerHeadError> {
         Ok(match self {
-            Self::Catalog(after) => {
-                HeadReadValue::Catalog(reader.catalog(after, MAX_CURRENT_HEADS_PAGE as u16).await?)
-            }
-            Self::Chat(stream) => HeadReadValue::Chat(reader.chat(stream).await?),
+            Self::Catalog(after) => HeadReadValue::Catalog(Box::new(
+                reader.catalog(after, MAX_CURRENT_HEADS_PAGE as u16).await?,
+            )),
+            Self::Chat(stream) => HeadReadValue::Chat(reader.chat(stream).await?.map(Box::new)),
             Self::Receipt(query) => HeadReadValue::Receipt(reader.receipt(query).await?),
         })
     }

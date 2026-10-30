@@ -45,6 +45,8 @@ pub enum RunnerError {
     Control(#[source] std::io::Error),
     #[error("the control-plane task stopped unexpectedly")]
     Task(#[source] tokio::task::JoinError),
+    #[error("the runner could not write its report")]
+    Output(#[source] std::io::Error),
     #[error("this control-plane executable currently requires Unix")]
     Platform,
 }

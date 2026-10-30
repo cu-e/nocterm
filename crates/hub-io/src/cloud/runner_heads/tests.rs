@@ -162,7 +162,7 @@ fn native_head_witness_keeps_exact_catalog_root_deleted_original_writer_and_epoc
         vec![fixture.head(5, true)?],
         true,
     )?;
-    let verified = fixture.roundtrip(&query, &HeadReadValue::Catalog(page))?;
+    let verified = fixture.roundtrip(&query, &HeadReadValue::Catalog(Box::new(page)))?;
     let HeadValue::Catalog(page) = &verified.witness().value else {
         return Err("catalog".into());
     };
@@ -204,9 +204,10 @@ fn native_head_witness_keeps_exact_catalog_root_deleted_original_writer_and_epoc
         chat_key_epoch: 12,
     })?;
     assert!(matches!(
-        fixture
-            .mapped
-            .value(&wrong, &HeadReadValue::Chat(Some(fixture.head(5, true)?))),
+        fixture.mapped.value(
+            &wrong,
+            &HeadReadValue::Chat(Some(Box::new(fixture.head(5, true)?)))
+        ),
         Err(RunnerHeadError::Binding)
     ));
     let mut clock = ClockFence::default();

@@ -297,13 +297,13 @@ fn retire_admitted(core: &SourceCore, batch: &ProjectionBatch) -> Result<(), Pro
             | CoordinatorEvent::PromptAccepted { command, .. } => Some(command),
             _ => None,
         };
-        if let Some(command) = command {
-            if let Err(error) = super::commands::retire(core, command.id()) {
-                core.progress
-                    .lock()
-                    .map_err(|_| ProjectionError::Unavailable)?
-                    .maintenance = Some(error);
-            }
+        if let Some(command) = command
+            && let Err(error) = super::commands::retire(core, command.id())
+        {
+            core.progress
+                .lock()
+                .map_err(|_| ProjectionError::Unavailable)?
+                .maintenance = Some(error);
         }
     }
     Ok(())

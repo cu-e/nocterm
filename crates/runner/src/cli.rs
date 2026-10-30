@@ -87,11 +87,7 @@ async fn command(
     match command {
         Command::Init => state.print_identity(),
         Command::ShowPublic => {
-            print!(
-                "{}",
-                public_setup.encode(&state.identity().public_identity()?)?
-            );
-            Ok(())
+            crate::output::report(&public_setup.encode(&state.identity().public_identity()?)?)
         }
         Command::Enrol => {
             let ticket = ticket.ok_or(RunnerError::TicketFormat)?;
@@ -101,8 +97,7 @@ async fn command(
             )
             .await
             .map_err(|_| RunnerError::Timeout)??;
-            println!("mode=control-plane\nexecution_ready=false\nenrolled=true");
-            Ok(())
+            crate::output::report("mode=control-plane\nexecution_ready=false\nenrolled=true\n")
         }
         Command::Refresh => {
             tokio::time::timeout(state.limits().operation(), state.connection().restore())
@@ -111,8 +106,9 @@ async fn command(
             tokio::time::timeout(state.limits().operation(), state.connection().refresh())
                 .await
                 .map_err(|_| RunnerError::Timeout)??;
-            println!("mode=control-plane\nexecution_ready=false\ncredentials_durable=true");
-            Ok(())
+            crate::output::report(
+                "mode=control-plane\nexecution_ready=false\ncredentials_durable=true\n",
+            )
         }
         Command::Health | Command::Run => Err(RunnerError::Arguments),
     }

@@ -137,7 +137,7 @@ struct SessionLifecycle {
 impl SessionLifecycle {
     async fn run(mut self) -> Result<(), CoordinatorError> {
         let first = tokio::select! {
-            first = self.observations.next() => first,
+            first = self.observations.recv() => first,
             _ = self.attempt.pending.cancelled() => None,
             _ = self.scope.ended(self.setup.timer().clone()) => None,
         };
@@ -163,33 +163,25 @@ impl SessionLifecycle {
         // The proof-bearing handshake no longer occupies its reserved slot.
         // Physical guards remain in the actual Session source and sole reader.
         let residency = self.attempt.admission.established();
-        let (candidate, cancellation) = PhysicalCandidate::new(candidate);
-        let established = self.attempt.facts.established(Box::new(candidate));
-        tokio::pin!(established);
-        let established = tokio::select! {
-            result = &mut established => result,
-            _ = self.attempt.pending.cancelled() => {
-                cancellation.cancel();
-                established.await
-            },
-            _ = self.scope.ended(self.setup.timer().clone()) => {
-                cancellation.cancel();
-                self.scope.close();
-                self.close.close();
-                established.await
-            },
+        let parts = SessionLifecycleParts {
+            pending: &self.attempt.pending,
+            facts: &self.attempt.facts,
+            scope: &self.scope,
+            setup: &self.setup,
+            close: &self.close,
         };
+        let established = publish_established(&parts, candidate).await;
         if established.is_ok() {
             self.attempt.pending.connected()?;
         }
         let loss = tokio::select! {
-            loss = self.observations.next() => loss,
+            loss = self.observations.recv() => loss,
             _ = self.scope.ended(self.setup.timer().clone()) => {
                 self.scope.close();
                 self.close.close();
                 // Closing the actual source ends this original transport;
                 // no descriptive receipt lookup can close a replacement.
-                self.observations.next().await
+                self.observations.recv().await
             }
         };
         let result = if let Some(loss) = loss {
@@ -221,6 +213,35 @@ impl SessionLifecycle {
         drop(residency);
         result
     }
+}
+struct SessionLifecycleParts<'a> {
+    pending: &'a Arc<PendingConnection>,
+    facts: &'a Arc<dyn SessionFactSink>,
+    scope: &'a Arc<SessionConnectionScope>,
+    setup: &'a Arc<SessionBrokerSetup>,
+    close: &'a Session,
+}
+async fn publish_established(
+    lifecycle: &SessionLifecycleParts<'_>,
+    candidate: InitialSessionCandidate,
+) -> Result<(), CoordinatorError> {
+    let (candidate, cancellation) = PhysicalCandidate::new(candidate);
+    let established = lifecycle.facts.established(Box::new(candidate));
+    tokio::pin!(established);
+    let established = tokio::select! {
+        result = &mut established => result,
+        _ = lifecycle.pending.cancelled() => {
+            cancellation.cancel();
+            established.await
+        },
+        _ = lifecycle.scope.ended(lifecycle.setup.timer().clone()) => {
+            cancellation.cancel();
+            lifecycle.scope.close();
+            lifecycle.close.close();
+            established.await
+        },
+    };
+    established
 }
 struct NativeSessionLifetime {
     session: Session,

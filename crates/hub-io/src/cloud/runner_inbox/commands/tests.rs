@@ -9,11 +9,7 @@ use nocterm_keys::{
     cloud::{RunnerEncryptionKey, open_command, seal_command},
 };
 
-#[test]
-fn authenticated_stop_keeps_original_id_run_and_signed_header_digest() {
-    let account = AccountKeyPair::generate().unwrap();
-    let runner = RunnerEncryptionKey::generate().unwrap();
-    let device = DeviceKey::generate().unwrap();
+fn stream_and_destination(account: &AccountKeyPair) -> (StreamBinding, RunDestination) {
     let source = StreamBinding::new(
         AccountScope::new(
             HubIdentity::new(
@@ -40,6 +36,15 @@ fn authenticated_stop_keeps_original_id_run_and_signed_header_digest() {
         Fingerprint::from_bytes([9; 32]),
     );
     let default = RunDestination::new(target, authentication, None).unwrap();
+    (source, default)
+}
+
+#[test]
+fn authenticated_stop_keeps_original_id_run_and_signed_header_digest() {
+    let account = AccountKeyPair::generate().unwrap();
+    let runner = RunnerEncryptionKey::generate().unwrap();
+    let device = DeviceKey::generate().unwrap();
+    let (source, default) = stream_and_destination(&account);
     let route = CloudRoute {
         namespace: CloudNamespace {
             hub_instance_id: CloudTextId::new("hub").unwrap(),

@@ -166,13 +166,11 @@ pub(super) fn read_error(error: rusqlite::Error) -> JournalError {
     }
 }
 pub(super) fn classify_busy(error: JournalError) -> JournalError {
-    if let JournalError::Storage(cause) = &error {
-        if let Some(cause) = cause.downcast_ref::<rusqlite::Error>() {
-            if matches!(cause, rusqlite::Error::SqliteFailure(cause, _) if matches!(cause.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
-            {
-                return JournalError::Busy;
-            }
-        }
+    if let JournalError::Storage(cause) = &error
+        && let Some(cause) = cause.downcast_ref::<rusqlite::Error>()
+        && matches!(cause, rusqlite::Error::SqliteFailure(cause, _) if matches!(cause.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
+    {
+        return JournalError::Busy;
     }
     error
 }

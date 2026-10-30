@@ -161,9 +161,9 @@ pub(super) fn map(
                     let offer = body::provider(grant, &context, &allowed_models)?;
                     hard_expires = Some(offer.expires());
                     attachment = Some(PreparedAttachment::Provider {
-                        context,
+                        context: Box::new(context),
                         capsule: capsule.to_vec(),
-                        offer: offer.clone(),
+                        offer: Box::new(offer.clone()),
                     });
                     CommandBody::ProviderGrant(offer)
                 }
@@ -195,14 +195,13 @@ pub(super) fn map(
             hard_expires = Some(consent.expires());
             attachment = Some(PreparedAttachment::Ssh {
                 payload: signed.payload().to_vec(),
-                consent: consent.clone(),
+                consent: Box::new(consent.clone()),
             });
             CommandBody::SessionConsent(consent)
         }
     };
-    let command = ReceivedCommand::new(stream, acceptance, window, run, body, hard_expires)?;
     Ok(MappedCommand {
-        command,
+        command: ReceivedCommand::new(stream, acceptance, window, run, body, hard_expires)?,
         attachment,
     })
 }

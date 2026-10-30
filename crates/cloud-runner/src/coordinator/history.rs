@@ -31,109 +31,116 @@ impl Conversation {
     }
     fn apply(&mut self, stored: &StoredRecord) -> Result<(), CoordinatorError> {
         match stored.record().kind() {
-            JournalRecordKind::CommandAccepted { id, kind } => {
-                let Frame::Accepted { command, allocated } =
-                    Frame::read(stored.record().payload())?
-                else {
-                    return Err(JournalError::Corrupt.into());
-                };
-                let command = command.restore()?;
-                if command.stream() != stored.stream()
-                    || command.acceptance().id() != *id
-                    || command.acceptance().kind() != *kind
-                {
-                    return Err(JournalError::Corrupt.into());
-                }
-                if let CommandBody::Submit(prompt) = command.body() {
-                    let run = allocated.ok_or(JournalError::Corrupt)?.restore()?;
-                    if stored.record().context().run() != Some(&run)
-                        || self.messages.contains_key(&run)
-                    {
-                        return Err(JournalError::Corrupt.into());
-                    }
-                    self.order.push(run.clone());
-                    self.messages.insert(
-                        run,
-                        vec![EngineHistoryMessage::User(prompt.prompt().clone())],
-                    );
-                }
-            }
-            JournalRecordKind::ModelAction { .. } => {
-                let Frame::Action { text, calls, .. } = Frame::read(stored.record().payload())?
-                else {
-                    return Err(JournalError::Corrupt.into());
-                };
-                if !text.is_empty() || !calls.is_empty() {
-                    let calls = calls
-                        .into_iter()
-                        .map(|planned| {
-                            Ok::<_, CoordinatorError>(HistoricalToolCall::new(
-                                planned.intent(),
-                                planned.call()?,
-                            )?)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    self.add(
-                        stored
-                            .record()
-                            .context()
-                            .run()
-                            .ok_or(JournalError::Corrupt)?,
-                        EngineHistoryMessage::Assistant(HistoricalAssistant::new(text, calls)?),
-                    )?;
-                }
-            }
+            JournalRecordKind::CommandAccepted { id, kind } => self.accepted(stored, *id, *kind),
+            JournalRecordKind::ModelAction { .. } => self.action(stored),
             JournalRecordKind::Outcome { intent, .. } | JournalRecordKind::Declined { intent } => {
-                let Frame::Result {
-                    intent: original,
-                    output,
-                    failed,
-                    unknown,
-                    ..
-                } = Frame::read(stored.record().payload())?
-                else {
-                    return Err(JournalError::Corrupt.into());
-                };
-                if original != *intent.as_bytes() {
-                    return Err(JournalError::Corrupt.into());
-                }
-                if unknown {
-                    let run = stored
-                        .record()
-                        .context()
-                        .run()
-                        .ok_or(JournalError::Corrupt)?;
-                    self.unknown.entry(run.clone()).or_default().insert(*intent);
-                }
-                self.add(
-                    stored
-                        .record()
-                        .context()
-                        .run()
-                        .ok_or(JournalError::Corrupt)?,
-                    EngineHistoryMessage::ToolResult(HistoricalToolResult::new(
-                        *intent,
-                        BoundedJson::new(output)?,
-                        failed,
-                    )),
-                )?;
+                self.result(stored, intent)
             }
-            JournalRecordKind::Reconciled { intent, .. } => {
-                let Frame::Reconciled { original, .. } = Frame::read(stored.record().payload())?
-                else {
-                    return Err(JournalError::Corrupt.into());
-                };
-                let original = original.restore()?;
-                if original.id() != *intent
-                    || Some(original.authority().run()) != stored.record().context().run()
-                {
-                    return Err(JournalError::Corrupt.into());
-                }
-                if let Some(unknown) = self.unknown.get_mut(original.authority().run()) {
-                    unknown.remove(intent);
-                }
+            JournalRecordKind::Reconciled { intent, .. } => self.reconciled(stored, intent),
+            _ => Ok(()),
+        }
+    }
+    fn accepted(
+        &mut self,
+        stored: &StoredRecord,
+        id: CommandId,
+        kind: CommandKind,
+    ) -> Result<(), CoordinatorError> {
+        let Frame::Accepted { command, allocated } = Frame::read(stored.record().payload())? else {
+            return Err(JournalError::Corrupt.into());
+        };
+        let command = command.restore()?;
+        if command.stream() != stored.stream()
+            || command.acceptance().id() != id
+            || command.acceptance().kind() != kind
+        {
+            return Err(JournalError::Corrupt.into());
+        }
+        if let CommandBody::Submit(prompt) = command.body() {
+            let run = allocated.ok_or(JournalError::Corrupt)?.restore()?;
+            if stored.record().context().run() != Some(&run) || self.messages.contains_key(&run) {
+                return Err(JournalError::Corrupt.into());
             }
-            _ => {}
+            self.order.push(run.clone());
+            self.messages.insert(
+                run,
+                vec![EngineHistoryMessage::User(prompt.prompt().clone())],
+            );
+        }
+        Ok(())
+    }
+    fn action(&mut self, stored: &StoredRecord) -> Result<(), CoordinatorError> {
+        let Frame::Action { text, calls, .. } = Frame::read(stored.record().payload())? else {
+            return Err(JournalError::Corrupt.into());
+        };
+        if text.is_empty() && calls.is_empty() {
+            return Ok(());
+        }
+        let calls = calls
+            .into_iter()
+            .map(|planned| {
+                Ok::<_, CoordinatorError>(HistoricalToolCall::new(
+                    planned.intent(),
+                    planned.call()?,
+                )?)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.add(
+            stored
+                .record()
+                .context()
+                .run()
+                .ok_or(JournalError::Corrupt)?,
+            EngineHistoryMessage::Assistant(HistoricalAssistant::new(text, calls)?),
+        )
+    }
+    fn result(&mut self, stored: &StoredRecord, intent: &IntentId) -> Result<(), CoordinatorError> {
+        let Frame::Result {
+            intent: original,
+            output,
+            failed,
+            unknown,
+            ..
+        } = Frame::read(stored.record().payload())?
+        else {
+            return Err(JournalError::Corrupt.into());
+        };
+        if original != *intent.as_bytes() {
+            return Err(JournalError::Corrupt.into());
+        }
+        let run = stored
+            .record()
+            .context()
+            .run()
+            .ok_or(JournalError::Corrupt)?;
+        if unknown {
+            self.unknown.entry(run.clone()).or_default().insert(*intent);
+        }
+        self.add(
+            run,
+            EngineHistoryMessage::ToolResult(HistoricalToolResult::new(
+                *intent,
+                BoundedJson::new(output)?,
+                failed,
+            )),
+        )
+    }
+    fn reconciled(
+        &mut self,
+        stored: &StoredRecord,
+        intent: &IntentId,
+    ) -> Result<(), CoordinatorError> {
+        let Frame::Reconciled { original, .. } = Frame::read(stored.record().payload())? else {
+            return Err(JournalError::Corrupt.into());
+        };
+        let original = original.restore()?;
+        if original.id() != *intent
+            || Some(original.authority().run()) != stored.record().context().run()
+        {
+            return Err(JournalError::Corrupt.into());
+        }
+        if let Some(unknown) = self.unknown.get_mut(original.authority().run()) {
+            unknown.remove(intent);
         }
         Ok(())
     }

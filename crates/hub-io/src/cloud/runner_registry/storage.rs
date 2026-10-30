@@ -112,7 +112,7 @@ async fn publish(
         }
         Ok(_) => Err(RunnerRegistryError::Format),
         Err(error) => {
-            let winner = read(work, &at, scope, context).await?;
+            let winner = read(work, at, scope, context).await?;
             if existing(&winner.1, registration)? {
                 return Ok(winner);
             }

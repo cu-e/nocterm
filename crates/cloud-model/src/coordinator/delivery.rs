@@ -13,7 +13,7 @@ pub enum CommandInput {
     /// Cryptographically checked small coordinates whose body could not receive
     /// an ordinary allocation. No payload allocation or final inbox ACK occurred.
     Deferred {
-        command: CommandAcknowledgement,
+        command: Box<CommandAcknowledgement>,
         reason: RetryReason,
         allocation: AllocationLease,
     },
@@ -39,7 +39,7 @@ pub enum CommandRefusal {
 /// pump. Accepted contains the actual immutable native journal receipt.
 #[derive(Clone, Debug)]
 pub enum CommandReply {
-    Accepted(CommandReceipt),
+    Accepted(Box<CommandReceipt>),
     /// An informational semantic refusal, never proof of durable admission or
     /// durable rejection. The producer needs a separately durable rejection or
     /// an explicit authenticated safe-discard policy before final hub ACK.

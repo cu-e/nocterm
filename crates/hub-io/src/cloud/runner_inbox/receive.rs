@@ -337,6 +337,29 @@ async fn material(
     Ok(Scanned::Handled)
 }
 
+/// The delivery origin must be the issuing device of the account's runner.
+fn check_origin(
+    owner: &InboxOwner,
+    origin: &CloudDeliveryOrigin,
+    signed: &nocterm_hub_model::cloud::SignedCommand<'_>,
+) -> Result<(), CoordinatorError> {
+    match origin {
+        CloudDeliveryOrigin::Device {
+            account,
+            device,
+            key,
+        } if account.as_str() == owner.material.binding().scope().account().id().as_str()
+            && device == &signed.header().issuer().device_id
+            && key == &signed.header().issuer().signing_key =>
+        {
+            Ok(())
+        }
+        _ => {
+            owner.fault(RunnerInboxFault::Authentication);
+            Err(CoordinatorError::InvalidCommand)
+        }
+    }
+}
 async fn command(
     owner: &Arc<InboxOwner>,
     budget: &CommandReceiveBudget,
@@ -358,19 +381,7 @@ async fn command(
             backend(error)
         })?;
     let signed = opened.command().map_err(backend)?;
-    match &incoming.origin {
-        CloudDeliveryOrigin::Device {
-            account,
-            device,
-            key,
-        } if account.as_str() == owner.material.binding().scope().account().id().as_str()
-            && device == &signed.header().issuer().device_id
-            && key == &signed.header().issuer().signing_key => {}
-        _ => {
-            owner.fault(RunnerInboxFault::Authentication);
-            return Err(CoordinatorError::InvalidCommand);
-        }
-    }
+    check_origin(owner, &incoming.origin, &signed)?;
     let stream = owner
         .material
         .binding()
@@ -417,12 +428,9 @@ async fn command(
         owner.fault(RunnerInboxFault::InvalidCommand);
         return Ok(Scanned::Handled);
     }
-    let payload = match CloudCommandPayload::from_command(&signed) {
-        Ok(value) => value,
-        Err(_) => {
-            owner.fault(RunnerInboxFault::InvalidCommand);
-            return Ok(Scanned::Handled);
-        }
+    let Ok(payload) = CloudCommandPayload::from_command(&signed) else {
+        owner.fault(RunnerInboxFault::InvalidCommand);
+        return Ok(Scanned::Handled);
     };
     prepare(
         owner,
@@ -465,10 +473,7 @@ fn prepare(
         }
         Err(error) => return Err(error.into()),
     };
-    let attachment_allocation = if matches!(&payload, CloudCommandPayload::IssueGrant(wire_grant)
-        if matches!(wire_grant.as_ref(), nocterm_hub_model::cloud::payload::GrantPayload::Provider { .. }))
-        || matches!(&payload, CloudCommandPayload::AnswerSshConsent(_))
-    {
+    let attachment_allocation = if needs_attachment(&payload) {
         match owner.attachments.reserve(signed.payload().len()) {
             Ok(allocation) => Some(allocation),
             Err(CoordinatorError::Overloaded) => {
@@ -486,7 +491,7 @@ fn prepare(
         None
     };
     let mapped = match commands::map(
-        &signed,
+        signed,
         payload,
         stream,
         acceptance,
@@ -527,6 +532,17 @@ fn prepare(
     owner.check_current()?;
     Ok(Scanned::Input(CommandInput::Ready(resident)))
 }
+/// Provider grants and SSH consent answers stage an attachment capsule.
+fn needs_attachment(payload: &CloudCommandPayload<'_>) -> bool {
+    match payload {
+        CloudCommandPayload::IssueGrant(grant) => matches!(
+            grant.as_ref(),
+            nocterm_hub_model::cloud::payload::GrantPayload::Provider { .. }
+        ),
+        CloudCommandPayload::AnswerSshConsent(_) => true,
+        _ => false,
+    }
+}
 fn deferred(
     owner: &InboxOwner,
     budget: &CommandReceiveBudget,
@@ -541,7 +557,7 @@ fn deferred(
     };
     match budget.try_reserve(lane, 16 * 1024, 0) {
         Ok(allocation) => Ok(Scanned::Input(CommandInput::Deferred {
-            command,
+            command: Box::new(command),
             reason,
             allocation,
         })),

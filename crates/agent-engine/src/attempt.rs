@@ -42,6 +42,17 @@ impl ModelDriver {
             calls,
         })
     }
+    fn policy(&self) -> Result<TurnPolicy, EngineError> {
+        TurnPolicy::new(
+            self.tools
+                .iter()
+                .map(|spec| spec.name.to_string())
+                .collect(),
+            None,
+            None,
+        )
+        .map_err(|_| EngineError::InvalidStream)
+    }
     pub(crate) async fn complete(
         &self,
         state: &mut ActiveRun,
@@ -117,15 +128,7 @@ impl ModelDriver {
                 )
                 .await?;
             call.check_current()?;
-            let policy = TurnPolicy::new(
-                self.tools
-                    .iter()
-                    .map(|spec| spec.name.to_string())
-                    .collect(),
-                None,
-                None,
-            )
-            .map_err(|_| EngineError::InvalidStream)?;
+            let policy = self.policy()?;
             Ok(FinishedTurn {
                 turn: ModelTurn::from_policy(&response, policy),
                 stop,

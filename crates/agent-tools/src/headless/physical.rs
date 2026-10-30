@@ -37,7 +37,7 @@ impl PhysicalTerminal {
             PhysicalPublication::Published => (Publication::Published, None),
             PhysicalPublication::Pending => (Publication::Pending, None),
             PhysicalPublication::Initial(lifecycle) => {
-                (Publication::InitialPending, Some(lifecycle))
+                (Publication::InitialPending, Some(*lifecycle))
             }
         };
         Self {
@@ -287,5 +287,5 @@ enum Publication {
 pub(super) enum PhysicalPublication {
     Published,
     Pending,
-    Initial(InitialLifecycle),
+    Initial(Box<InitialLifecycle>),
 }

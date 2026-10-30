@@ -6,13 +6,18 @@ use super::{ExecutionSetup, budgets::ExecutionBudgets, runtime::ExecutionRuntime
 use crate::{
     RunnerError,
     bootstrap::State,
-    sessions::{NativeSessionBroker, SessionBrokerSetup, SessionCapacity, SessionResources},
+    sessions::{
+        ConfiguredSessionTargets, NativeSessionBroker, SessionBrokerSetup, SessionCapacity,
+        SessionResources,
+    },
 };
 use nocterm_agent_engine::ConfiguredProviderCatalog;
 use nocterm_cloud_model::{
     admission::AdmissionLimits,
-    coordinator::AuthenticatedCommandSource,
-    journal::{CoordinatorSnapshotEncoder, JournalReadLimits, SnapshotLimits},
+    coordinator::{AuthenticatedCommandSource, RunDestination},
+    journal::{
+        CoordinatorSnapshotEncoder, JournalCatalogBinding, JournalReadLimits, SnapshotLimits,
+    },
     tool::ToolTimer,
 };
 use nocterm_cloud_runner::{
@@ -36,6 +41,59 @@ const STAGED_COMMANDS: usize = 64;
 const GLOBAL_SESSIONS: (usize, usize) = (16, 128);
 const ACCOUNT_SESSIONS: (usize, usize) = (8, 64);
 
+/// Host keys are pinned in the private state directory; no agent or identity
+/// directory is consulted.
+fn ssh_transport(state: &State) -> Result<Arc<SshTransport>, RunnerError> {
+    let config = SshConfig {
+        known_hosts: state.directory().join("known_hosts"),
+        ..SshConfig::default()
+    };
+    Ok(Arc::new(
+        SshTransport::new(config).map_err(RunnerError::Runtime)?,
+    ))
+}
+
+fn ingress(
+    state: &State,
+    timer: &Arc<NativeToolTimer>,
+    budgets: &ExecutionBudgets,
+    destination: RunDestination,
+) -> Result<(Arc<RunnerCommandAttachments>, RunnerInbox), RunnerError> {
+    let attachments = RunnerCommandAttachments::new(
+        state.connection().clone(),
+        state.material(),
+        timer.clone(),
+        STAGED_COMMANDS,
+        budgets.attachments(),
+    )?;
+    let inbox = RunnerInbox::new(
+        state.connection().clone(),
+        state.material(),
+        RunnerInboxPrincipal::new(state.account(), destination),
+        Arc::new(state.journal()),
+        attachments.clone(),
+        timer.clone(),
+        RunnerInboxOptions::new(state.directory().join("inbox"), InboxResume::OpenExisting),
+    )?;
+    Ok((attachments, inbox))
+}
+
+fn broker(
+    setup: SessionBrokerSetup,
+    targets: Arc<ConfiguredSessionTargets>,
+    budgets: &ExecutionBudgets,
+) -> Result<Arc<NativeSessionBroker>, RunnerError> {
+    let capture = budgets.capture();
+    Ok(NativeSessionBroker::new(
+        setup,
+        targets,
+        SessionResources::new(
+            SessionCapacity::new(GLOBAL_SESSIONS.0, GLOBAL_SESSIONS.1, capture.clone())?,
+            SessionCapacity::new(ACCOUNT_SESSIONS.0, ACCOUNT_SESSIONS.1, capture)?,
+        ),
+    )?)
+}
+
 pub(super) async fn compose(
     setup: ExecutionSetup,
     state: &State,
@@ -53,30 +111,11 @@ pub(super) async fn compose(
     // Containment is mandatory: a missing namespace or limit refuses startup and
     // never selects an uncontained path.
     let local = configuration.prepare_containment(state.directory()).await?;
-    let ssh = SshConfig {
-        known_hosts: state.directory().join("known_hosts"),
-        ..SshConfig::default()
-    };
-    let ssh = Arc::new(SshTransport::new(ssh).map_err(RunnerError::Runtime)?);
+    let ssh = ssh_transport(state)?;
     let destination = targets.default_destination()?;
     let targets = targets.build(binding.clone(), &local, ssh)?;
 
-    let attachments = RunnerCommandAttachments::new(
-        state.connection().clone(),
-        state.material(),
-        timer.clone(),
-        STAGED_COMMANDS,
-        budgets.attachments(),
-    )?;
-    let inbox = RunnerInbox::new(
-        state.connection().clone(),
-        state.material(),
-        RunnerInboxPrincipal::new(state.account(), destination),
-        Arc::new(state.journal()),
-        attachments.clone(),
-        timer.clone(),
-        RunnerInboxOptions::new(state.directory().join("inbox"), InboxResume::OpenExisting),
-    )?;
+    let (attachments, inbox) = ingress(state, &timer, &budgets, destination)?;
     let encoder = state.material().event_encoder(Arc::new(SystemClock));
     let journal = state
         .journal()
@@ -102,35 +141,16 @@ pub(super) async fn compose(
         state.identity(),
         budgets.sessions(),
     )?;
-    let capture = budgets.capture();
-    let broker = NativeSessionBroker::new(
-        broker_setup,
-        targets,
-        SessionResources::new(
-            SessionCapacity::new(GLOBAL_SESSIONS.0, GLOBAL_SESSIONS.1, capture.clone())?,
-            SessionCapacity::new(ACCOUNT_SESSIONS.0, ACCOUNT_SESSIONS.1, capture)?,
-        ),
-    )?;
+    let broker = broker(broker_setup, targets, &budgets)?;
     let credentials = RunnerProviderCredentialSource::new(attachments.clone(), state.account())?;
+    let policies = configuration.policies(binding.scope())?;
     let providers = ConfiguredProviderCatalog::new(
         Arc::new(credentials),
         tool_timer.clone(),
-        configuration.policies(binding.scope())?,
+        policies,
         grants,
     )?;
-    let sessions = CoordinatorSessions::new(
-        binding,
-        broker.clone(),
-        budgets.sessions(),
-        Arc::new(journal.cleanup()),
-    )?;
-    let execution = CoordinatorExecution::new(
-        Arc::new(providers),
-        broker.clone(),
-        broker.clone(),
-        Arc::new(RunnerArgumentFingerprint::new(budgets.arguments())),
-    )
-    .with_sessions(sessions);
+    let execution = execution(binding, providers, &broker, &journal, &budgets)?;
     let services = CoordinatorServices::new(
         source,
         storage,
@@ -152,6 +172,28 @@ pub(super) async fn compose(
         budgets.transport(),
         state.limits().operation(),
     ))
+}
+
+fn execution(
+    binding: JournalCatalogBinding,
+    providers: ConfiguredProviderCatalog,
+    broker: &Arc<NativeSessionBroker>,
+    journal: &DurableRunJournal,
+    budgets: &ExecutionBudgets,
+) -> Result<CoordinatorExecution, RunnerError> {
+    let sessions = CoordinatorSessions::new(
+        binding,
+        broker.clone(),
+        budgets.sessions(),
+        Arc::new(journal.cleanup()),
+    )?;
+    Ok(CoordinatorExecution::new(
+        Arc::new(providers),
+        broker.clone(),
+        broker.clone(),
+        Arc::new(RunnerArgumentFingerprint::new(budgets.arguments())),
+    )
+    .with_sessions(sessions))
 }
 
 /// The one FIFO outbox transport is the already-restored authenticated hub peer.

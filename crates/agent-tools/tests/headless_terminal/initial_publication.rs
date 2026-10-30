@@ -29,7 +29,7 @@ fn initial_session_published_guard_closes_until_original_run_accepts_it() {
         host.pool.spawner().spawn_local(task.into_run()).unwrap();
         host.pool.run_until(driver.emit(Event::Connected));
         host.pump();
-        let connected = observations.next().now_or_never().unwrap().unwrap();
+        let connected = observations.recv().now_or_never().unwrap().unwrap();
         assert!(matches!(
             connected.event(),
             SessionLifecycleEvent::Connected
@@ -47,7 +47,7 @@ fn initial_session_published_guard_closes_until_original_run_accepts_it() {
         assert_eq!(driver.closed().now_or_never().is_some(), !accepted);
         if !accepted {
             assert!(matches!(
-                observations.next().now_or_never().unwrap().unwrap().event(),
+                observations.recv().now_or_never().unwrap().unwrap().event(),
                 SessionLifecycleEvent::Lost { .. }
             ));
         }
@@ -73,14 +73,14 @@ fn initial_session_old_published_guard_does_not_remove_a_new_physical_generation
     host.pool.run_until(original_driver.emit(Event::Connected));
     host.pump();
     assert!(matches!(
-        observations.next().now_or_never().unwrap().unwrap().event(),
+        observations.recv().now_or_never().unwrap().unwrap().event(),
         SessionLifecycleEvent::Connected
     ));
     let old = candidate.publish_owned().unwrap();
     retained.remove(host.authority.session()).unwrap();
     host.pump();
     assert!(original_driver.closed().now_or_never().is_some());
-    let original_loss = observations.next().now_or_never().unwrap().unwrap();
+    let original_loss = observations.recv().now_or_never().unwrap().unwrap();
     let (session, replacement_driver) = nocterm_session::channel(None);
     let (replacement, mut observations, task) = InitialSessionCandidate::prepare(
         host.registry.clone(),
@@ -98,7 +98,7 @@ fn initial_session_old_published_guard_does_not_remove_a_new_physical_generation
         .run_until(replacement_driver.emit(Event::Connected));
     host.pump();
     assert!(matches!(
-        observations.next().now_or_never().unwrap().unwrap().event(),
+        observations.recv().now_or_never().unwrap().unwrap().event(),
         SessionLifecycleEvent::Connected
     ));
     replacement.publish_owned().unwrap().accept();
@@ -133,7 +133,7 @@ fn initial_session_old_guard_cannot_close_the_same_physical_after_another_view_a
     host.pool.run_until(driver.emit(Event::Connected));
     host.pump();
     assert!(matches!(
-        observations.next().now_or_never().unwrap().unwrap().event(),
+        observations.recv().now_or_never().unwrap().unwrap().event(),
         SessionLifecycleEvent::Connected
     ));
     let old = candidate.publish_owned().unwrap();
@@ -152,7 +152,7 @@ fn initial_session_old_guard_cannot_close_the_same_physical_after_another_view_a
     drop(old);
     host.pump();
     assert!(driver.closed().now_or_never().is_none());
-    assert!(observations.next().now_or_never().is_none());
+    assert!(observations.recv().now_or_never().is_none());
     let mut later = retained.view(next_run).unwrap();
     later
         .attach_retained(
@@ -183,13 +183,13 @@ fn initial_session_observed_loss_releases_the_original_retained_slot() {
     host.pool.spawner().spawn_local(task.into_run()).unwrap();
     host.pool.run_until(driver.emit(Event::Connected));
     host.pump();
-    let connected = observations.next().now_or_never().unwrap().unwrap();
+    let connected = observations.recv().now_or_never().unwrap().unwrap();
     assert!(!retained.retire_observed(&connected));
     candidate.publish_owned().unwrap().accept();
     host.pool
         .run_until(driver.emit(Event::Closed(nocterm_session::CloseReason::ClosedByUser)));
     host.pump();
-    let lost = observations.next().now_or_never().unwrap().unwrap();
+    let lost = observations.recv().now_or_never().unwrap().unwrap();
     assert!(retained.retire_observed(&lost));
     assert!(!retained.retire_observed(&lost));
     assert!(retained.remove(host.authority.session()).is_err());

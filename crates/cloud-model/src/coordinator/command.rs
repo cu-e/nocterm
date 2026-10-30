@@ -428,13 +428,12 @@ impl ReceivedCommand {
                 return Err(CoordinatorError::InvalidCommand);
             }
         }
-        if let CommandBody::RevokeIssuer(revoke) = &body {
-            if revoke.issuer().device() != acceptance.issuer().device()
+        if let CommandBody::RevokeIssuer(revoke) = &body
+            && (revoke.issuer().device() != acceptance.issuer().device()
                 || revoke.issuer().key() != acceptance.issuer().key()
-                || revoke.cutoff() > acceptance.expected_control()
-            {
-                return Err(CoordinatorError::InvalidCommand);
-            }
+                || revoke.cutoff() > acceptance.expected_control())
+        {
+            return Err(CoordinatorError::InvalidCommand);
         }
         let origin = match &body {
             CommandBody::InferenceGrant(grant) => Some(grant.origin()),

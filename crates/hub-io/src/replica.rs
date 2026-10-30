@@ -351,9 +351,9 @@ impl ProfileReplica for HubProfileReplica {
         let source = self.bound.source().clone();
         futures::stream::unfold((receiver, source), |(mut receiver, source)| async move {
             source.check().ok()?;
-            let tick = receiver.recv().await?;
+            receiver.recv().await?;
             source.check().ok()?;
-            Some((tick, (receiver, source)))
+            Some(((), (receiver, source)))
         })
         .boxed()
     }

@@ -60,61 +60,12 @@ impl RunWorker {
     }
     async fn advance(&self) -> Result<(), CoordinatorError> {
         self.run.control().check(self.services.source().as_ref())?;
-        let recovery = self.run.take_recovery();
-        let effect_state = recovery.as_ref().map_or_else(
-            || {
-                RunState::new(
-                    self.run.binding().clone(),
-                    self.run.context().destination().target().clone(),
-                    self.chat.log().lease().epoch(),
-                    Revision::default(),
-                )
-            },
-            |plan| plan.state(),
-        );
-        let mut effects = EffectHost::new(
-            self.services.clone(),
-            self.chat.clone(),
-            self.run.clone(),
-            effect_state,
-        );
-        if let Some(plan) = recovery {
-            for (id, call) in plan.missing()? {
-                if let Some(intent) = plan.pending().filter(|intent| intent.id() == id) {
-                    effects
-                        .undispatched(intent.clone(), call, plan.choice())
-                        .await?;
-                } else {
-                    effects.execute(id, call).await?;
-                }
-            }
-        }
+        let mut effects = self.replay(self.run.take_recovery()).await?;
         let configured = self
             .services
             .providers()
             .model(self.run.context().selection())?;
-        let history = history::load(&self.services, self.run.binding()).await?;
-        let mut prior = history.messages().to_vec();
-        let input = match prior.last() {
-            Some(EngineHistoryMessage::User(_)) => {
-                let Some(EngineHistoryMessage::User(prompt)) = prior.pop() else {
-                    return Err(JournalError::Corrupt.into());
-                };
-                EngineRequest::Prompt(prompt)
-            }
-            Some(EngineHistoryMessage::ToolResult(_)) => EngineRequest::ContinueHistory,
-            _ => return Err(JournalError::Corrupt.into()),
-        };
-        let mut engine = configured.factory().create(
-            EngineConfig {
-                run: self.run.binding().clone(),
-                model: configured.selection().model().clone(),
-                history: EngineHistory::new(prior)?,
-                budget: self.run.context().allowance().budget(),
-            },
-            None,
-        )?;
-        let mut input = input;
+        let (mut engine, mut input) = self.start_engine(&configured).await?;
         self.run.status(self.chat.log(), RunStatus::Running).await?;
         loop {
             self.run.control().check(self.services.source().as_ref())?;
@@ -149,71 +100,18 @@ impl RunWorker {
                 .await?;
             self.run.control().check(self.services.source().as_ref())?;
             if !admission.was_reserved() {
-                // Rig can finish after accepting the previous turn's tool
-                // results, before opening another HTTP call. Only the durable
-                // hard turn ceiling permits that local completion. It creates
-                // no model action, call reservation, usage or refund.
-                let exhausted = matches!(&action, EngineAction::Complete(done)
-                    if done.stop == nocterm_ai::model::session::StopReason::MaxTurnRequests);
-                let state = self.run.state().lock().await;
-                if exhausted
-                    && state.ledger().charge()?.turns()
-                        == self.run.context().allowance().budget().turns()
-                {
-                    return Ok(());
-                }
-                return Err(nocterm_cloud_model::inference::InferenceError::Conflict.into());
+                return self.complete_without_call(&action).await;
             }
-            let calls = match &action {
-                EngineAction::Tools(batch) => batch
-                    .calls()
-                    .iter()
-                    .map(|call| {
-                        Ok::<_, CoordinatorError>((
-                            IntentId::from_bytes(self.services.identity().fresh()?),
-                            call.clone(),
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                EngineAction::Complete(_) => Vec::new(),
-            };
-            let mut state = self.run.state().lock().await;
-            let mut ledger = state.ledger().clone();
-            ledger.finalize(admission.attempt())?;
-            let record = JournalRecord::new(
-                RecordContext::Run(self.run.binding().clone()),
-                JournalRecordKind::ModelAction { step },
-                Frame::Action {
-                    ledger: Ledger::from(&ledger),
-                    text: progress.text(),
-                    calls: calls
-                        .iter()
-                        .map(|(intent, call)| PlannedCall::new(*intent, call))
-                        .collect::<Result<_, _>>()?,
-                    complete: matches!(action, EngineAction::Complete(_)),
-                }
-                .bytes()?,
-            )?;
-            // ModelAction is already visible as durable progress; this event
-            // supplies its verified completion status, never partial authority.
-            let status = if matches!(action, EngineAction::Complete(_)) {
-                RunStatus::Completed
-            } else {
-                RunStatus::Running
-            };
-            self.chat
-                .log()
-                .model_action(
-                    record,
-                    CoordinatorEvent::Status {
-                        run: self.run.binding().clone(),
-                        status,
-                    },
-                    engine.as_mut(),
-                )
-                .await?;
-            state.set_ledger(ledger);
-            drop(state);
+            let calls = self.plan_calls(&action)?;
+            self.record_action(
+                engine.as_mut(),
+                step,
+                &admission,
+                &progress,
+                &action,
+                &calls,
+            )
+            .await?;
             self.run.control().check(self.services.source().as_ref())?;
             match action {
                 EngineAction::Complete(_) => return Ok(()),
@@ -227,6 +125,153 @@ impl RunWorker {
                 }
             }
         }
+    }
+    /// Builds the effect host and finishes every call a recovered run left
+    /// undone, without repeating dispatched I/O.
+    async fn replay(
+        &self,
+        recovery: Option<super::recovery::RecoveryPlan>,
+    ) -> Result<EffectHost, CoordinatorError> {
+        let effect_state = recovery.as_ref().map_or_else(
+            || {
+                RunState::new(
+                    self.run.binding().clone(),
+                    self.run.context().destination().target().clone(),
+                    self.chat.log().lease().epoch(),
+                    Revision::default(),
+                )
+            },
+            |plan| plan.state(),
+        );
+        let mut effects = EffectHost::new(
+            self.services.clone(),
+            self.chat.clone(),
+            self.run.clone(),
+            effect_state,
+        );
+        if let Some(plan) = recovery {
+            for (id, call) in plan.missing()? {
+                if let Some(intent) = plan.pending().filter(|intent| intent.id() == id) {
+                    effects
+                        .undispatched(intent.clone(), call, plan.choice())
+                        .await?;
+                } else {
+                    effects.execute(id, call).await?;
+                }
+            }
+        }
+        Ok(effects)
+    }
+    /// Creates the engine over the authoritative neutral history and returns
+    /// the first request, which is the trailing prompt or tool results.
+    async fn start_engine(
+        &self,
+        configured: &ConfiguredModel,
+    ) -> Result<(Box<dyn AgentEngine>, EngineRequest), CoordinatorError> {
+        let history = history::load(&self.services, self.run.binding()).await?;
+        let mut prior = history.messages().to_vec();
+        let input = match prior.last() {
+            Some(EngineHistoryMessage::User(_)) => {
+                let Some(EngineHistoryMessage::User(prompt)) = prior.pop() else {
+                    return Err(JournalError::Corrupt.into());
+                };
+                EngineRequest::Prompt(prompt)
+            }
+            Some(EngineHistoryMessage::ToolResult(_)) => EngineRequest::ContinueHistory,
+            _ => return Err(JournalError::Corrupt.into()),
+        };
+        let engine = configured.factory().create(
+            EngineConfig {
+                run: self.run.binding().clone(),
+                model: configured.selection().model().clone(),
+                history: EngineHistory::new(prior)?,
+                budget: self.run.context().allowance().budget(),
+            },
+            None,
+        )?;
+        Ok((engine, input))
+    }
+    /// Rig can finish after accepting the previous turn's tool results, before
+    /// opening another HTTP call. Only the durable hard turn ceiling permits
+    /// that local completion. It creates no model action, call reservation,
+    /// usage or refund.
+    async fn complete_without_call(&self, action: &EngineAction) -> Result<(), CoordinatorError> {
+        let exhausted = matches!(action, EngineAction::Complete(done)
+            if done.stop == nocterm_ai::model::session::StopReason::MaxTurnRequests);
+        let state = self.run.state().lock().await;
+        if exhausted
+            && state.ledger().charge()?.turns() == self.run.context().allowance().budget().turns()
+        {
+            return Ok(());
+        }
+        Err(nocterm_cloud_model::inference::InferenceError::Conflict.into())
+    }
+    fn plan_calls(
+        &self,
+        action: &EngineAction,
+    ) -> Result<Vec<(IntentId, EngineToolCall)>, CoordinatorError> {
+        match action {
+            EngineAction::Tools(batch) => batch
+                .calls()
+                .iter()
+                .map(|call| {
+                    Ok::<_, CoordinatorError>((
+                        IntentId::from_bytes(self.services.identity().fresh()?),
+                        call.clone(),
+                    ))
+                })
+                .collect(),
+            EngineAction::Complete(_) => Ok(Vec::new()),
+        }
+    }
+    /// Durably admits the model action and finalizes its call reservation.
+    async fn record_action(
+        &self,
+        engine: &mut dyn AgentEngine,
+        step: StepId,
+        admission: &ModelAdmission,
+        progress: &StepProgress,
+        action: &EngineAction,
+        calls: &[(IntentId, EngineToolCall)],
+    ) -> Result<(), CoordinatorError> {
+        let complete = matches!(action, EngineAction::Complete(_));
+        let mut state = self.run.state().lock().await;
+        let mut ledger = state.ledger().clone();
+        ledger.finalize(admission.attempt())?;
+        let record = JournalRecord::new(
+            RecordContext::Run(self.run.binding().clone()),
+            JournalRecordKind::ModelAction { step },
+            Frame::Action {
+                ledger: Ledger::from(&ledger),
+                text: progress.text(),
+                calls: calls
+                    .iter()
+                    .map(|(intent, call)| PlannedCall::new(*intent, call))
+                    .collect::<Result<_, _>>()?,
+                complete,
+            }
+            .bytes()?,
+        )?;
+        // ModelAction is already visible as durable progress; this event
+        // supplies its verified completion status, never partial authority.
+        let status = if complete {
+            RunStatus::Completed
+        } else {
+            RunStatus::Running
+        };
+        self.chat
+            .log()
+            .model_action(
+                record,
+                CoordinatorEvent::Status {
+                    run: self.run.binding().clone(),
+                    status,
+                },
+                engine,
+            )
+            .await?;
+        state.set_ledger(ledger);
+        Ok(())
     }
 }
 

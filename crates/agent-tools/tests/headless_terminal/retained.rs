@@ -575,11 +575,11 @@ fn initial_session_connected_requires_explicit_publication_then_reports_original
     let terminal = task.terminal().to_owned();
     let generation = candidate.generation().clone();
     host.pool.spawner().spawn_local(task.into_run()).unwrap();
-    assert!(observations.next().now_or_never().is_none());
+    assert!(observations.recv().now_or_never().is_none());
     host.pool.run_until(driver.emit(Event::Connected));
     host.pump();
     let connected = observations
-        .next()
+        .recv()
         .now_or_never()
         .expect("lifecycle fact pending")
         .unwrap();
@@ -623,14 +623,14 @@ fn initial_session_connected_requires_explicit_publication_then_reports_original
         .run_until(driver.emit(Event::Closed(CloseReason::ClosedByUser)));
     host.pump();
     let lost = observations
-        .next()
+        .recv()
         .now_or_never()
         .expect("lifecycle fact pending")
         .unwrap();
     assert_eq!(lost.receipt(), connected.receipt());
     assert_eq!(lost.generation(), &generation);
     assert!(matches!(lost.event(), SessionLifecycleEvent::Lost { .. }));
-    assert!(matches!(observations.next().now_or_never(), Some(None)));
+    assert!(matches!(observations.recv().now_or_never(), Some(None)));
 }
 
 #[test]
@@ -671,13 +671,13 @@ fn initial_session_pending_drop_and_unpolled_reader_release_only_the_original_ca
         }
         assert!(driver.closed().now_or_never().is_some());
         let lost = observations
-            .next()
+            .recv()
             .now_or_never()
             .expect("lifecycle fact pending")
             .unwrap();
         assert_eq!(lost.generation(), &original);
         assert!(matches!(lost.event(), SessionLifecycleEvent::Lost { .. }));
-        assert!(matches!(observations.next().now_or_never(), Some(None)));
+        assert!(matches!(observations.recv().now_or_never(), Some(None)));
         assert!(
             weak.upgrade().is_none(),
             "observation cannot retain the physical resource"
@@ -727,7 +727,7 @@ fn initial_session_reader_abort_reports_loss_and_closed_view_cannot_publish() {
         host.pump();
         assert!(matches!(
             observations
-                .next()
+                .recv()
                 .now_or_never()
                 .expect("lifecycle fact pending")
                 .unwrap()
@@ -743,13 +743,13 @@ fn initial_session_reader_abort_reports_loss_and_closed_view_cannot_publish() {
         abort.abort();
         host.pump();
         let lost = observations
-            .next()
+            .recv()
             .now_or_never()
             .expect("lifecycle fact pending")
             .unwrap();
         assert_eq!(lost.generation(), &generation);
         assert!(matches!(lost.event(), SessionLifecycleEvent::Lost { .. }));
         assert!(driver.closed().now_or_never().is_some());
-        assert!(matches!(observations.next().now_or_never(), Some(None)));
+        assert!(matches!(observations.recv().now_or_never(), Some(None)));
     }
 }

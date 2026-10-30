@@ -160,6 +160,31 @@ async fn issued_factory_keeps_the_actual_model_and_runner_grant(root: &str) {
     assert!(issued.factory().create(config(), None).is_ok());
 }
 
+async fn install_raced_by_revocation(
+    f: &CatalogFixture,
+    pending: CommandAcknowledgement,
+    third: ProviderOffer,
+) {
+    let (entered, release) = f.source.pause_next_delivery();
+    let catalog = f.catalog.clone();
+    let offer = third.clone();
+    let runtime = tokio::runtime::Handle::current();
+    let worker = std::thread::spawn(move || {
+        let _runtime = runtime.enter();
+        catalog
+            .install(pending, offer)
+            .now_or_never()
+            .expect("synchronous capsule delivery")
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), entered.wait())
+        .await
+        .unwrap();
+    f.catalog.revoke(third.reference());
+    let _fourth = f.install(2, 1, 4).await;
+    release.release();
+    assert!(worker.join().unwrap().is_err());
+}
+
 async fn replacement_and_pending_revocation(root: &str) {
     let f = CatalogFixture::new(root);
     let (_, first) = f.install(1, 1, 1).await;
@@ -182,24 +207,7 @@ async fn replacement_and_pending_revocation(root: &str) {
     assert!(f.catalog.model(&f.selection).is_ok());
     let (pending, third) = f.grant(1, 3, 3);
     f.stage(&pending, &third);
-    let (entered, release) = f.source.pause_next_delivery();
-    let catalog = f.catalog.clone();
-    let offer = third.clone();
-    let runtime = tokio::runtime::Handle::current();
-    let worker = std::thread::spawn(move || {
-        let _runtime = runtime.enter();
-        catalog
-            .install(pending, offer)
-            .now_or_never()
-            .expect("synchronous capsule delivery")
-    });
-    tokio::time::timeout(std::time::Duration::from_secs(2), entered.wait())
-        .await
-        .unwrap();
-    f.catalog.revoke(third.reference());
-    let _fourth = f.install(2, 1, 4).await;
-    release.release();
-    assert!(worker.join().unwrap().is_err());
+    install_raced_by_revocation(&f, pending, third).await;
     assert!(f.catalog.install(second_command, second).await.is_err());
     let current = f.catalog.model(&f.selection).unwrap();
     let mut engine = current.factory().create(config(), None).unwrap();

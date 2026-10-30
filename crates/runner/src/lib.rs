@@ -19,9 +19,11 @@ mod config;
 mod control;
 mod error;
 mod execution;
+mod output;
 mod public_setup;
 mod sessions;
 pub use error::RunnerError;
+use std::io::Write;
 
 /// CLI entrypoint. Only static typed top-level diagnostics are printed; native
 /// source chains remain available internally and are never expanded into logs.
@@ -29,7 +31,8 @@ pub fn entry() -> std::process::ExitCode {
     match cli::execute() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("{error}");
+            // A closed stderr leaves nowhere else to report; the exit code remains.
+            let _ = writeln!(std::io::stderr(), "{error}");
             std::process::ExitCode::FAILURE
         }
     }

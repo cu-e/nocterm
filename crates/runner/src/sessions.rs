@@ -22,3 +22,4 @@ pub(crate) use broker::NativeSessionBroker;
 pub(crate) use resources::{SessionCapacity, SessionResources};
 #[cfg(target_os = "linux")]
 pub(crate) use setup::SessionBrokerSetup;
+pub(crate) use targets::ConfiguredSessionTargets;

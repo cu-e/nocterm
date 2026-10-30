@@ -493,17 +493,7 @@ fn unknown_and_partial_usage_replace_cumulative_snapshots_and_reset_for_a_new_ru
     assert!(projection.transcript().tokens.is_none());
 }
 
-#[test]
-fn descriptive_background_after_new_run_and_delete_preserves_original_unknown_result() {
-    use crate::{
-        coordinator::{BackgroundObservation, ObservedBackground},
-        journal::BackgroundRecordOutcome,
-        run::CommitStamp,
-    };
-    let mut fixture = ProjectionFixture::new();
-    let original = run_binding(1);
-    let next = run_binding(2);
-    let mut projection = ConversationProjection::new(fixture.binding().clone());
+fn terminal_exec_intent(run: &RunBinding) -> (TerminalCall, ToolIntent) {
     let call = TerminalCall::ExecCommand(nocterm_ai::ExecCommand {
         terminal_id: "terminal".into(),
         program: "true".into(),
@@ -515,11 +505,55 @@ fn descriptive_background_after_new_run_and_delete_preserves_original_unknown_re
     let intent = ToolIntent::new(
         IntentId::from_bytes([40; 16]),
         StepId::from_bytes([40; 16]),
-        execution_authority(original.clone()),
+        execution_authority(run.clone()),
         Fingerprint::from_bytes([40; 32]),
         &call,
     )
     .unwrap();
+    (call, intent)
+}
+
+fn exit_observation(
+    original: &RunBinding,
+    intent: &ToolIntent,
+    step: StepId,
+) -> crate::coordinator::BackgroundObservation {
+    use crate::{
+        coordinator::{BackgroundObservation, ObservedBackground},
+        journal::BackgroundRecordOutcome,
+        run::CommitStamp,
+    };
+    let job = ObservedBackground::new(
+        intent.id(),
+        intent.authority().clone(),
+        "terminal".into(),
+        "original-job".into(),
+        None,
+    )
+    .unwrap();
+    BackgroundObservation::new(
+        job,
+        step,
+        intent.arguments(),
+        intent.mutates(),
+        CommitStamp::new(
+            original.clone(),
+            WriterEpoch::new(1).unwrap(),
+            Revision::from_u64(3),
+        ),
+        BackgroundRecordOutcome::ObservedExit(7),
+    )
+    .unwrap()
+}
+
+#[test]
+fn descriptive_background_after_new_run_and_delete_preserves_original_unknown_result() {
+    use crate::journal::BackgroundRecordOutcome;
+    let mut fixture = ProjectionFixture::new();
+    let original = run_binding(1);
+    let next = run_binding(2);
+    let mut projection = ConversationProjection::new(fixture.binding().clone());
+    let (call, intent) = terminal_exec_intent(&original);
     let display = ToolDisplay::new(&call, None);
     projection
         .apply(&fixture.page(vec![
@@ -549,29 +583,7 @@ fn descriptive_background_after_new_run_and_delete_preserves_original_unknown_re
         .unwrap();
     let entries = serde_json::to_value(&projection.transcript().entries).unwrap();
     let control = projection.control();
-    let job = ObservedBackground::new(
-        intent.id(),
-        intent.authority().clone(),
-        "terminal".into(),
-        "original-job".into(),
-        None,
-    )
-    .unwrap();
-    let fact = |step| {
-        BackgroundObservation::new(
-            job.clone(),
-            step,
-            intent.arguments(),
-            intent.mutates(),
-            CommitStamp::new(
-                original.clone(),
-                WriterEpoch::new(1).unwrap(),
-                Revision::from_u64(3),
-            ),
-            BackgroundRecordOutcome::ObservedExit(7),
-        )
-        .unwrap()
-    };
+    let fact = |step| exit_observation(&original, &intent, step);
     let good = fixture.page(vec![CoordinatorEvent::BackgroundLifecycle(Box::new(fact(
         intent.step(),
     )))]);

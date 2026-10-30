@@ -78,7 +78,7 @@ impl MaterialFile {
         let mut file = open_private_regular(&self.path).map_err(storage)?;
         let size = usize::try_from(file.metadata().map_err(storage)?.len())
             .map_err(|_| Error::Capacity)?;
-        if !(HEADER..=MAX_BYTES).contains(&size) || (size - HEADER) % ENTRY != 0 {
+        if !(HEADER..=MAX_BYTES).contains(&size) || !(size - HEADER).is_multiple_of(ENTRY) {
             return Err(Error::Format);
         }
         let mut bytes = Vec::with_capacity(size + 1);
@@ -96,7 +96,7 @@ impl MaterialFile {
             return Err(Error::Capacity);
         }
         let mut entries = BTreeMap::new();
-        for row in bytes[HEADER..].chunks_exact(ENTRY) {
+        for row in bytes[HEADER..].as_chunks::<ENTRY>().0 {
             let (chat, grant) = decode(row)?;
             if entries.insert(chat, grant).is_some() {
                 return Err(Error::Format);
@@ -116,7 +116,10 @@ impl MaterialFile {
         let mut bytes = vec![0; HEADER + entries.len() * ENTRY];
         bytes[..8].copy_from_slice(MAGIC);
         bytes[40..44].copy_from_slice(&(entries.len() as u32).to_be_bytes());
-        for ((chat, grant), row) in entries.iter().zip(bytes[HEADER..].chunks_exact_mut(ENTRY)) {
+        for ((chat, grant), row) in entries
+            .iter()
+            .zip(bytes[HEADER..].as_chunks_mut::<ENTRY>().0)
+        {
             encode(row, *chat, grant)?;
         }
         let digest = self.digest(&bytes[40..]);

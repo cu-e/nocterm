@@ -59,56 +59,57 @@ fn runner_events_background_and_unknown_results_keep_original_effect_without_a_n
         .unwrap();
     let command =
         BackgroundCommand::new(dispatch, "terminal".into(), "actual-owned-job".into()).unwrap();
-    let next = JournalPosition::default().next(1, 1, false).unwrap();
     for outcome in [
         BackgroundRecordOutcome::Retained,
         BackgroundRecordOutcome::ObservedExit(7),
         BackgroundRecordOutcome::Unknown,
     ] {
-        let publication = JournalEventEncoder::encode(
-            &encoder,
-            &fixture.lease,
-            next,
-            &command,
-            outcome,
-            work.as_ref(),
-        )
-        .unwrap();
-        let context = crate::cloud::runner_transport::record_context(
-            publication.stream(),
-            publication.key_epoch(),
-            publication.anchor(),
-        )
-        .unwrap();
-        let public = fixture.identity.public_identity().unwrap();
-        let opened = open_event(
-            &fixture.key,
-            public.signing_key(),
-            &context,
-            publication.sealed().as_bytes(),
-        )
-        .unwrap();
-        let record = opened.record().unwrap();
-        let event = CloudEvent::from_record(&record).unwrap();
-        assert_eq!(event.control_revision, 0);
-        let CloudEventPayload::BackgroundLifecycle(fact) = event.payload else {
-            panic!("wrong event")
-        };
-        assert_eq!(fact.job.execution.run.id, *fixture.run.run().as_bytes());
-        assert_eq!(fact.job.command, "actual-owned-job");
-        assert_eq!(fact.dispatch_revision, 2);
-        assert!(fact.job.window.is_none());
-        assert_eq!(
-            fact.outcome,
-            match outcome {
-                BackgroundRecordOutcome::Retained => BackgroundOutcome::Retained,
-                BackgroundRecordOutcome::ObservedExit(exit) =>
-                    BackgroundOutcome::ObservedExit(exit),
-                BackgroundRecordOutcome::Unknown => BackgroundOutcome::Unknown,
-            }
-        );
+        assert_background_event(&fixture, &encoder, &command, outcome, work.as_ref());
     }
     unknown_result(&fixture, &encoder, intent, &call, work.as_ref());
+}
+fn assert_background_event(
+    fixture: &Fixture,
+    encoder: &RunnerEventEncoder,
+    command: &BackgroundCommand,
+    outcome: BackgroundRecordOutcome,
+    work: &PublicationBudget,
+) {
+    let next = JournalPosition::default().next(1, 1, false).unwrap();
+    let publication =
+        JournalEventEncoder::encode(encoder, &fixture.lease, next, command, outcome, work).unwrap();
+    let context = crate::cloud::runner_transport::record_context(
+        publication.stream(),
+        publication.key_epoch(),
+        publication.anchor(),
+    )
+    .unwrap();
+    let public = fixture.identity.public_identity().unwrap();
+    let opened = open_event(
+        &fixture.key,
+        public.signing_key(),
+        &context,
+        publication.sealed().as_bytes(),
+    )
+    .unwrap();
+    let record = opened.record().unwrap();
+    let event = CloudEvent::from_record(&record).unwrap();
+    assert_eq!(event.control_revision, 0);
+    let CloudEventPayload::BackgroundLifecycle(fact) = event.payload else {
+        panic!("wrong event")
+    };
+    assert_eq!(fact.job.execution.run.id, *fixture.run.run().as_bytes());
+    assert_eq!(fact.job.command, "actual-owned-job");
+    assert_eq!(fact.dispatch_revision, 2);
+    assert!(fact.job.window.is_none());
+    assert_eq!(
+        fact.outcome,
+        match outcome {
+            BackgroundRecordOutcome::Retained => BackgroundOutcome::Retained,
+            BackgroundRecordOutcome::ObservedExit(exit) => BackgroundOutcome::ObservedExit(exit),
+            BackgroundRecordOutcome::Unknown => BackgroundOutcome::Unknown,
+        }
+    );
 }
 fn unknown_result(
     fixture: &Fixture,

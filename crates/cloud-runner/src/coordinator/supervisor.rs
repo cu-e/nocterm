@@ -213,11 +213,11 @@ impl ToolTaskSpawner for TaskSupervisor {
         let state = self.state.clone();
         self.executor.spawn(async move {
             let completion = work.await;
-            if let Err(error) = completion.result() {
-                if !expected_retirement(error) {
-                    let mut state = state.registry.lock();
-                    state.failures = state.failures.saturating_add(1);
-                }
+            if let Err(error) = completion.result()
+                && !expected_retirement(error)
+            {
+                let mut state = state.registry.lock();
+                state.failures = state.failures.saturating_add(1);
             }
             drop(completion);
         });

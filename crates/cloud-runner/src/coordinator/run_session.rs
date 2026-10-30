@@ -200,10 +200,10 @@ impl RunSessionOwner {
         );
         self.changed.send_replace(());
         drop(state);
-        if let SessionPhase::Pending(active) | SessionPhase::Durable(active, _) = previous {
-            if let Some(cancellation) = active.cancellation {
-                cancellation.cancel();
-            }
+        if let SessionPhase::Pending(active) | SessionPhase::Durable(active, _) = previous
+            && let Some(cancellation) = active.cancellation
+        {
+            cancellation.cancel();
         }
         Ok(SessionTicket {
             owner: Arc::downgrade(self),
@@ -394,10 +394,10 @@ impl RunSessionOwner {
             let phase = std::mem::replace(&mut state.phase, SessionPhase::Lost);
             self.changed.send_replace(());
             drop(state);
-            if let SessionPhase::Pending(active) | SessionPhase::Durable(active, _) = phase {
-                if let Some(cancellation) = active.cancellation {
-                    cancellation.cancel();
-                }
+            if let SessionPhase::Pending(active) | SessionPhase::Durable(active, _) = phase
+                && let Some(cancellation) = active.cancellation
+            {
+                cancellation.cancel();
             }
         }
     }

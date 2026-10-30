@@ -174,7 +174,7 @@ impl CloudChat {
                 }) {
                 Ok(work) => work,
                 Err(error) => {
-                    return Task::ready(Err(CloudChatError::from(error).into_conversation()));
+                    return Task::ready(Err(error.into_conversation()));
                 }
             },
             Err(error) => return Task::ready(Err(CloudChatError::from(error).into_conversation())),

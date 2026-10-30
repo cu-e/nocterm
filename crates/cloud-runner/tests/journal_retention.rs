@@ -259,6 +259,27 @@ fn assert_active_baseline(
         1
     );
 }
+fn assert_lost_reply_keeps_native_records(
+    store: &nocterm_cloud_runner::DurableRunJournal,
+    maintenance: &nocterm_cloud_runner::DurableSnapshotPublication,
+    transport: &nocterm_cloud_model::testing::ScriptedPublicationTransport,
+    first: &ResidentPublication,
+) {
+    transport.lose_next_reply();
+    assert!(block_on(transport.publish(first.clone())).is_err());
+    assert_eq!(
+        block_on(maintenance.delivered(stream())).unwrap(),
+        EventSequence::default()
+    );
+    // A missing transport reply cannot delete even one covered native record.
+    assert_eq!(
+        block_on(store.read(stream(), JournalSequence::default(), limits()))
+            .unwrap()
+            .records()
+            .len(),
+        2
+    );
+}
 #[test]
 fn signed_snapshot_lost_reply_reopens_and_retries_independent_ids_before_prefix_activation() {
     use nocterm_cloud_model::testing::ScriptedPublicationTransport;
@@ -280,20 +301,7 @@ fn signed_snapshot_lost_reply_reopens_and_retries_independent_ids_before_prefix_
     let first = next_publication(&maintenance, EventSequence::default());
     assert_ne!(first.id().as_bytes(), first.delivery_id().as_bytes());
     let transport = ScriptedPublicationTransport::default();
-    transport.lose_next_reply();
-    assert!(block_on(transport.publish(first.clone())).is_err());
-    assert_eq!(
-        block_on(maintenance.delivered(stream())).unwrap(),
-        EventSequence::default()
-    );
-    // A missing transport reply cannot delete even one covered native record.
-    assert_eq!(
-        block_on(store.read(stream(), JournalSequence::default(), limits()))
-            .unwrap()
-            .records()
-            .len(),
-        2
-    );
+    assert_lost_reply_keeps_native_records(&store, &maintenance, &transport, &first);
     drop(maintenance);
     drop(store);
     let store = journal(root.path(), cipher);

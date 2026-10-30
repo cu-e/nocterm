@@ -110,15 +110,15 @@ impl PendingCommands {
             .ok_or(ProjectionError::InvalidRecord)
     }
     pub(crate) fn staged(&mut self, id: CommandId) {
-        if let Some(entry) = self.0.get_mut(&id) {
-            if !matches!(
+        if let Some(entry) = self.0.get_mut(&id)
+            && !matches!(
                 entry.state,
                 PendingCommandState::Delivered
                     | PendingCommandState::Accepted
                     | PendingCommandState::Rejected
-            ) {
-                entry.state = PendingCommandState::Pending;
-            }
+            )
+        {
+            entry.state = PendingCommandState::Pending;
         }
     }
     pub(crate) fn attach(&mut self, id: CommandId, task: Task<()>) {

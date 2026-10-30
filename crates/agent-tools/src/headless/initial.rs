@@ -57,7 +57,7 @@ pub struct SessionObservations {
     receiver: async_channel::Receiver<SessionObservation>,
 }
 impl SessionObservations {
-    pub fn next(&mut self) -> BoxFuture<'_, Option<SessionObservation>> {
+    pub fn recv(&mut self) -> BoxFuture<'_, Option<SessionObservation>> {
         Box::pin(async move { self.receiver.recv().await.ok() })
     }
 }

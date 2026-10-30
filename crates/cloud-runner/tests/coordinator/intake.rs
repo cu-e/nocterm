@@ -37,7 +37,7 @@ async fn await_receipt(fixture: &Fixture, command: &ReceivedCommand) -> CommandR
                     return None;
                 }
                 match reply {
-                    CommandReply::Accepted(receipt) => Some(receipt.clone()),
+                    CommandReply::Accepted(receipt) => Some((**receipt).clone()),
                     _ => None,
                 }
             }) {
@@ -49,58 +49,16 @@ async fn await_receipt(fixture: &Fixture, command: &ReceivedCommand) -> CommandR
     .await
     .unwrap()
 }
-async fn pressure_preserves_stop_and_original_retry(body_pressure: bool) {
-    let budget = receive_budget();
-    let fixture = Fixture::with_receive_budget(budget.clone());
-    fixture
-        .actor
-        .accept(submit(1, ChatControlRevision::default()))
-        .await
-        .unwrap();
-    let run = fixture.binding().await;
-    let withheld = other_chat_submit(2);
-    let stop = command(
-        3,
-        fixture.control().await,
-        Some(run.clone()),
-        CommandBody::Stop,
-    );
-    let lane = if body_pressure {
-        IntakeLane::Ordinary
-    } else {
-        IntakeLane::Acknowledgement
-    };
-    let held = budget
-        .try_reserve(lane, budget.limits(lane).bytes(), 0)
-        .unwrap();
-    let acknowledgements = fixture.source.pause_acknowledgements();
-    fixture.source.push(withheld.clone()).unwrap();
-    fixture.source.push(stop.clone()).unwrap();
-    let actor = fixture.actor.clone();
-    let (abort, cancellation) = AbortHandle::new_pair();
-    let serving = tokio::spawn(async move { actor.serve(cancellation).await });
-    let stopped = await_receipt(&fixture, &stop).await;
-    assert_eq!(stopped.acceptance().id(), stop.acceptance().id());
-    assert_eq!(
-        stopped.position().control(),
-        stop.acceptance().expected_control().next().unwrap()
-    );
+async fn await_status_stopped(fixture: &Fixture, run: &RunBinding) {
     tokio::time::timeout(Duration::from_secs(5), async {
-        while fixture.actor.status(&run).await.unwrap() != RunStatus::Stopped {
+        while fixture.actor.status(run).await.unwrap() != RunStatus::Stopped {
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
-    assert!(
-        fixture
-            .journal
-            .command_receipt(withheld.stream().clone(), withheld.acceptance().id())
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(fixture.engine.calls(), 0);
+}
+async fn await_accepted_reply(fixture: &Fixture, stop: &ReceivedCommand) {
     tokio::time::timeout(Duration::from_secs(5), async {
         while !fixture.source.replies().iter().any(|(ack, reply)| {
             ack.acceptance().id() == stop.acceptance().id()
@@ -111,13 +69,33 @@ async fn pressure_preserves_stop_and_original_retry(body_pressure: bool) {
     })
     .await
     .unwrap();
-    assert_eq!(
-        budget
-            .usage(IntakeLane::UrgentAcknowledgement)
+}
+async fn await_acknowledgements_released(budget: &CommandReceiveBudget) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while budget
+            .usage(IntakeLane::Acknowledgement)
             .unwrap()
-            .allocations,
-        1
-    );
+            .allocations
+            != 0
+            || budget
+                .usage(IntakeLane::UrgentAcknowledgement)
+                .unwrap()
+                .allocations
+                != 0
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+fn assert_withheld_outcome(
+    fixture: &Fixture,
+    budget: &CommandReceiveBudget,
+    held: &nocterm_core::allocation::AllocationLease,
+    withheld: &ReceivedCommand,
+    body_pressure: bool,
+) {
     if body_pressure {
         assert_eq!(
             budget.usage(IntakeLane::Ordinary).unwrap().bytes,
@@ -143,43 +121,8 @@ async fn pressure_preserves_stop_and_original_retry(body_pressure: bool) {
                 .any(|(ack, _)| ack.acceptance().id() == withheld.acceptance().id())
         );
     }
-    drop(held);
-    acknowledgements.release();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while budget
-            .usage(IntakeLane::Acknowledgement)
-            .unwrap()
-            .allocations
-            != 0
-            || budget
-                .usage(IntakeLane::UrgentAcknowledgement)
-                .unwrap()
-                .allocations
-                != 0
-        {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    fixture.source.push(withheld.clone()).unwrap();
-    let receipt = await_receipt(&fixture, &withheld).await;
-    // A lost response retries the original immutable ID/digest, without another
-    // logical admission or any automatic effect redispatch.
-    assert_eq!(
-        fixture
-            .actor
-            .accept(withheld.clone())
-            .await
-            .unwrap()
-            .position(),
-        receipt.position()
-    );
-    abort.abort();
-    assert!(matches!(
-        serving.await.unwrap(),
-        Err(CoordinatorError::Stopped)
-    ));
+}
+async fn assert_single_acceptance_after_shutdown(fixture: &Fixture, withheld: &ReceivedCommand) {
     assert_eq!(
         fixture
             .actor
@@ -200,6 +143,94 @@ async fn pressure_preserves_stop_and_original_retry(body_pressure: bool) {
         .await
         .unwrap();
     assert_eq!(history.records().iter().filter(|record| matches!(record.record().kind(), JournalRecordKind::CommandAccepted{id,..} if *id == withheld.acceptance().id())).count(), 1);
+}
+async fn assert_lost_response_retry_is_idempotent(
+    fixture: &Fixture,
+    withheld: &ReceivedCommand,
+    receipt: &CommandReceipt,
+) {
+    // A lost response retries the original immutable ID/digest, without another
+    // logical admission or any automatic effect redispatch.
+    assert_eq!(
+        fixture
+            .actor
+            .accept(withheld.clone())
+            .await
+            .unwrap()
+            .position(),
+        receipt.position()
+    );
+}
+fn pressure_lane(body_pressure: bool) -> IntakeLane {
+    if body_pressure {
+        IntakeLane::Ordinary
+    } else {
+        IntakeLane::Acknowledgement
+    }
+}
+async fn pressure_preserves_stop_and_original_retry(body_pressure: bool) {
+    let budget = receive_budget();
+    let fixture = Fixture::with_receive_budget(budget.clone());
+    fixture
+        .actor
+        .accept(submit(1, ChatControlRevision::default()))
+        .await
+        .unwrap();
+    let run = fixture.binding().await;
+    let withheld = other_chat_submit(2);
+    let stop = command(
+        3,
+        fixture.control().await,
+        Some(run.clone()),
+        CommandBody::Stop,
+    );
+    let lane = pressure_lane(body_pressure);
+    let held = budget
+        .try_reserve(lane, budget.limits(lane).bytes(), 0)
+        .unwrap();
+    let acknowledgements = fixture.source.pause_acknowledgements();
+    fixture.source.push(withheld.clone()).unwrap();
+    fixture.source.push(stop.clone()).unwrap();
+    let actor = fixture.actor.clone();
+    let (abort, cancellation) = AbortHandle::new_pair();
+    let serving = tokio::spawn(async move { actor.serve(cancellation).await });
+    let stopped = await_receipt(&fixture, &stop).await;
+    assert_eq!(stopped.acceptance().id(), stop.acceptance().id());
+    assert_eq!(
+        stopped.position().control(),
+        stop.acceptance().expected_control().next().unwrap()
+    );
+    await_status_stopped(&fixture, &run).await;
+    assert!(
+        fixture
+            .journal
+            .command_receipt(withheld.stream().clone(), withheld.acceptance().id())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(fixture.engine.calls(), 0);
+    await_accepted_reply(&fixture, &stop).await;
+    assert_eq!(
+        budget
+            .usage(IntakeLane::UrgentAcknowledgement)
+            .unwrap()
+            .allocations,
+        1
+    );
+    assert_withheld_outcome(&fixture, &budget, &held, &withheld, body_pressure);
+    drop(held);
+    acknowledgements.release();
+    await_acknowledgements_released(&budget).await;
+    fixture.source.push(withheld.clone()).unwrap();
+    let receipt = await_receipt(&fixture, &withheld).await;
+    assert_lost_response_retry_is_idempotent(&fixture, &withheld, &receipt).await;
+    abort.abort();
+    assert!(matches!(
+        serving.await.unwrap(),
+        Err(CoordinatorError::Stopped)
+    ));
+    assert_single_acceptance_after_shutdown(&fixture, &withheld).await;
 }
 #[tokio::test]
 async fn reserved_publication_defers_ordinary_without_acceptance_while_stop_and_its_status_commit()

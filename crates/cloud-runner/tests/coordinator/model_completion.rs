@@ -177,6 +177,147 @@ async fn reported_usage_progress_is_cumulative_across_two_actual_calls() {
     }
 }
 
+fn reported_usage(fixture: &Fixture, run: &RunBinding) -> Vec<UsageObservation> {
+    fixture
+        .events
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            CoordinatorEvent::Progress {
+                run: actual,
+                event: EngineEvent::Usage(usage),
+            } => {
+                assert_eq!(&actual, run);
+                Some(usage)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+}
+fn script_usage_turns(fixture: &Fixture, first: UsageObservation, second: UsageObservation) {
+    let mut listing = listing_turn();
+    listing.observation = ModelCallObservation::new(first, 1).unwrap();
+    listing.events.push(EngineEvent::Usage(first));
+    fixture.engine.push(listing);
+    fixture.tools.push(Ok(
+        BoundedJson::new(serde_json::json!({"terminals":[]})).unwrap()
+    ));
+    let mut completion = complete();
+    completion.observation = ModelCallObservation::new(second, 1).unwrap();
+    completion.events.push(EngineEvent::Usage(second));
+    fixture.engine.push(completion);
+}
+/// Counts budget reservations and reports whether any of them changed control.
+async fn budget_reservations(fixture: &Fixture) -> (usize, bool) {
+    let page = fixture
+        .journal
+        .read(stream(), JournalSequence::default(), limits())
+        .await
+        .unwrap();
+    let budgets = page
+        .records()
+        .iter()
+        .filter(|stored| {
+            matches!(
+                stored.record().kind(),
+                JournalRecordKind::BudgetReserved { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    (
+        budgets.len(),
+        budgets
+            .iter()
+            .any(|stored| stored.record().changes_control()),
+    )
+}
+async fn assert_final_status(fixture: &Fixture, run: &RunBinding, boundary: usize) {
+    assert_eq!(
+        fixture.actor.status(run).await.unwrap(),
+        if boundary == 0 {
+            RunStatus::Interrupted
+        } else {
+            RunStatus::Stopped
+        }
+    );
+}
+async fn stop_after_boundary(
+    fixture: &Fixture,
+    boundary: usize,
+    control_before_release: ChatControlRevision,
+    run: &RunBinding,
+) -> Option<Result<CommandReceipt, CoordinatorError>> {
+    if boundary != 0 {
+        Some(
+            fixture
+                .actor
+                .accept(command(
+                    4,
+                    control_before_release,
+                    Some(run.clone()),
+                    CommandBody::Stop,
+                ))
+                .await,
+        )
+    } else {
+        None
+    }
+}
+async fn usage_boundary(
+    boundary: usize,
+    first: UsageObservation,
+    second: UsageObservation,
+    cumulative: UsageObservation,
+) {
+    let fixture = Fixture::new();
+    script_usage_turns(&fixture, first, second);
+    let (entered, release) = if boundary == 2 {
+        fixture.engine.pause_after_reconcile_at(2)
+    } else {
+        fixture.engine.pause_after_reserve_at(2)
+    };
+    if boundary == 0 {
+        fixture
+            .engine
+            .fail_after_reserve_at(2, EngineError::Unavailable);
+    }
+    let run = reconciliation::admitted_with_operations(&fixture, 1).await;
+    let original_control = fixture.control().await;
+    let actor = fixture.actor.clone();
+    let worker = tokio::spawn(async move { actor.drive_one().await });
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.wait())
+        .await
+        .unwrap();
+    let usage = || reported_usage(&fixture, &run);
+    let mut expected = vec![
+        UsageObservation::default(),
+        first,
+        UsageObservation::default(),
+    ];
+    if boundary == 2 {
+        expected.push(cumulative);
+    }
+    let observed_before_release = usage();
+    let control_before_release = fixture.control().await;
+    let (reservations, controlling) = budget_reservations(&fixture).await;
+    let stopped = stop_after_boundary(&fixture, boundary, control_before_release, &run).await;
+    // Release even if a regression changes the captured facts or Stop result.
+    release.release();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.is_err());
+    assert_eq!(observed_before_release, expected);
+    assert_eq!(usage(), expected);
+    assert_eq!(control_before_release, original_control);
+    assert_eq!(reservations, if boundary == 2 { 4 } else { 3 });
+    assert!(!controlling);
+    if let Some(result) = stopped {
+        result.unwrap();
+    }
+    assert_final_status(&fixture, &run, boundary).await;
+}
 #[tokio::test]
 async fn reported_usage_budget_ack_publishes_unknown_and_observed_totals_without_sdk_progress() {
     let first = UsageObservation {
@@ -206,118 +347,6 @@ async fn reported_usage_budget_ack_publishes_unknown_and_observed_totals_without
     // Actual reserve failure, cancellation after reserve, cancellation after
     // observation ACK: none can rely on a later SDK Usage callback.
     for boundary in 0..3 {
-        let fixture = Fixture::new();
-        let mut listing = listing_turn();
-        listing.observation = ModelCallObservation::new(first, 1).unwrap();
-        listing.events.push(EngineEvent::Usage(first));
-        fixture.engine.push(listing);
-        fixture.tools.push(Ok(
-            BoundedJson::new(serde_json::json!({"terminals":[]})).unwrap()
-        ));
-        let mut completion = complete();
-        completion.observation = ModelCallObservation::new(second, 1).unwrap();
-        completion.events.push(EngineEvent::Usage(second));
-        fixture.engine.push(completion);
-        let (entered, release) = if boundary == 2 {
-            fixture.engine.pause_after_reconcile_at(2)
-        } else {
-            fixture.engine.pause_after_reserve_at(2)
-        };
-        if boundary == 0 {
-            fixture
-                .engine
-                .fail_after_reserve_at(2, EngineError::Unavailable);
-        }
-        let run = reconciliation::admitted_with_operations(&fixture, 1).await;
-        let original_control = fixture.control().await;
-        let actor = fixture.actor.clone();
-        let worker = tokio::spawn(async move { actor.drive_one().await });
-        tokio::time::timeout(std::time::Duration::from_secs(5), entered.wait())
-            .await
-            .unwrap();
-        let usage = || {
-            fixture
-                .events
-                .events()
-                .into_iter()
-                .filter_map(|event| match event {
-                    CoordinatorEvent::Progress {
-                        run: actual,
-                        event: EngineEvent::Usage(usage),
-                    } => {
-                        assert_eq!(actual, run);
-                        Some(usage)
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        let mut expected = vec![
-            UsageObservation::default(),
-            first,
-            UsageObservation::default(),
-        ];
-        if boundary == 2 {
-            expected.push(cumulative);
-        }
-        let observed_before_release = usage();
-        let control_before_release = fixture.control().await;
-        let page = fixture
-            .journal
-            .read(stream(), JournalSequence::default(), limits())
-            .await
-            .unwrap();
-        let budgets = page
-            .records()
-            .iter()
-            .filter(|stored| {
-                matches!(
-                    stored.record().kind(),
-                    JournalRecordKind::BudgetReserved { .. }
-                )
-            })
-            .collect::<Vec<_>>();
-        let stopped = if boundary != 0 {
-            Some(
-                fixture
-                    .actor
-                    .accept(command(
-                        4,
-                        control_before_release,
-                        Some(run.clone()),
-                        CommandBody::Stop,
-                    ))
-                    .await,
-            )
-        } else {
-            None
-        };
-        // Release even if a regression changes the captured facts or Stop result.
-        release.release();
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5), worker)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(result.is_err());
-        assert_eq!(observed_before_release, expected);
-        assert_eq!(usage(), expected);
-        assert_eq!(control_before_release, original_control);
-        assert_eq!(budgets.len(), if boundary == 2 { 4 } else { 3 });
-        assert!(
-            budgets
-                .iter()
-                .all(|stored| !stored.record().changes_control())
-        );
-        if let Some(result) = stopped {
-            result.unwrap();
-        }
-        assert_eq!(
-            fixture.actor.status(&run).await.unwrap(),
-            if boundary == 0 {
-                RunStatus::Interrupted
-            } else {
-                RunStatus::Stopped
-            }
-        );
+        usage_boundary(boundary, first, second, cumulative).await;
     }
 }

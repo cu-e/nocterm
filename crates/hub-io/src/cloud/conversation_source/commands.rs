@@ -39,10 +39,10 @@ pub(super) fn prepare(
     if matches!(&action, ConversationIntent::Prompt(_)) && !core.policy.allows_prompt() {
         return Err(ProjectionError::Unavailable);
     }
-    if let ConversationIntent::AnswerApproval(request) = &action {
-        if coordinates.run.as_ref() != Some(request.answer().authority().run()) {
-            return Err(ProjectionError::WrongRun);
-        }
+    if let ConversationIntent::AnswerApproval(request) = &action
+        && coordinates.run.as_ref() != Some(request.answer().authority().run())
+    {
+        return Err(ProjectionError::WrongRun);
     }
     let invocation = core
         .native

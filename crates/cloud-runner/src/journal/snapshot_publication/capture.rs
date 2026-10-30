@@ -79,7 +79,7 @@ impl SnapshotCapture {
                 JournalRecordKind::ModelAction { .. }
             )
         }) {
-            native_checkpoint(db, cipher, &head)?
+            native_checkpoint(db, cipher, head)?
         } else {
             None
         };

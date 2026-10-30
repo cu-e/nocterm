@@ -33,25 +33,25 @@ use std::{
 
 pub(super) enum PreparedAttachment {
     Provider {
-        context: ProviderLeaseContext,
+        context: Box<ProviderLeaseContext>,
         capsule: Vec<u8>,
-        offer: ProviderOffer,
+        offer: Box<ProviderOffer>,
     },
     Ssh {
         payload: Vec<u8>,
-        consent: SessionConsent,
+        consent: Box<SessionConsent>,
     },
 }
 enum Attachment {
     Provider {
-        context: ProviderLeaseContext,
+        context: Box<ProviderLeaseContext>,
         capsule: Vec<u8>,
-        offer: ProviderOffer,
+        offer: Box<ProviderOffer>,
     },
     Ssh {
-        request: LoginProofRequest,
+        request: Box<LoginProofRequest>,
         signature: Option<LoginSignature>,
-        consent: SessionConsent,
+        consent: Box<SessionConsent>,
     },
 }
 struct Staged {
@@ -204,18 +204,13 @@ impl RunnerCommandAttachments {
             .try_reserve(PublicationAllocation::new(bytes, 1)?)
             .map_err(CoordinatorError::from)
     }
-    pub(super) fn stage(
+    fn attach(
         &self,
-        command: CommandAcknowledgement,
+        command: &CommandAcknowledgement,
         body: PreparedAttachment,
-        allocation: AllocationLease,
-    ) -> Result<AttachmentTicket, CoordinatorError> {
-        let now = self.check_current()?;
-        self.prune(now)?;
-        if !self.material.binding().contains(command.stream()) {
-            return Err(CoordinatorError::StaleSource);
-        }
-        let body = match body {
+        now: Timestamp,
+    ) -> Result<Attachment, CoordinatorError> {
+        match body {
             PreparedAttachment::Provider {
                 context,
                 capsule,
@@ -231,11 +226,11 @@ impl RunnerCommandAttachments {
                 {
                     return Err(CoordinatorError::NeedsProviderAccess);
                 }
-                Attachment::Provider {
+                Ok(Attachment::Provider {
                     context,
                     capsule,
                     offer,
-                }
+                })
             }
             PreparedAttachment::Ssh { payload, consent } => {
                 let answer = wire::CloudCommandPayload::from_canonical_bytes(
@@ -246,14 +241,27 @@ impl RunnerCommandAttachments {
                 let wire::CloudCommandPayload::AnswerSshConsent(answer) = answer else {
                     return Err(CoordinatorError::InvalidCommand);
                 };
-                let (request, signature) = verify_ssh(&command, &consent, &answer, now)?;
-                Attachment::Ssh {
-                    request,
+                let (request, signature) = verify_ssh(command, &consent, &answer, now)?;
+                Ok(Attachment::Ssh {
+                    request: Box::new(request),
                     signature,
                     consent,
-                }
+                })
             }
-        };
+        }
+    }
+    pub(super) fn stage(
+        &self,
+        command: CommandAcknowledgement,
+        body: PreparedAttachment,
+        allocation: AllocationLease,
+    ) -> Result<AttachmentTicket, CoordinatorError> {
+        let now = self.check_current()?;
+        self.prune(now)?;
+        if !self.material.binding().contains(command.stream()) {
+            return Err(CoordinatorError::StaleSource);
+        }
+        let body = self.attach(&command, body, now)?;
         let mut staged = self
             .staged
             .lock()
@@ -381,9 +389,9 @@ impl RunnerCommandAttachments {
         Ok(Some(RunnerStagedProvider {
             owner: self.clone(),
             command: entry.command,
-            context,
+            context: *context,
             capsule,
-            offer,
+            offer: *offer,
             _allocation: entry.allocation,
         }))
     }
@@ -418,7 +426,7 @@ impl RunnerCommandAttachments {
         else {
             return Err(CoordinatorError::InvalidCommand);
         };
-        if request != expected {
+        if **request != *expected {
             return Err(CoordinatorError::Conflict);
         }
         require_consent(original, consent)?;
@@ -464,9 +472,9 @@ impl RunnerCommandAttachments {
         Ok(Some(RunnerSshAnswer {
             owner: self.clone(),
             command: entry.command,
-            request,
+            request: *request,
             signature,
-            consent,
+            consent: *consent,
             _allocation: entry.allocation,
         }))
     }
