@@ -56,6 +56,11 @@ pub(super) async fn receive(
     }
     loop {
         owner.check_current()?;
+        owner
+            .connection
+            .wait_transport_ready()
+            .await
+            .map_err(backend)?;
         owner.prune_pending()?;
         if acknowledge::sync_confirmed(&owner, &budget).await.is_err() {
             // ACK loss must not prevent a separately available urgent replay path.
@@ -165,6 +170,11 @@ async fn read(
     budget: &CommandReceiveBudget,
     after: u64,
 ) -> Result<Option<Incoming>, CoordinatorError> {
+    let transport = owner
+        .connection
+        .capture_transport()
+        .await
+        .map_err(backend)?;
     // One native ciphertext generation and one opened plaintext generation.
     // Separate fixed slack covers bounded semantic parser arrays/header hashing;
     // final native DTO/attachment copies reserve their own ordinary/urgent lane.
@@ -177,31 +187,20 @@ async fn read(
     let selector = CloudSelector::RunnerInbox(super::super::metadata_crypto::runner(
         owner.material.binding(),
     ));
-    let runner = owner.connection.runner().map_err(backend)?;
-    let mut replay = owner
-        .io(async {
-            runner
-                .replay_with_residency(
-                    selector,
-                    after,
-                    1,
-                    u32::try_from(nocterm_hub_model::cloud::MAX_ENVELOPE_BYTES)
-                        .map_err(|_| CoordinatorError::Overloaded)?,
-                    allocation.clone(),
-                )
-                .await
-                .map_err(|error| wire_error(owner, error))
-        })
-        .await?;
-    let mut record = match owner
-        .io(async {
-            replay
-                .next_record()
-                .await
-                .map_err(|error| wire_error(owner, error))
-        })
-        .await?
-    {
+    let mut replay = rpc(
+        owner,
+        &transport,
+        transport.runner().replay_with_residency(
+            selector,
+            after,
+            1,
+            u32::try_from(nocterm_hub_model::cloud::MAX_ENVELOPE_BYTES)
+                .map_err(|_| CoordinatorError::Overloaded)?,
+            allocation.clone(),
+        ),
+    )
+    .await?;
+    let mut record = match rpc(owner, &transport, replay.next_record()).await? {
         CloudReplayItem::Record(record) => record,
         CloudReplayItem::End { .. } => return Ok(None),
         CloudReplayItem::Gap { .. } => {
@@ -226,16 +225,36 @@ async fn read(
     if length > nocterm_hub_model::cloud::MAX_ENVELOPE_BYTES {
         return Err(CoordinatorError::Overloaded);
     }
+    let ciphertext = ciphertext(owner, &transport, &mut record, length).await?;
+    drop(record);
+    if ciphertext.len() != length {
+        owner.fault(RunnerInboxFault::Authentication);
+        return Err(CoordinatorError::InvalidCommand);
+    }
+    if !matches!(rpc(owner, &transport, replay.next_record()).await?,
+        CloudReplayItem::End { through, .. } if through == cursor)
+    {
+        owner.fault(RunnerInboxFault::Authentication);
+        return Err(CoordinatorError::InvalidCommand);
+    }
+    Ok(Some(Incoming {
+        metadata,
+        origin,
+        cursor,
+        ciphertext,
+        _allocation: allocation,
+    }))
+}
+
+async fn ciphertext(
+    owner: &InboxOwner,
+    transport: &super::super::runner_peer::CapturedTransport,
+    record: &mut nocterm_hub_client::cloud::CloudIncomingRecord<'_>,
+    length: usize,
+) -> Result<Vec<u8>, CoordinatorError> {
     let mut ciphertext = Vec::with_capacity(length);
     loop {
-        let chunk = owner
-            .io(async {
-                record
-                    .next_chunk()
-                    .await
-                    .map_err(|error| wire_error(owner, error))
-            })
-            .await?;
+        let chunk = rpc(owner, transport, record.next_chunk()).await?;
         let Some(chunk) = chunk else {
             break;
         };
@@ -249,24 +268,20 @@ async fn read(
         }
         ciphertext.extend_from_slice(&chunk);
     }
-    drop(record);
-    if ciphertext.len() != length {
-        owner.fault(RunnerInboxFault::Authentication);
-        return Err(CoordinatorError::InvalidCommand);
-    }
-    if !matches!(owner.io(async { replay.next_record().await.map_err(|error| wire_error(owner, error)) }).await?,
-        CloudReplayItem::End { through, .. } if through == cursor)
-    {
-        owner.fault(RunnerInboxFault::Authentication);
-        return Err(CoordinatorError::InvalidCommand);
-    }
-    Ok(Some(Incoming {
-        metadata,
-        origin,
-        cursor,
-        ciphertext,
-        _allocation: allocation,
-    }))
+    Ok(ciphertext)
+}
+
+async fn rpc<T>(
+    owner: &InboxOwner,
+    transport: &super::super::runner_peer::CapturedTransport,
+    future: impl std::future::Future<Output = Result<T, CloudError>>,
+) -> Result<T, CoordinatorError> {
+    owner
+        .io(async {
+            let response = transport.during(future).await.map_err(backend)?;
+            response.map_err(|error| wire_error(owner, transport, error))
+        })
+        .await
 }
 
 async fn material(
@@ -537,7 +552,15 @@ fn deferred(
         Err(error) => Err(error.into()),
     }
 }
-fn wire_error(owner: &InboxOwner, error: CloudError) -> CoordinatorError {
+fn wire_error(
+    owner: &InboxOwner,
+    transport: &super::super::runner_peer::CapturedTransport,
+    error: CloudError,
+) -> CoordinatorError {
+    // An old token generation cannot poison the original runtime fault state.
+    if let Err(changed) = transport.check() {
+        return backend(changed);
+    }
     let fault = match &error {
         CloudError::Protocol
         | CloudError::Relay(_)

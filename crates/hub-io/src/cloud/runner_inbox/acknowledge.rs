@@ -161,12 +161,21 @@ async fn publish(
     let selector = CloudSelector::RunnerInbox(super::super::metadata_crypto::runner(
         owner.material.binding(),
     ));
-    let runner = owner.connection.runner().map_err(backend)?;
+    let transport = owner
+        .connection
+        .capture_transport()
+        .await
+        .map_err(backend)?;
     let receipt = owner
         .io(async {
-            runner
-                .acknowledge_with_residency(&selector, through, allocation.clone())
+            transport
+                .during(transport.runner().acknowledge_with_residency(
+                    &selector,
+                    through,
+                    allocation.clone(),
+                ))
                 .await
+                .map_err(backend)?
                 .map_err(backend)
         })
         .await;

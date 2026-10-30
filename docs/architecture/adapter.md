@@ -419,6 +419,17 @@ only when the editor requests a new draft. See
 
 ## Hub connections
 
+`RunnerHubConnection` separates original runtime authority from temporary RPC
+readiness. Its one session owner retains actual accepted deadlines, sticky native
+clock state, the live SDK runner and the original pending durable session. Known
+refresh/persistence keeps admitted runtime work current; unknown/cancelled refresh,
+retirement, observed hard expiry and clock rollback refuse the original source.
+SDK source checks remain in force. Native inbox receive/ACK capture one ready
+transport generation, recheck it around waits and retry immutable delivery after
+ordinary rotation without treating readiness as authority. Private session disk
+publication has a separate mutex and conditionally clears only its own pending
+record, so slow writes do not hold the runtime authority lock.
+
 `nocterm-hub-io::cloud` owns explicit persistent runner identity and maps native
 journal catalog/head cipher ports to the public contract's purpose-specific
 cryptography. The original full account/R binding is checked before public

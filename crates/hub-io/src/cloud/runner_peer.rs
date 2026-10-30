@@ -1,4 +1,8 @@
 //! Independent runner credentials; desktop membership never owns this lifetime.
+mod rotation;
+mod runtime;
+mod state;
+mod transport;
 use super::{CloudRunnerIdentity, CloudRunnerIdentityError};
 use nocterm_cloud_model::{
     identity::{
@@ -15,7 +19,9 @@ use nocterm_hub_client::{
 use nocterm_hub_model::cloud::{CloudTextId, hub_namespace_id, runner_auth::RunnerProofSubject};
 use nocterm_hubs_model::HubEndpointSpec;
 use nocterm_keys::DeviceKey;
+use rotation::RefreshGuard;
 use sha2::{Digest, Sha256};
+use state::SessionOwner;
 use std::{
     path::Path,
     sync::{
@@ -23,6 +29,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+pub(in crate::cloud) use transport::CapturedTransport;
 use zeroize::Zeroizing;
 
 use super::runner_session_file::{RunnerSessionFile, SessionRecord};
@@ -41,6 +48,14 @@ pub enum RunnerHubError {
     Existing,
     #[error("runner credential rotation awaits a confirmed private durable session")]
     DurabilityPending,
+    #[error("the original runner refresh has an unknown outcome")]
+    RefreshUnknown,
+    #[error("the original runner hard credential deadline expired")]
+    HardExpired,
+    #[error("the original runner clock moved backwards or is unavailable")]
+    Clock,
+    #[error("the original native transport generation changed; retry its immutable request")]
+    TransportChanged,
     #[error("the runner session file is malformed or belongs to another source")]
     Format,
     #[error("the private runner session could not be accessed")]
@@ -115,13 +130,6 @@ impl RunnerCredentialDeadlines {
     }
 }
 
-struct SessionOwner {
-    file: RunnerSessionFile,
-    runner: Option<CloudRunner>,
-    pending: Option<SessionRecord>,
-    rotating: bool,
-}
-
 /// A process-exclusive runner session owner, independent from device sign-in/out.
 /// The directory must have trusted private ancestors, as for runner identity.
 pub struct RunnerHubConnection {
@@ -132,6 +140,8 @@ pub struct RunnerHubConnection {
     authority: [u8; 32],
     work: Arc<dyn PublicationWorkBudget>,
     session: Mutex<SessionOwner>,
+    file: Mutex<RunnerSessionFile>,
+    notice: tokio::sync::watch::Sender<()>,
     operation: tokio::sync::Mutex<()>,
     retired: AtomicBool,
 }
@@ -176,12 +186,9 @@ impl RunnerHubConnection {
             subject,
             authority: trust.authority,
             work,
-            session: Mutex::new(SessionOwner {
-                file,
-                runner: None,
-                pending: None,
-                rotating: false,
-            }),
+            session: Mutex::default(),
+            file: Mutex::new(file),
+            notice: tokio::sync::watch::channel(()).0,
             operation: tokio::sync::Mutex::new(()),
             retired: AtomicBool::new(false),
         }))
@@ -198,9 +205,85 @@ impl RunnerHubConnection {
         self.runner().map(|_| ())
     }
 
+    /// The original runtime survives known credential rotation/persistence. This
+    /// check is not RPC admission or a fresh authenticated head witness.
+    pub fn check_runtime_source(&self) -> Result<(), RunnerHubError> {
+        self.check_identity()?;
+        self.session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .runtime(runtime::now())?;
+        self.check_identity()
+    }
+    /// False is temporary transport readiness only, never authenticated authority.
+    pub fn transport_ready(&self) -> Result<bool, RunnerHubError> {
+        self.check_identity()?;
+        let ready = self
+            .session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .transport_ready(runtime::now())?;
+        self.check_identity()?;
+        Ok(ready)
+    }
+    /// No payload reservation while waiting. Actual retirement/phase changes wake
+    /// waiters; finite clock polls also enforce the accepted hard deadline.
+    pub fn wait_transport_ready(
+        self: &Arc<Self>,
+    ) -> futures::future::BoxFuture<'static, Result<(), RunnerHubError>> {
+        let owner = self.clone();
+        Box::pin(async move {
+            let mut notice = owner.notice.subscribe();
+            loop {
+                if owner.transport_ready()? {
+                    return Ok(());
+                }
+                let interval = owner.wait_interval()?;
+                tokio::select! {
+                    changed=notice.changed()=> { changed.map_err(|_| RunnerHubError::Unavailable)?; },
+                    _=tokio::time::sleep(interval)=> {},
+                }
+            }
+        })
+    }
+    pub(in crate::cloud) async fn capture_transport(
+        self: &Arc<Self>,
+    ) -> Result<CapturedTransport, RunnerHubError> {
+        loop {
+            self.wait_transport_ready().await?;
+            self.check_identity()?;
+            let captured = self
+                .session
+                .lock()
+                .map_err(|_| RunnerHubError::Unavailable)?
+                .capture(runtime::now());
+            match captured {
+                Ok((runner, generation)) => {
+                    return Ok(CapturedTransport::new(self.clone(), runner, generation));
+                }
+                Err(RunnerHubError::DurabilityPending) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    fn changed(&self) {
+        self.notice.send_replace(());
+    }
+    fn wait_interval(&self) -> Result<std::time::Duration, RunnerHubError> {
+        self.check_identity()?;
+        let millis = self
+            .session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .wait_millis(runtime::now())?;
+        Ok(std::time::Duration::from_millis(millis))
+    }
     pub fn credential_deadlines(&self) -> Result<RunnerCredentialDeadlines, RunnerHubError> {
-        let (access, refresh) = self.runner()?.credential_deadlines().map_err(sdk_error)?;
-        Ok(RunnerCredentialDeadlines { access, refresh })
+        self.check_identity()?;
+        self.session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .deadlines(runtime::now())
     }
 
     pub async fn redeem(
@@ -209,16 +292,18 @@ impl RunnerHubConnection {
     ) -> Result<RunnerHubPeer, RunnerHubError> {
         let _turn = self.operation.lock().await;
         self.check_identity()?;
+        if self
+            .session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .has_runner()
         {
-            let state = self
-                .session
-                .lock()
-                .map_err(|_| RunnerHubError::Unavailable)?;
-            if state.runner.is_some() {
-                return Err(RunnerHubError::Existing);
-            }
-            state.file.require_absent()?;
+            return Err(RunnerHubError::Existing);
         }
+        self.file
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .require_absent()?;
         let response = CloudRunner::redeem(
             &self.endpoint,
             self.subject.clone(),
@@ -238,16 +323,19 @@ impl RunnerHubConnection {
     pub async fn restore(self: &Arc<Self>) -> Result<RunnerHubPeer, RunnerHubError> {
         let _turn = self.operation.lock().await;
         self.check_identity()?;
-        let session = {
-            let mut state = self
-                .session
-                .lock()
-                .map_err(|_| RunnerHubError::Unavailable)?;
-            if state.runner.is_some() {
-                return Err(RunnerHubError::Existing);
-            }
-            state.file.read(&self.subject)?
-        };
+        if self
+            .session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .has_runner()
+        {
+            return Err(RunnerHubError::Existing);
+        }
+        let session = self
+            .file
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .read(&self.subject)?;
         let response = CloudRunner::restore(
             &self.endpoint,
             self.subject.clone(),
@@ -268,69 +356,100 @@ impl RunnerHubConnection {
             .map_err(Into::into)
     }
 
+    fn record(
+        &self,
+        session: nocterm_hub_client::cloud::RunnerSession,
+    ) -> Result<Arc<SessionRecord>, RunnerHubError> {
+        let file = self.file.lock().map_err(|_| RunnerHubError::Unavailable)?;
+        Ok(Arc::new(SessionRecord::from_session(session, &file)?))
+    }
     fn install(&self, runner: CloudRunner, persist: bool) -> Result<(), RunnerHubError> {
-        let mut state = self
-            .session
-            .lock()
-            .map_err(|_| RunnerHubError::Unavailable)?;
         if let Err(error) = self.check_identity() {
             runner.revoke_local();
             return Err(error);
         }
         let pending = if persist {
-            Some(SessionRecord::from_session(
-                runner.session().map_err(sdk_error)?,
-                &state.file,
-            )?)
+            Some(self.record(runner.session().map_err(sdk_error)?)?)
         } else {
             None
         };
-        state.runner = Some(runner);
-        state.pending = pending;
-        persist_pending(&mut state)?;
+        {
+            let mut state = self
+                .session
+                .lock()
+                .map_err(|_| RunnerHubError::Unavailable)?;
+            if let Err(error) = self.check_identity() {
+                runner.revoke_local();
+                return Err(error);
+            }
+            state.install(runner, pending, runtime::now())?;
+        }
+        self.changed();
+        self.persist_pending()?;
         self.check_identity()
     }
-
-    /// Retry the exact successful rotation's native write, without another RPC.
+    fn persist_pending(&self) -> Result<(), RunnerHubError> {
+        let pending = self
+            .session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .pending();
+        let Some(pending) = pending else {
+            return Ok(());
+        };
+        self.check_identity()?;
+        // Slow private disk publication never holds the runtime authority lock.
+        self.file
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .save(&pending)?;
+        self.check_identity()?;
+        if !self
+            .session
+            .lock()
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .persisted(&pending)
+        {
+            return Err(RunnerHubError::Unavailable);
+        }
+        self.changed();
+        Ok(())
+    }
+    /// Retry the exact known returned session's disk publication, never another RPC.
     pub async fn retry_persist(self: &Arc<Self>) -> Result<RunnerHubPeer, RunnerHubError> {
         let _turn = self.operation.lock().await;
         self.check_identity()?;
-        {
-            let mut state = self
-                .session
-                .lock()
-                .map_err(|_| RunnerHubError::Unavailable)?;
-            persist_pending(&mut state)?;
-        }
+        self.persist_pending()?;
         self.peer()
     }
-
-    /// Close admission before remote rotation. An unknown/cancelled RPC result
-    /// stays fenced; only a known returned session can use `retry_persist`.
+    /// Known active refresh is separate from transport readiness. Cancellation,
+    /// failure or unobserved outcome permanently fences this original runtime.
     pub async fn refresh(self: &Arc<Self>) -> Result<RunnerHubPeer, RunnerHubError> {
         let _turn = self.operation.lock().await;
-        let runner = self.runner()?;
-        {
+        self.check_identity()?;
+        let (runner, token) = {
             let mut state = self
                 .session
                 .lock()
                 .map_err(|_| RunnerHubError::Unavailable)?;
-            // Admission closes before the SDK can rotate its shared credentials.
-            // Cancellation or an unknown remote refresh result stays fail closed;
-            // it must never cause an automatic second rotation request.
-            state.rotating = true;
-        }
-        let response = runner.refresh().await;
+            self.check_identity()?;
+            state.begin(runtime::now())?
+        };
+        let guard = RefreshGuard::new(self.clone(), token);
+        self.changed();
+        let session = runner.refresh().await.map_err(sdk_error)?;
         self.check_identity()?;
-        let session = response.map_err(sdk_error)?;
-        let mut state = self
-            .session
+        let deadlines = RunnerCredentialDeadlines {
+            access: session.access_expires_at_ms(),
+            refresh: session.refresh_expires_at_ms(),
+        };
+        let record = self.record(session)?;
+        self.session
             .lock()
-            .map_err(|_| RunnerHubError::Unavailable)?;
-        self.check_identity()?;
-        state.pending = Some(SessionRecord::from_session(session, &state.file)?);
-        persist_pending(&mut state)?;
-        drop(state);
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .returned(guard.token(), record, deadlines, runtime::now())?;
+        self.changed();
+        self.persist_pending()?;
         self.peer()
     }
 
@@ -350,10 +469,9 @@ impl RunnerHubConnection {
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(runner) = state.runner.take() {
-            runner.revoke_local();
-        }
-        state.pending.take();
+        state.retire();
+        drop(state);
+        self.changed();
     }
 
     pub(super) fn check_identity(&self) -> Result<(), RunnerHubError> {
@@ -368,30 +486,17 @@ impl RunnerHubConnection {
     }
     pub(super) fn runner(&self) -> Result<CloudRunner, RunnerHubError> {
         self.check_identity()?;
-        let state = self
+        let runner = self
             .session
             .lock()
-            .map_err(|_| RunnerHubError::Unavailable)?;
-        if state.rotating || state.pending.is_some() {
-            return Err(RunnerHubError::DurabilityPending);
-        }
-        let runner = state.runner.as_ref().ok_or(RunnerHubError::Unavailable)?;
-        runner.check_source().map_err(sdk_error)?;
+            .map_err(|_| RunnerHubError::Unavailable)?
+            .ready(runtime::now())?;
         self.check_identity()?;
-        Ok(runner.clone())
+        Ok(runner)
     }
     pub(super) fn work(&self) -> &Arc<dyn PublicationWorkBudget> {
         &self.work
     }
-}
-
-fn persist_pending(state: &mut SessionOwner) -> Result<(), RunnerHubError> {
-    if let Some(record) = state.pending.as_ref() {
-        state.file.save(record)?;
-        state.pending.take();
-        state.rotating = false;
-    }
-    Ok(())
 }
 
 impl Drop for RunnerHubConnection {

@@ -37,6 +37,8 @@
 //! Native Cloud adapter owners also keep the runner's three purpose-specific keys,
 //! original enrolled source and durable rotated session, authenticated chat material,
 //! signed public coordinator observations and exact ciphertext publication metadata.
+//! Runtime authority retains accepted hard deadlines across known credential rotation;
+//! RPC readiness is separate, and unknown refresh/expiry permanently fences it.
 //! Publication and argument encoding use the public canonical codec with injected
 //! finite work reservations; native journal framing never supplies a wire payload.
 //! Provider boot announcements/status use guarded SDK RPCs and independently

@@ -183,7 +183,9 @@ impl RunnerCommandAttachments {
             && Arc::ptr_eq(&self.timer, timer)
     }
     pub(super) fn check_current(&self) -> Result<Timestamp, CoordinatorError> {
-        self.connection.check_source().map_err(source_error)?;
+        self.connection
+            .check_runtime_source()
+            .map_err(source_error)?;
         self.observed
             .lock()
             .map_err(|_| CoordinatorError::NativeTaskFailed)?

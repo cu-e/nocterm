@@ -203,7 +203,7 @@ impl RunnerInbox {
 }
 impl InboxOwner {
     fn check_current(&self) -> Result<(), CoordinatorError> {
-        self.connection.check_source().map_err(backend)?;
+        self.connection.check_runtime_source().map_err(backend)?;
         self.attachments.check_current()?;
         if self
             .progress

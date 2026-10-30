@@ -5,6 +5,8 @@
 //! `NOCTERM_HUB_USERNAME` and `NOCTERM_HUB_PASSWORD`. Without `NOCTERM_REQUIRE_HUB` the tests
 //! pass vacuously when the variables are missing; with it, missing variables fail the run, so
 //! CI cannot silently skip them.
+//! Cloud runner tests also require the independently retained public authority pin
+//! in `NOCTERM_CLOUD_AUTHORITY`; it is never adopted from an untrusted offer.
 //!
 //! The relay test that reaches a destination also needs `NOCTERM_HUB_RELAY_TARGET` (`host:port`
 //! of an SSH server the hub is allowed to reach, for example a container of the compose file);
@@ -22,6 +24,8 @@ use nocterm_session::{RelayDialer as _, RelayError, RelayRefusal, Secret, Target
 
 #[path = "hub/account.rs"]
 mod account;
+#[path = "hub/cloud_runtime.rs"]
+mod cloud_runtime;
 #[path = "hub/groups.rs"]
 mod groups;
 #[path = "hub/revocation.rs"]
