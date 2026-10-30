@@ -78,7 +78,9 @@ impl CloudAgentsTab {
         };
         self.problem = None;
         self.form = Some(Form::new(prefill, window, cx));
-        let pools = self.service.update(cx, |service, cx| service.pools(&hub, cx));
+        let pools = self
+            .service
+            .update(cx, |service, cx| service.pools(&hub, cx));
         self.working = Some(cx.spawn(async move |this, cx| {
             let result = pools.await;
             this.update(cx, |tab, cx| {
@@ -177,11 +179,9 @@ impl CloudAgentsTab {
             return;
         };
         self.problem = None;
-        let deleting = self
-            .service
-            .update(cx, |service, cx| {
-                service.delete_personal(&hub, &agent.id, agent.version, cx)
-            });
+        let deleting = self.service.update(cx, |service, cx| {
+            service.delete_personal(&hub, &agent.id, agent.version, cx)
+        });
         self.working = Some(cx.spawn(async move |this, cx| {
             let result = deleting.await;
             this.update(cx, |tab, cx| {
@@ -194,12 +194,7 @@ impl CloudAgentsTab {
         }));
     }
 
-    fn confirm_delete(
-        view: Entity<Self>,
-        agent: CloudAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    fn confirm_delete(view: Entity<Self>, agent: CloudAgent, window: &mut Window, cx: &mut App) {
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (view, chosen) = (view.clone(), agent.clone());
             let confirm = Button::new("cloud-agent-delete-confirm")
@@ -299,7 +294,11 @@ impl Render for CloudAgentsTab {
                     .test_support()
                     .child(problem(text, cx))
             }))
-            .children(self.form.as_ref().map(|form| render_form(form, &key, &view, cx)))
+            .children(
+                self.form
+                    .as_ref()
+                    .map(|form| render_form(form, &key, &view, cx)),
+            )
             .child(body)
             .into_any_element()
     }
@@ -415,20 +414,26 @@ fn render_form(
             });
         });
     let pools = form.work_offline().then(|| {
-        let buttons = form.pools().iter().filter(|pool| pool.accepts_personal).map(|pool| {
-            let (view, id) = (view.clone(), pool.pool.clone());
-            Button::new(item(&format!("cloud-agent-pool-{}", pool.pool), key))
-                .label(pool.name.clone())
-                .when(form.chosen_pool() == Some(&pool.pool), |button| button.primary())
-                .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                    view.update(cx, |tab, cx| {
-                        if let Some(form) = &mut tab.form {
-                            form.choose_pool(id.clone());
-                        }
-                        cx.notify();
-                    });
-                })
-        });
+        let buttons = form
+            .pools()
+            .iter()
+            .filter(|pool| pool.accepts_personal)
+            .map(|pool| {
+                let (view, id) = (view.clone(), pool.pool.clone());
+                Button::new(item(&format!("cloud-agent-pool-{}", pool.pool), key))
+                    .label(pool.name.clone())
+                    .when(form.chosen_pool() == Some(&pool.pool), |button| {
+                        button.primary()
+                    })
+                    .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        view.update(cx, |tab, cx| {
+                            if let Some(form) = &mut tab.form {
+                                form.choose_pool(id.clone());
+                            }
+                            cx.notify();
+                        });
+                    })
+            });
         field("Pool", h_flex().gap_2().children(buttons))
     });
     let submit_view = view.clone();

@@ -11,6 +11,7 @@ enum Command {
     Health,
     Refresh,
     ShowPublic,
+    Managed,
 }
 struct Arguments {
     command: Command,
@@ -25,6 +26,7 @@ impl Arguments {
             Some("health") => Command::Health,
             Some("refresh") => Command::Refresh,
             Some("show-public") => Command::ShowPublic,
+            Some("managed") => Command::Managed,
             _ => return Err(RunnerError::Arguments),
         };
         if args.next().as_deref() != Some(std::ffi::OsStr::new("--config")) {
@@ -53,6 +55,15 @@ pub(crate) fn execute() -> Result<(), RunnerError> {
     } else {
         None
     };
+    let boot = if matches!(arguments.command, Command::Managed) {
+        // Managed configuration is the pool host's, with no execution of its own.
+        if config.execution.is_some() || config.session_targets.is_some() {
+            return Err(RunnerError::Value("managed configuration"));
+        }
+        Some(crate::managed::Boot::read(std::io::stdin().lock())?)
+    } else {
+        None
+    };
     let shutdown = config.limits.shutdown();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -61,7 +72,12 @@ pub(crate) fn execute() -> Result<(), RunnerError> {
         .build()
         .map_err(RunnerError::Runtime)?;
     let completion = runtime.block_on(async move {
-        if matches!(arguments.command, Command::Run) {
+        if let Some(boot) = &boot
+            && let Err(error) = crate::output::report(&boot.summary())
+        {
+            return Completion::finished(Err(error), shutdown);
+        }
+        if matches!(arguments.command, Command::Run | Command::Managed) {
             return match State::open(config, false) {
                 Ok(state) => control::run(state).await,
                 Err(error) => Completion::finished(Err(error), shutdown),
@@ -110,7 +126,7 @@ async fn command(
                 "mode=control-plane\nexecution_ready=false\ncredentials_durable=true\n",
             )
         }
-        Command::Health | Command::Run => Err(RunnerError::Arguments),
+        Command::Health | Command::Run | Command::Managed => Err(RunnerError::Arguments),
     }
 }
 pub(crate) struct Completion {
@@ -172,6 +188,14 @@ mod tests {
                     .map(OsString::from)
             )
             .is_err()
+        );
+        assert!(
+            Arguments::parse(
+                ["managed", "--config", "/mnt/runner.toml"]
+                    .into_iter()
+                    .map(OsString::from)
+            )
+            .is_ok()
         );
         assert_eq!(
             &**read_ticket(&b"actual-ticket\r\nignored"[..]).unwrap(),

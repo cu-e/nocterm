@@ -32,6 +32,37 @@ fn default_endpoint(kind: ProviderKind) -> &'static str {
     }
 }
 
+fn listing(
+    id: nocterm_hub_model::AgentId,
+    version: u64,
+    pool: nocterm_hub_model::PoolId,
+    draft: &PersonalAgentDraft,
+) -> AgentListing {
+    AgentListing {
+        id,
+        scope: AgentScope::Account,
+        version,
+        name: draft.name().to_owned(),
+        description: String::new(),
+        icon: String::new(),
+        color: String::new(),
+        provider_kind: draft.provider().id().to_owned(),
+        models: vec![draft.model().to_owned()],
+        resources: ResourceRequest {
+            cpu_milli: 500,
+            mem_mib: 512,
+            disk_mib: 1024,
+            max_parallel_runs: 1,
+        },
+        idle_ttl_s: IDLE_TTL_S,
+        access: AgentAccess::All,
+        allow_personal_on_pool: true,
+        enabled: true,
+        pools: vec![pool],
+        availability: Availability::Ready,
+    }
+}
+
 pub(super) async fn save(
     captured: Arc<Captured>,
     pins: Arc<PoolPins>,
@@ -105,29 +136,7 @@ pub(super) async fn save(
     let recipient = PublicKey::from_bytes(&offered.encryption).map_err(sealing)?;
     let envelope = seal_definition(keys.keyset().key_pair(), &recipient, &context, &definition)
         .map_err(sealing)?;
-    let listing = AgentListing {
-        id,
-        scope: AgentScope::Account,
-        version,
-        name: draft.name().to_owned(),
-        description: String::new(),
-        icon: String::new(),
-        color: String::new(),
-        provider_kind: draft.provider().id().to_owned(),
-        models: vec![draft.model().to_owned()],
-        resources: ResourceRequest {
-            cpu_milli: 500,
-            mem_mib: 512,
-            disk_mib: 1024,
-            max_parallel_runs: 1,
-        },
-        idle_ttl_s: IDLE_TTL_S,
-        access: AgentAccess::All,
-        allow_personal_on_pool: true,
-        enabled: true,
-        pools: vec![pool],
-        availability: Availability::Ready,
-    };
+    let listing = listing(id, version, pool, &draft);
     client
         .put_agent(&listing, vec![PoolEnvelope { pool, envelope }], expected)
         .await

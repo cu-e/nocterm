@@ -3,7 +3,7 @@ use nocterm_core::SharedCause;
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
     #[error(
-        "usage: nocterm-runner <init|enrol|run|health|refresh|show-public> --config <private.toml>; enrol reads its ticket from stdin"
+        "usage: nocterm-runner <init|enrol|run|health|refresh|show-public|managed> --config <private.toml>; enrol reads its ticket and managed its boot document from stdin"
     )]
     Arguments,
     #[error("the private runner configuration could not be read")]
@@ -45,6 +45,8 @@ pub enum RunnerError {
     Control(#[source] std::io::Error),
     #[error("the control-plane task stopped unexpectedly")]
     Task(#[source] tokio::task::JoinError),
+    #[error("the managed boot document could not be read")]
+    Boot(#[source] SharedCause),
     #[error("the runner could not write its report")]
     Output(#[source] std::io::Error),
     #[error("this control-plane executable currently requires Unix")]

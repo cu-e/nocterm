@@ -38,16 +38,17 @@ impl Form {
         window: &mut Window,
         cx: &mut Context<T>,
     ) -> Self {
-        let mut field = |placeholder: &'static str, masked: bool, text: &str, cx: &mut Context<T>| {
-            let text = text.to_owned();
-            cx.new(|cx| {
-                let mut input = InputState::new(window, cx)
-                    .masked(masked)
-                    .placeholder(placeholder);
-                input.set_value(text, window, cx);
-                input
-            })
-        };
+        let mut field =
+            |placeholder: &'static str, masked: bool, text: &str, cx: &mut Context<T>| {
+                let text = text.to_owned();
+                cx.new(|cx| {
+                    let mut input = InputState::new(window, cx)
+                        .masked(masked)
+                        .placeholder(placeholder);
+                    input.set_value(text, window, cx);
+                    input
+                })
+            };
         let (name, model) = prefill
             .as_ref()
             .map(|each| (each.name.clone(), each.model.clone()))
@@ -143,7 +144,8 @@ impl Form {
     ) -> Result<PersonalAgentDraft, DraftError> {
         let text = |input: &Entity<InputState>, cx: &Context<T>| input.read(cx).value().to_string();
         let key = text(&self.key, cx);
-        self.key.update(cx, |input, cx| input.set_value("", window, cx));
+        self.key
+            .update(cx, |input, cx| input.set_value("", window, cx));
         let key = if key.is_empty() && self.existing.is_some() && !self.work_offline {
             KeyInput::Keep
         } else {

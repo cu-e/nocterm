@@ -4,6 +4,9 @@
 //! native collaborators, bounded fresh-head service, explicit execution
 //! composition (command inbox, coordinator, providers, session broker, outbox
 //! delivery) when configured, and graceful task drain.
+//! Managed mode (`managed --config <path>`, boot document on stdin) is started by a pool
+//! host and is validated here; it stays control-plane only until containment and the
+//! broker credential source are composed.
 //! Does not own: GPUI, model/tool engines, device/account root keys, provider
 //! credentials, protocol codecs or server implementation. Execution stays disabled
 //! unless both `[execution]` and `[session_targets]` are configured.
@@ -19,6 +22,7 @@ mod config;
 mod control;
 mod error;
 mod execution;
+mod managed;
 mod output;
 mod public_setup;
 mod sessions;

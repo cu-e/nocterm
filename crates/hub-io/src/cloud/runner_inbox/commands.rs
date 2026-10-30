@@ -173,21 +173,7 @@ pub(super) fn map(
         wire::CloudCommandPayload::RevokeGrant(reference) => {
             CommandBody::RevokeGrant(grant_reference(reference)?)
         }
-        wire::CloudCommandPayload::RevokeIssuerGrants(revoke) => {
-            CommandBody::RevokeIssuer(IssuerRevocation::new(
-                IssuerSubject::new(
-                    namespace(revoke.device.as_str())?,
-                    Fingerprint::from_bytes(revoke.signing_key),
-                ),
-                ChatControlRevision::from_u64(revoke.control_cutoff),
-                revoke
-                    .grants
-                    .iter()
-                    .copied()
-                    .map(grant_reference)
-                    .collect::<Result<_, _>>()?,
-            )?)
-        }
+        wire::CloudCommandPayload::RevokeIssuerGrants(revoke) => revoke_issuer(&revoke)?,
         wire::CloudCommandPayload::BeginSession(_) => {
             return Err(CoordinatorError::InvalidCommand);
         }
@@ -208,6 +194,21 @@ pub(super) fn map(
         command: ReceivedCommand::new(stream, acceptance, window, run, body, hard_expires)?,
         attachment,
     })
+}
+fn revoke_issuer(revoke: &wire::IssuerRevocation) -> Result<CommandBody, CoordinatorError> {
+    Ok(CommandBody::RevokeIssuer(IssuerRevocation::new(
+        IssuerSubject::new(
+            namespace(revoke.device.as_str())?,
+            Fingerprint::from_bytes(revoke.signing_key),
+        ),
+        ChatControlRevision::from_u64(revoke.control_cutoff),
+        revoke
+            .grants
+            .iter()
+            .copied()
+            .map(grant_reference)
+            .collect::<Result<_, _>>()?,
+    )?))
 }
 pub(super) fn timestamp(value: i64) -> Result<Timestamp, CoordinatorError> {
     Ok(Timestamp::from_millis(
