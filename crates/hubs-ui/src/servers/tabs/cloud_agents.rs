@@ -24,7 +24,8 @@ use gpui_kit::{
 };
 use nocterm_cloud_agents::{CatalogStatus, CloudAgents};
 use nocterm_cloud_agents_model::{
-    AgentScope, CloudAgent, CloudAgentError, PinnedPool, PoolId, ProviderKind, SaveOutcome, web_panel_url,
+    AgentScope, CloudAgent, CloudAgentError, PinnedPool, PoolId, ProviderKind, SaveOutcome,
+    web_panel_url,
 };
 use nocterm_hubs_model::HubId;
 

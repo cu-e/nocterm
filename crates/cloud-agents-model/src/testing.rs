@@ -146,7 +146,9 @@ impl FakeCloudAgents {
 
     /// Whether the pool's keys were pinned through the launcher.
     pub fn is_pinned(&self, hub: &HubId, pool: &PoolId) -> bool {
-        self.state().pinned.contains_key(&(hub.clone(), pool.clone()))
+        self.state()
+            .pinned
+            .contains_key(&(hub.clone(), pool.clone()))
     }
 
     /// Agents started so far, in order, including repeated attempts.
@@ -216,7 +218,9 @@ impl CloudAgentLauncher for FakeCloudAgents {
                 return Err(failure.error());
             }
             if let Some(offer) = state.offers.get(agent)
-                && !state.pinned.contains_key(&(hub.clone(), offer.pool.clone()))
+                && !state
+                    .pinned
+                    .contains_key(&(hub.clone(), offer.pool.clone()))
             {
                 let offer = offer.clone();
                 steps(StartStep::TrustingPool(offer.clone()));
@@ -236,10 +240,9 @@ impl CloudAgentLauncher for FakeCloudAgents {
 
     fn pin_pool(&self, hub: &HubId, offer: &PoolOffer) -> CloudFuture<()> {
         let result = self.check(hub).map(|()| {
-            self.state().pinned.insert(
-                (hub.clone(), offer.pool.clone()),
-                offer.fingerprint.clone(),
-            );
+            self.state()
+                .pinned
+                .insert((hub.clone(), offer.pool.clone()), offer.fingerprint.clone());
         });
         async move { result }.boxed()
     }

@@ -20,8 +20,9 @@ pub use command::{
 pub use error::CoordinatorError;
 pub use event::{CoordinatorEvent, RunStatus, ToolObservation};
 pub use ports::{
-    AuthenticatedCommandSource, ChatRetirement, ChatRetirementRequest, ConfiguredModel, CoordinatorEventEncoder, CoordinatorIdentity,
-    CoordinatorJournal, CoordinatorProviders, SessionConsentConsumer,
+    AuthenticatedCommandSource, ChatRetirement, ChatRetirementRequest, ConfiguredModel,
+    CoordinatorEventEncoder, CoordinatorIdentity, CoordinatorJournal, CoordinatorProviders,
+    SessionConsentConsumer,
 };
 pub use provider_access::{ProviderCredentialReceiver, ProviderCredentialSource};
 pub use session::{

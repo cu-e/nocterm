@@ -19,6 +19,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
+use nocterm_hubs::HubSummary;
 use nocterm_hubs::{HubStatus, Hubs};
 use nocterm_hubs_model::HubId;
 use nocterm_ui::{IconName, SettingsPage, SettingsPageSpec};
@@ -134,6 +135,13 @@ impl Focusable for ServersPage {
     }
 }
 
+/// The server whose `wanted` tab is open, while this device can reach its account.
+fn on_show(shown: Option<&HubSummary>, current: Tab, wanted: Tab) -> Option<HubId> {
+    shown
+        .filter(|summary| current == wanted && Access::of(&summary.status) == Access::SignedIn)
+        .map(|summary| summary.id.clone())
+}
+
 impl Render for ServersPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.names.sync(window, cx);
@@ -144,31 +152,19 @@ impl Render for ServersPage {
             .and_then(|hub| summaries.iter().find(|summary| &summary.id == hub))
             .or(summaries.first());
         // The devices are read only while their tab is on show, and again each time it is.
-        let devices_on_show = shown
-            .filter(|summary| {
-                self.tab == Tab::Devices && Access::of(&summary.status) == Access::SignedIn
-            })
-            .map(|summary| summary.id.clone());
+        let devices_on_show = on_show(shown, self.tab, Tab::Devices);
         self.devices
             .update(cx, |devices, cx| match &devices_on_show {
                 Some(hub) => devices.show(hub, cx),
                 None => devices.hide(),
             });
-        let agents_on_show = shown
-            .filter(|summary| {
-                self.tab == Tab::AgentAccess && Access::of(&summary.status) == Access::SignedIn
-            })
-            .map(|summary| summary.id.clone());
+        let agents_on_show = on_show(shown, self.tab, Tab::AgentAccess);
         self.agents.update(cx, |agents, cx| match &agents_on_show {
             Some(hub) => agents.show(hub, cx),
             None => agents.hide(),
         });
         // Likewise the Cloud agents of the server, which are tracked while the tab is on show.
-        let cloud_on_show = shown
-            .filter(|summary| {
-                self.tab == Tab::CloudAgents && Access::of(&summary.status) == Access::SignedIn
-            })
-            .map(|summary| summary.id.clone());
+        let cloud_on_show = on_show(shown, self.tab, Tab::CloudAgents);
         if let Some(tab) = &self.cloud_agents {
             tab.update(cx, |tab, cx| match &cloud_on_show {
                 Some(hub) => tab.show(hub, cx),

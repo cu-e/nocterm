@@ -85,6 +85,20 @@ pub(crate) struct PendingHubs {
     accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
     /// The Cloud agents the Servers page manages personal agents of.
     cloud: Option<gpui_kit::Entity<nocterm_cloud_agents::CloudAgents>>,
+    /// Receives the sessions of saved connections for the agent SSH CA.
+    agent_hosts: Option<Arc<dyn nocterm_ssh_keys::authorized_keys::ConnectedHosts>>,
+}
+
+/// Lets the agent SSH CA follow the saved connections once both are installed.
+fn observe_agent_hosts(
+    pending: Option<&PendingHubs>,
+    connections: Option<&nocterm_connections::Installed>,
+) {
+    if let (Some(pending), Some(connections)) = (pending, connections)
+        && let Some(sessions) = pending.agent_hosts.clone()
+    {
+        crate::agent_hosts::observe(sessions, pending.hubs.hubs().clone(), connections);
+    }
 }
 
 fn start_hubs(
@@ -99,6 +113,7 @@ fn start_hubs(
         hubs,
         accounts,
         cloud,
+        ..
     } = pending?;
     let sources = accounts.map(|accounts| {
         let (hubs, terminal) = (hubs.hubs().clone(), terminal.clone());
@@ -136,6 +151,7 @@ struct ProjectResources {
     environment: Arc<dyn nocterm_project_providers::WorkspaceEnvironment>,
     preparation: Arc<dyn nocterm_project_providers::ProjectPreparation>,
     container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
+    local_host: Option<Arc<dyn nocterm_session::HostExec>>,
 }
 
 impl ProjectResources {
@@ -151,6 +167,7 @@ impl ProjectResources {
             environment: hosts.environment.clone(),
             preparation: hosts.preparation.clone(),
             container_actions: hosts.container_actions.clone(),
+            local_host: hosts.local_host.clone(),
         }
     }
 }
@@ -331,10 +348,6 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
     let (hubs, cloud_agents) = install_hubs(&hosts, &ui, cx);
-    let observed_hosts = hosts
-        .agent_hosts
-        .clone()
-        .zip(hubs.as_ref().map(|pending| pending.hubs.hubs().clone()));
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     // The vault opens first: the connection editor offers its keys, and its
     // credentials need the installed connections afterwards.
@@ -342,9 +355,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let connections = offer_keys(connections, vault.as_ref(), cx);
     let connection_inputs = connections.inputs();
     let connections = install_connections(connections, &ui, &shutdown, cx);
-    if let (Some((sessions, hubs)), Some(connections)) = (observed_hosts, connections.as_ref()) {
-        crate::agent_hosts::observe(sessions, hubs, connections);
-    }
+    observe_agent_hosts(hubs.as_ref(), connections.as_ref());
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let hubs = start_hubs(hubs, connection_inputs, &terminal, &ui, &shutdown, cx);
     let projects = install_projects(
@@ -354,8 +365,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         resources,
         &shutdown,
         cx,
-    )
-    .map(|projects| projects.with_local_host(local_host.clone()));
+    );
     let terminal_auth = terminal_auth_factory.map(|factory| factory(terminal.clone()));
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
     let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
@@ -457,7 +467,8 @@ fn install_projects(
                 .with_preparation(resources.preparation)
                 .with_image_search(resources.image_search)
                 .with_environment(resources.environment)
-                .with_container_actions(resources.container_actions),
+                .with_container_actions(resources.container_actions)
+                .with_local_host(resources.local_host),
         ),
         Err(error) => {
             tracing::error!(%error, "workspace installation failed");
@@ -539,6 +550,7 @@ fn install_hubs(
         hubs: nocterm_hubs::install(deps, ui.settings().clone(), cx),
         accounts: hosts.hub_accounts.clone(),
         cloud: None,
+        agent_hosts: hosts.agent_hosts.clone(),
     };
     let cloud = crate::cloud_agents_wiring::install(hosts.cloud_agents.clone(), Some(&pending), cx);
     pending.cloud = cloud.as_ref().map(|access| access.service().clone());

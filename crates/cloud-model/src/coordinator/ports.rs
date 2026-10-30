@@ -4,8 +4,8 @@ use super::{
 };
 use crate::{
     authority::{SessionReceipt, StreamBinding},
-    identity::NamespaceId,
     engine::{AgentEngineFactory, EngineError},
+    identity::NamespaceId,
     inference::{ModelPricing, ModelSelection},
     journal::*,
     tool::BackgroundCommandJournal,

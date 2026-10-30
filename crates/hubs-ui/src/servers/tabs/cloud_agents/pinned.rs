@@ -3,11 +3,7 @@
 
 use gpui_kit::{
     App, ClickEvent, Entity, TestSupportExt as _, Window,
-    component::{
-        ActiveTheme as _,
-        button::Button,
-        h_flex, v_flex,
-    },
+    component::{ActiveTheme as _, button::Button, h_flex, v_flex},
     div,
     prelude::*,
 };

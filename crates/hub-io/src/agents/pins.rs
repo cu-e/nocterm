@@ -176,7 +176,10 @@ mod tests {
         pins.pin(&on, "p2", &keys(3)).expect("pin");
         let listed = pins.list(&on).expect("list");
         assert_eq!(
-            listed.iter().map(|(pool, _)| pool.as_str()).collect::<Vec<_>>(),
+            listed
+                .iter()
+                .map(|(pool, _)| pool.as_str())
+                .collect::<Vec<_>>(),
             ["p1", "p2"]
         );
         pins.forget(&on, "p1").expect("forget");

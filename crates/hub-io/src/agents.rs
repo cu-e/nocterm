@@ -124,9 +124,10 @@ impl PoolPinStore for CloudAgentsLink {
 
     fn forget(&self, hub: &HubId, pool: &PoolId) -> CloudFuture<()> {
         let (pins, hub, pool) = (self.pins.clone(), hub.clone(), pool.clone());
-        let task = spawn(&self.handle, async move {
-            pins.forget(&hub, pool.as_str())
-        });
+        let task = spawn(
+            &self.handle,
+            async move { pins.forget(&hub, pool.as_str()) },
+        );
         Box::pin(async move { task.await.unwrap_or(Err(CloudAgentError::Stale)) })
     }
 }
