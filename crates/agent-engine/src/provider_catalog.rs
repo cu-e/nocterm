@@ -1,7 +1,7 @@
 //! Trusted provider policies and original-command memory credentials for actual Rig engines.
 mod candidate;
 mod state;
-use crate::{ProviderBinding, ProviderLease, RigEngineFactory};
+use crate::{LeaseServices, ProviderBinding, ProviderLease, RigEngineFactory};
 use candidate::Candidate;
 use futures::future::BoxFuture;
 use nocterm_cloud_model::{
@@ -76,6 +76,7 @@ struct CatalogOwner {
     policies: BTreeMap<NamespaceId, ProviderPolicy>,
     source: Arc<dyn ProviderCredentialSource>,
     timer: Arc<dyn ToolTimer>,
+    services: LeaseServices,
     state: Mutex<CatalogState>,
 }
 impl ConfiguredProviderCatalog {
@@ -86,6 +87,23 @@ impl ConfiguredProviderCatalog {
         timer: Arc<dyn ToolTimer>,
         policies: Vec<ProviderPolicy>,
         maximum_grants: usize,
+    ) -> Result<Self, CoordinatorError> {
+        Self::with_services(
+            source,
+            timer,
+            policies,
+            maximum_grants,
+            LeaseServices::default(),
+        )
+    }
+    /// As [`Self::new`], attaching background renewal and usage reporting to
+    /// every lease the catalog installs.
+    pub fn with_services(
+        source: Arc<dyn ProviderCredentialSource>,
+        timer: Arc<dyn ToolTimer>,
+        policies: Vec<ProviderPolicy>,
+        maximum_grants: usize,
+        services: LeaseServices,
     ) -> Result<Self, CoordinatorError> {
         if policies.is_empty()
             || policies.len() > 128
@@ -109,6 +127,7 @@ impl ConfiguredProviderCatalog {
                 policies: configured,
                 source,
                 timer,
+                services,
                 state: Mutex::new(CatalogState::new(maximum_grants)),
             }),
         })
@@ -188,6 +207,7 @@ impl CatalogOwner {
                 if let Some(old) = old {
                     old.revoke();
                 }
+                lease.attach(&self.services);
                 Ok(())
             }
             Err(error) => {

@@ -25,6 +25,14 @@ struct ActiveProvider {
     models: Vec<NamespaceId>,
     expires: Timestamp,
 }
+impl ActiveProvider {
+    /// A renewed lease may outlive the offer it was installed from.
+    fn until(&self) -> Timestamp {
+        self.lease
+            .horizon()
+            .map_or(self.expires, |renewed| renewed.max(self.expires))
+    }
+}
 struct ProviderSlot {
     generation: u64,
     active: Option<ActiveProvider>,
@@ -183,7 +191,7 @@ impl CatalogState {
             .get(selection.provider())
             .and_then(|slot| slot.active.as_ref())
             .ok_or(EngineError::NeedsProviderAccess)?;
-        if now >= active.expires || !active.models.contains(selection.model()) {
+        if now >= active.until() || !active.models.contains(selection.model()) {
             return Err(EngineError::NeedsProviderAccess);
         }
         Ok(active.lease.clone())

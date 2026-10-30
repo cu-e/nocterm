@@ -22,6 +22,7 @@ pub enum ProviderKind {
 pub struct ProviderEndpoint {
     url: Url,
     fixture: bool,
+    broker: bool,
 }
 impl ProviderEndpoint {
     /// Only HTTPS roots without user information, query or fragment are allowed.
@@ -46,6 +47,34 @@ impl ProviderEndpoint {
         Ok(Self {
             url,
             fixture: false,
+            broker: false,
+        })
+    }
+    /// The credential broker on the pool host that substitutes the real API key.
+    /// The host chooses where it listens, so a private or loopback address is
+    /// allowed here, and plain HTTP only for such an address. No public name
+    /// ever receives a plain-text request.
+    pub fn broker(root: &str) -> Result<Self, EngineError> {
+        if root.is_empty() || root.len() > 4096 {
+            return Err(EngineError::Unavailable);
+        }
+        let url = Url::parse(root).map_err(|_| EngineError::Unavailable)?;
+        if !valid_root(&url) {
+            return Err(EngineError::Unavailable);
+        }
+        let local_ip = url
+            .host_str()
+            .and_then(|host| host.trim_matches(['[', ']']).parse::<IpAddr>().ok())
+            .is_some_and(|ip| !crate::http::is_public(ip));
+        match url.scheme() {
+            "https" => {}
+            "http" if local_ip => {}
+            _ => return Err(EngineError::Unavailable),
+        }
+        Ok(Self {
+            url,
+            fixture: false,
+            broker: true,
         })
     }
     pub(crate) fn root(&self) -> &str {
@@ -63,8 +92,13 @@ impl ProviderEndpoint {
             }
         }
     }
-    pub(crate) fn fixture(&self) -> bool {
-        self.fixture
+    /// A broker endpoint is host-chosen, so it is neither https-only nor
+    /// restricted to public addresses.
+    pub(crate) fn plain_allowed(&self) -> bool {
+        self.fixture || (self.broker && self.url.scheme() == "http")
+    }
+    pub(crate) fn private_allowed(&self) -> bool {
+        self.broker
     }
     #[cfg(test)]
     pub(crate) fn for_fixture(root: &str) -> Self {
@@ -75,7 +109,11 @@ impl ProviderEndpoint {
                 .is_some_and(|s| s.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()))
         );
         assert!(valid_root(&url));
-        Self { url, fixture: true }
+        Self {
+            url,
+            fixture: true,
+            broker: false,
+        }
     }
 }
 impl fmt::Debug for ProviderEndpoint {
@@ -188,6 +226,9 @@ impl AgentEngineFactory for RigEngineFactory {
         }
         if !self.lease.is_available() {
             return Err(EngineError::NeedsProviderAccess);
+        }
+        if let Some(usage) = self.lease.usage() {
+            usage.run_started();
         }
         let calls = ModelCalls::new(config.run.clone());
         let model = self.model(

@@ -1,6 +1,8 @@
 //! Real local HTTP fixtures exercise the actual pinned Rig provider wires.
+mod broker_access;
 mod fixtures;
 mod history;
+mod lease_renewal;
 mod model_admission;
 mod provider_access;
 mod provider_catalog;

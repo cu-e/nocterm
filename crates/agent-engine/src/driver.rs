@@ -136,7 +136,7 @@ impl AgentEngine for RigEngine {
                 self.config.run.clone(),
                 input.next_step,
                 progress,
-                admission,
+                crate::lease::ObservedAdmission::wrap(admission, self.lease.usage()),
                 cancellation.handle(),
             );
             let work = Abortable::new(self.drive(input, context), cancellation);

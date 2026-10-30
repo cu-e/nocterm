@@ -13,6 +13,12 @@
 //! Every provider HTTP send waits for the host's explicit durable reservation;
 //! a per-engine once scope checks cancellation, provider and current host authority.
 //! Provider credentials remain in this adapter's explicit memory-only transport.
+//! A provider lease is capped at [`MAX_PROVIDER_LEASE`] per renewal step, not per chat:
+//! `LeaseServices` lets the host renew it in the background while `DevicePresence`
+//! reports an owner device online (pure `RenewalPolicy`, the clock is the host's tokio
+//! timer) and report accepted call usage through `ModelUsageObserver`, counts only.
+//! `ProviderEndpoint::broker` addresses the pool host's credential broker, where the
+//! lease's "key" is a virtual token and the broker substitutes the real API key.
 
 mod attempt;
 mod call;
@@ -29,7 +35,10 @@ mod provider_catalog;
 mod state;
 
 pub use config::{ProviderBinding, ProviderEndpoint, ProviderKind, RigEngineFactory};
-pub use lease::{MAX_PROVIDER_LEASE, ProviderLease};
+pub use lease::{
+    DevicePresence, LeaseRenewal, LeaseServices, MAX_PROVIDER_LEASE, ModelUsageObserver,
+    ProviderLease, RenewalError, RenewalPolicy, RenewalPolicyError, RenewalSetup,
+};
 pub use provider_catalog::{ConfiguredProviderCatalog, ProviderPolicy};
 
 #[cfg(test)]

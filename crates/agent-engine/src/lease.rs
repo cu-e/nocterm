@@ -8,10 +8,19 @@ use nocterm_core::allocation::AllocationLease;
 use rig_core::http_client::HeaderValue;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, MutexGuard},
-    time::{Duration, Instant},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
+    time::Duration,
 };
+use tokio::time::Instant;
 use zeroize::Zeroizing;
+
+mod renewal;
+mod services;
+pub use renewal::{
+    DevicePresence, LeaseRenewal, RenewalError, RenewalPolicy, RenewalPolicyError, RenewalSetup,
+};
+pub(crate) use services::ObservedAdmission;
+pub use services::{LeaseServices, ModelUsageObserver};
 
 const MAX_ACTIVE_REQUESTS: usize = 32;
 pub const MAX_PROVIDER_LEASE: Duration = Duration::from_secs(30 * 60);
@@ -52,7 +61,7 @@ impl ProviderLease {
             Some(LeaseResidency {
                 source,
                 timer,
-                expires,
+                expires: Mutex::new(expires),
                 observed: Mutex::new(None),
                 _allocation: allocation,
             }),
@@ -81,15 +90,28 @@ impl ProviderLease {
                 next: 0,
                 requests: BTreeMap::new(),
             }),
-            deadline: Instant::now() + lifetime,
+            deadline: Mutex::new(Instant::now() + lifetime),
             expiry: Mutex::new(None),
             residency,
+            renewal: Mutex::new(None),
+            usage: OnceLock::new(),
         });
         let revocation = RevokeOnDrop(Arc::downgrade(&owner));
-        let deadline = tokio::time::Instant::from_std(owner.deadline);
+        let weak = Arc::downgrade(&owner);
         let task = runtime.spawn(async move {
             let _revocation = revocation;
-            tokio::time::sleep_until(deadline).await;
+            // The deadline moves when a renewal extends it, so re-read it.
+            loop {
+                let Some(owner) = weak.upgrade() else { return };
+                let deadline = owner.deadline();
+                drop(owner);
+                tokio::time::sleep_until(deadline).await;
+                let Some(owner) = weak.upgrade() else { return };
+                if owner.deadline() <= Instant::now() {
+                    owner.revoke();
+                    return;
+                }
+            }
         });
         *owner
             .expiry
@@ -111,8 +133,60 @@ impl ProviderLease {
     pub fn revoke(&self) {
         self.owner.revoke();
     }
+    /// Pushes the deadline to one renewal step from now, never beyond
+    /// [`MAX_PROVIDER_LEASE`] ahead. A revoked or expired lease cannot be renewed.
+    pub(crate) fn extend(&self, step: Duration) -> Result<(), EngineError> {
+        if step.is_zero() || step > MAX_PROVIDER_LEASE || !self.is_available() {
+            return Err(EngineError::NeedsProviderAccess);
+        }
+        if let Some(residency) = &self.owner.residency {
+            residency.extend(step);
+        }
+        let mut deadline = self
+            .owner
+            .deadline
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *deadline = (*deadline).max(Instant::now() + step);
+        Ok(())
+    }
+    pub(crate) fn remaining(&self) -> Option<Duration> {
+        self.is_available().then(|| {
+            self.owner
+                .deadline()
+                .saturating_duration_since(Instant::now())
+        })
+    }
+    /// The furthest wall-clock instant the original host grant currently allows.
+    pub(crate) fn horizon(&self) -> Option<Timestamp> {
+        self.owner.residency.as_ref().map(LeaseResidency::expires)
+    }
+    /// Keeps the lease alive in the background while the presence port reports
+    /// a device online. Replaces a previous renewal; stops with the lease.
+    pub(crate) fn attach(&self, services: &LeaseServices) {
+        if let Some(usage) = services.usage() {
+            let _ = self.owner.usage.set(usage.clone());
+        }
+        if let Some(setup) = services.renewal()
+            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+        {
+            let renewal = LeaseRenewal::start(&runtime, Arc::downgrade(&self.owner), setup);
+            *self
+                .owner
+                .renewal
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(renewal);
+        }
+    }
+    /// Ends background renewal; the lease still lapses at its current deadline.
+    pub fn stop_renewal(&self) {
+        self.owner.stop_renewal();
+    }
+    pub(crate) fn usage(&self) -> Option<Arc<dyn ModelUsageObserver>> {
+        self.owner.usage.get().cloned()
+    }
     pub fn is_available(&self) -> bool {
-        if Instant::now() >= self.owner.deadline
+        if Instant::now() >= self.owner.deadline()
             || self
                 .owner
                 .residency
@@ -178,18 +252,35 @@ struct LeaseState {
 struct LeaseOwner {
     binding: ProviderBinding,
     state: Mutex<LeaseState>,
-    deadline: Instant,
+    deadline: Mutex<Instant>,
     expiry: Mutex<Option<Expiry>>,
     residency: Option<LeaseResidency>,
+    renewal: Mutex<Option<LeaseRenewal>>,
+    usage: OnceLock<Arc<dyn ModelUsageObserver>>,
 }
 struct LeaseResidency {
     source: Arc<dyn ProviderCredentialSource>,
     timer: Arc<dyn ToolTimer>,
-    expires: Timestamp,
+    expires: Mutex<Timestamp>,
     observed: Mutex<Option<Timestamp>>,
     _allocation: AllocationLease,
 }
 impl LeaseResidency {
+    fn expires(&self) -> Timestamp {
+        *self
+            .expires
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    fn extend(&self, step: Duration) {
+        let step = u64::try_from(step.as_millis()).unwrap_or(u64::MAX);
+        let target = Timestamp::from_millis(self.timer.now().as_millis().saturating_add(step));
+        let mut expires = self
+            .expires
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *expires = (*expires).max(target);
+    }
     fn current(&self) -> bool {
         if self.source.check_current().is_err() {
             return false;
@@ -198,7 +289,7 @@ impl LeaseResidency {
         let Ok(mut observed) = self.observed.lock() else {
             return false;
         };
-        if now >= self.expires || observed.is_some_and(|previous| now < previous) {
+        if now >= self.expires() || observed.is_some_and(|previous| now < previous) {
             return false;
         }
         *observed = Some(now);
@@ -206,6 +297,18 @@ impl LeaseResidency {
     }
 }
 impl LeaseOwner {
+    fn deadline(&self) -> Instant {
+        *self
+            .deadline
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    fn stop_renewal(&self) {
+        self.renewal
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+    }
     fn state(&self) -> MutexGuard<'_, LeaseState> {
         match self.state.lock() {
             Ok(state) => state,
@@ -221,6 +324,7 @@ impl LeaseOwner {
         }
     }
     fn revoke(&self) {
+        self.stop_renewal();
         let mut state = self.state();
         state.key.take();
         for request in state.requests.values() {

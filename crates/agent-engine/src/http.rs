@@ -25,17 +25,18 @@ impl ProviderHttp {
     pub(crate) fn new(lease: ProviderLease) -> Result<Self, EngineError> {
         let kind = lease.binding().kind();
         let endpoint = lease.binding().endpoint();
-        let client = reqwest::Client::builder()
-            .https_only(!endpoint.fixture())
+        let mut builder = reqwest::Client::builder()
+            .https_only(!endpoint.plain_allowed())
             .no_proxy()
             .redirect_policy(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(300))
-            .dns_resolver(Arc::new(PublicDns))
-            .build()
-            .map_err(|error| {
-                EngineError::Provider(SharedCause::new(TransportFailure::Request(error)))
-            })?;
+            .timeout(Duration::from_secs(300));
+        if !endpoint.private_allowed() {
+            builder = builder.dns_resolver(Arc::new(PublicDns));
+        }
+        let client = builder.build().map_err(|error| {
+            EngineError::Provider(SharedCause::new(TransportFailure::Request(error)))
+        })?;
         Ok(Self {
             client,
             destination: endpoint.request_url(kind).into(),
