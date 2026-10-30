@@ -270,18 +270,27 @@ impl CommandHandler {
             },
             Frame::Status(8).bytes()?,
         )?;
-        chat.accept(
-            command,
-            None,
-            vec![(
-                record,
-                Some(CoordinatorEvent::Deleted {
-                    command: command.acceptance().id(),
-                }),
-            )],
-            &self.work,
-        )
-        .await
+        let receipt = chat
+            .accept(
+                command,
+                None,
+                vec![(
+                    record,
+                    Some(CoordinatorEvent::Deleted {
+                        command: command.acceptance().id(),
+                    }),
+                )],
+                &self.work,
+            )
+            .await?;
+        // Only a deletion that is durable in the journal is announced to the hub.
+        if let Some(retirement) = self.services.retirement() {
+            retirement.retire(ChatRetirementRequest::new(
+                chat.log().lease().stream().clone(),
+                command.acceptance().issuer().device().clone(),
+            ));
+        }
+        Ok(receipt)
     }
     /// Runs after the command lock is released: provider installation may wait
     /// on external work that must not hold the chat's command order.

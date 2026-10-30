@@ -124,6 +124,7 @@ pub struct CoordinatorExecution {
     tools: Arc<dyn RunToolRuntimeFactory>,
     arguments: Arc<dyn ArgumentFingerprint>,
     session_setup: Option<super::session_services::CoordinatorSessions>,
+    retirement: Option<Arc<dyn ChatRetirement>>,
 }
 impl CoordinatorExecution {
     pub fn new(
@@ -138,7 +139,13 @@ impl CoordinatorExecution {
             tools,
             arguments,
             session_setup: None,
+            retirement: None,
         }
+    }
+    /// Announces each deleted chat to the hub, which may reclaim its capacity.
+    pub fn with_retirement(mut self, retirement: Arc<dyn ChatRetirement>) -> Self {
+        self.retirement = Some(retirement);
+        self
     }
     pub fn with_sessions(mut self, setup: super::session_services::CoordinatorSessions) -> Self {
         self.session_setup = Some(setup);
@@ -220,6 +227,9 @@ impl CoordinatorServices {
             .session_setup
             .as_ref()
             .ok_or(CoordinatorError::Unsupported)
+    }
+    pub(super) fn retirement(&self) -> Option<&Arc<dyn ChatRetirement>> {
+        self.execution.retirement.as_ref()
     }
     pub(super) fn storage(&self) -> &CoordinatorStorage {
         &self.storage

@@ -236,6 +236,17 @@ impl RunnerMaterialStore {
         persist_pending(&mut state)?;
         Ok(true)
     }
+    /// The key epoch the stream's chat is installed under; `None` for a chat without
+    /// live material (never installed, or already retired).
+    pub fn chat_key_epoch(&self, stream: &StreamBinding) -> Option<ChatKeyEpoch> {
+        self.require_stream(stream).ok()?;
+        let state = self.state.lock().ok()?;
+        state
+            .entries
+            .get(&stream.chat())
+            .filter(|grant| !grant.retired)
+            .map(|grant| grant.epoch)
+    }
     pub fn retry_pending(&self) -> Result<(), MaterialStoreError> {
         self.identity.with_keys(|_| ())?;
         {

@@ -25,7 +25,22 @@ use nocterm_cloud_runner::coordinator::{
 use std::sync::Arc;
 use support::*;
 
+/// Records the deleted chats the coordinator announced.
+#[derive(Default)]
+struct RecordedRetirements(std::sync::Mutex<Vec<ChatRetirementRequest>>);
+impl ChatRetirement for RecordedRetirements {
+    fn retire(&self, request: ChatRetirementRequest) {
+        self.0.lock().unwrap().push(request);
+    }
+}
+impl RecordedRetirements {
+    fn requests(&self) -> Vec<ChatRetirementRequest> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
 struct Fixture {
+    retirements: Arc<RecordedRetirements>,
     root: tempfile::TempDir,
     journal: Arc<nocterm_cloud_runner::DurableRunJournal>,
     actor: RunCoordinator,
@@ -66,6 +81,7 @@ impl Fixture {
         transport: Arc<ScriptedPublicationTransport>,
     ) -> Self {
         let root = private_root();
+        let retirements = Arc::new(RecordedRetirements::default());
         let cipher = Arc::new(TestCipher::default());
         let journal = Arc::new(journal(root.path(), cipher.clone()));
         let source = Arc::new(ScriptedCommandSource::new(catalog_binding()));
@@ -100,7 +116,8 @@ impl Fixture {
             Arc::new(RefusedSessionConsent),
             tools.clone(),
             Arc::new(FixtureArgumentFingerprint),
-        );
+        )
+        .with_retirement(retirements.clone());
         let identity = Arc::new(ScriptedCoordinatorIdentity::default());
         let services = CoordinatorServices::new(
             source.clone(),
@@ -123,6 +140,7 @@ impl Fixture {
             RunCoordinator::with_receive_budget(services, admissions, receive_budget.clone())
                 .unwrap();
         Self {
+            retirements,
             root,
             journal,
             actor,
@@ -169,7 +187,8 @@ impl Fixture {
             Arc::new(RefusedSessionConsent),
             self.tools.clone(),
             Arc::new(FixtureArgumentFingerprint),
-        );
+        )
+        .with_retirement(self.retirements.clone());
         self.storage = storage.clone();
         let services = CoordinatorServices::new(
             self.source.clone(),
@@ -724,5 +743,25 @@ async fn recovery_keeps_deleted_catalog_entries_as_cleanup_only_and_continues_ot
             .unwrap()
             .lease(),
         head.lease()
+    );
+}
+
+#[tokio::test]
+async fn a_durable_deletion_is_announced_with_the_requesting_device() {
+    let fixture = Fixture::new();
+    fixture
+        .actor
+        .accept(submit(1, ChatControlRevision::default()))
+        .await
+        .unwrap();
+    assert!(fixture.retirements.requests().is_empty());
+    let deletion = command(2, fixture.control().await, None, CommandBody::DeleteChat);
+    fixture.actor.accept(deletion).await.unwrap();
+    assert_eq!(
+        fixture.retirements.requests(),
+        vec![ChatRetirementRequest::new(
+            stream(),
+            NamespaceId::new("device").unwrap()
+        )]
     );
 }

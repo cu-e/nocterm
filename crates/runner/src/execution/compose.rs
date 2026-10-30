@@ -28,7 +28,7 @@ use nocterm_cloud_runner::{
     },
 };
 use nocterm_hub_io::cloud::{
-    InboxResume, RunnerArgumentFingerprint, RunnerCommandAttachments, RunnerHubPeer, RunnerInbox,
+    InboxResume, RunnerArgumentFingerprint, RunnerChatRetirement, RunnerCommandAttachments, RunnerHubPeer, RunnerInbox,
     RunnerInboxOptions, RunnerInboxPrincipal, RunnerProviderCredentialSource,
 };
 use nocterm_local::SystemClock;
@@ -120,7 +120,7 @@ pub(super) async fn compose(
     let journal = state
         .journal()
         .with_background_events(encoder.clone(), budgets.publication())?;
-    let publication = publication(&journal, &encoder, &budgets, peer)?;
+    let publication = publication(&journal, &encoder, &budgets, peer.clone())?;
     let storage = CoordinatorStorage::new(
         binding.clone(),
         Arc::new(journal.clone()),
@@ -150,7 +150,13 @@ pub(super) async fn compose(
         policies,
         grants,
     )?;
-    let execution = execution(binding, providers, &broker, &journal, &budgets)?;
+    let retirement = Arc::new(RunnerChatRetirement::new(
+        peer.clone(),
+        state.material(),
+        tokio::runtime::Handle::current(),
+    ));
+    let execution =
+        execution(binding, providers, &broker, &journal, &budgets)?.with_retirement(retirement);
     let services = CoordinatorServices::new(
         source,
         storage,

@@ -156,6 +156,18 @@ fn original_sealed_material_restores_without_online_device_and_rejects_replaceme
 
 #[cfg(unix)]
 #[test]
+fn the_key_epoch_of_a_chat_is_known_until_its_material_is_retired() {
+    let f = Fixture::new();
+    let store = f.create();
+    assert_eq!(store.chat_key_epoch(&f.stream), None);
+    f.install(&store).unwrap();
+    assert_eq!(store.chat_key_epoch(&f.stream), Some(f.epoch));
+    assert!(store.retire_chat(&f.stream, f.epoch).unwrap());
+    assert_eq!(store.chat_key_epoch(&f.stream), None);
+}
+
+#[cfg(unix)]
+#[test]
 fn material_store_refuses_moved_or_tampered_grants_before_key_installation() {
     let f = Fixture::new();
     let store = f.create();

@@ -3,7 +3,8 @@ use super::{
     CoordinatorEvent, ProviderOffer, SessionConsent,
 };
 use crate::{
-    authority::SessionReceipt,
+    authority::{SessionReceipt, StreamBinding},
+    identity::NamespaceId,
     engine::{AgentEngineFactory, EngineError},
     inference::{ModelPricing, ModelSelection},
     journal::*,
@@ -130,4 +131,30 @@ pub trait SessionConsentConsumer: Send + Sync {
 }
 pub trait CoordinatorIdentity: Send + Sync {
     fn fresh(&self) -> Result<[u8; 16], CoordinatorError>;
+}
+/// A chat the runner has just deleted, and the device that asked for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatRetirementRequest {
+    stream: StreamBinding,
+    requested_by: NamespaceId,
+}
+impl ChatRetirementRequest {
+    pub fn new(stream: StreamBinding, requested_by: NamespaceId) -> Self {
+        Self {
+            stream,
+            requested_by,
+        }
+    }
+    pub fn stream(&self) -> &StreamBinding {
+        &self.stream
+    }
+    pub fn requested_by(&self) -> &NamespaceId {
+        &self.requested_by
+    }
+}
+/// Announces a deletion that is already durable in the runner's journal, so the hub can
+/// reclaim the chat's capacity. It must not block the command order: an implementation
+/// queues the work and returns.
+pub trait ChatRetirement: Send + Sync {
+    fn retire(&self, request: ChatRetirementRequest);
 }
