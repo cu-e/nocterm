@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
-    AdminKeyError, AdminKeyOffer, HubAddress, HubColor, HubEndpointSpec, HubError, HubId, HubInfo,
-    HubRecord, HubsSettings,
+    AdminKeyError, AdminKeyOffer, DeviceSummary, HubAddress, HubColor, HubEndpointSpec, HubError,
+    HubFuture, HubId, HubInfo, HubRecord, HubsSettings,
 };
 use nocterm_store::SettingsHandle;
 
@@ -330,6 +330,24 @@ impl Hubs {
         })
         .detach();
         Some(session)
+    }
+
+    /// The devices of the account on `hub`. The call captures the original membership before it
+    /// returns, so a result never belongs to an account that replaced it; a hub that is not
+    /// listed is [`HubError::Stale`].
+    pub fn list_devices(&self, hub: &HubId) -> HubFuture<Vec<DeviceSummary>> {
+        if self.entry(hub).is_none() {
+            return Box::pin(async { Err(HubError::Stale) });
+        }
+        self.deps.devices.list(hub)
+    }
+
+    /// Revokes `device` of the account on `hub`. Revoking this device is [`Hubs::sign_out`].
+    pub fn revoke_device(&self, hub: &HubId, device: &str) -> HubFuture<()> {
+        if self.entry(hub).is_none() {
+            return Box::pin(async { Err(HubError::Stale) });
+        }
+        self.deps.devices.revoke(hub, device)
     }
 
     /// Ends this device's session on the hub and erases its credentials. The server stays

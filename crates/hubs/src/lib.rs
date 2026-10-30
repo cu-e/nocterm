@@ -9,7 +9,8 @@
 //!
 //! Ports used: [`nocterm_hubs_model::HubTrust`], [`nocterm_hubs_model::HubSignIn`] and
 //! [`nocterm_hubs_model::HubAdminKeys`] (the administrator keys waiting for confirmation, read
-//! and confirmed through [`Hubs`]), passed in [`Deps`]; `nocterm_store::SettingsHandle`.
+//! and confirmed through [`Hubs`]) and [`nocterm_hubs_model::AccountDevices`] (the devices of the
+//! account, listed and revoked through [`Hubs`]), passed in [`Deps`]; `nocterm_store::SettingsHandle`.
 //! Provides: [`Installed`] with the [`Hubs`] entity.
 //!
 //! Settings: the `[hubs]` section ([`nocterm_hubs_model::HubsSettings`]), registered by

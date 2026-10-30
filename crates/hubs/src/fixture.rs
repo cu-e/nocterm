@@ -93,6 +93,7 @@ fn build(
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
             admin_keys: Arc::new(admin_keys.clone()),
+            devices: Arc::new(nocterm_hubs_model::testing::FakeAccountDevices::default()),
         };
         let installed = install(deps, settings.clone(), cx);
         Fixture {

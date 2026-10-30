@@ -9,7 +9,7 @@ use gpui_kit::{
     AnyWindowHandle, AppContext as _, ElementId, Entity, Focusable as _, TestAppContext,
     WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
-use nocterm_hubs_model::testing::{FakeAdminKeys, FakeHub, FakeServer};
+use nocterm_hubs_model::testing::{FakeAccountDevices, FakeAdminKeys, FakeHub, FakeServer};
 use nocterm_hubs_model::{Environment, HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
@@ -67,6 +67,7 @@ pub(crate) struct Fixture {
     pub(crate) workspace: Entity<Workspace>,
     pub(crate) hub: FakeHub,
     pub(crate) admin_keys: FakeAdminKeys,
+    pub(crate) devices: FakeAccountDevices,
     pub(crate) installed: Installed,
     pub(crate) environments: Rc<RecordingEnvironments>,
 }
@@ -97,6 +98,7 @@ pub(crate) fn fixture_over(
         hub.sign_in_as(&hub_id(), user);
     }
     let admin_keys = FakeAdminKeys::alongside(&hub);
+    let devices = FakeAccountDevices::default();
     let environments = Rc::new(RecordingEnvironments::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -107,6 +109,7 @@ pub(crate) fn fixture_over(
                 trust: Arc::new(hub.clone()),
                 sign_in: Arc::new(hub.clone()),
                 admin_keys: Arc::new(admin_keys.clone()),
+                devices: Arc::new(devices.clone()),
             },
             settings,
             cx,
@@ -124,6 +127,7 @@ pub(crate) fn fixture_over(
         workspace,
         hub,
         admin_keys,
+        devices,
         installed,
         environments,
     };
