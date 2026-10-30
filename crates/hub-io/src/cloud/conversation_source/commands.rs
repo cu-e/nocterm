@@ -5,7 +5,7 @@ use super::{
     requirements, sdk_error,
 };
 use futures::future::BoxFuture;
-use nocterm_ai::conversation::ConversationAction;
+use nocterm_cloud_model::projection::ConversationIntent;
 use nocterm_cloud_model::{
     identity::*,
     projection::{ProjectionError, ports::*},
@@ -22,7 +22,7 @@ use std::sync::Arc;
 pub(super) fn prepare(
     core: &SourceCore,
     coordinates: ConversationCoordinates,
-    action: ConversationAction,
+    action: ConversationIntent,
 ) -> Result<ConversationCommand, ProjectionError> {
     core.check()?;
     if coordinates.binding != core.binding
@@ -33,8 +33,16 @@ pub(super) fn prepare(
     {
         return Err(ProjectionError::WrongSource);
     }
-    if matches!(&action, ConversationAction::Stop) && coordinates.run.is_none() {
+    if matches!(&action, ConversationIntent::Stop) && coordinates.run.is_none() {
         return Err(ProjectionError::WrongRun);
+    }
+    if matches!(&action, ConversationIntent::Prompt(_)) && !core.policy.allows_prompt() {
+        return Err(ProjectionError::Unavailable);
+    }
+    if let ConversationIntent::AnswerApproval(request) = &action {
+        if coordinates.run.as_ref() != Some(request.answer().authority().run()) {
+            return Err(ProjectionError::WrongRun);
+        }
     }
     let invocation = core
         .native
@@ -42,17 +50,10 @@ pub(super) fn prepare(
         .command_invocation()
         .map_err(sdk_error)?;
     let issued = core.now()?;
-    let maximum = u64::try_from(invocation.subject().hard_refresh_expires_at_ms())
-        .map_err(|_| ProjectionError::Stale)?;
-    let expires = issued
-        .as_millis()
-        .checked_add(core.policy.lifetime_ms())
-        .ok_or(ProjectionError::Capacity)?
-        .min(maximum);
-    let preparation = ConversationPreparation::new(
+    let preparation = core.policy.preparation(
         issued,
-        Timestamp::from_millis(expires),
-        core.policy.fingerprint(),
+        invocation.subject().hard_refresh_expires_at_ms(),
+        &action,
     )?;
     Ok(ConversationCommand {
         id: CommandId::from_bytes(random_bytes().map_err(|_| ProjectionError::Unavailable)?),
@@ -79,7 +80,7 @@ pub(super) fn stage(
                 Some(_) => {}
                 None => {
                     if progress.attempts.len()
-                        >= if matches!(&command.value().action, ConversationAction::Stop) {
+                        >= if matches!(&command.value().action, ConversationIntent::Stop) {
                             super::storage::MAX_PENDING
                         } else {
                             super::storage::MAX_PENDING - 1
@@ -92,7 +93,7 @@ pub(super) fn stage(
                         super::StageAttempt {
                             intent,
                             unsent: true,
-                            urgent: matches!(&command.value().action, ConversationAction::Stop),
+                            urgent: matches!(&command.value().action, ConversationIntent::Stop),
                         },
                     );
                 }
@@ -103,7 +104,7 @@ pub(super) fn stage(
         let output = workers
             .blocking(
                 work.clone(),
-                matches!(&command.value().action, ConversationAction::Stop),
+                matches!(&command.value().action, ConversationIntent::Stop),
                 move || stage_native(&core, command.value(), work.bytes()),
             )?
             .await
@@ -166,7 +167,7 @@ fn stage_native(
         command.id,
         &sealed,
         core.binding.writer().get(),
-        matches!(&command.action, ConversationAction::Stop),
+        matches!(&command.action, ConversationIntent::Stop),
     )?;
     let file = core.publish(|| {
         publication
@@ -189,7 +190,9 @@ fn seal(
     core: &SourceCore,
     command: &ConversationCommand,
 ) -> Result<nocterm_hub_client::cloud::PreparedCloudCommand, ProjectionError> {
-    core.now()?;
+    if core.now()? >= command.preparation.expires() {
+        return Err(ProjectionError::Unavailable);
+    }
     let stream = core.binding.stream();
     let route = CloudRoute {
         namespace: core.native.cloud().namespace().clone(),
@@ -201,8 +204,9 @@ fn seal(
         command_id: *command.id.as_bytes(),
     };
     let kind = match &command.action {
-        ConversationAction::Prompt(_) => CommandKind::SubmitPrompt,
-        ConversationAction::Stop => CommandKind::Stop,
+        ConversationIntent::Prompt(_) => CommandKind::SubmitPrompt,
+        ConversationIntent::Stop => CommandKind::Stop,
+        ConversationIntent::AnswerApproval(_) => CommandKind::ResolveApproval,
     };
     let context = CommandContext {
         nonce: random_bytes().map_err(|_| ProjectionError::Unavailable)?,
@@ -220,10 +224,7 @@ fn seal(
         accept_before_ms: i64::try_from(command.preparation.expires().as_millis())
             .map_err(|_| ProjectionError::InvalidRecord)?,
     };
-    let payload = match &command.action {
-        ConversationAction::Prompt(text) => core.policy.prompt(text, command.preparation)?,
-        ConversationAction::Stop => CloudCommandPayload::Stop,
-    };
+    let payload = payload(&core.policy, &command.action, command.preparation)?;
     let runner = PublicKey::from_bytes(&core.native.material().request().pins.encryption)
         .map_err(|_| ProjectionError::WrongSource)?;
     core.native.with_keyset(|keys| {
@@ -420,4 +421,21 @@ fn seal_stored(
         .material()
         .with_key(|key| Ok(stored.seal(key, chat, command.id, core.binding.writer())))
         .map_err(|_| ProjectionError::Stale)?
+}
+
+pub(super) fn payload<'a>(
+    policy: &super::policy::ConversationPolicy,
+    action: &'a ConversationIntent,
+    preparation: ConversationPreparation,
+) -> Result<CloudCommandPayload<'a>, ProjectionError> {
+    Ok(match action {
+        ConversationIntent::Prompt(text) => policy.prompt(text, preparation)?,
+        ConversationIntent::Stop => CloudCommandPayload::Stop,
+        ConversationIntent::AnswerApproval(request) => {
+            CloudCommandPayload::ResolveApproval(Box::new(
+                crate::cloud::events::values::approval(request.answer())
+                    .map_err(|_| ProjectionError::InvalidRecord)?,
+            ))
+        }
+    })
 }

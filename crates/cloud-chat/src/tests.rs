@@ -627,3 +627,110 @@ async fn full_normal_pending_load_still_admits_stop_for_the_original_run(cx: &mu
     assert_eq!(stop.coordinates.run, Some(run_binding(1)));
     drop(last_normal);
 }
+
+fn replay_approval_page(
+    source: &ScriptedConversationSource,
+    chat: &Entity<CloudChat>,
+    page: nocterm_cloud_model::projection::ProjectionBatch,
+    cx: &mut TestAppContext,
+) {
+    let sizes = cx.update(|cx| {
+        let old = chat.read(cx).projection();
+        let candidate = old.advanced(&page).unwrap().0;
+        (
+            old.resident_bytes(),
+            page.resident_bytes(),
+            old.resident_bytes() + page.projection_growth_bytes().unwrap() + 4096,
+            candidate.resident_bytes(),
+        )
+    });
+    assert!(
+        sizes.3 <= sizes.2,
+        "candidate admission (old/page/reservation/actual): {sizes:?}"
+    );
+    source.queue(page).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            chat.read(cx).last_error().is_none(),
+            "approval replay: {:?}; old/page/reservation/actual: {sizes:?}",
+            chat.read(cx).last_error()
+        );
+    });
+}
+
+#[gpui::test]
+async fn captured_approval_keeps_actual_intent_and_one_durable_answer_until_resolution(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_agent_chat::conversation::ToolApprovalChoice;
+    use nocterm_cloud_model::{
+        coordinator::CoordinatorEvent,
+        identity::Timestamp,
+        projection::{ConversationIntent, ports::CommandDelivery, testing::approval_events},
+    };
+    let (source, chat, _) = opened(cx);
+    let run = run_binding(1);
+    let mut fixture = ProjectionFixture::new();
+    let (intent, mut events) = approval_events(&run, 7, Timestamp::from_millis(20_000));
+    events.insert(
+        0,
+        prompt_event(
+            &run,
+            "waiting",
+            nocterm_cloud_model::identity::CommandId::from_bytes([9; 16]),
+        ),
+    );
+    replay_approval_page(&source, &chat, fixture.page(events), cx);
+    let facade = CloudChat::conversation(&chat);
+    let card = cx.update(|cx| facade.tool_approvals(cx).unwrap().pop().unwrap());
+    cx.update(|cx| {
+        card.with_view(cx, &mut |view| {
+            assert_eq!(view.target, "original target");
+            assert_eq!(view.principal, Some("user"));
+            assert_eq!(view.expires_ms, Some(20_000));
+            assert!(!view.reusable);
+        })
+        .unwrap()
+    });
+    let stage = source.pause_stage();
+    let answer = cx.update(|cx| card.choose(ToolApprovalChoice::AllowOnce, cx));
+    cx.run_until_parked();
+    let duplicate = cx.update(|cx| card.choose(ToolApprovalChoice::Deny, cx));
+    assert!(matches!(
+        duplicate.await,
+        Err(ConversationError::Unavailable)
+    ));
+    stage.release();
+    answer.await.unwrap();
+    let id = source.effects().staged[0];
+    let command = source.staged(id).unwrap();
+    let ConversationIntent::AnswerApproval(request) = &command.action else {
+        panic!("expected typed approval");
+    };
+    assert_eq!(request.answer().intent(), intent.id());
+    assert_eq!(request.answer().authority(), intent.authority());
+    assert_eq!(request.answer().arguments(), intent.arguments());
+    assert_eq!(request.expires(), Timestamp::from_millis(20_000));
+    assert_eq!(command.coordinates.run, Some(run.clone()));
+    assert_eq!(source.effects().staged, [id]);
+    assert_eq!(source.effects().delivered, [id]);
+    source
+        .runner_receipt(id, CommandDelivery::Accepted)
+        .unwrap();
+    chat.update(cx, |chat, cx| chat.retry(id, cx))
+        .await
+        .unwrap();
+    fixture.set_control(nocterm_cloud_model::identity::ChatControlRevision::from_u64(2));
+    source
+        .queue(fixture.page(vec![CoordinatorEvent::ApprovalResolved {
+            command: id,
+            answer: request.answer().clone(),
+        }]))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(cx.update(|cx| facade.tool_approvals(cx).unwrap().is_empty()));
+    let stale = cx.update(|cx| card.choose(ToolApprovalChoice::Deny, cx));
+    assert!(matches!(stale.await, Err(ConversationError::Stale)));
+    cx.update(|cx| assert!(chat.read(cx).pending_commands().is_empty()));
+}

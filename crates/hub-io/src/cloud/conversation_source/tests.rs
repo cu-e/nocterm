@@ -446,3 +446,131 @@ async fn conversation_source_observed_clock_rollback_wakes_ended_and_fences_publ
         assert!(futures::poll!(already_retired.as_mut()).is_ready());
     }
 }
+
+#[test]
+fn conversation_source_controls_need_no_provider_and_encode_exact_canonical_approval() {
+    use nocterm_cloud_model::{
+        authority::RunBinding,
+        coordinator::{ApprovalAnswer, ApprovalChoice},
+        projection::{ApprovalRequest, ConversationIntent},
+    };
+    let mut policy = policy::ConversationPolicy::controls(60_000).unwrap();
+    policy.bind_capture().unwrap();
+    let issued = Timestamp::from_millis(100_000);
+    assert!(
+        policy
+            .preparation(
+                issued,
+                170_000,
+                &ConversationIntent::Prompt("no provider".into())
+            )
+            .is_err()
+    );
+    let stop = ConversationIntent::Stop;
+    let prep = policy.preparation(issued, 170_000, &stop).unwrap();
+    assert!(matches!(
+        commands::payload(&policy, &stop, prep).unwrap(),
+        CloudCommandPayload::Stop
+    ));
+    let run = RunBinding::new(
+        AccountScope::new(
+            HubIdentity::new(
+                NamespaceId::new("source-hub").unwrap(),
+                Fingerprint::from_bytes([1; 32]),
+            ),
+            AccountIdentity::new(
+                NamespaceId::new("source-account").unwrap(),
+                Fingerprint::from_bytes([2; 32]),
+            ),
+        ),
+        RunnerId::from_bytes([1; 16]),
+        RunnerKeyEpoch::new(2).unwrap(),
+        CloudChatId::from_bytes([3; 16]),
+        RunId::from_bytes([9; 16]),
+        RunEpoch::new(10).unwrap(),
+    );
+    let authority = nocterm_cloud_model::projection::testing::execution_authority(run);
+    let answer = ApprovalAnswer::new(
+        IntentId::from_bytes([17; 16]),
+        authority.clone(),
+        Fingerprint::from_bytes([18; 32]),
+        ApprovalChoice::Approve,
+    );
+    let action = ConversationIntent::AnswerApproval(Box::new(
+        ApprovalRequest::new(answer, Timestamp::from_millis(150_000)).unwrap(),
+    ));
+    let prep = policy.preparation(issued, 170_000, &action).unwrap();
+    assert_eq!(prep.expires().as_millis(), 150_000);
+    assert!(
+        policy
+            .preparation(Timestamp::from_millis(150_000), 170_000, &action)
+            .is_err()
+    );
+    let payload = commands::payload(&policy, &action, prep).unwrap();
+    let body = payload.canonical_bytes().unwrap();
+    require_encoded_approval(&body, prep, &authority);
+}
+
+fn require_encoded_approval(
+    body: &[u8],
+    prep: nocterm_cloud_model::projection::ports::ConversationPreparation,
+    authority: &nocterm_cloud_model::authority::ExecutionAuthority,
+) {
+    let (account, runner, device) = (
+        AccountKeyPair::generate().unwrap(),
+        RunnerEncryptionKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+    );
+    let route = CloudRoute {
+        namespace: chat().namespace().clone(),
+        runner: chat().runner(),
+        chat_id: chat().chat_id(),
+        command_id: [19; 16],
+    };
+    let header = CommandHeader::new(
+        route.clone(),
+        CommandKeys {
+            account: account.public_key().to_bytes(),
+            runner: runner.public_key().to_bytes(),
+        },
+        CommandIssuer {
+            device_id: CloudTextId::new("device").unwrap(),
+            signing_key: device.public_key(),
+            access_token_digest: [20; 32],
+        },
+        CommandContext {
+            nonce: [21; 16],
+            expected_chat_revision: 22,
+            run: Some(RunCoordinate {
+                id: *authority.run().run().as_bytes(),
+                expected_epoch: authority.run().epoch().get(),
+            }),
+            kind: CommandKind::ResolveApproval,
+            issued_at_ms: prep.issued().as_millis() as i64,
+            accept_before_ms: prep.expires().as_millis() as i64,
+        },
+        body,
+    )
+    .unwrap();
+    let canonical = header.canonical_bytes().unwrap();
+    let signed = SignedCommand::new(header, body, device.sign(&canonical)).unwrap();
+    let sealed = seal_command(&account, &runner.public_key(), &signed).unwrap();
+    let opened = open_command(&runner, &account.public_key(), &route, &sealed).unwrap();
+    let signed = opened.command().unwrap();
+    let CloudCommandPayload::ResolveApproval(decoded) =
+        CloudCommandPayload::from_command(&signed).unwrap()
+    else {
+        panic!("expected actual approval codec");
+    };
+    assert_eq!(decoded.intent, [17; 16]);
+    assert_eq!(decoded.arguments_digest, [18; 32]);
+    assert_eq!(
+        decoded.execution.session.id,
+        *authority.session().id().as_bytes()
+    );
+    assert_eq!(decoded.execution.grant.id, *authority.grant().as_bytes());
+    assert_eq!(
+        decoded.choice,
+        nocterm_hub_model::cloud::payload::ApprovalChoice::Approve
+    );
+}

@@ -47,32 +47,11 @@ impl ConversationPromptPolicy {
         result.fingerprint = result.digest();
         Ok(result)
     }
-    /// Native preparation generation, separate from public signing authority.
-    /// If an old durable M is missing, an old capture's DTO cannot be re-signed
-    /// by a later capture just because all descriptive policy fields match.
-    pub(super) fn bind_capture(&mut self) -> Result<(), ProjectionError> {
-        let nonce = nocterm_keys::random_bytes::<32>().map_err(|_| ProjectionError::Unavailable)?;
-        let mut digest = Sha256::new();
-        digest.update(b"nocterm-native-conversation-preparation-generation-v1");
-        digest.update(self.fingerprint.as_bytes());
-        digest.update(nonce);
-        self.fingerprint = Fingerprint::from_bytes(digest.finalize().into());
-        Ok(())
-    }
-    pub(super) fn fingerprint(&self) -> Fingerprint {
-        self.fingerprint
-    }
-    pub(super) fn lifetime_ms(&self) -> u64 {
-        self.lifetime_ms
-    }
     pub(super) fn prompt<'a>(
         &self,
         text: &'a str,
         preparation: ConversationPreparation,
     ) -> Result<wire::CloudCommandPayload<'a>, ProjectionError> {
-        if preparation.policy() != self.fingerprint {
-            return Err(ProjectionError::WrongSource);
-        }
         let selection = wire::ModelSelection {
             provider: id(self.selection.provider().as_str())?,
             model: id(self.selection.model().as_str())?,
@@ -178,4 +157,97 @@ fn target(
             credential_revision: *auth.credential_revision().as_bytes(),
         },
     })
+}
+
+/// Independent control timing never requires inference/provider configuration.
+pub(super) struct ConversationPolicy {
+    prompt: Option<ConversationPromptPolicy>,
+    lifetime_ms: u64,
+    fingerprint: Fingerprint,
+}
+impl ConversationPolicy {
+    pub(super) fn for_prompt(prompt: ConversationPromptPolicy) -> Self {
+        Self {
+            lifetime_ms: prompt.lifetime_ms,
+            fingerprint: prompt.fingerprint,
+            prompt: Some(prompt),
+        }
+    }
+    pub(super) fn controls(lifetime_ms: u64) -> Result<Self, ProjectionError> {
+        if lifetime_ms == 0
+            || lifetime_ms > nocterm_hub_model::cloud::MAX_COMMAND_LIFETIME_MS as u64
+        {
+            return Err(ProjectionError::InvalidRecord);
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"nocterm-native-cloud-control-timing-v1");
+        hash.update(lifetime_ms.to_be_bytes());
+        Ok(Self {
+            prompt: None,
+            lifetime_ms,
+            fingerprint: Fingerprint::from_bytes(hash.finalize().into()),
+        })
+    }
+    pub(super) fn bind_capture(&mut self) -> Result<(), ProjectionError> {
+        let nonce = nocterm_keys::random_bytes::<32>().map_err(|_| ProjectionError::Unavailable)?;
+        let mut hash = Sha256::new();
+        hash.update(b"nocterm-native-conversation-preparation-generation-v1");
+        hash.update(self.fingerprint.as_bytes());
+        hash.update(nonce);
+        self.fingerprint = Fingerprint::from_bytes(hash.finalize().into());
+        Ok(())
+    }
+    pub(super) fn fingerprint(&self) -> Fingerprint {
+        self.fingerprint
+    }
+    pub(super) fn allows_prompt(&self) -> bool {
+        self.prompt.is_some()
+    }
+    pub(super) fn prompt<'a>(
+        &self,
+        text: &'a str,
+        preparation: ConversationPreparation,
+    ) -> Result<wire::CloudCommandPayload<'a>, ProjectionError> {
+        if preparation.policy() != self.fingerprint {
+            return Err(ProjectionError::WrongSource);
+        }
+        self.prompt
+            .as_ref()
+            .ok_or(ProjectionError::Unavailable)?
+            .prompt(text, preparation)
+    }
+}
+
+impl ConversationPolicy {
+    pub(super) fn preparation(
+        &self,
+        issued: nocterm_cloud_model::identity::Timestamp,
+        hard_deadline: i64,
+        action: &nocterm_cloud_model::projection::ConversationIntent,
+    ) -> Result<ConversationPreparation, ProjectionError> {
+        use nocterm_cloud_model::projection::ConversationIntent;
+        if matches!(action, ConversationIntent::Prompt(_)) && !self.allows_prompt() {
+            return Err(ProjectionError::Unavailable);
+        }
+        let hard = u64::try_from(hard_deadline).map_err(|_| ProjectionError::Stale)?;
+        let expires = issued
+            .as_millis()
+            .checked_add(self.lifetime_ms)
+            .ok_or(ProjectionError::Capacity)?
+            .min(hard);
+        let expires = match action {
+            ConversationIntent::AnswerApproval(request) => {
+                expires.min(request.expires().as_millis())
+            }
+            _ => expires,
+        };
+        if expires <= issued.as_millis() {
+            return Err(ProjectionError::Unavailable);
+        }
+        ConversationPreparation::new(
+            issued,
+            nocterm_cloud_model::identity::Timestamp::from_millis(expires),
+            self.fingerprint,
+        )
+    }
 }

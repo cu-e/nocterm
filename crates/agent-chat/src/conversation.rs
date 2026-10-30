@@ -1,8 +1,10 @@
 //! The renderer's borrowed source and captured action ports. No view or wire types.
-use gpui::{App, Subscription, Task};
+use gpui::{App, EntityId, Subscription, Task};
 use nocterm_ai::conversation::{ConversationAction, ConversationView};
 use std::rc::Rc;
 
+mod approval;
+pub use approval::{ConversationToolApproval, ToolApprovalChoice, ToolApprovalView};
 mod local;
 pub use local::LocalConversation;
 
@@ -32,6 +34,12 @@ pub trait ConversationActions {
 /// Implementations borrow rows only during the visitor and retain weak entities.
 /// Viewer visibility never grants a run lease or implies a remote Stop.
 pub trait ConversationSource {
+    /// Presentation identity only; it confers no native/remote authority.
+    fn identity(&self) -> EntityId;
+    fn tool_approvals(
+        &self,
+        cx: &mut App,
+    ) -> Result<Vec<Rc<dyn ConversationToolApproval>>, ConversationError>;
     fn with_view(
         &self,
         cx: &App,

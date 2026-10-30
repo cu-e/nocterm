@@ -1,6 +1,10 @@
 //! Pure desktop replay rules and ports for an originally captured verified source.
 //! A source implementation owns authentication, signatures, decryption and durable
 //! encrypted client outbox/cache I/O. Coordinate constructors confer no trust.
+mod approvals;
+mod intent;
+pub use approvals::{ApprovalKey, ProjectedApproval};
+pub use intent::{ApprovalRequest, ConversationIntent};
 mod baseline;
 pub use baseline::{SnapshotBaseline, SnapshotFact};
 mod cursor;

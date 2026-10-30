@@ -196,6 +196,19 @@ impl ConversationObserver {
 
 struct ObservedConversation(Entity<ConversationObserver>);
 impl ConversationSource for ObservedConversation {
+    fn identity(&self) -> EntityId {
+        self.0.entity_id()
+    }
+    fn tool_approvals(
+        &self,
+        cx: &mut App,
+    ) -> Result<
+        Vec<Rc<dyn nocterm_agent_chat::conversation::ConversationToolApproval>>,
+        ConversationError,
+    > {
+        let delegate = self.0.read(cx).delegate.clone();
+        delegate.tool_approvals(cx)
+    }
     fn with_view(
         &self,
         cx: &App,

@@ -91,7 +91,9 @@ pub(super) fn accepted(value: &CommandAcceptance) -> Result<AcceptedCommand, Jou
         expected_control_revision: value.expected_control().get(),
     })
 }
-pub(super) fn approval(value: &ApprovalAnswer) -> Result<body::ApprovalPayload, JournalError> {
+pub(in crate::cloud) fn approval(
+    value: &ApprovalAnswer,
+) -> Result<body::ApprovalPayload, JournalError> {
     let choice = match value.choice() {
         ApprovalChoice::Approve => body::ApprovalChoice::Approve,
         ApprovalChoice::Deny => body::ApprovalChoice::Deny,

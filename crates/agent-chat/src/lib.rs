@@ -16,6 +16,8 @@
 //! polling projections. Archive owns lazy hydration generations, typed pending intentions
 //! and delivery residency. BackgroundOpen owns the native-opening handoff and its original
 //! workspace receipt.
+//! Borrowed ConversationSource and captured tool cards preserve the original
+//! Local token/document/session; choices delegate the existing public admission.
 //! Does not own: views, the workspace shell, ACP transport, connection admission,
 //! filesystem storage, native command execution or image decoding.
 //! Ports used: AgentConnector and ToolBridge through the runtime, terminal ports from

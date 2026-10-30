@@ -91,6 +91,9 @@ impl PendingCommands {
         entry.waiter = Some(waiter);
         Ok(entry.retained.clone())
     }
+    pub(crate) fn has_approval(&self, key: nocterm_cloud_model::projection::ApprovalKey) -> bool {
+        self.0.values().any(|entry| matches!(&entry.retained.value().action,nocterm_cloud_model::projection::ConversationIntent::AnswerApproval(request) if key.matches_request(request)))
+    }
     pub(crate) fn item(&self, id: CommandId) -> Result<Arc<RetainedCommand>, ProjectionError> {
         self.0
             .get(&id)

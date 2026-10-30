@@ -1,7 +1,8 @@
 //! Consumer-specific Cloud view I/O. Native implementations supply real verified
 //! replay and encrypted durable outbox/cache operations for ONE captured source.
 use super::{
-    ConversationProjection, ProjectionBatch, ProjectionBinding, ProjectionCursor, ProjectionError,
+    ConversationIntent, ConversationProjection, ProjectionBatch, ProjectionBinding,
+    ProjectionCursor, ProjectionError,
 };
 use crate::{
     authority::RunBinding,
@@ -58,12 +59,12 @@ impl ConversationPreparation {
 pub struct ConversationCommand {
     pub id: CommandId,
     pub coordinates: ConversationCoordinates,
-    pub action: ConversationAction,
+    pub action: ConversationIntent,
     pub preparation: ConversationPreparation,
 }
 impl ConversationCommand {
     pub fn resident_bytes(&self) -> usize {
-        Self::action_bytes(&self.action)
+        self.action.resident_bytes()
     }
     pub fn action_bytes(action: &ConversationAction) -> usize {
         4096usize.saturating_add(match action {
@@ -131,6 +132,8 @@ pub trait CapturedConversationSource: Send + Sync {
         &self,
         work: ConversationWork<'_>,
     ) -> Result<AllocationRequirements, ProjectionError>;
+    /// Explicit configured capability; false never selects a fallback provider.
+    fn supports_prompt(&self) -> bool;
     fn binding(&self) -> &ProjectionBinding;
     fn check_current(&self) -> Result<(), ProjectionError>;
     /// Resolves when this exact captured membership ends, independently of
@@ -152,7 +155,7 @@ pub trait CapturedConversationSource: Send + Sync {
     fn prepare(
         &self,
         coordinates: ConversationCoordinates,
-        action: ConversationAction,
+        action: ConversationIntent,
     ) -> Result<ConversationCommand, ProjectionError>;
     /// Commit exact ID/body to the encrypted durable client outbox before any send.
     /// Re-staging the same command is idempotent; changed contents are rejected.

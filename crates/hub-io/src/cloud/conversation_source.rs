@@ -36,6 +36,7 @@ use nocterm_cloud_model::{
 };
 use nocterm_core::allocation::{Allocated, AllocationLease};
 use nocterm_hub_client::cloud::CloudError;
+use policy::ConversationPolicy;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -46,7 +47,7 @@ const RESIDENT_BYTES: usize = 64 * 1024;
 const MAX_WIRE_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct ConversationSetup {
-    policy: ConversationPromptPolicy,
+    policy: ConversationPolicy,
     workers: Arc<ConversationWorkers>,
     timer: Arc<dyn ToolTimer>,
     storage: Arc<ConversationStorage>,
@@ -59,11 +60,25 @@ impl ConversationSetup {
         storage: Arc<ConversationStorage>,
     ) -> Self {
         Self {
-            policy,
+            policy: ConversationPolicy::for_prompt(policy),
             workers,
             timer,
             storage,
         }
+    }
+    /// History/control capture works with no invented provider/model/budget.
+    pub fn controls(
+        lifetime_ms: u64,
+        workers: Arc<ConversationWorkers>,
+        timer: Arc<dyn ToolTimer>,
+        storage: Arc<ConversationStorage>,
+    ) -> Result<Self, ProjectionError> {
+        Ok(Self {
+            policy: ConversationPolicy::controls(lifetime_ms)?,
+            workers,
+            timer,
+            storage,
+        })
     }
 }
 pub struct CloudConversationSource {
@@ -75,7 +90,7 @@ struct SourceCore {
     decoder: AccountObservationDecoder,
     workers: Arc<ConversationWorkers>,
     clock: SourceClock,
-    policy: ConversationPromptPolicy,
+    policy: ConversationPolicy,
     files: persistence::Files,
     progress: Mutex<Progress>,
     lifetime: lifetime::SourceLifetime,
@@ -142,9 +157,9 @@ impl CloudConversationSource {
     }
     /// Native composition only. The account facade supplies these actual owners;
     /// a UI selector cannot instantiate their authority from descriptive DTOs.
-    pub(crate) async fn capture(
+    async fn capture(
         native: Arc<NativeSource>,
-        mut policy: ConversationPromptPolicy,
+        mut policy: ConversationPolicy,
         workers: Arc<ConversationWorkers>,
         timer: Arc<dyn ToolTimer>,
         storage: Arc<ConversationStorage>,
@@ -297,6 +312,9 @@ impl CloudConversationSource {
     }
 }
 impl CapturedConversationSource for CloudConversationSource {
+    fn supports_prompt(&self) -> bool {
+        self.core.policy.allows_prompt()
+    }
     fn binding(&self) -> &ProjectionBinding {
         &self.core.binding
     }
@@ -346,7 +364,7 @@ impl CapturedConversationSource for CloudConversationSource {
     fn prepare(
         &self,
         coordinates: ConversationCoordinates,
-        action: nocterm_ai::conversation::ConversationAction,
+        action: nocterm_cloud_model::projection::ConversationIntent,
     ) -> Result<ConversationCommand, ProjectionError> {
         commands::prepare(&self.core, coordinates, action)
     }

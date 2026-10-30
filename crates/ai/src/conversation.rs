@@ -27,6 +27,9 @@ pub struct ConversationView<'a> {
     pub accepts_updates: bool,
     /// Whether this source offers the existing Local fork operation.
     pub can_fork: bool,
+    /// Presentation capabilities; native admission still rechecks authority.
+    pub can_prompt: bool,
+    pub can_stop: bool,
     pub updated_at: u64,
     pub pending_commands: usize,
 }

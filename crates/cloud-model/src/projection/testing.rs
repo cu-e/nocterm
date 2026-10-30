@@ -1,7 +1,7 @@
 //! Shared scripted captured source. No production verifier or encrypted store.
 use super::{
-    ConversationProjection, MAX_REPLAY_BYTES, ProjectionBatch, ProjectionBinding, ProjectionCursor,
-    ProjectionError,
+    ConversationIntent, ConversationProjection, MAX_REPLAY_BYTES, ProjectionBatch,
+    ProjectionBinding, ProjectionCursor, ProjectionError,
     ports::{
         AllocationRequirements, CapturedConversationSource, CommandDelivery, ConversationCommand,
         ConversationCoordinates, ConversationWork,
@@ -10,7 +10,6 @@ use super::{
 use crate::identity::CommandId;
 use futures::channel::oneshot;
 use futures::{FutureExt as _, StreamExt as _, channel::mpsc, future::BoxFuture};
-use nocterm_ai::conversation::ConversationAction;
 use nocterm_core::allocation::{Allocated, AllocationLease};
 use nocterm_session::testing::Gate;
 use std::{
@@ -19,7 +18,9 @@ use std::{
 };
 
 mod fixture;
-pub use fixture::{ProjectionFixture, execution_authority, prompt_event, run_binding};
+pub use fixture::{
+    ProjectionFixture, approval_events, execution_authority, prompt_event, run_binding,
+};
 
 #[derive(Clone, Default)]
 pub struct ConversationEffects {
@@ -233,6 +234,9 @@ impl ScriptedConversationSource {
     }
 }
 impl CapturedConversationSource for ScriptedConversationSource {
+    fn supports_prompt(&self) -> bool {
+        true
+    }
     fn allocation_requirements(
         &self,
         work: ConversationWork<'_>,
@@ -303,7 +307,7 @@ impl CapturedConversationSource for ScriptedConversationSource {
     fn prepare(
         &self,
         coordinates: ConversationCoordinates,
-        action: ConversationAction,
+        action: ConversationIntent,
     ) -> Result<ConversationCommand, ProjectionError> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.check(&state)?;
@@ -318,10 +322,15 @@ impl CapturedConversationSource for ScriptedConversationSource {
         Ok(ConversationCommand {
             id,
             coordinates,
-            action,
+            action: action.clone(),
             preparation: crate::projection::ports::ConversationPreparation::new(
                 crate::identity::Timestamp::from_millis(1),
-                crate::identity::Timestamp::from_millis(10_000),
+                crate::identity::Timestamp::from_millis(match &action {
+                    ConversationIntent::AnswerApproval(request) => {
+                        10_000.min(request.expires().as_millis())
+                    }
+                    _ => 10_000,
+                }),
                 crate::identity::Fingerprint::from_bytes([1; 32]),
             )?,
         })

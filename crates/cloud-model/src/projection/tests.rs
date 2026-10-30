@@ -596,3 +596,104 @@ fn descriptive_background_after_new_run_and_delete_preserves_original_unknown_re
         BackgroundRecordOutcome::ObservedExit(7)
     );
 }
+
+#[test]
+fn approval_observations_preserve_exact_card_and_refuse_changed_resolution_atomically() {
+    use crate::coordinator::{ApprovalAnswer, ApprovalChoice};
+    let mut fixture = ProjectionFixture::new();
+    let run = run_binding(1);
+    let mut projection = ConversationProjection::new(fixture.binding().clone());
+    let (intent, mut events) = approval_events(&run, 7, Timestamp::from_millis(20_000));
+    events.insert(0, prompt(&run, 1));
+    projection.apply(&fixture.page(events)).unwrap();
+    let key = projection.approvals().next().unwrap().key();
+    let card = projection.approval(key).unwrap();
+    assert_eq!(card.intent(), &intent);
+    assert_eq!(
+        card.display().destination.as_deref(),
+        Some("original target")
+    );
+    let request = card.request(ApprovalChoice::Approve).unwrap();
+    assert!(key.matches_request(&request));
+    let before = state(&projection);
+    let answer = ApprovalAnswer::new(
+        intent.id(),
+        intent.authority().clone(),
+        intent.arguments(),
+        ApprovalChoice::Approve,
+    );
+    let valid = fixture.page(vec![CoordinatorEvent::ApprovalResolved {
+        command: CommandId::from_bytes([8; 16]),
+        answer: answer.clone(),
+    }]);
+    let mut wrong = valid.events().to_vec();
+    wrong[0].event = CoordinatorEvent::ApprovalResolved {
+        command: CommandId::from_bytes([8; 16]),
+        answer: ApprovalAnswer::new(
+            intent.id(),
+            intent.authority().clone(),
+            Fingerprint::from_bytes([9; 32]),
+            ApprovalChoice::Approve,
+        ),
+    };
+    let wrong = ProjectionBatch::new(fixture.binding().clone(), wrong, valid.known_head()).unwrap();
+    assert_eq!(
+        projection.apply(&wrong),
+        Err(ProjectionError::InvalidRecord)
+    );
+    assert_eq!(state(&projection), before);
+    assert!(projection.approval(key).is_some());
+    assert_eq!(
+        projection.apply(&valid).unwrap(),
+        [CommandId::from_bytes([8; 16])]
+    );
+    assert!(projection.approvals().next().is_none());
+    assert!(
+        matches!(&projection.transcript().entries[1],Entry::Tool(record) if record.status==ToolStatus::Running)
+    );
+}
+
+#[test]
+fn approval_cards_preserve_expired_facts_and_retire_finite_pending_on_actual_stop() {
+    let mut fixture = ProjectionFixture::new();
+    let run = run_binding(1);
+    let mut projection = ConversationProjection::new(fixture.binding().clone());
+    projection
+        .apply(&fixture.page(vec![prompt(&run, 1)]))
+        .unwrap();
+    let (_, expired) = approval_events(&run, 2, Timestamp::from_millis(1));
+    let mut historical = projection.clone();
+    let mut history = fixture.clone();
+    historical.apply(&history.page(expired)).unwrap();
+    assert_eq!(
+        historical.approvals().next().unwrap().key().expires(),
+        Timestamp::from_millis(1)
+    );
+    let (_, malformed) = approval_events(&run, 2, Timestamp::from_millis(0));
+    let mut rejected = fixture.clone();
+    let before = state(&projection);
+    assert_eq!(
+        projection.apply(&rejected.page(malformed)),
+        Err(ProjectionError::InvalidRecord)
+    );
+    assert_eq!(state(&projection), before);
+    assert!(projection.approvals().next().is_none());
+    for tag in 1..=MAX_PENDING_COMMANDS as u8 {
+        let (_, events) = approval_events(&run, tag, Timestamp::from_millis(1_000_000));
+        projection.apply(&fixture.page(events)).unwrap();
+    }
+    assert_eq!(projection.approvals().count(), MAX_PENDING_COMMANDS);
+    let mut rejected = fixture.clone();
+    let before = state(&projection);
+    let (_, extra) = approval_events(&run, 99, Timestamp::from_millis(1_000_000));
+    assert_eq!(
+        projection.apply(&rejected.page(extra)),
+        Err(ProjectionError::Capacity)
+    );
+    assert_eq!(state(&projection), before);
+    assert_eq!(projection.approvals().count(), MAX_PENDING_COMMANDS);
+    projection
+        .apply(&fixture.page(vec![status(&run, RunStatus::Stopped)]))
+        .unwrap();
+    assert!(projection.approvals().next().is_none());
+}

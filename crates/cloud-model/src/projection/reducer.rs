@@ -38,6 +38,7 @@ pub struct ConversationProjection {
     bytes: usize,
     updated: u64,
     usage: super::usage::ProjectionUsage,
+    approvals: super::approvals::ProjectionApprovals,
 }
 impl ConversationProjection {
     pub fn new(binding: ProjectionBinding) -> Self {
@@ -54,6 +55,7 @@ impl ConversationProjection {
             bytes: 1024,
             updated: 0,
             usage: super::usage::ProjectionUsage::default(),
+            approvals: super::approvals::ProjectionApprovals::default(),
         }
     }
     pub fn binding(&self) -> &ProjectionBinding {
@@ -93,6 +95,12 @@ impl ConversationProjection {
         &self,
     ) -> impl Iterator<Item = &crate::coordinator::BackgroundObservation> {
         self.tools.observations()
+    }
+    pub fn approvals(&self) -> impl Iterator<Item = &super::ProjectedApproval> {
+        self.approvals.iter()
+    }
+    pub fn approval(&self, key: super::ApprovalKey) -> Option<&super::ProjectedApproval> {
+        self.approvals.get(key)
     }
     pub fn updated_at(&self) -> u64 {
         self.updated
@@ -146,6 +154,7 @@ impl ConversationProjection {
             }
             let now = envelope.time.as_millis() / 1000;
             next.reduce(&envelope.event, now, &mut accepted)?;
+            next.approvals.observe(&envelope.event, envelope.control)?;
             next.control = envelope.control;
             next.cursor = after;
             next.updated = next.updated.max(now);
@@ -187,6 +196,7 @@ impl ConversationProjection {
             .saturating_add(self.transcript.times.capacity().saturating_mul(8))
             .saturating_add(self.runs.bytes())
             .saturating_add(self.tools.bytes())
+            .saturating_add(self.approvals.bytes()?)
             .saturating_add(self.seen.capacity().saturating_mul(96));
         if self.bytes > MAX_RESIDENT_BYTES {
             return Err(ProjectionError::Capacity);

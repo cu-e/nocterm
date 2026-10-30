@@ -87,6 +87,7 @@ pub fn prompt_event(run: &RunBinding, text: &str, id: CommandId) -> CoordinatorE
     }
 }
 
+#[derive(Clone)]
 pub struct ProjectionFixture {
     binding: ProjectionBinding,
     cursor: ProjectionCursor,
@@ -136,4 +137,37 @@ impl ProjectionFixture {
         }
         ProjectionBatch::new(self.binding.clone(), envelopes, self.cursor).unwrap()
     }
+}
+
+pub fn approval_events(
+    run: &RunBinding,
+    tag: u8,
+    expires: Timestamp,
+) -> (crate::run::ToolIntent, Vec<CoordinatorEvent>) {
+    let call = nocterm_ai::TerminalCall::ListTerminals;
+    let intent = crate::run::ToolIntent::new(
+        IntentId::from_bytes([tag; 16]),
+        StepId::from_bytes([tag; 16]),
+        execution_authority(run.clone()),
+        fingerprint(tag),
+        &call,
+    )
+    .unwrap();
+    let display = nocterm_ai::tool_display::ToolDisplay::new(&call, Some("original target".into()));
+    (
+        intent.clone(),
+        vec![
+            CoordinatorEvent::ToolIntent {
+                intent: intent.clone(),
+                call: call.clone(),
+                display: display.clone(),
+            },
+            CoordinatorEvent::Approval {
+                intent,
+                call,
+                display,
+                expires,
+            },
+        ],
+    )
 }

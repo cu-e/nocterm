@@ -12,18 +12,31 @@ fn for_action_body(
         nocterm_ai::conversation::ConversationAction::Prompt(text) => text.len(),
         nocterm_ai::conversation::ConversationAction::Stop => 0,
     };
+    body_size(text)
+}
+fn body_size(text: usize) -> Result<usize, ProjectionError> {
     text.checked_mul(6)
         .and_then(|bytes| bytes.checked_add(METADATA))
         .filter(|bytes| *bytes <= MAX_ENVELOPE_BYTES)
         .ok_or(ProjectionError::Capacity)
 }
 pub(super) fn stage(command: &ConversationCommand) -> Result<usize, ProjectionError> {
-    action(&command.action)
+    match &command.action {
+        nocterm_cloud_model::projection::ConversationIntent::Prompt(text) => body_work(text.len()),
+        nocterm_cloud_model::projection::ConversationIntent::Stop
+        | nocterm_cloud_model::projection::ConversationIntent::AnswerApproval(_) => body_work(0),
+    }
 }
 pub(super) fn action(
     action: &nocterm_ai::conversation::ConversationAction,
 ) -> Result<usize, ProjectionError> {
     let body = for_action_body(action)?;
+    work_for_body(body)
+}
+fn body_work(text: usize) -> Result<usize, ProjectionError> {
+    work_for_body(body_size(text)?)
+}
+fn work_for_body(body: usize) -> Result<usize, ProjectionError> {
     let upload = CloudUpload::buffer_work_bytes(body).map_err(|_| ProjectionError::Capacity)?;
     // At seal time the public body/plaintext/cipher generations coexist. Native
     // storage additionally holds exact M, authenticated outbox plaintext/cipher,

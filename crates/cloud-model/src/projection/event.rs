@@ -78,4 +78,12 @@ impl ProjectionBatch {
     pub fn resident_bytes(&self) -> usize {
         self.bytes
     }
+    /// Allocation-free upper bound for the candidate's additional retained
+    /// transcript, tool/approval owners and per-event bookkeeping. The old
+    /// projection and this decoded page remain separately admitted while cloning.
+    pub fn projection_growth_bytes(&self) -> Result<usize, ProjectionError> {
+        self.events.iter().try_fold(1024usize, |total, envelope| {
+            Ok(total.saturating_add(super::sizing::projection_growth(&envelope.event)?))
+        })
+    }
 }

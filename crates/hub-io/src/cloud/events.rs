@@ -6,7 +6,7 @@ mod prompt;
 mod sealing;
 mod snapshot;
 mod tools;
-mod values;
+pub(super) mod values;
 use super::RunnerJournalCrypto;
 use nocterm_cloud_model::{
     coordinator::{CoordinatorEvent, CoordinatorEventEncoder},

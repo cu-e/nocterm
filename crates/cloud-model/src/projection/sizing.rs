@@ -22,8 +22,9 @@ pub(super) fn event_bytes(event: &CoordinatorEvent) -> Result<usize, ProjectionE
         } => text.text().len().saturating_mul(2),
         CoordinatorEvent::ToolIntent { call, display, .. } => call_bytes(call)?
             .saturating_add(retained_value_bytes(display).map_err(|_| ProjectionError::Capacity)?),
-        CoordinatorEvent::Approval { call, display, .. } => call_bytes(call)?
-            .saturating_add(retained_value_bytes(display).map_err(|_| ProjectionError::Capacity)?),
+        CoordinatorEvent::Approval { call, display, .. } => {
+            approval_bytes(call, display)?.saturating_sub(8192)
+        }
         CoordinatorEvent::BackgroundLifecycle(value) => value
             .job()
             .terminal()
@@ -42,6 +43,29 @@ pub(super) fn event_bytes(event: &CoordinatorEvent) -> Result<usize, ProjectionE
     Ok(8192usize.saturating_add(variable))
 }
 
+/// Additional retained owners created by reduction, beyond the transcript and
+/// small per-event bookkeeping covered by `event_bytes`. Deletions are ignored:
+/// the reservation must cover the candidate before any replaced value drops.
+pub(super) fn projection_growth(event: &CoordinatorEvent) -> Result<usize, ProjectionError> {
+    let owners = match event {
+        CoordinatorEvent::ToolIntent { display, .. } => super::tools::TOOL_ROW_BYTES
+            // ToolRecord keeps a separate generated title and name alongside
+            // the display embedded in its metadata.
+            .saturating_add(display.tool.len().saturating_mul(2))
+            .saturating_add(
+                display
+                    .destination
+                    .as_ref()
+                    .map_or(0, |value| value.len().saturating_mul(2)),
+            ),
+        CoordinatorEvent::Approval { call, display, .. } => approval_bytes(call, display)?,
+        // ProjectionRuns retains a separate bounded run/phase record.
+        CoordinatorEvent::PromptAccepted { .. } => 1024,
+        _ => 0,
+    };
+    Ok(event_bytes(event)?.saturating_add(owners))
+}
+
 fn call_bytes(call: &TerminalCall) -> Result<usize, ProjectionError> {
     let bytes = match call {
         TerminalCall::ListTerminals => return Ok(0),
@@ -54,4 +78,13 @@ fn call_bytes(call: &TerminalCall) -> Result<usize, ProjectionError> {
         TerminalCall::CancelCommand(value) => retained_value_bytes(value),
     };
     bytes.map_err(|_| ProjectionError::Capacity)
+}
+
+pub(super) fn approval_bytes(
+    call: &TerminalCall,
+    display: &nocterm_ai::tool_display::ToolDisplay,
+) -> Result<usize, ProjectionError> {
+    Ok(8192usize
+        .saturating_add(call_bytes(call)?)
+        .saturating_add(retained_value_bytes(display).map_err(|_| ProjectionError::Capacity)?))
 }

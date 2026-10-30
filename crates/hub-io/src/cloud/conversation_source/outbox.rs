@@ -185,11 +185,49 @@ pub(super) fn intent_fingerprint(command: &ConversationCommand) -> Fingerprint {
         }
     }
     match &command.action {
-        nocterm_ai::conversation::ConversationAction::Prompt(text) => {
+        nocterm_cloud_model::projection::ConversationIntent::Prompt(text) => {
             hash.update([1]);
             hash.update(text.as_bytes());
         }
-        nocterm_ai::conversation::ConversationAction::Stop => hash.update([2]),
+        nocterm_cloud_model::projection::ConversationIntent::Stop => hash.update([2]),
+        nocterm_cloud_model::projection::ConversationIntent::AnswerApproval(request) => {
+            approval_fingerprint(&mut hash, request)
+        }
     }
     Fingerprint::from_bytes(hash.finalize().into())
+}
+
+fn approval_fingerprint(
+    hash: &mut Sha256,
+    request: &nocterm_cloud_model::projection::ApprovalRequest,
+) {
+    hash.update([3]);
+    hash.update(request.answer().intent().as_bytes());
+    hash.update(request.answer().arguments().as_bytes());
+    hash.update(request.expires().as_millis().to_be_bytes());
+    let authority = request.answer().authority();
+    for value in [
+        authority.session().target().host(),
+        authority.session().target().route(),
+        authority.session().target().workspace(),
+        authority.session().authentication().key(),
+        authority.session().authentication().credential_revision(),
+    ] {
+        hash.update(value.as_bytes());
+    }
+    let principal = authority.session().target().principal().as_str();
+    hash.update((principal.len() as u64).to_be_bytes());
+    hash.update(principal.as_bytes());
+    hash.update(authority.session().id().as_bytes());
+    hash.update(authority.session().epoch().get().to_be_bytes());
+    hash.update(authority.grant().as_bytes());
+    hash.update(authority.grant_epoch().get().to_be_bytes());
+    match request.answer().choice() {
+        nocterm_cloud_model::coordinator::ApprovalChoice::Approve => hash.update([1]),
+        nocterm_cloud_model::coordinator::ApprovalChoice::Deny => hash.update([2]),
+        nocterm_cloud_model::coordinator::ApprovalChoice::ReconcileKnown(digest) => {
+            hash.update([3]);
+            hash.update(digest.as_bytes());
+        }
+    }
 }

@@ -20,6 +20,8 @@ use nocterm_ai::{
 };
 use std::collections::BTreeMap;
 
+pub(super) const TOOL_ROW_BYTES: usize = 16 * 1024;
+
 #[derive(Clone)]
 struct ToolRow {
     index: usize,
@@ -33,7 +35,7 @@ struct ToolRow {
 pub(super) struct ProjectionTools(BTreeMap<(RunKey, IntentId), ToolRow>);
 impl ProjectionTools {
     pub(super) fn bytes(&self) -> usize {
-        self.0.len().saturating_mul(16 * 1024)
+        self.0.len().saturating_mul(TOOL_ROW_BYTES)
     }
     pub(super) fn contains(&self, intent: &ToolIntent) -> bool {
         self.0

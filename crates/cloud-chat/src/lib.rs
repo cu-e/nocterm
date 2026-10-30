@@ -12,7 +12,9 @@
 //! Invariants: source is captured before enqueue and rechecked after every await;
 //! atomic publication is delegated to the original native membership. Accepted
 //! prompts enter only through verified PromptAccepted. A retry retains its ID and
-//! durable body. Viewer close never sends Stop. Native ports have no fake default.
+//! durable body. Captured tool-card choices preserve the exact intent/args/run,
+//! observed source/control and cutoff through the same durable command owner.
+//! Viewer close never sends Stop. Native ports have no fake default.
 mod admission;
 mod command_operation;
 mod conversation;
@@ -35,8 +37,8 @@ use nocterm_ai::conversation::{ConversationAction, ConversationPhase};
 use nocterm_cloud_model::{
     identity::CommandId,
     projection::{
-        ConversationProjection, MAX_REPLAY_BYTES, ProjectionBatch, ProjectionCursor,
-        ProjectionError,
+        ConversationIntent, ConversationProjection, MAX_REPLAY_BYTES, ProjectionBatch,
+        ProjectionCursor, ProjectionError,
         ports::{CapturedConversationSource, ConversationCoordinates, ConversationWork},
     },
 };
@@ -160,7 +162,7 @@ impl CloudChat {
             Ok(required) => match self
                 .pending
                 .item(id)
-                .map(|command| matches!(command.value().action, ConversationAction::Stop))
+                .map(|command| matches!(command.value().action, ConversationIntent::Stop))
                 .map_err(CloudChatError::from)
                 .and_then(|urgent| {
                     if urgent {
@@ -205,6 +207,53 @@ impl CloudChat {
         }
         Self::wait_for_command(receive, cx)
     }
+    fn perform_approval(
+        &mut self,
+        key: nocterm_cloud_model::projection::ApprovalKey,
+        control: nocterm_cloud_model::identity::ChatControlRevision,
+        choice: nocterm_cloud_model::coordinator::ApprovalChoice,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConversationError>> {
+        let (waiter, receive) = oneshot::channel();
+        let result = self.enqueue_approval(key, control, choice, waiter, cx);
+        if let Err(error) = result {
+            return Task::ready(Err(error.into_conversation()));
+        }
+        Self::wait_for_command(receive, cx)
+    }
+    fn enqueue_approval(
+        &mut self,
+        key: nocterm_cloud_model::projection::ApprovalKey,
+        control: nocterm_cloud_model::identity::ChatControlRevision,
+        choice: nocterm_cloud_model::coordinator::ApprovalChoice,
+        waiter: pending::CommandWaiter,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CloudChatError> {
+        self.source.check_current()?;
+        if self.projection().control() != control
+            || self.projection().phase() == ConversationPhase::Deleted
+        {
+            return Err(ProjectionError::Stale.into());
+        }
+        self.pending.require_room()?;
+        if self.pending.has_approval(key) {
+            return Err(ProjectionError::Unavailable.into());
+        }
+        // Reserve bounded immutable command coordinates BEFORE cloning the
+        // observed execution descriptor. Exact call/display payload stays borrowed.
+        let allocation = self.residency.allocate(4096 + 512, cx)?.0;
+        let card = self
+            .projection()
+            .approval(key)
+            .ok_or(ProjectionError::Unavailable)?;
+        let action = ConversationIntent::AnswerApproval(Box::new(card.request(choice)?));
+        let coordinates = ConversationCoordinates {
+            binding: self.projection().binding().clone(),
+            run: Some(card.intent().authority().run().clone()),
+            control,
+        };
+        self.enqueue_intent(coordinates, action, allocation, waiter, cx)
+    }
     fn wait_for_command(
         receive: oneshot::Receiver<Result<(), ProjectionError>>,
         cx: &mut Context<Self>,
@@ -248,6 +297,19 @@ impl CloudChat {
         } else {
             self.residency.allocate(bytes.saturating_add(512), cx)?.0
         };
+        self.enqueue_intent(coordinates, action.into(), allocation, waiter, cx)
+    }
+    fn enqueue_intent(
+        &mut self,
+        coordinates: ConversationCoordinates,
+        action: ConversationIntent,
+        allocation: AllocationLease,
+        waiter: pending::CommandWaiter,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CloudChatError> {
+        self.source.check_current()?;
+        let bytes = action.resident_bytes();
+        let urgent = matches!(action, ConversationIntent::Stop);
         let command = self.source.prepare(coordinates.clone(), action.clone())?;
         if command.coordinates != coordinates || command.action != action {
             return Err(ProjectionError::WrongSource.into());
@@ -355,7 +417,7 @@ impl CloudChat {
         let bytes = self
             .projection()
             .resident_bytes()
-            .saturating_add(batch.value().resident_bytes())
+            .saturating_add(batch.value().projection_growth_bytes()?)
             .saturating_add(4096);
         let (allocation, payload) = self.residency.allocate(bytes, cx)?;
         let (next, accepted) = self.projection().advanced(batch.value())?;

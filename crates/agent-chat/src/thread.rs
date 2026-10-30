@@ -34,7 +34,7 @@ mod execution;
 mod permissions;
 mod reconnects;
 mod session_grants;
-pub use approval_inbox::ToolApprovalCard;
+pub use approval_inbox::{ApprovalToken, ToolApprovalCard};
 pub use permissions::PermissionCard;
 mod queue;
 mod tool_display;
@@ -168,6 +168,12 @@ impl AgentThread {
             .is_none_or(|info| info.at_prompt != Some(true) || info.dirty_input || info.alt_screen)
     }
 
+    pub fn tool_approval_tokens(&self) -> Vec<ApprovalToken> {
+        self.tools.approval_tool_tokens()
+    }
+    pub fn tool_approval_call(&self, token: ApprovalToken) -> Option<&nocterm_ai::TerminalCall> {
+        self.tools.approval_tool(token)
+    }
     pub fn tool_cards(&self) -> Vec<ToolApprovalCard> {
         self.tools.approval_tool_cards()
     }

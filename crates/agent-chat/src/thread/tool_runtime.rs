@@ -445,6 +445,9 @@ impl ToolRuntime {
     pub(super) fn approval_permission_cards(&self) -> Vec<PermissionCard> {
         self.approvals.permission_cards()
     }
+    pub(super) fn approval_tool_tokens(&self) -> Vec<ApprovalToken> {
+        self.approvals.tool_tokens()
+    }
     pub(super) fn approval_tool_cards(&self) -> Vec<ToolApprovalCard> {
         self.approvals.tool_cards()
     }

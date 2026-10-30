@@ -228,6 +228,9 @@ impl ApprovalInbox {
     pub(super) fn permission_cards(&self) -> Vec<PermissionCard> {
         self.providers.cards()
     }
+    pub(super) fn tool_tokens(&self) -> Vec<ApprovalToken> {
+        self.tools.iter().map(|entry| entry.token).collect()
+    }
     pub(super) fn tool_cards(&self) -> Vec<ToolApprovalCard> {
         self.tools
             .iter()
