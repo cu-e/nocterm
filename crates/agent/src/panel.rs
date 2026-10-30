@@ -1,10 +1,7 @@
 use crate::thread::AgentThread;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, TestSupportExt as _, Window,
-    component::v_flex,
-    div,
-    prelude::*,
+    Subscription, TestSupportExt as _, Window, component::v_flex, div, prelude::*,
 };
 use nocterm_ai::model::controls::ConfigCategory;
 use nocterm_plugin_model::Side;

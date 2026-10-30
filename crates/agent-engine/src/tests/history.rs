@@ -114,7 +114,6 @@ async fn signed_thinking_continuation_is_explicitly_refused_before_tools() {
     ));
 }
 
-
 fn completed_tool_history() -> EngineHistory {
     let mut messages = history().messages().to_vec();
     messages.pop();
@@ -126,23 +125,45 @@ async fn authoritative_tool_history_continues_without_a_synthetic_user_message()
     for kind in [ProviderKind::OpenAiChat, ProviderKind::AnthropicMessages] {
         let body = match kind {
             ProviderKind::OpenAiChat => chat_text("continued", true),
-            ProviderKind::AnthropicMessages => anthropic(json!({"type":"text","text":""}), json!({"type":"text_delta","text":"continued"}), "end_turn"),
+            ProviderKind::AnthropicMessages => anthropic(
+                json!({"type":"text","text":""}),
+                json!({"type":"text_delta","text":"continued"}),
+                "end_turn",
+            ),
         };
         let server = Server::start(vec![http(&body)]).await;
         let mut config = config();
         config.history = completed_tool_history();
         let mut engine = factory(kind, server.root()).create(config, None).unwrap();
         let (_, registration) = AbortHandle::new_pair();
-        assert!(matches!(engine.advance(EngineInput {next_step: StepId::from_bytes([1;16]), request: EngineRequest::ContinueHistory}, Arc::new(Events::default()), admission(), registration).await.unwrap(), EngineAction::Complete(_)));
+        assert!(matches!(
+            engine
+                .advance(
+                    EngineInput {
+                        next_step: StepId::from_bytes([1; 16]),
+                        request: EngineRequest::ContinueHistory
+                    },
+                    Arc::new(Events::default()),
+                    admission(),
+                    registration
+                )
+                .await
+                .unwrap(),
+            EngineAction::Complete(_)
+        ));
         let id = "nocterm_09090909090909090909090909090909";
         let seed = completed_tool_history();
-        let EngineHistoryMessage::Assistant(assistant) = &seed.messages()[1] else {panic!("assistant")};
+        let EngineHistoryMessage::Assistant(assistant) = &seed.messages()[1] else {
+            panic!("assistant")
+        };
         let arguments = assistant.calls()[0].arguments().value().clone();
         let requests = server.requests();
         let mut messages = requests[0].1["messages"].clone();
         let expected = match kind {
             ProviderKind::OpenAiChat => {
-                let encoded = messages[1]["tool_calls"][0]["function"]["arguments"].as_str().unwrap();
+                let encoded = messages[1]["tool_calls"][0]["function"]["arguments"]
+                    .as_str()
+                    .unwrap();
                 let decoded = serde_json::from_str(encoded).unwrap();
                 messages[1]["tool_calls"][0]["function"]["arguments"] = decoded;
                 json!([
@@ -167,9 +188,24 @@ async fn continuation_refuses_empty_completed_text_or_unfinished_tool_history_be
     for seed in [EngineHistory::default(), history()] {
         let mut config = config();
         config.history = seed;
-        let mut engine = factory(ProviderKind::OpenAiChat, server.root()).create(config, None).unwrap();
+        let mut engine = factory(ProviderKind::OpenAiChat, server.root())
+            .create(config, None)
+            .unwrap();
         let (_, registration) = AbortHandle::new_pair();
-        assert!(matches!(engine.advance(EngineInput {next_step:StepId::from_bytes([1;16]),request:EngineRequest::ContinueHistory},Arc::new(Events::default()),admission(),registration).await,Err(EngineError::InvalidStream)));
+        assert!(matches!(
+            engine
+                .advance(
+                    EngineInput {
+                        next_step: StepId::from_bytes([1; 16]),
+                        request: EngineRequest::ContinueHistory
+                    },
+                    Arc::new(Events::default()),
+                    admission(),
+                    registration
+                )
+                .await,
+            Err(EngineError::InvalidStream)
+        ));
     }
     let mut missing = completed_tool_history().messages().to_vec();
     missing.pop();
@@ -179,14 +215,43 @@ async fn continuation_refuses_empty_completed_text_or_unfinished_tool_history_be
 
 #[tokio::test]
 async fn continuation_cannot_replace_a_live_pending_tool_batch() {
-    let response = chat_tools(r#"{"terminal_id":"t","program":"true","args":[]}"#,1,true);
+    let response = chat_tools(r#"{"terminal_id":"t","program":"true","args":[]}"#, 1, true);
     let server = Server::start(vec![http(&response)]).await;
     let mut config = config();
     config.history = completed_tool_history();
-    let mut engine = factory(ProviderKind::OpenAiChat,server.root()).create(config,None).unwrap();
+    let mut engine = factory(ProviderKind::OpenAiChat, server.root())
+        .create(config, None)
+        .unwrap();
     let (_, registration) = AbortHandle::new_pair();
-    assert!(matches!(engine.advance(EngineInput {next_step:StepId::from_bytes([1;16]),request:EngineRequest::ContinueHistory},Arc::new(Events::default()),admission(),registration).await.unwrap(),EngineAction::Tools(_)));
+    assert!(matches!(
+        engine
+            .advance(
+                EngineInput {
+                    next_step: StepId::from_bytes([1; 16]),
+                    request: EngineRequest::ContinueHistory
+                },
+                Arc::new(Events::default()),
+                admission(),
+                registration
+            )
+            .await
+            .unwrap(),
+        EngineAction::Tools(_)
+    ));
     let (_, registration) = AbortHandle::new_pair();
-    assert!(matches!(engine.advance(EngineInput {next_step:StepId::from_bytes([2;16]),request:EngineRequest::ContinueHistory},Arc::new(Events::default()),admission(),registration).await,Err(EngineError::InvalidStream)));
-    assert_eq!(server.requests().len(),1);
+    assert!(matches!(
+        engine
+            .advance(
+                EngineInput {
+                    next_step: StepId::from_bytes([2; 16]),
+                    request: EngineRequest::ContinueHistory
+                },
+                Arc::new(Events::default()),
+                admission(),
+                registration
+            )
+            .await,
+        Err(EngineError::InvalidStream)
+    ));
+    assert_eq!(server.requests().len(), 1);
 }

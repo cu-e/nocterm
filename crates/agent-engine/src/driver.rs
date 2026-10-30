@@ -66,7 +66,10 @@ impl RigEngine {
                 self.state = Some(ActiveRun::new(sdk));
             }
             EngineRequest::ContinueHistory if self.state.is_none() => {
-                if !matches!(self.config.history.messages().last(), Some(nocterm_cloud_model::engine::EngineHistoryMessage::ToolResult(_))) {
+                if !matches!(
+                    self.config.history.messages().last(),
+                    Some(nocterm_cloud_model::engine::EngineHistoryMessage::ToolResult(_))
+                ) {
                     return Err(EngineError::InvalidStream);
                 }
                 let mut history = mapping::history(&self.config.history)?;

@@ -242,7 +242,10 @@ fn account_writer_lanes_serialize_chats_while_readers_share_the_target() {
             .is_none()
     );
     state.release(&writer).unwrap();
-    assert_eq!(lease(&mut state).request().binding().chat(), request(1, 2, 1).binding().chat());
+    assert_eq!(
+        lease(&mut state).request().binding().chat(),
+        request(1, 2, 1).binding().chat()
+    );
 }
 
 #[test]
@@ -347,14 +350,26 @@ fn duplicate_and_changed_requests_do_not_consume_more_queue_capacity() {
     assert_eq!(state.queued_count(), 1);
 }
 
-
 #[test]
 fn different_account_authorities_do_not_share_a_mutation_lock() {
     let mut state = scheduler(AdmissionLimits::default());
     for account in [1, 2] {
-        state.enqueue(QueuedRun::new(run(account,1,1,1),target(1),RunAccess::Mutating,Timestamp::from_millis(1000)),Timestamp::from_millis(1)).unwrap();
+        state
+            .enqueue(
+                QueuedRun::new(
+                    run(account, 1, 1, 1),
+                    target(1),
+                    RunAccess::Mutating,
+                    Timestamp::from_millis(1000),
+                ),
+                Timestamp::from_millis(1),
+            )
+            .unwrap();
     }
-    let first=lease(&mut state);
-    let second=lease(&mut state);
-    assert_ne!(first.request().binding().scope(),second.request().binding().scope());
+    let first = lease(&mut state);
+    let second = lease(&mut state);
+    assert_ne!(
+        first.request().binding().scope(),
+        second.request().binding().scope()
+    );
 }
