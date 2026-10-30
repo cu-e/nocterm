@@ -39,9 +39,22 @@ impl OutboxPublicationTransport for RunnerHubPeer {
             let metadata = metadata(&publication)?;
             connection.runner().map_err(native_error)?;
             let residency = Arc::new((publication.clone(), allocation));
-            let mut upload = runner
-                .begin_publication_with_residency(metadata, residency.clone())
-                .map_err(transport_error)?;
+            // A hub with reclaim may drop the receipt after this horizon; any other hub
+            // gets the previous request unchanged.
+            let horizon = super::runner_reclaim::retry_until(
+                super::runner_reclaim::now_ms().map_err(native_error)?,
+                runner.supports_receipt_reclaim(),
+            );
+            let mut upload = if horizon == 0 {
+                runner.begin_publication_with_residency(metadata, residency.clone())
+            } else {
+                runner.begin_publication_with_retry_until_and_residency(
+                    metadata,
+                    horizon,
+                    residency.clone(),
+                )
+            }
+            .map_err(transport_error)?;
             let frame_bytes =
                 usize::try_from(upload.max_frame_bytes()).map_err(|_| JournalError::Capacity)?;
             if frame_bytes == 0 {

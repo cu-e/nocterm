@@ -10,12 +10,14 @@ mod journal_crypto;
 pub use journal_crypto::{RunnerJournalCrypto, RunnerMaterialError};
 mod runner_heads;
 mod runner_peer;
+mod runner_reclaim;
 mod runner_session_file;
 mod runner_transport;
 pub use runner_heads::{RunnerHeadError, RunnerHeadOutcome, RunnerHeadResponder, RunnerHeadWork};
 pub use runner_peer::{
     RunnerCredentialDeadlines, RunnerHubConnection, RunnerHubError, RunnerHubPeer, RunnerHubTrust,
 };
+pub use runner_reclaim::{ChatRetirementOutcome, RunnerReclaimError, retire_until_compacted};
 #[cfg(test)]
 mod runner_test_support;
 
