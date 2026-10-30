@@ -192,7 +192,9 @@ fn native_only_snapshot_refuses_prefix_purge_before_a_real_signed_baseline_exist
     .unwrap();
     assert!(matches!(
         block_on(store.compact(lease, position, archive)),
-        Err(JournalError::UnsupportedFormat)
+        // No published signed baseline is active, the same refusal every
+        // compaction without one receives; no covered record may be purged.
+        Err(JournalError::Conflict)
     ));
     assert_eq!(
         block_on(store.read(stream(), JournalSequence::default(), limits()))

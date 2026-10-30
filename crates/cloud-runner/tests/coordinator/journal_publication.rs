@@ -22,10 +22,13 @@ async fn a_cancelled_command_waiter_keeps_actual_publication_charged_and_seriali
     waiting.abort();
     assert!(waiting.await.unwrap_err().is_cancelled());
     assert_eq!(fixture.storage.in_flight_writes(), 1);
+    // Grants are control commands: they are charged to the urgent lane, never
+    // to ordinary prompt admission.
+    assert!(command.body().high_priority());
     assert!(
         fixture
             .receive_budget
-            .usage(IntakeLane::Ordinary)
+            .usage(IntakeLane::Urgent)
             .unwrap()
             .bytes
             >= command.reservation_bytes()
@@ -48,7 +51,7 @@ async fn a_cancelled_command_waiter_keeps_actual_publication_charged_and_seriali
     assert_eq!(
         fixture
             .receive_budget
-            .usage(IntakeLane::Ordinary)
+            .usage(IntakeLane::Urgent)
             .unwrap()
             .bytes,
         0
