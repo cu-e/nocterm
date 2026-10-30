@@ -62,7 +62,7 @@
 //! Does not own: which hubs the user knows or trusts (the `[hubs]` settings section and the
 //! trust decision belong to `nocterm-hubs-model` and the callers), connection status, retries,
 //! windows, terminal emulation, or any view.
-//! Ports provided: `HubTrust`, `HubSignIn` and `HubAdminKeys` from
+//! Ports provided: `HubTrust`, `HubSignIn`, `HubAdminKeys` and `AccountDevices` from
 //! `nocterm-hubs-model`, all implemented by [`HubLinks`], `LocalAccountSource` captured
 //! by [`HubAccount`], its captured `CredentialStore` of `nocterm-session`, the `VaultAccess` of `nocterm-vault` and the `ProfileReplica` of
 //! `nocterm-connections-model`, implemented by [`HubVault`] and [`HubProfileReplica`], and the `RelayDialer` of `nocterm-session`, implemented
@@ -108,6 +108,7 @@ pub mod cloud;
 mod connect;
 mod convert;
 mod credentials;
+mod devices;
 mod directory;
 mod endpoint;
 mod hub_account;

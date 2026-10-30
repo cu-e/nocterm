@@ -11,8 +11,9 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
-    Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec, HubError, HubFuture, HubId, HubInfo,
-    HubSignIn, HubTrust, KeyStatus, OidcSignIn, ProbedHub, SignedIn,
+    AccountDevices, DeviceSummary, Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec,
+    HubError, HubFuture, HubId, HubInfo, HubSignIn, HubTrust, KeyStatus, OidcSignIn, ProbedHub,
+    SignedIn,
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
@@ -284,5 +285,15 @@ impl HubAdminKeys for HubLinks {
         self.open_account(hub)
             .map(|account| account.admin_keys().pending())
             .unwrap_or_default()
+    }
+}
+
+impl AccountDevices for HubLinks {
+    fn list(&self, hub: &HubId) -> HubFuture<Vec<DeviceSummary>> {
+        crate::devices::list(Arc::clone(&self.pool), &self.handle, hub)
+    }
+
+    fn revoke(&self, hub: &HubId, device: &str) -> HubFuture<()> {
+        crate::devices::revoke(Arc::clone(&self.pool), &self.handle, hub, device)
     }
 }
