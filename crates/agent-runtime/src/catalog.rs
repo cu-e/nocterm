@@ -10,7 +10,7 @@ use nocterm_ai::{
 };
 use std::sync::Arc;
 mod allocation;
-pub(crate) use allocation::CatalogAllocation;
+pub(crate) use allocation::{CatalogAllocation, WORK_BYTES as CATALOG_WORK_BYTES};
 mod prepared;
 mod reclamation;
 use prepared::PreparedRecords;

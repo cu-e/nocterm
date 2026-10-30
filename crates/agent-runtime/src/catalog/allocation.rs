@@ -10,7 +10,7 @@ use nocterm_ai::{
 pub(super) const MAX_ROW_BYTES: usize = 32 * 1024;
 // At most200 returned rows,200 prepared metadata rows and one native scan
 // candidate coexist. OneMiB also covers vector reallocation and assembly state.
-pub(super) const WORK_BYTES: usize = (2 * MAX_RESTORED + 1) * MAX_ROW_BYTES + 1024 * 1024;
+pub(crate) const WORK_BYTES: usize = (2 * MAX_RESTORED + 1) * MAX_ROW_BYTES + 1024 * 1024;
 
 pub(crate) struct CatalogAllocation {
     slot: HistoryPayloadPermit,

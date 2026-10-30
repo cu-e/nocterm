@@ -253,7 +253,13 @@ fn a_catalog_reload_reclaims_its_unpinned_cache_without_reentering_runtime(
     let admission = cx.update(|cx| general.history_admission(cx));
     let remote = cx.update(|cx| {
         admission
-            .reserve_unowned_bytes(50 * 1024 * 1024, cx)
+            // Leaves room for exactly one worst-case catalog reload, so the
+            // second scope fits only if the unpinned first scope is reclaimed.
+            .reserve_unowned_bytes(
+                crate::history_admission::MAX_NORMAL_HISTORY_BYTES
+                    - crate::catalog::CATALOG_WORK_BYTES,
+                cx,
+            )
             .unwrap()
     });
     let next = general.for_scope(project_scope(2));
