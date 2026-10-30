@@ -45,6 +45,7 @@ mod panel;
 pub mod plugin;
 mod prepared;
 mod probe_sources;
+pub use probe_sources::HostObserver;
 mod spaces;
 pub use prepared::{ConnectionInputs, ConnectionWriters, EditorInputs, PreparedConnections};
 

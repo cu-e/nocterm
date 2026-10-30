@@ -101,6 +101,11 @@ impl Installed {
     pub fn bind_replication(&self, replication: Entity<ProfileReplication>) {
         self.0.replication.bind(replication);
     }
+    /// Tells `observer` about every session of a saved connection as it comes up. Only the
+    /// first call has an effect.
+    pub fn bind_host_observer(&self, observer: Rc<dyn crate::HostObserver>) {
+        self.0.sources.bind_observer(observer);
+    }
     /// How a saved password finds the space of the connection it was typed for.
     pub fn credential_spaces(&self) -> CredentialSpaces {
         self.0.replication.clone()
