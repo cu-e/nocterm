@@ -161,6 +161,19 @@ impl HostKeys {
                 line: record.line,
             })
     }
+    /// The SHA-256 fingerprints of the plain keys recorded for the host, oldest record first.
+    pub(crate) fn fingerprints(&self, host: &str, port: u16) -> Vec<String> {
+        self.matching(host, port)
+            .filter(|record| record.entry.marker().is_none())
+            .map(|record| {
+                record
+                    .entry
+                    .public_key()
+                    .fingerprint(russh::keys::ssh_key::HashAlg::Sha256)
+                    .to_string()
+            })
+            .collect()
+    }
     pub(crate) fn known_algorithms(&self, host: &str, port: u16) -> Vec<Algorithm> {
         self.matching(host, port)
             .filter(|record| record.entry.marker().is_none())

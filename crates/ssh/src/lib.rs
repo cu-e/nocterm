@@ -9,6 +9,7 @@
 //! is driven entirely through the runtime-agnostic channels of [`Session`].
 //!
 //! Owns: SSH authentication (including keys kept in the vault), entropy and file reads for new vault keys, host-key policy, proxy tunnels and the bridge from a relay's frame channels to a stream, jump-host routes, SFTP and remote execution.
+//! Also owns the edit of the user's `authorized_keys` through an open session's SFTP (`authorized_keys`).
 //! Does not own: profiles, credential storage, the rules of key text (`nocterm-ssh-keys`), terminal emulation or session views.
 //! Ports provided: `Transport`, `RemoteFs`, `HostExec` from `nocterm-session`.
 //! Ports used: `RelayDialer`, supplied by the application through `SshTransport::with_relay`.
@@ -25,6 +26,7 @@
 //! SFTP/exec workers and retained outputs. Already admitted effects cannot be undone.
 
 mod auth;
+pub mod authorized_keys;
 mod connection;
 mod connection_relay;
 mod exec;

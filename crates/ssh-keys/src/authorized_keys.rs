@@ -76,8 +76,11 @@ pub trait AgentHosts: Send + Sync {
 pub struct ConnectedHost {
     /// The id of the saved connection.
     pub connection: String,
-    /// Who the user is there.
+    /// Who the user is there. An empty host key fingerprint is filled in by the adapter from
+    /// the keys this device recorded for the host.
     pub identity: HostIdentity,
+    /// The SSH port, which tells the recorded host keys apart.
+    pub port: u16,
     /// The session's file system.
     pub fs: Arc<dyn RemoteFs>,
 }
