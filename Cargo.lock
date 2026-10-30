@@ -6276,6 +6276,7 @@ dependencies = [
  "signature",
  "ssh-key",
  "thiserror 2.0.21",
+ "zeroize",
 ]
 
 [[package]]

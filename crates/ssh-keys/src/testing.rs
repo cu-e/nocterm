@@ -141,3 +141,97 @@ impl VaultSshKeys for MemoryVaultSshKeys {
 
 mod login;
 pub use login::LoginProofFixture;
+
+/// An `authorized_keys` file kept in memory, with the same compare-before-swap rule as the
+/// adapter that edits a real one.
+#[derive(Clone, Default)]
+pub struct FakeAuthorizedKeys {
+    text: Arc<Mutex<String>>,
+}
+
+impl FakeAuthorizedKeys {
+    /// A file that starts with `text`.
+    pub fn with_text(text: &str) -> Self {
+        Self {
+            text: Arc::new(Mutex::new(text.to_owned())),
+        }
+    }
+
+    /// The file as it is now.
+    pub fn text(&self) -> String {
+        self.text
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl crate::authorized_keys::AuthorizedKeysFile for FakeAuthorizedKeys {
+    fn read(&self) -> BoxFuture<'static, Result<String, crate::authorized_keys::HostAccessError>> {
+        Box::pin(std::future::ready(Ok(self.text())))
+    }
+
+    fn replace(
+        &self,
+        previous: String,
+        updated: String,
+    ) -> BoxFuture<'static, Result<(), crate::authorized_keys::HostAccessError>> {
+        let mut text = self
+            .text
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let result = if *text == previous {
+            *text = updated;
+            Ok(())
+        } else {
+            Err(crate::authorized_keys::HostAccessError::Changed)
+        };
+        Box::pin(std::future::ready(result))
+    }
+}
+
+/// Saved connections that are reachable now, each with its in-memory file.
+#[derive(Clone, Default)]
+pub struct FakeAgentHosts {
+    hosts: Arc<Mutex<HashMap<String, crate::authorized_keys::HostAccess>>>,
+}
+
+impl FakeAgentHosts {
+    /// Makes `connection` reachable as `user@host`, with `file` as its `authorized_keys`.
+    pub fn connect(&self, connection: &str, user: &str, host: &str, file: FakeAuthorizedKeys) {
+        let access = crate::authorized_keys::HostAccess {
+            identity: crate::authorized_keys::HostIdentity {
+                user: user.to_owned(),
+                host: host.to_owned(),
+                host_key_fingerprint: "SHA256:fake-host-key".to_owned(),
+            },
+            file: Arc::new(file),
+        };
+        self.hosts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(connection.to_owned(), access);
+    }
+
+    /// Makes `connection` unreachable, as a server that went away.
+    pub fn disconnect(&self, connection: &str) {
+        self.hosts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(connection);
+    }
+}
+
+impl crate::authorized_keys::AgentHosts for FakeAgentHosts {
+    fn access(
+        &self,
+        connection: &str,
+    ) -> Result<crate::authorized_keys::HostAccess, crate::authorized_keys::HostAccessError> {
+        self.hosts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(connection)
+            .cloned()
+            .ok_or(crate::authorized_keys::HostAccessError::NotConnected)
+    }
+}
