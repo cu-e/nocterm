@@ -18,11 +18,11 @@
         "inputSchema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "title": "OpenTerminal",
-          "description": "Connects to an attached offline server without opening a tab.",
+          "description": "Opens an allowlisted server or reuses its already connected terminal.",
           "type": "object",
           "properties": {
             "server_id": {
-              "description": "An `offline_servers` entry of `list_terminals`.",
+              "description": "A `server_id` from the terminals or offline servers in `list_terminals`.",
               "type": "string"
             }
           },
