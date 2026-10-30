@@ -86,6 +86,8 @@ pub(super) fn accepted(value: &AcceptedCommand) -> Result<CommandAcceptance, Pro
         wire::CommandKind::AnswerSshConsent => CommandKind::AuthenticationConsent,
         wire::CommandKind::DeleteChat => CommandKind::DeleteChat,
         wire::CommandKind::RevokeIssuerGrants => CommandKind::RevokeIssuer,
+        // Managed sessions are not accepted by this desktop build yet.
+        wire::CommandKind::BeginSession => return Err(ProjectionError::InvalidRecord),
     };
     Ok(CommandAcceptance::new(
         CommandId::from_bytes(value.id),

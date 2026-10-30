@@ -5609,7 +5609,6 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-client"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9#1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -5620,6 +5619,7 @@ dependencies = [
  "nocterm-hub-proto",
  "nocterm-keys",
  "nocterm-link",
+ "prost",
  "rustls",
  "serde",
  "sha2 0.11.0",
@@ -5637,7 +5637,6 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-grpc"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9#1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9"
 dependencies = [
  "nocterm-hub-proto",
  "prost",
@@ -5682,7 +5681,6 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-model"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9#1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -5697,12 +5695,12 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-proto"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9#1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9"
 dependencies = [
  "nocterm-hub-model",
  "prost",
  "prost-build",
  "protox",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5785,17 +5783,21 @@ dependencies = [
 [[package]]
 name = "nocterm-keys"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9#1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9"
 dependencies = [
  "argon2",
+ "base64 0.22.1",
  "chacha20poly1305",
  "ed25519-dalek",
  "getrandom 0.4.3",
  "hex",
  "hkdf 0.13.0",
+ "hmac 0.13.0",
  "nocterm-hub-model",
+ "postcard",
+ "serde",
  "sha2 0.11.0",
  "thiserror 2.0.21",
+ "uuid",
  "x25519-dalek",
  "zeroize",
 ]
@@ -5818,7 +5820,6 @@ dependencies = [
 [[package]]
 name = "nocterm-link"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9#1de2c4d8dbdd2ee70d9e9ff24e8b06d2c201b0c9"
 dependencies = [
  "thiserror 2.0.21",
 ]

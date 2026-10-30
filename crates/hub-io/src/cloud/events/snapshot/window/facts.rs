@@ -186,6 +186,10 @@ impl CausalFacts {
             }
             CloudEventPayload::ApprovalResolved { answer, .. } => answer.execution.run,
             CloudEventPayload::BackgroundLifecycle(fact) => fact.job.execution.run,
+            // Managed-session payloads are not projected by this desktop build yet.
+            CloudEventPayload::AuthenticationRequested(_) | CloudEventPayload::SessionState(_) => {
+                return Err(JournalError::Corrupt);
+            }
         };
         let run = self.run(run)?;
         let tool = self.observe_run(index, run, events)?;

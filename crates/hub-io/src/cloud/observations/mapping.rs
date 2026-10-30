@@ -67,6 +67,10 @@ pub(super) fn event(
                 expires: Timestamp::from_millis(*expires_at_ms),
             }
         }
+        // The managed-session payloads are not projected by this desktop build yet.
+        CloudEventPayload::AuthenticationRequested(_) | CloudEventPayload::SessionState(_) => {
+            return Err(ProjectionError::InvalidRecord);
+        }
         CloudEventPayload::ApprovalResolved { command, answer } => {
             CoordinatorEvent::ApprovalResolved {
                 command: CommandId::from_bytes(*command),

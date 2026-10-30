@@ -409,3 +409,11 @@ postcard = { opt-level = 3 }
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# Temporary: build against the local contract branch until it is pushed and the rev is bumped.
+[patch."https://github.com/cu-e/nocterm-contract"]
+nocterm-hub-model = { path = "/home/egor/dev/pet/nocterm-contract-wt/agents/crates/hub-model" }
+nocterm-hub-proto = { path = "/home/egor/dev/pet/nocterm-contract-wt/agents/crates/hub-proto" }
+nocterm-hub-grpc = { path = "/home/egor/dev/pet/nocterm-contract-wt/agents/crates/hub-grpc" }
+nocterm-hub-client = { path = "/home/egor/dev/pet/nocterm-contract-wt/agents/crates/hub-client" }
+nocterm-keys = { path = "/home/egor/dev/pet/nocterm-contract-wt/agents/crates/keys" }

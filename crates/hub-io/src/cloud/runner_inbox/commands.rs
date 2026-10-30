@@ -33,7 +33,7 @@ pub(super) fn acceptance(
     let issuer = header.issuer();
     Ok(CommandAcceptance::new(
         CommandId::from_bytes(header.route().command_id),
-        kind(header.context().kind),
+        kind(header.context().kind).ok_or(CoordinatorError::InvalidCommand)?,
         Fingerprint::from_bytes(Sha256::digest(header.canonical_bytes().map_err(backend)?).into()),
         CommandIssuer::new(
             namespace(issuer.device_id.as_str())?,
@@ -46,9 +46,9 @@ pub(super) fn acceptance(
 pub(super) fn high_priority(kind: nocterm_hub_model::cloud::CommandKind) -> bool {
     !matches!(kind, nocterm_hub_model::cloud::CommandKind::SubmitPrompt)
 }
-fn kind(value: nocterm_hub_model::cloud::CommandKind) -> CommandKind {
+fn kind(value: nocterm_hub_model::cloud::CommandKind) -> Option<CommandKind> {
     use nocterm_hub_model::cloud::CommandKind as Wire;
-    match value {
+    Some(match value {
         Wire::SubmitPrompt => CommandKind::SubmitPrompt,
         Wire::Stop => CommandKind::Stop,
         Wire::ResolveApproval => CommandKind::ResolveApproval,
@@ -57,7 +57,8 @@ fn kind(value: nocterm_hub_model::cloud::CommandKind) -> CommandKind {
         Wire::AnswerSshConsent => CommandKind::AuthenticationConsent,
         Wire::DeleteChat => CommandKind::DeleteChat,
         Wire::RevokeIssuerGrants => CommandKind::RevokeIssuer,
-    }
+        Wire::BeginSession => return None,
+    })
 }
 
 /// Reserve this real generation before native prompt/base64/attachment copies.
@@ -186,6 +187,9 @@ pub(super) fn map(
                     .map(grant_reference)
                     .collect::<Result<_, _>>()?,
             )?)
+        }
+        wire::CloudCommandPayload::BeginSession(_) => {
+            return Err(CoordinatorError::InvalidCommand);
         }
         wire::CloudCommandPayload::AnswerSshConsent(answer) => {
             let consent = body::ssh(
