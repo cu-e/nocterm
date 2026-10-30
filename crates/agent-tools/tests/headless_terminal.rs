@@ -1,6 +1,8 @@
 #[path = "headless_terminal/commands.rs"]
 mod commands;
 mod headless_support;
+#[path = "headless_terminal/initial_publication.rs"]
+mod initial_publication;
 #[path = "headless_terminal/retained.rs"]
 mod retained;
 #[path = "headless_terminal/sessions.rs"]

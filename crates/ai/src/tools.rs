@@ -64,11 +64,11 @@ pub enum ToolCapability {
     Execution,
     Connection,
 }
-/// Connects to an attached offline server without opening a tab.
+/// Opens an allowlisted server or reuses its already connected terminal.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
-    /// An `offline_servers` entry of `list_terminals`.
+    /// A `server_id` from the terminals or offline servers in `list_terminals`.
     pub server_id: String,
 }
 #[derive(Clone, Debug)]

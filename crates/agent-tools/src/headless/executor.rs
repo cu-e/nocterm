@@ -25,9 +25,17 @@ use std::{
 };
 
 struct OfferedSession {
-    handle: RemoteSessionId,
     receipt: SessionReceipt,
-    options: HeadlessTerminalOptions,
+    connection: OfferedConnection,
+}
+enum OfferedConnection {
+    Fresh {
+        handle: RemoteSessionId,
+        options: HeadlessTerminalOptions,
+    },
+    Existing {
+        terminal: String,
+    },
 }
 
 pub struct HeadlessToolServices {
@@ -35,7 +43,7 @@ pub struct HeadlessToolServices {
     timer: Arc<dyn ToolTimer>,
     journal: Arc<dyn BackgroundCommandJournal>,
     tasks: Arc<dyn ToolTaskSpawner>,
-    opener: Arc<dyn ScopedSessionOpener>,
+    opener: Option<Arc<dyn ScopedSessionOpener>>,
 }
 
 impl HeadlessToolServices {
@@ -51,7 +59,22 @@ impl HeadlessToolServices {
             timer,
             journal,
             tasks,
-            opener,
+            opener: Some(opener),
+        }
+    }
+    /// Physical acquisition is exclusively owned by the initial-session broker.
+    pub fn existing_only(
+        authority: Arc<dyn ToolAuthority>,
+        timer: Arc<dyn ToolTimer>,
+        journal: Arc<dyn BackgroundCommandJournal>,
+        tasks: Arc<dyn ToolTaskSpawner>,
+    ) -> Self {
+        Self {
+            authority,
+            timer,
+            journal,
+            tasks,
+            opener: None,
         }
     }
 }
@@ -62,7 +85,7 @@ struct ToolRuntime {
     timer: Arc<dyn ToolTimer>,
     journal: Arc<dyn BackgroundCommandJournal>,
     tasks: Arc<dyn ToolTaskSpawner>,
-    opener: Arc<dyn ScopedSessionOpener>,
+    opener: Option<Arc<dyn ScopedSessionOpener>>,
     jobs: Arc<Mutex<BackgroundJobs>>,
     dispatches: Mutex<DispatchBook>,
     offered: Mutex<BTreeMap<String, OfferedSession>>,
@@ -153,9 +176,48 @@ impl HeadlessTools {
         offered.insert(
             id.clone(),
             OfferedSession {
-                handle,
                 receipt,
-                options,
+                connection: OfferedConnection::Fresh { handle, options },
+            },
+        );
+        Ok(id)
+    }
+    /// Publish a fresh run-local alias for one actual connected view. Repeated
+    /// opens reuse that physical session and never create another reader/login.
+    pub fn offer_existing(
+        &self,
+        handle: RemoteSessionId,
+        receipt: SessionReceipt,
+        terminal: String,
+    ) -> Result<String, HeadlessError> {
+        let id = terminal_handle(handle);
+        {
+            let registry = self
+                .0
+                .registry
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if id != terminal {
+                registry.require_fresh_handle(&id)?;
+            }
+            registry.require_existing(&terminal, &receipt)?;
+        }
+        let mut offered = self
+            .0
+            .offered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if offered.len() >= 16 {
+            return Err(HeadlessError::Capacity);
+        }
+        if offered.contains_key(&id) {
+            return Err(HeadlessError::IdentityConflict);
+        }
+        offered.insert(
+            id.clone(),
+            OfferedSession {
+                receipt,
+                connection: OfferedConnection::Existing { terminal },
             },
         );
         Ok(id)
@@ -297,35 +359,82 @@ impl ToolRuntime {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .list(authority.run())?;
-        let terminals: Vec<_> = sessions.into_iter().map(|session| serde_json::json!({
+        let offered = self.offered.lock().unwrap_or_else(PoisonError::into_inner);
+        let terminals: Vec<_> = sessions.into_iter().map(|session| {
+            let server = offered.iter().find_map(|(id, entry)| match &entry.connection {
+                OfferedConnection::Existing { terminal } if terminal == &session.terminal_id
+                    && entry.receipt == session.receipt => Some(id.as_str()),
+                _ => None,
+            });
+            serde_json::json!({
             "terminal_id":session.terminal_id, "connected":session.status == HeadlessSessionStatus::Connected,
+            "server_id":server,
             "capabilities":{"read":true,"input":true,"live":true,"exec":session.execution,"files":session.files},
-        })).collect();
-        let offline: Vec<_> = self
-            .offered
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        })}).collect();
+        let offline: Vec<_> = offered
             .iter()
-            .filter(|(_, session)| session.receipt.target() == authority.session().target())
+            .filter(|(_, session)| {
+                matches!(session.connection, OfferedConnection::Fresh { .. })
+                    && session.receipt.target() == authority.session().target()
+            })
             .map(|(id, _)| serde_json::json!({"server_id":id}))
             .collect();
         Ok(serde_json::json!({"terminals":terminals,"offline_servers":offline}))
+    }
+    fn existing_terminal(
+        &self,
+        request: &ScopedToolRequest,
+        server: &str,
+    ) -> Result<Option<String>, ToolExecutionError> {
+        let existing = {
+            let offered = self.offered.lock().unwrap_or_else(PoisonError::into_inner);
+            let entry = offered.get(server).ok_or(HeadlessError::StaleSession)?;
+            if &entry.receipt != request.permit().intent().authority().session() {
+                return Err(HeadlessError::StaleSession.into());
+            }
+            match &entry.connection {
+                OfferedConnection::Existing { terminal } => {
+                    Some((terminal.clone(), entry.receipt.clone()))
+                }
+                OfferedConnection::Fresh { .. } => None,
+            }
+        };
+        if let Some((terminal, receipt)) = existing {
+            self.authority.check(request)?;
+            self.registry
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .require_existing(&terminal, &receipt)?;
+            self.authority.check(request)?;
+            return Ok(Some(terminal));
+        }
+        Ok(None)
     }
     async fn open(
         &self,
         request: &ScopedToolRequest,
         server: &str,
     ) -> Result<serde_json::Value, ToolExecutionError> {
+        if let Some(terminal) = self.existing_terminal(request, server)? {
+            return Ok(serde_json::json!({"terminal_id":terminal}));
+        }
+        let opener = self
+            .opener
+            .as_ref()
+            .ok_or(ToolExecutionError::NeedsUnlock)?;
         let (handle, receipt, options) = {
             let mut offered = self.offered.lock().unwrap_or_else(PoisonError::into_inner);
             let entry = offered.remove(server).ok_or(HeadlessError::StaleSession)?;
             if &entry.receipt != request.permit().intent().authority().session() {
                 return Err(HeadlessError::StaleSession.into());
             }
-            (entry.handle, entry.receipt.clone(), entry.options)
+            let OfferedConnection::Fresh { handle, options } = entry.connection else {
+                return Err(HeadlessError::IdentityConflict.into());
+            };
+            (handle, entry.receipt, options)
         };
         self.authority.check(request)?;
-        let (actual, session) = self.opener.open(request.clone()).await?.into_parts();
+        let (actual, session) = opener.open(request.clone()).await?.into_parts();
         self.authority
             .check(request)
             .inspect_err(|_| session.close())?;

@@ -19,7 +19,7 @@ pub struct RetainedToolsFactory {
     timer: Arc<dyn ToolTimer>,
     journal: Arc<dyn BackgroundCommandJournal>,
     tasks: Arc<dyn ToolTaskSpawner>,
-    opener: Arc<dyn ScopedSessionOpener>,
+    opener: Option<Arc<dyn ScopedSessionOpener>>,
     handles: Arc<dyn ToolSessionHandleSource>,
 }
 impl RetainedToolsFactory {
@@ -36,7 +36,24 @@ impl RetainedToolsFactory {
             timer,
             journal,
             tasks,
-            opener,
+            opener: Some(opener),
+            handles,
+        }
+    }
+    /// Initial physical creation is owned by a separate authenticated broker.
+    pub fn existing_only(
+        terminals: RetainedTerminals,
+        timer: Arc<dyn ToolTimer>,
+        journal: Arc<dyn BackgroundCommandJournal>,
+        tasks: Arc<dyn ToolTaskSpawner>,
+        handles: Arc<dyn ToolSessionHandleSource>,
+    ) -> Self {
+        Self {
+            terminals,
+            timer,
+            journal,
+            tasks,
+            opener: None,
             handles,
         }
     }
@@ -50,22 +67,32 @@ impl RunToolRuntimeFactory for RetainedToolsFactory {
     ) -> BoxFuture<'static, Result<Arc<dyn RunToolRuntime>, ToolExecutionError>> {
         let result = (|| {
             let mut registry = self.terminals.view(run.clone())?;
-            registry
-                .attach_retained(self.handles.next(&run)?, &receipt)
-                .map_err(|error| match error {
-                    super::HeadlessError::StaleSession => ToolExecutionError::NeedsUnlock,
-                    error => error.into(),
-                })?;
-            let tools = HeadlessTools::new(
-                Arc::new(Mutex::new(registry)),
+            let handle = self.handles.next(&run)?;
+            let terminal =
+                registry
+                    .attach_retained(handle, &receipt)
+                    .map_err(|error| match error {
+                        super::HeadlessError::StaleSession => ToolExecutionError::NeedsUnlock,
+                        error => error.into(),
+                    })?;
+            let services = if let Some(opener) = &self.opener {
                 HeadlessToolServices::new(
                     authority,
                     self.timer.clone(),
                     self.journal.clone(),
                     self.tasks.clone(),
-                    self.opener.clone(),
-                ),
-            );
+                    opener.clone(),
+                )
+            } else {
+                HeadlessToolServices::existing_only(
+                    authority,
+                    self.timer.clone(),
+                    self.journal.clone(),
+                    self.tasks.clone(),
+                )
+            };
+            let tools = HeadlessTools::new(Arc::new(Mutex::new(registry)), services);
+            tools.offer_existing(handle, receipt.clone(), terminal)?;
             let runtime = Arc::new(RetainedRunTools {
                 run,
                 receipt,

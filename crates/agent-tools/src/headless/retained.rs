@@ -80,6 +80,7 @@ impl RetainedOwner {
     pub(super) fn publish_initial(
         &self,
         original: &Arc<Mutex<PhysicalTerminal>>,
+        owner: Arc<()>,
     ) -> Result<(), HeadlessError> {
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if state.closed {
@@ -93,7 +94,7 @@ impl RetainedOwner {
         {
             return Err(HeadlessError::StaleSession);
         }
-        physical.publish_initial()
+        physical.publish_initial_owned(owner)
     }
     pub(super) fn discard_pending(&self, original: &Arc<Mutex<PhysicalTerminal>>) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -159,6 +160,35 @@ impl Drop for RetainedOwner {
 #[derive(Clone)]
 pub struct RetainedTerminals(Arc<RetainedOwner>);
 impl RetainedTerminals {
+    /// Reclaims only the actual generation whose sole reader reported Lost.
+    /// Old observations cannot remove a replacement with the same receipt.
+    pub fn retire_observed(&self, observation: &super::initial::SessionObservation) -> bool {
+        let removed = {
+            let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let id = observation.receipt().id();
+            let matches = state.entries.get(&id).is_some_and(|entry| {
+                entry
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .observed_loss(observation)
+            });
+            if matches {
+                state.entries.remove(&id)
+            } else {
+                None
+            }
+        };
+        if let Some(entry) = removed {
+            // Native retirement/drop never runs under the retained-owner lock.
+            entry
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retire();
+            true
+        } else {
+            false
+        }
+    }
     pub fn new(
         run: &RunBinding,
         observations: Arc<dyn BackgroundCommandAuthority>,

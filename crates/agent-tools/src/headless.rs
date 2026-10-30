@@ -18,8 +18,8 @@ mod view;
 pub use error::HeadlessError;
 pub use executor::{HeadlessToolServices, HeadlessTools};
 pub use initial::{
-    InitialSessionCandidate, SessionGeneration, SessionLifecycleEvent, SessionObservation,
-    SessionObservations,
+    InitialSessionCandidate, PublishedInitialSession, SessionGeneration, SessionLifecycleEvent,
+    SessionObservation, SessionObservations,
 };
 pub use registry::{
     HeadlessSessionInfo, HeadlessSessionStatus, HeadlessSessionTask, HeadlessTerminalOptions,

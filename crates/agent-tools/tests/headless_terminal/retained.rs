@@ -327,6 +327,25 @@ fn retained_factory_attaches_without_login_and_completion_preserves_the_physical
         result.output().value()["terminals"][0]["terminal_id"],
         "t-09090909090909090909090909090909"
     );
+    let server = result.output().value()["terminals"][0]["server_id"]
+        .as_str()
+        .unwrap();
+    for id in [2, 3] {
+        let opened = host
+            .pool
+            .run_until(runtime.execute(host.request(
+                id,
+                TerminalCall::OpenTerminal(nocterm_ai::OpenTerminal {
+                    server_id: server.into(),
+                }),
+            )))
+            .unwrap();
+        assert_eq!(
+            opened.output().value()["terminal_id"],
+            result.output().value()["terminals"][0]["terminal_id"]
+        );
+    }
+    assert!(host.tasks.take().is_empty());
     assert!(host.opener.requests().is_empty());
     host.pool
         .run_until(runtime.retire(RunRetirement::Completed))

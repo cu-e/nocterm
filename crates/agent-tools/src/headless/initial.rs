@@ -1,7 +1,8 @@
 //! Initial physical publication and bounded lifecycle facts from the sole reader.
 use super::{
     HeadlessError, HeadlessSessionStatus, HeadlessSessionTask, HeadlessTerminalOptions,
-    SessionRegistry, pending_open::PendingOpen,
+    SessionRegistry,
+    pending_open::{InitialPublication, PendingOpen},
 };
 use futures::future::BoxFuture;
 use nocterm_cloud_model::{authority::SessionReceipt, identity::RemoteSessionId, tool::ToolTimer};
@@ -105,6 +106,41 @@ impl InitialSessionCandidate {
     pub fn publish(self) -> Result<(), HeadlessError> {
         self.pending.publish_initial()
     }
+    /// Publishes the actual original physical generation after durability, but
+    /// keeps conditional retirement armed until the original run accepts it.
+    pub fn publish_owned(self) -> Result<PublishedInitialSession, HeadlessError> {
+        let Self {
+            pending,
+            receipt,
+            generation,
+        } = self;
+        Ok(PublishedInitialSession {
+            publication: pending.publish_initial_owned()?,
+            receipt,
+            generation,
+        })
+    }
+}
+
+/// The coordinator checks source, writer and original pending generation before
+/// marking Live and waking that run, then accepts this guard without an await.
+/// Until acceptance, cancellation retires only the original physical pointer.
+pub struct PublishedInitialSession {
+    publication: InitialPublication,
+    receipt: SessionReceipt,
+    generation: SessionGeneration,
+}
+impl PublishedInitialSession {
+    pub fn receipt(&self) -> &SessionReceipt {
+        &self.receipt
+    }
+    pub fn generation(&self) -> &SessionGeneration {
+        &self.generation
+    }
+    /// The retained physical supervisor continues ownership across run views.
+    pub fn accept(self) {
+        self.publication.accept();
+    }
 }
 
 pub(super) struct InitialLifecycle {
@@ -116,6 +152,9 @@ pub(super) struct InitialLifecycle {
     _residency: Arc<dyn Send + Sync>,
 }
 impl InitialLifecycle {
+    pub(super) fn matches(&self, observation: &SessionObservation) -> bool {
+        self.receipt == observation.receipt && self.generation == observation.generation
+    }
     fn new(
         receipt: SessionReceipt,
         residency: Arc<dyn Send + Sync>,

@@ -23,6 +23,7 @@ pub(super) struct PhysicalTerminal {
     retirement: async_channel::Sender<()>,
     failure: TerminalFailure,
     lifecycle: Option<InitialLifecycle>,
+    initial_owner: Option<Arc<()>>,
 }
 impl PhysicalTerminal {
     pub(super) fn new(
@@ -49,6 +50,7 @@ impl PhysicalTerminal {
             retirement,
             failure: Default::default(),
             lifecycle,
+            initial_owner: None,
         }
     }
     /// Transfer this connected candidate to its physical supervisor. Publication
@@ -56,7 +58,12 @@ impl PhysicalTerminal {
     pub(super) fn publish(&mut self) -> Result<(), HeadlessError> {
         match self.publication {
             Publication::Retired | Publication::RetiredPending => Err(HeadlessError::StaleSession),
-            Publication::Published => Ok(()),
+            Publication::Published => {
+                // A real new run view accepts this same physical generation.
+                // The older initial-publication waiter no longer owns rollback.
+                self.initial_owner = None;
+                Ok(())
+            }
             Publication::Pending if self.status == HeadlessSessionStatus::Connected => {
                 self.publication = Publication::Published;
                 Ok(())
@@ -74,6 +81,32 @@ impl PhysicalTerminal {
         self.publication = Publication::Published;
         Ok(())
     }
+    pub(super) fn publish_initial_owned(&mut self, owner: Arc<()>) -> Result<(), HeadlessError> {
+        self.publish_initial()?;
+        self.initial_owner = Some(owner);
+        Ok(())
+    }
+    pub(super) fn accept_initial(&mut self, owner: &Arc<()>) {
+        if self
+            .initial_owner
+            .as_ref()
+            .is_some_and(|held| Arc::ptr_eq(held, owner))
+        {
+            self.initial_owner = None;
+        }
+    }
+    pub(super) fn retire_initial(&mut self, owner: &Arc<()>) -> bool {
+        if !self
+            .initial_owner
+            .as_ref()
+            .is_some_and(|held| Arc::ptr_eq(held, owner))
+        {
+            return false;
+        }
+        self.initial_owner = None;
+        self.retire();
+        true
+    }
     pub(super) fn retire_pending(&mut self) -> bool {
         if !matches!(
             self.publication,
@@ -86,6 +119,15 @@ impl PhysicalTerminal {
     }
     pub(super) fn receipt(&self) -> &SessionReceipt {
         &self.receipt
+    }
+    pub(super) fn observed_loss(&self, observation: &super::initial::SessionObservation) -> bool {
+        matches!(
+            observation.event(),
+            super::initial::SessionLifecycleEvent::Lost { .. }
+        ) && self
+            .lifecycle
+            .as_ref()
+            .is_some_and(|lifecycle| lifecycle.matches(observation))
     }
     pub(super) fn info(&self, terminal_id: String) -> super::HeadlessSessionInfo {
         super::HeadlessSessionInfo::new(

@@ -27,6 +27,9 @@
 //! candidates remain unavailable to tools/reattachment until explicit publication
 //! after actual Connected and caller-owned durable establishment. One bounded
 //! lifecycle receiver observes that physical generation without reading Session.
+//! Existing-only factories never open a second connection. Their run-local
+//! server aliases support idempotent open of the exact connected receipt. Initial
+//! publication guards retire only their original untransferred physical owner.
 //! Only an
 //! observed exit acknowledged by that journal resolves its own effect; other
 //! outcomes remain unknown. Restoring a screen never establishes a shell prompt.

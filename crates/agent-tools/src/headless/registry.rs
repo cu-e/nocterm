@@ -216,6 +216,7 @@ impl SessionRegistry {
         &self,
         terminal: &str,
         original: &Arc<Mutex<PhysicalTerminal>>,
+        owner: Arc<()>,
     ) -> Result<(), HeadlessError> {
         if self.fence.is_closed() {
             return Err(HeadlessError::Closed);
@@ -229,7 +230,7 @@ impl SessionRegistry {
         }
         self.retained_owner()
             .ok_or(HeadlessError::Closed)?
-            .publish_initial(original)
+            .publish_initial(original, owner)
     }
     fn attach_physical(
         &mut self,
@@ -354,6 +355,32 @@ impl SessionRegistry {
             // has already accepted the connected physical capability.
         }
     }
+    /// Roll back an initial publication which its original coordinator has not
+    /// accepted. Ordinary PendingOpen cleanup must keep its narrower semantics.
+    pub(super) fn retire_initial_if_original(
+        &mut self,
+        terminal: &str,
+        original: &Arc<Mutex<PhysicalTerminal>>,
+        owner: &Arc<()>,
+    ) {
+        if !self
+            .entries
+            .get(terminal)
+            .is_some_and(|current| Arc::ptr_eq(current, original))
+        {
+            return;
+        }
+        let retired = original
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retire_initial(owner);
+        if retired {
+            if let Some(retained) = self.retained_owner() {
+                retained.remove_if_original(original);
+            }
+        }
+        self.entries.remove(terminal);
+    }
     pub fn close(&mut self) {
         self.fence.close();
         if self.retained.is_some() {
@@ -407,6 +434,32 @@ impl SessionRegistry {
             physical.publish()?;
         }
         Ok(entry)
+    }
+    pub(super) fn require_existing(
+        &self,
+        terminal: &str,
+        receipt: &SessionReceipt,
+    ) -> Result<(), HeadlessError> {
+        self.require_run(&self.run)?;
+        let entry = self
+            .entries
+            .get(terminal)
+            .ok_or(HeadlessError::StaleSession)?;
+        let physical = entry.lock().unwrap_or_else(PoisonError::into_inner);
+        if physical.receipt() != receipt {
+            return Err(HeadlessError::StaleSession);
+        }
+        let info = physical.info(terminal.into());
+        if let Some(error) = info.failure() {
+            return Err(HeadlessError::Session(error.clone()));
+        }
+        match info.status {
+            HeadlessSessionStatus::Connected => Ok(()),
+            HeadlessSessionStatus::NeedsUnlock | HeadlessSessionStatus::Closed => {
+                Err(HeadlessError::NeedsUnlock)
+            }
+            HeadlessSessionStatus::Connecting => Err(HeadlessError::NotConnected),
+        }
     }
 }
 impl Drop for SessionRegistry {
