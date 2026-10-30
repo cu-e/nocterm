@@ -198,6 +198,21 @@ The selected server has four tabs:
   confirmation: compare each fingerprint with the one the administrator sees in `hubctl`, out of
   band, and confirm only when they are identical. A changed key is shown with a warning and
   both fingerprints.
+- **Cloud agents** lists the agents the server offers to your account (personal, organisation
+  and server agents) with their status. **New personal agent** opens a form for a name, a model
+  provider (and optional endpoint), a model, your API key and the pool that runs it. The key is
+  sealed to the pool and is never readable by the server; to edit an agent type the key again.
+  **Delete** removes a personal agent. **Manage agents on the web** opens the server's panel.
+  A server that does not manage agents says so.
+
+### Cloud agents in the chat menu
+
+The **+** menu of the assistant panel has **Local** and **Cloud** tabs. **Cloud** lists the
+agents of every signed-in server (a server window lists only its own), with a search field,
+sections per server and a status chip per agent. Pick one to start it: the steps are shown,
+and the first start on a pool asks you to compare the pool's fingerprint with the one its
+administrator gives you before it is trusted. **New personal agent…** opens the Servers page.
+The tab is hidden while no server offers agents.
 
 - **Agent access (SSH)** controls how cloud agents sign in to your own servers. A personal CA
   (shown with its fingerprint and date) signs certificates that are valid for hours at most,
