@@ -13,7 +13,8 @@
 //! Does not own: the hub wire protocol and its SDK types (the hub contract crates, reached
 //! only by `nocterm-hub-io`), device keys and tokens (private adapter files), connection
 //! state over time (`nocterm-hubs`), views.
-//! Ports provided: HubTrust, HubSignIn, HubAdminKeys. Ports used: nocterm-session
+//! Ports provided: HubTrust, HubSignIn, HubAdminKeys, AccountDevices (the devices of an
+//! account, listed and revoked). Ports used: nocterm-session
 //! `Secret`.
 //! Settings section: `hubs`. Globals: none.
 //! Invariants: no I/O; no protocol types; a hub is identified by its canonical address;
@@ -34,6 +35,7 @@
 pub mod address;
 pub mod admin_keys;
 pub mod color;
+pub mod devices;
 pub mod environment;
 pub mod error;
 mod login;
@@ -56,6 +58,7 @@ pub use admin_keys::{
     AdminKeyConfirmation, AdminKeyError, AdminKeyOffer, HubAdminKeys, PendingAdminKey,
 };
 pub use color::HubColor;
+pub use devices::{AccountDevices, DeviceSummary};
 pub use environment::Environment;
 pub use error::{FingerprintError, HubAddressError, HubError};
 pub use ports::{HubFuture, HubSignIn, HubTrust, OidcSignIn};
