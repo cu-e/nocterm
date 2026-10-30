@@ -5,7 +5,9 @@
 //! with a successful real namespace probe. It exposes the same contained host
 //! executor for PTY sessions; it mounts only a separate private work directory,
 //! read-only system tools and fresh proc/dev/tmp, with no inherited environment
-//! or network. Account cgroups and supervisor isolation belong to the runner app.
+//! or network. Its interactive Bash mounts one read-only bundled script, held by
+//! the physical PTY worker through child exit; explicit command terminals stay literal.
+//! Account cgroups and supervisor isolation belong to the runner app.
 //! Does not own: session contracts, filesystem traversal, editor selection or views.
 //! Ports used: session channels. Ports provided: Transport, HostExec, ProgramOpener,
 //! recording::OutputLogFactory, nocterm_core::clock::WallClock (`SystemClock`). Output-log
@@ -36,6 +38,7 @@ mod clock;
 #[cfg(target_os = "linux")]
 mod containment;
 mod exec;
+mod integration;
 mod program_opener;
 mod recording;
 
@@ -103,6 +106,17 @@ fn open_scoped(
     pty: PtySize,
     source: nocterm_session::ConnectionSource,
 ) -> Session {
+    open_scoped_retained(launch, isolated, term, pty, source, None)
+}
+
+fn open_scoped_retained(
+    launch: ShellLaunch,
+    isolated: bool,
+    term: String,
+    pty: PtySize,
+    source: nocterm_session::ConnectionSource,
+    retention: Option<Arc<dyn Send + Sync>>,
+) -> Session {
     if let Err(error) = source.check() {
         return Session::failed(error.into());
     }
@@ -119,6 +133,7 @@ fn open_scoped(
             };
             block_on(driver.emit(Event::Closed(CloseReason::Failed(error))));
         }
+        drop(retention);
     });
     session
 }
@@ -425,24 +440,8 @@ fn prepare_integration(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    let (name, script) = match stem {
-        "bash" => (
-            "bashrc",
-            include_str!("../../../assets/shell-integration/bash.bash"),
-        ),
-        "zsh" => (
-            ".zshrc",
-            include_str!("../../../assets/shell-integration/zsh.zsh"),
-        ),
-        "fish" => (
-            "integration.fish",
-            include_str!("../../../assets/shell-integration/fish.fish"),
-        ),
-        "pwsh" | "powershell" => (
-            "integration.ps1",
-            include_str!("../../../assets/shell-integration/powershell.ps1"),
-        ),
-        _ => return Ok(None),
+    let Some((name, script)) = integration::bundled(stem) else {
+        return Ok(None);
     };
     let directory = tempfile::tempdir()?;
     let path = directory.path().join(name);

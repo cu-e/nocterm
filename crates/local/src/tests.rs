@@ -15,7 +15,7 @@ pub(super) fn request(launch: ShellLaunch) -> ConnectRequest {
         jumps: Vec::new(),
     }
 }
-fn events(session: &Session) -> std::sync::mpsc::Receiver<Event> {
+pub(super) fn events(session: &Session) -> std::sync::mpsc::Receiver<Event> {
     let session = session.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
@@ -30,10 +30,13 @@ fn events(session: &Session) -> std::sync::mpsc::Receiver<Event> {
     });
     rx
 }
-fn next(rx: &std::sync::mpsc::Receiver<Event>) -> Event {
+pub(super) fn next(rx: &std::sync::mpsc::Receiver<Event>) -> Event {
     rx.recv_timeout(std::time::Duration::from_secs(10))
         .expect("PTY event timed out")
 }
+
+mod launch_resources;
+
 #[test]
 fn invalid_launch_reports_typed_failure_before_starting_a_pty() {
     let launch = ShellLaunch {

@@ -1,5 +1,6 @@
 //! Explicit Linux containment for Cloud tool children; the desktop transport is separate.
 mod policy;
+mod shell;
 #[cfg(test)]
 mod tests;
 use futures::future::BoxFuture;
@@ -30,7 +31,7 @@ impl ContainedLocal {
     ) -> BoxFuture<'static, Result<Self, ContainmentError>> {
         Box::pin(async move {
             let policy = Arc::new(ChildPolicy::new(workspace, supervisor_state, limits)?);
-            let request = policy.wrap(ExecRequest::new("/bin/true"))?;
+            let request = policy.probe()?;
             let output = crate::LocalExec
                 .exec(request)
                 .await
@@ -51,25 +52,29 @@ impl ContainedLocal {
         }
     }
     fn terminal_request(&self, request: TerminalRequest) -> Session {
-        if let Err(error) = self.source.check() {
-            return Session::failed(error.into());
-        }
-        let wrapped = match self.policy.wrap(request.program) {
-            Ok(request) => request,
-            Err(error) => return Session::failed(error.connection_failure().into()),
-        };
         let launch = ShellLaunch {
-            program: Some(wrapped.program),
-            args: wrapped.args,
+            program: Some(request.program.program),
+            args: request.program.args,
             integration: false,
             ..Default::default()
         };
-        crate::open_scoped(
+        self.shell(launch, request.term, request.size)
+    }
+    fn shell(&self, launch: ShellLaunch, term: String, size: nocterm_session::PtySize) -> Session {
+        if let Err(error) = self.source.check() {
+            return Session::failed(error.into());
+        }
+        let launch = match self.policy.launch(launch, &term, size) {
+            Ok(request) => request,
+            Err(error) => return Session::failed(error.connection_failure().into()),
+        };
+        crate::open_scoped_retained(
             launch,
             true,
-            request.term,
-            request.size,
+            term,
+            size,
             self.source.clone(),
+            Some(self.policy.clone()),
         )
         .with_exec(Arc::new(self.clone()))
     }
@@ -94,10 +99,6 @@ impl Transport for ContainedLocal {
     }
     fn open_with(&self, request: ConnectRequest, options: ConnectionOpenOptions) -> Session {
         self.scoped(options.source().clone())
-            .terminal_request(TerminalRequest {
-                program: ExecRequest::new("/bin/sh"),
-                term: request.term,
-                size: request.size,
-            })
+            .shell(request.launch, request.term, request.size)
     }
 }

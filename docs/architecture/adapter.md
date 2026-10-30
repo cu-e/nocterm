@@ -158,6 +158,17 @@ detached process groups are outside that ownership. Windows commands start
 suspended and are attached to a Job Object before execution. Dropping the
 output or startup future cancels the owned command.
 
+Linux `nocterm-local::ContainedLocal` requires a successful bubblewrap namespace
+probe and finite child limits before exposing its transport or host executor.
+Children see a separate private workspace, read-only system tools and fresh
+proc/dev/tmp, without host home, supervisor state, inherited environment or network.
+Interactive startup uses an explicit Bash with the existing bundled prompt script
+mounted as one read-only file; the native PTY worker retains that resource through
+actual child exit. Public terminal settings are validated and applied inside the
+namespace. Unsupported shell options fail explicitly; literal command terminals
+keep their original argv. Account cgroups and supervisor isolation are separate
+runner application responsibilities.
+
 ## External local programs
 
 `nocterm-local` implements the separate `ProgramOpener` port for configured external
