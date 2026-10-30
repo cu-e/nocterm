@@ -59,6 +59,11 @@ impl ChatHost {
     }
     /// Capture a committed UI origin synchronously. This supplies descriptive
     /// membership; terminals remain attached to that original ordinary surface.
+    /// The Cloud agents this window offers, if the application has hubs.
+    pub(crate) fn cloud_agents(&self) -> Option<&crate::CloudAgentsAccess> {
+        self.installed.cloud_agents()
+    }
+
     pub(crate) fn deps_for_source(
         &self,
         source: ProjectSurfaceReceipt,

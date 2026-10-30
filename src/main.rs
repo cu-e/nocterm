@@ -13,6 +13,7 @@ mod agent_hosts;
 mod app_menus;
 mod application;
 mod bootstrap;
+mod cloud_agents_wiring;
 mod connection_setup;
 mod hub_sources;
 mod keymap;

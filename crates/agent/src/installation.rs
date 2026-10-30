@@ -6,11 +6,13 @@ use nocterm_store::{SettingsHandle, ShutdownCoordinator, StoreError};
 use nocterm_ui::{LayoutHandle, UiReady};
 use std::{rc::Rc, sync::Arc};
 mod source;
+use crate::cloud_access::CloudAgentsAccess;
 use source::SourceBinding;
 #[derive(Clone)]
 pub struct Installed {
     inner: Rc<Installation>,
     source: SourceBinding,
+    cloud: Option<CloudAgentsAccess>,
 }
 struct Installation {
     agents: AgentsHandle,
@@ -32,6 +34,7 @@ impl Installed {
     ) -> Result<Self, nocterm_ai::storage::AgentStorageError> {
         Ok(Self {
             inner: self.inner.clone(),
+            cloud: self.cloud.clone(),
             source: SourceBinding::fixed(self.runtime().for_environment(access)?),
         })
     }
@@ -39,6 +42,7 @@ impl Installed {
     pub fn unavailable_account(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            cloud: self.cloud.clone(),
             source: SourceBinding::fixed(self.runtime().unavailable_account()),
         }
     }
@@ -48,8 +52,28 @@ impl Installed {
     ) -> Self {
         Self {
             inner: self.inner.clone(),
+            cloud: self.cloud.clone(),
             source: SourceBinding::account(self.runtime(), factory),
         }
+    }
+    /// The Cloud agents of the signed-in hubs, offered in the new-chat menu of every window
+    /// made from this installation.
+    pub fn with_cloud_agents(&self, access: CloudAgentsAccess) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            source: self.source.clone(),
+            cloud: Some(access),
+        }
+    }
+    /// A window of one hub offers only that hub's Cloud agents.
+    pub fn for_hub_window(&self, hub: &nocterm_hubs_model::HubId) -> Self {
+        Self {
+            cloud: self.cloud.as_ref().map(|access| access.for_hub(hub)),
+            ..self.clone()
+        }
+    }
+    pub(crate) fn cloud_agents(&self) -> Option<&CloudAgentsAccess> {
+        self.cloud.as_ref()
     }
     pub(crate) fn capture_runtime(
         &self,
@@ -114,6 +138,7 @@ pub(crate) fn install(
     let registered = shutdown.register_capture(move |cx| captured.capture_shutdown(cx));
     (
         Installed {
+            cloud: None,
             source: SourceBinding::fixed(runtime.clone()),
             inner: Rc::new(Installation {
                 agents,

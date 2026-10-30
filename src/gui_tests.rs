@@ -341,6 +341,7 @@ fn fixture_hosts(
         )),
         workspace_sessions: activation,
         hubs: None,
+        cloud_agents: None,
         hub_accounts: None,
         agent_hosts: None,
     }

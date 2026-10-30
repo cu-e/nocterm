@@ -13,6 +13,7 @@ mod attach;
 mod attachments;
 mod bindings;
 mod chat;
+mod cloud_menu;
 pub(crate) mod commands;
 mod composer;
 mod composer_renderer;
@@ -69,6 +70,7 @@ pub(crate) struct AgentPanel {
     settings: nocterm_store::SettingsHandle,
     source: nocterm_workspace::ProjectSurfaceReceipt,
     conversation: Option<conversation_surface::ConversationSurface>,
+    cloud: cloud_menu::CloudMenu,
 }
 impl EventEmitter<PanelRequest> for AgentPanel {}
 
@@ -86,6 +88,7 @@ impl AgentPanel {
         let settings = host.settings().clone();
         let composer = composer_view::ComposerView::new(window, cx);
         let menus = menu_view::MenuView::new(composer.focus(cx), window, cx);
+        let cloud = cloud_menu::CloudMenu::new(host.cloud_agents().cloned(), window, cx);
         let history = history_column::HistoryColumn::new(window, cx);
         let layout = layout::PanelLayout::new(layout, cx);
         let messages = message_list::MessageList::new(images, cx);
@@ -109,6 +112,7 @@ impl AgentPanel {
             menus,
             settings,
             conversation: None,
+            cloud,
         }
     }
     fn bind_panel(
@@ -433,7 +437,15 @@ impl AgentPanel {
             self.host.runtime().favorites(cx).clone(),
             attachment,
         );
-        menu::ConfigMenuRenderer::render_menu(frame, window, cx)
+        let (tabs, rows) = if matches!(frame.kind(), Some(MenuKind::Agents)) {
+            let tabs = self.render_menu_tabs(cx);
+            let rows = (self.cloud.tab(cx) == cloud_menu::MenuTab::Cloud)
+                .then(|| self.render_cloud_tab(cx));
+            (tabs, rows)
+        } else {
+            (None, None)
+        };
+        menu::ConfigMenuRenderer::render_menu(frame.with_cloud(tabs, rows), window, cx)
     }
 }
 

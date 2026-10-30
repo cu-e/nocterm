@@ -33,6 +33,8 @@
 
 mod agent_icon;
 mod chat_host;
+mod cloud_access;
+pub use cloud_access::CloudAgentsAccess;
 mod conversation_panel;
 pub use conversation_panel::ConversationPanel;
 mod image_deps;

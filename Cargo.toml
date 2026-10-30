@@ -47,6 +47,7 @@ nocterm-project-container-fs.workspace = true
 nocterm-directory-io.workspace = true
 nocterm-explorer.workspace = true
 nocterm-hub-io.workspace = true
+nocterm-cloud-agents.workspace = true
 nocterm-hubs-model.workspace = true
 nocterm-hubs.workspace = true
 nocterm-hubs-ui.workspace = true

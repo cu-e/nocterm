@@ -51,6 +51,7 @@ impl PreparedApp {
             &ssh_config(&paths),
         ));
         let transport = ssh_transport(&paths, hub_links.as_deref())?;
+        let cloud_agents = cloud_agents_dependencies(hub_links.clone(), &paths);
         let local_fs = Arc::new(
             nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
         );
@@ -91,6 +92,7 @@ impl PreparedApp {
                 container_actions: Arc::new(
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
+                cloud_agents,
                 hubs: hub_dependencies(hub_links.clone(), agent_hosts.clone()),
                 agent_hosts: hub_links.is_some().then_some(agent_hosts as _),
                 hub_accounts: hub_links
@@ -236,6 +238,24 @@ fn hub_dependencies(
             agent_trust: agent_access.clone(),
             agent_grants: agent_access,
         }
+    })
+}
+
+/// The Cloud agents ports of the links, if there are any. The pool keys the person trusted are
+/// pinned per hub in a private directory.
+fn cloud_agents_dependencies(
+    links: Option<Arc<nocterm_hub_io::HubLinks>>,
+    paths: &Paths,
+) -> Option<nocterm_cloud_agents::Deps> {
+    let links = links?;
+    let link = Arc::new(nocterm_hub_io::CloudAgentsLink::new(
+        links,
+        paths.state_dir().join("hub-pool-pins"),
+    ));
+    Some(nocterm_cloud_agents::Deps {
+        catalog: link.clone(),
+        launcher: link.clone(),
+        personal: link,
     })
 }
 

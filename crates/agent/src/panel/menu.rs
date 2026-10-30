@@ -186,13 +186,17 @@ impl ConfigMenuRenderer {
         let mut menu = ConfigMenuRenderer::frame(heading, cx);
         match kind {
             Some(MenuKind::Agents) => {
-                menu = menu.children(Self::agent_choices(
-                    &frame.agents,
-                    frame.last.as_deref(),
-                    &frame.focus,
-                    window,
-                    cx,
-                ))
+                menu = menu.children(frame.tabs.take());
+                menu = match frame.cloud.take() {
+                    Some(rows) => menu.children(rows),
+                    None => menu.children(Self::agent_choices(
+                        &frame.agents,
+                        frame.last.as_deref(),
+                        &frame.focus,
+                        window,
+                        cx,
+                    )),
+                }
             }
             Some(MenuKind::Context) => {
                 menu = menu.child(
@@ -417,6 +421,8 @@ pub(super) struct MenuFrame {
     focus: gpui_kit::FocusHandle,
     favorites: nocterm_ai::favorites::AgentStateFile,
     attachment: Option<gpui_kit::AnyElement>,
+    tabs: Option<gpui_kit::AnyElement>,
+    cloud: Option<Vec<gpui_kit::AnyElement>>,
 }
 
 impl ConfigurationSelection {
@@ -465,6 +471,23 @@ impl MenuFrame {
             focus,
             favorites,
             attachment,
+            tabs: None,
+            cloud: None,
         }
+    }
+
+    /// The Local | Cloud switch and, when Cloud is chosen, the rows that replace the local list.
+    pub(super) fn kind(&self) -> Option<&MenuKind> {
+        self.kind.as_ref()
+    }
+
+    pub(super) fn with_cloud(
+        mut self,
+        tabs: Option<gpui_kit::AnyElement>,
+        cloud: Option<Vec<gpui_kit::AnyElement>>,
+    ) -> Self {
+        self.tabs = tabs;
+        self.cloud = cloud;
+        self
     }
 }

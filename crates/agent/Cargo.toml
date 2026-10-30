@@ -11,6 +11,9 @@ layer = "feature"
 
 [dependencies]
 nocterm-hubs-model.workspace = true
+nocterm-hubs.workspace = true
+nocterm-cloud-agents.workspace = true
+nocterm-cloud-agents-model.workspace = true
 nocterm-ai.workspace = true
 nocterm-plugin-model.workspace = true
 nocterm-project-model.workspace = true
@@ -52,6 +55,7 @@ tracing.workspace = true
 [dev-dependencies]
 nocterm-cloud-model = { workspace = true, features = ["test-support"] }
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
+nocterm-cloud-agents-model = { workspace = true, features = ["test-support"] }
 nocterm-workspace-ports.workspace = true
 nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-project-model = { workspace = true, features = ["test-support"] }

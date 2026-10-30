@@ -63,6 +63,8 @@ pub(crate) struct HostServices {
     pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
     /// The hub access ports; `None` leaves the application without hubs.
     pub(crate) hubs: Option<nocterm_hubs::Deps>,
+    /// The Cloud agents ports; without them the new-chat menu has no Cloud tab.
+    pub(crate) cloud_agents: Option<nocterm_cloud_agents::Deps>,
     /// The encrypted data of hub accounts; without it the hubs cannot open windows.
     pub(crate) hub_accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
     /// Receives the sessions of saved connections for the agent SSH CA; `None` without hubs.
@@ -78,8 +80,8 @@ pub(crate) struct HubWindows {
 }
 
 /// The hub servers with the account data their windows will be made from.
-struct PendingHubs {
-    hubs: nocterm_hubs::Installed,
+pub(crate) struct PendingHubs {
+    pub(crate) hubs: nocterm_hubs::Installed,
     accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
 }
 
@@ -323,6 +325,8 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
         .agent_hosts
         .clone()
         .zip(hubs.as_ref().map(|pending| pending.hubs.hubs().clone()));
+    let cloud_agents =
+        crate::cloud_agents_wiring::install(hosts.cloud_agents.clone(), hubs.as_ref(), cx);
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     // The vault opens first: the connection editor offers its keys, and its
     // credentials need the installed connections afterwards.
@@ -347,6 +351,10 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let terminal_auth = terminal_auth_factory.map(|factory| factory(terminal.clone()));
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
     let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
+    let agent = match cloud_agents {
+        Some(access) => agent.with_cloud_agents(access),
+        None => agent,
+    };
     let files = install_files(files, &ui, &shutdown, cx);
     let keymap = install_keymap(stored, cx);
     let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);

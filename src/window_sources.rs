@@ -63,9 +63,12 @@ impl WindowSources {
         installed: &nocterm_agent::Installed,
     ) -> nocterm_agent::Installed {
         match (&self.environment, &self.agent_source) {
+            (Environment::Hub(hub), Some(source)) => installed
+                .with_account_source(source.clone())
+                .for_hub_window(hub),
             (_, Some(source)) => installed.with_account_source(source.clone()),
             (Environment::Local, None) => installed.clone(),
-            (Environment::Hub(_), None) => installed.unavailable_account(),
+            (Environment::Hub(hub), None) => installed.unavailable_account().for_hub_window(hub),
         }
     }
     pub(crate) fn environment(&self) -> &Environment {
