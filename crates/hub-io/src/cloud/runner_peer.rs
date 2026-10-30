@@ -457,6 +457,7 @@ impl RunnerHubConnection {
         self.runner()?;
         Ok(RunnerHubPeer {
             connection: self.clone(),
+            horizons: Arc::default(),
         })
     }
 
@@ -508,6 +509,7 @@ impl Drop for RunnerHubConnection {
 #[derive(Clone)]
 pub struct RunnerHubPeer {
     connection: Arc<RunnerHubConnection>,
+    horizons: Arc<super::runner_horizons::RetryHorizons>,
 }
 impl RunnerHubPeer {
     pub fn binding(&self) -> &JournalCatalogBinding {
@@ -515,6 +517,9 @@ impl RunnerHubPeer {
     }
     pub(super) fn connection(&self) -> &Arc<RunnerHubConnection> {
         &self.connection
+    }
+    pub(super) fn horizons(&self) -> &Arc<super::runner_horizons::RetryHorizons> {
+        &self.horizons
     }
 }
 

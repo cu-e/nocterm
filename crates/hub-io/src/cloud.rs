@@ -18,6 +18,7 @@ pub use runner_peer::{
     RunnerCredentialDeadlines, RunnerHubConnection, RunnerHubError, RunnerHubPeer, RunnerHubTrust,
 };
 pub use runner_reclaim::{ChatRetirementOutcome, RunnerReclaimError, retire_until_compacted};
+mod runner_horizons;
 mod runner_retirement;
 pub use runner_retirement::RunnerChatRetirement;
 #[cfg(test)]

@@ -24,6 +24,7 @@ use std::sync::Arc;
 impl OutboxPublicationTransport for RunnerHubPeer {
     fn publish(&self, publication: ResidentPublication) -> JournalFuture<OutboxStored> {
         let connection = self.connection().clone();
+        let horizons = self.horizons().clone();
         Box::pin(async move {
             if !connection.binding().contains(publication.stream()) {
                 return Err(JournalError::Fenced);
@@ -39,9 +40,11 @@ impl OutboxPublicationTransport for RunnerHubPeer {
             let metadata = metadata(&publication)?;
             connection.runner().map_err(native_error)?;
             let residency = Arc::new((publication.clone(), allocation));
-            // A hub with reclaim may drop the receipt after this horizon; any other hub
-            // gets the previous request unchanged.
-            let horizon = super::runner_reclaim::retry_until(
+            // A hub with reclaim may drop the receipt after this horizon, which stays the
+            // same for every attempt at this publication; any other hub gets the previous
+            // request unchanged.
+            let horizon = horizons.horizon(
+                *publication.delivery_id().as_bytes(),
                 super::runner_reclaim::now_ms().map_err(native_error)?,
                 runner.supports_receipt_reclaim(),
             );
@@ -77,6 +80,7 @@ impl OutboxPublicationTransport for RunnerHubPeer {
             {
                 return Err(JournalError::Corrupt);
             }
+            horizons.settle(publication.delivery_id().as_bytes());
             Ok(OutboxStored::new(
                 publication.stream().clone(),
                 publication.delivery_id(),
