@@ -17,7 +17,6 @@ nocterm-local.workspace = true
 nocterm-ssh.workspace = true
 nocterm-ssh-keys.workspace = true
 futures.workspace = true
-parking_lot.workspace = true
 nocterm-core.workspace = true
 nocterm-hubs-model.workspace = true
 nocterm-cloud-model.workspace = true

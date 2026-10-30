@@ -6149,7 +6149,6 @@ dependencies = [
  "nocterm-session",
  "nocterm-ssh",
  "nocterm-ssh-keys",
- "parking_lot",
  "serde",
  "tempfile",
  "thiserror 2.0.21",
