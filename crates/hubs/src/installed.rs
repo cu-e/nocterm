@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Entity};
-use nocterm_hubs_model::{AccountDevices, HubAdminKeys, HubSignIn, HubTrust};
+use nocterm_hubs_model::{
+    AccountDevices, AgentGrants, AgentHostTrust, HubAdminKeys, HubSignIn, HubTrust,
+};
 use nocterm_store::SettingsHandle;
 
 use crate::registry::Hubs;
@@ -15,6 +17,8 @@ pub struct Deps {
     pub sign_in: Arc<dyn HubSignIn>,
     pub admin_keys: Arc<dyn HubAdminKeys>,
     pub devices: Arc<dyn AccountDevices>,
+    pub agent_trust: Arc<dyn AgentHostTrust>,
+    pub agent_grants: Arc<dyn AgentGrants>,
 }
 
 /// The registry of known hubs, kept alive by whoever composes the application.

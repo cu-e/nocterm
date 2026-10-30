@@ -21,7 +21,8 @@ use futures::FutureExt as _;
 use nocterm_hub_model::DeviceId;
 use nocterm_hubs_model::{
     AccountDevices as _, AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa,
-    AgentGrants, AgentHostTrust, AgentTrustOverview, HubError, HubFuture, HubId, ServerTrust,
+    AgentGrants, AgentHostTrust, AgentTrustOverview, HostChoice, HubError, HubFuture, HubId,
+    ServerTrust,
 };
 use nocterm_ssh_keys::authorized_keys::AgentHosts;
 use tokio::runtime::Handle;
@@ -108,6 +109,10 @@ impl AgentAccess {
 }
 
 impl AgentHostTrust for AgentAccess {
+    fn connected_hosts(&self) -> Vec<HostChoice> {
+        self.trust.sessions()
+    }
+
     fn overview(&self, hub: &HubId) -> AgentAccessFuture<AgentTrustOverview> {
         let (trust, hub) = (self.trust.clone(), hub.clone());
         self.run(async move { trust.overview(&hub).await })

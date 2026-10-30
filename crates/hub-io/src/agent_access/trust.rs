@@ -8,7 +8,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use nocterm_hubs_model::{
-    AgentAccessError, AgentCa, AgentTrustOverview, HubId, ServerTrust, TrustedServer,
+    AgentAccessError, AgentCa, AgentTrustOverview, HostChoice, HubId, ServerTrust, TrustedServer,
 };
 use nocterm_keys::agents::{
     CaLine, Observation, PRINCIPAL_PREFIX, SshTrustRecord, TrustAction, TrustState, find_ca_lines,
@@ -131,6 +131,18 @@ impl Trust {
             hosts,
             clock,
         }
+    }
+
+    pub(super) fn sessions(&self) -> Vec<HostChoice> {
+        self.hosts
+            .sessions()
+            .into_iter()
+            .map(|session| HostChoice {
+                connection: session.connection,
+                user: session.user,
+                host: session.host,
+            })
+            .collect()
     }
 
     fn host(&self, connection: &str) -> Result<HostAccess, AgentAccessError> {

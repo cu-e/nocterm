@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
-    AdminKeyError, AdminKeyOffer, DeviceSummary, HubAddress, HubColor, HubEndpointSpec, HubError,
-    HubFuture, HubId, HubInfo, HubRecord, HubsSettings,
+    AdminKeyError, AdminKeyOffer, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentTrustOverview,
+    DeviceSummary, HostChoice, HubAddress, HubColor, HubEndpointSpec, HubError, HubFuture, HubId,
+    HubInfo, HubRecord, HubsSettings, ServerTrust,
 };
 use nocterm_store::SettingsHandle;
 
@@ -348,6 +349,64 @@ impl Hubs {
             return Box::pin(async { Err(HubError::Stale) });
         }
         self.deps.devices.revoke(hub, device)
+    }
+
+    /// The servers with an open session, where the agent CA can be allowed now.
+    pub fn agent_candidates(&self) -> Vec<HostChoice> {
+        self.deps.agent_trust.connected_hosts()
+    }
+
+    /// The agent CA of the account on `hub` and the servers that trust it.
+    pub fn agent_overview(&self, hub: &HubId) -> AgentAccessFuture<AgentTrustOverview> {
+        self.deps.agent_trust.overview(hub)
+    }
+
+    /// Lets the agent CA sign in to the server of `connection`.
+    pub fn allow_agent_host(&self, hub: &HubId, connection: &str) -> AgentAccessFuture<()> {
+        self.deps.agent_trust.allow(hub, connection)
+    }
+
+    /// Stops trusting the server of `connection`; an unreachable one is removed later.
+    pub fn deny_agent_host(&self, hub: &HubId, connection: &str) -> AgentAccessFuture<ServerTrust> {
+        self.deps.agent_trust.deny(hub, connection)
+    }
+
+    /// Replaces the agent CA of the account on `hub`.
+    pub fn reissue_agent_ca(&self, hub: &HubId) -> AgentAccessFuture<AgentCa> {
+        self.deps.agent_trust.reissue_ca(hub)
+    }
+
+    /// The `authorized_keys` line of the agent CA.
+    pub fn agent_ca_line(&self, hub: &HubId) -> AgentAccessFuture<String> {
+        self.deps.agent_trust.ca_line(hub)
+    }
+
+    /// The chat accesses agents hold on `hub`.
+    pub fn agent_grants(&self, hub: &HubId) -> AgentAccessFuture<Vec<AgentAccessGrant>> {
+        self.deps.agent_grants.list(hub)
+    }
+
+    /// Ends the chat access `grant_id` on `hub`.
+    pub fn revoke_agent_grant(&self, hub: &HubId, grant_id: &str) -> AgentAccessFuture<()> {
+        self.deps.agent_grants.revoke(hub, grant_id)
+    }
+
+    /// The user connected to `connection`: every hub that is online compares the server's
+    /// `authorized_keys` with its registry. A connection no registry knows is left alone.
+    pub fn reconcile_agent_host(&self, connection: &str, cx: &mut Context<Self>) {
+        for entry in &self.entries {
+            if !matches!(entry.status, HubStatus::Online) {
+                continue;
+            }
+            let reconciling = self
+                .deps
+                .agent_trust
+                .reconcile(&entry.record.id(), connection);
+            cx.spawn(async move |_, _| {
+                let _ = reconciling.await;
+            })
+            .detach();
+        }
     }
 
     /// Ends this device's session on the hub and erases its credentials. The server stays

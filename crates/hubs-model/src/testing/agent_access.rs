@@ -8,7 +8,7 @@ use futures::FutureExt as _;
 use crate::address::HubId;
 use crate::agent_access::{
     AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentGrants, AgentHostTrust,
-    AgentTrustOverview, ServerTrust, TrustedServer,
+    AgentTrustOverview, HostChoice, ServerTrust, TrustedServer,
 };
 
 /// An in-memory [`AgentHostTrust`] and [`AgentGrants`]. Clones share one state, so a test
@@ -32,6 +32,7 @@ struct State {
     revoked: Vec<String>,
     failure: Option<AgentAccessError>,
     reissued: usize,
+    hosts: Vec<HostChoice>,
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -62,6 +63,11 @@ impl FakeAgentAccess {
         } else {
             state.unreachable.remove(connection);
         }
+    }
+
+    /// These servers have an open session from now on.
+    pub fn set_connected_hosts(&self, hosts: Vec<HostChoice>) {
+        lock(&self.state).hosts = hosts;
     }
 
     /// Someone removed the CA line of `connection` on the server itself.
@@ -108,6 +114,10 @@ fn server<'a>(
 }
 
 impl AgentHostTrust for FakeAgentAccess {
+    fn connected_hosts(&self) -> Vec<HostChoice> {
+        lock(&self.state).hosts.clone()
+    }
+
     fn overview(&self, _hub: &HubId) -> AgentAccessFuture<AgentTrustOverview> {
         let state = self.state.clone();
         async move {

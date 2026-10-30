@@ -223,6 +223,23 @@ impl FakeAgentHosts {
 }
 
 impl crate::authorized_keys::AgentHosts for FakeAgentHosts {
+    fn sessions(&self) -> Vec<crate::authorized_keys::HostSession> {
+        let hosts = self
+            .hosts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut sessions: Vec<_> = hosts
+            .iter()
+            .map(|(connection, access)| crate::authorized_keys::HostSession {
+                connection: connection.clone(),
+                user: access.identity.user.clone(),
+                host: access.identity.host.clone(),
+            })
+            .collect();
+        sessions.sort_by(|a, b| a.connection.cmp(&b.connection));
+        sessions
+    }
+
     fn access(
         &self,
         connection: &str,

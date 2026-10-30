@@ -65,8 +65,22 @@ pub struct HostAccess {
     pub file: Arc<dyn AuthorizedKeysFile>,
 }
 
+/// A saved connection with a live session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostSession {
+    /// The id of the saved connection.
+    pub connection: String,
+    /// The user of the session.
+    pub user: String,
+    /// The server host.
+    pub host: String,
+}
+
 /// Finds the live access to a saved connection, if the user has a session to it now.
 pub trait AgentHosts: Send + Sync {
+    /// The saved connections with a live session, in the order of their ids.
+    fn sessions(&self) -> Vec<HostSession>;
+
     /// [`HostAccessError::NotConnected`] when no session of `connection` is up.
     fn access(&self, connection: &str) -> Result<HostAccess, HostAccessError>;
 }

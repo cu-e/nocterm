@@ -34,8 +34,8 @@
 //! lease checks prevent old owners from returning after sign-out or key replacement.
 
 pub mod address;
-pub mod agent_access;
 pub mod admin_keys;
+pub mod agent_access;
 pub mod color;
 pub mod devices;
 pub mod environment;
@@ -56,12 +56,12 @@ pub mod trust;
 pub mod testing;
 
 pub use address::{DEFAULT_PORT, HubAddress, HubId};
-pub use agent_access::{
-    AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentGrants, AgentHostTrust,
-    AgentTrustOverview, ServerTrust, TrustedServer,
-};
 pub use admin_keys::{
     AdminKeyConfirmation, AdminKeyError, AdminKeyOffer, HubAdminKeys, PendingAdminKey,
+};
+pub use agent_access::{
+    AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentGrants, AgentHostTrust,
+    AgentTrustOverview, HostChoice, ServerTrust, TrustedServer,
 };
 pub use color::HubColor;
 pub use devices::{AccountDevices, DeviceSummary};

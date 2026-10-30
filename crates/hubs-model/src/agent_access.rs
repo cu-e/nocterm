@@ -58,6 +58,17 @@ pub struct AgentTrustOverview {
     pub servers: Vec<TrustedServer>,
 }
 
+/// A server the user is connected to now, which the CA could be allowed on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostChoice {
+    /// The saved connection.
+    pub connection: String,
+    /// The user of the session.
+    pub user: String,
+    /// The server host.
+    pub host: String,
+}
+
 /// One chat access an agent holds on the account's servers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentAccessGrant {
@@ -115,6 +126,9 @@ pub type AgentAccessFuture<T> = BoxFuture<'static, Result<T, AgentAccessError>>;
 /// A change to a server needs a session the user already opened to it; the registry is the
 /// account's own encrypted collection, so a hub never reads it.
 pub trait AgentHostTrust: Send + Sync {
+    /// The servers with an open session, where [`AgentHostTrust::allow`] can work now.
+    fn connected_hosts(&self) -> Vec<HostChoice>;
+
     /// The CA and the registry of `hub`'s account.
     fn overview(&self, hub: &HubId) -> AgentAccessFuture<AgentTrustOverview>;
 
