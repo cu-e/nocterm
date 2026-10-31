@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Entity};
 use nocterm_cloud_agents_model::{
-    CloudAgentCatalog, CloudAgentLauncher, PersonalAgents, PoolPinStore,
+    CloudAgentCatalog, CloudAgentLauncher, OwnRunnerLauncher, PersonalAgents, PoolPinStore,
 };
 
 use crate::service::CloudAgents;
@@ -14,6 +14,7 @@ use crate::service::CloudAgents;
 pub struct Deps {
     pub catalog: Arc<dyn CloudAgentCatalog>,
     pub launcher: Arc<dyn CloudAgentLauncher>,
+    pub own_runner: Arc<dyn OwnRunnerLauncher>,
     pub personal: Arc<dyn PersonalAgents>,
     pub pins: Arc<dyn PoolPinStore>,
 }

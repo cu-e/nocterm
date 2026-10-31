@@ -34,7 +34,10 @@ fn agent(id: &str, name: &str, scope: AgentScope) -> CloudAgent {
             idle_ttl_s: 600,
         },
         status: AgentStatus::Ready,
-        pools: Vec::new(),
+        pools: vec![nocterm_cloud_agents_model::PoolLabel {
+            id: nocterm_cloud_agents_model::PoolId::new("pool-1").unwrap(),
+            name: "Shared".into(),
+        }],
     }
 }
 
@@ -55,6 +58,7 @@ fn page(cx: &mut TestAppContext, fake: &FakeCloudAgents) -> Fixture {
             nocterm_cloud_agents::Deps {
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
+                own_runner: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake),
             },

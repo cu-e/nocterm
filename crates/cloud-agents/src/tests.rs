@@ -33,7 +33,17 @@ fn agent(id: &str, name: &str) -> CloudAgent {
             idle_ttl_s: 600,
         },
         status: AgentStatus::Ready,
+        pools: vec![nocterm_cloud_agents_model::PoolLabel {
+            id: PoolId::new("pool-1").expect("pool"),
+            name: "Shared".into(),
+        }],
+    }
+}
+
+fn own_runner_agent(id: &str, name: &str) -> CloudAgent {
+    CloudAgent {
         pools: Vec::new(),
+        ..agent(id, name)
     }
 }
 
@@ -44,6 +54,7 @@ fn install_with(fake: &FakeCloudAgents, cx: &mut TestAppContext) -> crate::Insta
             Deps {
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
+                own_runner: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake),
             },
@@ -209,4 +220,83 @@ async fn changed_pool_key_fails_the_start(cx: &mut TestAppContext) {
         let view = agents.start_view(id).expect("start");
         assert!(matches!(view.phase(), StartPhase::Failed(_)));
     });
+}
+
+#[gpui::test]
+async fn a_personal_agent_without_a_pool_starts_on_the_own_runner(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = own_runner_agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    let id = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    installed.agents().read_with(cx, |agents, _| {
+        let view = agents.start_view(id).expect("start");
+        assert!(matches!(view.phase(), StartPhase::Ready(_)));
+    });
+    assert_eq!(fake.own_runner_started(), vec![scribe.id.clone()]);
+    assert!(fake.started().is_empty(), "no pool seat is reserved");
+}
+
+#[gpui::test]
+async fn an_agent_on_a_pool_never_touches_the_own_runner(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let shared = agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &shared, cx));
+    cx.run_until_parked();
+    assert_eq!(fake.started().len(), 1);
+    assert!(fake.own_runner_started().is_empty());
+}
+
+#[gpui::test]
+async fn the_lease_is_renewed_in_the_background_until_the_start_is_dismissed(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    let scribe = own_runner_agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    let id = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    assert!(fake.renewed().is_empty());
+
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(31));
+    cx.run_until_parked();
+    assert_eq!(fake.renewed().len(), 1);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(30));
+    cx.run_until_parked();
+    assert_eq!(fake.renewed().len(), 2);
+
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.dismiss(id, cx));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(fake.renewed().len(), 2, "a dismissed start stops renewing");
+}
+
+#[gpui::test]
+async fn a_failed_renewal_ends_the_renewing(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.fail_renewals_after(1);
+    let scribe = own_runner_agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    for _ in 0..4 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(31));
+        cx.run_until_parked();
+    }
+    assert_eq!(fake.renewed().len(), 1);
 }

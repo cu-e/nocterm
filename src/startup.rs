@@ -256,6 +256,7 @@ fn cloud_agents_dependencies(
     Some(nocterm_cloud_agents::Deps {
         catalog: link.clone(),
         launcher: link.clone(),
+        own_runner: link.clone(),
         personal: link.clone(),
         pins: link,
     })

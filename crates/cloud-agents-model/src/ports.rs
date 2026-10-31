@@ -74,6 +74,26 @@ pub trait CloudAgentLauncher: Send + Sync {
     fn pin_pool(&self, hub: &HubId, offer: &PoolOffer) -> CloudFuture<()>;
 }
 
+/// The seat of an agent on the person's own runner, with the lease that keeps it working.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnRunnerSeat {
+    /// The own runner's identifier on the hub (16 bytes).
+    pub runner: Vec<u8>,
+    /// How long the provider lease lasts; the service renews it before it ends.
+    pub lease_ttl: std::time::Duration,
+}
+
+/// Runs an agent on the person's own runner instead of a pool, for personal agents that work
+/// only while a device is online. The lease is the provider credential the device holds for
+/// a bounded time; it ends when the device stops renewing it.
+pub trait OwnRunnerLauncher: Send + Sync {
+    /// Leases the credential for `agent` from this device and prepares the own runner.
+    fn start(&self, hub: &HubId, agent: &AgentId, steps: StepSink) -> CloudFuture<OwnRunnerSeat>;
+
+    /// Extends the lease of `agent` by another term and returns that term.
+    fn renew(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<std::time::Duration>;
+}
+
 /// A pool whose keys this device pinned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PinnedPool {

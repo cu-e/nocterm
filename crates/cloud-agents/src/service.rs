@@ -8,8 +8,8 @@ use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{AppContext as _, Context, EventEmitter};
 use nocterm_cloud_agents_model::{
-    AgentId, CloudAgent, CloudAgentError, PersonalAgentDraft, PinnedPool, PoolChoice, PoolId,
-    PoolOffer, SaveOutcome, StartOutcome, StartStep, StepSink,
+    AgentId, CloudAgent, CloudAgentError, InstanceId, PersonalAgentDraft, PinnedPool, Placement,
+    PoolChoice, PoolId, PoolOffer, SaveOutcome, StartOutcome, StartStep, StartedAgent, StepSink,
 };
 use nocterm_hubs_model::HubId;
 
@@ -141,7 +141,10 @@ impl CloudAgents {
     pub fn start(&mut self, hub: &HubId, agent: &CloudAgent, cx: &mut Context<Self>) -> StartId {
         let (id, fresh) = self.starts.begin(hub, &agent.id, &agent.name);
         if fresh {
-            self.run_start(id, hub.clone(), agent.id.clone(), cx);
+            match agent.placement() {
+                Placement::Pool => self.run_start(id, hub.clone(), agent.id.clone(), cx),
+                Placement::OwnRunner => self.run_own_start(id, hub.clone(), agent.id.clone(), cx),
+            }
             cx.emit(CloudAgentsEvent::Changed);
             cx.notify();
         }
@@ -290,6 +293,61 @@ impl CloudAgents {
         .detach();
     }
 
+    /// Starts an agent that works only while this device is online: the device leases the
+    /// credential and keeps renewing it for as long as the start is listed and the hub answers.
+    fn run_own_start(&mut self, id: StartId, hub: HubId, agent: AgentId, cx: &mut Context<Self>) {
+        let launcher = self.deps.own_runner.clone();
+        let (sender, mut steps) = mpsc::unbounded::<StartStep>();
+        let sink: StepSink = Arc::new(move |step| {
+            sender.unbounded_send(step).ok();
+        });
+        let mut call = launcher.start(&hub, &agent, sink).fuse();
+        cx.spawn(async move |this, cx| {
+            let result = loop {
+                futures::select_biased! {
+                    step = steps.next() => {
+                        if let Some(step) = step
+                            && this.update(cx, |this, cx| this.stepped(id, step, cx)).is_err()
+                        {
+                            return;
+                        }
+                    }
+                    result = call => break result,
+                }
+            };
+            while let Ok(step) = steps.try_recv() {
+                this.update(cx, |this, cx| this.stepped(id, step, cx)).ok();
+            }
+            let seat = match result {
+                Ok(seat) => seat,
+                Err(error) => {
+                    this.update(cx, |this, cx| this.failed(id, error, cx)).ok();
+                    return;
+                }
+            };
+            let started = StartedAgent {
+                agent: agent.clone(),
+                instance: own_instance(&agent),
+                runner: seat.runner,
+            };
+            let live = this
+                .update(cx, |this, cx| {
+                    let finished = this.starts.finish(id, started);
+                    if finished {
+                        cx.emit(CloudAgentsEvent::Ready(id));
+                        cx.emit(CloudAgentsEvent::Changed);
+                        cx.notify();
+                    }
+                    finished
+                })
+                .unwrap_or(false);
+            if live {
+                renew_lease(&launcher, &hub, &agent, id, seat.lease_ttl, &this, cx).await;
+            }
+        })
+        .detach();
+    }
+
     fn stepped(&mut self, id: StartId, step: StartStep, cx: &mut Context<Self>) {
         if self.starts.step(id, step) {
             cx.emit(CloudAgentsEvent::Changed);
@@ -333,6 +391,42 @@ async fn watch_once(
         }
         if hints.next().await?.is_none() {
             return Ok(());
+        }
+    }
+}
+
+/// The seat label of an agent on the own runner: the device holds it, no host does.
+fn own_instance(agent: &AgentId) -> InstanceId {
+    InstanceId::new(format!("own-{agent}"))
+        .or_else(|_| InstanceId::new("own"))
+        .unwrap_or_else(|_| unreachable!("a short ASCII identifier is valid"))
+}
+
+/// Renews the lease at half its term until the start is dismissed or its hub untracked, the
+/// service is gone, or a renewal fails (the device went offline or the hub ended the lease).
+async fn renew_lease(
+    launcher: &Arc<dyn nocterm_cloud_agents_model::OwnRunnerLauncher>,
+    hub: &HubId,
+    agent: &AgentId,
+    id: StartId,
+    mut term: Duration,
+    this: &gpui::WeakEntity<CloudAgents>,
+    cx: &mut gpui::AsyncApp,
+) {
+    loop {
+        cx.background_executor().timer(term / 2).await;
+        let listed = this
+            .read_with(cx, |this, _| this.starts.get(id).is_some())
+            .unwrap_or(false);
+        if !listed {
+            return;
+        }
+        match launcher.renew(hub, agent).await {
+            Ok(next) => term = next,
+            Err(error) => {
+                tracing::debug!(%error, "own runner lease renewal ended");
+                return;
+            }
         }
     }
 }

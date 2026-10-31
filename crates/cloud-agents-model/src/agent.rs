@@ -1,6 +1,7 @@
 //! One agent as the hub lists it: descriptive data only.
 
 use crate::ids::{AgentId, PoolId};
+use crate::placement::Placement;
 use crate::scope::AgentScope;
 use crate::status::AgentStatus;
 
@@ -59,6 +60,17 @@ pub struct CloudAgent {
 }
 
 impl CloudAgent {
+    /// Where the agent runs. A personal agent no pool holds works only while a device of the
+    /// person is online, so it runs on the person's own runner; every other agent runs on a
+    /// pool.
+    pub fn placement(&self) -> Placement {
+        if self.scope == AgentScope::Personal && self.pools.is_empty() {
+            Placement::OwnRunner
+        } else {
+            Placement::Pool
+        }
+    }
+
     /// The model shown in the row.
     pub fn primary_model(&self) -> Option<&str> {
         self.models.first().map(String::as_str)

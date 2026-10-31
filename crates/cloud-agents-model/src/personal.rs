@@ -170,6 +170,15 @@ impl PersonalAgentDraft {
         self.work_offline
     }
 
+    /// Where the agent runs: on a pool when it works offline, otherwise on the own runner.
+    pub fn placement(&self) -> crate::placement::Placement {
+        if self.work_offline {
+            crate::placement::Placement::Pool
+        } else {
+            crate::placement::Placement::OwnRunner
+        }
+    }
+
     /// The pool the agent works on while the person is offline.
     pub fn pool(&self) -> Option<&PoolId> {
         self.pool.as_ref()
@@ -221,6 +230,15 @@ mod tests {
             offline,
             pool.then(|| PoolId::new("p1").unwrap()),
         )
+    }
+
+    #[test]
+    fn an_agent_that_does_not_work_offline_runs_on_the_own_runner() {
+        let key = || KeyInput::Replace(Secret::new("sk-1"));
+        let offline = draft("", key(), true, true).unwrap();
+        let online = draft("", key(), false, false).unwrap();
+        assert_eq!(offline.placement(), crate::Placement::Pool);
+        assert_eq!(online.placement(), crate::Placement::OwnRunner);
     }
 
     #[test]

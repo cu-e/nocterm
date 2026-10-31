@@ -151,3 +151,26 @@ fn a_pool_key_change_is_not_transient_but_a_full_host_is() {
         .is_transient()
     );
 }
+
+#[test]
+fn only_a_personal_agent_without_pools_runs_on_the_own_runner() {
+    let mut mine = agent("a1", "Mine", AgentScope::Personal, AgentStatus::Ready);
+    assert_eq!(mine.placement(), Placement::OwnRunner);
+    mine.pools.push(PoolLabel {
+        id: PoolId::new("p1").unwrap(),
+        name: "Shared".into(),
+    });
+    assert_eq!(mine.placement(), Placement::Pool);
+    let org = agent(
+        "a2",
+        "Org",
+        AgentScope::Org {
+            id: "o1".into(),
+            name: "Acme".into(),
+        },
+        AgentStatus::Ready,
+    );
+    assert_eq!(org.placement(), Placement::Pool);
+    let server = agent("a3", "Srv", AgentScope::Server, AgentStatus::Ready);
+    assert_eq!(server.placement(), Placement::Pool);
+}

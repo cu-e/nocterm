@@ -17,8 +17,9 @@ use crate::error::CloudAgentError;
 use crate::ids::{AgentId, InstanceId, PoolId};
 use crate::personal::PersonalAgentDraft;
 use crate::ports::{
-    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, PersonalAgents, PinnedPool,
-    PoolChoice, PoolPinStore, SaveOutcome, StartOutcome, StepSink,
+    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, OwnRunnerLauncher,
+    OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore, SaveOutcome, StartOutcome,
+    StepSink,
 };
 use crate::start::{PoolOffer, StartStep, StartedAgent};
 
@@ -81,6 +82,9 @@ struct State {
     offers: BTreeMap<AgentId, PoolOffer>,
     scripts: BTreeMap<AgentId, VecDeque<StartScript>>,
     starts: Vec<AgentId>,
+    own_starts: Vec<AgentId>,
+    renewals: Vec<AgentId>,
+    renewals_fail_after: Option<usize>,
     saved: Vec<SavedAgent>,
     next: u64,
     revision: u64,
@@ -154,6 +158,21 @@ impl FakeCloudAgents {
     /// Agents started so far, in order, including repeated attempts.
     pub fn started(&self) -> Vec<AgentId> {
         self.state().starts.clone()
+    }
+
+    /// Agents started on the own runner so far, in order.
+    pub fn own_runner_started(&self) -> Vec<AgentId> {
+        self.state().own_starts.clone()
+    }
+
+    /// Lease renewals so far, in order.
+    pub fn renewed(&self) -> Vec<AgentId> {
+        self.state().renewals.clone()
+    }
+
+    /// Renewals fail after this many have succeeded (the device went offline).
+    pub fn fail_renewals_after(&self, successes: usize) {
+        self.state().renewals_fail_after = Some(successes);
     }
 
     /// Personal agents saved so far.
@@ -308,6 +327,39 @@ impl PersonalAgents for FakeCloudAgents {
     fn delete(&self, hub: &HubId, agent: &AgentId, _version: u64) -> CloudFuture<()> {
         let result = self.check(hub).map(|()| {
             self.state().saved.retain(|saved| &saved.id != agent);
+        });
+        async move { result }.boxed()
+    }
+}
+
+/// The lease term the fake grants.
+pub const FAKE_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+impl OwnRunnerLauncher for FakeCloudAgents {
+    fn start(&self, hub: &HubId, agent: &AgentId, steps: StepSink) -> CloudFuture<OwnRunnerSeat> {
+        let result = self.check(hub).map(|()| {
+            self.state().own_starts.push(agent.clone());
+            steps(StartStep::Registering);
+            steps(StartStep::Ready);
+            OwnRunnerSeat {
+                runner: vec![9; 16],
+                lease_ttl: FAKE_LEASE_TTL,
+            }
+        });
+        async move { result }.boxed()
+    }
+
+    fn renew(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<std::time::Duration> {
+        let result = self.check(hub).and_then(|()| {
+            let mut state = self.state();
+            if state
+                .renewals_fail_after
+                .is_some_and(|limit| state.renewals.len() >= limit)
+            {
+                return Err(CloudAgentError::Stale);
+            }
+            state.renewals.push(agent.clone());
+            Ok(FAKE_LEASE_TTL)
         });
         async move { result }.boxed()
     }
