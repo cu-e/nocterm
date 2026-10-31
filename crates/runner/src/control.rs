@@ -31,7 +31,7 @@ struct Startup {
     execution: Option<ExecutionRuntime>,
 }
 #[cfg(unix)]
-async fn startup(state: &mut State) -> Result<Startup, RunnerError> {
+async fn startup(state: &mut State, session: Option<&Session>) -> Result<Startup, RunnerError> {
     let operation = state.limits().operation();
     let peer = tokio::time::timeout(operation, state.connection().restore())
         .await
@@ -39,14 +39,16 @@ async fn startup(state: &mut State) -> Result<Startup, RunnerError> {
     let work = worker::work()?;
     let endpoint = health::Endpoint::bind(state.directory())?;
     let execution = match state.take_execution() {
-        Some(setup) => Some(
-            tokio::time::timeout(
+        Some(setup) => {
+            let brokered = session.map(|session| session.providers().clone());
+            let started = tokio::time::timeout(
                 operation,
-                ExecutionRuntime::start(setup, state, peer.clone()),
+                ExecutionRuntime::start(setup, state, peer.clone(), brokered),
             )
             .await
-            .map_err(|_| RunnerError::Timeout)??,
-        ),
+            .map_err(|_| RunnerError::Timeout)?;
+            tolerate_missing_containment(started, session.is_some())?
+        }
         None => None,
     };
     Ok(Startup {
@@ -56,10 +58,28 @@ async fn startup(state: &mut State) -> Result<Startup, RunnerError> {
         execution,
     })
 }
+/// A managed runner whose host cannot give it nested containment still serves
+/// its controls and reports `execution_ready=false`; it never runs a tool
+/// without containment. Every other failure refuses the daemon.
+#[cfg(unix)]
+fn tolerate_missing_containment(
+    started: Result<ExecutionRuntime, RunnerError>,
+    managed: bool,
+) -> Result<Option<ExecutionRuntime>, RunnerError> {
+    match started {
+        Ok(execution) => Ok(Some(execution)),
+        #[cfg(target_os = "linux")]
+        Err(RunnerError::Containment(_)) if managed => Ok(None),
+        Err(error) => {
+            let _ = managed;
+            Err(error)
+        }
+    }
+}
 #[cfg(unix)]
 pub(crate) async fn run(mut state: State, session: Option<Session>) -> Completion {
     let budget = state.limits().shutdown();
-    match startup(&mut state).await {
+    match startup(&mut state, session.as_ref()).await {
         Ok(started) => {
             if let Some(session) = &session
                 && let Err(error) = session.announce(started.execution.is_some())
@@ -213,4 +233,27 @@ pub(crate) async fn run(state: State, _session: Option<Session>) -> Completion {
 #[cfg(not(unix))]
 pub(crate) async fn health(_: &Path) -> Result<(), RunnerError> {
     Err(RunnerError::Platform)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use nocterm_local::ContainmentError;
+
+    #[test]
+    fn only_a_managed_runner_survives_unavailable_containment() {
+        let unavailable = || Err(RunnerError::Containment(ContainmentError::Unavailable));
+        assert!(matches!(
+            tolerate_missing_containment(unavailable(), true),
+            Ok(None)
+        ));
+        assert!(matches!(
+            tolerate_missing_containment(unavailable(), false),
+            Err(RunnerError::Containment(_))
+        ));
+        assert!(matches!(
+            tolerate_missing_containment(Err(RunnerError::Timeout), true),
+            Err(RunnerError::Timeout)
+        ));
+    }
 }

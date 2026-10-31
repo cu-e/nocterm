@@ -1,7 +1,7 @@
 //! What a managed start hands the daemon: either the legacy lease document or a
 //! live control channel with the providers that use its tokens (ADR 0123).
 use super::{Boot, BootV2, BrokeredProviders, ControlEnd, read_boot_v2, spawn_reader};
-use crate::{RunnerError, config::Configuration};
+use crate::{RunnerError, config::Configuration, execution::config::ExecutionConfig};
 use nocterm_cloud_model::identity::AccountScope;
 use std::{io::Stdin, sync::Arc};
 use tokio::sync::oneshot;
@@ -16,6 +16,15 @@ pub(crate) enum Launch {
 impl Launch {
     pub(crate) fn read(control: bool, config: &Configuration) -> Result<Self, RunnerError> {
         if control {
+            // The control channel exists to feed tool execution: it needs the
+            // containment and session target, and no provider of its own.
+            let brokered = config
+                .execution
+                .as_ref()
+                .is_some_and(ExecutionConfig::is_brokered);
+            if !brokered || config.session_targets.is_none() {
+                return Err(RunnerError::Value("managed execution configuration"));
+            }
             let mut input = std::io::stdin();
             let boot = read_boot_v2(&mut input)?;
             return Ok(Self::Controlled(boot, input));

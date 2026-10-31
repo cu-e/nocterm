@@ -15,6 +15,8 @@ use std::{path::PathBuf, sync::Arc};
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecutionConfig {
     containment: ContainmentDocument,
+    /// Empty for a managed runner: its provider is the host broker (ADR 0124).
+    #[serde(default)]
     providers: Vec<ProviderDocument>,
     maximum_provider_grants: usize,
 }
@@ -71,6 +73,11 @@ impl ExecutionConfig {
             limits,
         )
         .await?)
+    }
+    /// A managed runner reaches providers only through the host broker, so its
+    /// configuration lists none.
+    pub(crate) fn is_brokered(&self) -> bool {
+        self.providers.is_empty()
     }
     pub(crate) fn maximum_grants(&self) -> Result<usize, RunnerError> {
         if self.maximum_provider_grants == 0 || self.maximum_provider_grants > 4096 {
@@ -172,5 +179,26 @@ mod tests {
         ))
         .unwrap();
         assert!(unbounded.policies(&scope()).is_err());
+    }
+
+    #[test]
+    fn a_managed_configuration_lists_no_provider_and_still_bounds_containment() {
+        let text = document();
+        let head = text.split("[[providers]]").next().unwrap();
+        let managed: ExecutionConfig = toml::from_str(head).unwrap();
+        assert!(managed.is_brokered());
+        assert!(managed.policies(&scope()).is_err());
+        let own: ExecutionConfig = toml::from_str(&text).unwrap();
+        assert!(!own.is_brokered());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unusable_containment_is_a_typed_error_the_managed_runner_can_degrade_on() {
+        let managed: ExecutionConfig =
+            toml::from_str(document().split("[[providers]]").next().unwrap()).unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let prepared = futures::executor::block_on(managed.prepare_containment(state.path()));
+        assert!(matches!(prepared, Err(RunnerError::Containment(_))));
     }
 }

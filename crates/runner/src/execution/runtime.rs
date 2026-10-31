@@ -2,7 +2,9 @@
 //! outbox delivery and bounded drain. It is created only from complete
 //! explicit configuration and never outlives the daemon's native control plane.
 use super::{compose::compose, publisher::OutboxPublisher};
-use crate::{RunnerError, bootstrap::State, sessions::NativeSessionBroker};
+use crate::{
+    RunnerError, bootstrap::State, managed::BrokeredProviders, sessions::NativeSessionBroker,
+};
 use futures::future::{AbortHandle, AbortRegistration};
 use nocterm_cloud_model::{
     coordinator::{CoordinatorError, DrainReport},
@@ -67,8 +69,9 @@ impl ExecutionRuntime {
         setup: super::ExecutionSetup,
         state: &State,
         peer: RunnerHubPeer,
+        brokered: Option<Arc<BrokeredProviders>>,
     ) -> Result<Self, RunnerError> {
-        let mut runtime = compose(setup, state, peer).await?;
+        let mut runtime = compose(setup, state, peer, brokered).await?;
         let begun = runtime.begin().await;
         match begun {
             Ok(()) => Ok(runtime),

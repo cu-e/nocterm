@@ -10,6 +10,7 @@ impl ExecutionRuntime {
         _: ExecutionSetup,
         _: &crate::bootstrap::State,
         _: nocterm_hub_io::cloud::RunnerHubPeer,
+        _: Option<Arc<crate::managed::BrokeredProviders>>,
     ) -> Result<Self, RunnerError> {
         Err(RunnerError::Platform)
     }

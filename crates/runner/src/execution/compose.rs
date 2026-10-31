@@ -2,10 +2,13 @@
 //! state and the administrator configuration. Nothing here is looked up
 //! globally, and no API secret is an input: provider credentials arrive only as
 //! original sealed commands consumed by the injected attachment owner.
-use super::{ExecutionSetup, budgets::ExecutionBudgets, runtime::ExecutionRuntime};
+use super::{
+    ExecutionSetup, budgets::ExecutionBudgets, config::ExecutionConfig, runtime::ExecutionRuntime,
+};
 use crate::{
     RunnerError,
     bootstrap::State,
+    managed::{BrokeredProviders, CoordinatorWake},
     sessions::{
         ConfiguredSessionTargets, NativeSessionBroker, SessionBrokerSetup, SessionCapacity,
         SessionResources,
@@ -14,7 +17,7 @@ use crate::{
 use nocterm_agent_engine::ConfiguredProviderCatalog;
 use nocterm_cloud_model::{
     admission::AdmissionLimits,
-    coordinator::{AuthenticatedCommandSource, RunDestination},
+    coordinator::{AuthenticatedCommandSource, CoordinatorProviders, RunDestination},
     journal::{
         CoordinatorSnapshotEncoder, JournalCatalogBinding, JournalReadLimits, SnapshotLimits,
     },
@@ -95,10 +98,44 @@ fn broker(
     )?)
 }
 
+/// A managed runner calls the host broker with per-chat tokens; every other
+/// runner installs the original sealed provider commands of its devices.
+fn providers(
+    configuration: ExecutionConfig,
+    brokered: Option<&Arc<BrokeredProviders>>,
+    attachments: &Arc<RunnerCommandAttachments>,
+    state: &State,
+    timer: &Arc<dyn ToolTimer>,
+    grants: usize,
+) -> Result<Arc<dyn CoordinatorProviders>, RunnerError> {
+    if let Some(brokered) = brokered {
+        return Ok(brokered.clone());
+    }
+    let credentials = RunnerProviderCredentialSource::new(attachments.clone(), state.account())?;
+    let policies = configuration.policies(state.connection().binding().scope())?;
+    Ok(Arc::new(ConfiguredProviderCatalog::new(
+        Arc::new(credentials),
+        timer.clone(),
+        policies,
+        grants,
+    )?))
+}
+
+/// A token issued after a prompt parked resumes it without another command.
+fn bind_wake(brokered: Option<&Arc<BrokeredProviders>>, coordinator: &RunCoordinator) {
+    if let Some(brokered) = brokered {
+        brokered.tokens().bind_wake(Arc::new(CoordinatorWake::new(
+            coordinator.clone(),
+            brokered.provider().clone(),
+        )));
+    }
+}
+
 pub(super) async fn compose(
     setup: ExecutionSetup,
     state: &State,
     peer: RunnerHubPeer,
+    brokered: Option<Arc<BrokeredProviders>>,
 ) -> Result<ExecutionRuntime, RunnerError> {
     let ExecutionSetup {
         configuration,
@@ -143,12 +180,12 @@ pub(super) async fn compose(
         budgets.sessions(),
     )?;
     let broker = broker(broker_setup, targets, &budgets)?;
-    let credentials = RunnerProviderCredentialSource::new(attachments.clone(), state.account())?;
-    let policies = configuration.policies(binding.scope())?;
-    let providers = ConfiguredProviderCatalog::new(
-        Arc::new(credentials),
-        tool_timer.clone(),
-        policies,
+    let providers = providers(
+        configuration,
+        brokered.as_ref(),
+        &attachments,
+        state,
+        &tool_timer,
         grants,
     )?;
     let retirement = Arc::new(RunnerChatRetirement::new(
@@ -170,6 +207,7 @@ pub(super) async fn compose(
         AdmissionLimits::default(),
         budgets.receive(),
     )?;
+    bind_wake(brokered.as_ref(), &coordinator);
     Ok(ExecutionRuntime::new(
         coordinator,
         broker,
@@ -183,7 +221,7 @@ pub(super) async fn compose(
 
 fn execution(
     binding: JournalCatalogBinding,
-    providers: ConfiguredProviderCatalog,
+    providers: Arc<dyn CoordinatorProviders>,
     broker: &Arc<NativeSessionBroker>,
     journal: &DurableRunJournal,
     budgets: &ExecutionBudgets,
@@ -195,7 +233,7 @@ fn execution(
         Arc::new(journal.cleanup()),
     )?;
     Ok(CoordinatorExecution::new(
-        Arc::new(providers),
+        providers,
         broker.clone(),
         broker.clone(),
         Arc::new(RunnerArgumentFingerprint::new(budgets.arguments())),
