@@ -1,7 +1,10 @@
 //! Boot document version 2: the managed document of a runner whose chat tokens
 //! arrive on the control channel. It is boot v1 without `provider.token`, plus
 //! the pricing ceilings the runner applies to every model (ADR 0123).
-use super::{MAX_BOOT_BYTES, Shape, SshTarget, check_shape};
+use super::{
+    MAX_BOOT_BYTES, Shape, SshTarget, check_shape,
+    policy::{ManagedPolicy, PolicyDocument},
+};
 use crate::RunnerError;
 use nocterm_agent_engine::{ProviderEndpoint, ProviderKind};
 use nocterm_cloud_model::{
@@ -42,6 +45,9 @@ struct Document {
     secret_names: Vec<String>,
     allowed_hosts: Vec<String>,
     ssh_targets: Vec<SshTarget>,
+    /// Absent means every tool, the existing approval rule and no extra limits.
+    #[serde(default)]
+    policy: Option<PolicyDocument>,
 }
 
 /// A validated boot v2 document. It holds no secret.
@@ -49,6 +55,7 @@ pub(crate) struct BootV2 {
     document: Document,
     kind: ProviderKind,
     models: Vec<NamespaceId>,
+    policy: ManagedPolicy,
 }
 impl BootV2 {
     /// Parses and validates one document, refusing anything over the bound,
@@ -61,7 +68,7 @@ impl BootV2 {
             .map_err(|error| RunnerError::Boot(nocterm_core::SharedCause::new(error)))?;
         Self::prepare(document)
     }
-    fn prepare(document: Document) -> Result<Self, RunnerError> {
+    fn prepare(mut document: Document) -> Result<Self, RunnerError> {
         if document.version != BOOT_VERSION {
             return Err(RunnerError::Value("boot.version"));
         }
@@ -90,10 +97,17 @@ impl BootV2 {
             .collect::<Result<Vec<_>, _>>()?;
         // The broker is the only provider endpoint a managed runner may use.
         ProviderEndpoint::broker(&provider.base_url)?;
+        let policy = document
+            .policy
+            .take()
+            .map(ManagedPolicy::from_document)
+            .transpose()?
+            .unwrap_or_default();
         let candidate = Self {
             document,
             kind,
             models,
+            policy,
         };
         // Refuse unusable ceilings now rather than at the first model call.
         let probe = NamespaceId::new("probe".to_owned())
@@ -106,6 +120,9 @@ impl BootV2 {
     }
     pub(crate) fn models(&self) -> &[NamespaceId] {
         &self.models
+    }
+    pub(crate) fn policy(&self) -> &ManagedPolicy {
+        &self.policy
     }
     pub(crate) fn endpoint(&self) -> Result<ProviderEndpoint, RunnerError> {
         Ok(ProviderEndpoint::broker(&self.document.provider.base_url)?)
@@ -151,6 +168,7 @@ impl BootV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managed::Approval;
     fn document() -> serde_json::Value {
         serde_json::json!({
             "version": 2, "instance": "inst1", "agent": "agent1", "lease": "lease1",
@@ -190,5 +208,27 @@ mod tests {
         let mut public = document();
         public["provider"]["base_url"] = "http://api.example.org/v1".into();
         assert!(read(&public).is_err());
+    }
+    #[test]
+    fn a_document_with_or_without_a_policy_parses_and_a_bad_policy_is_refused() {
+        let plain = read(&document()).unwrap();
+        assert!(plain.policy().allowed_tools().is_none());
+        assert_eq!(plain.policy().approval(), Approval::Ask);
+        let mut with = document();
+        with["policy"] = serde_json::json!({"tools": {"allowed": ["exec_command"]},
+            "approval": "never", "limits": {"max_turns": 3}});
+        let boot = read(&with).unwrap();
+        assert_eq!(boot.policy().approval(), Approval::Never);
+        assert_eq!(boot.policy().allowed_tools().unwrap().len(), 1);
+        let mut unknown = with.clone();
+        unknown["policy"]["token"] = "x".into();
+        assert!(read(&unknown).is_err());
+        let mut oversize = document();
+        oversize["policy"] = serde_json::json!({"tools": {"allowed": "all"},
+            "limits": {"max_turns": 1_000_000}});
+        assert!(matches!(
+            read(&oversize),
+            Err(RunnerError::Value("boot.policy.limits"))
+        ));
     }
 }

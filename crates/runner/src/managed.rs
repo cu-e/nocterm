@@ -10,6 +10,7 @@
 mod boot_v2;
 mod chat_tokens;
 mod frames;
+mod policy;
 mod providers;
 mod session;
 #[cfg(test)]
@@ -17,6 +18,7 @@ mod testing;
 pub(crate) use boot_v2::BootV2;
 pub(crate) use chat_tokens::{ChatTokens, ProviderWake};
 pub(crate) use frames::{ControlEnd, read_boot_v2, spawn_reader};
+pub(crate) use policy::{Approval, ManagedPolicy};
 pub(crate) use providers::{BrokeredProviders, CoordinatorWake};
 pub(crate) use session::{Launch, Session};
 
