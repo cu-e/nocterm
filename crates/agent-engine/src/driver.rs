@@ -20,7 +20,7 @@ use nocterm_cloud_model::{
 };
 use rig_agent::run::{AgentRun, AgentRunStep, PromptError};
 use rig_core::{DynModel, operation::Completion};
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 pub(crate) struct RigEngine {
     config: EngineConfig,
@@ -38,12 +38,13 @@ impl RigEngine {
         lease: crate::ProviderLease,
         restore: Option<EngineCheckpoint>,
         calls: ModelCalls,
+        allowed: Option<&BTreeSet<String>>,
     ) -> Result<Self, EngineError> {
         let state = restore
             .map(|saved| checkpoint::restore(&config, &identity, saved))
             .transpose()?
             .flatten();
-        let model = ModelDriver::new(model, config.budget, calls)?;
+        let model = ModelDriver::new(model, config.budget, calls, allowed)?;
         Ok(Self {
             config,
             identity,

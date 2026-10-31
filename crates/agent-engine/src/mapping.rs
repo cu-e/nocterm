@@ -10,7 +10,7 @@ use rig_core::{
     completion::{ToolDefinition, Usage},
     message::{ImageMediaType, Message, ToolName, UserContent},
 };
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 pub(crate) fn prompt(value: &EnginePrompt) -> Result<Message, EngineError> {
     let content = value
@@ -43,9 +43,14 @@ pub(crate) fn prompt(value: &EnginePrompt) -> Result<Message, EngineError> {
         .collect::<Result<_, _>>()?;
     Ok(Message::User { content })
 }
-pub(crate) fn tools() -> Result<Vec<Arc<ToolDefinition>>, EngineError> {
+/// The catalog tools the model is offered: all of them, or only the named ones.
+/// A name outside the catalog never matches.
+pub(crate) fn tools(
+    allowed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Arc<ToolDefinition>>, EngineError> {
     catalog::TOOLS
         .iter()
+        .filter(|spec| allowed.is_none_or(|names| names.contains(spec.name)))
         .map(|spec| {
             let name = ToolName::new(spec.name).map_err(|_| EngineError::InvalidStream)?;
             Ok(Arc::new(ToolDefinition::new(

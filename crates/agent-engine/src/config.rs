@@ -8,7 +8,7 @@ use rig_core::{
     operation::Completion,
     providers::{anthropic::AnthropicConfig, openai::OpenAIConfig},
 };
-use std::{fmt, net::IpAddr};
+use std::{collections::BTreeSet, fmt, net::IpAddr};
 use url::Url;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,6 +181,7 @@ pub struct RigEngineFactory {
     binding: ProviderBinding,
     transport: ProviderHttp,
     lease: ProviderLease,
+    tools: Option<BTreeSet<String>>,
 }
 impl RigEngineFactory {
     pub fn new(lease: ProviderLease) -> Result<Self, EngineError> {
@@ -193,7 +194,15 @@ impl RigEngineFactory {
             binding,
             transport,
             lease,
+            tools: None,
         })
+    }
+    /// Offers the model only the named catalog tools, and refuses a call to any
+    /// other. A name that is not in the catalog never matches. The default
+    /// offers the whole catalog.
+    pub fn with_allowed_tools(mut self, names: BTreeSet<String>) -> Self {
+        self.tools = Some(names);
+        self
     }
     fn model(&self, model: &str, transport: ProviderHttp) -> DynModel<Completion> {
         // The SDK never receives the real credential. The pinned transport adds
@@ -247,6 +256,7 @@ impl AgentEngineFactory for RigEngineFactory {
             self.lease.clone(),
             restore,
             calls,
+            self.tools.as_ref(),
         )?))
     }
 }

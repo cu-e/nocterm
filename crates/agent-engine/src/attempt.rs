@@ -17,7 +17,7 @@ use rig_core::{
     message::Message,
     operation::Completion,
 };
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 pub(crate) struct ModelDriver {
     model: DynModel<Completion>,
@@ -34,11 +34,12 @@ impl ModelDriver {
         model: DynModel<Completion>,
         budget: ModelBudget,
         calls: ModelCalls,
+        allowed: Option<&BTreeSet<String>>,
     ) -> Result<Self, EngineError> {
         Ok(Self {
             model,
             budget,
-            tools: mapping::tools()?,
+            tools: mapping::tools(allowed)?,
             calls,
         })
     }
