@@ -125,6 +125,7 @@ pub struct CoordinatorExecution {
     arguments: Arc<dyn ArgumentFingerprint>,
     session_setup: Option<super::session_services::CoordinatorSessions>,
     retirement: Option<Arc<dyn ChatRetirement>>,
+    approval: Option<Arc<dyn super::ToolApprovalPolicy>>,
 }
 impl CoordinatorExecution {
     pub fn new(
@@ -140,7 +141,14 @@ impl CoordinatorExecution {
             arguments,
             session_setup: None,
             retirement: None,
+            approval: None,
         }
+    }
+    /// Lets the embedding runner decide which mutating calls need a person.
+    /// Without it every mutating call asks.
+    pub fn with_approval_policy(mut self, policy: Arc<dyn super::ToolApprovalPolicy>) -> Self {
+        self.approval = Some(policy);
+        self
     }
     /// Announces each deleted chat to the hub, which may reclaim its capacity.
     pub fn with_retirement(mut self, retirement: Arc<dyn ChatRetirement>) -> Self {
@@ -230,6 +238,9 @@ impl CoordinatorServices {
     }
     pub(super) fn retirement(&self) -> Option<&Arc<dyn ChatRetirement>> {
         self.execution.retirement.as_ref()
+    }
+    pub(super) fn approval(&self) -> Option<&Arc<dyn super::ToolApprovalPolicy>> {
+        self.execution.approval.as_ref()
     }
     pub(super) fn storage(&self) -> &CoordinatorStorage {
         &self.storage

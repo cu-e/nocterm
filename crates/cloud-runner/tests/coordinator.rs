@@ -1,4 +1,6 @@
 //! Real SQLite admission/engine vertical slices. Injected test codecs are not crypto.
+#[path = "coordinator/approval_policy.rs"]
+mod approval_policy;
 #[path = "coordinator/authentication.rs"]
 mod authentication;
 #[path = "coordinator/intake.rs"]
@@ -23,6 +25,7 @@ use nocterm_cloud_model::{
 };
 use nocterm_cloud_runner::coordinator::{
     CoordinatorExecution, CoordinatorServices, CoordinatorStorage, RunCoordinator,
+    ToolApprovalPolicy,
 };
 use std::sync::Arc;
 use support::*;
@@ -83,6 +86,22 @@ impl Fixture {
         receive_budget: CommandReceiveBudget,
         transport: Arc<ScriptedPublicationTransport>,
     ) -> Self {
+        Self::build(task_limits, receive_budget, transport, None)
+    }
+    fn with_approval_policy(policy: Arc<dyn ToolApprovalPolicy>) -> Self {
+        Self::build(
+            SupervisorLimits::default(),
+            CommandReceiveBudget::new(IntakeLimits::default()),
+            Arc::new(ScriptedPublicationTransport::default()),
+            Some(policy),
+        )
+    }
+    fn build(
+        task_limits: SupervisorLimits,
+        receive_budget: CommandReceiveBudget,
+        transport: Arc<ScriptedPublicationTransport>,
+        approval: Option<Arc<dyn ToolApprovalPolicy>>,
+    ) -> Self {
         let root = private_root();
         let retirements = Arc::new(RecordedRetirements::default());
         let cipher = Arc::new(TestCipher::default());
@@ -115,13 +134,16 @@ impl Fixture {
         )
         .with_publication(publication_config(&journal, transport));
         let tools = Arc::new(ScriptedRunTools::default());
-        let execution = CoordinatorExecution::new(
+        let mut execution = CoordinatorExecution::new(
             providers,
             Arc::new(RefusedSessionConsent),
             tools.clone(),
             Arc::new(FixtureArgumentFingerprint),
         )
         .with_retirement(retirements.clone());
+        if let Some(policy) = approval {
+            execution = execution.with_approval_policy(policy);
+        }
         let identity = Arc::new(ScriptedCoordinatorIdentity::default());
         let services = CoordinatorServices::new(
             source.clone(),

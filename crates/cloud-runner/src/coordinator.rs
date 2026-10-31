@@ -1,4 +1,5 @@
 //! Native host actor, bounded command intake and explicit current authority.
+mod approval;
 mod authority;
 mod chat;
 mod commands;
@@ -32,6 +33,7 @@ pub use session_services::CoordinatorSessions;
 mod supervisor;
 mod worker;
 
+pub use approval::ToolApprovalPolicy;
 use chat::Chat;
 use commands::CommandHandler;
 use futures::{

@@ -168,7 +168,7 @@ impl EffectHost {
                 display: ToolDisplay::new(call.call(), None),
             }),
         )];
-        let wait = if intent.mutates() {
+        let wait = if self.needs_person(&intent, call.call()) {
             let expires = grant.expires();
             let (record, event, receiver) = self.pending_approval(&intent, call.call(), expires)?;
             records.push((record, Some(event)));
@@ -197,6 +197,14 @@ impl EffectHost {
             }
         }
         self.release(intent, call, grant).await
+    }
+    /// A mutating call waits for a person unless the runner's policy relaxes it
+    /// for the contained target the call is bound to.
+    fn needs_person(&self, intent: &ToolIntent, call: &TerminalCall) -> bool {
+        intent.mutates()
+            && self.services.approval().is_none_or(|policy| {
+                policy.requires_approval(call, intent.authority().session().target())
+            })
     }
     fn pending_approval(
         &self,
@@ -256,7 +264,7 @@ impl EffectHost {
             .tool(intent.authority().grant())
             .cloned()
             .ok_or(CoordinatorError::NeedsGrant)?;
-        if intent.mutates() {
+        if self.needs_person(&intent, call.call()) {
             let answer = if let Some(choice) = choice {
                 choice
             } else {
