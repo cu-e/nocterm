@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::FutureExt as _;
-use nocterm_cloud_model::projection::{ProjectionError, ports::CapturedConversationSource};
+use nocterm_cloud_model::projection::ProjectionError;
 
 use super::budget::{ChatBudget, SOURCE_RESIDENT_BYTES};
 use super::error::{self, CloudChatError};
@@ -24,7 +24,7 @@ pub(super) async fn open_source(
     budget: &ChatBudget,
     grant: Option<Arc<StoredChatKeyGrant>>,
     patience: Duration,
-) -> Result<Arc<dyn CapturedConversationSource>, CloudChatError> {
+) -> Result<Arc<CloudConversationSource>, CloudChatError> {
     let publish = move || match grant.clone() {
         Some(grant) => async move { grant.publish().await.map_err(error::material) }.boxed(),
         None => async { Ok(()) }.boxed(),
@@ -47,12 +47,7 @@ pub(super) async fn open_source(
             ))
         })();
         match attempt {
-            Ok(opening) => async move {
-                opening
-                    .await
-                    .map(|source| source as Arc<dyn CapturedConversationSource>)
-            }
-            .boxed(),
+            Ok(opening) => opening.boxed(),
             Err(error) => async move { Err(error) }.boxed(),
         }
     };

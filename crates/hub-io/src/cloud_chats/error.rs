@@ -6,7 +6,8 @@ use nocterm_hubs_model::{HubAddress, HubError};
 
 use crate::agents::agent_error;
 use crate::cloud::{
-    AccountMaterialError, CloudTrustError, RunnerCatalogError, RunnerRegistryError,
+    AccountMaterialError, CloudTrustError, ProviderBootError, RunnerCatalogError,
+    RunnerRegistryError,
 };
 
 pub(super) use nocterm_cloud_agents_model::CloudChatError;
@@ -61,6 +62,17 @@ pub(super) fn catalog(error: RunnerCatalogError) -> CloudChatError {
     }
 }
 
+pub(super) fn boot(error: ProviderBootError) -> CloudChatError {
+    match error {
+        ProviderBootError::Capacity => CloudChatError::Capacity,
+        ProviderBootError::Stale => CloudChatError::Stale,
+        // A boot that ended, or a clock that moved, is replaced by the runner's next one.
+        ProviderBootError::Expired | ProviderBootError::Clock => CloudChatError::RunnerNotReady,
+        ProviderBootError::Storage(error) => material(error),
+        other => CloudChatError::Backend(SharedCause::new(other)),
+    }
+}
+
 pub(super) fn agent(address: &HubAddress, error: AgentError) -> CloudChatError {
     CloudChatError::Agent(agent_error(address, error))
 }
@@ -89,6 +101,15 @@ mod tests {
         ));
         assert!(matches!(
             trust(CloudTrustError::Storage(AccountMaterialError::Stale)),
+            CloudChatError::Stale
+        ));
+    }
+
+    #[test]
+    fn a_boot_that_ended_asks_the_person_to_try_again() {
+        assert!(boot(ProviderBootError::Expired).is_retryable());
+        assert!(matches!(
+            boot(ProviderBootError::Stale),
             CloudChatError::Stale
         ));
     }

@@ -22,6 +22,22 @@ impl ModelSelection {
     }
 }
 
+/// The pricing policy of a model the person's own runner calls with a key that a device of
+/// the person leases to it (ADR 0126). The runner's configuration must name it as the
+/// `pricing_revision` of the provider's models.
+pub const OWN_PRICING: &str = "own-v1";
+
+impl ModelSelection {
+    /// The selection of `model` of `provider` on the person's own runner.
+    pub fn own(provider: &str, model: &str) -> Result<Self, SourceIdentityError> {
+        Ok(Self::new(
+            NamespaceId::new(provider)?,
+            NamespaceId::new(model)?,
+            NamespaceId::new(OWN_PRICING)?,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,6 +48,14 @@ mod tests {
         assert_eq!(selection.provider().as_str(), MANAGED_PROVIDER);
         assert_eq!(selection.model().as_str(), "gpt-5");
         assert_eq!(selection.pricing().as_str(), MANAGED_PRICING);
+    }
+
+    #[test]
+    fn an_own_selection_names_the_provider_the_runner_configured() {
+        let selection = ModelSelection::own("openai", "gpt-5").unwrap();
+        assert_eq!(selection.provider().as_str(), "openai");
+        assert_eq!(selection.pricing().as_str(), OWN_PRICING);
+        assert!(ModelSelection::own("", "gpt-5").is_err());
     }
 
     #[test]

@@ -134,7 +134,7 @@ impl CloudChatLauncher for FakeCloudChatLauncher {
                 state.opened.push(source.clone());
                 let title = match host {
                     ChatHost::Agent { agent, .. } => agent.to_string(),
-                    ChatHost::Runner(runner) => runner.label,
+                    ChatHost::Runner(runner) | ChatHost::OwnAgent { runner, .. } => runner.label,
                 };
                 Ok(OpenedChat { source, title })
             }

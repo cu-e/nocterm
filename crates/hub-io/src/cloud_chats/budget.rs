@@ -9,6 +9,7 @@ use nocterm_core::allocation::AllocationLease;
 use super::error::CloudChatError;
 use crate::cloud::{
     ACCOUNT_MATERIAL_RESIDENT_BYTES, AccountMaterialReservations, CLOUD_TRUST_RESIDENT_BYTES,
+    PROVIDER_BOOT_RESIDENT_BYTES, ProviderBootReservations, provider_boot_work_bytes,
     CloudConversationSource, CloudTrustReservations, RUNNER_CATALOG_RESIDENT_BYTES,
     RUNNER_REGISTRY_RESIDENT_BYTES, RunnerRegistryReservations, account_material_work_bytes,
     cloud_trust_work_bytes, runner_catalog_page_bytes, runner_catalog_work_bytes,
@@ -33,7 +34,8 @@ impl ChatBudget {
             .max(Self::trust_work_bytes()?)
             .max(account_material_work_bytes().map_err(|_| CloudChatError::Capacity)?)
             .max(runner_registry_work_bytes().map_err(|_| CloudChatError::Capacity)?)
-            .max(runner_catalog_work_bytes());
+            .max(runner_catalog_work_bytes())
+            .max(provider_boot_work_bytes());
         let work = IntakePoolLimits::new(
             largest.saturating_mul(WORK_POOL_PAYLOADS),
             WORK_POOL_PAYLOADS,
@@ -98,6 +100,18 @@ impl ChatBudget {
         .map_err(|_| CloudChatError::Capacity)
     }
 
+    pub(super) fn boot_resident(&self) -> Result<AllocationLease, CloudChatError> {
+        self.resident(PROVIDER_BOOT_RESIDENT_BYTES)
+    }
+
+    pub(super) fn boot(&self) -> Result<ProviderBootReservations, CloudChatError> {
+        ProviderBootReservations::new(
+            self.work(provider_boot_work_bytes())?,
+            self.resident(PROVIDER_BOOT_RESIDENT_BYTES)?,
+        )
+        .map_err(|_| CloudChatError::Capacity)
+    }
+
     pub(super) fn catalog_resident(&self) -> Result<AllocationLease, CloudChatError> {
         self.resident(RUNNER_CATALOG_RESIDENT_BYTES)
     }
@@ -127,6 +141,7 @@ mod tests {
         assert!(budget.registry().is_ok());
         assert!(budget.catalog_work().is_ok());
         assert!(budget.catalog_page().is_ok());
+        assert!(budget.boot().is_ok());
     }
 
     #[test]

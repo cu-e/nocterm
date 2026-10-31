@@ -14,6 +14,7 @@ mod directory;
 mod error;
 mod managed;
 mod open;
+mod own_runner;
 mod session;
 mod setup;
 mod timer;
@@ -21,10 +22,11 @@ mod wait;
 
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use nocterm_cloud_agents_model::{
-    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, CloudChatLauncher,
-    OpenedChat,
+    AgentId, ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, CloudChatLauncher,
+    CloudFuture, OpenedChat, OwnRunnerLauncher, OwnRunnerSeat, StepSink,
 };
 use nocterm_cloud_model::tool::ToolTimer;
 use nocterm_hubs_model::HubId;
@@ -77,9 +79,14 @@ struct Shared {
     handle: Handle,
     budget: ChatBudget,
     collaborators: Collaborators,
+    leases: own_runner::Leases,
 }
 
 impl Shared {
+    fn leases(&self) -> &own_runner::Leases {
+        &self.leases
+    }
+
     fn handle(&self) -> &Handle {
         &self.handle
     }
@@ -128,6 +135,7 @@ impl CloudChatsLink {
                 storage: services.storage,
                 timer: services.timer,
             },
+            leases: own_runner::Leases::default(),
         });
         Ok(Self {
             links,
@@ -176,12 +184,36 @@ impl CloudChatLauncher for CloudChatsLink {
     }
 
     fn create(&self, hub: &HubId, host: ChatHost) -> ChatFuture<OpenedChat> {
+        let hub_id = hub.clone();
         self.call(hub, move |shared, captured, account| {
-            create::create(shared, captured, account, host)
+            create::create(shared, captured, account, hub_id, host)
         })
     }
 
     fn history(&self, hub: &HubId) -> ChatFuture<Vec<Arc<dyn ChatHistoryEntry>>> {
         self.call(hub, directory::list)
+    }
+}
+
+impl OwnRunnerLauncher for CloudChatsLink {
+    fn start(
+        &self,
+        hub: &HubId,
+        agent: &AgentId,
+        _steps: StepSink,
+    ) -> CloudFuture<OwnRunnerSeat> {
+        let (hub_id, agent) = (hub.clone(), agent.clone());
+        let call = self.call(hub, move |shared, captured, account| async move {
+            own_runner::start(&shared, &captured, &account, &hub_id, &agent).await
+        });
+        Box::pin(async move { call.await.map_err(own_runner::agent_error) })
+    }
+
+    fn renew(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<Duration> {
+        let (hub_id, agent) = (hub.clone(), agent.clone());
+        let call = self.call(hub, move |shared, _captured, account| async move {
+            own_runner::renew(&shared, &account, &hub_id, &agent).await
+        });
+        Box::pin(async move { call.await.map_err(own_runner::agent_error) })
     }
 }

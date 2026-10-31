@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use nocterm_cloud_model::{
-    engine::ModelBudget, inference::ModelSelection, projection::ProjectionError, tool::ToolTimer,
+    engine::ModelBudget, identity::SourceIdentityError, inference::ModelSelection,
+    projection::ProjectionError, tool::ToolTimer,
 };
 
 use crate::cloud::{
@@ -22,7 +23,9 @@ const LIFETIME_MS: u64 = 10 * 60 * 1000;
 pub(super) enum Capability {
     /// Prompts run on the managed seat's default destination with this model.
     Prompting { model: String },
-    /// History, cancel and delete only: a plain chat has no device provider yet.
+    /// Prompts run on the person's own runner with the key this device leases to it.
+    OwnProvider { provider: String, model: String },
+    /// History, cancel and delete only.
     Controls,
 }
 
@@ -41,20 +44,27 @@ impl Capability {
         let workers = collaborators.workers.clone();
         let timer = collaborators.timer.clone();
         let storage = collaborators.storage.clone();
+        let Some(selection) = self.selection() else {
+            return ConversationSetup::controls(LIFETIME_MS, workers, timer, storage);
+        };
+        let budget = ModelBudget::new(TURNS, IO_BYTES, IO_BYTES, OUTPUT_TOKENS)
+            .map_err(|_| ProjectionError::InvalidRecord)?;
+        let policy = ConversationPromptPolicy::runner_default(
+            selection.map_err(|_| ProjectionError::InvalidRecord)?,
+            budget,
+            SPEND_MICROS,
+            LIFETIME_MS,
+            LIFETIME_MS,
+        )?;
+        Ok(ConversationSetup::new(policy, workers, timer, storage))
+    }
+
+    /// The model a prompt names, or `None` when the chat cannot prompt.
+    fn selection(&self) -> Option<Result<ModelSelection, SourceIdentityError>> {
         match self {
-            Self::Controls => ConversationSetup::controls(LIFETIME_MS, workers, timer, storage),
-            Self::Prompting { model } => {
-                let budget = ModelBudget::new(TURNS, IO_BYTES, IO_BYTES, OUTPUT_TOKENS)
-                    .map_err(|_| ProjectionError::InvalidRecord)?;
-                let policy = ConversationPromptPolicy::runner_default(
-                    ModelSelection::managed(model).map_err(|_| ProjectionError::InvalidRecord)?,
-                    budget,
-                    SPEND_MICROS,
-                    LIFETIME_MS,
-                    LIFETIME_MS,
-                )?;
-                Ok(ConversationSetup::new(policy, workers, timer, storage))
-            }
+            Self::Controls => None,
+            Self::Prompting { model } => Some(ModelSelection::managed(model)),
+            Self::OwnProvider { provider, model } => Some(ModelSelection::own(provider, model)),
         }
     }
 }
@@ -62,6 +72,21 @@ impl Capability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_own_provider_chat_prompts_the_provider_the_runner_configured() {
+        let own = Capability::OwnProvider {
+            provider: "openai".into(),
+            model: "gpt-5".into(),
+        };
+        let selection = own.selection().unwrap().unwrap();
+        assert_eq!(selection.provider().as_str(), "openai");
+        assert_eq!(
+            selection.pricing().as_str(),
+            nocterm_cloud_model::inference::OWN_PRICING
+        );
+        assert!(Capability::Controls.selection().is_none());
+    }
 
     #[test]
     fn the_prompt_limits_are_valid_for_the_policy() {

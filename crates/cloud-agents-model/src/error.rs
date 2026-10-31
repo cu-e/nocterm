@@ -42,6 +42,15 @@ pub enum CloudAgentError {
     /// this build cannot set up yet.
     #[error("agents that work only while you are online are not available yet")]
     OnlineOnlyUnavailable,
+    /// No runner of the person's own is registered on this device to lease the key to.
+    #[error("no runner of yours is registered on this device")]
+    NoOwnRunner,
+    /// This device holds no key for the agent, so nothing can be leased.
+    #[error("this device holds no key for the agent")]
+    NoOwnKey,
+    /// The lease of the agent's key is not tracked: it ended or was never started.
+    #[error("the lease of the agent's key has ended")]
+    LeaseEnded,
     /// The agent changed on the hub meanwhile.
     #[error("the agent changed on the hub")]
     Conflict,

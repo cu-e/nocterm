@@ -21,7 +21,6 @@ mod storage;
 mod tests;
 mod work;
 pub use drivers::ConversationStorage;
-pub use grants::ReserveWork;
 pub use policy::ConversationPromptPolicy;
 pub use work::ConversationWorkers;
 

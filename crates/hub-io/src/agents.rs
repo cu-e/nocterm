@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use nocterm_cloud_agents_model::{
     AgentHints, AgentId, AgentUsage, CloudAgent, CloudAgentCatalog, CloudAgentError,
-    CloudAgentLauncher, CloudFuture, ModelUsage, OwnRunnerLauncher, OwnRunnerSeat,
+    CloudAgentLauncher, CloudFuture, ModelUsage, 
     PersonalAgentDraft, PersonalAgents, PinnedPool, PoolChoice, PoolId, PoolOffer, PoolPinStore,
     SaveOutcome, StartOutcome, StepSink,
 };
@@ -106,23 +106,6 @@ impl CloudAgentLauncher for CloudAgentsLink {
     fn pin_pool(&self, hub: &HubId, offer: &PoolOffer) -> CloudFuture<()> {
         let (pins, offer) = (self.pins.clone(), offer.clone());
         self.call(hub, move |captured| launch::pin(captured, pins, offer))
-    }
-}
-
-/// The own-runner adapter is not built yet: the runner's lease and the chat that uses it belong
-/// to the chat-opening path. Both calls answer `OnlineOnlyUnavailable`, which the views show.
-impl OwnRunnerLauncher for CloudAgentsLink {
-    fn start(
-        &self,
-        _hub: &HubId,
-        _agent: &AgentId,
-        _steps: StepSink,
-    ) -> CloudFuture<OwnRunnerSeat> {
-        Box::pin(async { Err(CloudAgentError::OnlineOnlyUnavailable) })
-    }
-
-    fn renew(&self, _hub: &HubId, _agent: &AgentId) -> CloudFuture<std::time::Duration> {
-        Box::pin(async { Err(CloudAgentError::OnlineOnlyUnavailable) })
     }
 }
 

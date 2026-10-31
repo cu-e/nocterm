@@ -8,7 +8,7 @@ pub use ledger::{
     InferenceCallSnapshot, InferenceCharge, InferenceLedger, InferenceReservation,
     InferenceSnapshot,
 };
-pub use managed::{MANAGED_PRICING, MANAGED_PROVIDER};
+pub use managed::{MANAGED_PRICING, MANAGED_PROVIDER, OWN_PRICING};
 pub use policy::{InferenceGrant, InferenceTask, ModelSelection};
 pub use pricing::{ConservativeModelPricing, ModelPricing, ModelQuote};
 

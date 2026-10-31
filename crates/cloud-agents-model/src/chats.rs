@@ -36,8 +36,18 @@ pub enum ChatHost {
         /// The model the chat prompts; the agent's first model is its default.
         model: String,
     },
-    /// One of the person's own runners: history and controls only, until a provider is set up.
+    /// One of the person's own runners: history and controls only.
     Runner(ChatRunner),
+    /// One of the person's own runners prompted with a personal agent that works only while
+    /// a device is online: this device leases the agent's key to the runner (ADR 0126).
+    OwnAgent {
+        /// The runner that runs the chat.
+        runner: ChatRunner,
+        /// The personal agent whose key and model the chat uses.
+        agent: AgentId,
+        /// The model the chat prompts.
+        model: String,
+    },
 }
 
 /// A chat ready to be presented in a window.
@@ -78,6 +88,9 @@ pub enum CloudChatError {
     /// Too many chats or operations are open at once.
     #[error("too many Cloud chats are in use")]
     Capacity,
+    /// The agent has no key on this device, so nothing can be leased to the runner.
+    #[error("this device holds no key for the agent")]
+    NoProviderKey,
     /// The hub refused or failed the managed agent's part.
     #[error(transparent)]
     Agent(#[from] CloudAgentError),
