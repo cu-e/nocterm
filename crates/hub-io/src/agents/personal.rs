@@ -15,8 +15,10 @@ use nocterm_keys::PublicKey;
 use nocterm_keys::agents::{AgentDefinitionV1, DefinitionContext, ProviderBlock, seal_definition};
 
 use super::error::agent_error;
+use super::own_keys;
 use super::launch::{changed, offer};
 use super::pins::PoolPins;
+use crate::account::operations::OpenedWork;
 use crate::devices::Captured;
 
 const IDLE_TTL_S: u32 = 900;
@@ -35,7 +37,7 @@ fn default_endpoint(kind: ProviderKind) -> &'static str {
 fn listing(
     id: nocterm_hub_model::AgentId,
     version: u64,
-    pool: nocterm_hub_model::PoolId,
+    pool: Option<nocterm_hub_model::PoolId>,
     draft: &PersonalAgentDraft,
 ) -> AgentListing {
     AgentListing {
@@ -56,21 +58,61 @@ fn listing(
         },
         idle_ttl_s: IDLE_TTL_S,
         access: AgentAccess::All,
-        allow_personal_on_pool: true,
+        allow_personal_on_pool: pool.is_some(),
         enabled: true,
-        pools: vec![pool],
+        pools: pool.into_iter().collect(),
         availability: Availability::Ready,
     }
+}
+
+/// An agent that works only while a device is online: its key stays in the account's own
+/// encrypted collection and is leased to the own runner on demand; the hub lists the agent
+/// without a pool and holds no sealed definition (ADR 0126).
+async fn save_own(
+    captured: &Captured,
+    work: OpenedWork,
+    existing: Option<(AgentId, u64)>,
+    draft: PersonalAgentDraft,
+) -> Result<SaveOutcome, CloudAgentError> {
+    let (id, expected) = match &existing {
+        Some((id, version)) => (
+            id.as_str().parse().map_err(|_| CloudAgentError::Conflict)?,
+            *version,
+        ),
+        None => (nocterm_hub_model::AgentId::new(), 0),
+    };
+    let agent = id.to_string();
+    let secret = match draft.key() {
+        KeyInput::Replace(secret) => secret.expose().to_owned(),
+        KeyInput::Keep => own_keys::get(&work, &agent)
+            .await?
+            .map(|kept| kept.expose().to_owned())
+            .ok_or(CloudAgentError::Invalid(DraftError::Key))?,
+    };
+    let stored = own_keys::OwnAgentKey::new(draft.provider().id(), draft.model(), &secret);
+    // The key is durable before the listing exists, so a listed agent always has its key.
+    own_keys::put(&work, &agent, &stored).await?;
+    let address = captured.hub.address().clone();
+    captured
+        .client
+        .agents()
+        .put_agent(&listing(id, expected + 1, None, &draft), Vec::new(), expected)
+        .await
+        .map_err(|error| agent_error(&address, error))?;
+    let saved = AgentId::new(agent).map_err(|_| CloudAgentError::Conflict)?;
+    Ok(SaveOutcome::Saved(saved))
 }
 
 pub(super) async fn save(
     captured: Arc<Captured>,
     pins: Arc<PoolPins>,
+    work: Result<OpenedWork, nocterm_hubs_model::HubError>,
     existing: Option<(AgentId, u64)>,
     draft: PersonalAgentDraft,
 ) -> Result<SaveOutcome, CloudAgentError> {
     if !draft.work_offline() {
-        return Err(CloudAgentError::OnlineOnlyUnavailable);
+        let work = work.map_err(super::error::hub_error)?;
+        return save_own(&captured, work, existing, draft).await;
     }
     // The definition is sealed to the pool, and its version is part of what is sealed, so a
     // saved agent is always resealed: the key must be typed again.
@@ -136,7 +178,7 @@ pub(super) async fn save(
     let recipient = PublicKey::from_bytes(&offered.encryption).map_err(sealing)?;
     let envelope = seal_definition(keys.keyset().key_pair(), &recipient, &context, &definition)
         .map_err(sealing)?;
-    let listing = listing(id, version, pool, &draft);
+    let listing = listing(id, version, Some(pool), &draft);
     client
         .put_agent(&listing, vec![PoolEnvelope { pool, envelope }], expected)
         .await
@@ -147,6 +189,7 @@ pub(super) async fn save(
 
 pub(super) async fn delete(
     captured: Arc<Captured>,
+    work: Result<OpenedWork, nocterm_hubs_model::HubError>,
     agent: AgentId,
     version: u64,
 ) -> Result<(), CloudAgentError> {
@@ -160,5 +203,10 @@ pub(super) async fn delete(
         .agents()
         .delete_agent(id, version)
         .await
-        .map_err(|error| agent_error(&address, error))
+        .map_err(|error| agent_error(&address, error))?;
+    // A key kept for an own-runner agent goes with the agent; a pool agent has none.
+    if let Ok(work) = work {
+        own_keys::remove(&work, agent.as_str()).await?;
+    }
+    Ok(())
 }

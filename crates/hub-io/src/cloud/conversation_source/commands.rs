@@ -207,12 +207,13 @@ fn seal(
         ConversationIntent::Prompt(_) => CommandKind::SubmitPrompt,
         ConversationIntent::Stop => CommandKind::Stop,
         ConversationIntent::AnswerApproval(_) => CommandKind::ResolveApproval,
+        ConversationIntent::GrantProvider(_) => CommandKind::IssueGrant,
     };
     let context = CommandContext {
         nonce: random_bytes().map_err(|_| ProjectionError::Unavailable)?,
         expected_chat_revision: command.coordinates.control.get(),
         run: match kind {
-            CommandKind::SubmitPrompt => None,
+            CommandKind::SubmitPrompt | CommandKind::IssueGrant => None,
             _ => command.coordinates.run.as_ref().map(|run| RunCoordinate {
                 id: *run.run().as_bytes(),
                 expected_epoch: run.epoch().get(),
@@ -437,5 +438,32 @@ pub(super) fn payload<'a>(
                     .map_err(|_| ProjectionError::InvalidRecord)?,
             ))
         }
+        ConversationIntent::GrantProvider(access) => provider_grant(access)?,
     })
+}
+
+fn provider_grant(
+    access: &nocterm_cloud_model::projection::ProviderAccess,
+) -> Result<CloudCommandPayload<'_>, ProjectionError> {
+    use nocterm_hub_model::cloud::{CloudTextId, payload::GrantPayload, payload::GrantReference};
+    let context = nocterm_hub_model::cloud::provider::ProviderLeaseContext::from_canonical_bytes(
+        access.context(),
+    )
+    .map_err(|_| ProjectionError::InvalidRecord)?;
+    let allowed_models = access
+        .models()
+        .iter()
+        .map(|model| CloudTextId::new(model).map_err(|_| ProjectionError::InvalidRecord))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CloudCommandPayload::IssueGrant(Box::new(
+        GrantPayload::Provider {
+            grant: GrantReference {
+                id: access.grant(),
+                epoch: access.epoch(),
+            },
+            context,
+            allowed_models,
+            capsule: access.capsule(),
+        },
+    )))
 }

@@ -25,6 +25,9 @@ pub(super) fn stage(command: &ConversationCommand) -> Result<usize, ProjectionEr
         nocterm_cloud_model::projection::ConversationIntent::Prompt(text) => body_work(text.len()),
         nocterm_cloud_model::projection::ConversationIntent::Stop
         | nocterm_cloud_model::projection::ConversationIntent::AnswerApproval(_) => body_work(0),
+        nocterm_cloud_model::projection::ConversationIntent::GrantProvider(access) => {
+            body_work(access.resident_bytes())
+        }
     }
 }
 pub(super) fn action(

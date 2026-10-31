@@ -290,6 +290,7 @@ impl ConversationPolicy {
             ConversationIntent::AnswerApproval(request) => {
                 expires.min(request.expires().as_millis())
             }
+            ConversationIntent::GrantProvider(access) => expires.min(access.expires().as_millis()),
             _ => expires,
         };
         if expires <= issued.as_millis() {

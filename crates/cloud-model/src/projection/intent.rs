@@ -1,5 +1,5 @@
 //! Cloud command requests remain distinct from neutral Local renderer actions.
-use super::ProjectionError;
+use super::{ProjectionError, ProviderAccess};
 use crate::{coordinator::ApprovalAnswer, identity::Timestamp};
 use nocterm_ai::conversation::ConversationAction;
 
@@ -37,6 +37,8 @@ pub enum ConversationIntent {
     Prompt(String),
     Stop,
     AnswerApproval(Box<ApprovalRequest>),
+    /// Hands the runner a sealed lease of the provider credential.
+    GrantProvider(Box<ProviderAccess>),
 }
 impl From<ConversationAction> for ConversationIntent {
     fn from(action: ConversationAction) -> Self {
@@ -60,6 +62,7 @@ impl ConversationIntent {
         4096usize.saturating_add(match self {
             Self::Prompt(text) => text.len().saturating_mul(2),
             Self::Stop | Self::AnswerApproval(_) => 0,
+            Self::GrantProvider(access) => access.resident_bytes(),
         })
     }
 }

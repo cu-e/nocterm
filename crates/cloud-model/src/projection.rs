@@ -3,8 +3,10 @@
 //! encrypted client outbox/cache I/O. Coordinate constructors confer no trust.
 mod approvals;
 mod intent;
+mod provider_access;
 pub use approvals::{ApprovalKey, ProjectedApproval};
 pub use intent::{ApprovalRequest, ConversationIntent};
+pub use provider_access::ProviderAccess;
 mod baseline;
 pub use baseline::{SnapshotBaseline, SnapshotFact};
 mod cursor;

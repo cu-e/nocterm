@@ -10,6 +10,7 @@ mod catalog;
 mod convert;
 pub(crate) mod error;
 mod launch;
+pub(crate) mod own_keys;
 mod personal;
 mod pins;
 mod usage;
@@ -166,16 +167,18 @@ impl PersonalAgents for CloudAgentsLink {
         existing: Option<(AgentId, u64)>,
         draft: PersonalAgentDraft,
     ) -> CloudFuture<SaveOutcome> {
-        let pins = self.pins.clone();
+        let (pins, links, hub_id) = (self.pins.clone(), self.links.clone(), hub.clone());
         self.call(hub, move |captured| {
-            personal::save(captured, pins, existing, draft)
+            let work = links.open_account(&hub_id).and_then(|account| account.work());
+            personal::save(captured, pins, work, existing, draft)
         })
     }
 
     fn delete(&self, hub: &HubId, agent: &AgentId, version: u64) -> CloudFuture<()> {
-        let agent = agent.clone();
+        let (agent, links, hub_id) = (agent.clone(), self.links.clone(), hub.clone());
         self.call(hub, move |captured| {
-            personal::delete(captured, agent, version)
+            let work = links.open_account(&hub_id).and_then(|account| account.work());
+            personal::delete(captured, work, agent, version)
         })
     }
 }
