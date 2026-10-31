@@ -5381,7 +5381,9 @@ dependencies = [
  "futures",
  "gpui-pre",
  "nocterm-cloud-agents-model",
+ "nocterm-cloud-model",
  "nocterm-hubs-model",
+ "nocterm-session",
  "tracing",
 ]
 
@@ -5768,6 +5770,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-cloud-agents",
  "nocterm-cloud-agents-model",
+ "nocterm-cloud-model",
  "nocterm-core",
  "nocterm-hubs",
  "nocterm-hubs-model",

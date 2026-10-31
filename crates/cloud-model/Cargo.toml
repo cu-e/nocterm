@@ -10,7 +10,7 @@ publish = false
 layer = "domain"
 
 [features]
-test-support = ["dep:sha2", "nocterm-session/test-support"]
+test-support = ["dep:sha2"]
 
 [dependencies]
 nocterm-ai.workspace = true

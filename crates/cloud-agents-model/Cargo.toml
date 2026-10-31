@@ -10,7 +10,7 @@ publish = false
 layer = "domain"
 
 [features]
-test-support = ["nocterm-cloud-model/test-support"]
+test-support = []
 
 [dependencies]
 nocterm-cloud-model.workspace = true
@@ -20,6 +20,10 @@ nocterm-session.workspace = true
 
 futures.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+nocterm-cloud-model = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
