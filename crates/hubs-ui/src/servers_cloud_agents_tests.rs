@@ -59,6 +59,7 @@ fn page(cx: &mut TestAppContext, fake: &FakeCloudAgents) -> Fixture {
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
                 own_runner: Arc::new(fake.clone()),
+                usage: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake),
             },
@@ -175,4 +176,30 @@ fn a_forgotten_pool_key_leaves_the_list_and_is_no_longer_trusted(cx: &mut TestAp
     assert!(page.shows(item("cloud-agents-pinned-p1", KEY), cx));
     assert!(!fake.is_pinned(&hub_id(), &dropped));
     assert!(fake.is_pinned(&hub_id(), &kept));
+}
+
+#[gpui_kit::test]
+fn usage_of_own_agents_is_listed_per_model(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    let sample = |model: &str, spend_micros| nocterm_cloud_agents_model::UsageSample {
+        model: model.into(),
+        runs: 1,
+        input_tokens: 10,
+        output_tokens: 2,
+        spend_micros,
+    };
+    fake.set_usage(&hub_id(), vec![sample("gpt-x", 500), sample("", 5)]);
+    let page = page(cx, &fake);
+    assert!(page.shows(item("cloud-agents-usage", KEY), cx));
+    assert!(page.shows(item("cloud-agents-usage-gpt-x", KEY), cx));
+    assert!(page.shows(item("cloud-agents-usage-not attributed", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn a_hub_without_usage_shows_no_table(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    let page = page(cx, &fake);
+    assert!(!page.shows(item("cloud-agents-usage", KEY), cx));
 }

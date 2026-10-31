@@ -17,11 +17,12 @@ use crate::error::CloudAgentError;
 use crate::ids::{AgentId, InstanceId, PoolId};
 use crate::personal::PersonalAgentDraft;
 use crate::ports::{
-    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, OwnRunnerLauncher,
+    AgentHints, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, OwnRunnerLauncher,
     OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore, SaveOutcome, StartOutcome,
     StepSink,
 };
 use crate::start::{PoolOffer, StartStep, StartedAgent};
+use crate::usage::{ModelUsage, UsageSample};
 
 /// How the next start of an agent ends.
 #[derive(Clone, Debug)]
@@ -82,6 +83,7 @@ struct State {
     offers: BTreeMap<AgentId, PoolOffer>,
     scripts: BTreeMap<AgentId, VecDeque<StartScript>>,
     starts: Vec<AgentId>,
+    usage: BTreeMap<HubId, Vec<UsageSample>>,
     own_starts: Vec<AgentId>,
     renewals: Vec<AgentId>,
     renewals_fail_after: Option<usize>,
@@ -158,6 +160,11 @@ impl FakeCloudAgents {
     /// Agents started so far, in order, including repeated attempts.
     pub fn started(&self) -> Vec<AgentId> {
         self.state().starts.clone()
+    }
+
+    /// The hub reports these usage samples for the person's own agents.
+    pub fn set_usage(&self, hub: &HubId, samples: Vec<UsageSample>) {
+        self.state().usage.insert(hub.clone(), samples);
     }
 
     /// Agents started on the own runner so far, in order.
@@ -360,6 +367,15 @@ impl OwnRunnerLauncher for FakeCloudAgents {
             }
             state.renewals.push(agent.clone());
             Ok(FAKE_LEASE_TTL)
+        });
+        async move { result }.boxed()
+    }
+}
+
+impl AgentUsage for FakeCloudAgents {
+    fn personal_usage(&self, hub: &HubId, _days: u32) -> CloudFuture<Vec<ModelUsage>> {
+        let result = self.check(hub).map(|()| {
+            ModelUsage::by_model(self.state().usage.get(hub).cloned().unwrap_or_default())
         });
         async move { result }.boxed()
     }

@@ -5,13 +5,13 @@
 //! ([`arrange`]); the steps a start goes through ([`StartStep`], [`PoolOffer`],
 //! [`StartedAgent`]) and what a hub can refuse ([`Refusal`]); the validated form of a personal
 //! agent ([`PersonalAgentDraft`]); the ports [`CloudAgentCatalog`], [`CloudAgentLauncher`],
-//! [`OwnRunnerLauncher`] and [`PersonalAgents`] with their typed [`CloudAgentError`].
+//! [`OwnRunnerLauncher`], [`AgentUsage`] and [`PersonalAgents`] with their typed [`CloudAgentError`].
 //!
 //! Does not own: the hub protocol, sealing and signatures (`nocterm-hub-io` is the adapter),
 //! the catalog entity and the order of a start (`nocterm-cloud-agents`), views.
 //!
 //! Ports provided: `CloudAgentCatalog`, `CloudAgentLauncher`, `OwnRunnerLauncher`,
-//! `PersonalAgents`. Ports used:
+//! `AgentUsage`, `PersonalAgents`. Ports used:
 //! `nocterm-hubs-model` (`HubId`, `HubColor`, `HubError`) and the `Secret` of `nocterm-session`.
 //!
 //! Settings: none. Globals: none.
@@ -35,6 +35,7 @@ mod start;
 mod status;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+mod usage;
 
 pub use agent::{AgentLimits, CloudAgent, PoolLabel};
 pub use error::CloudAgentError;
@@ -45,7 +46,7 @@ pub use personal::{
 };
 pub use placement::Placement;
 pub use ports::{
-    AgentHints, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, OwnRunnerLauncher,
+    AgentHints, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, OwnRunnerLauncher,
     OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore, SaveOutcome, StartOutcome,
     StepSink, web_panel_url,
 };
@@ -53,6 +54,7 @@ pub use scope::AgentScope;
 pub use sections::{Audience, HubAgents, Section, SectionTitle, arrange};
 pub use start::{PoolOffer, Refusal, SetupProblem, StartStep, StartedAgent};
 pub use status::AgentStatus;
+pub use usage::{ModelUsage, UsageSample};
 
 #[cfg(test)]
 mod tests;

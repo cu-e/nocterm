@@ -13,6 +13,7 @@ use crate::error::CloudAgentError;
 use crate::ids::{AgentId, PoolId};
 use crate::personal::PersonalAgentDraft;
 use crate::start::{PoolOffer, StartStep, StartedAgent};
+use crate::usage::ModelUsage;
 
 /// A call of a Cloud agents port.
 pub type CloudFuture<T> = BoxFuture<'static, Result<T, CloudAgentError>>;
@@ -92,6 +93,12 @@ pub trait OwnRunnerLauncher: Send + Sync {
 
     /// Extends the lease of `agent` by another term and returns that term.
     fn renew(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<std::time::Duration>;
+}
+
+/// Reads what the signed-in person's own agents consumed.
+pub trait AgentUsage: Send + Sync {
+    /// The person's own usage of the last `days` UTC days including today, summed per model.
+    fn personal_usage(&self, hub: &HubId, days: u32) -> CloudFuture<Vec<ModelUsage>>;
 }
 
 /// A pool whose keys this device pinned.

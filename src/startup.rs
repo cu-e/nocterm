@@ -257,6 +257,7 @@ fn cloud_agents_dependencies(
         catalog: link.clone(),
         launcher: link.clone(),
         own_runner: link.clone(),
+        usage: link.clone(),
         personal: link.clone(),
         pins: link,
     })

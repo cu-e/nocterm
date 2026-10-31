@@ -7,6 +7,7 @@
 
 mod form;
 mod pinned;
+mod usage;
 
 use gpui_kit::{
     App, ClickEvent, Context, Entity, Subscription, Task, TestSupportExt as _, Window,
@@ -33,6 +34,7 @@ use crate::layout::{field, note, problem};
 use crate::servers::item;
 use form::{Form, Prefill};
 use pinned::pinned_section;
+use usage::{USAGE_DAYS, UsageTable};
 
 /// The agents of the server that is shown, and the form of one of them.
 pub(in crate::servers) struct CloudAgentsTab {
@@ -43,6 +45,7 @@ pub(in crate::servers) struct CloudAgentsTab {
     problem: Option<String>,
     pinned: Vec<PinnedPool>,
     pinning: Option<Task<()>>,
+    usage: UsageTable,
     _service: Subscription,
 }
 
@@ -57,6 +60,7 @@ impl CloudAgentsTab {
             problem: None,
             pinned: Vec::new(),
             pinning: None,
+            usage: UsageTable::default(),
         }
     }
 
@@ -68,9 +72,11 @@ impl CloudAgentsTab {
             self.working = None;
             self.problem = None;
             self.pinned.clear();
+            self.usage.clear();
             self.service
                 .update(cx, |service, cx| service.track(hub, cx));
             self.refresh_pinned(cx);
+            self.refresh_usage(cx);
             cx.notify();
         }
     }
@@ -78,6 +84,7 @@ impl CloudAgentsTab {
     pub(in crate::servers) fn hide(&mut self) {
         self.hub = None;
         self.pinning = None;
+        self.usage.clear();
         self.form = None;
         self.working = None;
     }
@@ -100,6 +107,27 @@ impl CloudAgentsTab {
             })
             .ok();
         }));
+    }
+
+    /// Reads the per-model usage. A hub that cannot report it simply shows no table.
+    fn refresh_usage(&mut self, cx: &mut Context<Self>) {
+        let Some(hub) = self.hub.clone() else {
+            return;
+        };
+        let reading = self.service.update(cx, |service, cx| {
+            service.personal_usage(&hub, USAGE_DAYS, cx)
+        });
+        let task = cx.spawn(async move |this, cx| {
+            let result = reading.await;
+            this.update(cx, |tab, cx| {
+                if let Ok(rows) = result {
+                    tab.usage.show(rows);
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.usage.reading(task);
     }
 
     fn forget_pool(&mut self, pool: &PoolId, cx: &mut Context<Self>) {
@@ -351,6 +379,7 @@ impl Render for CloudAgentsTab {
                     .map(|form| render_form(form, &key, &view, cx)),
             )
             .child(body)
+            .children(self.usage.render(&key, cx))
             .children(pinned_section(&self.pinned, &key, &view, cx))
             .into_any_element()
     }

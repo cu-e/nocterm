@@ -174,3 +174,27 @@ fn only_a_personal_agent_without_pools_runs_on_the_own_runner() {
     let server = agent("a3", "Srv", AgentScope::Server, AgentStatus::Ready);
     assert_eq!(server.placement(), Placement::Pool);
 }
+
+#[test]
+fn usage_is_summed_per_model_with_the_largest_spender_first() {
+    let sample = |model: &str, runs, spend_micros| UsageSample {
+        model: model.into(),
+        runs,
+        input_tokens: 10,
+        output_tokens: 1,
+        spend_micros,
+    };
+    let rows = ModelUsage::by_model([
+        sample("small", 1, 5),
+        sample("big", 2, 900),
+        sample("small", 3, 7),
+        sample("", 1, 1),
+        sample("big", u64::MAX, 100),
+    ]);
+    let models: Vec<&str> = rows.iter().map(|row| row.model.as_str()).collect();
+    assert_eq!(models, ["big", "small", ""]);
+    assert_eq!(rows[0].runs, u64::MAX, "counters saturate");
+    assert_eq!(rows[0].spend_micros, 1000);
+    assert_eq!((rows[1].runs, rows[1].spend_micros), (4, 12));
+    assert_eq!(rows[2].label(), "not attributed");
+}

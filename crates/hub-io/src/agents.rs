@@ -12,15 +12,17 @@ mod error;
 mod launch;
 mod personal;
 mod pins;
+mod usage;
 
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use nocterm_cloud_agents_model::{
-    AgentHints, AgentId, CloudAgent, CloudAgentCatalog, CloudAgentError, CloudAgentLauncher,
-    CloudFuture, OwnRunnerLauncher, OwnRunnerSeat, PersonalAgentDraft, PersonalAgents, PinnedPool,
-    PoolChoice, PoolId, PoolOffer, PoolPinStore, SaveOutcome, StartOutcome, StepSink,
+    AgentHints, AgentId, AgentUsage, CloudAgent, CloudAgentCatalog, CloudAgentError,
+    CloudAgentLauncher, CloudFuture, ModelUsage, OwnRunnerLauncher, OwnRunnerSeat,
+    PersonalAgentDraft, PersonalAgents, PinnedPool, PoolChoice, PoolId, PoolOffer, PoolPinStore,
+    SaveOutcome, StartOutcome, StepSink,
 };
 use nocterm_hubs_model::HubId;
 use tokio::runtime::Handle;
@@ -118,6 +120,12 @@ impl OwnRunnerLauncher for CloudAgentsLink {
 
     fn renew(&self, _hub: &HubId, _agent: &AgentId) -> CloudFuture<std::time::Duration> {
         Box::pin(async { Err(CloudAgentError::OnlineOnlyUnavailable) })
+    }
+}
+
+impl AgentUsage for CloudAgentsLink {
+    fn personal_usage(&self, hub: &HubId, days: u32) -> CloudFuture<Vec<ModelUsage>> {
+        self.call(hub, move |captured| usage::personal(captured, days))
     }
 }
 

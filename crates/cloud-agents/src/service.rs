@@ -8,8 +8,9 @@ use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{AppContext as _, Context, EventEmitter};
 use nocterm_cloud_agents_model::{
-    AgentId, CloudAgent, CloudAgentError, InstanceId, PersonalAgentDraft, PinnedPool, Placement,
-    PoolChoice, PoolId, PoolOffer, SaveOutcome, StartOutcome, StartStep, StartedAgent, StepSink,
+    AgentId, CloudAgent, CloudAgentError, InstanceId, ModelUsage, PersonalAgentDraft, PinnedPool,
+    Placement, PoolChoice, PoolId, PoolOffer, SaveOutcome, StartOutcome, StartStep, StartedAgent,
+    StepSink,
 };
 use nocterm_hubs_model::HubId;
 
@@ -212,6 +213,16 @@ impl CloudAgents {
         cx: &mut Context<Self>,
     ) -> gpui::Task<Result<(), CloudAgentError>> {
         cx.background_spawn(self.deps.pins.forget(hub, pool))
+    }
+
+    /// What the person's own agents consumed on `hub` in the last `days` days, per model.
+    pub fn personal_usage(
+        &self,
+        hub: &HubId,
+        days: u32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<Vec<ModelUsage>, CloudAgentError>> {
+        cx.background_spawn(self.deps.usage.personal_usage(hub, days))
     }
 
     /// Saves a personal agent; the catalog refreshes through the hub's change hint.
