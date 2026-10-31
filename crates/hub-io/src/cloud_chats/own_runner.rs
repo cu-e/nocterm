@@ -10,12 +10,15 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use nocterm_cloud_agents_model::{AgentId, CloudAgentError, OwnRunnerSeat};
-use nocterm_cloud_model::{identity::Timestamp, projection::{ProjectionError, ProviderAccess}};
+use nocterm_cloud_model::{
+    identity::Timestamp,
+    projection::{ProjectionError, ProviderAccess},
+};
 use nocterm_hubs_model::HubId;
 
+use super::Shared;
 use super::error::{self, CloudChatError};
 use super::session::OpenedAccount;
-use super::Shared;
 use crate::agents::own_keys::{self, OwnAgentKey};
 use crate::cloud::{
     AccountProviderBoot, CloudConversationSource, LeaseRequest, TrustedProviderBoot,
@@ -79,9 +82,12 @@ impl Leases {
         let mut tracked = self.tracked.lock().ok()?;
         let entry = tracked.get_mut(&(hub.clone(), agent.clone()))?;
         entry.chats.retain(|held| {
-            held.chat
-                .upgrade()
-                .is_some_and(|chat| nocterm_cloud_model::projection::ports::CapturedConversationSource::check_current(&*chat).is_ok())
+            held.chat.upgrade().is_some_and(|chat| {
+                nocterm_cloud_model::projection::ports::CapturedConversationSource::check_current(
+                    &*chat,
+                )
+                .is_ok()
+            })
         });
         let chats = entry
             .chats

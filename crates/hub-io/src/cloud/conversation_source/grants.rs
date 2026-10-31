@@ -15,7 +15,8 @@ use nocterm_core::allocation::{Allocated, AllocationLease};
 use std::sync::Arc;
 
 /// Gives the source the work allowance a command of the stated size needs.
-pub(super) type ReserveWork = dyn Fn(usize) -> Result<AllocationLease, ProjectionError> + Send + Sync;
+pub(super) type ReserveWork =
+    dyn Fn(usize) -> Result<AllocationLease, ProjectionError> + Send + Sync;
 
 impl CloudConversationSource {
     /// Stages and delivers a lease of the provider key for this chat. A refusal by the runner
@@ -33,7 +34,10 @@ impl CloudConversationSource {
                 run: None,
                 control: source.core.marker()?.control,
             };
-            let command = source.prepare(coordinates, ConversationIntent::GrantProvider(Box::new(access)))?;
+            let command = source.prepare(
+                coordinates,
+                ConversationIntent::GrantProvider(Box::new(access)),
+            )?;
             let bytes = source
                 .allocation_requirements(ConversationWork::Stage { command: &command })?
                 .bytes();

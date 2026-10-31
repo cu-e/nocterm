@@ -9,10 +9,10 @@ use nocterm_core::allocation::AllocationLease;
 use super::error::CloudChatError;
 use crate::cloud::{
     ACCOUNT_MATERIAL_RESIDENT_BYTES, AccountMaterialReservations, CLOUD_TRUST_RESIDENT_BYTES,
-    PROVIDER_BOOT_RESIDENT_BYTES, ProviderBootReservations, provider_boot_work_bytes,
-    CloudConversationSource, CloudTrustReservations, RUNNER_CATALOG_RESIDENT_BYTES,
-    RUNNER_REGISTRY_RESIDENT_BYTES, RunnerRegistryReservations, account_material_work_bytes,
-    cloud_trust_work_bytes, runner_catalog_page_bytes, runner_catalog_work_bytes,
+    CloudConversationSource, CloudTrustReservations, PROVIDER_BOOT_RESIDENT_BYTES,
+    ProviderBootReservations, RUNNER_CATALOG_RESIDENT_BYTES, RUNNER_REGISTRY_RESIDENT_BYTES,
+    RunnerRegistryReservations, account_material_work_bytes, cloud_trust_work_bytes,
+    provider_boot_work_bytes, runner_catalog_page_bytes, runner_catalog_work_bytes,
     runner_registry_work_bytes,
 };
 

@@ -17,12 +17,20 @@ fn work() -> (OpenedWork, Arc<MemoryHub>, tempfile::TempDir) {
 #[tokio::test]
 async fn a_stored_key_is_read_back_on_the_account_and_replaced_by_the_next_save() {
     let (work, _hub, _dir) = work();
-    put(&work, "agent-1", &OwnAgentKey::new("openai_chat", "gpt", "sk-first"))
-        .await
-        .unwrap();
-    put(&work, "agent-1", &OwnAgentKey::new("openai_chat", "gpt", "sk-second"))
-        .await
-        .unwrap();
+    put(
+        &work,
+        "agent-1",
+        &OwnAgentKey::new("openai_chat", "gpt", "sk-first"),
+    )
+    .await
+    .unwrap();
+    put(
+        &work,
+        "agent-1",
+        &OwnAgentKey::new("openai_chat", "gpt", "sk-second"),
+    )
+    .await
+    .unwrap();
     let read = get(&work, "agent-1").await.unwrap().unwrap();
     assert_eq!(read.expose(), "sk-second");
     assert_eq!(read.provider(), "openai_chat");
@@ -33,9 +41,13 @@ async fn a_stored_key_is_read_back_on_the_account_and_replaced_by_the_next_save(
 #[tokio::test]
 async fn a_forgotten_key_is_gone_and_forgetting_twice_succeeds() {
     let (work, _hub, _dir) = work();
-    put(&work, "agent-1", &OwnAgentKey::new("openai_chat", "gpt", "sk-first"))
-        .await
-        .unwrap();
+    put(
+        &work,
+        "agent-1",
+        &OwnAgentKey::new("openai_chat", "gpt", "sk-first"),
+    )
+    .await
+    .unwrap();
     remove(&work, "agent-1").await.unwrap();
     assert!(get(&work, "agent-1").await.unwrap().is_none());
     remove(&work, "agent-1").await.unwrap();
@@ -44,7 +56,10 @@ async fn a_forgotten_key_is_gone_and_forgetting_twice_succeeds() {
 
 #[test]
 fn the_key_is_never_shown_in_debug() {
-    let shown = format!("{:?}", OwnAgentKey::new("openai_chat", "gpt", "sk-secret-value"));
+    let shown = format!(
+        "{:?}",
+        OwnAgentKey::new("openai_chat", "gpt", "sk-secret-value")
+    );
     assert!(!shown.contains("sk-secret-value"));
     assert!(shown.contains("openai_chat"));
 }

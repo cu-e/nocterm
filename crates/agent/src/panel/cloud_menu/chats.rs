@@ -242,7 +242,10 @@ impl AgentPanel {
                             .runners
                             .get(start.hub())
                             .and_then(|runners| runners.iter().find(|runner| runner.id == id))
-                            .map_or_else(|| "your runner".to_owned(), |runner| runner.label.clone());
+                            .map_or_else(
+                                || "your runner".to_owned(),
+                                |runner| runner.label.clone(),
+                            );
                         ChatHost::OwnAgent {
                             runner: ChatRunner { id, label },
                             agent: start.agent().clone(),

@@ -51,8 +51,12 @@ impl PreparedApp {
             &ssh_config(&paths),
         ));
         let transport = ssh_transport(&paths, hub_links.as_deref())?;
-        let cloud_agents = cloud_agents_dependencies(hub_links.clone(), &paths);
-        let cloud_chats = cloud_chats_launcher(hub_links.as_ref(), &paths);
+        // One chat link serves both ports: it owns the leases of the keys it hands to the own
+        // runner, which the agents service renews.
+        let chats_link = cloud_chats_link(hub_links.as_ref(), &paths);
+        let cloud_agents = cloud_agents_dependencies(hub_links.clone(), chats_link.clone(), &paths);
+        let cloud_chats =
+            chats_link.map(|link| link as Arc<dyn nocterm_cloud_agents_model::CloudChatLauncher>);
         let local_fs = Arc::new(
             nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
         );
@@ -248,9 +252,10 @@ fn hub_dependencies(
 /// pinned per hub in a private directory.
 fn cloud_agents_dependencies(
     links: Option<Arc<nocterm_hub_io::HubLinks>>,
+    own_runner: Option<Arc<nocterm_hub_io::CloudChatsLink>>,
     paths: &Paths,
 ) -> Option<nocterm_cloud_agents::Deps> {
-    let links = links?;
+    let (links, own_runner) = (links?, own_runner?);
     let link = Arc::new(nocterm_hub_io::CloudAgentsLink::new(
         links,
         paths.state_dir().join("hub-pool-pins"),
@@ -258,7 +263,7 @@ fn cloud_agents_dependencies(
     Some(nocterm_cloud_agents::Deps {
         catalog: link.clone(),
         launcher: link.clone(),
-        own_runner: link.clone(),
+        own_runner,
         usage: link.clone(),
         personal: link.clone(),
         pins: link,
@@ -267,10 +272,10 @@ fn cloud_agents_dependencies(
 
 /// The Cloud chat port of the links, if there are any. Its encrypted chat files live in the
 /// state directory.
-fn cloud_chats_launcher(
+fn cloud_chats_link(
     links: Option<&Arc<nocterm_hub_io::HubLinks>>,
     paths: &Paths,
-) -> Option<Arc<dyn nocterm_cloud_agents_model::CloudChatLauncher>> {
+) -> Option<Arc<nocterm_hub_io::CloudChatsLink>> {
     let links = links?;
     let root = paths.state_dir().join("cloud-chats");
     let link = nocterm_hub_io::ChatServices::native(links, root)

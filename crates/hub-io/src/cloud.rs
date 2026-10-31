@@ -71,6 +71,6 @@ pub use conversation_source::{
 
 mod provider_boot;
 pub use provider_boot::{
-    AccountProviderBoot, PROVIDER_BOOT_RESIDENT_BYTES, ProviderBootError, ProviderBootReservations,
-    LeaseRequest, SealedLease, TrustedProviderBoot, provider_boot_work_bytes,
+    AccountProviderBoot, LeaseRequest, PROVIDER_BOOT_RESIDENT_BYTES, ProviderBootError,
+    ProviderBootReservations, SealedLease, TrustedProviderBoot, provider_boot_work_bytes,
 };

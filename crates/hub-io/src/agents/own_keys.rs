@@ -141,12 +141,7 @@ pub(crate) async fn get(
     work: &OpenedWork,
     agent: &str,
 ) -> Result<Option<OwnAgentKey>, CloudAgentError> {
-    let Some(at) = work
-        .transient_store()
-        .find(KIND)
-        .await
-        .map_err(store)?
-    else {
+    let Some(at) = work.transient_store().find(KIND).await.map_err(store)? else {
         return Ok(None);
     };
     let id = object(agent);

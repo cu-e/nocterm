@@ -38,10 +38,6 @@ pub enum CloudAgentError {
     /// The hub did not finish provisioning in time.
     #[error("the host took too long to prepare the agent")]
     TimedOut,
-    /// Agents that work only while a device of the person is online need an own runner, which
-    /// this build cannot set up yet.
-    #[error("agents that work only while you are online are not available yet")]
-    OnlineOnlyUnavailable,
     /// No runner of the person's own is registered on this device to lease the key to.
     #[error("no runner of yours is registered on this device")]
     NoOwnRunner,

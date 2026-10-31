@@ -15,8 +15,8 @@ use nocterm_keys::PublicKey;
 use nocterm_keys::agents::{AgentDefinitionV1, DefinitionContext, ProviderBlock, seal_definition};
 
 use super::error::agent_error;
-use super::own_keys;
 use super::launch::{changed, offer};
+use super::own_keys;
 use super::pins::PoolPins;
 use crate::account::operations::OpenedWork;
 use crate::devices::Captured;
@@ -96,7 +96,11 @@ async fn save_own(
     captured
         .client
         .agents()
-        .put_agent(&listing(id, expected + 1, None, &draft), Vec::new(), expected)
+        .put_agent(
+            &listing(id, expected + 1, None, &draft),
+            Vec::new(),
+            expected,
+        )
         .await
         .map_err(|error| agent_error(&address, error))?;
     let saved = AgentId::new(agent).map_err(|_| CloudAgentError::Conflict)?;
@@ -233,12 +237,7 @@ mod tests {
 
     #[test]
     fn an_online_only_agent_is_listed_without_a_pool_and_runs_on_the_own_runner() {
-        let listed = listing(
-            nocterm_hub_model::AgentId::new(),
-            1,
-            None,
-            &draft(false),
-        );
+        let listed = listing(nocterm_hub_model::AgentId::new(), 1, None, &draft(false));
         assert!(listed.pools.is_empty());
         let shown = super::super::convert::agent(listed, None, &HashMap::new()).unwrap();
         assert_eq!(shown.placement(), Placement::OwnRunner);

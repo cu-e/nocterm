@@ -21,9 +21,8 @@ use std::sync::Arc;
 
 use nocterm_cloud_agents_model::{
     AgentHints, AgentId, AgentUsage, CloudAgent, CloudAgentCatalog, CloudAgentError,
-    CloudAgentLauncher, CloudFuture, ModelUsage, 
-    PersonalAgentDraft, PersonalAgents, PinnedPool, PoolChoice, PoolId, PoolOffer, PoolPinStore,
-    SaveOutcome, StartOutcome, StepSink,
+    CloudAgentLauncher, CloudFuture, ModelUsage, PersonalAgentDraft, PersonalAgents, PinnedPool,
+    PoolChoice, PoolId, PoolOffer, PoolPinStore, SaveOutcome, StartOutcome, StepSink,
 };
 use nocterm_hubs_model::HubId;
 use tokio::runtime::Handle;
@@ -152,7 +151,9 @@ impl PersonalAgents for CloudAgentsLink {
     ) -> CloudFuture<SaveOutcome> {
         let (pins, links, hub_id) = (self.pins.clone(), self.links.clone(), hub.clone());
         self.call(hub, move |captured| {
-            let work = links.open_account(&hub_id).and_then(|account| account.work());
+            let work = links
+                .open_account(&hub_id)
+                .and_then(|account| account.work());
             personal::save(captured, pins, work, existing, draft)
         })
     }
@@ -160,7 +161,9 @@ impl PersonalAgents for CloudAgentsLink {
     fn delete(&self, hub: &HubId, agent: &AgentId, version: u64) -> CloudFuture<()> {
         let (agent, links, hub_id) = (agent.clone(), self.links.clone(), hub.clone());
         self.call(hub, move |captured| {
-            let work = links.open_account(&hub_id).and_then(|account| account.work());
+            let work = links
+                .open_account(&hub_id)
+                .and_then(|account| account.work());
             personal::delete(captured, work, agent, version)
         })
     }

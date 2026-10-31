@@ -196,12 +196,7 @@ impl CloudChatLauncher for CloudChatsLink {
 }
 
 impl OwnRunnerLauncher for CloudChatsLink {
-    fn start(
-        &self,
-        hub: &HubId,
-        agent: &AgentId,
-        _steps: StepSink,
-    ) -> CloudFuture<OwnRunnerSeat> {
+    fn start(&self, hub: &HubId, agent: &AgentId, _steps: StepSink) -> CloudFuture<OwnRunnerSeat> {
         let (hub_id, agent) = (hub.clone(), agent.clone());
         let call = self.call(hub, move |shared, captured, account| async move {
             own_runner::start(&shared, &captured, &account, &hub_id, &agent).await

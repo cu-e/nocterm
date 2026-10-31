@@ -578,9 +578,7 @@ fn require_encoded_approval(
 #[test]
 fn conversation_source_provider_grant_carries_the_sealed_capsule_and_never_outlives_it() {
     use nocterm_cloud_model::projection::{ConversationIntent, ProviderAccess};
-    use nocterm_hub_model::cloud::provider::{
-        BootDescriptor, BootWindow, ProviderLeaseContext,
-    };
+    use nocterm_hub_model::cloud::provider::{BootDescriptor, BootWindow, ProviderLeaseContext};
     use nocterm_keys::cloud::{RunnerBootKey, RunnerSigningKey, seal_provider_lease};
     let account = AccountKeyPair::generate().unwrap();
     let boot = RunnerBootKey::generate().unwrap();
@@ -631,8 +629,7 @@ fn conversation_source_provider_grant_carries_the_sealed_capsule_and_never_outli
         .preparation(Timestamp::from_millis(110_000), 400_000, &action)
         .unwrap();
     assert_eq!(prep.expires().as_millis(), 150_000);
-    let CloudCommandPayload::IssueGrant(grant) =
-        commands::payload(&policy, &action, prep).unwrap()
+    let CloudCommandPayload::IssueGrant(grant) = commands::payload(&policy, &action, prep).unwrap()
     else {
         panic!("a provider lease is an IssueGrant command");
     };

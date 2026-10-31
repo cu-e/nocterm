@@ -84,9 +84,7 @@ impl ProviderAccess {
 
     /// Bytes the lease holds while it waits to be sent.
     pub fn resident_bytes(&self) -> usize {
-        self.context.len()
-            + self.capsule.len()
-            + self.models.iter().map(String::len).sum::<usize>()
+        self.context.len() + self.capsule.len() + self.models.iter().map(String::len).sum::<usize>()
     }
 }
 

@@ -167,7 +167,9 @@ impl BootVerifier {
         Ok(SealedLease {
             context: context.canonical_bytes().map_err(backend)?,
             capsule,
-            expires: Timestamp::from_millis(u64::try_from(ends).map_err(|_| ProviderBootError::Clock)?),
+            expires: Timestamp::from_millis(
+                u64::try_from(ends).map_err(|_| ProviderBootError::Clock)?,
+            ),
         })
     }
 }
