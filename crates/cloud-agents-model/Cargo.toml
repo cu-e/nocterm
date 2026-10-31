@@ -10,9 +10,10 @@ publish = false
 layer = "domain"
 
 [features]
-test-support = []
+test-support = ["nocterm-cloud-model/test-support"]
 
 [dependencies]
+nocterm-cloud-model.workspace = true
 nocterm-core.workspace = true
 nocterm-hubs-model.workspace = true
 nocterm-session.workspace = true

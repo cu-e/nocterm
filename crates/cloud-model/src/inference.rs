@@ -1,5 +1,6 @@
 //! Conservative finite model spending; descriptive values are not execution permits.
 mod ledger;
+mod managed;
 mod policy;
 mod pricing;
 
@@ -7,6 +8,7 @@ pub use ledger::{
     InferenceCallSnapshot, InferenceCharge, InferenceLedger, InferenceReservation,
     InferenceSnapshot,
 };
+pub use managed::{MANAGED_PRICING, MANAGED_PROVIDER};
 pub use policy::{InferenceGrant, InferenceTask, ModelSelection};
 pub use pricing::{ConservativeModelPricing, ModelPricing, ModelQuote};
 

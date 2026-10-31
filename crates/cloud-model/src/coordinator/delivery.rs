@@ -22,7 +22,9 @@ pub enum CommandInput {
     /// The runner opens the chat's stream so its writer, head and catalog row
     /// exist. This is not a command: it has no acceptance, acknowledgement or
     /// control position, and repeating it changes nothing.
-    ChatOpened { stream: StreamBinding },
+    ChatOpened {
+        stream: StreamBinding,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RetryReason {

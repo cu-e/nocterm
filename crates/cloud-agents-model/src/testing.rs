@@ -3,6 +3,9 @@
 //! Enable `test-support` in a dev-dependency. A call completes when it is polled. Clones share
 //! one state, so a test keeps a handle while the code under test holds another.
 
+mod chats;
+pub use chats::{ChatFailure, FakeCloudChatLauncher};
+
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 

@@ -5389,6 +5389,7 @@ name = "nocterm-cloud-agents-model"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "nocterm-cloud-model",
  "nocterm-core",
  "nocterm-hubs-model",
  "nocterm-session",

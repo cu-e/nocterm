@@ -5,14 +5,17 @@
 //! ([`arrange`]); the steps a start goes through ([`StartStep`], [`PoolOffer`],
 //! [`StartedAgent`]) and what a hub can refuse ([`Refusal`]); the validated form of a personal
 //! agent ([`PersonalAgentDraft`]); the ports [`CloudAgentCatalog`], [`CloudAgentLauncher`],
-//! [`OwnRunnerLauncher`], [`AgentUsage`] and [`PersonalAgents`] with their typed [`CloudAgentError`].
+//! [`OwnRunnerLauncher`], [`AgentUsage`] and [`PersonalAgents`] with their typed
+//! [`CloudAgentError`]; the chat port [`CloudChatLauncher`] (create, list and open Cloud
+//! chats) with its typed [`CloudChatError`].
 //!
 //! Does not own: the hub protocol, sealing and signatures (`nocterm-hub-io` is the adapter),
 //! the catalog entity and the order of a start (`nocterm-cloud-agents`), views.
 //!
 //! Ports provided: `CloudAgentCatalog`, `CloudAgentLauncher`, `OwnRunnerLauncher`,
-//! `AgentUsage`, `PersonalAgents`. Ports used:
-//! `nocterm-hubs-model` (`HubId`, `HubColor`, `HubError`) and the `Secret` of `nocterm-session`.
+//! `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`. Ports used: `nocterm-hubs-model`
+//! (`HubId`, `HubColor`, `HubError`), the `Secret` of `nocterm-session` and the
+//! `CapturedConversationSource` of `nocterm-cloud-model`.
 //!
 //! Settings: none. Globals: none.
 //!
@@ -20,10 +23,11 @@
 //! the sealed definition; a start never registers a runner for a pool whose keys are not pinned
 //! or changed; a provider key is write-only and redacted in `Debug`; sections never mix hubs.
 //!
-//! With the `test-support` feature, [`testing::FakeCloudAgents`] implements the ports in
-//! memory for consumers' tests.
+//! With the `test-support` feature, [`testing::FakeCloudAgents`] implements the agent ports
+//! and [`testing::FakeCloudChatLauncher`] the chat port in memory for consumers' tests.
 
 mod agent;
+mod chats;
 mod error;
 mod ids;
 mod personal;
@@ -38,6 +42,10 @@ pub mod testing;
 mod usage;
 
 pub use agent::{AgentLimits, CloudAgent, PoolLabel};
+pub use chats::{
+    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, CloudChatLauncher,
+    OpenedChat,
+};
 pub use error::CloudAgentError;
 pub use ids::{AgentId, IdError, InstanceId, MAX_ID_BYTES, PoolId};
 pub use personal::{
