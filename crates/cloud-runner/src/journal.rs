@@ -9,6 +9,7 @@ mod head;
 mod head_cells;
 pub(crate) mod header_link;
 mod metadata;
+mod migration;
 pub use current_heads::DurableCurrentCloudHeads;
 mod replay;
 mod retention;
@@ -88,7 +89,7 @@ impl Default for JournalLimits {
     }
 }
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 struct Driver {
     connection: Connection,
@@ -548,7 +549,9 @@ fn initialize(db: &Connection, limits: JournalLimits, create: bool) -> Result<()
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(storage)?;
-    if (create && version != 0) || (!create && version != SCHEMA_VERSION) {
+    if !create && version == migration::PREVIOUS_VERSION {
+        migration::upgrade(db)?;
+    } else if (create && version != 0) || (!create && version != SCHEMA_VERSION) {
         return Err(JournalError::UnsupportedFormat);
     }
     let page_size: i64 = db

@@ -64,6 +64,7 @@ CREATE TABLE outbox (
   writer INTEGER NOT NULL CHECK(writer>0),
   body BLOB NOT NULL,
   acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN(0,1)),
+  retry_until INTEGER NOT NULL DEFAULT 0 CHECK(retry_until>=0),
   PRIMARY KEY(chat,sequence),
   UNIQUE(chat,id),
   UNIQUE(chat,delivery)
@@ -123,5 +124,5 @@ CREATE TABLE snapshot_payloads (
   body BLOB NOT NULL,
   PRIMARY KEY(chat,kind)
 ) WITHOUT ROWID;
-PRAGMA user_version=5;
+PRAGMA user_version=6;
 COMMIT;

@@ -140,7 +140,23 @@ impl OutboxPublicationReader for DurableSnapshotPublication {
                 {
                     return Err(JournalError::Corrupt);
                 }
-                ResidentPublication::new(stream.clone(), entry, allocation).map(Some)
+                let retry_until: i64 = db
+                    .query_row(
+                        "SELECT retry_until FROM outbox WHERE chat=?1 AND sequence=?2",
+                        rusqlite::params![
+                            head::key(&stream).as_slice(),
+                            i64::try_from(next.get()).map_err(|_| JournalError::Capacity)?
+                        ],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error)?;
+                ResidentPublication::with_retry_until(
+                    stream.clone(),
+                    entry,
+                    allocation,
+                    retry_until,
+                )
+                .map(Some)
             })
         })
     }

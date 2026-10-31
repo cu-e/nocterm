@@ -20,10 +20,15 @@ impl OutboxDeliveryId {
         &self.0
     }
 }
+/// How long after its first storage a publication may still be retried: the horizon a hub
+/// with receipt reclaim is promised. The hub accepts 1 ms to 30 days; a week outlasts any
+/// outbox retry cycle.
+pub const OUTBOX_RETRY_WINDOW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 #[derive(Debug)]
 pub struct OutboxPublication {
     stream: StreamBinding,
     entry: OutboxEntry,
+    retry_until_ms: i64,
 }
 /// Only sharing this carrier shares a proof; cloning an entry alone does not.
 #[derive(Clone)]
@@ -39,6 +44,16 @@ impl ResidentPublication {
         entry: OutboxEntry,
         allocation: AllocationLease,
     ) -> Result<Self, JournalError> {
+        Self::with_retry_until(stream, entry, allocation, 0)
+    }
+    /// A publication whose journal fixed the retry horizon (milliseconds since the epoch)
+    /// when the entry was stored; `0` means none was recorded.
+    pub fn with_retry_until(
+        stream: StreamBinding,
+        entry: OutboxEntry,
+        allocation: AllocationLease,
+        retry_until_ms: i64,
+    ) -> Result<Self, JournalError> {
         if allocation.bytes() < Self::required_bytes(entry.sealed().len())?
             || allocation.payloads() < 1
             || entry
@@ -49,7 +64,11 @@ impl ResidentPublication {
             return Err(JournalError::Capacity);
         }
         Ok(Self(Arc::new(Allocated::new(
-            OutboxPublication { stream, entry },
+            OutboxPublication {
+                stream,
+                entry,
+                retry_until_ms,
+            },
             allocation,
         ))))
     }
@@ -73,6 +92,10 @@ impl ResidentPublication {
     }
     pub fn entry(&self) -> &OutboxEntry {
         &self.0.value().entry
+    }
+    /// The horizon the journal persisted with this entry, or `0` when none was recorded.
+    pub fn retry_until_ms(&self) -> i64 {
+        self.0.value().retry_until_ms
     }
     pub fn allocation(&self) -> &AllocationLease {
         self.0.allocation()

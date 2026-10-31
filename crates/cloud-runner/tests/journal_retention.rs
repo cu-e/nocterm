@@ -513,3 +513,58 @@ fn assert_active_archive_type_preflight() {
         Err(JournalError::Corrupt)
     ));
 }
+
+fn clock_ms() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+fn stored_with_one_entry(root: &std::path::Path, cipher: &Arc<TestCipher>) {
+    let store = journal(root, cipher.clone());
+    let lease = claim(&store, None);
+    commit(
+        &store,
+        admission(&lease, JournalPosition::default(), acceptance(1, 0)),
+    );
+}
+fn first_horizon(root: &std::path::Path, cipher: &Arc<TestCipher>) -> i64 {
+    let store = journal(root, cipher.clone());
+    let maintenance = snapshot_publication(&store);
+    next_publication(&maintenance, EventSequence::default()).retry_until_ms()
+}
+
+#[test]
+fn a_stored_entry_keeps_its_retry_horizon_across_reopen() {
+    let root = private_root();
+    let cipher = Arc::new(TestCipher::default());
+    let before = clock_ms();
+    stored_with_one_entry(root.path(), &cipher);
+    let first = first_horizon(root.path(), &cipher);
+    assert!(first >= before + OUTBOX_RETRY_WINDOW_MS);
+    assert_eq!(first_horizon(root.path(), &cipher), first);
+}
+
+#[test]
+fn a_version_5_journal_is_upgraded_with_a_horizon_computed_once() {
+    let root = private_root();
+    let cipher = Arc::new(TestCipher::default());
+    stored_with_one_entry(root.path(), &cipher);
+    let db = rusqlite::Connection::open(root.path().join("cloud-runs.sqlite3")).unwrap();
+    db.execute_batch("ALTER TABLE outbox DROP COLUMN retry_until; PRAGMA user_version=5")
+        .unwrap();
+    drop(db);
+    let before = clock_ms();
+    let upgraded = first_horizon(root.path(), &cipher);
+    assert!(upgraded >= before + OUTBOX_RETRY_WINDOW_MS);
+    let db = rusqlite::Connection::open(root.path().join("cloud-runs.sqlite3")).unwrap();
+    let version: i64 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 6);
+    drop(db);
+    assert_eq!(first_horizon(root.path(), &cipher), upgraded);
+}

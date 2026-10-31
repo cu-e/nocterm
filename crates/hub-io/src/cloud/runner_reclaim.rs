@@ -2,16 +2,13 @@
 //! a publication and the runner-signed deletion of a chat. A hub without the bit keeps
 //! the old behaviour: no horizon is sent and a deletion stays local.
 use super::{RunnerHubError, RunnerHubPeer, runner_peer::sdk_error};
+use nocterm_cloud_model::journal::OUTBOX_RETRY_WINDOW_MS as RETRY_HORIZON_MS;
 use nocterm_hub_client::cloud::{CloudError, RetireChatError};
 use nocterm_hub_model::cloud::CloudTextId;
 use std::{
     future::Future,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-
-/// How long after an attempt the runner promises not to retry that publication. The
-/// hub accepts 1 ms to 30 days; a week outlasts any outbox retry cycle.
-const RETRY_HORIZON_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 /// The horizon for one publication attempt: `0` (none) unless the hub negotiated reclaim.
 pub(super) fn retry_until(now_ms: i64, supported: bool) -> i64 {

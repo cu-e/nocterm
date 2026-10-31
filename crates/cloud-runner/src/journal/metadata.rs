@@ -45,13 +45,13 @@ pub(super) fn outbox_rows(db: &Connection, maximum: u64) -> Result<(), JournalEr
     require_transaction(db)?;
     scan(
         db,
-        "SELECT CASE WHEN typeof(chat)!='blob' OR typeof(sequence)!='integer' OR typeof(id)!='blob' OR typeof(delivery)!='blob' OR typeof(record)!='integer' OR typeof(revision)!='integer' OR typeof(writer)!='integer' OR typeof(body)!='blob' OR typeof(acknowledged)!='integer' THEN 0 ELSE 1 END FROM outbox LIMIT ?1",
+        "SELECT CASE WHEN typeof(chat)!='blob' OR typeof(sequence)!='integer' OR typeof(id)!='blob' OR typeof(delivery)!='blob' OR typeof(record)!='integer' OR typeof(revision)!='integer' OR typeof(writer)!='integer' OR typeof(body)!='blob' OR typeof(acknowledged)!='integer' OR typeof(retry_until)!='integer' THEN 0 ELSE 1 END FROM outbox LIMIT ?1",
         maximum,
         0,
     )?;
     scan(
         db,
-        "SELECT CASE WHEN length(chat)!=32 OR length(id)!=16 OR length(delivery)!=16 OR sequence<=0 OR record<=0 OR revision<=0 OR writer<=0 OR acknowledged NOT IN (0,1) OR length(body)<=0 OR length(body)>?2 THEN 0 ELSE 1 END FROM outbox LIMIT ?1",
+        "SELECT CASE WHEN length(chat)!=32 OR length(id)!=16 OR length(delivery)!=16 OR sequence<=0 OR record<=0 OR revision<=0 OR writer<=0 OR acknowledged NOT IN (0,1) OR retry_until<0 OR length(body)<=0 OR length(body)>?2 THEN 0 ELSE 1 END FROM outbox LIMIT ?1",
         maximum,
         super::MAX_STORED_JOURNAL_BYTES,
     )?;

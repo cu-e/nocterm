@@ -45,6 +45,7 @@ impl OutboxPublicationTransport for RunnerHubPeer {
             // request unchanged.
             let horizon = horizons.horizon(
                 *publication.delivery_id().as_bytes(),
+                publication.retry_until_ms(),
                 super::runner_reclaim::now_ms().map_err(native_error)?,
                 runner.supports_receipt_reclaim(),
             );

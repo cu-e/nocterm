@@ -139,6 +139,7 @@ pub(super) fn outbox(
 ) -> Result<(), JournalError> {
     let next = batch.next_position()?;
     let material = cipher.chat_key_epoch(batch.lease().stream())?;
+    let retry_until = super::migration::horizon_from(super::migration::now_ms()?);
     for entry in batch.outbox() {
         use sha2::{Digest, Sha256};
         let anchor = entry.anchor();
@@ -187,7 +188,7 @@ pub(super) fn outbox(
             batch.lease().epoch(),
         );
         let body = codec::seal(cipher, &context, &codec::Outbox::from(entry.entry()))?;
-        db.execute("INSERT INTO outbox(chat,sequence,id,record,revision,writer,body,delivery) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![head::key(batch.lease().stream()).as_slice(), integer(entry.sequence().get())?, entry.id().as_bytes().as_slice(), integer(entry.record().get())?, integer(context.revision().get())?, integer(context.writer().get())?, body, entry.delivery_id().as_bytes().as_slice()]).map_err(storage)?;
+        db.execute("INSERT INTO outbox(chat,sequence,id,record,revision,writer,body,delivery,retry_until) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![head::key(batch.lease().stream()).as_slice(), integer(entry.sequence().get())?, entry.id().as_bytes().as_slice(), integer(entry.record().get())?, integer(context.revision().get())?, integer(context.writer().get())?, body, entry.delivery_id().as_bytes().as_slice(), retry_until]).map_err(storage)?;
     }
     Ok(())
 }
