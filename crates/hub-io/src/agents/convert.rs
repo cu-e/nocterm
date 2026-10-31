@@ -9,13 +9,17 @@ use nocterm_hub_model::agents::{AgentListing, AgentScope as WireScope, Availabil
 
 pub(super) fn agent(
     listing: AgentListing,
+    org_name: Option<String>,
     pool_names: &HashMap<String, String>,
 ) -> Option<CloudAgent> {
     let scope = match listing.scope {
         WireScope::Account => AgentScope::Personal,
+        // The hub names the organization; without a name the person sees the identifier.
         WireScope::Org(org) => AgentScope::Org {
             id: org.to_string(),
-            name: org.to_string(),
+            name: org_name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| org.to_string()),
         },
         WireScope::Instance => AgentScope::Server,
     };
@@ -65,5 +69,67 @@ fn status(availability: Availability) -> AgentStatus {
         Availability::NeedsKey => AgentStatus::NeedsKey,
         Availability::NeedsPoolTrust => AgentStatus::NeedsPoolTrust,
         Availability::Disabled => AgentStatus::Disabled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_hub_model::OrgId;
+    use nocterm_hub_model::agents::{AgentAccess, ResourceRequest};
+
+    fn listing(scope: WireScope) -> AgentListing {
+        AgentListing {
+            id: nocterm_hub_model::AgentId::new(),
+            scope,
+            version: 1,
+            name: "Scribe".into(),
+            description: String::new(),
+            icon: String::new(),
+            color: String::new(),
+            provider_kind: "openai_chat".into(),
+            models: vec!["gpt".into()],
+            resources: ResourceRequest {
+                cpu_milli: 500,
+                mem_mib: 256,
+                disk_mib: 512,
+                max_parallel_runs: 1,
+            },
+            idle_ttl_s: 600,
+            access: AgentAccess::All,
+            allow_personal_on_pool: false,
+            enabled: true,
+            pools: Vec::new(),
+            availability: Availability::Ready,
+        }
+    }
+
+    fn scope_name(listed: &CloudAgent) -> String {
+        match &listed.scope {
+            AgentScope::Org { name, .. } => name.clone(),
+            other => panic!("not an organization: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_organization_agent_shows_the_name_the_hub_sent() {
+        let org = OrgId::new();
+        let named = agent(
+            listing(WireScope::Org(org)),
+            Some("Acme".into()),
+            &HashMap::new(),
+        )
+        .expect("agent");
+        assert_eq!(scope_name(&named), "Acme");
+    }
+
+    #[test]
+    fn an_organization_without_a_name_shows_its_identifier() {
+        let org = OrgId::new();
+        for missing in [None, Some("  ".to_owned())] {
+            let unnamed =
+                agent(listing(WireScope::Org(org)), missing, &HashMap::new()).expect("agent");
+            assert_eq!(scope_name(&unnamed), org.to_string());
+        }
     }
 }

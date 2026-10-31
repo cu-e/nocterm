@@ -19,7 +19,7 @@ pub(super) async fn list(captured: Arc<Captured>) -> Result<Vec<CloudAgent>, Clo
     let address = captured.hub.address().clone();
     let client = captured.client.agents();
     let listings = client
-        .list_agents(None)
+        .list_agents_with_org_names(None)
         .await
         .map_err(|error| agent_error(&address, error))?;
     // Names are only decoration: a hub that cannot list pools still lists its agents.
@@ -35,7 +35,7 @@ pub(super) async fn list(captured: Arc<Captured>) -> Result<Vec<CloudAgent>, Clo
         .unwrap_or_default();
     Ok(listings
         .into_iter()
-        .filter_map(|listing| convert::agent(listing, &names))
+        .filter_map(|listed| convert::agent(listed.listing, listed.org_name, &names))
         .collect())
 }
 
