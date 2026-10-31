@@ -210,3 +210,37 @@ pub(super) async fn delete(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_cloud_agents_model::{KeyInput, Placement, ProviderKind};
+    use nocterm_session::Secret;
+    use std::collections::HashMap;
+
+    fn draft(offline: bool) -> PersonalAgentDraft {
+        PersonalAgentDraft::new(
+            "Helper",
+            ProviderKind::OpenAiChat,
+            "",
+            "gpt-4o-mini",
+            KeyInput::Replace(Secret::new("sk-1")),
+            offline,
+            offline.then(|| nocterm_cloud_agents_model::PoolId::new("p1").unwrap()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_online_only_agent_is_listed_without_a_pool_and_runs_on_the_own_runner() {
+        let listed = listing(
+            nocterm_hub_model::AgentId::new(),
+            1,
+            None,
+            &draft(false),
+        );
+        assert!(listed.pools.is_empty());
+        let shown = super::super::convert::agent(listed, None, &HashMap::new()).unwrap();
+        assert_eq!(shown.placement(), Placement::OwnRunner);
+    }
+}
