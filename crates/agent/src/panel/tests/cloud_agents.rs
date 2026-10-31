@@ -349,6 +349,38 @@ fn a_ready_start_opens_the_chat_of_its_agent_in_the_window_that_pressed_start(
 }
 
 #[gpui_kit::test]
+fn a_ready_online_only_agent_opens_a_chat_that_leases_its_key_to_the_own_runner(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let fake = FakeCloudAgents::default();
+    let mut mine = agent("a1", "Scribe", AgentScope::Personal, AgentStatus::Ready);
+    mine.pools.clear();
+    fake.set_agents(&hub(HOME), vec![mine]);
+    let launcher = FakeCloudChatLauncher::default();
+    launcher.set_runners(vec![ChatRunner {
+        id: [9; 16],
+        label: "laptop".into(),
+    }]);
+    let (handle, _) = cloud_window(&f, chat_access(&fake, &launcher, cx), cx);
+    open_cloud_tab(handle, cx);
+    cx.run_until_parked();
+    click(handle, format!("cloud-agent-{HOME}-a1"), cx);
+    assert_eq!(
+        launcher.created(),
+        vec![ChatHost::OwnAgent {
+            runner: ChatRunner {
+                id: [9; 16],
+                label: "laptop".into(),
+            },
+            agent: AgentId::new("a1").unwrap(),
+            model: "gpt-x".into(),
+        }]
+    );
+    assert_eq!(launcher.opened().len(), 1);
+}
+
+#[gpui_kit::test]
 fn another_window_offers_open_chat_and_a_slow_runner_asks_to_try_again(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let launcher = FakeCloudChatLauncher::default();

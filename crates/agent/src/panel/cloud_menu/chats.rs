@@ -10,8 +10,9 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_cloud_agents::{StartId, StartPhase};
+use nocterm_cloud_agents_model::Placement;
 use nocterm_cloud_agents_model::{
-    AgentId, ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, OpenedChat,
+    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, OpenedChat,
 };
 use nocterm_hubs_model::HubId;
 
@@ -223,7 +224,7 @@ impl AgentPanel {
             return;
         };
         let service = access.service().read(cx);
-        let target: Option<(HubId, AgentId, String)> = service
+        let target: Option<(HubId, ChatHost)> = service
             .starts()
             .find(|start| start.id() == id)
             .and_then(|start| {
@@ -232,15 +233,36 @@ impl AgentPanel {
                     .iter()
                     .find(|agent| agent.id == *start.agent())?;
                 let model = agent.primary_model()?.to_owned();
-                Some((start.hub().clone(), start.agent().clone(), model))
+                let host = match (agent.placement(), start.phase()) {
+                    (Placement::OwnRunner, StartPhase::Ready(started)) => {
+                        let id: [u8; 16] = started.runner.as_slice().try_into().ok()?;
+                        let label = self
+                            .cloud
+                            .chats
+                            .runners
+                            .get(start.hub())
+                            .and_then(|runners| runners.iter().find(|runner| runner.id == id))
+                            .map_or_else(|| "your runner".to_owned(), |runner| runner.label.clone());
+                        ChatHost::OwnAgent {
+                            runner: ChatRunner { id, label },
+                            agent: start.agent().clone(),
+                            model,
+                        }
+                    }
+                    _ => ChatHost::Agent {
+                        agent: start.agent().clone(),
+                        model,
+                    },
+                };
+                Some((start.hub().clone(), host))
             });
-        let Some((hub, agent, model)) = target else {
+        let Some((hub, host)) = target else {
             self.cloud.chats.notice = Some("The agent has no model to chat with.".to_owned());
             cx.notify();
             return;
         };
         self.cloud.chats.started_here.remove(&id);
-        let future = launcher.create(&hub, ChatHost::Agent { agent, model });
+        let future = launcher.create(&hub, host);
         self.present_cloud_chat(future, Some(id), window, cx);
     }
 
