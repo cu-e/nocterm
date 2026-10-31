@@ -117,6 +117,7 @@ acceptance; a later record supersedes an earlier one.
 | [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers |
 | [0120](0120-cloud-agent-catalog-in-the-chat-menu.md) | The Cloud agent catalog lives in the new-chat menu |
 | [0121](0121-managed-pools-as-a-trusted-gateway.md) | Managed pools are a trusted gateway with per-lease broker tokens |
+| [0122](0122-cloud-chat-creation-protocol.md) | Cloud chats are created on the device and claimed by the runner on key admission |
 | [0123](0123-runner-control-channel.md) | The managed runner reads per-chat broker tokens from a framed control channel |
 | [0124](0124-managed-execution-containment.md) | Managed execution runs tools in nested containment behind the host broker |
 | [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) | Account-key lock port, journal v6 horizon and own-runner placement |
