@@ -1,5 +1,5 @@
 use super::*;
-use crate::managed::testing::{chat, namespace, scope, token};
+use crate::managed::testing::{Broker, chat, namespace, scope, text_reply, token};
 use futures::future::AbortHandle;
 use nocterm_cloud_model::{
     authority::RunBinding,
@@ -8,74 +8,6 @@ use nocterm_cloud_model::{
     testing::{ScriptedEngineEvents, ScriptedModelAdmission},
 };
 use std::sync::Mutex;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-};
-
-/// A broker stub that records the head of each request and answers one SSE chat.
-struct Broker {
-    root: String,
-    heads: Arc<Mutex<Vec<String>>>,
-}
-impl Broker {
-    async fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let root = format!("http://{}", listener.local_addr().unwrap());
-        let heads = Arc::new(Mutex::new(Vec::new()));
-        let seen = heads.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let mut bytes = Vec::new();
-                let mut chunk = [0u8; 4096];
-                let split = loop {
-                    let read = stream.read(&mut chunk).await.unwrap();
-                    bytes.extend_from_slice(&chunk[..read]);
-                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                        break end + 4;
-                    }
-                };
-                let head = String::from_utf8_lossy(&bytes[..split]).to_ascii_lowercase();
-                let length = head
-                    .lines()
-                    .find_map(|line| line.strip_prefix("content-length:"))
-                    .map_or(0, |n| n.trim().parse::<usize>().unwrap());
-                while bytes.len() < split + length {
-                    let read = stream.read(&mut chunk).await.unwrap();
-                    bytes.extend_from_slice(&chunk[..read]);
-                }
-                seen.lock().unwrap().push(head);
-                stream.write_all(reply().as_bytes()).await.unwrap();
-                let _ = stream.shutdown().await;
-            }
-        });
-        Self { root, heads }
-    }
-    fn heads(&self) -> Vec<String> {
-        self.heads.lock().unwrap().clone()
-    }
-}
-fn reply() -> String {
-    let data = |value: serde_json::Value| format!("data: {value}\n\n");
-    let body = data(
-        serde_json::json!({"id":"m","object":"chat.completion.chunk","model":"gpt-x",
-        "created":0,"choices":[{"index":0,"delta":{"role":"assistant","content":"done"},
-        "finish_reason":null}]}),
-    ) + &data(
-        serde_json::json!({"id":"m","object":"chat.completion.chunk","model":"gpt-x",
-            "created":0,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}),
-    ) + &data(
-        serde_json::json!({"id":"m","object":"chat.completion.chunk","model":"gpt-x",
-            "choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}),
-    ) + "data: [DONE]\n\n";
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )
-}
 
 fn boot(root: &str) -> BootV2 {
     BootV2::parse(
@@ -128,13 +60,19 @@ fn create(
         .create(config(chat_byte), None)
 }
 async fn advance(engine: &mut dyn AgentEngine, chat_byte: u8) -> Result<EngineAction, EngineError> {
+    let prompt = EngineRequest::Prompt(EnginePrompt::new(vec!["hello".into()]).unwrap());
+    advance_with(engine, chat_byte, StepId::from_bytes([1; 16]), prompt).await
+}
+async fn advance_with(
+    engine: &mut dyn AgentEngine,
+    chat_byte: u8,
+    next_step: StepId,
+    request: EngineRequest,
+) -> Result<EngineAction, EngineError> {
     let (_handle, registration) = AbortHandle::new_pair();
     engine
         .advance(
-            EngineInput {
-                next_step: StepId::from_bytes([1; 16]),
-                request: EngineRequest::Prompt(EnginePrompt::new(vec!["hello".into()]).unwrap()),
-            },
+            EngineInput { next_step, request },
             Arc::new(ScriptedEngineEvents::default()),
             Arc::new(ScriptedModelAdmission::new(config(chat_byte).run)),
             registration,
@@ -142,10 +80,13 @@ async fn advance(engine: &mut dyn AgentEngine, chat_byte: u8) -> Result<EngineAc
         .await
 }
 
+#[path = "execution_tests.rs"]
+mod execution;
+
 #[tokio::test]
 async fn a_brokered_model_call_carries_the_chats_own_bearer_token_to_the_broker() {
-    let broker = Broker::start().await;
-    let providers = providers(&broker.root);
+    let broker = Broker::start(vec![text_reply("done")]).await;
+    let providers = providers(broker.root());
     providers.tokens().issue(chat(1), &token("one")).unwrap();
     providers.tokens().issue(chat(2), &token("two")).unwrap();
     let mut engine = create(&providers, 2).unwrap();
@@ -171,8 +112,8 @@ impl ProviderWake for Woken {
 
 #[tokio::test]
 async fn a_chat_without_a_token_needs_provider_access_until_issue_wakes_it() {
-    let broker = Broker::start().await;
-    let providers = providers(&broker.root);
+    let broker = Broker::start(vec![text_reply("done")]).await;
+    let providers = providers(broker.root());
     let woken = Arc::new(Woken(Mutex::new(Vec::new())));
     providers.tokens().bind_wake(woken.clone());
     assert!(matches!(
@@ -187,8 +128,8 @@ async fn a_chat_without_a_token_needs_provider_access_until_issue_wakes_it() {
 
 #[tokio::test]
 async fn revoking_a_chat_fails_its_next_call_without_reaching_the_broker() {
-    let broker = Broker::start().await;
-    let providers = providers(&broker.root);
+    let broker = Broker::start(vec![text_reply("done")]).await;
+    let providers = providers(broker.root());
     providers.tokens().issue(chat(1), &token("one")).unwrap();
     let mut engine = create(&providers, 1).unwrap();
     providers.tokens().revoke(chat(1));
