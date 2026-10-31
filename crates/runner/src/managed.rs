@@ -13,6 +13,7 @@ mod frames;
 mod policy;
 mod providers;
 mod session;
+mod spend;
 #[cfg(test)]
 mod testing;
 pub(crate) use boot_v2::BootV2;

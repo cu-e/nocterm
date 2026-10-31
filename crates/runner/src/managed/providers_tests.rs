@@ -10,22 +10,28 @@ use nocterm_cloud_model::{
 use std::sync::Mutex;
 
 fn boot(root: &str) -> BootV2 {
-    BootV2::parse(
-        serde_json::json!({
+    boot_with(root, None)
+}
+fn boot_with(root: &str, policy: Option<serde_json::Value>) -> BootV2 {
+    let mut document = serde_json::json!({
             "version": 2, "instance": "i", "agent": "a", "lease": "l", "name": "n",
             "instructions": "", "provider": {"kind": "openai_chat", "base_url": root,
                 "models": ["gpt-x"],
                 "pricing": {"maximum_request_bytes": 1048576, "maximum_output_tokens": 1024,
                     "maximum_call_cost_micros": 50000}},
             "secret_names": [], "allowed_hosts": [], "ssh_targets": []
-        })
-        .to_string()
-        .as_bytes(),
-    )
-    .unwrap()
+    });
+    if let Some(policy) = policy {
+        document["policy"] = policy;
+    }
+    BootV2::parse(document.to_string().as_bytes()).unwrap()
 }
 fn providers(root: &str) -> BrokeredProviders {
     BrokeredProviders::new(&boot(root), &scope(), tokio::runtime::Handle::current()).unwrap()
+}
+fn providers_with(root: &str, policy: serde_json::Value) -> BrokeredProviders {
+    let boot = boot_with(root, Some(policy));
+    BrokeredProviders::new(&boot, &scope(), tokio::runtime::Handle::current()).unwrap()
 }
 fn selection() -> ModelSelection {
     ModelSelection::new(
@@ -35,6 +41,9 @@ fn selection() -> ModelSelection {
     )
 }
 fn config(chat_byte: u8) -> EngineConfig {
+    config_turns(chat_byte, 4)
+}
+fn config_turns(chat_byte: u8, turns: u32) -> EngineConfig {
     EngineConfig {
         run: RunBinding::new(
             scope(),
@@ -46,7 +55,7 @@ fn config(chat_byte: u8) -> EngineConfig {
         ),
         model: namespace("gpt-x"),
         history: Default::default(),
-        budget: ModelBudget::new(4, 1024 * 1024, 256 * 1024, 1024).unwrap(),
+        budget: ModelBudget::new(turns, 1024 * 1024, 256 * 1024, 1024).unwrap(),
     }
 }
 fn create(
@@ -82,6 +91,8 @@ async fn advance_with(
 
 #[path = "execution_tests.rs"]
 mod execution;
+#[path = "policy_tests.rs"]
+mod policy;
 
 #[tokio::test]
 async fn a_brokered_model_call_carries_the_chats_own_bearer_token_to_the_broker() {
