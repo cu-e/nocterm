@@ -64,6 +64,11 @@ impl ChatHost {
         self.installed.cloud_agents()
     }
 
+    /// The shared owner that presents a captured Cloud conversation.
+    pub(crate) fn cloud_chats(&self) -> &nocterm_cloud_chat::CloudChatInstallation {
+        self.installed.cloud_chats()
+    }
+
     pub(crate) fn deps_for_source(
         &self,
         source: ProjectSurfaceReceipt,

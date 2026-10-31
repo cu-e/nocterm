@@ -23,6 +23,8 @@ use super::{
 };
 use crate::cloud_access::CloudAgentsAccess;
 
+mod chats;
+
 /// Which list the new-chat popover shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MenuTab {
@@ -36,6 +38,7 @@ pub(super) struct CloudMenu {
     access: Option<CloudAgentsAccess>,
     tab: MenuTab,
     search: Entity<InputState>,
+    chats: chats::CloudChats,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -52,20 +55,24 @@ impl CloudMenu {
             }
         })];
         if let Some(access) = &access {
-            subscriptions.push(cx.subscribe(access.service(), |_, _, event, cx| {
-                if matches!(
-                    event,
-                    CloudAgentsEvent::Changed | CloudAgentsEvent::Ready(_)
-                ) {
-                    cx.notify();
-                }
-            }));
+            subscriptions.push(cx.subscribe_in(
+                access.service(),
+                window,
+                |panel, _, event, window, cx| match event {
+                    CloudAgentsEvent::Ready(id) => {
+                        panel.cloud_start_ready(*id, window, cx);
+                        cx.notify();
+                    }
+                    CloudAgentsEvent::Changed => cx.notify(),
+                },
+            ));
             subscriptions.push(cx.observe(access.hubs(), |_, _, cx| cx.notify()));
         }
         Self {
             access,
             tab: MenuTab::Local,
             search,
+            chats: chats::CloudChats::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -172,6 +179,7 @@ impl AgentPanel {
                     .selected(current == tab)
                     .on_click(cx.listener(move |panel, _, _, cx| {
                         panel.cloud.select(tab);
+                        panel.refresh_cloud_chats(cx);
                         cx.notify();
                     })),
             )
@@ -220,6 +228,7 @@ impl AgentPanel {
         for section in sections {
             rows.push(self.render_section(&section, several_hubs, cx));
         }
+        rows.extend(self.render_cloud_chats(&access, cx));
         rows.extend(self.render_cloud_footer(&access, cx));
         rows
     }
@@ -309,8 +318,8 @@ impl AgentPanel {
                 .child(status_label(agent.status)),
         )
         .disabled(!startable)
-        .on_click(cx.listener(move |panel, _, _, cx| {
-            panel.start_cloud_agent(&hub_id, &chosen, cx);
+        .on_click(cx.listener(move |panel, _, window, cx| {
+            panel.start_cloud_agent(&hub_id, &chosen, window, cx);
         }))
         .into_any_element()
     }
@@ -396,6 +405,11 @@ impl AgentPanel {
             StartPhase::Ready(_) => frame
                 .child(text(format!("{name}: {}", nocterm_cloud_agents_model::StartStep::Ready.text()), cx))
                 .child(
+                    button("Open chat", "cloud-open-chat", cx).on_click(
+                        cx.listener(move |panel, _, window, cx| panel.open_started_chat(id, window, cx)),
+                    ),
+                )
+                .child(
                     button("Dismiss", "cloud-dismiss", cx)
                         .on_click(cx.listener(move |panel, _, _, cx| panel.dismiss_cloud_start(id, cx))),
                 )
@@ -427,12 +441,20 @@ impl AgentPanel {
         vec![manage.into_any_element(), create.into_any_element()]
     }
 
-    fn start_cloud_agent(&mut self, hub: &HubId, agent: &CloudAgent, cx: &mut Context<Self>) {
-        if let Some(access) = &self.cloud.access {
-            access
-                .service()
-                .update(cx, |service, cx| service.start(hub, agent, cx));
-        }
+    fn start_cloud_agent(
+        &mut self,
+        hub: &HubId,
+        agent: &CloudAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(access) = &self.cloud.access else {
+            return;
+        };
+        let id = access
+            .service()
+            .update(cx, |service, cx| service.start(hub, agent, cx));
+        self.began_cloud_start(id, window, cx);
     }
 
     fn trust_cloud_pool(&mut self, id: StartId, cx: &mut Context<Self>) {

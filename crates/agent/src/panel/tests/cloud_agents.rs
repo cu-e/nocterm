@@ -1,8 +1,8 @@
 //! The Cloud tab of the new-agent popover, driven through clicks and rendering.
 use super::*;
 use nocterm_cloud_agents_model::{
-    AgentId, AgentLimits, AgentScope, AgentStatus, CloudAgent, PoolOffer,
-    testing::{FakeCloudAgents, FakeFailure},
+    AgentId, AgentLimits, AgentScope, AgentStatus, ChatHost, ChatRunner, CloudAgent, PoolOffer,
+    testing::{ChatFailure, FakeCloudAgents, FakeCloudChatLauncher, FakeFailure},
 };
 use nocterm_hubs_model::{
     HubAddress, HubId, HubsSettings,
@@ -291,4 +291,120 @@ fn a_key_that_is_missing_blocks_the_row(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     assert!(fake.started().is_empty());
+}
+
+fn chat_access(
+    fake: &FakeCloudAgents,
+    launcher: &FakeCloudChatLauncher,
+    cx: &mut TestAppContext,
+) -> crate::CloudAgentsAccess {
+    access(fake, &[HOME], None, cx).with_chats(Arc::new(launcher.clone()))
+}
+
+fn ready_scribe() -> FakeCloudAgents {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(
+        &hub(HOME),
+        vec![agent(
+            "a1",
+            "Scribe",
+            AgentScope::Personal,
+            AgentStatus::Ready,
+        )],
+    );
+    fake
+}
+
+fn click(handle: AnyWindowHandle, id: impl Into<gpui_kit::ElementId>, cx: &mut TestAppContext) {
+    let id = id.into();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(id, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_ready_start_opens_the_chat_of_its_agent_in_the_window_that_pressed_start(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let launcher = FakeCloudChatLauncher::default();
+    let (handle, _) = cloud_window(&f, chat_access(&ready_scribe(), &launcher, cx), cx);
+    open_cloud_tab(handle, cx);
+    click(handle, format!("cloud-agent-{HOME}-a1"), cx);
+    assert_eq!(
+        launcher.created(),
+        vec![ChatHost::Agent {
+            agent: AgentId::new("a1").unwrap(),
+            model: "gpt-x".into(),
+        }]
+    );
+    assert_eq!(launcher.opened().len(), 1);
+    assert!(!shown(handle, "cloud-dismiss-StartId(1)", cx));
+    assert!(!shown(handle, "cloud-open-chat-StartId(1)", cx));
+}
+
+#[gpui_kit::test]
+fn another_window_offers_open_chat_and_a_slow_runner_asks_to_try_again(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let launcher = FakeCloudChatLauncher::default();
+    launcher.fail_creating(ChatFailure::RunnerNotReady);
+    let access = chat_access(&ready_scribe(), &launcher, cx);
+    let (pressed, _) = cloud_window(&f, access.clone(), cx);
+    let (other, _) = cloud_window(&f, access, cx);
+    open_cloud_tab(pressed, cx);
+    open_cloud_tab(other, cx);
+    click(pressed, format!("cloud-agent-{HOME}-a1"), cx);
+    assert_eq!(
+        launcher.created().len(),
+        1,
+        "only the pressing window opens"
+    );
+    assert!(shown(pressed, "cloud-chat-notice", cx));
+    assert!(shown(other, "cloud-open-chat-StartId(1)", cx));
+
+    launcher.heal();
+    click(other, "cloud-open-chat-StartId(1)", cx);
+    assert_eq!(launcher.created().len(), 2);
+    assert_eq!(launcher.opened().len(), 1);
+    assert!(!shown(other, "cloud-open-chat-StartId(1)", cx));
+}
+
+#[gpui_kit::test]
+fn a_new_cloud_chat_opens_on_the_chosen_runner(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let launcher = FakeCloudChatLauncher::default();
+    let runner = ChatRunner {
+        id: [7; 16],
+        label: "laptop".into(),
+    };
+    launcher.set_runners(vec![runner.clone()]);
+    let (handle, _) = cloud_window(&f, chat_access(&ready_scribe(), &launcher, cx), cx);
+    open_cloud_tab(handle, cx);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    click(handle, format!("cloud-chat-new-{HOME}-laptop"), cx);
+    assert_eq!(launcher.created(), vec![ChatHost::Runner(runner)]);
+    assert_eq!(launcher.opened().len(), 1);
+}
+
+#[gpui_kit::test]
+fn an_earlier_cloud_chat_in_the_history_opens_from_its_row(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let launcher = FakeCloudChatLauncher::default();
+    launcher.add_history("Release notes");
+    let (handle, _) = cloud_window(&f, chat_access(&ready_scribe(), &launcher, cx), cx);
+    open_cloud_tab(handle, cx);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(shown(handle, format!("cloud-chat-history-{HOME}"), cx));
+    click(handle, format!("cloud-chat-entry-{HOME}-0"), cx);
+    assert!(launcher.created().is_empty());
+    assert_eq!(launcher.opened().len(), 1);
 }

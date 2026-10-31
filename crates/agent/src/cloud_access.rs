@@ -1,8 +1,10 @@
 //! The Cloud agents a window offers: the shared service, the hubs that name them, and which
 //! hubs this window shows.
+use std::sync::Arc;
+
 use gpui_kit::{App, Entity};
 use nocterm_cloud_agents::CloudAgents;
-use nocterm_cloud_agents_model::{Audience, HubAgents, Section, arrange};
+use nocterm_cloud_agents_model::{Audience, CloudChatLauncher, HubAgents, Section, arrange};
 use nocterm_hubs::{HubStatus, Hubs};
 use nocterm_hubs_model::{HubColor, HubId};
 
@@ -13,6 +15,7 @@ pub struct CloudAgentsAccess {
     agents: Entity<CloudAgents>,
     hubs: Entity<Hubs>,
     audience: Audience,
+    chats: Option<Arc<dyn CloudChatLauncher>>,
 }
 
 impl CloudAgentsAccess {
@@ -22,7 +25,21 @@ impl CloudAgentsAccess {
             agents,
             hubs,
             audience: Audience::AllHubs,
+            chats: None,
         }
+    }
+
+    /// The same access with the port that creates, lists and opens Cloud chats.
+    #[must_use]
+    pub fn with_chats(self, chats: Arc<dyn CloudChatLauncher>) -> Self {
+        Self {
+            chats: Some(chats),
+            ..self
+        }
+    }
+
+    pub(crate) fn chats(&self) -> Option<&Arc<dyn CloudChatLauncher>> {
+        self.chats.as_ref()
     }
 
     /// The access of a window of one hub.
