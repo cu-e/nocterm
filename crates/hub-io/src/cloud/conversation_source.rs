@@ -7,6 +7,7 @@ mod capture;
 mod clock;
 mod commands;
 mod drivers;
+mod grants;
 mod heads;
 mod lifetime;
 mod outbox;
@@ -20,6 +21,7 @@ mod storage;
 mod tests;
 mod work;
 pub use drivers::ConversationStorage;
+pub use grants::ReserveWork;
 pub use policy::ConversationPromptPolicy;
 pub use work::ConversationWorkers;
 

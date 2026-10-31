@@ -574,3 +574,84 @@ fn require_encoded_approval(
         nocterm_hub_model::cloud::payload::ApprovalChoice::Approve
     );
 }
+
+#[test]
+fn conversation_source_provider_grant_carries_the_sealed_capsule_and_never_outlives_it() {
+    use nocterm_cloud_model::projection::{ConversationIntent, ProviderAccess};
+    use nocterm_hub_model::cloud::provider::{
+        BootDescriptor, BootWindow, ProviderLeaseContext,
+    };
+    use nocterm_keys::cloud::{RunnerBootKey, RunnerSigningKey, seal_provider_lease};
+    let account = AccountKeyPair::generate().unwrap();
+    let boot = RunnerBootKey::generate().unwrap();
+    let signing = RunnerSigningKey::from_seed(&[1; 32]);
+    let descriptor = BootDescriptor::new(
+        chat().namespace().clone(),
+        chat().runner(),
+        [4; 16],
+        boot.public_key().to_bytes(),
+        BootWindow {
+            issued_at_ms: 100_000,
+            expires_at_ms: 160_000,
+        },
+    )
+    .unwrap();
+    let signed = signing.attest_boot(descriptor).unwrap();
+    let verified = signed
+        .verify(
+            &signing.public_key(),
+            signed.descriptor().namespace(),
+            signed.descriptor().runner(),
+            110_000,
+        )
+        .unwrap();
+    let context = ProviderLeaseContext::new(
+        signed.descriptor().clone(),
+        CloudTextId::new("openai").unwrap(),
+        [5; 16],
+        150_000,
+    )
+    .unwrap();
+    let capsule =
+        seal_provider_lease(&account, &verified, &context, b"sk-secret", 110_000).unwrap();
+    let access = ProviderAccess::new(
+        [5; 16],
+        2,
+        context.canonical_bytes().unwrap(),
+        vec!["gpt-5".into()],
+        capsule.clone(),
+        Timestamp::from_millis(150_000),
+    )
+    .unwrap();
+    assert!(!format!("{access:?}").contains("sk-secret"));
+    let mut policy = policy::ConversationPolicy::controls(60_000).unwrap();
+    policy.bind_capture().unwrap();
+    let action = ConversationIntent::GrantProvider(Box::new(access));
+    let prep = policy
+        .preparation(Timestamp::from_millis(110_000), 400_000, &action)
+        .unwrap();
+    assert_eq!(prep.expires().as_millis(), 150_000);
+    let CloudCommandPayload::IssueGrant(grant) =
+        commands::payload(&policy, &action, prep).unwrap()
+    else {
+        panic!("a provider lease is an IssueGrant command");
+    };
+    let nocterm_hub_model::cloud::payload::GrantPayload::Provider {
+        grant,
+        context: carried,
+        allowed_models,
+        capsule: carried_capsule,
+    } = *grant
+    else {
+        panic!("expected the provider grant");
+    };
+    assert_eq!((grant.id, grant.epoch), ([5; 16], 2));
+    assert_eq!(carried, context);
+    assert_eq!(allowed_models.len(), 1);
+    assert_eq!(carried_capsule, capsule.as_slice());
+    // The runner side opens exactly what was sealed on this device.
+    let opened = boot
+        .open_provider_lease(&account.public_key(), &carried, carried_capsule, 110_000)
+        .unwrap();
+    assert_eq!(opened.secret(), b"sk-secret");
+}
