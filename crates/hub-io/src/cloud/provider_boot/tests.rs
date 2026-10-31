@@ -14,7 +14,9 @@ use nocterm_cloud_model::{
     journal::{PublicationAllocation, PublicationBudget, PublicationWorkBudget},
     testing::ManualToolTimer,
 };
-use nocterm_hub_model::cloud::provider::{BootDescriptor, BootWindow, SignedBootDescriptor};
+use nocterm_hub_model::cloud::provider::{
+    BootDescriptor, BootWindow, ProviderLeaseContext, SignedBootDescriptor,
+};
 use nocterm_hubs_model::{HubAddress, HubEndpointSpec, TrustPolicy};
 use nocterm_keys::{DeviceKey, cloud::RunnerBootKey};
 use sha2::{Digest, Sha256};
@@ -277,4 +279,61 @@ async fn provider_boot_keeps_actual_quota_and_never_revives_after_clock_or_login
         .native()
         .with_current(|keys| Ok(Sha256::digest(keys.keyset().public_key().to_bytes())));
     assert!(actual.is_err());
+}
+#[tokio::test]
+async fn a_sealed_lease_opens_only_on_the_runner_boot_that_was_verified() {
+    let fixture = Fixture::new();
+    let boot = RunnerBootKey::generate().unwrap();
+    let descriptor = BootDescriptor::new(
+        super::super::metadata_crypto::namespace(&fixture.binding).unwrap(),
+        super::super::metadata_crypto::runner(&fixture.binding),
+        [4; 16],
+        boot.public_key().to_bytes(),
+        BootWindow {
+            issued_at_ms: 100_000,
+            expires_at_ms: 160_000,
+        },
+    )
+    .unwrap();
+    let bytes = fixture.signed(descriptor).canonical_bytes().unwrap();
+    let verifier = fixture.verifier(fixture.bound.clone());
+    let verified = verifier
+        .open(&bytes, reserve(provider_boot_work_bytes()))
+        .unwrap();
+    let secret = b"sk-device-secret-0123456789";
+    let request = LeaseRequest {
+        provider: "openai",
+        lease_id: [5; 16],
+        expires_ms: 400_000,
+    };
+    let sealed = verifier.seal(verified.value(), &request, secret).unwrap();
+    // A boot that ends sooner shortens the lease.
+    assert_eq!(sealed.expires().as_millis(), 160_000);
+    assert!(!format!("{sealed:?}").contains("sk-device"));
+    assert!(
+        !sealed
+            .capsule()
+            .windows(secret.len())
+            .any(|window| window == secret)
+    );
+    let account = fixture
+        .bound
+        .source()
+        .native()
+        .with_current(|keys| Ok(keys.keyset().public_key()))
+        .unwrap();
+    let context = ProviderLeaseContext::from_canonical_bytes(sealed.context()).unwrap();
+    let opened = boot
+        .open_provider_lease(&account, &context, sealed.capsule(), 110_000)
+        .unwrap();
+    assert_eq!(opened.secret(), secret);
+    let other = RunnerBootKey::generate().unwrap();
+    assert!(
+        other
+            .open_provider_lease(&account, &context, sealed.capsule(), 110_000)
+            .is_err()
+    );
+    // Sealing is refused once the boot window is over.
+    fixture.timer.set(160_000);
+    assert!(verifier.seal(verified.value(), &request, secret).is_err());
 }

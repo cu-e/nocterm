@@ -15,6 +15,7 @@ use nocterm_hubs_model::HubError;
 use std::{error::Error, sync::Arc};
 use tokio::runtime::Handle;
 pub(super) use verify::BootClock;
+
 use verify::BootVerifier;
 
 /// Captured binding/source plus bounded descriptor data. This is separate from
@@ -223,6 +224,19 @@ impl TrustedProviderBoot {
         self.check_current()?;
         Ok(self.resident.value().descriptor.descriptor().recipient())
     }
+    /// Seals `secret` to this verified boot; see [`LeaseRequest`].
+    pub fn seal_lease(
+        &self,
+        request: &LeaseRequest<'_>,
+        secret: &[u8],
+    ) -> Result<SealedLease, ProviderBootError> {
+        self.check_current()?;
+        let facts = self.resident.value();
+        facts
+            .owner
+            .verifier
+            .seal(&facts.descriptor, request, secret)
+    }
     pub fn expires(&self) -> Result<Timestamp, ProviderBootError> {
         self.check_current()?;
         let expires = self
@@ -235,6 +249,37 @@ impl TrustedProviderBoot {
         Ok(Timestamp::from_millis(
             u64::try_from(expires).map_err(|_| ProviderBootError::Expired)?,
         ))
+    }
+}
+/// What a lease of the provider key is sealed under.
+pub struct LeaseRequest<'a> {
+    /// The provider the runner's configuration names.
+    pub provider: &'a str,
+    /// Names the lease of this provider in one chat.
+    pub lease_id: [u8; 16],
+    /// When the lease should end; a boot that ends earlier shortens it.
+    pub expires_ms: i64,
+}
+/// A provider key sealed to one runner boot. Holds ciphertext only.
+pub struct SealedLease {
+    context: Vec<u8>,
+    capsule: Vec<u8>,
+    expires: Timestamp,
+}
+impl SealedLease {
+    pub fn context(&self) -> &[u8] {
+        &self.context
+    }
+    pub fn capsule(&self) -> &[u8] {
+        &self.capsule
+    }
+    pub fn expires(&self) -> Timestamp {
+        self.expires
+    }
+}
+impl std::fmt::Debug for SealedLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SealedLease({} bytes)", self.capsule.len())
     }
 }
 fn require_resident(value: &AllocationLease) -> Result<(), ProviderBootError> {

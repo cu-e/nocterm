@@ -1,7 +1,11 @@
 //! Actual captured key membership and one sticky native clock, no directory trust.
 use super::*;
 use crate::account::operations::{BoundOperations, OpenedSource};
-use nocterm_hub_model::cloud::provider::SignedBootDescriptor;
+use nocterm_hub_model::cloud::{
+    CloudTextId,
+    provider::{ProviderLeaseContext, SignedBootDescriptor},
+};
+use nocterm_keys::cloud::seal_provider_lease;
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 
@@ -124,5 +128,46 @@ impl BootVerifier {
                 .map_err(account)
         })();
         result.map_err(|error| retained(error, allocation))
+    }
+    /// Seals `secret` to the verified boot's recipient key under a lease that ends at
+    /// `expires_ms` or at the boot's own expiry, whichever is first. The sender is this
+    /// account's key; the secret never leaves this call unsealed.
+    pub(super) fn seal(
+        &self,
+        boot: &VerifiedBootDescriptor,
+        request: &LeaseRequest<'_>,
+        secret: &[u8],
+    ) -> Result<SealedLease, ProviderBootError> {
+        let now = self.check_current()?;
+        let now_ms = i64::try_from(now.as_millis()).map_err(|_| ProviderBootError::Clock)?;
+        let ends = request
+            .expires_ms
+            .min(boot.descriptor().window().expires_at_ms);
+        let context = ProviderLeaseContext::new(
+            boot.descriptor().clone(),
+            CloudTextId::new(request.provider).map_err(backend)?,
+            request.lease_id,
+            ends,
+        )
+        .map_err(backend)?;
+        let capsule = self
+            .source()
+            .native()
+            .with_current(|keys| {
+                Ok(seal_provider_lease(
+                    keys.keyset().key_pair(),
+                    boot,
+                    &context,
+                    secret,
+                    now_ms,
+                ))
+            })
+            .map_err(account)?
+            .map_err(backend)?;
+        Ok(SealedLease {
+            context: context.canonical_bytes().map_err(backend)?,
+            capsule,
+            expires: Timestamp::from_millis(u64::try_from(ends).map_err(|_| ProviderBootError::Clock)?),
+        })
     }
 }
