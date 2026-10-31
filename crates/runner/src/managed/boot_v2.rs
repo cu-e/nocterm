@@ -47,7 +47,7 @@ struct Document {
     ssh_targets: Vec<SshTarget>,
     /// Absent means every tool, the existing approval rule and no extra limits.
     #[serde(default)]
-    policy: Option<PolicyDocument>,
+    policy: Option<Box<PolicyDocument>>,
 }
 
 /// A validated boot v2 document. It holds no secret.
@@ -55,7 +55,7 @@ pub(crate) struct BootV2 {
     document: Document,
     kind: ProviderKind,
     models: Vec<NamespaceId>,
-    policy: ManagedPolicy,
+    policy: Box<ManagedPolicy>,
 }
 impl BootV2 {
     /// Parses and validates one document, refusing anything over the bound,
@@ -100,9 +100,10 @@ impl BootV2 {
         let policy = document
             .policy
             .take()
-            .map(ManagedPolicy::from_document)
+            .map(|document| ManagedPolicy::from_document(*document))
             .transpose()?
             .unwrap_or_default();
+        let policy = Box::new(policy);
         let candidate = Self {
             document,
             kind,

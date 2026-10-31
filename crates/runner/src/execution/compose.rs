@@ -205,12 +205,8 @@ pub(super) async fn compose(
         state.material(),
         tokio::runtime::Handle::current(),
     ));
-    let execution =
-        execution(binding, providers, &broker, &journal, &budgets)?.with_retirement(retirement);
-    let execution = match approval {
-        Some(policy) => execution.with_approval_policy(policy),
-        None => execution,
-    };
+    let execution = execution(binding, providers, &broker, &journal, &budgets, approval)?
+        .with_retirement(retirement);
     let services = CoordinatorServices::new(
         source,
         storage,
@@ -241,6 +237,7 @@ fn execution(
     broker: &Arc<NativeSessionBroker>,
     journal: &DurableRunJournal,
     budgets: &ExecutionBudgets,
+    approval: Option<Arc<dyn ToolApprovalPolicy>>,
 ) -> Result<CoordinatorExecution, RunnerError> {
     let sessions = CoordinatorSessions::new(
         binding,
@@ -248,13 +245,17 @@ fn execution(
         budgets.sessions(),
         Arc::new(journal.cleanup()),
     )?;
-    Ok(CoordinatorExecution::new(
+    let execution = CoordinatorExecution::new(
         providers,
         broker.clone(),
         broker.clone(),
         Arc::new(RunnerArgumentFingerprint::new(budgets.arguments())),
     )
-    .with_sessions(sessions))
+    .with_sessions(sessions);
+    Ok(match approval {
+        Some(policy) => execution.with_approval_policy(policy),
+        None => execution,
+    })
 }
 
 /// The one FIFO outbox transport is the already-restored authenticated hub peer.
