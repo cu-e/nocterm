@@ -122,3 +122,4 @@ acceptance; a later record supersedes an earlier one.
 | [0124](0124-managed-execution-containment.md) | Managed execution runs tools in nested containment behind the host broker |
 | [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) | Account-key lock port, journal v6 horizon and own-runner placement |
 | [0126](0126-own-runner-provider-lease.md) | A device leases a personal agent's key to the own runner |
+| [0127](0127-managed-runner-agent-policy.md) | The managed runner enforces the agent definition policy from boot v2 |
