@@ -25,6 +25,8 @@ use crate::cloud_access::CloudAgentsAccess;
 
 mod chats;
 
+pub(super) use chats::notice_text;
+
 /// Which list the new-chat popover shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MenuTab {
@@ -60,7 +62,7 @@ impl CloudMenu {
                 window,
                 |panel, _, event, window, cx| match event {
                     CloudAgentsEvent::Ready(id) => {
-                        panel.cloud_start_ready(*id, window, cx);
+                        panel.cloud.start_ready(*id, window, cx);
                         cx.notify();
                     }
                     CloudAgentsEvent::Changed => cx.notify(),
@@ -165,25 +167,26 @@ fn failure_text(error: &CloudAgentError) -> String {
     error.to_string()
 }
 
-impl AgentPanel {
+impl CloudMenu {
     /// The tab switch at the top of the "New agent" popover, or nothing when Cloud is not
     /// offered.
-    pub(super) fn render_menu_tabs(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.cloud.offered(cx) {
+    pub(super) fn render_menu_tabs(&self, cx: &mut Context<AgentPanel>) -> Option<AnyElement> {
+        if !self.offered(cx) {
             return None;
         }
-        let current = self.cloud.tab(cx);
-        let tab = |id: &'static str, label: &'static str, tab: MenuTab, cx: &mut Context<Self>| {
-            div().flex_1().min_w_0().child(
-                menu_row(id, label, cx)
-                    .selected(current == tab)
-                    .on_click(cx.listener(move |panel, _, _, cx| {
-                        panel.cloud.select(tab);
-                        panel.refresh_cloud_chats(cx);
-                        cx.notify();
-                    })),
-            )
-        };
+        let current = self.tab(cx);
+        let tab =
+            |id: &'static str, label: &'static str, tab: MenuTab, cx: &mut Context<AgentPanel>| {
+                div().flex_1().min_w_0().child(
+                    menu_row(id, label, cx)
+                        .selected(current == tab)
+                        .on_click(cx.listener(move |panel, _, _, cx| {
+                            panel.cloud.select(tab);
+                            panel.cloud.refresh_chats(cx);
+                            cx.notify();
+                        })),
+                )
+            };
         Some(
             gpui_kit::component::h_flex()
                 .w_full()
@@ -195,17 +198,17 @@ impl AgentPanel {
     }
 
     /// The Cloud tab: search, starts in progress, sections of agents, footer.
-    pub(super) fn render_cloud_tab(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let Some(access) = self.cloud.access.clone() else {
+    pub(super) fn render_tab(&self, cx: &mut Context<AgentPanel>) -> Vec<AnyElement> {
+        let Some(access) = self.access.clone() else {
             return Vec::new();
         };
         let mut rows = vec![
-            gpui_kit::component::input::Input::new(&self.cloud.search)
+            gpui_kit::component::input::Input::new(&self.search)
                 .small()
                 .into_any_element(),
         ];
         rows.extend(self.render_starts(&access, cx));
-        let query = self.cloud.query(cx);
+        let query = self.query(cx);
         let sections = access.sections(&query, cx);
         if sections.is_empty() {
             rows.push(
@@ -228,16 +231,16 @@ impl AgentPanel {
         for section in sections {
             rows.push(self.render_section(&section, several_hubs, cx));
         }
-        rows.extend(self.render_cloud_chats(&access, cx));
-        rows.extend(self.render_cloud_footer(&access, cx));
+        rows.extend(self.render_chats(&access, cx));
+        rows.extend(self.render_footer(&access, cx));
         rows
     }
 
     fn render_section(
-        &mut self,
+        &self,
         section: &Section,
         several_hubs: bool,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let title = section.title.text();
         let heading = if several_hubs
@@ -271,11 +274,11 @@ impl AgentPanel {
     }
 
     fn render_agent_row(
-        &mut self,
+        &self,
         hub: &HubId,
         hub_name: &str,
         agent: &CloudAgent,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let id = format!("cloud-agent-{}-{}", hub.address(), agent.id);
         let startable = agent.status.can_start();
@@ -319,15 +322,15 @@ impl AgentPanel {
         )
         .disabled(!startable)
         .on_click(cx.listener(move |panel, _, window, cx| {
-            panel.start_cloud_agent(&hub_id, &chosen, window, cx);
+            panel.cloud.start_agent(&hub_id, &chosen, window, cx);
         }))
         .into_any_element()
     }
 
     fn render_starts(
-        &mut self,
+        &self,
         access: &CloudAgentsAccess,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> Vec<AnyElement> {
         let service = access.service().clone();
         let visible: Vec<HubId> = access
@@ -348,11 +351,11 @@ impl AgentPanel {
     }
 
     fn render_start(
-        &mut self,
+        &self,
         id: StartId,
         name: String,
         phase: StartPhase,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let frame = v_flex()
             .id(SharedString::from(format!("cloud-start-{id:?}")))
@@ -368,7 +371,7 @@ impl AgentPanel {
                 .text_color(cx.theme().foreground)
                 .child(text)
         };
-        let button = |label: &'static str, key: &'static str, cx: &mut Context<Self>| {
+        let button = |label: &'static str, key: &'static str, cx: &mut Context<AgentPanel>| {
             menu_row(SharedString::from(format!("{key}-{id:?}")), label, cx)
         };
         match phase {
@@ -393,12 +396,12 @@ impl AgentPanel {
                 )
                 .child(
                     button("Trust pool", "cloud-trust", cx).on_click(
-                        cx.listener(move |panel, _, _, cx| panel.trust_cloud_pool(id, cx)),
+                        cx.listener(move |panel, _, _, cx| panel.cloud.trust_pool(id, cx)),
                     ),
                 )
                 .child(
                     button("Do not trust", "cloud-refuse", cx).on_click(
-                        cx.listener(move |panel, _, _, cx| panel.refuse_cloud_pool(id, cx)),
+                        cx.listener(move |panel, _, _, cx| panel.cloud.refuse_pool(id, cx)),
                     ),
                 )
                 .into_any_element(),
@@ -406,28 +409,28 @@ impl AgentPanel {
                 .child(text(format!("{name}: {}", nocterm_cloud_agents_model::StartStep::Ready.text()), cx))
                 .child(
                     button("Open chat", "cloud-open-chat", cx).on_click(
-                        cx.listener(move |panel, _, window, cx| panel.open_started_chat(id, window, cx)),
+                        cx.listener(move |panel, _, window, cx| panel.cloud.open_started_chat(id, window, cx)),
                     ),
                 )
                 .child(
                     button("Dismiss", "cloud-dismiss", cx)
-                        .on_click(cx.listener(move |panel, _, _, cx| panel.dismiss_cloud_start(id, cx))),
+                        .on_click(cx.listener(move |panel, _, _, cx| panel.cloud.dismiss_start(id, cx))),
                 )
                 .into_any_element(),
             StartPhase::Failed(error) => frame
                 .child(text(format!("{name}: {}", failure_text(&error)), cx))
                 .child(
                     button("Dismiss", "cloud-dismiss", cx)
-                        .on_click(cx.listener(move |panel, _, _, cx| panel.dismiss_cloud_start(id, cx))),
+                        .on_click(cx.listener(move |panel, _, _, cx| panel.cloud.dismiss_start(id, cx))),
                 )
                 .into_any_element(),
         }
     }
 
-    fn render_cloud_footer(
-        &mut self,
+    fn render_footer(
+        &self,
         access: &CloudAgentsAccess,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> Vec<AnyElement> {
         let hubs = access.visible_hubs(cx);
         let Some((hub, ..)) = hubs.first().cloned() else {
@@ -441,52 +444,43 @@ impl AgentPanel {
         vec![manage.into_any_element(), create.into_any_element()]
     }
 
-    fn start_cloud_agent(
+    pub(super) fn start_agent(
         &mut self,
         hub: &HubId,
         agent: &CloudAgent,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) {
-        let Some(access) = &self.cloud.access else {
+        let Some(access) = &self.access else {
             return;
         };
         let id = access
             .service()
             .update(cx, |service, cx| service.start(hub, agent, cx));
-        self.began_cloud_start(id, window, cx);
+        self.began_start(id, window, cx);
     }
 
-    fn trust_cloud_pool(&mut self, id: StartId, cx: &mut Context<Self>) {
-        if let Some(access) = &self.cloud.access {
+    fn trust_pool(&self, id: StartId, cx: &mut Context<AgentPanel>) {
+        if let Some(access) = &self.access {
             access
                 .service()
                 .update(cx, |service, cx| service.trust_pool(id, cx));
         }
     }
 
-    fn refuse_cloud_pool(&mut self, id: StartId, cx: &mut Context<Self>) {
-        if let Some(access) = &self.cloud.access {
+    fn refuse_pool(&self, id: StartId, cx: &mut Context<AgentPanel>) {
+        if let Some(access) = &self.access {
             access
                 .service()
                 .update(cx, |service, cx| service.refuse_pool(id, cx));
         }
     }
 
-    fn dismiss_cloud_start(&mut self, id: StartId, cx: &mut Context<Self>) {
-        if let Some(access) = &self.cloud.access {
+    fn dismiss_start(&self, id: StartId, cx: &mut Context<AgentPanel>) {
+        if let Some(access) = &self.access {
             access
                 .service()
                 .update(cx, |service, cx| service.dismiss(id, cx));
         }
-    }
-
-    /// Opens the Servers page of the settings, where personal agents are created and edited.
-    fn new_personal_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.menus.reset();
-        if let Ok(action) = cx.build_action("hubs::ManageServers", None) {
-            window.dispatch_action(action, cx);
-        }
-        cx.notify();
     }
 }

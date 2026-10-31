@@ -16,6 +16,7 @@ use nocterm_cloud_agents_model::{
 };
 use nocterm_hubs_model::HubId;
 
+use super::{CloudMenu, MenuTab};
 use crate::cloud_access::CloudAgentsAccess;
 use crate::panel::{AgentPanel, widgets::menu_row};
 
@@ -30,7 +31,7 @@ pub(super) struct CloudChats {
 }
 
 /// What a failed attempt tells the person.
-fn notice_text(error: &CloudChatError) -> String {
+pub(in crate::panel) fn notice_text(error: &CloudChatError) -> String {
     if error.is_retryable() {
         format!("{error}. Try again.")
     } else {
@@ -38,16 +39,16 @@ fn notice_text(error: &CloudChatError) -> String {
     }
 }
 
-impl AgentPanel {
+impl CloudMenu {
     /// Lists the runners and earlier chats of the shown hubs while the Cloud tab is selected.
-    pub(super) fn refresh_cloud_chats(&mut self, cx: &mut Context<Self>) {
-        let Some(access) = self.cloud.access.clone() else {
+    pub(super) fn refresh_chats(&mut self, cx: &mut Context<AgentPanel>) {
+        let Some(access) = self.access.clone() else {
             return;
         };
         let Some(launcher) = access.chats().cloned() else {
             return;
         };
-        if self.cloud.tab(cx) != super::MenuTab::Cloud {
+        if self.tab(cx) != MenuTab::Cloud {
             return;
         }
         for (hub, ..) in access.visible_hubs(cx) {
@@ -77,23 +78,17 @@ impl AgentPanel {
     }
 
     /// The rows of the chat section: new chats per runner, then the history.
-    pub(super) fn render_cloud_chats(
-        &mut self,
+    pub(super) fn render_chats(
+        &self,
         access: &CloudAgentsAccess,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) -> Vec<AnyElement> {
         if access.chats().is_none() {
             return Vec::new();
         }
         let mut rows = Vec::new();
         for (hub, ..) in access.visible_hubs(cx) {
-            let runners = self
-                .cloud
-                .chats
-                .runners
-                .get(&hub)
-                .cloned()
-                .unwrap_or_default();
+            let runners = self.chats.runners.get(&hub).cloned().unwrap_or_default();
             for runner in runners {
                 let id = format!("cloud-chat-new-{}-{}", hub.address(), runner.label);
                 let label = format!("New Cloud chat · {}", runner.label);
@@ -101,7 +96,7 @@ impl AgentPanel {
                 rows.push(
                     menu_row(SharedString::from(id), label, cx)
                         .on_click(cx.listener(move |panel, _, window, cx| {
-                            panel.create_cloud_chat(
+                            panel.cloud.create_chat(
                                 &hub,
                                 ChatHost::Runner(runner.clone()),
                                 window,
@@ -111,13 +106,7 @@ impl AgentPanel {
                         .into_any_element(),
                 );
             }
-            let history = self
-                .cloud
-                .chats
-                .history
-                .get(&hub)
-                .cloned()
-                .unwrap_or_default();
+            let history = self.chats.history.get(&hub).cloned().unwrap_or_default();
             if history.is_empty() {
                 continue;
             }
@@ -139,13 +128,13 @@ impl AgentPanel {
                 let label = entry.label().to_owned();
                 block = block.child(menu_row(SharedString::from(id), label, cx).on_click(
                     cx.listener(move |panel, _, window, cx| {
-                        panel.present_cloud_chat(entry.open(), None, window, cx);
+                        panel.cloud.present_chat(entry.open(), None, window, cx);
                     }),
                 ));
             }
             rows.push(block.into_any_element());
         }
-        if let Some(notice) = &self.cloud.chats.notice {
+        if let Some(notice) = &self.chats.notice {
             rows.push(
                 div()
                     .id("cloud-chat-notice")
@@ -161,47 +150,47 @@ impl AgentPanel {
         rows
     }
 
-    fn create_cloud_chat(
+    fn create_chat(
         &mut self,
         hub: &HubId,
         host: ChatHost,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) {
-        let Some(launcher) = self.cloud.access.as_ref().and_then(|a| a.chats().cloned()) else {
+        let Some(launcher) = self.access.as_ref().and_then(|a| a.chats().cloned()) else {
             return;
         };
-        self.present_cloud_chat(launcher.create(hub, host), None, window, cx);
+        self.present_chat(launcher.create(hub, host), None, window, cx);
     }
 
     /// Remembers that this window pressed Start; opens the chat at once when the start had
     /// already finished.
-    pub(super) fn began_cloud_start(
+    pub(super) fn began_start(
         &mut self,
         id: StartId,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) {
-        self.cloud.chats.started_here.insert(id);
+        self.chats.started_here.insert(id);
         if self.start_is_ready(id, cx) {
             self.open_started_chat(id, window, cx);
         }
     }
 
     /// A start became ready: its chat opens in the window that pressed Start.
-    pub(super) fn cloud_start_ready(
+    pub(super) fn start_ready(
         &mut self,
         id: StartId,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) {
-        if self.cloud.chats.started_here.contains(&id) {
+        if self.chats.started_here.contains(&id) {
             self.open_started_chat(id, window, cx);
         }
     }
 
     fn start_is_ready(&self, id: StartId, cx: &gpui_kit::App) -> bool {
-        self.cloud.access.as_ref().is_some_and(|access| {
+        self.access.as_ref().is_some_and(|access| {
             access
                 .service()
                 .read(cx)
@@ -215,9 +204,9 @@ impl AgentPanel {
         &mut self,
         id: StartId,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) {
-        let Some(access) = self.cloud.access.clone() else {
+        let Some(access) = self.access.clone() else {
             return;
         };
         let Some(launcher) = access.chats().cloned() else {
@@ -237,7 +226,6 @@ impl AgentPanel {
                     (Placement::OwnRunner, StartPhase::Ready(started)) => {
                         let id: [u8; 16] = started.runner.as_slice().try_into().ok()?;
                         let label = self
-                            .cloud
                             .chats
                             .runners
                             .get(start.hub())
@@ -260,25 +248,25 @@ impl AgentPanel {
                 Some((start.hub().clone(), host))
             });
         let Some((hub, host)) = target else {
-            self.cloud.chats.notice = Some("The agent has no model to chat with.".to_owned());
+            self.chats.notice = Some("The agent has no model to chat with.".to_owned());
             cx.notify();
             return;
         };
-        self.cloud.chats.started_here.remove(&id);
+        self.chats.started_here.remove(&id);
         let future = launcher.create(&hub, host);
-        self.present_cloud_chat(future, Some(id), window, cx);
+        self.present_chat(future, Some(id), window, cx);
     }
 
     /// Waits for `future`, then shows the chat it opened. `start` is dismissed once its chat
     /// is open.
-    fn present_cloud_chat(
+    fn present_chat(
         &mut self,
         future: ChatFuture<OpenedChat>,
         start: Option<StartId>,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) {
-        self.cloud.chats.notice = None;
+        self.chats.notice = None;
         cx.spawn_in(window, async move |panel, cx| {
             let result = future.await;
             let _ = panel.update_in(cx, |panel, window, cx| {
@@ -289,40 +277,24 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn finish_cloud_chat(
-        &mut self,
-        result: Result<OpenedChat, CloudChatError>,
+    /// The chat a start belonged to is open: its start is dismissed.
+    pub(in crate::panel) fn chat_opened(
+        &self,
         start: Option<StartId>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<AgentPanel>,
     ) {
-        let outcome = result
-            .map_err(|error| notice_text(&error))
-            .and_then(|opened| {
-                let source = self
-                    .host
-                    .cloud_chats()
-                    .open(opened.source, cx)
-                    .map_err(|error| error.to_string())?;
-                self.open_conversation(source, SharedString::from(opened.title), window, cx)
-                    .map_err(|error| error.to_string())
-            });
-        match outcome {
-            Ok(()) => {
-                if let (Some(id), Some(access)) = (start, &self.cloud.access) {
-                    access
-                        .service()
-                        .update(cx, |service, cx| service.dismiss(id, cx));
-                }
-                self.menus.reset();
-            }
-            Err(notice) => {
-                self.cloud.chats.notice = Some(notice);
-                if let Some(id) = start {
-                    self.cloud.chats.started_here.insert(id);
-                }
-            }
+        if let (Some(id), Some(access)) = (start, &self.access) {
+            access
+                .service()
+                .update(cx, |service, cx| service.dismiss(id, cx));
         }
-        cx.notify();
+    }
+
+    /// Opening the chat failed: the person sees `notice`, and the start stays pending.
+    pub(in crate::panel) fn chat_failed(&mut self, notice: String, start: Option<StartId>) {
+        self.chats.notice = Some(notice);
+        if let Some(id) = start {
+            self.chats.started_here.insert(id);
+        }
     }
 }

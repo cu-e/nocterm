@@ -4,6 +4,8 @@ use gpui_kit::{
     Subscription, TestSupportExt as _, Window, component::v_flex, div, prelude::*,
 };
 use nocterm_ai::model::controls::ConfigCategory;
+use nocterm_cloud_agents::StartId;
+use nocterm_cloud_agents_model::{CloudChatError, OpenedChat};
 use nocterm_plugin_model::Side;
 use nocterm_ui::IconName;
 use nocterm_workspace::{ExpandablePanel, Panel, PanelRequest, WorkspaceEvent};
@@ -438,9 +440,9 @@ impl AgentPanel {
             attachment,
         );
         let (tabs, rows) = if matches!(frame.kind(), Some(MenuKind::Agents)) {
-            let tabs = self.render_menu_tabs(cx);
+            let tabs = self.cloud.render_menu_tabs(cx);
             let rows = (self.cloud.tab(cx) == cloud_menu::MenuTab::Cloud)
-                .then(|| self.render_cloud_tab(cx));
+                .then(|| self.cloud.render_tab(cx));
             (tabs, rows)
         } else {
             (None, None)
@@ -451,6 +453,44 @@ impl AgentPanel {
 
 impl AgentPanel {
     pub(super) fn on_config_query_changed(&mut self, cx: &mut Context<Self>) {
+        cx.notify();
+    }
+
+    /// Opens the Servers page of the settings, where personal agents are created and edited.
+    fn new_personal_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menus.reset();
+        if let Ok(action) = cx.build_action("hubs::ManageServers", None) {
+            window.dispatch_action(action, cx);
+        }
+        cx.notify();
+    }
+
+    /// Shows the chat a Cloud request opened, or tells the Cloud tab why it could not.
+    fn finish_cloud_chat(
+        &mut self,
+        result: Result<OpenedChat, CloudChatError>,
+        start: Option<StartId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let outcome = result
+            .map_err(|error| cloud_menu::notice_text(&error))
+            .and_then(|opened| {
+                let source = self
+                    .host
+                    .cloud_chats()
+                    .open(opened.source, cx)
+                    .map_err(|error| error.to_string())?;
+                self.open_conversation(source, SharedString::from(opened.title), window, cx)
+                    .map_err(|error| error.to_string())
+            });
+        match outcome {
+            Ok(()) => {
+                self.cloud.chat_opened(start, cx);
+                self.menus.reset();
+            }
+            Err(notice) => self.cloud.chat_failed(notice, start),
+        }
         cx.notify();
     }
 }
