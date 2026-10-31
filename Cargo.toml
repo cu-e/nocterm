@@ -184,6 +184,7 @@ nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-ssh-keys = { workspace = true, features = ["test-support"] }
 nocterm-vault = { workspace = true, features = ["test-support"] }
 nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-project-model = { workspace = true, features = ["test-support"] }
