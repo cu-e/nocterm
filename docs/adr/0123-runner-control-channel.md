@@ -79,8 +79,9 @@ truncated frame and bytes after the last field.
   `ProviderLease`; the runner rebuilds it from the held token when a chat asks for
   one, until REVOKE or close. The broker alone decides when a token stops working.
 
-**The reader.** A dedicated blocking thread reads the pipe in chunks of at most
-512 bytes (zeroized), so the async runtime never waits on it and a slow writer
+**The reader.** A dedicated blocking thread reads an unbuffered duplicate of
+fd 0 (never the standard library's buffered `Stdin`, whose buffer is not wiped) in
+chunks of at most 512 bytes (zeroized), so the async runtime never waits on it and a slow writer
 cannot block shutdown. Tokens reach the coordinator's runs through a `ProviderWake`
 that calls `RunCoordinator::wake_provider`; the coordinator gains no field.
 

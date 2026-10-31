@@ -3,7 +3,7 @@
 use super::{Boot, BootV2, BrokeredProviders, ControlEnd, read_boot_v2, spawn_reader};
 use crate::{RunnerError, config::Configuration, execution::config::ExecutionConfig};
 use nocterm_cloud_model::identity::AccountScope;
-use std::{io::Stdin, sync::Arc};
+use std::{fs::File, os::fd::AsFd, sync::Arc};
 use tokio::sync::oneshot;
 
 /// The document read from standard input, before any runtime exists.
@@ -11,7 +11,7 @@ pub(crate) enum Launch {
     /// Boot v1, read to EOF: control plane only.
     Legacy(Boot),
     /// Boot v2 frame read; the rest of standard input is the control channel.
-    Controlled(BootV2, Stdin),
+    Controlled(BootV2, File),
 }
 impl Launch {
     pub(crate) fn read(control: bool, config: &Configuration) -> Result<Self, RunnerError> {
@@ -25,7 +25,13 @@ impl Launch {
             if !brokered || config.session_targets.is_none() {
                 return Err(RunnerError::Value("managed execution configuration"));
             }
-            let mut input = std::io::stdin();
+            // An unbuffered duplicate of fd 0: `Stdin` keeps its own buffer that is
+            // never wiped, so token bytes must not pass through it (ADR 0123).
+            let mut input = std::io::stdin()
+                .as_fd()
+                .try_clone_to_owned()
+                .map(File::from)
+                .map_err(|error| RunnerError::Boot(nocterm_core::SharedCause::new(error)))?;
             let boot = read_boot_v2(&mut input)?;
             return Ok(Self::Controlled(boot, input));
         }
@@ -48,7 +54,7 @@ impl Session {
     /// `providers`, and the end of the channel revokes them all.
     pub(crate) fn start(
         boot: BootV2,
-        input: Stdin,
+        input: File,
         scope: &AccountScope,
     ) -> Result<Self, RunnerError> {
         let providers = Arc::new(BrokeredProviders::new(
