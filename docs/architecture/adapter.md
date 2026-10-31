@@ -554,6 +554,13 @@ after restart still requires an external trusted head to detect. See
 [ADR 0109](../adr/0109-native-cloud-journal-and-effect-recovery.md) and
 [ADR 0113](../adr/0113-account-bound-journal-catalog.md).
 
+A runner's command source also reports `CommandInput::ChatOpened { stream }` after it
+durably admits (or finds already installed) a chat key grant. It is not a command: it has no
+acceptance, acknowledgement or control position, and a retired generation reports nothing. The
+coordinator answers it with the memoized first-touch chat claim, which publishes writer 1, the
+empty head and the catalog row, so a chat the device just created becomes visible; a repeated
+grant changes nothing ([ADR 0122](../adr/0122-cloud-chat-creation-protocol.md)).
+
 ### Native account admission
 
 `nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache, replica-space and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Native administrator and recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

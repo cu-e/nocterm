@@ -363,3 +363,36 @@ async fn waiting_for_finite_grant(fixture: &Fixture) -> RunBinding {
     assert_eq!(fixture.engine.calls(), 0);
     run
 }
+
+/// Serves one admitted-key report, then stops before reading: the serial journal
+/// refuses a reader that overlaps the claim, so the head is read afterwards.
+async fn serve_chat_opened(fixture: &Fixture, repeats: usize) {
+    for _ in 0..repeats {
+        fixture.source.push_chat_opened(stream());
+    }
+    let actor = fixture.actor.clone();
+    let (_abort, cancellation) = AbortHandle::new_pair();
+    let serving = tokio::spawn(async move { actor.serve(cancellation).await });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    serving.abort();
+    let _ = serving.await;
+}
+
+#[tokio::test]
+async fn an_admitted_chat_key_makes_the_runner_claim_the_chat_without_a_command() {
+    let fixture = Fixture::new();
+    serve_chat_opened(&fixture, 1).await;
+    let head = fixture.journal.head(stream()).await.unwrap().unwrap();
+    assert_eq!(head.lease().epoch().get(), 1);
+    assert_eq!(head.position().control(), ChatControlRevision::default());
+    assert!(fixture.source.replies().is_empty());
+}
+
+#[tokio::test]
+async fn a_repeated_chat_key_admission_keeps_one_writer_epoch() {
+    let fixture = Fixture::new();
+    serve_chat_opened(&fixture, 3).await;
+    let head = fixture.journal.head(stream()).await.unwrap().unwrap();
+    assert_eq!(head.lease().epoch().get(), 1);
+    assert!(fixture.source.replies().is_empty());
+}

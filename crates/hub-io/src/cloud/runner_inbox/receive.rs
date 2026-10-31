@@ -314,6 +314,7 @@ async fn material(
         &incoming.ciphertext,
     );
     owner.check_current()?;
+    let opened = chat_opened(&admitted, &stream);
     match admitted {
         Ok(()) | Err(MaterialStoreError::Retired) => {
             // A tombstoned generation has an explicit durable no-revival policy.
@@ -334,7 +335,18 @@ async fn material(
             return Err(backend(error));
         }
     }
-    Ok(Scanned::Handled)
+    Ok(opened.map_or(Scanned::Handled, Scanned::Input))
+}
+
+/// Only an installed (or already installed) key opens the chat. A retired
+/// generation has a durable no-revival policy and opens nothing.
+fn chat_opened(
+    admitted: &Result<(), MaterialStoreError>,
+    stream: &nocterm_cloud_model::authority::StreamBinding,
+) -> Option<CommandInput> {
+    admitted.is_ok().then(|| CommandInput::ChatOpened {
+        stream: stream.clone(),
+    })
 }
 
 /// The delivery origin must be the issuing device of the account's runner.
@@ -587,4 +599,48 @@ fn wire_error(
     };
     owner.fault(fault);
     backend(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_cloud_model::{authority::StreamBinding, identity::*};
+
+    fn stream() -> StreamBinding {
+        StreamBinding::new(
+            AccountScope::new(
+                HubIdentity::new(
+                    NamespaceId::new("hub").unwrap(),
+                    Fingerprint::from_bytes([1; 32]),
+                ),
+                AccountIdentity::new(
+                    NamespaceId::new("account").unwrap(),
+                    Fingerprint::from_bytes([2; 32]),
+                ),
+            ),
+            RunnerId::from_bytes([3; 16]),
+            RunnerKeyEpoch::new(4).unwrap(),
+            CloudChatId::from_bytes([5; 16]),
+        )
+    }
+
+    #[test]
+    fn an_admitted_chat_key_opens_its_chat() {
+        let opened = chat_opened(&Ok(()), &stream());
+        assert!(matches!(
+            opened,
+            Some(CommandInput::ChatOpened { stream: opened }) if opened == stream()
+        ));
+    }
+
+    #[test]
+    fn a_retired_or_refused_chat_key_opens_nothing() {
+        for refusal in [
+            MaterialStoreError::Retired,
+            MaterialStoreError::Conflict,
+            MaterialStoreError::Capacity,
+        ] {
+            assert!(chat_opened(&Err(refusal), &stream()).is_none());
+        }
+    }
 }
