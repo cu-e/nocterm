@@ -80,12 +80,19 @@ pub(super) fn object_id(request: &ChatMaterialRequest) -> Result<String, Account
 pub(super) fn collection_id(
     scope: &nocterm_cloud_model::identity::AccountScope,
 ) -> Result<String, AccountMaterialError> {
+    collection_id_of(scope, KIND)
+}
+/// The same identity for another personal object kind of the account.
+pub(super) fn collection_id_of(
+    scope: &nocterm_cloud_model::identity::AccountScope,
+    kind: &str,
+) -> Result<String, AccountMaterialError> {
     let mut hash = Sha256::new();
     hash.update(b"nocterm/cloud/account-material-collection/v1");
     for field in [
         scope.hub().instance().as_str().as_bytes(),
         scope.account().id().as_str().as_bytes(),
-        KIND.as_bytes(),
+        kind.as_bytes(),
     ] {
         hash.update(
             u64::try_from(field.len())

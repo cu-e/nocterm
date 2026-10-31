@@ -39,7 +39,7 @@ pub(crate) mod account_material;
 pub use account_material::{
     ACCOUNT_MATERIAL_RESIDENT_BYTES, ACCOUNT_MATERIAL_WORK_BYTES, AccountChatMaterial,
     AccountMaterialError, AccountMaterialFailure, AccountMaterialReservations, ChatMaterialPins,
-    ChatMaterialRequest, CloudAccountMaterial, account_material_work_bytes,
+    ChatMaterialRequest, CloudAccountMaterial, StoredChatKeyGrant, account_material_work_bytes,
 };
 
 mod runner_enrolment;

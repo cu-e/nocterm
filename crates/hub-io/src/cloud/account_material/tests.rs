@@ -375,3 +375,98 @@ fn account_material_shared_error_cause_retains_its_actual_work_guard_and_typed_c
             .is_ok()
     );
 }
+
+async fn grant(
+    bound: &BoundOperations,
+    request: &ChatMaterialRequest,
+    make: impl FnOnce() -> Result<grant::GrantRecord, AccountMaterialError>,
+) -> Result<grant::GrantRecord, AccountMaterialError> {
+    let work = bound.capture_bounded(MAX_RESPONSE, allocation())?;
+    grant::load_or_create(&work, request, make).await
+}
+fn sealed(byte: u8) -> Result<grant::GrantRecord, AccountMaterialError> {
+    grant::GrantRecord::new([byte; 16], vec![byte; 200])
+}
+
+#[tokio::test]
+async fn a_chat_key_grant_is_stored_once_and_every_retry_and_device_reuses_its_bytes() {
+    let hub = Arc::new(MemoryHub::default());
+    let (record, _) = testing::record(&testing::unlock(testing::PASSWORD));
+    let a = Device::open(hub.clone(), record.clone());
+    let b = Device::open(hub.clone(), record);
+    let request = a.request();
+    let first = grant(&a.bound(), &request, || sealed(1)).await.unwrap();
+    let mut sealed_again = false;
+    let retried = grant(&a.bound(), &request, || {
+        sealed_again = true;
+        sealed(2)
+    })
+    .await
+    .unwrap();
+    let other_device = grant(&b.bound(), &request, || sealed(3)).await.unwrap();
+    assert!(!sealed_again);
+    assert_eq!(retried, first);
+    assert_eq!(other_device, first);
+    let collection = record::collection_id_of(request.stream.scope(), grant::KIND).unwrap();
+    assert_eq!(hub.objects(&collection).len(), 1);
+}
+
+#[tokio::test]
+async fn a_chat_key_grant_keeps_its_own_collection_apart_from_the_chat_key() {
+    let hub = Arc::new(MemoryHub::default());
+    let (record, _) = testing::record(&testing::unlock(testing::PASSWORD));
+    let a = Device::open(hub.clone(), record);
+    let request = a.request();
+    load(&a.bound(), request.clone(), true).await.unwrap();
+    grant(&a.bound(), &request, || sealed(1)).await.unwrap();
+    let material = record::collection_id(request.stream.scope()).unwrap();
+    let grants = record::collection_id_of(request.stream.scope(), grant::KIND).unwrap();
+    assert_ne!(material, grants);
+    assert_eq!(hub.objects(&material).len(), 1);
+    assert_eq!(hub.objects(&grants).len(), 1);
+}
+
+#[tokio::test]
+async fn a_lost_acknowledgement_of_the_grant_write_resolves_to_the_stored_bytes() {
+    let hub = Arc::new(MemoryHub::default());
+    let (record, _) = testing::record(&testing::unlock(testing::PASSWORD));
+    let a = Device::open(hub.clone(), record);
+    let request = a.request();
+    let bound = a.bound();
+    let (entered, release) = hub.pause_next_error(StoreBoundary::PutReady, HubError::NotSignedIn);
+    let pending_request = request.clone();
+    let pending_bound = bound.clone();
+    let first =
+        tokio::spawn(async move { grant(&pending_bound, &pending_request, || sealed(1)).await });
+    entered.wait().await;
+    release.release();
+    let outcome = first.await.unwrap().unwrap();
+    assert_eq!(outcome, sealed(1).unwrap());
+    let retried = grant(&bound, &request, || sealed(9)).await.unwrap();
+    assert_eq!(retried, outcome);
+}
+
+#[tokio::test]
+async fn a_damaged_or_oversize_chat_key_grant_is_refused_rather_than_republished() {
+    let hub = Arc::new(MemoryHub::default());
+    let (record, _) = testing::record(&testing::unlock(testing::PASSWORD));
+    let a = Device::open(hub.clone(), record);
+    let request = a.request();
+    let bound = a.bound();
+    grant(&bound, &request, || sealed(1)).await.unwrap();
+    let collection = record::collection_id_of(request.stream.scope(), grant::KIND).unwrap();
+    let id = record::object_id(&request).unwrap();
+    let saved = hub.objects(&collection)[0].ciphertext.clone();
+    hub.tamper(&collection, &id, vec![0; grant::MAX_RECORD + 43]);
+    assert!(matches!(
+        grant(&bound, &request, || sealed(2)).await,
+        Err(AccountMaterialError::Capacity)
+    ));
+    let mut damaged = saved;
+    *damaged.last_mut().unwrap() ^= 1;
+    hub.tamper(&collection, &id, damaged);
+    assert!(matches!(
+        grant(&bound, &request, || sealed(2)).await,
+        Err(AccountMaterialError::Backend(_))
+    ));
+}

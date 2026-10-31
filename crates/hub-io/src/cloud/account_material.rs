@@ -3,7 +3,9 @@
 //! native key ownership and cannot revive after lock or replacement sign-in.
 mod capture;
 mod failure;
+mod grant;
 pub use failure::AccountMaterialFailure;
+pub use grant::StoredChatKeyGrant;
 mod operation;
 mod reservations;
 pub use reservations::AccountMaterialReservations;
