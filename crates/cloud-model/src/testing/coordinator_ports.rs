@@ -18,6 +18,7 @@ pub struct ScriptedCommandSource {
 #[derive(Default)]
 struct ScriptedInbox {
     commands: VecDeque<ReceivedCommand>,
+    opened: VecDeque<crate::authority::StreamBinding>,
     replies: Vec<(CommandAcknowledgement, CommandReply)>,
     acknowledgements: Option<Gate>,
 }
@@ -41,6 +42,16 @@ impl ScriptedCommandSource {
         drop(state);
         self.ready.wake();
         Ok(())
+    }
+    /// Scripts the source's report that a chat's key was admitted. It carries no
+    /// command, acknowledgement or control position.
+    pub fn push_chat_opened(&self, stream: crate::authority::StreamBinding) {
+        self.inbox
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .opened
+            .push_back(stream);
+        self.ready.wake();
     }
     pub fn pause_acknowledgements(&self) -> Gate {
         let gate = Gate::pending();
@@ -83,8 +94,10 @@ impl AuthenticatedCommandSource for ScriptedCommandSource {
             loop {
                 let command = futures::future::poll_fn(|cx| {
                     let mut state = inbox.lock().unwrap_or_else(PoisonError::into_inner);
-                    if let Some(command) = state.commands.pop_front() {
-                        std::task::Poll::Ready(command)
+                    if let Some(stream) = state.opened.pop_front() {
+                        std::task::Poll::Ready(Err(stream))
+                    } else if let Some(command) = state.commands.pop_front() {
+                        std::task::Poll::Ready(Ok(command))
                     } else {
                         ready.register(cx.waker());
                         std::task::Poll::Pending
@@ -94,6 +107,10 @@ impl AuthenticatedCommandSource for ScriptedCommandSource {
                 if !current.load(Ordering::Acquire) {
                     return Err(CoordinatorError::StaleSource);
                 }
+                let command = match command {
+                    Ok(command) => command,
+                    Err(stream) => return Ok(Some(CommandInput::ChatOpened { stream })),
+                };
                 let high = command.body().high_priority();
                 let lane = if high {
                     IntakeLane::Urgent

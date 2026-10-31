@@ -387,6 +387,12 @@ impl RunCoordinator {
                 next=&mut receiving=> {
                     let Some(input)=next? else {return Ok(());};
                     match input {
+                        CommandInput::ChatOpened{stream} => {
+                            // Claims the chat's writer, head and catalog row; the
+                            // memoized slot makes a repeated grant a no-op.
+                            let this=self.clone();
+                            workers.push(async move { this.chat(stream).await.map(|_| ()) }.boxed());
+                        },
                         CommandInput::Deferred{command,reason,allocation} => {
                             deliveries.push(intake::deliver(self.services.source().clone(),*command,CommandReply::RetryLater(reason),allocation));
                         },

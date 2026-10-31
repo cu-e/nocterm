@@ -1,5 +1,6 @@
 //! Small authenticated delivery outcomes, independent from hub transport ACKs.
 use super::{CommandAcknowledgement, ReceivedCommand};
+use crate::authority::StreamBinding;
 use crate::journal::CommandReceipt;
 use nocterm_core::allocation::{Allocated, AllocationLease};
 use std::sync::Arc;
@@ -17,6 +18,11 @@ pub enum CommandInput {
         reason: RetryReason,
         allocation: AllocationLease,
     },
+    /// A chat key for this runner was durably admitted (or already installed).
+    /// The runner opens the chat's stream so its writer, head and catalog row
+    /// exist. This is not a command: it has no acceptance, acknowledgement or
+    /// control position, and repeating it changes nothing.
+    ChatOpened { stream: StreamBinding },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RetryReason {
