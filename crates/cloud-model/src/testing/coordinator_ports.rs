@@ -194,6 +194,10 @@ impl ScriptedCoordinatorProviders {
     pub fn revoke(&self) {
         self.current.store(false, Ordering::Release);
     }
+    /// Access arrives again, as when a host hands a managed runner a new token.
+    pub fn restore(&self) {
+        self.current.store(true, Ordering::Release);
+    }
 }
 impl CoordinatorProviders for ScriptedCoordinatorProviders {
     fn model(&self, selection: &ModelSelection) -> Result<ConfiguredModel, EngineError> {

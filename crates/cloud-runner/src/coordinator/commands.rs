@@ -1,6 +1,7 @@
 //! Authenticated control admission and durable one-winner approval publication.
 use super::{
-    chat::Chat, frame::Frame, queue::RunQueue, run::RunRecord, services::CoordinatorServices,
+    RunCoordinator, chat::Chat, frame::Frame, queue::RunQueue, run::RunRecord,
+    services::CoordinatorServices,
 };
 use nocterm_cloud_model::{
     admission::{QueuedRun, RunAccess},
@@ -12,6 +13,36 @@ use nocterm_cloud_model::{
     journal::*,
 };
 use std::sync::Arc;
+
+/// Marks every run of `chat` that selected `provider` for resumption; the serve
+/// loop resumes those that are parked waiting for access.
+fn wake_provider_runs(chat: &Chat, provider: &NamespaceId) {
+    for run in chat.runs() {
+        if run.context().selection().provider() == provider {
+            run.wake();
+        }
+    }
+}
+
+impl RunCoordinator {
+    /// A provider became usable for `chat` without a command: the host handed the
+    /// runner a token. Wakes the chat's runs that selected `provider`, like a
+    /// provider grant does. A chat the coordinator has not opened has nothing to wake.
+    pub fn wake_provider(&self, chat: CloudChatId, provider: &NamespaceId) {
+        let slots = self
+            .chats
+            .lock()
+            .iter()
+            .filter(|(stream, _)| stream.chat() == chat)
+            .map(|(_, slot)| slot.clone())
+            .collect::<Vec<_>>();
+        for slot in slots {
+            if let Some(chat) = slot.get() {
+                wake_provider_runs(chat, provider);
+            }
+        }
+    }
+}
 
 pub(super) struct CommandHandler {
     services: Arc<CoordinatorServices>,
@@ -308,11 +339,7 @@ impl CommandHandler {
             .install(command.acknowledgement(), offer.clone())
             .await?;
         self.services.source().check_current()?;
-        for run in chat.runs() {
-            if run.context().selection().provider() == offer.provider() {
-                run.wake();
-            }
-        }
+        wake_provider_runs(chat, offer.provider());
         Ok(())
     }
     async fn submit(

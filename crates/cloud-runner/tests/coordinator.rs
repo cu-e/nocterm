@@ -7,6 +7,8 @@ mod intake;
 mod journal_publication;
 #[path = "coordinator/model_completion.rs"]
 mod model_completion;
+#[path = "coordinator/provider_wake.rs"]
+mod provider_wake;
 #[path = "coordinator/reconciliation.rs"]
 mod reconciliation;
 #[path = "coordinator/snapshots.rs"]
@@ -46,6 +48,7 @@ struct Fixture {
     actor: RunCoordinator,
     source: Arc<ScriptedCommandSource>,
     engine: Arc<ScriptedEngineFactory>,
+    providers: Arc<ScriptedCoordinatorProviders>,
     events: Arc<ObservedCoordinatorEvents>,
     timer: Arc<ManualToolTimer>,
     identity: Arc<ScriptedCoordinatorIdentity>,
@@ -97,6 +100,7 @@ impl Fixture {
             engine.clone(),
             pricing,
         ));
+        let provider_access = providers.clone();
         let storage = CoordinatorStorage::with_task_limits(
             catalog_binding(),
             journal.clone(),
@@ -146,6 +150,7 @@ impl Fixture {
             actor,
             source,
             engine,
+            providers: provider_access,
             events,
             timer,
             identity,
@@ -166,6 +171,7 @@ impl Fixture {
             self.engine.clone(),
             pricing,
         ));
+        self.providers = providers.clone();
         let storage = CoordinatorStorage::with_task_limits(
             catalog_binding(),
             self.journal.clone(),
