@@ -17,7 +17,7 @@ pub(super) fn hub_error(error: HubError) -> CloudAgentError {
     }
 }
 
-pub(super) fn agent_error(address: &HubAddress, error: AgentError) -> CloudAgentError {
+pub(crate) fn agent_error(address: &HubAddress, error: AgentError) -> CloudAgentError {
     match error {
         AgentError::Unsupported => CloudAgentError::Unsupported,
         AgentError::Conflict { .. } => CloudAgentError::Conflict,

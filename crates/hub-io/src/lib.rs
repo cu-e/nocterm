@@ -103,6 +103,14 @@
 //! Its encryption, transcript-signing and Cloud-token proof keys are independent;
 //! setup/open never resets an existing identity. It exports public identity facts
 //! and neutral cipher ports, never a generic signer, private seed or SDK wire type.
+//!
+//! Cloud chats (`cloud_chats`) implement the `CloudChatLauncher` port of
+//! `nocterm-cloud-agents-model`: the device mints a chat and its first key epoch, stores the
+//! wrapped key and the sealed runner grant in the account before publishing, waits (bounded,
+//! republishing) for the runner to claim the chat, and lists chats from the authenticated
+//! catalogs of the registered runners. Managed chats start their seat for the chat first and
+//! prompt at the runner's default destination
+//! ([ADR 0122](../../../docs/adr/0122-cloud-chat-creation-protocol.md)).
 
 mod account;
 mod account_keys;
@@ -111,6 +119,7 @@ mod agents;
 mod cache;
 mod classify;
 pub mod cloud;
+mod cloud_chats;
 mod connect;
 mod convert;
 mod credentials;
@@ -129,6 +138,7 @@ mod vault;
 pub use account::{AdminKeyError, AdminKeys, PendingAdminKey};
 pub use account_keys::AccountKeys;
 pub use agents::CloudAgentsLink;
+pub use cloud_chats::{ChatServices, CloudChatsLink};
 pub use hub_account::HubAccount;
 pub use links::{HubLinks, HubLinksConfig, HubStartError};
 pub use relay::HubRelay;

@@ -11,7 +11,8 @@ use sha2::{Digest, Sha256};
 
 pub struct ConversationPromptPolicy {
     selection: ModelSelection,
-    destination: RunDestination,
+    /// `None` lets the runner apply its configured default destination.
+    destination: Option<RunDestination>,
     budget: ModelBudget,
     spend: u64,
     lifetime_ms: u64,
@@ -22,6 +23,41 @@ impl ConversationPromptPolicy {
     pub fn new(
         selection: ModelSelection,
         destination: RunDestination,
+        budget: ModelBudget,
+        spend: u64,
+        lifetime_ms: u64,
+        inference_lifetime_ms: u64,
+    ) -> Result<Self, ProjectionError> {
+        Self::build(
+            selection,
+            Some(destination),
+            budget,
+            spend,
+            lifetime_ms,
+            inference_lifetime_ms,
+        )
+    }
+    /// Prompts name no target: the runner runs them at its configured default destination
+    /// (for a managed instance, its workspace) and never resumes a session.
+    pub fn runner_default(
+        selection: ModelSelection,
+        budget: ModelBudget,
+        spend: u64,
+        lifetime_ms: u64,
+        inference_lifetime_ms: u64,
+    ) -> Result<Self, ProjectionError> {
+        Self::build(
+            selection,
+            None,
+            budget,
+            spend,
+            lifetime_ms,
+            inference_lifetime_ms,
+        )
+    }
+    fn build(
+        selection: ModelSelection,
+        destination: Option<RunDestination>,
         budget: ModelBudget,
         spend: u64,
         lifetime_ms: u64,
@@ -57,18 +93,22 @@ impl ConversationPromptPolicy {
             model: id(self.selection.model().as_str())?,
             pricing_policy: id(self.selection.pricing().as_str())?,
         };
-        let destination = &self.destination;
-        let access = target(destination.target(), destination.authentication())?;
-        let existing_session = destination
-            .session()
-            .map(|value| {
-                Ok::<_, ProjectionError>(wire::SessionReference {
-                    id: *value.id().as_bytes(),
-                    epoch: value.epoch().get(),
-                    access: target(value.target(), value.authentication())?,
-                })
-            })
-            .transpose()?;
+        let (access, existing_session) = match &self.destination {
+            Some(destination) => (
+                Some(target(destination.target(), destination.authentication())?),
+                destination
+                    .session()
+                    .map(|value| {
+                        Ok::<_, ProjectionError>(wire::SessionReference {
+                            id: *value.id().as_bytes(),
+                            epoch: value.epoch().get(),
+                            access: target(value.target(), value.authentication())?,
+                        })
+                    })
+                    .transpose()?,
+            ),
+            None => (None, None),
+        };
         let inference = wire::InferenceLimits {
             calls: self.budget.calls(),
             turns: self.budget.turns(),
@@ -89,11 +129,32 @@ impl ConversationPromptPolicy {
             wire::PromptPayload {
                 content: vec![wire::PromptPart::Text(text)],
                 model: selection,
-                target: Some(access),
+                target: access,
                 existing_session,
                 inference,
             },
         )))
+    }
+    fn digest_destination(hash: &mut Sha256, destination: &RunDestination) {
+        let principal = destination.target().principal().as_str();
+        hash.update((principal.len() as u64).to_be_bytes());
+        hash.update(principal.as_bytes());
+        for value in [
+            destination.target().host(),
+            destination.target().route(),
+            destination.target().workspace(),
+            destination.authentication().key(),
+            destination.authentication().credential_revision(),
+        ] {
+            hash.update(value.as_bytes());
+        }
+        if let Some(session) = destination.session() {
+            hash.update([1]);
+            hash.update(session.id().as_bytes());
+            hash.update(session.epoch().get().to_be_bytes());
+        } else {
+            hash.update([0]);
+        }
     }
     fn digest(&self) -> Fingerprint {
         let mut hash = Sha256::new();
@@ -102,26 +163,16 @@ impl ConversationPromptPolicy {
             self.selection.provider().as_str(),
             self.selection.model().as_str(),
             self.selection.pricing().as_str(),
-            self.destination.target().principal().as_str(),
         ] {
             hash.update((value.len() as u64).to_be_bytes());
             hash.update(value.as_bytes());
         }
-        for value in [
-            self.destination.target().host(),
-            self.destination.target().route(),
-            self.destination.target().workspace(),
-            self.destination.authentication().key(),
-            self.destination.authentication().credential_revision(),
-        ] {
-            hash.update(value.as_bytes());
-        }
-        if let Some(session) = self.destination.session() {
-            hash.update([1]);
-            hash.update(session.id().as_bytes());
-            hash.update(session.epoch().get().to_be_bytes());
-        } else {
-            hash.update([0]);
+        match &self.destination {
+            Some(destination) => {
+                hash.update([1]);
+                Self::digest_destination(&mut hash, destination);
+            }
+            None => hash.update([0]),
         }
         for value in [
             self.budget.calls() as u64,
@@ -249,5 +300,97 @@ impl ConversationPolicy {
             nocterm_cloud_model::identity::Timestamp::from_millis(expires),
             self.fingerprint,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_cloud_model::{
+        authority::{AuthenticationBinding, TargetBinding},
+        identity::{NamespaceId, Timestamp},
+        inference::MANAGED_PRICING,
+    };
+
+    fn fingerprint(byte: u8) -> Fingerprint {
+        Fingerprint::from_bytes([byte; 32])
+    }
+    fn selection() -> ModelSelection {
+        ModelSelection::managed("model-a").unwrap()
+    }
+    fn budget() -> ModelBudget {
+        ModelBudget::new(8, 1024 * 1024, 1024 * 1024, 4096).unwrap()
+    }
+    fn destination() -> RunDestination {
+        let target = TargetBinding::new(
+            fingerprint(5),
+            fingerprint(6),
+            NamespaceId::new("user").unwrap(),
+            fingerprint(7),
+        );
+        RunDestination::new(
+            target,
+            AuthenticationBinding::new(fingerprint(8), fingerprint(9)),
+            None,
+        )
+        .unwrap()
+    }
+    fn targeted() -> ConversationPromptPolicy {
+        ConversationPromptPolicy::new(selection(), destination(), budget(), 10, 60_000, 60_000)
+            .unwrap()
+    }
+    fn default_destination() -> ConversationPromptPolicy {
+        ConversationPromptPolicy::runner_default(selection(), budget(), 10, 60_000, 60_000).unwrap()
+    }
+    fn preparation(policy: &ConversationPromptPolicy) -> ConversationPreparation {
+        ConversationPreparation::new(
+            Timestamp::from_millis(1),
+            Timestamp::from_millis(10_000),
+            policy.fingerprint,
+        )
+        .unwrap()
+    }
+    fn submitted(policy: &ConversationPromptPolicy) -> wire::PromptPayload<'_> {
+        let payload = policy.prompt("hello", preparation(policy)).unwrap();
+        match payload {
+            wire::CloudCommandPayload::SubmitPrompt(prompt) => *prompt,
+            _ => panic!("expected a prompt"),
+        }
+    }
+
+    #[test]
+    fn a_runner_default_prompt_names_no_target_or_session() {
+        let policy = default_destination();
+        let prompt = submitted(&policy);
+        assert!(prompt.target.is_none());
+        assert!(prompt.existing_session.is_none());
+        assert_eq!(prompt.model.pricing_policy.as_str(), MANAGED_PRICING);
+    }
+
+    #[test]
+    fn a_targeted_prompt_still_names_its_destination() {
+        let policy = targeted();
+        assert!(submitted(&policy).target.is_some());
+    }
+
+    #[test]
+    fn a_default_and_a_targeted_policy_never_share_a_fingerprint() {
+        assert_ne!(targeted().fingerprint, default_destination().fingerprint);
+    }
+
+    #[test]
+    fn a_runner_default_policy_refuses_the_same_invalid_limits_as_a_targeted_one() {
+        for (spend, lifetime) in [(0, 60_000), (10, 0)] {
+            assert!(
+                ConversationPromptPolicy::runner_default(
+                    selection(),
+                    budget(),
+                    spend,
+                    lifetime,
+                    60_000
+                )
+                .is_err()
+            );
+        }
     }
 }

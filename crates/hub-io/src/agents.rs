@@ -8,7 +8,7 @@
 
 mod catalog;
 mod convert;
-mod error;
+pub(crate) mod error;
 mod launch;
 mod personal;
 mod pins;
@@ -31,6 +31,8 @@ use crate::devices::Captured;
 use crate::links::HubLinks;
 use crate::pool::Pool;
 use crate::task::spawn;
+pub(crate) use catalog::list as list_agents;
+pub(crate) use error::agent_error;
 use error::hub_error;
 use pins::PoolPins;
 

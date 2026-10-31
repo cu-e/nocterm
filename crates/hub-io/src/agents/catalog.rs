@@ -15,7 +15,7 @@ use super::convert;
 use super::error::agent_error;
 use crate::devices::Captured;
 
-pub(super) async fn list(captured: Arc<Captured>) -> Result<Vec<CloudAgent>, CloudAgentError> {
+pub(crate) async fn list(captured: Arc<Captured>) -> Result<Vec<CloudAgent>, CloudAgentError> {
     let address = captured.hub.address().clone();
     let client = captured.client.agents();
     let listings = client
