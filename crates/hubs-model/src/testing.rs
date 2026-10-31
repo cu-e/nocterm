@@ -19,6 +19,7 @@ use crate::ports::{HubFuture, HubSignIn, HubTrust, OidcSignIn};
 use crate::records::{Account, HubEndpointSpec, HubInfo, KeyStatus, SignedIn};
 use crate::trust::{ProbedHub, TrustPolicy};
 
+mod account_keys;
 mod admin_keys;
 mod agent_access;
 mod devices;
@@ -28,6 +29,7 @@ mod recovery;
 mod server;
 pub use local_source::ScriptedLocalAccountFactory;
 
+pub use account_keys::FakeAccountKeys;
 pub use admin_keys::FakeAdminKeys;
 pub use agent_access::FakeAgentAccess;
 pub use devices::FakeAccountDevices;
@@ -206,6 +208,12 @@ impl FakeHub {
 
     pub fn revoke_device(&self, hub: &HubId) {
         lock(&self.state).revoked.insert(hub.clone());
+    }
+
+    /// Whether the account keys of `hub` are open: signed in and not locked.
+    pub fn keys_open(&self, hub: &HubId) -> bool {
+        let state = lock(&self.state);
+        state.credentials.contains_key(hub) && !state.locked.contains(hub)
     }
 
     pub fn is_signed_in(&self, hub: &HubId) -> bool {

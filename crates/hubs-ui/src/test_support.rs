@@ -10,7 +10,7 @@ use gpui_kit::{
     WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
 use nocterm_hubs_model::testing::{
-    FakeAccountDevices, FakeAdminKeys, FakeAgentAccess, FakeHub, FakeServer,
+    FakeAccountDevices, FakeAccountKeys, FakeAdminKeys, FakeAgentAccess, FakeHub, FakeServer,
 };
 use nocterm_hubs_model::{Environment, HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
@@ -21,6 +21,8 @@ use nocterm_workspace::{Workspace, test_support::deps_for};
 use crate::{EnvironmentOpenError, EnvironmentOpener, Installed, Placement, install, register};
 
 pub(crate) const ADDRESS: &str = "hub.home:7443";
+/// The password that opens the account keys in the fixture.
+pub(crate) const PASSWORD: &str = "correct horse";
 
 pub(crate) fn hub_id() -> HubId {
     HubId::from(HubAddress::parse(ADDRESS).unwrap())
@@ -71,6 +73,7 @@ pub(crate) struct Fixture {
     pub(crate) admin_keys: FakeAdminKeys,
     pub(crate) devices: FakeAccountDevices,
     pub(crate) agent_access: FakeAgentAccess,
+    pub(crate) account_keys: FakeAccountKeys,
     pub(crate) installed: Installed,
     pub(crate) environments: Rc<RecordingEnvironments>,
 }
@@ -102,7 +105,8 @@ pub(crate) fn fixture_over(
     }
     let admin_keys = FakeAdminKeys::alongside(&hub);
     let devices = FakeAccountDevices::default();
-    let agent_access = FakeAgentAccess::default();
+    let agent_access = FakeAgentAccess::alongside(&hub);
+    let account_keys = FakeAccountKeys::alongside(&hub, PASSWORD);
     let environments = Rc::new(RecordingEnvironments::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -116,6 +120,7 @@ pub(crate) fn fixture_over(
                 devices: Arc::new(devices.clone()),
                 agent_trust: Arc::new(agent_access.clone()),
                 agent_grants: Arc::new(agent_access.clone()),
+                account_keys: Arc::new(account_keys.clone()),
             },
             settings,
             cx,
@@ -135,6 +140,7 @@ pub(crate) fn fixture_over(
         admin_keys,
         devices,
         agent_access,
+        account_keys,
         installed,
         environments,
     };

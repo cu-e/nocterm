@@ -102,6 +102,24 @@ fn capitalize(text: &str) -> String {
     }
 }
 
+/// The sentence for a failed attempt to open the account keys.
+pub(crate) fn account_key_problem(error: &nocterm_hubs_model::AccountKeyError) -> String {
+    use nocterm_hubs_model::AccountKeyError as Error;
+    match error {
+        Error::WrongPassword => {
+            "That password does not open the account keys. Check it and try again.".to_owned()
+        }
+        Error::Offline => {
+            "The server cannot be reached, and this device keeps no copy of the keys to open offline."
+                .to_owned()
+        }
+        Error::NotSignedIn => {
+            "This device is not signed in to the server. Sign in first.".to_owned()
+        }
+        Error::Failed { .. } => "The account keys could not be opened.".to_owned(),
+    }
+}
+
 /// Why an agent access change did not work.
 pub(crate) fn agent_problem(error: &nocterm_hubs_model::AgentAccessError) -> String {
     use nocterm_hubs_model::AgentAccessError as Error;

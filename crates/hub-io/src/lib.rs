@@ -105,6 +105,7 @@
 //! and neutral cipher ports, never a generic signer, private seed or SDK wire type.
 
 mod account;
+mod account_keys;
 pub mod agent_access;
 mod agents;
 mod cache;
@@ -126,6 +127,7 @@ mod task;
 mod vault;
 
 pub use account::{AdminKeyError, AdminKeys, PendingAdminKey};
+pub use account_keys::AccountKeys;
 pub use agents::CloudAgentsLink;
 pub use hub_account::HubAccount;
 pub use links::{HubLinks, HubLinksConfig, HubStartError};

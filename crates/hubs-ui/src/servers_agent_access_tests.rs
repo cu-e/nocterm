@@ -217,3 +217,65 @@ fn records_that_cannot_be_read_are_reported_and_read_again_on_request(cx: &mut T
     assert!(!page.shows("agent-access-failed", cx));
     assert!(page.shows(item("agent-server", "web"), cx));
 }
+
+fn locked_page(cx: &mut TestAppContext) -> Fixture {
+    let page = page_with_access(cx);
+    page.hub.lock_keys(&hub_id());
+    open_tab(&page, AGENTS, cx);
+    page
+}
+
+fn submit_password(page: &Fixture, password: &str, cx: &mut TestAppContext) {
+    page.type_text(password, cx);
+    page.click("account-keys-unlock", cx);
+    cx.run_until_parked();
+    page.render(cx);
+}
+
+#[gpui_kit::test]
+fn closed_account_keys_ask_for_the_password_instead_of_showing_records(cx: &mut TestAppContext) {
+    let page = locked_page(cx);
+
+    assert!(page.shows("account-keys-locked", cx));
+    assert!(page.shows("agent-access-failed", cx));
+    assert!(!page.shows(item("agent-server", "web"), cx));
+}
+
+#[gpui_kit::test]
+fn the_right_password_opens_the_keys_and_the_records_are_read_again(cx: &mut TestAppContext) {
+    let page = locked_page(cx);
+
+    submit_password(&page, crate::test_support::PASSWORD, cx);
+
+    assert!(page.shows("account-keys-open", cx));
+    assert!(!page.shows("account-keys-locked", cx));
+    assert!(page.shows(item("agent-server", "web"), cx));
+    assert_eq!(page.account_keys.attempts(), vec![true]);
+}
+
+#[gpui_kit::test]
+fn a_wrong_password_is_refused_and_the_keys_stay_closed(cx: &mut TestAppContext) {
+    let page = locked_page(cx);
+
+    submit_password(&page, "not it", cx);
+
+    assert!(page.shows("account-keys-refused", cx));
+    assert!(page.shows("account-keys-locked", cx));
+    assert!(!page.shows(item("agent-server", "web"), cx));
+    assert_eq!(page.account_keys.attempts(), vec![false]);
+}
+
+#[gpui_kit::test]
+fn locking_the_keys_hides_the_records_until_the_password_is_typed(cx: &mut TestAppContext) {
+    let page = page_with_access(cx);
+    open_tab(&page, AGENTS, cx);
+    assert!(page.shows("account-keys-open", cx));
+    assert!(page.shows(item("agent-server", "web"), cx));
+
+    page.click("account-keys-lock", cx);
+    cx.run_until_parked();
+    page.render(cx);
+
+    assert!(page.shows("account-keys-locked", cx));
+    assert!(!page.shows(item("agent-server", "web"), cx));
+}

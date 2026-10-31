@@ -33,6 +33,7 @@
 //! account owners. Identity constructors validate shape; adapters authenticate values, and
 //! lease checks prevent old owners from returning after sign-out or key replacement.
 
+pub mod account_keys;
 pub mod address;
 pub mod admin_keys;
 pub mod agent_access;
@@ -55,6 +56,7 @@ pub mod trust;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub use account_keys::{AccountKeyError, AccountKeyFuture, AccountKeyLock};
 pub use address::{DEFAULT_PORT, HubAddress, HubId};
 pub use admin_keys::{
     AdminKeyConfirmation, AdminKeyError, AdminKeyOffer, HubAdminKeys, PendingAdminKey,

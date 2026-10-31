@@ -68,6 +68,9 @@ fn access(
                 devices: Arc::new(FakeAccountDevices::default()),
                 agent_trust: Arc::new(FakeAgentAccess::default()),
                 agent_grants: Arc::new(FakeAgentAccess::default()),
+                account_keys: Arc::new(nocterm_hubs_model::testing::FakeAccountKeys::alongside(
+                    &fake_hub, "password",
+                )),
             },
             settings,
             cx,

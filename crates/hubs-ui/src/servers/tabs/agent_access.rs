@@ -9,7 +9,8 @@
 use std::collections::BTreeSet;
 
 use gpui_kit::{
-    App, ClickEvent, ClipboardItem, Context, Entity, Task, TestSupportExt as _, Window,
+    App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity, Subscription, Task,
+    TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
@@ -26,6 +27,7 @@ use nocterm_hubs_model::{
     ServerTrust, TrustedServer,
 };
 
+use super::account_keys::{AccountKeys, AccountKeysEvent};
 use super::devices::utc;
 use crate::layout::{note, problem};
 use crate::messages::agent_problem;
@@ -54,10 +56,18 @@ pub(in crate::servers) struct AgentAccess {
     notice: Option<Result<String, String>>,
     loading: Option<Task<()>>,
     working: Option<Task<()>>,
+    /// The lock of the account keys the records are encrypted under.
+    keys: Entity<AccountKeys>,
+    _keys_changed: Subscription,
 }
 
 impl AgentAccess {
-    pub(in crate::servers) fn new(hubs: Entity<Hubs>) -> Self {
+    pub(in crate::servers) fn new(hubs: Entity<Hubs>, cx: &mut Context<Self>) -> Self {
+        let keys = cx.new(|_| AccountKeys::new(hubs.clone()));
+        let _keys_changed = cx.subscribe(&keys, |tab, _, event: &AccountKeysEvent, cx| {
+            let AccountKeysEvent::Changed = event;
+            tab.reload(cx);
+        });
         Self {
             hubs,
             hub: None,
@@ -67,6 +77,8 @@ impl AgentAccess {
             notice: None,
             loading: None,
             working: None,
+            keys,
+            _keys_changed,
         }
     }
 
@@ -76,6 +88,7 @@ impl AgentAccess {
             return;
         }
         self.hub = Some(hub.clone());
+        self.keys.update(cx, |keys, cx| keys.show(hub, cx));
         self.selected.clear();
         self.picking = None;
         self.notice = None;
@@ -338,6 +351,7 @@ impl Render for AgentAccess {
                 cx,
             ))
             .children(notice)
+            .child(self.keys.clone())
             .child(body)
     }
 }

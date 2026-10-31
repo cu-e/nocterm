@@ -90,7 +90,7 @@ impl ServersPage {
             tab: Tab::Overview,
             names: NameFields::new(hubs.clone()),
             devices: cx.new(|_| Devices::new(hubs.clone())),
-            agents: cx.new(|_| AgentAccess::new(hubs.clone())),
+            agents: cx.new(|cx| AgentAccess::new(hubs.clone(), cx)),
             cloud_agents: cloud_agents.map(|service| cx.new(|cx| CloudAgentsTab::new(service, cx))),
             focus: cx.focus_handle(),
             _redraw: redraw,

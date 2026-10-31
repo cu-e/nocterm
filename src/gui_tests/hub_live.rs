@@ -87,6 +87,7 @@ fn boot(links: &Arc<HubLinks>, cx: &mut TestAppContext) -> (Booted, Saved) {
         devices: links.clone(),
         agent_trust: agent.clone(),
         agent_grants: agent,
+        account_keys: Arc::new(nocterm_hub_io::AccountKeys::new(links.clone())),
     };
     let booted = cx.update(|cx| {
         boot_with_ports_and_probe(

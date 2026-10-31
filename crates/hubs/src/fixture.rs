@@ -96,6 +96,9 @@ fn build(
             devices: Arc::new(nocterm_hubs_model::testing::FakeAccountDevices::default()),
             agent_trust: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
             agent_grants: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
+            account_keys: Arc::new(nocterm_hubs_model::testing::FakeAccountKeys::alongside(
+                &hub, "password",
+            )),
         };
         let installed = install(deps, settings.clone(), cx);
         Fixture {

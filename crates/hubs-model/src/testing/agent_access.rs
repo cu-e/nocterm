@@ -10,6 +10,8 @@ use crate::agent_access::{
     AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentGrants, AgentHostTrust,
     AgentTrustOverview, HostChoice, ServerTrust, TrustedServer,
 };
+use crate::error::HubError;
+use crate::testing::FakeHub;
 
 /// An in-memory [`AgentHostTrust`] and [`AgentGrants`]. Clones share one state, so a test
 /// keeps a handle while a service owns another.
@@ -20,6 +22,7 @@ use crate::agent_access::{
 #[derive(Clone, Default)]
 pub struct FakeAgentAccess {
     state: Arc<Mutex<State>>,
+    keys: Option<FakeHub>,
 }
 
 #[derive(Default)]
@@ -40,6 +43,23 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 }
 
 impl FakeAgentAccess {
+    /// Records are encrypted under the account keys of `hub`: while they are closed
+    /// ([`FakeHub::lock_keys`]) reading them fails with [`HubError::KeysLocked`].
+    #[must_use]
+    pub fn alongside(hub: &FakeHub) -> Self {
+        Self {
+            state: Arc::default(),
+            keys: Some(hub.clone()),
+        }
+    }
+
+    fn require_keys(&self, hub: &HubId) -> Result<(), AgentAccessError> {
+        match &self.keys {
+            Some(keys) if !keys.keys_open(hub) => Err(HubError::KeysLocked.into()),
+            _ => Ok(()),
+        }
+    }
+
     /// The account has this CA from now on.
     pub fn set_ca(&self, ca: AgentCa) {
         lock(&self.state).ca = Some(ca);
@@ -118,9 +138,10 @@ impl AgentHostTrust for FakeAgentAccess {
         lock(&self.state).hosts.clone()
     }
 
-    fn overview(&self, _hub: &HubId) -> AgentAccessFuture<AgentTrustOverview> {
-        let state = self.state.clone();
+    fn overview(&self, hub: &HubId) -> AgentAccessFuture<AgentTrustOverview> {
+        let (state, open) = (self.state.clone(), self.require_keys(hub));
         async move {
+            open?;
             let state = lock(&state);
             failed(&state)?;
             Ok(AgentTrustOverview {
@@ -234,9 +255,10 @@ impl AgentHostTrust for FakeAgentAccess {
 }
 
 impl AgentGrants for FakeAgentAccess {
-    fn list(&self, _hub: &HubId) -> AgentAccessFuture<Vec<AgentAccessGrant>> {
-        let state = self.state.clone();
+    fn list(&self, hub: &HubId) -> AgentAccessFuture<Vec<AgentAccessGrant>> {
+        let (state, open) = (self.state.clone(), self.require_keys(hub));
         async move {
+            open?;
             let state = lock(&state);
             failed(&state)?;
             Ok(state.grants.clone())

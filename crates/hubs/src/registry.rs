@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_hubs_model::{
-    AdminKeyError, AdminKeyOffer, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentTrustOverview,
-    DeviceSummary, HostChoice, HubAddress, HubColor, HubEndpointSpec, HubError, HubFuture, HubId,
-    HubInfo, HubRecord, HubsSettings, ServerTrust,
+    AccountKeyFuture, AdminKeyError, AdminKeyOffer, AgentAccessFuture, AgentAccessGrant, AgentCa,
+    AgentTrustOverview, DeviceSummary, HostChoice, HubAddress, HubColor, HubEndpointSpec, HubError,
+    HubFuture, HubId, HubInfo, HubRecord, HubsSettings, ServerTrust,
 };
+use nocterm_session::Secret;
 use nocterm_store::SettingsHandle;
 
 use crate::error::HubsError;
@@ -389,6 +390,21 @@ impl Hubs {
     /// Ends the chat access `grant_id` on `hub`.
     pub fn revoke_agent_grant(&self, hub: &HubId, grant_id: &str) -> AgentAccessFuture<()> {
         self.deps.agent_grants.revoke(hub, grant_id)
+    }
+
+    /// Whether the keys of the account on `hub` are open on this device.
+    pub fn account_keys_open(&self, hub: &HubId) -> bool {
+        self.deps.account_keys.is_open(hub)
+    }
+
+    /// Opens the keys of the account on `hub` with `password`.
+    pub fn unlock_account_keys(&self, hub: &HubId, password: Secret) -> AccountKeyFuture<()> {
+        self.deps.account_keys.unlock(hub, password)
+    }
+
+    /// Closes the keys of the account on `hub`.
+    pub fn lock_account_keys(&self, hub: &HubId) {
+        self.deps.account_keys.lock(hub);
     }
 
     /// The user connected to `connection`: every hub that is online compares the server's

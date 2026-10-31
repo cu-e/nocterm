@@ -234,9 +234,10 @@ fn hub_dependencies(
             trust: links.clone(),
             sign_in: links.clone(),
             admin_keys: links.clone(),
-            devices: links,
+            devices: links.clone(),
             agent_trust: agent_access.clone(),
             agent_grants: agent_access,
+            account_keys: Arc::new(nocterm_hub_io::AccountKeys::new(links)),
         }
     })
 }
