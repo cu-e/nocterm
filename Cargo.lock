@@ -5093,6 +5093,7 @@ dependencies = [
  "nocterm-agent-tools",
  "nocterm-ai",
  "nocterm-cloud-agents",
+ "nocterm-cloud-agents-model",
  "nocterm-connections",
  "nocterm-connections-io",
  "nocterm-connections-model",

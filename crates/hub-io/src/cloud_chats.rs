@@ -16,6 +16,7 @@ mod managed;
 mod open;
 mod session;
 mod setup;
+mod timer;
 mod wait;
 
 use std::future::Future;
@@ -46,6 +47,29 @@ pub struct ChatServices {
     pub storage: Arc<ConversationStorage>,
     /// The clock and delays of waits and sources.
     pub timer: Arc<dyn ToolTimer>,
+}
+
+/// Most chat namespaces that are open at once.
+const MAX_OPEN_CHATS: usize = 32;
+/// Most blocking operations of all sources at once.
+const MAX_WORKERS: usize = 8;
+
+impl ChatServices {
+    /// The services of an application over `links`: workers and a clock on the adapter's
+    /// runtime, and encrypted chat files under `root`.
+    pub fn native(links: &HubLinks, root: std::path::PathBuf) -> Result<Self, CloudChatError> {
+        let (handle, _) = links.agent_parts();
+        let resident = ConversationStorage::resident_bytes(MAX_OPEN_CHATS)
+            .map_err(|_| CloudChatError::Capacity)?;
+        let lease = ChatBudget::new()?.resident(resident)?;
+        Ok(Self {
+            workers: ConversationWorkers::new(handle.clone(), MAX_WORKERS)
+                .map_err(|_| CloudChatError::Capacity)?,
+            storage: ConversationStorage::new(root, MAX_OPEN_CHATS, lease)
+                .map_err(|_| CloudChatError::Capacity)?,
+            timer: Arc::new(timer::NativeTimer::new(handle)),
+        })
+    }
 }
 
 /// What one operation shares with the others of the installation.

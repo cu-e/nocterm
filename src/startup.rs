@@ -52,6 +52,7 @@ impl PreparedApp {
         ));
         let transport = ssh_transport(&paths, hub_links.as_deref())?;
         let cloud_agents = cloud_agents_dependencies(hub_links.clone(), &paths);
+        let cloud_chats = cloud_chats_launcher(hub_links.as_ref(), &paths);
         let local_fs = Arc::new(
             nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
         );
@@ -93,6 +94,7 @@ impl PreparedApp {
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
                 cloud_agents,
+                cloud_chats,
                 hubs: hub_dependencies(hub_links.clone(), agent_hosts.clone()),
                 agent_hosts: hub_links.is_some().then_some(agent_hosts as _),
                 hub_accounts: hub_links
@@ -261,6 +263,25 @@ fn cloud_agents_dependencies(
         personal: link.clone(),
         pins: link,
     })
+}
+
+/// The Cloud chat port of the links, if there are any. Its encrypted chat files live in the
+/// state directory.
+fn cloud_chats_launcher(
+    links: Option<&Arc<nocterm_hub_io::HubLinks>>,
+    paths: &Paths,
+) -> Option<Arc<dyn nocterm_cloud_agents_model::CloudChatLauncher>> {
+    let links = links?;
+    let root = paths.state_dir().join("cloud-chats");
+    let link = nocterm_hub_io::ChatServices::native(links, root)
+        .and_then(|services| nocterm_hub_io::CloudChatsLink::new(links.clone(), services));
+    match link {
+        Ok(link) => Some(Arc::new(link)),
+        Err(error) => {
+            tracing::error!(?error, "Cloud chats are unavailable");
+            None
+        }
+    }
 }
 
 /// The SSH transport. A profile that routes its first hop through a hub is dialled by the hub

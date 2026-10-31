@@ -65,6 +65,8 @@ pub(crate) struct HostServices {
     pub(crate) hubs: Option<nocterm_hubs::Deps>,
     /// The Cloud agents ports; without them the new-chat menu has no Cloud tab.
     pub(crate) cloud_agents: Option<nocterm_cloud_agents::Deps>,
+    /// Creates, lists and opens Cloud chats; without it the Cloud tab offers agents only.
+    pub(crate) cloud_chats: Option<Arc<dyn nocterm_cloud_agents_model::CloudChatLauncher>>,
     /// The encrypted data of hub accounts; without it the hubs cannot open windows.
     pub(crate) hub_accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
     /// Receives the sessions of saved connections for the agent SSH CA; `None` without hubs.
@@ -552,7 +554,12 @@ fn install_hubs(
         cloud: None,
         agent_hosts: hosts.agent_hosts.clone(),
     };
-    let cloud = crate::cloud_agents_wiring::install(hosts.cloud_agents.clone(), Some(&pending), cx);
+    let cloud = crate::cloud_agents_wiring::install(
+        hosts.cloud_agents.clone(),
+        hosts.cloud_chats.clone(),
+        Some(&pending),
+        cx,
+    );
     pending.cloud = cloud.as_ref().map(|access| access.service().clone());
     (Some(pending), cloud)
 }

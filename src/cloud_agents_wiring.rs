@@ -1,6 +1,9 @@
 //! Composes the Cloud agents service with the known hubs: it is installed once, and follows
 //! which hubs are signed in so only those are listed.
+use std::sync::Arc;
+
 use gpui_kit::App;
+use nocterm_cloud_agents_model::CloudChatLauncher;
 use nocterm_hubs::{HubStatus, HubsEvent};
 
 use crate::bootstrap::PendingHubs;
@@ -9,6 +12,7 @@ use crate::bootstrap::PendingHubs;
 /// signed in to. Returns the access the agent feature offers, or none without hubs or ports.
 pub(crate) fn install(
     deps: Option<nocterm_cloud_agents::Deps>,
+    chats: Option<Arc<dyn CloudChatLauncher>>,
     hubs: Option<&PendingHubs>,
     cx: &mut App,
 ) -> Option<nocterm_agent::CloudAgentsAccess> {
@@ -34,5 +38,9 @@ pub(crate) fn install(
     cx.subscribe(&hubs, move |_, HubsEvent::Changed, cx| on_change(cx))
         .detach();
     follow(cx);
-    Some(nocterm_agent::CloudAgentsAccess::new(agents, hubs))
+    let access = nocterm_agent::CloudAgentsAccess::new(agents, hubs);
+    Some(match chats {
+        Some(chats) => access.with_chats(chats),
+        None => access,
+    })
 }
