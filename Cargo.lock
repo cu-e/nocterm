@@ -6174,6 +6174,7 @@ dependencies = [
  "nocterm-cloud-runner",
  "nocterm-core",
  "nocterm-hub-io",
+ "nocterm-hub-model",
  "nocterm-hubs-model",
  "nocterm-local",
  "nocterm-session",

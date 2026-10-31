@@ -7,7 +7,7 @@ mod health;
 mod worker;
 #[cfg(unix)]
 use crate::execution::ExecutionRuntime;
-use crate::{RunnerError, bootstrap::State, cli::Completion};
+use crate::{RunnerError, bootstrap::State, cli::Completion, managed::Session};
 #[cfg(unix)]
 use nocterm_core::persist::ShutdownDeadline;
 #[cfg(unix)]
@@ -57,15 +57,31 @@ async fn startup(state: &mut State) -> Result<Startup, RunnerError> {
     })
 }
 #[cfg(unix)]
-pub(crate) async fn run(mut state: State) -> Completion {
+pub(crate) async fn run(mut state: State, session: Option<Session>) -> Completion {
     let budget = state.limits().shutdown();
     match startup(&mut state).await {
-        Ok(started) => supervise(state, started).await,
+        Ok(started) => {
+            if let Some(session) = &session
+                && let Err(error) = session.announce(started.execution.is_some())
+            {
+                return Completion::finished(Err(error), budget);
+            }
+            supervise(state, started, session).await
+        }
         Err(error) => Completion::finished(Err(error), budget),
     }
 }
+/// The host closing the control channel ends the lease, so the runner stops
+/// like it does for a signal. A daemon without a channel never stops for it.
 #[cfg(unix)]
-async fn supervise(state: State, started: Startup) -> Completion {
+async fn control_ended(session: &mut Option<Session>) -> Result<(), RunnerError> {
+    match session {
+        Some(session) => session.ended().await,
+        None => std::future::pending().await,
+    }
+}
+#[cfg(unix)]
+async fn supervise(state: State, started: Startup, mut session: Option<Session>) -> Completion {
     let Startup {
         peer,
         work,
@@ -95,6 +111,7 @@ async fn supervise(state: State, started: Startup) -> Completion {
         result = &mut producer => (flatten(result), true, false),
         result = &mut observer => (flatten(result), false, true),
         result = execution_stopped(&mut execution) => (result, false, false),
+        result = control_ended(&mut session) => (result, false, false),
     };
     let deadline = ShutdownDeadline::new(budget);
     work.close();
@@ -190,7 +207,7 @@ pub(crate) async fn health(directory: &Path) -> Result<(), RunnerError> {
     health::query(directory).await
 }
 #[cfg(not(unix))]
-pub(crate) async fn run(state: State) -> Completion {
+pub(crate) async fn run(state: State, _session: Option<Session>) -> Completion {
     Completion::finished(Err(RunnerError::Platform), state.limits().shutdown())
 }
 #[cfg(not(unix))]

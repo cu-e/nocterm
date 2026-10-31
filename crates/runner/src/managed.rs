@@ -1,8 +1,25 @@
 //! Managed mode: the pool host starts the runner as
 //! `nocterm-runner managed --config <mount>/runner.toml` and writes one boot
 //! document to its standard input. The document names what the agent is and
-//! points at the host's credential broker with a per-lease virtual token. It
-//! never carries a provider key, and nothing here writes it to disk.
+//! points at the host's credential broker. It never carries a provider key, and
+//! nothing here writes one to disk.
+//!
+//! Boot v1 (no `--control`) carries one lease token and is read to EOF; it keeps
+//! the runner control-plane only. Boot v2 (`--control stdin`, ADR 0123) carries no
+//! token: the framed channel behind it delivers per-chat broker tokens.
+mod boot_v2;
+mod chat_tokens;
+mod frames;
+mod providers;
+mod session;
+#[cfg(test)]
+mod testing;
+pub(crate) use boot_v2::BootV2;
+pub(crate) use chat_tokens::{ChatTokens, ProviderWake};
+pub(crate) use frames::{ControlEnd, read_boot_v2, spawn_reader};
+pub(crate) use providers::{BrokeredProviders, CoordinatorWake};
+pub(crate) use session::{Launch, Session};
+
 use crate::RunnerError;
 use nocterm_agent_engine::ProviderEndpoint;
 use nocterm_core::SharedCause;
@@ -51,6 +68,36 @@ struct Document {
     ssh_targets: Vec<SshTarget>,
 }
 
+/// What every boot version shares and validates the same way.
+struct Shape<'a> {
+    identity: [&'a String; 3],
+    name: &'a str,
+    secret_names: usize,
+    allowed_hosts: usize,
+    ssh_targets: &'a [SshTarget],
+}
+fn check_shape(shape: &Shape<'_>) -> Result<(), RunnerError> {
+    for text in shape.identity {
+        if text.is_empty() || text.len() > 128 || !text.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(RunnerError::Value("boot.identity"));
+        }
+    }
+    if shape.name.is_empty() || shape.name.len() > 256 {
+        return Err(RunnerError::Value("boot.name"));
+    }
+    if shape.secret_names > MAX_ENTRIES
+        || shape.allowed_hosts > MAX_ENTRIES
+        || shape.ssh_targets.len() > MAX_ENTRIES
+        || shape
+            .ssh_targets
+            .iter()
+            .any(|t| t.host.is_empty() || t.user.is_empty() || t.port == 0)
+    {
+        return Err(RunnerError::Value("boot.lists"));
+    }
+    Ok(())
+}
+
 /// A validated boot document. The virtual token is zeroized when it drops.
 pub(crate) struct Boot {
     document: Document,
@@ -75,14 +122,13 @@ impl Boot {
         if document.version != BOOT_VERSION {
             return Err(RunnerError::Value("boot.version"));
         }
-        for text in [&document.instance, &document.agent, &document.lease] {
-            if text.is_empty() || text.len() > 128 || !text.bytes().all(|b| b.is_ascii_graphic()) {
-                return Err(RunnerError::Value("boot.identity"));
-            }
-        }
-        if document.name.is_empty() || document.name.len() > 256 {
-            return Err(RunnerError::Value("boot.name"));
-        }
+        check_shape(&Shape {
+            identity: [&document.instance, &document.agent, &document.lease],
+            name: &document.name,
+            secret_names: document.secret_names.len(),
+            allowed_hosts: document.allowed_hosts.len(),
+            ssh_targets: &document.ssh_targets,
+        })?;
         let provider = &document.provider;
         if !matches!(provider.kind.as_str(), "openai_chat" | "anthropic_messages")
             || provider.models.is_empty()
@@ -93,16 +139,6 @@ impl Boot {
             || !provider.token.bytes().all(|b| b.is_ascii_graphic())
         {
             return Err(RunnerError::Value("boot.provider"));
-        }
-        if document.secret_names.len() > MAX_ENTRIES
-            || document.allowed_hosts.len() > MAX_ENTRIES
-            || document.ssh_targets.len() > MAX_ENTRIES
-            || document
-                .ssh_targets
-                .iter()
-                .any(|t| t.host.is_empty() || t.user.is_empty() || t.port == 0)
-        {
-            return Err(RunnerError::Value("boot.lists"));
         }
         // The broker is the only provider endpoint a managed runner may use.
         ProviderEndpoint::broker(&provider.base_url)?;

@@ -16,6 +16,8 @@ enum Command {
 struct Arguments {
     command: Command,
     configuration: PathBuf,
+    /// `managed --control stdin`: framed standard input (ADR 0123).
+    control: bool,
 }
 impl Arguments {
     fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Self, RunnerError> {
@@ -36,12 +38,24 @@ impl Arguments {
             .next()
             .map(PathBuf::from)
             .ok_or(RunnerError::Arguments)?;
-        if args.next().is_some() {
+        let mut control = false;
+        let mut next = args.next();
+        if matches!(command, Command::Managed)
+            && next.as_deref() == Some(std::ffi::OsStr::new("--control"))
+        {
+            if args.next().as_deref() != Some(std::ffi::OsStr::new("stdin")) {
+                return Err(RunnerError::Arguments);
+            }
+            control = true;
+            next = args.next();
+        }
+        if next.is_some() {
             return Err(RunnerError::Arguments);
         }
         Ok(Self {
             command,
             configuration,
+            control,
         })
     }
 }
@@ -55,15 +69,12 @@ pub(crate) fn execute() -> Result<(), RunnerError> {
     } else {
         None
     };
-    let boot = if matches!(arguments.command, Command::Managed) {
-        // Managed configuration is the pool host's, with no execution of its own.
-        if config.execution.is_some() || config.session_targets.is_some() {
-            return Err(RunnerError::Value("managed configuration"));
-        }
-        Some(crate::managed::Boot::read(std::io::stdin().lock())?)
+    let launch = if matches!(arguments.command, Command::Managed) {
+        Some(crate::managed::Launch::read(arguments.control, &config)?)
     } else {
         None
     };
+    let scope = config.binding.scope().clone();
     let shutdown = config.limits.shutdown();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -72,14 +83,24 @@ pub(crate) fn execute() -> Result<(), RunnerError> {
         .build()
         .map_err(RunnerError::Runtime)?;
     let completion = runtime.block_on(async move {
-        if let Some(boot) = &boot
-            && let Err(error) = crate::output::report(&boot.summary())
-        {
-            return Completion::finished(Err(error), shutdown);
-        }
+        let session = match launch {
+            Some(crate::managed::Launch::Legacy(boot)) => {
+                if let Err(error) = crate::output::report(&boot.summary()) {
+                    return Completion::finished(Err(error), shutdown);
+                }
+                None
+            }
+            Some(crate::managed::Launch::Controlled(boot, input)) => {
+                match crate::managed::Session::start(boot, input, &scope) {
+                    Ok(session) => Some(session),
+                    Err(error) => return Completion::finished(Err(error), shutdown),
+                }
+            }
+            None => None,
+        };
         if matches!(arguments.command, Command::Run | Command::Managed) {
             return match State::open(config, false) {
-                Ok(state) => control::run(state).await,
+                Ok(state) => control::run(state, session).await,
                 Err(error) => Completion::finished(Err(error), shutdown),
             };
         }
@@ -197,6 +218,20 @@ mod tests {
             )
             .is_ok()
         );
+        let parse = |args: &[&str]| Arguments::parse(args.iter().map(OsString::from));
+        assert!(
+            parse(&["managed", "--config", "/m/r.toml", "--control", "stdin"])
+                .unwrap()
+                .control
+        );
+        assert!(
+            !parse(&["managed", "--config", "/m/r.toml"])
+                .unwrap()
+                .control
+        );
+        assert!(parse(&["managed", "--config", "/m/r.toml", "--control", "fd3"]).is_err());
+        assert!(parse(&["managed", "--config", "/m/r.toml", "--control"]).is_err());
+        assert!(parse(&["run", "--config", "/m/r.toml", "--control", "stdin"]).is_err());
         assert_eq!(
             &**read_ticket(&b"actual-ticket\r\nignored"[..]).unwrap(),
             "actual-ticket"

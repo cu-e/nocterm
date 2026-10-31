@@ -21,6 +21,7 @@ nocterm-core.workspace = true
 nocterm-hubs-model.workspace = true
 nocterm-cloud-model.workspace = true
 nocterm-hub-io.workspace = true
+nocterm-hub-model.workspace = true
 nocterm-cloud-runner.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 serde.workspace = true
@@ -31,6 +32,8 @@ zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-cloud-model = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

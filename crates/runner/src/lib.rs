@@ -4,12 +4,15 @@
 //! native collaborators, bounded fresh-head service, explicit execution
 //! composition (command inbox, coordinator, providers, session broker, outbox
 //! delivery) when configured, and graceful task drain.
-//! Managed mode (`managed --config <path>`, boot document on stdin) is started by a pool
-//! host and is validated here; it stays control-plane only until containment and the
-//! broker credential source are composed.
+//! Managed mode (`managed --config <path>`) is started by a pool host. Boot v1 on stdin
+//! (ADR 0121) validates and stays control-plane only. With `--control stdin` (ADR 0123)
+//! stdin is a framed channel: a boot v2 document, then contract chat access frames that
+//! give each chat a memory-only broker token; closing it ends the lease.
 //! Does not own: GPUI, model/tool engines, device/account root keys, provider
 //! credentials, protocol codecs or server implementation. Execution stays disabled
 //! unless both `[execution]` and `[session_targets]` are configured.
+//! Control channel reader: a blocking thread owning stdin; the token store, wake hook and
+//! brokered providers live in `managed/`.
 //! Ports used: hub-io runner identity/session/head responder, cloud-runner native
 //! journal/current heads and cloud-model finite budgets. Provided port: CLI.
 //! Settings: a bounded private runner TOML file. Globals: none.
