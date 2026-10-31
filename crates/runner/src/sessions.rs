@@ -1,4 +1,5 @@
 //! Explicit trusted session targets and actual retained physical login ownership.
+mod approval;
 #[cfg(target_os = "linux")]
 mod broker;
 pub(crate) mod config;
@@ -16,6 +17,7 @@ mod source;
 mod targets;
 #[cfg(target_os = "linux")]
 mod task;
+pub(crate) use approval::ContainedApproval;
 #[cfg(target_os = "linux")]
 pub(crate) use broker::NativeSessionBroker;
 #[cfg(target_os = "linux")]

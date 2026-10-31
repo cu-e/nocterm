@@ -8,10 +8,10 @@ use super::{
 use crate::{
     RunnerError,
     bootstrap::State,
-    managed::{BrokeredProviders, CoordinatorWake},
+    managed::{Approval, BrokeredProviders, CoordinatorWake},
     sessions::{
-        ConfiguredSessionTargets, NativeSessionBroker, SessionBrokerSetup, SessionCapacity,
-        SessionResources,
+        ConfiguredSessionTargets, ContainedApproval, NativeSessionBroker, SessionBrokerSetup,
+        SessionCapacity, SessionResources,
     },
 };
 use nocterm_agent_engine::ConfiguredProviderCatalog;
@@ -27,7 +27,7 @@ use nocterm_cloud_runner::{
     DurableRunJournal, DurableSnapshotPublication, NativeToolTimer,
     coordinator::{
         CoordinatorExecution, CoordinatorPublication, CoordinatorServices, CoordinatorSessions,
-        CoordinatorStorage, RunCoordinator,
+        CoordinatorStorage, RunCoordinator, ToolApprovalPolicy,
     },
 };
 use nocterm_hub_io::cloud::{
@@ -121,6 +121,17 @@ fn providers(
     )?))
 }
 
+/// `approval: "never"` trusts the runner's own containment; every other mode
+/// keeps the coordinator's default of asking for each mutating call (ADR 0127).
+fn approval_policy(
+    brokered: Option<&Arc<BrokeredProviders>>,
+    targets: &ConfiguredSessionTargets,
+) -> Option<Arc<dyn ToolApprovalPolicy>> {
+    let brokered = brokered?;
+    (brokered.policy().approval() == Approval::Never)
+        .then(|| Arc::new(ContainedApproval::new(targets.contained_targets())) as Arc<_>)
+}
+
 /// A token issued after a prompt parked resumes it without another command.
 fn bind_wake(brokered: Option<&Arc<BrokeredProviders>>, coordinator: &RunCoordinator) {
     if let Some(brokered) = brokered {
@@ -152,6 +163,7 @@ pub(super) async fn compose(
     let ssh = ssh_transport(state)?;
     let destination = targets.default_destination()?;
     let targets = targets.build(binding.clone(), &local, ssh)?;
+    let approval = approval_policy(brokered.as_ref(), &targets);
 
     let (attachments, inbox) = ingress(state, &timer, &budgets, destination)?;
     let encoder = state.material().event_encoder(Arc::new(SystemClock));
@@ -195,6 +207,10 @@ pub(super) async fn compose(
     ));
     let execution =
         execution(binding, providers, &broker, &journal, &budgets)?.with_retirement(retirement);
+    let execution = match approval {
+        Some(policy) => execution.with_approval_policy(policy),
+        None => execution,
+    };
     let services = CoordinatorServices::new(
         source,
         storage,

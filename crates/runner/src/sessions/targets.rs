@@ -134,6 +134,15 @@ impl ConfiguredSessionTargets {
         }
         Ok(Self { binding, entries })
     }
+    /// The targets that run inside this runner's own containment. Every other
+    /// target is a remote machine the runner does not contain.
+    pub(crate) fn contained_targets(&self) -> Vec<TargetBinding> {
+        self.entries
+            .iter()
+            .filter(|entry| matches!(entry.connector, Connector::Local { .. }))
+            .map(|entry| entry.target.clone())
+            .collect()
+    }
     pub(crate) fn binding(&self) -> &JournalCatalogBinding {
         &self.binding
     }
