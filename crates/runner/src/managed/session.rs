@@ -112,7 +112,7 @@ mod tests {
     #[tokio::test]
     async fn a_channel_that_failed_keeps_the_runner_serving() {
         let (ended, closed) = oneshot::channel();
-        let failure = nocterm_hub_model::agents::ChatAccessFrameError::Truncated;
+        let failure = nocterm_hub_io::runner_control::ChatAccessFrameError::Truncated;
         ended
             .send(ControlEnd::Refused(RunnerError::ControlChannel(failure)))
             .unwrap();

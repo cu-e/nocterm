@@ -1,6 +1,6 @@
 use super::*;
 use crate::managed::testing::{chat, token, tokens};
-use nocterm_hub_model::agents::ChatAccessFrame;
+use nocterm_hub_io::runner_control::ChatAccessFrame;
 use std::io::Cursor;
 
 fn issue(byte: u8, text: &str) -> Vec<u8> {

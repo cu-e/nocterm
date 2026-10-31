@@ -4,7 +4,7 @@ use super::{BootV2, ChatTokens, MAX_BOOT_BYTES};
 use crate::RunnerError;
 use nocterm_cloud_model::identity::CloudChatId;
 use nocterm_core::SharedCause;
-use nocterm_hub_model::agents::{ChatAccessDecoder, ChatAccessFrame};
+use nocterm_hub_io::runner_control::{ChatAccessDecoder, ChatAccessFrame};
 use std::{io::Read, sync::Arc};
 use tokio::sync::oneshot;
 use zeroize::Zeroizing;

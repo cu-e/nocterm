@@ -4,7 +4,7 @@
 //! command already allow.
 use crate::RunnerError;
 use nocterm_cloud_model::engine::{EngineError, ModelBudget};
-use nocterm_hub_model::agents::limits::{
+use nocterm_hub_io::runner_control::limits::{
     MAX_AGENT_OUTPUT_TOKENS, MAX_AGENT_TURNS, MAX_TOOL_NAME_BYTES, MAX_TOOL_POLICY_ENTRIES,
 };
 use serde::Deserialize;

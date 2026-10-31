@@ -48,7 +48,7 @@ pub enum RunnerError {
     #[error("the managed boot document could not be read")]
     Boot(#[source] SharedCause),
     #[error("the managed control channel failed and its tokens were revoked")]
-    ControlChannel(#[source] nocterm_hub_model::agents::ChatAccessFrameError),
+    ControlChannel(#[source] nocterm_hub_io::runner_control::ChatAccessFrameError),
     #[error("the runner could not write its report")]
     Output(#[source] std::io::Error),
     #[error("this control-plane executable currently requires Unix")]

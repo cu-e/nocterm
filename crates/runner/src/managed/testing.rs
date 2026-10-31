@@ -4,7 +4,7 @@ use nocterm_agent_engine::{ProviderBinding, ProviderEndpoint, ProviderKind};
 use nocterm_cloud_model::identity::{
     AccountIdentity, AccountScope, CloudChatId, Fingerprint, HubIdentity, NamespaceId,
 };
-use nocterm_hub_model::agents::ChatAccessToken;
+use nocterm_hub_io::runner_control::ChatAccessToken;
 use std::sync::{Arc, Mutex};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

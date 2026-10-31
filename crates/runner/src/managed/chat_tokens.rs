@@ -5,7 +5,7 @@
 //! built from it, and ends with REVOKE, a closed channel or the process.
 use nocterm_agent_engine::{MAX_PROVIDER_LEASE, ProviderBinding, ProviderLease};
 use nocterm_cloud_model::{engine::EngineError, identity::CloudChatId};
-use nocterm_hub_model::agents::ChatAccessToken;
+use nocterm_hub_io::runner_control::ChatAccessToken;
 use std::{
     collections::BTreeMap,
     fmt,

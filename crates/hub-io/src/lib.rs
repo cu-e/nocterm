@@ -131,6 +131,7 @@ mod links;
 mod pool;
 mod relay;
 mod replica;
+pub mod runner_control;
 mod store;
 mod task;
 mod vault;
