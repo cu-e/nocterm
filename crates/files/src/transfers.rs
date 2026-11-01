@@ -189,6 +189,7 @@ impl Render for TransfersView {
                 let direction = match job.direction {
                     TransferDirection::Upload => "Upload",
                     TransferDirection::Download => "Download",
+                    TransferDirection::Relay => "Copy",
                 };
                 let description = format!(
                     "{direction} · {} · {} complete / {} files · {} / {}{} · {:?}",

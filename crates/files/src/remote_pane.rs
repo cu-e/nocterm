@@ -122,7 +122,11 @@ impl RemotePane {
                 jobs.into_iter()
                     .filter(|job| {
                         Some(&job.host) == session.address().as_ref()
-                            && job.direction == nocterm_transfers::TransferDirection::Upload
+                            && matches!(
+                                job.direction,
+                                nocterm_transfers::TransferDirection::Upload
+                                    | nocterm_transfers::TransferDirection::Relay
+                            )
                             && !job.state.finished()
                     })
                     .collect()

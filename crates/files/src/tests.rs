@@ -121,7 +121,9 @@ fn recorded_download(
 ) -> nocterm_transfers::DownloadRequest {
     match recording.request(id).unwrap() {
         nocterm_transfers::Request::Download(request) => request,
-        nocterm_transfers::Request::Upload(_) => panic!("expected a download request"),
+        nocterm_transfers::Request::Upload(_) | nocterm_transfers::Request::Relay(_) => {
+            panic!("expected a download request")
+        }
     }
 }
 fn recorded_upload(
@@ -130,7 +132,9 @@ fn recorded_upload(
 ) -> nocterm_transfers::UploadRequest {
     match recording.request(id).unwrap() {
         nocterm_transfers::Request::Upload(request) => request,
-        nocterm_transfers::Request::Download(_) => panic!("expected an upload request"),
+        nocterm_transfers::Request::Download(_) | nocterm_transfers::Request::Relay(_) => {
+            panic!("expected an upload request")
+        }
     }
 }
 fn complete_recorded(
