@@ -24,6 +24,8 @@ pub(crate) struct PreparedApp {
     themes: bootstrap::Themes,
     hosts: bootstrap::HostServices,
     files: nocterm_files::Deps,
+    /// The Files transfer runtime, shared so agent transfers join the user's activity.
+    agent_transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     local_fs: Arc<dyn nocterm_session::local_fs::LocalFs>,
     user_plugins: UserPluginMode,
 }
@@ -73,6 +75,7 @@ impl PreparedApp {
         let preparation = Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
             environment.clone(),
         ));
+        let (files, agent_transfers) = files_dependencies(local_fs.clone())?;
         Ok(Self {
             paths,
             executable,
@@ -104,7 +107,8 @@ impl PreparedApp {
                 hub_accounts: hub_links
                     .map(|links| links as Arc<dyn crate::hub_sources::HubAccounts>),
             },
-            files: files_dependencies(local_fs.clone())?,
+            files,
+            agent_transfers,
             local_fs,
             user_plugins,
         })
@@ -139,7 +143,7 @@ impl PreparedApp {
         projects: crate::project_setup::PreparedProjectSetup,
         cx: &mut App,
     ) {
-        let agent = agent_services(&self.paths, self.executable, storage);
+        let agent = agent_services(&self.paths, self.executable, self.agent_transfers, storage);
         let vault = Some(bootstrap::VaultSetup {
             file: self.paths.config_dir().join("vault.bin"),
             device_unlock: true,
@@ -189,9 +193,13 @@ impl PreparedApp {
     }
 }
 
+/// Files dependencies and their transfer runtime, which agents submit to as well.
 fn files_dependencies(
     local_fs: Arc<nocterm_localfs::LocalFilesystem>,
-) -> anyhow::Result<nocterm_files::Deps> {
+) -> anyhow::Result<(
+    nocterm_files::Deps,
+    Arc<dyn nocterm_transfers::TransferRequests>,
+)> {
     let transfers = nocterm_transfer_runtime::TransferRuntime::start(
         nocterm_transfer_runtime::TransferRuntimeDeps::new(
             local_fs.clone(),
@@ -202,13 +210,14 @@ fn files_dependencies(
     let directories = Arc::new(nocterm_directory_io::DirectoryReaders::new(
         local_fs.clone(),
     ));
-    Ok(nocterm_files::Deps::new(
+    let files = nocterm_files::Deps::new(
         local_fs.clone(),
         local_fs,
-        transfers,
+        transfers.clone(),
         Arc::new(nocterm_local::LocalProgramOpener::default()),
         directories,
-    ))
+    );
+    Ok((files, transfers))
 }
 
 /// The adapter that reaches hubs, or none when it cannot start: local work does not suffer.
@@ -327,42 +336,15 @@ fn local_sessions() -> nocterm_terminal::LocalSessions {
     )
 }
 
-/// Interim until composition hands agents the Files transfer runtime: refuses every request.
-struct UnwiredAgentTransfers;
-#[derive(Debug, thiserror::Error)]
-#[error("Agent file transfers are not wired into this build.")]
-struct AgentTransfersUnwired;
-impl nocterm_transfers::TransferRequests for UnwiredAgentTransfers {
-    fn submit(
-        &self,
-        _: nocterm_transfers::Request,
-    ) -> Result<nocterm_transfers::TransferId, nocterm_transfers::TransferError> {
-        Err(nocterm_transfers::TransferError::runtime(
-            AgentTransfersUnwired,
-        ))
-    }
-    fn progress(
-        &self,
-        _: nocterm_transfers::TransferId,
-    ) -> Result<nocterm_transfers::Progress, nocterm_transfers::TransferError> {
-        Err(nocterm_transfers::TransferError::Missing)
-    }
-    fn cancel(
-        &self,
-        _: nocterm_transfers::TransferId,
-    ) -> Result<(), nocterm_transfers::TransferError> {
-        Err(nocterm_transfers::TransferError::Missing)
-    }
-}
-
 fn agent_services(
     paths: &Paths,
     executable: std::path::PathBuf,
+    transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     storage: nocterm_agent_runtime::AgentStorage,
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
         command_jobs: Arc::new(nocterm_agent_tools::JobsFactory),
-        transfers: Arc::new(UnwiredAgentTransfers),
+        transfers,
         catalog: nocterm_agent_providers::catalog(),
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
