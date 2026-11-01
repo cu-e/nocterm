@@ -23,6 +23,8 @@ impl TransferState {
 pub enum TransferDirection {
     Upload,
     Download,
+    /// Remote to remote, streamed through this application.
+    Relay,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Progress {

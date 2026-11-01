@@ -1,7 +1,7 @@
 //! Explicitly driven transfer-port fake; it performs no discovery or streaming.
 use crate::{
     DownloadRequest, Progress, ProgressTracker, Request, TransferError, TransferEvent, TransferId,
-    TransferLimits, TransferService, UploadRequest,
+    TransferLimits, TransferRequests, TransferService, UploadRequest,
 };
 use futures::future::BoxFuture;
 use nocterm_session::RemoteFs;
@@ -60,6 +60,25 @@ impl FakeTransfers {
             .apply(event);
         Ok(())
     }
+    /// Drops a recording, as the runtime does when it trims finished history.
+    pub fn forget(&self, id: TransferId) {
+        if let Ok(mut recordings) = self.recordings.lock() {
+            recordings.entries.remove(&id);
+        }
+    }
+    fn cancel_recorded(&self, id: TransferId) -> Result<(), TransferError> {
+        for event in [
+            TransferEvent::CancelRequested,
+            TransferEvent::DiscoveryComplete,
+            TransferEvent::WorkersDrained,
+        ] {
+            self.advance(id, event).map_err(|error| match error {
+                FakeTransferError::Missing => TransferError::Missing,
+                error => TransferError::runtime(error),
+            })?;
+        }
+        Ok(())
+    }
     fn admit(&self, request: Request) -> Result<TransferId, TransferError> {
         let limits = TransferLimits::default();
         request.validate(limits.discovery())?;
@@ -109,17 +128,7 @@ impl TransferService for FakeTransfers {
             .unwrap_or_default()
     }
     fn cancel(&self, id: TransferId) -> Result<(), TransferError> {
-        for event in [
-            TransferEvent::CancelRequested,
-            TransferEvent::DiscoveryComplete,
-            TransferEvent::WorkersDrained,
-        ] {
-            self.advance(id, event).map_err(|error| match error {
-                FakeTransferError::Missing => TransferError::Missing,
-                error => TransferError::runtime(error),
-            })?;
-        }
-        Ok(())
+        self.cancel_recorded(id)
     }
     fn retry(&self, id: TransferId, fs: Arc<dyn RemoteFs>) -> Result<TransferId, TransferError> {
         let request = {
@@ -153,5 +162,24 @@ impl TransferService for FakeTransfers {
                 }
             });
         Box::pin(async move { result })
+    }
+}
+impl TransferRequests for FakeTransfers {
+    fn submit(&self, request: Request) -> Result<TransferId, TransferError> {
+        self.admit(request)
+    }
+    fn progress(&self, id: TransferId) -> Result<Progress, TransferError> {
+        let recordings = self
+            .recordings
+            .lock()
+            .map_err(|_| TransferError::runtime(FakeTransferError::Poisoned))?;
+        recordings
+            .entries
+            .get(&id)
+            .map(|entry| entry.tracker.snapshot())
+            .ok_or(TransferError::Missing)
+    }
+    fn cancel(&self, id: TransferId) -> Result<(), TransferError> {
+        self.cancel_recorded(id)
     }
 }
