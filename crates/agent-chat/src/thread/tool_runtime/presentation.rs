@@ -36,3 +36,10 @@ pub(in crate::thread) fn command_payload(
         "error": state.error().map(|error| nocterm_ai::redact::redact(&error.to_string())),
     })
 }
+/// The agent-facing report of one transfer.
+pub(in crate::thread) fn transfer_payload(
+    progress: &nocterm_transfers::Progress,
+    redact: bool,
+) -> serde_json::Value {
+    nocterm_ai::tools::transfer::report(progress, redact)
+}

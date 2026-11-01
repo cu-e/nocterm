@@ -231,23 +231,34 @@ impl TurnContext {
                 })
                 .unwrap_or_else(|| "Unavailable server".into());
         }
-        self.resolved(input, defaults, cx)
-            .into_iter()
-            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
-            .map(|(_, entry, descriptor)| {
-                format!(
-                    "{}{}",
-                    entry.title,
-                    descriptor
-                        .connection
-                        .as_ref()
-                        .map(|connection| format!(
-                            " · {}@{}:{}",
-                            connection.user, connection.host, connection.port
-                        ))
-                        .unwrap_or_default()
-                )
-            })
-            .unwrap_or_else(|| "Unavailable terminal".into())
+        let resolved = self.resolved(input, defaults, cx);
+        let describe = |wanted: Option<&str>| {
+            resolved
+                .iter()
+                .find(|(id, _, _)| Some(id.as_str()) == wanted)
+                .map(|(_, entry, descriptor)| {
+                    format!(
+                        "{}{}",
+                        entry.title,
+                        descriptor
+                            .connection
+                            .as_ref()
+                            .map(|connection| format!(
+                                " · {}@{}:{}",
+                                connection.user, connection.host, connection.port
+                            ))
+                            .unwrap_or_default()
+                    )
+                })
+                .unwrap_or_else(|| "Unavailable terminal".into())
+        };
+        match call.source_terminal_id() {
+            Some(source) => format!(
+                "{} → {}",
+                describe(Some(source)),
+                describe(call.terminal_id())
+            ),
+            None => describe(call.terminal_id()),
+        }
     }
 }

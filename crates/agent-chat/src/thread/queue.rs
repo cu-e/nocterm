@@ -4,6 +4,7 @@ use super::{
     background_open::BackgroundOpen,
     bound_call::BoundToolCall,
     connection_wait::{ConnectionWaitError, WaitTarget},
+    execution::WaitSubject,
 };
 use gpui::{App, Context, EntityId, Task};
 use nocterm_ai::history::{SavedAttachment, SavedPrompt};
@@ -85,7 +86,7 @@ impl QueuedPrompt {
 }
 
 impl AgentThread {
-    fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
         if self.tools.has_watch() {
             return;
         }
@@ -96,9 +97,9 @@ impl AgentThread {
         }));
     }
 
-    pub(super) fn poll_command_wait(
+    pub(super) fn poll_tool_wait(
         &mut self,
-        operation: &super::execution::CommandWaitOperation,
+        operation: &super::execution::ToolWaitOperation,
         cx: &mut Context<Self>,
     ) -> Result<Option<serde_json::Value>, ToolFailure> {
         if !self.session.session_current(operation.ticket())
@@ -108,23 +109,18 @@ impl AgentThread {
             return Err(ToolFailure::from("Chat is unavailable."));
         }
         self.revoke_executions(cx);
-        let state = self
-            .tools
-            .command_snapshot(operation.id(), operation.terminal())?;
-        operation.frame(state, self.deps.ai(cx).approval.redact_secrets)
+        operation.frame(&mut self.tools, self.deps.ai(cx).approval.redact_secrets)
     }
 
-    fn wait_command(
+    pub(super) fn wait_tool(
         &mut self,
-        terminal: String,
-        id: String,
+        subject: WaitSubject,
         yield_ms: u64,
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
-        let operation = super::execution::CommandWaitOperation::new(
-            terminal,
-            id,
+        let operation = super::execution::ToolWaitOperation::new(
+            subject,
             yield_ms,
             self.session.ticket(),
             self.hold_operation(),
@@ -148,9 +144,8 @@ impl AgentThread {
         let TerminalCall::ReadCommand(request) = &call.call else {
             return;
         };
-        let terminal = request.terminal_id.clone();
-        let id = request.command_id.clone();
-        self.wait_command(terminal, id, request.yield_ms.unwrap_or(0), call, cx);
+        let subject = WaitSubject::command(&request.terminal_id, &request.command_id);
+        self.wait_tool(subject, request.yield_ms.unwrap_or(0), call, cx);
     }
 
     pub(super) fn execute_command(
@@ -173,9 +168,9 @@ impl AgentThread {
         };
         cx.background_executor().spawn(run).detach();
         self.start_execution_watch(cx);
-        let terminal = request.terminal_id.clone();
+        let subject = WaitSubject::command(&request.terminal_id, &id);
         let yield_ms = request.yield_ms.unwrap_or(1000);
-        self.wait_command(terminal, id, yield_ms, call, cx);
+        self.wait_tool(subject, yield_ms, call, cx);
     }
 
     fn reconnect_target(
@@ -337,6 +332,9 @@ impl AgentThread {
             }
             DispatchAction::Read(call) => self.read_command(call, cx),
             DispatchAction::Cancel(call) => self.cancel_command(call, cx),
+            DispatchAction::Transfer(admission) => self.start_transfer(*admission, cx),
+            DispatchAction::ReadTransfer(call) => self.read_transfer(call, cx),
+            DispatchAction::CancelTransfer(call) => self.cancel_transfer(call, cx),
             DispatchAction::Ignore => {}
         }
     }

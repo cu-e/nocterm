@@ -9,9 +9,21 @@ pub(super) struct SessionGrants {
 }
 impl SessionGrants {
     pub(super) fn observe(&mut self, call: &TerminalCall, expected: Option<ExpectedSession>) {
-        let Some(id) = call.terminal_id() else {
-            return;
-        };
+        if let Some(id) = call.terminal_id() {
+            self.observe_session(id, expected);
+        }
+    }
+    /// The source terminal of a transfer expires its grants the same way.
+    pub(super) fn observe_source(
+        &mut self,
+        call: &TerminalCall,
+        expected: Option<ExpectedSession>,
+    ) {
+        if let Some(id) = call.source_terminal_id() {
+            self.observe_session(id, expected);
+        }
+    }
+    fn observe_session(&mut self, id: &str, expected: Option<ExpectedSession>) {
         if self.sessions.get(id).copied() != expected {
             self.grants.revoke(id);
             self.sessions.remove(id);

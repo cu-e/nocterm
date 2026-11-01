@@ -4,6 +4,8 @@ use super::{AgentThread, approval_inbox::ApprovalToken, permissions::PermissionG
 use super::{
     approval_inbox::{ToolDecision, ToolRejection},
     bound_call::BoundToolCall,
+    execution::WaitSubject,
+    tool_runtime::TransferAdmission,
 };
 use crate::runtime::SessionEvent;
 use gpui::{App, Context};
@@ -36,10 +38,11 @@ impl AgentThread {
     }
 
     pub fn revoke_executions(&mut self, cx: &gpui::App) {
-        if !self.tools.has_active_commands() && self.tools.live_empty() {
+        if !self.tools.has_active_executions() && self.tools.live_empty() {
             return;
         }
         let resolved = self.resolved(cx);
+        self.tools.revoke_replaced_transfers(&resolved, cx);
         let attached = resolved
             .iter()
             .map(|(id, _, _)| id.clone())
@@ -66,7 +69,7 @@ impl AgentThread {
         } else {
             self.revoke_executions(cx);
         }
-        if !self.tools.has_active_commands() {
+        if !self.tools.has_active_executions() {
             self.tools.finish_watch();
             false
         } else {
@@ -76,6 +79,39 @@ impl AgentThread {
 
     pub(super) fn cancel_execution(&mut self) {
         self.tools.cancel_execution();
+    }
+
+    pub(super) fn start_transfer(&mut self, admission: TransferAdmission, cx: &mut Context<Self>) {
+        let source = self
+            .resolved(cx)
+            .into_iter()
+            .find(|(id, _, _)| admission.reads_from(id))
+            .map(|(_, entry, _)| entry);
+        match self.tools.start_transfer(admission, source, cx) {
+            Ok(started) => {
+                let (call, id, yield_ms) = started.into_parts();
+                self.start_execution_watch(cx);
+                self.wait_tool(WaitSubject::transfer(&id.to_string()), yield_ms, call, cx);
+            }
+            Err((call, error)) => self.finish(call, Err(error)),
+        }
+    }
+
+    pub(super) fn read_transfer(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
+        let TerminalCall::ReadTransfer(request) = &call.call else {
+            return;
+        };
+        let subject = WaitSubject::transfer(&request.transfer_id);
+        self.wait_tool(subject, request.yield_ms.unwrap_or(0), call, cx);
+    }
+
+    pub(super) fn cancel_transfer(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
+        let TerminalCall::CancelTransfer(request) = &call.call else {
+            return;
+        };
+        let redact = self.deps.ai(cx).approval.redact_secrets;
+        let result = self.tools.cancel_transfer(&request.transfer_id, redact);
+        self.finish(call, result);
     }
 
     pub(super) fn command_payload(
@@ -153,7 +189,7 @@ impl AgentThread {
         let gate = self.tool_gate(&call.call, cx);
         let expected = gate.expected();
         let decision = self.tools.approval_receive_tool(
-            BoundToolCall::new(call, expected),
+            BoundToolCall::new(call, expected).with_source(gate.source_expected()),
             &gate,
             &self.deps.ai(cx).approval,
         );

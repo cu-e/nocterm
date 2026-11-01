@@ -392,7 +392,7 @@ impl AgentThread {
         let release = cx.on_release(move |this, cx| this.on_release(id, cx));
         Self {
             session: Default::default(),
-            tools: tool_runtime::ToolRuntime::new(deps.runtime().command_jobs(cx)),
+            tools: tool_runtime::ToolRuntime::attached(deps.runtime(), cx),
             archive: Default::default(),
             composer: Default::default(),
             state,

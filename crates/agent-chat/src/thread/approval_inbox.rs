@@ -33,6 +33,7 @@ pub(super) struct ToolGate {
     attached: bool,
     unsafe_input: bool,
     expected: Option<nocterm_workspace_ports::ExpectedSession>,
+    source_expected: Option<nocterm_workspace_ports::ExpectedSession>,
 }
 impl ToolGate {
     pub(super) fn from_context(
@@ -51,14 +52,20 @@ impl ToolGate {
         cx: &gpui::App,
     ) -> Self {
         let attached = match (call.terminal_id(), call.server_id()) {
-            (Some(id), _) => resolved.iter().any(|(candidate, _, _)| candidate == id),
+            (Some(_), _) => call
+                .terminals()
+                .all(|id| resolved.iter().any(|(candidate, _, _)| candidate == id)),
             (None, Some(id)) => offline.iter().any(|(server, _)| server.server_id == id),
             (None, None) => true,
         };
-        let info = resolved
-            .iter()
-            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
-            .and_then(|(_, entry, _)| entry.capabilities.state().info(cx));
+        let expected_of = |wanted: Option<&str>| {
+            resolved
+                .iter()
+                .find(|(id, _, _)| Some(id.as_str()) == wanted)
+                .and_then(|(_, entry, _)| entry.capabilities.state().info(cx))
+        };
+        let info = expected_of(call.terminal_id());
+        let source_expected = expected_of(call.source_terminal_id()).map(|info| info.expected);
         let unsafe_input = matches!(call, TerminalCall::SendInput(_))
             && info.as_ref().is_none_or(|info| {
                 info.at_prompt != Some(true) || info.dirty_input || info.alt_screen
@@ -70,9 +77,17 @@ impl ToolGate {
             unsafe_input,
             info.map(|info| info.expected),
         )
+        .with_source(source_expected)
     }
     pub(super) fn expected(&self) -> Option<nocterm_workspace_ports::ExpectedSession> {
         self.expected
+    }
+    pub(super) fn source_expected(&self) -> Option<nocterm_workspace_ports::ExpectedSession> {
+        self.source_expected
+    }
+    fn with_source(mut self, source: Option<nocterm_workspace_ports::ExpectedSession>) -> Self {
+        self.source_expected = source;
+        self
     }
 
     pub(super) fn new(
@@ -88,6 +103,7 @@ impl ToolGate {
             attached,
             unsafe_input,
             expected,
+            source_expected: None,
         }
     }
     fn accepts(&self, call: &BridgeCall) -> bool {
@@ -162,6 +178,8 @@ impl ApprovalInbox {
             return ToolDecision::Respond(call.into_call(), ToolRejection::Unavailable);
         }
         self.grants.observe(&call.call().call, gate.expected);
+        self.grants
+            .observe_source(&call.call().call, gate.source_expected);
         if self.grants.requires_approval(&call.call().call, policy) || gate.unsafe_input {
             self.generation = self.generation.wrapping_add(1);
             self.tools.push(PendingTool {
@@ -187,15 +205,21 @@ impl ApprovalInbox {
         if !allow {
             return ToolDecision::Respond(call.into_call(), ToolRejection::Denied);
         }
-        if !gate.accepts(call.call()) || !gate.attached || call.expected() != gate.expected {
+        if !gate.accepts(call.call())
+            || !gate.attached
+            || call.expected() != gate.expected
+            || call.source() != gate.source_expected
+        {
             return ToolDecision::Respond(call.into_call(), ToolRejection::Detached);
         }
         self.grants.observe(&call.call().call, gate.expected);
-        if grant
-            && !gate.unsafe_input
-            && let Some(id) = call.call().call.target()
-        {
-            self.grants.grant(id, call.call().call.capability());
+        self.grants
+            .observe_source(&call.call().call, gate.source_expected);
+        if grant && !gate.unsafe_input {
+            let tool = &call.call().call;
+            for id in tool.terminals().chain(tool.server_id()) {
+                self.grants.grant(id, tool.capability());
+            }
         }
         ToolDecision::Execute(call)
     }

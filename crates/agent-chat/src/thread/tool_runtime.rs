@@ -23,12 +23,16 @@ pub(in crate::thread) mod reconnect_operation;
 pub(in crate::thread) mod resolution;
 pub(in crate::thread) mod source_execution;
 mod terminal_sessions;
+mod transfer_dispatch;
+mod transfers;
 mod turn_context;
 use command_jobs::CommandJobs;
 pub(super) use command_jobs::{CommandSnapshot, CommandStart};
 use live_observations::LiveObservations;
 use reconnect_dispatch::{DispatchEffect, DispatchScope, DispatchTicket, ReconnectDispatch};
 use terminal_sessions::TerminalSessions;
+pub(super) use transfer_dispatch::{StartedTransfer, TransferAdmission};
+use transfers::ChatTransfers;
 use turn_context::TurnContext;
 pub(super) struct ToolRuntime {
     approvals: ApprovalInbox,
@@ -38,9 +42,17 @@ pub(super) struct ToolRuntime {
     terminals: TerminalSessions,
     displays: super::tool_display::ToolDisplays,
     reconnect_dispatch: ReconnectDispatch,
+    transfers: ChatTransfers,
 }
 impl ToolRuntime {
-    pub(super) fn new(jobs: Box<dyn nocterm_session::command_jobs::CommandJobs>) -> Self {
+    /// A chat's tools over what its installed runtime supplies.
+    pub(super) fn attached(runtime: &nocterm_agent_runtime::RuntimeHandle, cx: &gpui::App) -> Self {
+        Self::new(runtime.command_jobs(cx), runtime.transfers(cx))
+    }
+    pub(super) fn new(
+        jobs: Box<dyn nocterm_session::command_jobs::CommandJobs>,
+        transfers: Arc<dyn nocterm_transfers::TransferRequests>,
+    ) -> Self {
         Self {
             approvals: Default::default(),
             turn: Default::default(),
@@ -49,6 +61,7 @@ impl ToolRuntime {
             terminals: Default::default(),
             displays: Default::default(),
             reconnect_dispatch: Default::default(),
+            transfers: ChatTransfers::new(transfers),
         }
     }
 
@@ -311,9 +324,56 @@ impl ToolRuntime {
     pub(super) fn cancel_execution(&mut self) {
         self.commands.cancel_all();
         self.live.cancel_all();
+        self.transfers.cancel_all();
     }
-    pub(super) fn has_active_commands(&self) -> bool {
-        self.commands.has_active()
+    /// Commands and transfers still running for this chat.
+    pub(super) fn has_active_executions(&mut self) -> bool {
+        self.commands.has_active() || self.transfers.has_active()
+    }
+    pub(super) fn start_transfer(
+        &mut self,
+        admission: TransferAdmission,
+        source: Option<nocterm_workspace_ports::TerminalEntry>,
+        cx: &gpui::App,
+    ) -> Result<StartedTransfer, (BridgeCall, ToolFailure)> {
+        transfer_dispatch::start(&mut self.transfers, admission, source, cx)
+    }
+    pub(super) fn transfer_progress(
+        &mut self,
+        id: &str,
+    ) -> Result<nocterm_transfers::Progress, ToolFailure> {
+        self.transfers.progress(id)
+    }
+    pub(super) fn cancel_transfer(
+        &mut self,
+        id: &str,
+        redact: bool,
+    ) -> Result<serde_json::Value, ToolFailure> {
+        let progress = self.transfers.cancel(id)?;
+        Ok(presentation::transfer_payload(&progress, redact))
+    }
+    /// Cancels transfers whose endpoint terminals detached or changed session.
+    pub(super) fn revoke_replaced_transfers(
+        &mut self,
+        resolved: &[(
+            String,
+            nocterm_workspace_ports::TerminalEntry,
+            nocterm_ai::context::TerminalDescriptor,
+        )],
+        cx: &gpui::App,
+    ) {
+        let current = resolved
+            .iter()
+            .map(|(id, entry, _)| {
+                let session = entry
+                    .capabilities
+                    .state()
+                    .info(cx)
+                    .map(|info| info.expected);
+                (id.clone(), session)
+            })
+            .collect::<Vec<_>>();
+        self.transfers.revoke_replaced(&current);
     }
     pub(super) fn start_command(
         &mut self,
@@ -458,8 +518,10 @@ mod tests {
     use super::*;
     #[test]
     fn running_scope_does_not_follow_future_defaults_and_detachment_revokes_only_that_scope() {
-        let mut tools =
-            ToolRuntime::new(Box::<nocterm_session::testing::ScriptedCommandJobs>::default());
+        let mut tools = ToolRuntime::new(
+            Box::<nocterm_session::testing::ScriptedCommandJobs>::default(),
+            Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
+        );
         let fixed = Attachment::Group("accepted turn".into());
         let future = vec![Attachment::Group("next turn".into())];
         tools.capture_scope(vec![fixed.clone()]);
@@ -475,8 +537,10 @@ mod tests {
     }
     #[test]
     fn clearing_a_turn_preserves_opaque_terminal_identity_and_usage_accounting() {
-        let mut tools =
-            ToolRuntime::new(Box::<nocterm_session::testing::ScriptedCommandJobs>::default());
+        let mut tools = ToolRuntime::new(
+            Box::<nocterm_session::testing::ScriptedCommandJobs>::default(),
+            Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
+        );
         let id = tools.terminal_id("original item");
         let server = tools.server_id("profile");
         tools.account_context(40);

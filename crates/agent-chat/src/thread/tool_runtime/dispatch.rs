@@ -21,6 +21,9 @@ pub(in crate::thread) enum DispatchAction {
     Read(BridgeCall),
     Cancel(BridgeCall),
     Ignore,
+    Transfer(Box<super::transfer_dispatch::TransferAdmission>),
+    ReadTransfer(BridgeCall),
+    CancelTransfer(BridgeCall),
     ExecuteAdmitted(BridgeCall, TerminalEntry, ExpectedSession),
     List(BridgeCall),
     Open(String, BridgeCall),
@@ -93,16 +96,16 @@ impl TerminalDispatch {
             TerminalCall::ReadCommand(_) => DispatchAction::Read(self.call),
             TerminalCall::CancelCommand(_) => DispatchAction::Cancel(self.call),
             TerminalCall::ListTerminals | TerminalCall::OpenTerminal(_) => DispatchAction::Ignore,
+            // Admission routes transfers before terminal dispatch.
             TerminalCall::TransferFiles(_)
             | TerminalCall::ReadTransfer(_)
-            | TerminalCall::CancelTransfer(_) => transfer_unavailable(self.call),
+            | TerminalCall::CancelTransfer(_) => DispatchAction::Respond(
+                self.call,
+                Err("This call does not act on a terminal.".into()),
+                0,
+            ),
         }
     }
-}
-
-// Interim: file transfer execution is not wired into the chat yet.
-fn transfer_unavailable(call: BridgeCall) -> DispatchAction {
-    DispatchAction::Respond(call, Err("File transfer is unavailable.".into()), 0)
 }
 
 /// A supplied admission observation cannot renew a captured terminal authority.
@@ -133,9 +136,10 @@ impl ExecutionAdmission {
                 TerminalCall::OpenTerminal(request) => {
                     DispatchAction::Open(request.server_id.clone(), bound.into_call())
                 }
-                TerminalCall::TransferFiles(_)
-                | TerminalCall::ReadTransfer(_)
-                | TerminalCall::CancelTransfer(_) => transfer_unavailable(bound.into_call()),
+                TerminalCall::ReadTransfer(_) => DispatchAction::ReadTransfer(bound.into_call()),
+                TerminalCall::CancelTransfer(_) => {
+                    DispatchAction::CancelTransfer(bound.into_call())
+                }
                 _ => return AdmissionRoute::Resolve(Box::new(bound)),
             }
         };
@@ -188,6 +192,9 @@ impl ExecutionAdmission {
                 }))
         {
             return DispatchAction::Reconnect(bound, entry, expected);
+        }
+        if matches!(bound.call().call, TerminalCall::TransferFiles(_)) {
+            return super::transfer_dispatch::TransferAdmission::admit(bound, entry, expected);
         }
         // Native read/input execution is a separate admitted step interpreted by the coordinator.
         DispatchAction::ExecuteAdmitted(bound.into_call(), entry, expected)
