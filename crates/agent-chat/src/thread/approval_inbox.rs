@@ -216,10 +216,7 @@ impl ApprovalInbox {
         self.grants
             .observe_source(&call.call().call, gate.source_expected);
         if grant && !gate.unsafe_input {
-            let tool = &call.call().call;
-            for id in tool.terminals().chain(tool.server_id()) {
-                self.grants.grant(id, tool.capability());
-            }
+            self.grants.grant_call(&call.call().call);
         }
         ToolDecision::Execute(call)
     }

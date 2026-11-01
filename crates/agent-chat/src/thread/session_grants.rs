@@ -1,5 +1,5 @@
 //! Reusable target grants expire when the observed session changes.
-use nocterm_ai::{ApprovalSettings, TerminalCall, ToolCapability, approval::ApprovalGrants};
+use nocterm_ai::{ApprovalSettings, TerminalCall, approval::ApprovalGrants};
 use nocterm_workspace_ports::ExpectedSession;
 use std::collections::HashMap;
 #[derive(Default)]
@@ -35,8 +35,8 @@ impl SessionGrants {
     pub(super) fn requires_approval(&self, call: &TerminalCall, policy: &ApprovalSettings) -> bool {
         self.grants.requires_approval(call, policy)
     }
-    pub(super) fn grant(&mut self, id: &str, capability: ToolCapability) {
-        self.grants.grant(id, capability);
+    pub(super) fn grant_call(&mut self, call: &TerminalCall) {
+        self.grants.grant_call(call);
     }
     pub(super) fn clear(&mut self) {
         self.grants.clear();

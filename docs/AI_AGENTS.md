@@ -317,7 +317,7 @@ the chat:
 | `exec_command` | Separate structured-execution approval | 16 KiB program/args, 64 KiB stdin, 5 minute absolute timeout |
 | `read_command` | Reading approval | Full 64 KiB stdout snapshot plus 4 KiB stderr tail |
 | `cancel_command` | Structured-execution approval | One command owned by this chat |
-| `transfer_files` | Ask before typing or running commands, with a transfer grant for both terminals | 1 to 64 absolute source paths, 4 active transfers per chat |
+| `transfer_files` | Ask before typing or running commands, with a transfer grant for the terminal pair | 1 to 64 absolute source paths, 4 active transfers per chat |
 | `read_transfer` | None | One transfer started by this chat |
 | `cancel_transfer` | None | One transfer started by this chat |
 | `open_terminal` | Ask before typing or running commands | One attached offline server |
@@ -403,9 +403,10 @@ activity, after which it reports `cancelled`.
 Approval: `transfer_files` follows the write policy. The card names the source and
 destination terminals, lists the source paths, the destination folder and whether
 existing files are skipped or replaced. **Allow transfers between these terminals** is
-a separate grant from execution: it covers both terminals for the chat's session and
-is dropped, like other grants, when either terminal's session is replaced or the
-chat restarts. A local endpoint reads and writes anywhere you can, as
+a separate grant from execution: it covers transfers between exactly that pair of
+terminals, in either direction, for the chat's session. Approving `a`/`b` and `c`/`d`
+does not approve `a`/`d`. It is dropped, like other grants, when either terminal's
+session is replaced or the chat restarts. A local endpoint reads and writes anywhere you can, as
 `exec_command` on a local terminal does, so the same approval applies.
 `read_transfer` needs no approval; `cancel_transfer` only stops a transfer the chat
 started.

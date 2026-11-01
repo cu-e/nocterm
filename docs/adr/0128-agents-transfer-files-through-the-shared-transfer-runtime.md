@@ -79,10 +79,11 @@ does not reconnect: a lost endpoint fails with a typed error telling the agent t
 the terminal again.
 
 **Approval.** `transfer_files` is a writing call with a new `ToolCapability::Transfer`.
-Under the write policy it asks unless both endpoint terminals hold a `Transfer` grant;
-the card shows the source, the sources, the destination and the collision policy, and
-"Allow transfers between these terminals" grants `Transfer` on both for the chat's
-session. A new session of either endpoint drops its grant. `Execution` is not reused,
+Under the write policy it asks unless the chat holds a `Transfer` grant for that pair
+of terminals; the card shows the source, the sources, the destination and the collision
+policy, and "Allow transfers between these terminals" grants the unordered pair for the
+chat's session, so grants for `a`/`b` and `c`/`d` do not approve `a`/`d`. A new session
+of either endpoint drops the pairs that include it. `Execution` is not reused,
 so "allow execution on this terminal" never silently authorises transfers. In the
 Cloud grant, which is a contract format, `Transfer` maps onto the existing execution
 bit and the grant bytes are unchanged. `read_transfer` needs no approval;
