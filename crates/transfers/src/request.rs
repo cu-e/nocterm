@@ -115,7 +115,9 @@ impl Request {
                 if value.destination.len() > limits.source_path_bytes() {
                     return Err(TransferError::RequestTooLarge);
                 }
-                if !valid_remote_directory(&value.destination) {
+                if !valid_remote_directory(&value.destination)
+                    || !value.sources.iter().all(|path| absolute_local(path))
+                {
                     return Err(TransferError::InvalidDestination);
                 }
             }
@@ -126,11 +128,7 @@ impl Request {
                 {
                     return Err(TransferError::RequestTooLarge);
                 }
-                if !value.local_destination.is_absolute()
-                    || value
-                        .local_destination
-                        .components()
-                        .any(|part| matches!(part, std::path::Component::ParentDir))
+                if !absolute_local(&value.local_destination)
                     || value.sources.iter().any(|path| !valid_remote_source(path))
                 {
                     return Err(TransferError::InvalidDestination);
@@ -156,6 +154,13 @@ impl Request {
             _ => None,
         }
     }
+}
+/// An absolute native path without `..` components; `~` and relative paths are not expanded.
+fn absolute_local(path: &std::path::Path) -> bool {
+    path.is_absolute()
+        && !path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
 }
 /// A `/`-rooted path without NUL, empty or `.`/`..` components whose last component
 /// can be published by name at the destination.
