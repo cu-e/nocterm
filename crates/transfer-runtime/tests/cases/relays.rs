@@ -1,10 +1,10 @@
 use super::*;
 use nocterm_session::{
-    FsError,
+    EntryKind, FsError, RemoteFs,
     testing::{FsOperation, Gate},
 };
 use nocterm_transfers::{
-    CollisionPolicy, Request, TransferDirection, TransferError, TransferOperation,
+    CollisionPolicy, Request, TransferDirection, TransferError, TransferOperation, TransferPath,
     TransferRequests, TransferState,
 };
 
@@ -125,6 +125,51 @@ fn a_failed_destination_write_never_publishes_and_closes_the_source() {
     assert!(fixture.destination.bytes("/dest/file").is_err());
     assert_eq!(fixture.source.activity().live_downloads, 0);
     assert_eq!(fixture.destination.activity().live_uploads, 0);
+}
+
+#[test]
+fn links_and_special_files_are_skipped_and_never_followed() {
+    let fixture = RelayFixture::new();
+    futures::executor::block_on(fixture.source.create_dir("/tree")).unwrap();
+    fixture.source.seed_file("/tree/file", b"data").unwrap();
+    fixture
+        .source
+        .seed_symlink("/tree/link", EntryKind::Directory)
+        .unwrap();
+    fixture.source.seed_special("/tree/socket").unwrap();
+    let progress = fixture.finished(fixture.relay(vec!["/tree"], CollisionPolicy::Skip));
+    assert_eq!(progress.state, TransferState::Completed);
+    assert_eq!(progress.completed_files, 1);
+    assert_eq!(progress.skipped_files, 2);
+    assert_eq!(
+        fixture.destination.bytes("/dest/tree/file").unwrap(),
+        b"data"
+    );
+    assert!(fixture.destination.bytes("/dest/tree/link").is_err());
+    assert!(fixture.destination.bytes("/dest/tree/socket").is_err());
+    assert_eq!(fixture.source.activity().live_downloads, 0);
+}
+
+#[test]
+fn a_destination_directory_that_cannot_be_created_is_reported_for_its_source() {
+    let fixture = RelayFixture::new();
+    futures::executor::block_on(fixture.source.create_dir("/tree")).unwrap();
+    fixture.source.seed_file("/tree/file", b"data").unwrap();
+    fixture.destination.fail_next(
+        FsOperation::CreateDir,
+        "/dest/tree",
+        FsError::PermissionDenied {
+            path: "/dest/tree".into(),
+        },
+    );
+    let progress = fixture.finished(fixture.relay(vec!["/tree"], CollisionPolicy::Skip));
+    assert_eq!(progress.state, TransferState::Failed);
+    assert_eq!(progress.completed_files, 0);
+    assert!(progress.errors.iter().any(|issue| {
+        issue.operation() == TransferOperation::Discover
+            && matches!(issue.path(), Some(TransferPath::Remote(path)) if path == "/tree")
+    }));
+    assert!(fixture.destination.bytes("/dest/tree/file").is_err());
 }
 
 #[test]
