@@ -2,9 +2,9 @@ use gpui_kit::{App, WeakEntity};
 use nocterm_session::{HostExec, Prompt, Secret, SecretRequest};
 use nocterm_workspace::{
     ExpectedSession, LiveCommands, RemoteReconnect, SignInPrompt, SignInPrompts,
-    TerminalCapability, TerminalError, TerminalExecution, TerminalInfo, TerminalInput,
-    TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken,
-    UserTerminalPaste,
+    TerminalCapability, TerminalError, TerminalExecution, TerminalFiles, TerminalFilesystem,
+    TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText, TerminalTextSource,
+    TextRequest, UserPromptToken, UserTerminalPaste,
 };
 use std::sync::Arc;
 
@@ -32,7 +32,8 @@ impl Access {
             .with_input(access.clone())
             .with_live(access.clone())
             .with_execution(access.clone())
-            .with_paste(access.clone());
+            .with_paste(access.clone())
+            .with_files(access.clone());
         let base = base
             .with_fact_session(access.clone())
             .with_prompts(access.clone())
@@ -193,6 +194,33 @@ impl TerminalExecution for Access {
         terminal.agent_executor().ok_or(TerminalError::Unsupported(
             TerminalCapability::SessionExecution,
         ))
+    }
+}
+
+impl TerminalFiles for Access {
+    fn filesystem(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<TerminalFilesystem, TerminalError> {
+        self.item()?;
+        let entity = self.terminal.upgrade().ok_or(TerminalError::Gone)?;
+        let terminal = entity.read(cx);
+        self.check(expected, terminal)?;
+        if !terminal.is_connected() || terminal.prompt().is_some() || terminal.awaiting_vault() {
+            return Err(TerminalError::Unavailable);
+        }
+        let context = terminal.session_context();
+        if let Some(fs) = context.fs.clone() {
+            return Ok(TerminalFilesystem::Remote {
+                host: context.address(),
+                fs,
+            });
+        }
+        if terminal.is_local() {
+            return Ok(TerminalFilesystem::Local);
+        }
+        Err(TerminalError::Unsupported(TerminalCapability::Files))
     }
 }
 
