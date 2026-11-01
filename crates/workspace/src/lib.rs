@@ -35,7 +35,7 @@
 //! be shown (both read the workspace when they apply, and the window's rules decide), and the
 //! withdrawal of a user contribution (a built-in one is refused),
 //! plus separate state, text,
-//! input, live-command, execution, prompt, reconnect and user-paste ports, plus
+//! input, live-command, execution, prompt, reconnect, user-paste and connection-filesystem ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
 //! Settings section: owns `[clock]` (`ClockSettings`); reads `[layouts]` (owned by
 //! `nocterm-window-layout`) and `[plugins]` (owned by `nocterm-plugin-enablement`) through the
@@ -110,8 +110,9 @@ pub use nocterm_workspace_ports::{
     LiveCommandLease, LiveCommands, ProjectCreationSource, ProjectParentCapture,
     ProjectParentDescriptor, ProjectParentError, RemoteReconnect, SessionContext, SessionSource,
     SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalCapability, TerminalEntry,
-    TerminalError, TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus,
-    TerminalText, TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
+    TerminalError, TerminalExecution, TerminalFiles, TerminalFilesystem, TerminalInfo,
+    TerminalInput, TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest,
+    UserPromptToken, UserTerminalPaste,
 };
 pub use workspace::{
     ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,

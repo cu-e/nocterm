@@ -2,7 +2,8 @@
 //! which authority, independent of the window shell that hosts them.
 //!
 //! Owns: the terminal contracts of ADR 0032 (state, text, input, live
-//! commands, execution, sign-in prompts, reconnect, user paste), the
+//! commands, execution, sign-in prompts, reconnect, user paste, the filesystem of
+//! a terminal's connection), the
 //! `TerminalCapabilities` bundle a provider advertises, `ExpectedSession` and
 //! `UserPromptToken` authority, `LiveCommandLease`, connection facts,
 //! `SessionContext`, `ConnectionSummary` and the typed `TerminalError` and
@@ -54,8 +55,9 @@ pub use session_source::SessionSource;
 pub use terminal::{
     ConnectionFactSession, ExpectedSession, FactSessionSnapshot, LiveCommandLease, LiveCommands,
     RemoteReconnect, SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalEntry,
-    TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
-    TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
+    TerminalExecution, TerminalFiles, TerminalFilesystem, TerminalInfo, TerminalInput,
+    TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken,
+    UserTerminalPaste,
 };
 
 pub use project_terminal::{

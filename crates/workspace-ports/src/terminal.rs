@@ -11,7 +11,7 @@ use std::{
 };
 
 use gpui::{App, EntityId, SharedString};
-use nocterm_session::{HostExec, Secret, Session, Target};
+use nocterm_session::{HostAddress, HostExec, RemoteFs, Secret, Session, Target};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalStatus {
@@ -173,6 +173,26 @@ pub trait UserTerminalPaste: 'static {
         execute: bool,
         cx: &mut App,
     ) -> Result<(), TerminalError>;
+}
+
+/// The filesystem a terminal's exact connection reaches.
+#[derive(Clone)]
+pub enum TerminalFilesystem {
+    /// This computer; the consumer's injected transfer runtime owns local file access.
+    Local,
+    /// The remote host and the filesystem of the session behind the terminal.
+    Remote {
+        host: HostAddress,
+        fs: Arc<dyn RemoteFs>,
+    },
+}
+/// Hands out the filesystem of one connection, bound to its `ExpectedSession`.
+pub trait TerminalFiles: 'static {
+    fn filesystem(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<TerminalFilesystem, TerminalError>;
 }
 
 /// The original workspace Item and its particular connection, never a screen generation.
