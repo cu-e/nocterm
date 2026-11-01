@@ -344,6 +344,12 @@ impl ToolRuntime {
                     .await?;
                 (output, ToolEffectStatus::Unknown)
             }
+            // Interim: headless transfers are not composed into this executor yet.
+            TerminalCall::TransferFiles(_)
+            | TerminalCall::ReadTransfer(_)
+            | TerminalCall::CancelTransfer(_) => {
+                return Err(ToolExecutionError::UnsupportedCapability);
+            }
         };
         ToolExecutionResult::completed(
             request,

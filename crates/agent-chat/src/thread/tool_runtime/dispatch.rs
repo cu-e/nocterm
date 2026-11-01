@@ -93,8 +93,16 @@ impl TerminalDispatch {
             TerminalCall::ReadCommand(_) => DispatchAction::Read(self.call),
             TerminalCall::CancelCommand(_) => DispatchAction::Cancel(self.call),
             TerminalCall::ListTerminals | TerminalCall::OpenTerminal(_) => DispatchAction::Ignore,
+            TerminalCall::TransferFiles(_)
+            | TerminalCall::ReadTransfer(_)
+            | TerminalCall::CancelTransfer(_) => transfer_unavailable(self.call),
         }
     }
+}
+
+// Interim: file transfer execution is not wired into the chat yet.
+fn transfer_unavailable(call: BridgeCall) -> DispatchAction {
+    DispatchAction::Respond(call, Err("File transfer is unavailable.".into()), 0)
 }
 
 /// A supplied admission observation cannot renew a captured terminal authority.
@@ -125,6 +133,9 @@ impl ExecutionAdmission {
                 TerminalCall::OpenTerminal(request) => {
                     DispatchAction::Open(request.server_id.clone(), bound.into_call())
                 }
+                TerminalCall::TransferFiles(_)
+                | TerminalCall::ReadTransfer(_)
+                | TerminalCall::CancelTransfer(_) => transfer_unavailable(bound.into_call()),
                 _ => return AdmissionRoute::Resolve(Box::new(bound)),
             }
         };

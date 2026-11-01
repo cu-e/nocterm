@@ -145,5 +145,9 @@ pub(super) fn arguments(call: &TerminalCall) -> Result<ToolArguments<'_>, Journa
             terminal_id: &value.terminal_id,
             command_id: &value.command_id,
         },
+        // Interim: the contract has no transfer tags yet, so these are never journaled.
+        TerminalCall::TransferFiles(_)
+        | TerminalCall::ReadTransfer(_)
+        | TerminalCall::CancelTransfer(_) => return Err(JournalError::UnsupportedFormat),
     })
 }
