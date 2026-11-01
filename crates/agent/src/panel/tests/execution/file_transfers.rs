@@ -178,7 +178,7 @@ fn one_grant_covers_both_terminals_but_not_a_new_endpoint(cx: &mut TestAppContex
         "the granted pair needs no card"
     );
     assert!(result(repeated).is_ok());
-    let _ = submit(&p.f, &p.thread, transfer(&p, &third), false, cx);
+    let _pending = submit(&p.f, &p.thread, transfer(&p, &third), false, cx);
     assert_eq!(cx.update(|cx| p.thread.read(cx).tool_cards().len()), 1);
 }
 
