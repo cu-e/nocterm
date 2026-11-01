@@ -1,7 +1,7 @@
 //! Pure transfer admission and progress rules, independent of any executor.
 use nocterm_session::{Target, testing::InMemoryFs};
 use nocterm_transfers::*;
-use std::{error::Error as _, io, path::PathBuf, sync::Arc};
+use std::{error::Error as _, io, sync::Arc};
 
 fn request() -> Request {
     Request::Upload(UploadRequest {
