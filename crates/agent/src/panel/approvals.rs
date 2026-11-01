@@ -13,7 +13,7 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_ai::TerminalCall;
+use nocterm_ai::{TerminalCall, TransferFiles};
 use nocterm_ui::IconName;
 use nocterm_workspace::UnlockVault;
 
@@ -364,6 +364,35 @@ impl ApprovalCardsRenderer {
                 "Allow for this server",
             ),
             TerminalCall::ListTerminals => ("List terminals", String::new(), "Allow"),
+            TerminalCall::TransferFiles(request) => transfer_text(request, target),
+            TerminalCall::ReadTransfer(request) => (
+                "Read transfer",
+                request.transfer_id.clone(),
+                "Allow reading",
+            ),
+            TerminalCall::CancelTransfer(request) => (
+                "Cancel transfer",
+                request.transfer_id.clone(),
+                "Allow cancelling",
+            ),
         }
     }
+}
+
+/// `target` names the source and destination terminals of the transfer.
+fn transfer_text(request: &TransferFiles, target: &str) -> (&'static str, String, &'static str) {
+    let sources: String = request
+        .sources
+        .iter()
+        .map(|source| format!("\n  {source}"))
+        .collect();
+    let existing = if request.overwrite { "replace" } else { "skip" };
+    (
+        "Transfer files",
+        format!(
+            "{target}\nSources:{sources}\nInto: {}\nExisting files: {existing}",
+            request.destination
+        ),
+        "Allow transfers between these terminals",
+    )
 }

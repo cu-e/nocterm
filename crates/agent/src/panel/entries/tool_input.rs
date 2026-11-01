@@ -14,7 +14,7 @@ use gpui_kit::{
 };
 use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::{
-    TerminalCall,
+    TerminalCall, TransferFiles,
     tool_display::{self, ToolDisplay},
 };
 use nocterm_ui::IconName;
@@ -217,7 +217,34 @@ fn request_source(call: TerminalCall) -> Source {
         TerminalCall::ListTerminals => {
             Source::plain("Scope", "Terminals attached to this chat".into(), None)
         }
+        TerminalCall::TransferFiles(v) => transfer_source(v),
+        TerminalCall::ReadTransfer(v) => transfer_handle(v.transfer_id, v.yield_ms),
+        TerminalCall::CancelTransfer(v) => transfer_handle(v.transfer_id, None),
     }
+}
+
+fn transfer_source(v: TransferFiles) -> Source {
+    let mut source = Source::plain("Sources", v.sources.join("\n"), None);
+    source.parameters = vec![
+        format!("From terminal {}", v.source_terminal_id),
+        format!(
+            "Into {} on terminal {}",
+            v.destination, v.destination_terminal_id
+        ),
+        format!(
+            "Existing files: {}",
+            if v.overwrite { "replace" } else { "skip" }
+        ),
+    ];
+    source
+}
+
+fn transfer_handle(transfer_id: String, wait_ms: Option<u64>) -> Source {
+    let mut source = Source::plain("Transfer handle", transfer_id, None);
+    if let Some(wait) = wait_ms {
+        source.parameters.push(format!("Wait {wait} ms"));
+    }
+    source
 }
 
 fn shell_script<'a>(program: &str, args: &'a [String]) -> Option<&'a str> {
