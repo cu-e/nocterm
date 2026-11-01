@@ -133,6 +133,26 @@ pub trait RemoteUpload: Send + 'static {
 /// requested bound; callers close after EOF and drop on cancellation.
 pub trait RemoteDownload: Send + 'static {
     fn read(&mut self, max_bytes: usize) -> FsFuture<Vec<u8>>;
+    /// At most `count` (up to 8) consecutive chunks of at most `max_bytes` (up
+    /// to 32 KiB). An empty vector is EOF and only the last chunk may be short.
+    /// Adapters may pipeline the reads and return fewer chunks than requested;
+    /// the default performs one read, so callers loop until an empty vector.
+    fn read_batch(&mut self, max_bytes: usize, count: usize) -> FsFuture<Vec<Vec<u8>>> {
+        if count == 0 || count > 8 || max_bytes > 32 * 1024 {
+            return Box::pin(async {
+                Err(FsError::Other("download batch exceeds 8 × 32 KiB".into()))
+            });
+        }
+        let read = self.read(max_bytes);
+        Box::pin(async move {
+            let chunk = read.await?;
+            Ok(if chunk.is_empty() {
+                Vec::new()
+            } else {
+                vec![chunk]
+            })
+        })
+    }
     fn close(self: Box<Self>) -> FsFuture<()>;
 }
 
