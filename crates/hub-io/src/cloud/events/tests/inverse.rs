@@ -174,6 +174,22 @@ fn observations(
 
 #[test]
 fn observation_refuses_a_transfer_intent_whose_mutation_flag_contradicts_the_call() {
+    let Ok(CoordinatorEvent::ToolIntent { call, .. }) = decode_transfer_intent(true) else {
+        panic!("missing descriptive intent")
+    };
+    assert!(matches!(call, nocterm_ai::TerminalCall::TransferFiles(_)));
+    assert!(matches!(
+        decode_transfer_intent(false),
+        Err(crate::cloud::observations::ObservationError::Projection(
+            nocterm_cloud_model::projection::ProjectionError::InvalidRecord
+        ))
+    ));
+}
+
+/// Seals a `transfer_files` intent with the given mutation flag and decodes it.
+fn decode_transfer_intent(
+    mutates: bool,
+) -> Result<CoordinatorEvent, crate::cloud::observations::ObservationError> {
     use nocterm_hub_model::cloud::{
         events::{ToolIntentPayload, ToolPresentation},
         tool_arguments::ToolArguments,
@@ -207,59 +223,40 @@ fn observation_refuses_a_transfer_intent_whose_mutation_flag_contradicts_the_cal
         yield_ms: Some(1000),
     };
     let digest = arguments.digest().unwrap();
-    for mutates in [true, false] {
-        let body = CloudEvent {
-            control_revision: next.control().get(),
-            timestamp_ms: 1_700_000_000_000,
-            payload: CloudEventPayload::ToolIntent(Box::new(ToolIntentPayload {
-                id: [61; 16],
-                step: [62; 16],
-                execution: crate::cloud::events::values::execution(&fixture.authority()).unwrap(),
-                arguments_digest: digest,
-                mutates,
-                arguments: arguments.clone(),
-                display: ToolPresentation {
-                    tool: "transfer_files",
-                    arguments_json: "{}",
-                    destination: None,
-                    redacted: false,
-                    outcome: None,
-                },
-            })),
-        }
-        .canonical_bytes()
-        .unwrap();
-        let sealed = fixture
-            .material
-            .with_material(fixture.lease.stream(), |key, _, signer| {
-                nocterm_keys::cloud::seal_event(key, signer, context.clone(), &body)
-                    .map_err(crate::cloud::events::encoding_error)
-            })
-            .unwrap();
-        let public = fixture.identity.public_identity().unwrap();
-        let opened = open_event(&fixture.key, public.signing_key(), &context, &sealed).unwrap();
-        let allocation = work
-            .try_reserve(PublicationAllocation::new(1024 * 1024, 1).unwrap())
-            .unwrap();
-        let result = crate::cloud::observations::decode_opened_event(
-            fixture.lease.stream(),
-            &opened,
-            &allocation,
-        );
-        if mutates {
-            let CoordinatorEvent::ToolIntent { call, .. } = result.unwrap() else {
-                panic!("missing descriptive intent")
-            };
-            assert!(matches!(call, nocterm_ai::TerminalCall::TransferFiles(_)));
-        } else {
-            assert!(matches!(
-                result,
-                Err(crate::cloud::observations::ObservationError::Projection(
-                    nocterm_cloud_model::projection::ProjectionError::InvalidRecord
-                ))
-            ));
-        }
+    let body = CloudEvent {
+        control_revision: next.control().get(),
+        timestamp_ms: 1_700_000_000_000,
+        payload: CloudEventPayload::ToolIntent(Box::new(ToolIntentPayload {
+            id: [61; 16],
+            step: [62; 16],
+            execution: crate::cloud::events::values::execution(&fixture.authority()).unwrap(),
+            arguments_digest: digest,
+            mutates,
+            arguments: arguments.clone(),
+            display: ToolPresentation {
+                tool: "transfer_files",
+                arguments_json: "{}",
+                destination: None,
+                redacted: false,
+                outcome: None,
+            },
+        })),
     }
+    .canonical_bytes()
+    .unwrap();
+    let sealed = fixture
+        .material
+        .with_material(fixture.lease.stream(), |key, _, signer| {
+            nocterm_keys::cloud::seal_event(key, signer, context.clone(), &body)
+                .map_err(crate::cloud::events::encoding_error)
+        })
+        .unwrap();
+    let public = fixture.identity.public_identity().unwrap();
+    let opened = open_event(&fixture.key, public.signing_key(), &context, &sealed).unwrap();
+    let allocation = work
+        .try_reserve(PublicationAllocation::new(1024 * 1024, 1).unwrap())
+        .unwrap();
+    crate::cloud::observations::decode_opened_event(fixture.lease.stream(), &opened, &allocation)
 }
 
 fn legacy_reconciliation(fixture: &Fixture, work: &dyn PublicationWorkBudget) {
