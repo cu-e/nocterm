@@ -2,7 +2,7 @@ use crate::{
     chunks, reservations,
     scheduler::{DownloadJob, FileOutcome, Work},
 };
-use futures::future::try_join;
+use futures::future::join;
 use nocterm_session::{
     fs::{RemoteDownload, UploadMode},
     local_fs::{LocalFsError, LocalStage, PublicationOutcome},
@@ -180,7 +180,11 @@ async fn stream(
                 stage.write_batch(work, writing).await
             }
         };
-        let (read, ()) = try_join(read, write).await?;
+        // A local write owns the stage until it returns it, so both sides finish before
+        // either result is read: dropping a pending write would skip `StageWriter::cancel`.
+        let (read, written) = join(read, write).await;
+        written?;
+        let read = read?;
         if wrote > 0 {
             budget.acknowledged(wrote)?;
             work.batch().event(TransferEvent::Acknowledged {
