@@ -157,13 +157,18 @@ impl Request {
         }
     }
 }
-/// A `/`-rooted path without NUL or `.`/`..` components whose last component
+/// A `/`-rooted path without NUL, empty or `.`/`..` components whose last component
 /// can be published by name at the destination.
 pub fn valid_relay_source(source: &str) -> bool {
     valid_remote_directory(source) && valid_publication_name(path::file_name(source))
 }
+/// A `/`-rooted path without NUL, `.`/`..` or empty components. One trailing `/` is
+/// allowed, so `//` cannot spell a path that differs from its plain form only in text.
 fn valid_remote_directory(path: &str) -> bool {
-    path.starts_with('/')
-        && !path.contains('\0')
-        && !path.split('/').any(|part| matches!(part, "." | ".."))
+    let Some(rest) = path.strip_prefix('/') else {
+        return false;
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    !path.contains('\0')
+        && (rest.is_empty() || !rest.split('/').any(|part| matches!(part, "" | "." | "..")))
 }

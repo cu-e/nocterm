@@ -56,10 +56,9 @@ impl Request {
                 TransferEndpoint::Remote { host, fs },
             ) => {
                 let same_host = source_host == host || Arc::ptr_eq(&source_fs, &fs);
-                if same_host && sources.iter().any(|source| contains(source, &directory)) {
-                    return Err(TransferError::DestinationInsideSource);
-                }
-                Self::Relay(RelayRequest {
+                // Compared only after validation, which refuses `//`, `.` and `..`: the
+                // plain text of a valid path is its canonical form.
+                let relay = Self::Relay(RelayRequest {
                     source_host,
                     source_fs,
                     sources,
@@ -67,7 +66,18 @@ impl Request {
                     destination: directory,
                     fs,
                     collisions,
-                })
+                });
+                relay.validate(DiscoveryLimits::default())?;
+                if let Self::Relay(value) = &relay
+                    && same_host
+                    && value
+                        .sources
+                        .iter()
+                        .any(|source| contains(source, &value.destination))
+                {
+                    return Err(TransferError::DestinationInsideSource);
+                }
+                return Ok(relay);
             }
         };
         request.validate(DiscoveryLimits::default())?;
@@ -149,6 +159,23 @@ mod tests {
             assert!(
                 matches!(result, Err(TransferError::DestinationInsideSource)),
                 "{directory}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_slashes_cannot_hide_a_destination_inside_a_source() {
+        for (source, directory) in [
+            ("/srv/data", "/srv//data/nested"),
+            ("/srv//data", "/srv/data/nested"),
+            ("/srv/data", "//srv/data"),
+            ("/srv/data", "/srv/data//"),
+        ] {
+            let host = remote("same");
+            let result = between(host.clone(), &[source], host, directory);
+            assert!(
+                matches!(result, Err(TransferError::InvalidDestination)),
+                "{source} -> {directory}"
             );
         }
     }
