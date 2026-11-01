@@ -3,6 +3,7 @@
 //! Owns: neutral `model` records (the only agent vocabulary other crates see), agent
 //! profiles, catalog and settings resolution (`agents`), configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
 //! bounded history codecs, immutable scoped execution origins and capability/storage ports.
+//! The terminal tool catalog includes the file transfer tools and their agent-facing transfer report.
 //! Does not own: per-chat configuration/composer state, native workspace/sandbox lookup,
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: metadata::ChatMetadataSource,

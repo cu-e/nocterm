@@ -233,6 +233,101 @@
             "command_id"
           ]
         }
+      },
+      {
+        "name": "transfer_files",
+        "description": "Copy files and folders between the hosts of two attached terminals: this computer (a local terminal) to a server, a server to this computer, or a server to another server. nocterm relays the data over the connections it already holds, so servers need no credentials for each other and you must never use scp, rsync or ssh between them. Every path is absolute (no ~, no .. components). sources are files or folders on the source host; folders copy recursively, and each source is copied into destination under its own name. destination must be an existing folder; it is never created. Existing files are skipped and counted as skipped unless overwrite is true. Symbolic links and special files are skipped. At most 64 sources per call. Two local terminals are refused: use exec_command. Some environments only allow copies within one server. The copy runs in the background: after optional yield_ms (default 1000) it returns the current state and a transfer_id for read_transfer/cancel_transfer. Poll read_transfer until the state is completed, failed or cancelled. Whole files are published atomically; a cancelled or failed file leaves no partial file",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "TransferFiles",
+          "description": "Copy files and folders between the hosts of two attached terminals.",
+          "type": "object",
+          "properties": {
+            "source_terminal_id": {
+              "description": "terminal_id whose host holds the sources; a local terminal means this computer.",
+              "type": "string"
+            },
+            "sources": {
+              "description": "Absolute paths of files or folders on the source host; folders copy recursively.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "destination_terminal_id": {
+              "description": "terminal_id whose host receives the copies.",
+              "type": "string"
+            },
+            "destination": {
+              "description": "Absolute path of an existing folder on the destination host.",
+              "type": "string"
+            },
+            "overwrite": {
+              "description": "Replace files that already exist at the destination; by default they are skipped.",
+              "type": "boolean",
+              "default": false
+            },
+            "yield_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "source_terminal_id",
+            "sources",
+            "destination_terminal_id",
+            "destination"
+          ]
+        }
+      },
+      {
+        "name": "read_transfer",
+        "description": "Read a snapshot of a transfer started by this chat: state, file and byte counts and up to 16 failures. Does not start or cancel a transfer; optional yield_ms waits briefly while it is active",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "ReadTransfer",
+          "type": "object",
+          "properties": {
+            "transfer_id": {
+              "type": "string"
+            },
+            "yield_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "transfer_id"
+          ]
+        }
+      },
+      {
+        "name": "cancel_transfer",
+        "description": "Cancel a transfer started by this chat. Files already published stay in place; files being copied are discarded",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "CancelTransfer",
+          "type": "object",
+          "properties": {
+            "transfer_id": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "transfer_id"
+          ]
+        }
       }
     ]
   }

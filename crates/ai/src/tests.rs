@@ -324,6 +324,44 @@ fn capabilities_do_not_share_execution_input_or_connection_grants() {
     assert!(grants.requires_approval(&execution, &settings));
 }
 #[test]
+fn a_transfer_needs_the_transfer_grant_on_both_terminals() {
+    let settings = ApprovalSettings::default();
+    let mut grants = ApprovalGrants::default();
+    let call = TerminalCall::TransferFiles(TransferFiles {
+        source_terminal_id: "t1".into(),
+        sources: vec!["/a".into()],
+        destination_terminal_id: "t2".into(),
+        destination: "/in".into(),
+        overwrite: false,
+        yield_ms: None,
+    });
+    assert!(grants.requires_approval(&call, &settings));
+    grants.grant("t2", ToolCapability::Transfer);
+    assert!(grants.requires_approval(&call, &settings));
+    grants.grant("t1", ToolCapability::Execution);
+    assert!(grants.requires_approval(&call, &settings));
+    grants.grant("t1", ToolCapability::Transfer);
+    assert!(!grants.requires_approval(&call, &settings));
+    grants.revoke("t1");
+    assert!(grants.requires_approval(&call, &settings));
+}
+#[test]
+fn reading_and_cancelling_a_transfer_need_no_terminal_grant() {
+    let settings = ApprovalSettings::default();
+    let grants = ApprovalGrants::default();
+    for call in [
+        TerminalCall::ReadTransfer(ReadTransfer {
+            transfer_id: "x".into(),
+            yield_ms: None,
+        }),
+        TerminalCall::CancelTransfer(CancelTransfer {
+            transfer_id: "x".into(),
+        }),
+    ] {
+        assert!(!grants.requires_approval(&call, &settings));
+    }
+}
+#[test]
 fn structured_execution_bounds_program_arguments_stdin_and_lifetime() {
     let valid = ExecCommand {
         terminal_id: "t1".into(),

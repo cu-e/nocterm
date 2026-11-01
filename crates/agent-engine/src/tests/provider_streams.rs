@@ -29,7 +29,7 @@ async fn openai_wire_streams_neutral_text_and_reported_usage() {
             .contains(&format!("authorization: bearer {KEY}"))
     );
     assert!(requests[0].0.starts_with("POST /chat/completions "));
-    assert_eq!(requests[0].1["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(requests[0].1["tools"].as_array().unwrap().len(), 11);
     assert_eq!(requests[0].1["model"], "fixture-model");
 }
 #[tokio::test]
@@ -63,7 +63,7 @@ async fn anthropic_messages_wire_streams_text_and_preserves_usage() {
     let requests = server.requests();
     assert!(requests[0].0.starts_with("POST /v1/messages "));
     assert!(requests[0].0.contains(&format!("x-api-key: {KEY}")));
-    assert_eq!(requests[0].1["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(requests[0].1["tools"].as_array().unwrap().len(), 11);
 }
 #[tokio::test]
 async fn anthropic_finished_tool_arguments_use_existing_terminal_catalog() {

@@ -36,6 +36,9 @@ fn correct_variant(name: &str, call: &TerminalCall) -> bool {
             | ("exec_command", TerminalCall::ExecCommand(_))
             | ("read_command", TerminalCall::ReadCommand(_))
             | ("cancel_command", TerminalCall::CancelCommand(_))
+            | ("transfer_files", TerminalCall::TransferFiles(_))
+            | ("read_transfer", TerminalCall::ReadTransfer(_))
+            | ("cancel_transfer", TerminalCall::CancelTransfer(_))
     )
 }
 
@@ -55,7 +58,7 @@ fn tools_list_preserves_original_order_descriptions_and_schemas() {
 fn every_variant_round_trips_through_a_unique_catalogue_entry() {
     let fixtures = fixtures();
     let names: BTreeSet<_> = TOOLS.iter().map(|spec| spec.name).collect();
-    assert_eq!(TOOLS.len(), 8);
+    assert_eq!(TOOLS.len(), 11);
     assert_eq!(TOOLS.len(), names.len());
     assert_eq!(fixtures.len(), names.len());
     assert_eq!(
@@ -137,6 +140,16 @@ fn catalogue_and_mcp_reject_unknown_tools_bad_shapes_and_extra_fields() {
         ),
         ("open_terminal", json!({"server_id":null})),
         ("read_command", json!({"terminal_id":"t1"})),
+        (
+            "transfer_files",
+            json!({"source_terminal_id":"t1","sources":"/a","destination_terminal_id":"t2","destination":"/b"}),
+        ),
+        (
+            "transfer_files",
+            json!({"source_terminal_id":"t1","sources":["/a"],"destination_terminal_id":"t2","destination":"/b","extra":true}),
+        ),
+        ("read_transfer", json!({"transfer_id":7})),
+        ("cancel_transfer", json!({})),
     ] {
         assert!(
             get(name)

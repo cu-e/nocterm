@@ -59,6 +59,12 @@ catalog! {
         "Read a bounded full snapshot of a command owned by this chat. Does not start or cancel a command; optional yield_ms waits briefly";
     CancelCommand(CancelCommand) => "cancel_command", "Cancel command",
         "Cancel a command owned by this chat. SSH sends TERM and closes its channel; remote descendant termination is best effort";
+    TransferFiles(TransferFiles) => "transfer_files", "Transfer files",
+        "Copy files and folders between the hosts of two attached terminals: this computer (a local terminal) to a server, a server to this computer, or a server to another server. nocterm relays the data over the connections it already holds, so servers need no credentials for each other and you must never use scp, rsync or ssh between them. Every path is absolute (no ~, no .. components). sources are files or folders on the source host; folders copy recursively, and each source is copied into destination under its own name. destination must be an existing folder; it is never created. Existing files are skipped and counted as skipped unless overwrite is true. Symbolic links and special files are skipped. At most 64 sources per call. Two local terminals are refused: use exec_command. Some environments only allow copies within one server. The copy runs in the background: after optional yield_ms (default 1000) it returns the current state and a transfer_id for read_transfer/cancel_transfer. Poll read_transfer until the state is completed, failed or cancelled. Whole files are published atomically; a cancelled or failed file leaves no partial file";
+    ReadTransfer(ReadTransfer) => "read_transfer", "Read transfer",
+        "Read a snapshot of a transfer started by this chat: state, file and byte counts and up to 16 failures. Does not start or cancel a transfer; optional yield_ms waits briefly while it is active";
+    CancelTransfer(CancelTransfer) => "cancel_transfer", "Cancel transfer",
+        "Cancel a transfer started by this chat. Files already published stay in place; files being copied are discarded";
 }
 
 pub fn get(name: &str) -> Option<&'static ToolSpec> {

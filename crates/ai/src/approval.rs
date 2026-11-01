@@ -15,16 +15,23 @@ impl ApprovalGrants {
     pub fn clear(&mut self) {
         self.grants.clear();
     }
+    /// A call needs a card unless the policy allows it or every terminal it
+    /// touches already holds the capability it needs.
     pub fn requires_approval(&self, call: &TerminalCall, settings: &ApprovalSettings) -> bool {
-        let Some(id) = call.target() else {
+        let mut targets = call.terminals().peekable();
+        let server = call.server_id();
+        if targets.peek().is_none() && server.is_none() {
             return false;
-        };
-        if call.writes() {
-            settings.terminal_write == ApprovalPolicy::Ask
-                && !self.grants.contains(&(id.into(), call.capability()))
-        } else {
-            settings.terminal_read == ApprovalPolicy::Ask
-                && !self.grants.contains(&(id.into(), call.capability()))
         }
+        let policy = if call.writes() {
+            settings.terminal_write
+        } else {
+            settings.terminal_read
+        };
+        let capability = call.capability();
+        policy == ApprovalPolicy::Ask
+            && !targets
+                .chain(server)
+                .all(|id| self.grants.contains(&(id.into(), capability)))
     }
 }

@@ -1,7 +1,12 @@
 pub mod catalog;
 mod failure;
+pub mod transfer;
 
 pub use failure::{TerminalCallError, ToolArgumentsError, ToolFailure};
+pub use transfer::{
+    CancelTransfer, MAX_TRANSFER_FAILURES, MAX_TRANSFER_PATH_BYTES, MAX_TRANSFER_SOURCE_BYTES,
+    MAX_TRANSFER_SOURCES, ReadTransfer, TransferFiles,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,6 +68,7 @@ pub enum ToolCapability {
     LiveInput,
     Execution,
     Connection,
+    Transfer,
 }
 /// Opens an allowlisted server or reuses its already connected terminal.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -81,6 +87,9 @@ pub enum TerminalCall {
     ExecCommand(ExecCommand),
     ReadCommand(ReadCommand),
     CancelCommand(CancelCommand),
+    TransferFiles(TransferFiles),
+    ReadTransfer(ReadTransfer),
+    CancelTransfer(CancelTransfer),
 }
 impl TerminalCall {
     /// Canonical semantic arguments, using the same DTOs as catalog parsing.
@@ -95,12 +104,19 @@ impl TerminalCall {
             Self::ExecCommand(v) => serde_json::to_value(v),
             Self::ReadCommand(v) => serde_json::to_value(v),
             Self::CancelCommand(v) => serde_json::to_value(v),
+            Self::TransferFiles(v) => serde_json::to_value(v),
+            Self::ReadTransfer(v) => serde_json::to_value(v),
+            Self::CancelTransfer(v) => serde_json::to_value(v),
         }
         .map_err(ToolArgumentsError::from)
     }
     pub fn terminal_id(&self) -> Option<&str> {
         match self {
-            Self::ListTerminals | Self::OpenTerminal(_) => None,
+            Self::ListTerminals
+            | Self::OpenTerminal(_)
+            | Self::ReadTransfer(_)
+            | Self::CancelTransfer(_) => None,
+            Self::TransferFiles(v) => Some(&v.destination_terminal_id),
             Self::ReadTerminal(v) => Some(&v.terminal_id),
             Self::SendInput(v) => Some(&v.terminal_id),
             Self::RunCommand(v) => Some(&v.terminal_id),
@@ -108,6 +124,21 @@ impl TerminalCall {
             Self::ReadCommand(v) => Some(&v.terminal_id),
             Self::CancelCommand(v) => Some(&v.terminal_id),
         }
+    }
+    /// The terminal whose host holds the sources of a transfer.
+    pub fn source_terminal_id(&self) -> Option<&str> {
+        match self {
+            Self::TransferFiles(v) => Some(&v.source_terminal_id),
+            _ => None,
+        }
+    }
+    /// Every terminal the call touches: `terminal_id`, then a distinct `source_terminal_id`.
+    pub fn terminals(&self) -> impl Iterator<Item = &str> {
+        let destination = self.terminal_id();
+        let source = self
+            .source_terminal_id()
+            .filter(|source| Some(*source) != destination);
+        destination.into_iter().chain(source)
     }
     pub fn server_id(&self) -> Option<&str> {
         match self {
@@ -128,6 +159,8 @@ impl TerminalCall {
                 | Self::OpenTerminal(_)
                 | Self::ExecCommand(_)
                 | Self::CancelCommand(_)
+                | Self::TransferFiles(_)
+                | Self::CancelTransfer(_)
         )
     }
     pub fn capability(&self) -> ToolCapability {
@@ -135,9 +168,11 @@ impl TerminalCall {
             Self::SendInput(_) | Self::RunCommand(_) => ToolCapability::LiveInput,
             Self::ExecCommand(_) | Self::CancelCommand(_) => ToolCapability::Execution,
             Self::OpenTerminal(_) => ToolCapability::Connection,
-            Self::ListTerminals | Self::ReadTerminal(_) | Self::ReadCommand(_) => {
-                ToolCapability::Read
-            }
+            Self::TransferFiles(_) | Self::CancelTransfer(_) => ToolCapability::Transfer,
+            Self::ListTerminals
+            | Self::ReadTerminal(_)
+            | Self::ReadCommand(_)
+            | Self::ReadTransfer(_) => ToolCapability::Read,
         }
     }
     pub fn validate(&self) -> Result<(), TerminalCallError> {
@@ -197,6 +232,9 @@ impl TerminalCall {
             Self::CancelCommand(v) if v.command_id.is_empty() || v.command_id.len() > 128 => {
                 Err(TerminalCallError::InvalidCommandId)
             }
+            Self::TransferFiles(v) => v.validate(),
+            Self::ReadTransfer(v) => v.validate(),
+            Self::CancelTransfer(v) => v.validate(),
             _ => Ok(()),
         }
     }

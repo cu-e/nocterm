@@ -148,6 +148,9 @@ pub fn request(call: &TerminalCall) -> (&'static str, Value) {
         TerminalCall::ExecCommand(v) => json!(v),
         TerminalCall::ReadCommand(v) => json!(v),
         TerminalCall::CancelCommand(v) => json!(v),
+        TerminalCall::TransferFiles(v) => json!(v),
+        TerminalCall::ReadTransfer(v) => json!(v),
+        TerminalCall::CancelTransfer(v) => json!(v),
     };
     (call.name(), arguments)
 }

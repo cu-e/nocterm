@@ -21,6 +21,14 @@ pub enum TerminalCallError {
     ReadCommandRejected,
     #[error("Invalid command id")]
     InvalidCommandId,
+    #[error(
+        "Transfer needs 1–64 absolute source paths and one destination folder (each at most 4096 bytes without NUL, sources at most 64 KiB in total) and a yield of at most 10000 ms"
+    )]
+    TransferRejected,
+    #[error("Invalid transfer id or yield interval")]
+    ReadTransferRejected,
+    #[error("Invalid transfer id")]
+    InvalidTransferId,
 }
 
 /// Agent-facing text of a failed tool call.

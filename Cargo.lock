@@ -5362,6 +5362,7 @@ dependencies = [
  "nocterm-project-model",
  "nocterm-session",
  "nocterm-settings",
+ "nocterm-transfers",
  "regex",
  "schemars 1.2.2",
  "serde",

@@ -94,5 +94,50 @@
       "terminal_id": "t1",
       "command_id": "cmd1"
     }
+  },
+  {
+    "name": "transfer_files",
+    "label": "Transfer files",
+    "arguments": {
+      "source_terminal_id": "t1",
+      "sources": [
+        "/srv/a",
+        "/srv/dir b"
+      ],
+      "destination_terminal_id": "t2",
+      "destination": "/home/alice/in"
+    },
+    "normalized": {
+      "source_terminal_id": "t1",
+      "sources": [
+        "/srv/a",
+        "/srv/dir b"
+      ],
+      "destination_terminal_id": "t2",
+      "destination": "/home/alice/in",
+      "overwrite": false,
+      "yield_ms": null
+    }
+  },
+  {
+    "name": "read_transfer",
+    "label": "Read transfer",
+    "arguments": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819"
+    },
+    "normalized": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819",
+      "yield_ms": null
+    }
+  },
+  {
+    "name": "cancel_transfer",
+    "label": "Cancel transfer",
+    "arguments": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819"
+    },
+    "normalized": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819"
+    }
   }
 ]
