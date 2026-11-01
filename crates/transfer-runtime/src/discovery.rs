@@ -1,4 +1,7 @@
-use crate::scheduler::{DownloadJob, FileJob, UploadJob, Work};
+use crate::{
+    relay_discovery,
+    scheduler::{DownloadJob, FileJob, UploadJob, Work},
+};
 use nocterm_session::{
     DirEntry, EntryKind, FileMetadata,
     fs::path,
@@ -31,15 +34,19 @@ pub(crate) async fn run(work: Work, sender: mpsc::Sender<FileJob>) {
                 }
             }
         }
+        Request::Relay(request) => relay_discovery::run(&work, &sender, request).await,
         Request::Download(request) => {
-            let local = work.state().local().clone();
             let destination = request.local_destination;
-            match work
-                .state()
-                .blocking()
-                .call(work.cancel(), move || local.open_directory(&destination))
-                .await
-            {
+            let opened = match work.state().local().cloned() {
+                Ok(local) => {
+                    work.state()
+                        .blocking()
+                        .call(work.cancel(), move || local.open_directory(&destination))
+                        .await
+                }
+                Err(cause) => Err(cause),
+            };
+            match opened {
                 Ok(directory) => {
                     let mut discovery = DownloadDiscovery::new(work.clone(), sender);
                     for source in request.sources {
@@ -91,7 +98,7 @@ impl UploadDiscovery {
         }
     }
     async fn root(&mut self, source: PathBuf, destination: String) -> Result<(), TransferCause> {
-        let local = self.work.state().local().clone();
+        let local = self.work.state().local()?.clone();
         let (directory, name) = self
             .work
             .state()
@@ -409,7 +416,7 @@ impl DownloadDiscovery {
 fn special(metadata: &FileMetadata) -> bool {
     metadata.is_symlink || metadata.kind == EntryKind::Other
 }
-fn skip(work: &Work, path: TransferPath) {
+pub(crate) fn skip(work: &Work, path: TransferPath) {
     work.batch()
         .event(TransferEvent::FileSkipped(Some(TransferIssue::new(
             Some(path),
@@ -417,7 +424,7 @@ fn skip(work: &Work, path: TransferPath) {
             TransferCause::SpecialFile,
         ))));
 }
-async fn send(
+pub(crate) async fn send(
     work: &Work,
     sender: &mpsc::Sender<FileJob>,
     job: FileJob,

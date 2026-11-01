@@ -1,8 +1,8 @@
-use nocterm_session::{RemoteFs, Target, local_fs::LocalFs, testing::InMemoryFs};
+use nocterm_session::{HostAddress, RemoteFs, Target, local_fs::LocalFs, testing::InMemoryFs};
 use nocterm_transfer_runtime::{TransferRuntime, TransferRuntimeDeps};
 use nocterm_transfers::{
-    CollisionPolicy, DownloadRequest, Progress, TransferId, TransferLimits, TransferService,
-    UploadRequest,
+    CollisionPolicy, DownloadRequest, Progress, RelayRequest, Request, TransferId, TransferLimits,
+    TransferRequests, TransferService, UploadRequest,
 };
 use std::{
     path::PathBuf,
@@ -101,5 +101,45 @@ pub(super) fn wait(mut condition: impl FnMut() -> bool) {
             "Transfer behavior did not settle"
         );
         std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// A remote-only runtime with two independent remote filesystems for relays.
+pub(super) struct RelayFixture {
+    pub(super) runtime: Arc<TransferRuntime>,
+    pub(super) source: Arc<InMemoryFs>,
+    pub(super) destination: Arc<InMemoryFs>,
+}
+impl RelayFixture {
+    pub(super) fn new() -> Self {
+        let source = Arc::new(InMemoryFs::default());
+        let destination = Arc::new(InMemoryFs::default());
+        futures::executor::block_on(destination.create_dir("/dest")).unwrap();
+        let runtime =
+            TransferRuntime::start(TransferRuntimeDeps::remote_only(TransferLimits::default()))
+                .unwrap();
+        Self {
+            runtime,
+            source,
+            destination,
+        }
+    }
+    pub(super) fn request(&self, sources: Vec<&str>, policy: CollisionPolicy) -> Request {
+        Request::Relay(RelayRequest {
+            source_host: HostAddress::direct(Target::new("u", "source-host", 22)),
+            source_fs: self.source.clone(),
+            sources: sources.into_iter().map(str::to_owned).collect(),
+            host: HostAddress::direct(Target::new("u", "destination-host", 22)),
+            destination: "/dest".into(),
+            fs: self.destination.clone(),
+            collisions: policy,
+        })
+    }
+    pub(super) fn relay(&self, sources: Vec<&str>, policy: CollisionPolicy) -> TransferId {
+        self.runtime.submit(self.request(sources, policy)).unwrap()
+    }
+    pub(super) fn finished(&self, id: TransferId) -> Progress {
+        wait(|| self.runtime.progress(id).unwrap().state.finished());
+        self.runtime.progress(id).unwrap()
     }
 }

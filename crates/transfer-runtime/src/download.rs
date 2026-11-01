@@ -1,7 +1,8 @@
 use crate::{
-    reservations,
+    chunks, reservations,
     scheduler::{DownloadJob, FileOutcome, Work},
 };
+use futures::future::try_join;
 use nocterm_session::{
     fs::{RemoteDownload, UploadMode},
     local_fs::{LocalFsError, LocalStage, PublicationOutcome},
@@ -26,13 +27,17 @@ impl StageWriter {
                 "consumed stage",
             )))
     }
-    async fn write(&mut self, work: &Work, bytes: Vec<u8>) -> Result<(), TransferCause> {
+    async fn write_batch(
+        &mut self,
+        work: &Work,
+        chunks: Vec<Vec<u8>>,
+    ) -> Result<(), TransferCause> {
         let mut stage = self.take()?;
         let (stage, result) = work
             .state()
             .blocking()
             .call(work.cancel(), move || {
-                let result = stage.write(&bytes);
+                let result = chunks.iter().try_for_each(|chunk| stage.write(chunk));
                 Ok((stage, result))
             })
             .await?;
@@ -151,18 +156,43 @@ async fn stream(
 ) -> Result<(), TransferCause> {
     let limits = work.state().limits().stream();
     let mut budget = StreamBudget::new(limits, job.expected());
+    let mut pending: Vec<Vec<u8>> = Vec::new();
+    let mut eof = false;
+    // The next batch is read from the remote while the previous one is written.
     loop {
-        let bytes = work.remote(reader.read(limits.chunk())).await?;
-        if bytes.is_empty() {
+        let writing = std::mem::take(&mut pending);
+        if eof && writing.is_empty() {
             break;
         }
-        budget.accept_chunk(bytes.len())?;
-        let length = bytes.len();
-        stage.write(work, bytes).await?;
-        budget.acknowledged(length)?;
-        work.batch().event(TransferEvent::Acknowledged {
-            bytes: length as u64,
-        });
+        let wrote = chunks::total(&writing);
+        let read = async {
+            if eof {
+                Ok(Vec::new())
+            } else {
+                work.remote(reader.read_batch(limits.chunk(), limits.acknowledgements()))
+                    .await
+            }
+        };
+        let write = async {
+            if writing.is_empty() {
+                Ok(())
+            } else {
+                stage.write_batch(work, writing).await
+            }
+        };
+        let (read, ()) = try_join(read, write).await?;
+        if wrote > 0 {
+            budget.acknowledged(wrote)?;
+            work.batch().event(TransferEvent::Acknowledged {
+                bytes: wrote as u64,
+            });
+        }
+        if read.is_empty() {
+            eof = true;
+        } else {
+            chunks::accept_batch(&budget, &read)?;
+            pending = read;
+        }
     }
     budget.finish()
 }

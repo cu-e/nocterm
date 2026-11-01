@@ -1,9 +1,12 @@
 use crate::{batch::Batch, blocking::BlockingDispatcher, scheduler};
 use futures::future::BoxFuture;
-use nocterm_session::{RemoteFs, local_fs::LocalFs};
+use nocterm_session::{
+    RemoteFs,
+    local_fs::{LocalFs, LocalFsError},
+};
 use nocterm_transfers::{
-    DownloadRequest, Progress, Request, TransferError, TransferId, TransferLimits, TransferService,
-    UploadRequest,
+    DownloadRequest, Progress, Request, TransferCause, TransferError, TransferId, TransferLimits,
+    TransferRequests, TransferService, UploadRequest,
 };
 use parking_lot::Mutex;
 use std::{
@@ -19,12 +22,23 @@ use tokio::{
 };
 
 pub struct TransferRuntimeDeps {
-    local: Arc<dyn LocalFs>,
+    local: Option<Arc<dyn LocalFs>>,
     limits: TransferLimits,
 }
 impl TransferRuntimeDeps {
     pub fn new(local: Arc<dyn LocalFs>, limits: TransferLimits) -> Self {
-        Self { local, limits }
+        Self {
+            local: Some(local),
+            limits,
+        }
+    }
+    /// No local filesystem: Upload and Download requests are refused with
+    /// `TransferError::LocalUnavailable`; relays between remote hosts still run.
+    pub fn remote_only(limits: TransferLimits) -> Self {
+        Self {
+            local: None,
+            limits,
+        }
     }
 }
 #[derive(Debug, thiserror::Error)]
@@ -48,7 +62,7 @@ struct Admission {
 }
 pub(crate) struct RuntimeState {
     batches: Mutex<BTreeMap<TransferId, Arc<Batch>>>,
-    local: Arc<dyn LocalFs>,
+    local: Option<Arc<dyn LocalFs>>,
     limits: TransferLimits,
     blocking: BlockingDispatcher,
     completion: Completion,
@@ -58,8 +72,12 @@ struct Completion {
     changed: Notify,
 }
 impl RuntimeState {
-    pub(crate) fn local(&self) -> &Arc<dyn LocalFs> {
-        &self.local
+    pub(crate) fn local(&self) -> Result<&Arc<dyn LocalFs>, TransferCause> {
+        self.local
+            .as_ref()
+            .ok_or(TransferCause::Local(LocalFsError::Unsupported(
+                "local filesystem",
+            )))
     }
     pub(crate) fn limits(&self) -> TransferLimits {
         self.limits
@@ -136,6 +154,9 @@ impl TransferRuntime {
     }
     fn admit(&self, request: Request) -> Result<TransferId, TransferError> {
         request.validate(self.state.limits.discovery())?;
+        if self.state.local.is_none() && !matches!(request, Request::Relay(_)) {
+            return Err(TransferError::LocalUnavailable);
+        }
         let mut admission = self.admission.lock();
         if admission.sender.is_none() {
             return Err(TransferError::ShuttingDown);
@@ -171,6 +192,12 @@ impl TransferRuntime {
         self.state.trim(&mut batches);
         Ok(id)
     }
+    fn cancel_batch(&self, id: TransferId) -> Result<(), TransferError> {
+        let batches = self.state.batches.lock();
+        let batch = batches.get(&id).ok_or(TransferError::Missing)?;
+        batch.cancel();
+        Ok(())
+    }
     fn freeze(&self) {
         let mut admission = self.admission.lock();
         admission.sender.take();
@@ -199,10 +226,7 @@ impl TransferService for TransferRuntime {
             .collect()
     }
     fn cancel(&self, id: TransferId) -> Result<(), TransferError> {
-        let batches = self.state.batches.lock();
-        let batch = batches.get(&id).ok_or(TransferError::Missing)?;
-        batch.cancel();
-        Ok(())
+        self.cancel_batch(id)
     }
     fn retry(&self, id: TransferId, fs: Arc<dyn RemoteFs>) -> Result<TransferId, TransferError> {
         let request = {
@@ -224,6 +248,22 @@ impl TransferService for TransferRuntime {
             drop(owner);
             Ok(())
         })
+    }
+}
+impl TransferRequests for TransferRuntime {
+    fn submit(&self, request: Request) -> Result<TransferId, TransferError> {
+        self.admit(request)
+    }
+    fn progress(&self, id: TransferId) -> Result<Progress, TransferError> {
+        self.state
+            .batches
+            .lock()
+            .get(&id)
+            .map(|batch| batch.snapshot())
+            .ok_or(TransferError::Missing)
+    }
+    fn cancel(&self, id: TransferId) -> Result<(), TransferError> {
+        self.cancel_batch(id)
     }
 }
 impl Drop for TransferRuntime {

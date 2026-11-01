@@ -1,7 +1,7 @@
-use crate::{batch::Batch, discovery, download, runtime::RuntimeState, upload};
+use crate::{batch::Batch, discovery, download, relay, runtime::RuntimeState, upload};
 use futures::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use nocterm_session::{
-    FsError,
+    FsError, RemoteFs,
     local_fs::{CancelFlag, LocalDirectory, LocalSource},
 };
 use nocterm_transfers::{
@@ -13,6 +13,42 @@ use tokio::sync::mpsc;
 pub(crate) enum FileJob {
     Upload(UploadJob),
     Download(DownloadJob),
+    Relay(RelayJob),
+}
+pub(crate) struct RelayJob {
+    source_fs: Arc<dyn RemoteFs>,
+    source: String,
+    remote: String,
+    expected: Option<u64>,
+}
+impl RelayJob {
+    pub(crate) fn new(
+        source_fs: Arc<dyn RemoteFs>,
+        source: String,
+        remote: String,
+        expected: Option<u64>,
+    ) -> Self {
+        Self {
+            source_fs,
+            source,
+            remote,
+            expected,
+        }
+    }
+    pub(crate) fn source_fs(&self) -> &Arc<dyn RemoteFs> {
+        &self.source_fs
+    }
+    /// The path read on the source filesystem.
+    pub(crate) fn source(&self) -> &str {
+        &self.source
+    }
+    /// The path published on the destination filesystem.
+    pub(crate) fn remote(&self) -> &str {
+        &self.remote
+    }
+    pub(crate) fn expected(&self) -> Option<u64> {
+        self.expected
+    }
 }
 pub(crate) struct UploadJob {
     source: Box<dyn LocalSource>,
@@ -163,6 +199,7 @@ async fn run_file(work: Work, job: FileJob) -> Result<FileOutcome, TransferIssue
     match job {
         FileJob::Upload(job) => upload::run(work, job).await,
         FileJob::Download(job) => download::run(work, job).await,
+        FileJob::Relay(job) => relay::run(work, job).await,
     }
 }
 fn record_outcome(work: &Work, outcome: Result<FileOutcome, TransferIssue>) {
