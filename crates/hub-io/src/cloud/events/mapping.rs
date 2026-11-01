@@ -179,14 +179,7 @@ pub(super) fn mapping_bytes(event: &CoordinatorEvent) -> Result<usize, JournalEr
     let intent_bytes = |intent: &nocterm_cloud_model::run::ToolIntent,
                         call: &nocterm_ai::TerminalCall|
      -> Result<usize, JournalError> {
-        let arguments = match call {
-            nocterm_ai::TerminalCall::ExecCommand(value) => value
-                .args
-                .len()
-                .checked_mul(std::mem::size_of::<&str>())
-                .ok_or(JournalError::Capacity)?,
-            _ => 0,
-        };
+        let arguments = super::tools::borrowed_vectors(call)?;
         std::mem::size_of::<wire::ToolIntentPayload<'static>>()
             .checked_add(principal(intent.authority()))
             .and_then(|n| n.checked_add(arguments))

@@ -20,16 +20,9 @@ impl RunnerArgumentFingerprint {
 impl ArgumentFingerprint for RunnerArgumentFingerprint {
     fn fingerprint(&self, call: &TerminalCall) -> Result<Fingerprint, ToolExecutionError> {
         call.validate()?;
-        // Only ExecCommand creates a vector of borrowed string views. The SDK
-        // digest streams directly to its canonical hasher without a payload Vec.
-        let bytes = match call {
-            TerminalCall::ExecCommand(value) => value
-                .args
-                .len()
-                .checked_mul(std::mem::size_of::<&str>())
-                .ok_or(ToolExecutionError::Capacity)?,
-            _ => 0,
-        };
+        // Only calls with string lists create a vector of borrowed views. The
+        // SDK digest streams directly to its canonical hasher without a payload Vec.
+        let bytes = tools::borrowed_vectors(call).map_err(|_| ToolExecutionError::Capacity)?;
         let _allocation = self
             .work
             .try_reserve(

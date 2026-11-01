@@ -1,8 +1,8 @@
 //! Exact canonical tool arguments become descriptive native calls only.
 use super::{budget::DecodeBudget, values};
 use nocterm_ai::{
-    CancelCommand, ExecCommand, OpenTerminal, ReadCommand, ReadTerminal, RunCommand, SendInput,
-    TerminalCall,
+    CancelCommand, CancelTransfer, ExecCommand, OpenTerminal, ReadCommand, ReadTerminal,
+    ReadTransfer, RunCommand, SendInput, TerminalCall, TransferFiles,
     tool_display::{ToolDisplay, ToolOutcome},
 };
 use nocterm_cloud_model::{
@@ -184,6 +184,33 @@ fn arguments(
             terminal_id: string(terminal_id, budget)?,
             command_id: string(command_id, budget)?,
         }),
+        ToolArguments::TransferFiles {
+            source_terminal_id,
+            sources,
+            destination_terminal_id,
+            destination,
+            overwrite,
+            yield_ms,
+        } => TerminalCall::TransferFiles(TransferFiles {
+            source_terminal_id: string(source_terminal_id, budget)?,
+            sources: argument_array(sources, budget)?,
+            destination_terminal_id: string(destination_terminal_id, budget)?,
+            destination: string(destination, budget)?,
+            overwrite: *overwrite,
+            yield_ms: *yield_ms,
+        }),
+        ToolArguments::ReadTransfer {
+            transfer_id,
+            yield_ms,
+        } => TerminalCall::ReadTransfer(ReadTransfer {
+            transfer_id: string(transfer_id, budget)?,
+            yield_ms: *yield_ms,
+        }),
+        ToolArguments::CancelTransfer { transfer_id } => {
+            TerminalCall::CancelTransfer(CancelTransfer {
+                transfer_id: string(transfer_id, budget)?,
+            })
+        }
     })
 }
 

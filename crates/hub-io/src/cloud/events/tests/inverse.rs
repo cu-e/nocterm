@@ -172,6 +172,96 @@ fn observations(
     events
 }
 
+#[test]
+fn observation_refuses_a_transfer_intent_whose_mutation_flag_contradicts_the_call() {
+    use nocterm_hub_model::cloud::{
+        events::{ToolIntentPayload, ToolPresentation},
+        tool_arguments::ToolArguments,
+    };
+    let fixture = Fixture::new();
+    let work = Arc::new(Fixture::budget(8 * 1024 * 1024));
+    let next = JournalPosition::default().next(1, 1, true).unwrap();
+    let publication = CoordinatorEventEncoder::encode(
+        &fixture.encoder(),
+        &fixture.lease,
+        next,
+        &CoordinatorEvent::Status {
+            run: fixture.run.clone(),
+            status: RunStatus::Interrupted,
+        },
+        work.as_ref(),
+    )
+    .unwrap();
+    let context = crate::cloud::runner_transport::record_context(
+        publication.stream(),
+        publication.key_epoch(),
+        publication.anchor(),
+    )
+    .unwrap();
+    let arguments = ToolArguments::TransferFiles {
+        source_terminal_id: "terminal",
+        sources: vec!["/srv/a", "/srv/dir b"],
+        destination_terminal_id: "terminal-2",
+        destination: "/home/alice/in",
+        overwrite: false,
+        yield_ms: Some(1000),
+    };
+    let digest = arguments.digest().unwrap();
+    for mutates in [true, false] {
+        let body = CloudEvent {
+            control_revision: next.control().get(),
+            timestamp_ms: 1_700_000_000_000,
+            payload: CloudEventPayload::ToolIntent(Box::new(ToolIntentPayload {
+                id: [61; 16],
+                step: [62; 16],
+                execution: crate::cloud::events::values::execution(&fixture.authority()).unwrap(),
+                arguments_digest: digest,
+                mutates,
+                arguments: arguments.clone(),
+                display: ToolPresentation {
+                    tool: "transfer_files",
+                    arguments_json: "{}",
+                    destination: None,
+                    redacted: false,
+                    outcome: None,
+                },
+            })),
+        }
+        .canonical_bytes()
+        .unwrap();
+        let sealed = fixture
+            .material
+            .with_material(fixture.lease.stream(), |key, _, signer| {
+                nocterm_keys::cloud::seal_event(key, signer, context.clone(), &body)
+                    .map_err(crate::cloud::events::encoding_error)
+            })
+            .unwrap();
+        let public = fixture.identity.public_identity().unwrap();
+        let opened = open_event(&fixture.key, public.signing_key(), &context, &sealed).unwrap();
+        let allocation = work
+            .try_reserve(PublicationAllocation::new(1024 * 1024, 1).unwrap())
+            .unwrap();
+        let result = crate::cloud::observations::decode_opened_event(
+            fixture.lease.stream(),
+            &opened,
+            &allocation,
+        );
+        if mutates {
+            let CoordinatorEvent::ToolIntent { call, .. } = result.unwrap() else {
+                panic!("missing descriptive intent")
+            };
+            assert!(matches!(call, nocterm_ai::TerminalCall::TransferFiles(_)));
+        } else {
+            assert!(matches!(
+                result,
+                Err(crate::cloud::observations::ObservationError::Projection(
+                    nocterm_cloud_model::projection::ProjectionError::InvalidRecord
+                ))
+            ));
+        }
+    }
+}
+
 fn legacy_reconciliation(fixture: &Fixture, work: &dyn PublicationWorkBudget) {
     use nocterm_hub_model::cloud::{events::CloudEventPayload, payload::ApprovalChoice};
     let next = JournalPosition::default().next(1, 1, true).unwrap();

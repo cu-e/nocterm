@@ -145,9 +145,33 @@ pub(super) fn arguments(call: &TerminalCall) -> Result<ToolArguments<'_>, Journa
             terminal_id: &value.terminal_id,
             command_id: &value.command_id,
         },
-        // Interim: the contract has no transfer tags yet, so these are never journaled.
-        TerminalCall::TransferFiles(_)
-        | TerminalCall::ReadTransfer(_)
-        | TerminalCall::CancelTransfer(_) => return Err(JournalError::UnsupportedFormat),
+        TerminalCall::TransferFiles(value) => ToolArguments::TransferFiles {
+            source_terminal_id: &value.source_terminal_id,
+            sources: value.sources.iter().map(String::as_str).collect(),
+            destination_terminal_id: &value.destination_terminal_id,
+            destination: &value.destination,
+            overwrite: value.overwrite,
+            yield_ms: value.yield_ms,
+        },
+        TerminalCall::ReadTransfer(value) => ToolArguments::ReadTransfer {
+            transfer_id: &value.transfer_id,
+            yield_ms: value.yield_ms,
+        },
+        TerminalCall::CancelTransfer(value) => ToolArguments::CancelTransfer {
+            transfer_id: &value.transfer_id,
+        },
     })
+}
+
+/// Bytes of the borrowed string-view vectors `arguments` builds for `call`.
+/// Callers reserve them before mapping; the other calls borrow no vector.
+pub(super) fn borrowed_vectors(call: &TerminalCall) -> Result<usize, JournalError> {
+    let views = match call {
+        TerminalCall::ExecCommand(value) => value.args.len(),
+        TerminalCall::TransferFiles(value) => value.sources.len(),
+        _ => 0,
+    };
+    views
+        .checked_mul(std::mem::size_of::<&str>())
+        .ok_or(JournalError::Capacity)
 }
