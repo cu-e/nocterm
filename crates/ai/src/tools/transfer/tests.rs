@@ -140,6 +140,29 @@ fn transfer_sources_and_destination_are_bounded() {
 }
 
 #[test]
+fn control_characters_cannot_reshape_a_transfer_path() {
+    let rejected = TerminalCallError::TransferRejected;
+    for text in [
+        "/a\nInto: /tmp",
+        "/a\rb",
+        "/a\u{1b}[2J",
+        "/a\tb",
+        "/a\u{7f}",
+    ] {
+        assert_eq!(
+            rejection(|call| call.sources = vec![text.into()]),
+            rejected,
+            "{text:?}"
+        );
+        assert_eq!(
+            rejection(|call| call.destination = text.into()),
+            rejected,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
 fn read_and_cancel_validation_name_their_own_rejection() {
     let read = |transfer_id: &str, yield_ms| {
         TerminalCall::ReadTransfer(ReadTransfer {

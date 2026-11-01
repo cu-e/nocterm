@@ -50,8 +50,9 @@ fn id_len_ok(id: &str) -> bool {
     !id.is_empty() && id.len() <= MAX_ID_BYTES
 }
 
+/// Control characters (NUL, newlines, escapes) could reshape the approval card text.
 fn path_ok(path: &str) -> bool {
-    !path.is_empty() && path.len() <= MAX_TRANSFER_PATH_BYTES && !path.contains('\0')
+    !path.is_empty() && path.len() <= MAX_TRANSFER_PATH_BYTES && !path.chars().any(char::is_control)
 }
 
 impl TransferFiles {
