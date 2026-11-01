@@ -125,10 +125,7 @@ impl TransferAdmission {
     }
 }
 impl PreparedTransfer {
-    fn submit(
-        self,
-        book: &mut ChatTransfers,
-    ) -> Result<StartedTransfer, Box<RejectedTransfer>> {
+    fn submit(self, book: &mut ChatTransfers) -> Result<StartedTransfer, Box<RejectedTransfer>> {
         match book.start(self.request, self.binding) {
             Ok(id) => Ok(StartedTransfer {
                 call: self.call,
