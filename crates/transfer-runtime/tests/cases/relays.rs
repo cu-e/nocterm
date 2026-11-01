@@ -4,7 +4,8 @@ use nocterm_session::{
     testing::{FsOperation, Gate},
 };
 use nocterm_transfers::{
-    CollisionPolicy, Request, TransferDirection, TransferError, TransferRequests, TransferState,
+    CollisionPolicy, Request, TransferDirection, TransferError, TransferOperation,
+    TransferRequests, TransferState,
 };
 
 #[test]
@@ -102,6 +103,7 @@ fn a_failed_source_read_never_publishes_and_releases_both_handles() {
     let progress = fixture.finished(fixture.relay(vec!["/in/file"], CollisionPolicy::Skip));
     assert_eq!(progress.state, TransferState::Failed);
     assert_eq!(progress.failed_files, 1);
+    assert_eq!(progress.errors[0].operation(), TransferOperation::Read);
     assert!(fixture.destination.bytes("/dest/file").is_err());
     assert_eq!(fixture.source.activity().live_downloads, 0);
     assert_eq!(fixture.destination.activity().live_uploads, 0);
@@ -119,6 +121,7 @@ fn a_failed_destination_write_never_publishes_and_closes_the_source() {
         .fail_next(FsOperation::Write, "/dest/file", FsError::NotConnected);
     let progress = fixture.finished(fixture.relay(vec!["/in/file"], CollisionPolicy::Skip));
     assert_eq!(progress.state, TransferState::Failed);
+    assert_eq!(progress.errors[0].operation(), TransferOperation::Write);
     assert!(fixture.destination.bytes("/dest/file").is_err());
     assert_eq!(fixture.source.activity().live_downloads, 0);
     assert_eq!(fixture.destination.activity().live_uploads, 0);
