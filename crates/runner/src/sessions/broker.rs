@@ -129,12 +129,16 @@ impl NativeSessionBroker {
     }
     pub(crate) async fn drain(&self, deadline: ShutdownDeadline) -> bool {
         self.close();
+        // Freezing cancels the transfers at once. Their unwinding and the session drain
+        // then share one deadline concurrently, so a slow relay cannot use up the time
+        // the SSH sessions need to close (and closing them also unblocks that relay).
         let transfers = self.transfers.freeze_and_drain();
-        let transfers = matches!(
-            tokio::time::timeout(deadline.remaining(), transfers).await,
-            Ok(Ok(()))
-        );
-        self.resources.drain(deadline).await && transfers
+        let (transfers, resources) = futures::future::join(
+            tokio::time::timeout(deadline.remaining(), transfers),
+            self.resources.drain(deadline),
+        )
+        .await;
+        resources && matches!(transfers, Ok(Ok(())))
     }
 }
 impl RunSessionBroker for NativeSessionBroker {
