@@ -31,7 +31,7 @@ pub(super) use command_jobs::{CommandSnapshot, CommandStart};
 use live_observations::LiveObservations;
 use reconnect_dispatch::{DispatchEffect, DispatchScope, DispatchTicket, ReconnectDispatch};
 use terminal_sessions::TerminalSessions;
-pub(super) use transfer_dispatch::{StartedTransfer, TransferAdmission};
+pub(super) use transfer_dispatch::{RejectedTransfer, StartedTransfer, TransferAdmission};
 use transfers::ChatTransfers;
 use turn_context::TurnContext;
 pub(super) struct ToolRuntime {
@@ -335,7 +335,7 @@ impl ToolRuntime {
         admission: TransferAdmission,
         source: Option<nocterm_workspace_ports::TerminalEntry>,
         cx: &gpui::App,
-    ) -> Result<StartedTransfer, (BridgeCall, ToolFailure)> {
+    ) -> Result<StartedTransfer, Box<RejectedTransfer>> {
         transfer_dispatch::start(&mut self.transfers, admission, source, cx)
     }
     pub(super) fn transfer_progress(

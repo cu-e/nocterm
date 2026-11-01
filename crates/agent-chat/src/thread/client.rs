@@ -93,7 +93,10 @@ impl AgentThread {
                 self.start_execution_watch(cx);
                 self.wait_tool(WaitSubject::transfer(&id.to_string()), yield_ms, call, cx);
             }
-            Err((call, error)) => self.finish(call, Err(error)),
+            Err(rejected) => {
+                let (call, error) = rejected.into_parts();
+                self.finish(call, Err(error));
+            }
         }
     }
 

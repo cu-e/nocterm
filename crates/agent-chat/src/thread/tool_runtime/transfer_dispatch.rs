@@ -30,6 +30,20 @@ impl StartedTransfer {
         (self.call, self.id, self.yield_ms)
     }
 }
+/// A transfer call that could not start, with the failure to answer it with. Boxed so the
+/// `Err` side of the start path stays small.
+pub(in crate::thread) struct RejectedTransfer {
+    call: BridgeCall,
+    error: ToolFailure,
+}
+impl RejectedTransfer {
+    fn new(call: BridgeCall, error: ToolFailure) -> Box<Self> {
+        Box::new(Self { call, error })
+    }
+    pub(in crate::thread) fn into_parts(self) -> (BridgeCall, ToolFailure) {
+        (self.call, self.error)
+    }
+}
 struct PreparedTransfer {
     call: BridgeCall,
     request: Request,
@@ -64,7 +78,7 @@ impl TransferAdmission {
         self,
         source: Option<TerminalEntry>,
         cx: &App,
-    ) -> Result<PreparedTransfer, (BridgeCall, ToolFailure)> {
+    ) -> Result<PreparedTransfer, Box<RejectedTransfer>> {
         match self.endpoints(source, cx) {
             Ok((request, binding, yield_ms)) => Ok(PreparedTransfer {
                 call: self.call,
@@ -72,7 +86,7 @@ impl TransferAdmission {
                 binding,
                 yield_ms,
             }),
-            Err(error) => Err((self.call, error)),
+            Err(error) => Err(RejectedTransfer::new(self.call, error)),
         }
     }
     fn endpoints(
@@ -114,14 +128,14 @@ impl PreparedTransfer {
     fn submit(
         self,
         book: &mut ChatTransfers,
-    ) -> Result<StartedTransfer, (BridgeCall, ToolFailure)> {
+    ) -> Result<StartedTransfer, Box<RejectedTransfer>> {
         match book.start(self.request, self.binding) {
             Ok(id) => Ok(StartedTransfer {
                 call: self.call,
                 id,
                 yield_ms: self.yield_ms,
             }),
-            Err(error) => Err((self.call, error)),
+            Err(error) => Err(RejectedTransfer::new(self.call, error)),
         }
     }
 }
@@ -131,7 +145,7 @@ pub(super) fn start(
     admission: TransferAdmission,
     source: Option<TerminalEntry>,
     cx: &App,
-) -> Result<StartedTransfer, (BridgeCall, ToolFailure)> {
+) -> Result<StartedTransfer, Box<RejectedTransfer>> {
     admission.prepare(source, cx)?.submit(book)
 }
 
