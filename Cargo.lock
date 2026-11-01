@@ -6193,6 +6193,8 @@ dependencies = [
  "nocterm-session",
  "nocterm-ssh",
  "nocterm-ssh-keys",
+ "nocterm-transfer-runtime",
+ "nocterm-transfers",
  "serde",
  "serde_json",
  "tempfile",

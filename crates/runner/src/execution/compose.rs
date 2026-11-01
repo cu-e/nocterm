@@ -37,6 +37,8 @@ use nocterm_hub_io::cloud::{
 };
 use nocterm_local::SystemClock;
 use nocterm_ssh::{SshConfig, SshTransport};
+use nocterm_transfer_runtime::{TransferRuntime, TransferRuntimeDeps};
+use nocterm_transfers::TransferLimits;
 use std::sync::Arc;
 
 /// Staged provider/SSH answers a device may have outstanding at once.
@@ -88,6 +90,9 @@ fn broker(
     budgets: &ExecutionBudgets,
 ) -> Result<Arc<NativeSessionBroker>, RunnerError> {
     let capture = budgets.capture();
+    // The runner has no local filesystem for transfers: only host-to-host relays run.
+    let transfers =
+        TransferRuntime::start(TransferRuntimeDeps::remote_only(TransferLimits::default()))?;
     Ok(NativeSessionBroker::new(
         setup,
         targets,
@@ -95,6 +100,7 @@ fn broker(
             SessionCapacity::new(GLOBAL_SESSIONS.0, GLOBAL_SESSIONS.1, capture.clone())?,
             SessionCapacity::new(ACCOUNT_SESSIONS.0, ACCOUNT_SESSIONS.1, capture)?,
         ),
+        transfers,
     )?)
 }
 

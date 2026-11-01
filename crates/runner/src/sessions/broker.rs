@@ -14,6 +14,8 @@ use nocterm_cloud_model::{
     tool::{RunToolRuntime, RunToolRuntimeFactory, ToolAuthority, ToolExecutionError},
 };
 use nocterm_core::{SharedCause, allocation::Allocated, persist::ShutdownDeadline};
+use nocterm_transfer_runtime::TransferRuntime;
+use nocterm_transfers::{TransferRequests, TransferService};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, Weak},
@@ -23,6 +25,13 @@ struct ChatSessions {
     retained: RetainedTerminals,
     tools: RetainedToolsFactory,
     capacity: ChatCapacity,
+}
+impl ChatSessions {
+    /// Ends the chat's retained terminals and cancels the transfers it started.
+    fn close(&self) {
+        self.tools.cancel_transfers();
+        self.retained.close();
+    }
 }
 #[derive(Default)]
 struct Registry {
@@ -34,6 +43,7 @@ pub(crate) struct NativeSessionBroker {
     setup: Arc<SessionBrokerSetup>,
     targets: Arc<ConfiguredSessionTargets>,
     resources: SessionResources,
+    transfers: Arc<TransferRuntime>,
     registry: Mutex<Registry>,
 }
 impl NativeSessionBroker {
@@ -41,6 +51,7 @@ impl NativeSessionBroker {
         setup: SessionBrokerSetup,
         targets: Arc<ConfiguredSessionTargets>,
         resources: SessionResources,
+        transfers: Arc<TransferRuntime>,
     ) -> Result<Arc<Self>, CoordinatorError> {
         if setup.connection().binding() != targets.binding()
             || setup.source().binding() != targets.binding()
@@ -51,6 +62,7 @@ impl NativeSessionBroker {
             setup: Arc::new(setup),
             targets,
             resources,
+            transfers,
             registry: Mutex::new(Registry::default()),
         }))
     }
@@ -83,7 +95,8 @@ impl NativeSessionBroker {
             self.setup.journal().clone(),
             self.setup.tasks().clone(),
             self.setup.handles(),
-        );
+        )
+        .with_transfers(self.transfers.clone() as Arc<dyn TransferRequests>);
         let chat = Arc::new(ChatSessions {
             retained,
             tools,
@@ -111,12 +124,17 @@ impl NativeSessionBroker {
             Err(_) => return,
         };
         for chat in chats.into_values() {
-            chat.retained.close();
+            chat.close();
         }
     }
     pub(crate) async fn drain(&self, deadline: ShutdownDeadline) -> bool {
         self.close();
-        self.resources.drain(deadline).await
+        let transfers = self.transfers.freeze_and_drain();
+        let transfers = matches!(
+            tokio::time::timeout(deadline.remaining(), transfers).await,
+            Ok(Ok(()))
+        );
+        self.resources.drain(deadline).await && transfers
     }
 }
 impl RunSessionBroker for NativeSessionBroker {
@@ -183,7 +201,7 @@ impl RunSessionBroker for NativeSessionBroker {
             registry.chats.remove(stream)
         });
         if let Some(chat) = chat {
-            chat.retained.close();
+            chat.close();
         }
     }
 }

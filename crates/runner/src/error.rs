@@ -28,6 +28,8 @@ pub enum RunnerError {
     Head(#[from] nocterm_hub_io::cloud::RunnerHeadError),
     #[error("the configured Cloud execution runtime failed")]
     Execution(#[from] nocterm_cloud_model::coordinator::CoordinatorError),
+    #[error("the agent transfer runtime could not start")]
+    Transfers(#[from] nocterm_transfer_runtime::TransferRuntimeError),
     #[cfg(target_os = "linux")]
     #[error("required native tool containment is unavailable")]
     Containment(#[from] nocterm_local::ContainmentError),

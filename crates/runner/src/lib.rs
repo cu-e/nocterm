@@ -14,7 +14,10 @@
 //! Control channel reader: a blocking thread owning stdin; the token store, wake hook and
 //! brokered providers live in `managed/`.
 //! Ports used: hub-io runner identity/session/head responder, cloud-runner native
-//! journal/current heads and cloud-model finite budgets. Provided port: CLI.
+//! journal/current heads and cloud-model finite budgets. Agent file transfers run on
+//! one remote-only `nocterm-transfer-runtime` runtime owned by the session broker: it
+//! relays between hosts, refuses local upload/download, cancels a chat's transfers when
+//! it closes and is frozen and drained with the broker. Provided port: CLI.
 //! Settings: a bounded private runner TOML file. Globals: none.
 //! show-public exports an explicit bounded setup allowlist, never private configuration.
 //! Invariants: independent process lifetime; no implicit reset, secret argv/env,

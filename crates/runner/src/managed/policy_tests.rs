@@ -35,6 +35,33 @@ async fn a_tool_outside_the_policy_is_not_offered_to_the_model() {
     assert!(broker.bodies()[1].contains("exec_command"));
 }
 
+const TRANSFER_TOOLS: [&str; 3] = ["transfer_files", "read_transfer", "cancel_transfer"];
+
+/// A tool is offered when it is a declared function, not merely mentioned in another description.
+fn offers(body: &str, tool: &str) -> bool {
+    body.contains(&format!(r#""function":{{"name":"{tool}""#))
+}
+
+#[tokio::test]
+async fn the_transfer_tools_are_offered_to_all_and_to_a_list_that_names_them() {
+    let broker = Broker::start(vec![text_reply("a"), text_reply("b")]).await;
+    let open = issued(&broker, serde_json::json!({"tools": {"allowed": "all"}})).await;
+    let mut engine = create(&open, 1).unwrap();
+    advance(engine.as_mut(), 1).await.unwrap();
+    for name in TRANSFER_TOOLS {
+        assert!(offers(&broker.bodies()[0], name), "{name} missing for all");
+    }
+
+    let named = serde_json::json!({"tools": {"allowed": ["transfer_files", "read_transfer"]}});
+    let narrow = issued(&broker, named).await;
+    let mut engine = create(&narrow, 1).unwrap();
+    advance(engine.as_mut(), 1).await.unwrap();
+    let offered = &broker.bodies()[1];
+    assert!(offers(offered, "transfer_files") && offers(offered, "read_transfer"));
+    assert!(!offers(offered, "cancel_transfer"), "{offered}");
+    assert!(!offers(offered, "exec_command"), "{offered}");
+}
+
 #[tokio::test]
 async fn an_empty_allow_list_offers_no_tool_and_the_model_can_still_answer() {
     let broker = Broker::start(vec![text_reply("just words")]).await;
