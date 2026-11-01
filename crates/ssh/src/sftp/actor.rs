@@ -172,6 +172,12 @@ pub(super) async fn dispatch(
                 Err(e) => Err(e),
             });
         }
+        FsRequest::ReadBatch(id, max_bytes, count, reply) => {
+            let _ = reply.send(match result {
+                Ok(s) => read_batch(&s, &downloads, id, max_bytes, count).await,
+                Err(e) => Err(e),
+            });
+        }
         FsRequest::CloseDownload(id, reply) => {
             let _ = reply.send(match result {
                 Ok(s) => close_download(&s, &downloads, id).await,

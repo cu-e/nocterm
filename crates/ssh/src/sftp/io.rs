@@ -80,6 +80,16 @@ impl RemoteDownload for Reader {
         self.fs
             .request(move |reply| FsRequest::Read(id, max_bytes, reply))
     }
+    fn read_batch(&mut self, max_bytes: usize, count: usize) -> FsFuture<Vec<Vec<u8>>> {
+        if max_bytes == 0 || count == 0 || count > MAX_READ_BATCH {
+            return async { Err(FsError::Other("download batch exceeds 8 × 32 KiB".into())) }
+                .boxed();
+        }
+        let id = self.id;
+        let max_bytes = max_bytes.min(MAX_CHUNK);
+        self.fs
+            .request(move |reply| FsRequest::ReadBatch(id, max_bytes, count, reply))
+    }
     fn close(self: Box<Self>) -> FsFuture<()> {
         async move {
             self.fs

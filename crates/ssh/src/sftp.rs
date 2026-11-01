@@ -21,6 +21,7 @@ const REQUEST_BACKLOG: usize = 64;
 const CONCURRENT_REQUESTS: usize = 16;
 const MAX_CHUNK: usize = 32 * 1024;
 const MAX_WRITE_BATCH: usize = 8;
+const MAX_READ_BATCH: usize = 8;
 const MAX_OPEN_DOWNLOADS: usize = 128;
 const MAX_OPEN_UPLOADS: usize = 128;
 const MAX_DIRECTORY_ENTRIES: usize = 100_000;
@@ -45,6 +46,7 @@ pub(crate) enum FsRequest {
     Cancel(Uuid, Answer<()>),
     Download(String, Answer<Box<dyn RemoteDownload>>),
     Read(Uuid, usize, Answer<Vec<u8>>),
+    ReadBatch(Uuid, usize, usize, Answer<Vec<Vec<u8>>>),
     CloseDownload(Uuid, Answer<()>),
 }
 enum Cleanup {
