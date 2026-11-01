@@ -35,6 +35,8 @@ fn bit(capability: ToolCapability) -> u8 {
         ToolCapability::LiveInput => 2,
         ToolCapability::Execution => 4,
         ToolCapability::Connection => 8,
+        // Transfers share the execution bit: the grant byte format is a contract.
+        ToolCapability::Transfer => 4,
     }
 }
 

@@ -1,7 +1,7 @@
 mod support;
 use nocterm_ai::{
     CancelCommand, ExecCommand, OpenTerminal, ReadCommand, ReadTerminal, RunCommand, SendInput,
-    TerminalCall, TerminalCallError,
+    TerminalCall, TerminalCallError, ToolCapability,
 };
 use nocterm_cloud_model::{
     authority::{AuthorityError, ExecutionAuthority, SessionReceipt},
@@ -86,6 +86,18 @@ fn read_only_grant_never_admits_shell_input_execution_connection_or_cancellation
         ),
         Err(GrantError::BudgetExceeded)
     ));
+}
+
+#[test]
+fn transfers_share_the_execution_bit_and_read_only_grants_refuse_them() {
+    let execution_only = Capabilities::NONE.with(ToolCapability::Execution);
+    assert!(execution_only.permits(ToolCapability::Transfer));
+    assert!(Capabilities::ALL.permits(ToolCapability::Transfer));
+    assert!(!Capabilities::READ_ONLY.permits(ToolCapability::Transfer));
+    assert_eq!(
+        Capabilities::NONE.with(ToolCapability::Transfer).bits(),
+        execution_only.bits()
+    );
 }
 
 #[test]

@@ -85,6 +85,9 @@ fn call_bytes(call: &TerminalCall) -> Result<usize, ProjectionError> {
         TerminalCall::ExecCommand(value) => retained_value_bytes(value),
         TerminalCall::ReadCommand(value) => retained_value_bytes(value),
         TerminalCall::CancelCommand(value) => retained_value_bytes(value),
+        TerminalCall::TransferFiles(value) => retained_value_bytes(value),
+        TerminalCall::ReadTransfer(value) => retained_value_bytes(value),
+        TerminalCall::CancelTransfer(value) => retained_value_bytes(value),
     };
     bytes.map_err(|_| ProjectionError::Capacity)
 }
