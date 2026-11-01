@@ -214,21 +214,14 @@ fn actual_stdio_relay_roundtrip() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        names,
-        [
-            "list_terminals",
-            "open_terminal",
-            "read_terminal",
-            "send_input",
-            "run_command",
-            "exec_command",
-            "read_command",
-            "cancel_command",
-        ]
-        .into_iter()
-        .collect(),
-    );
+    let catalog: std::collections::BTreeSet<_> = nocterm_ai::catalog::TOOLS
+        .iter()
+        .map(|spec| spec.name)
+        .collect();
+    assert_eq!(names, catalog);
+    for transfer in ["transfer_files", "read_transfer", "cancel_transfer"] {
+        assert!(names.contains(transfer));
+    }
 }
 #[test]
 fn bounds_unauthenticated_connections_and_protocol_lines() {
