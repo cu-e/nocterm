@@ -323,27 +323,49 @@ fn capabilities_do_not_share_execution_input_or_connection_grants() {
     grants.revoke("t1");
     assert!(grants.requires_approval(&execution, &settings));
 }
-#[test]
-fn a_transfer_needs_the_transfer_grant_on_both_terminals() {
-    let settings = ApprovalSettings::default();
-    let mut grants = ApprovalGrants::default();
-    let call = TerminalCall::TransferFiles(TransferFiles {
-        source_terminal_id: "t1".into(),
+fn transfer_between(source: &str, destination: &str) -> TerminalCall {
+    TerminalCall::TransferFiles(TransferFiles {
+        source_terminal_id: source.into(),
         sources: vec!["/a".into()],
-        destination_terminal_id: "t2".into(),
+        destination_terminal_id: destination.into(),
         destination: "/in".into(),
         overwrite: false,
         yield_ms: None,
-    });
-    assert!(grants.requires_approval(&call, &settings));
-    grants.grant("t2", ToolCapability::Transfer);
-    assert!(grants.requires_approval(&call, &settings));
-    grants.grant("t1", ToolCapability::Execution);
+    })
+}
+#[test]
+fn a_transfer_grant_covers_one_unordered_terminal_pair_only() {
+    let settings = ApprovalSettings::default();
+    let mut grants = ApprovalGrants::default();
+    let call = transfer_between("t1", "t2");
     assert!(grants.requires_approval(&call, &settings));
     grants.grant("t1", ToolCapability::Transfer);
+    grants.grant("t2", ToolCapability::Transfer);
+    assert!(
+        grants.requires_approval(&call, &settings),
+        "per-terminal capability grants do not approve a transfer"
+    );
+    grants.grant_call(&call);
     assert!(!grants.requires_approval(&call, &settings));
+    assert!(!grants.requires_approval(&transfer_between("t2", "t1"), &settings));
+    grants.grant_call(&transfer_between("t3", "t4"));
+    for crossing in [("t1", "t4"), ("t3", "t2"), ("t1", "t3"), ("t1", "t1")] {
+        assert!(
+            grants.requires_approval(&transfer_between(crossing.0, crossing.1), &settings),
+            "{crossing:?}"
+        );
+    }
     grants.revoke("t1");
     assert!(grants.requires_approval(&call, &settings));
+    assert!(!grants.requires_approval(&transfer_between("t4", "t3"), &settings));
+}
+#[test]
+fn a_same_terminal_transfer_grant_is_its_own_pair() {
+    let settings = ApprovalSettings::default();
+    let mut grants = ApprovalGrants::default();
+    grants.grant_call(&transfer_between("t1", "t1"));
+    assert!(!grants.requires_approval(&transfer_between("t1", "t1"), &settings));
+    assert!(grants.requires_approval(&transfer_between("t1", "t2"), &settings));
 }
 #[test]
 fn reading_and_cancelling_a_transfer_need_no_terminal_grant() {
