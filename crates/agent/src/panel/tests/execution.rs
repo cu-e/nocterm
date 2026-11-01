@@ -536,5 +536,6 @@ fn a_joined_reconnect_command_does_not_hold_input_until_its_process_exits(cx: &m
     cx.run_until_parked();
 }
 
+mod file_transfers;
 mod local_environments;
 mod screenshot_history;
