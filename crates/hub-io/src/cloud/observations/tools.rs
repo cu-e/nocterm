@@ -184,6 +184,18 @@ fn arguments(
             terminal_id: string(terminal_id, budget)?,
             command_id: string(command_id, budget)?,
         }),
+        ToolArguments::TransferFiles { .. }
+        | ToolArguments::ReadTransfer { .. }
+        | ToolArguments::CancelTransfer { .. } => transfer_arguments(value, budget)?,
+    })
+}
+
+/// The transfer tools; `arguments` routes only these variants here.
+fn transfer_arguments(
+    value: &ToolArguments<'_>,
+    budget: &mut DecodeBudget<'_>,
+) -> Result<TerminalCall, ProjectionError> {
+    Ok(match value {
         ToolArguments::TransferFiles {
             source_terminal_id,
             sources,
@@ -211,6 +223,7 @@ fn arguments(
                 transfer_id: string(transfer_id, budget)?,
             })
         }
+        _ => return Err(ProjectionError::InvalidRecord),
     })
 }
 
