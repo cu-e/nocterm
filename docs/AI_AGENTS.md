@@ -317,6 +317,9 @@ the chat:
 | `exec_command` | Separate structured-execution approval | 16 KiB program/args, 64 KiB stdin, 5 minute absolute timeout |
 | `read_command` | Reading approval | Full 64 KiB stdout snapshot plus 4 KiB stderr tail |
 | `cancel_command` | Structured-execution approval | One command owned by this chat |
+| `transfer_files` | Ask before typing or running commands, with a transfer grant for both terminals | 1 to 64 absolute source paths, 4 active transfers per chat |
+| `read_transfer` | None | One transfer started by this chat |
+| `cancel_transfer` | None | One transfer started by this chat |
 | `open_terminal` | Ask before typing or running commands | One attached offline server |
 
 The settings apply at once, including to running chats. An approval card shows
@@ -330,7 +333,7 @@ Connecting and authentication states refuse input; a closed remote terminal is
 reconnected first, as described above. Live `run_command`
 also rejects alternate-screen programs and unknown, busy or dirty prompts,
 including SSH shells without OSC 133 integration. Grants are separate for reading,
-live input, structured execution and opening connections. Explicit `send_input`
+live input, structured execution, file transfers and opening connections. Explicit `send_input`
 into an unknown, busy or dirty shell always needs a one-time approval, even when
 normal write approvals are disabled; it never consumes a remembered safe-input grant.
 
@@ -361,6 +364,65 @@ lease. Observation reports completion only on a confirmed shell prompt; output
 idle or observation timeout leave completion unknown, never invent an exit status,
 and do not stop the shell. A later Stop no longer controls that program. Use
 `exec_command` when execution needs a durable handle, cancellation and a deadline.
+
+### File transfers
+
+`transfer_files` copies files and folders between the hosts of two terminals attached
+to the chat: this computer (a local terminal) to a server, a server to this computer,
+or a server to another server. Nocterm relays the data over the SSH/SFTP connections it
+already holds, so a server needs no credentials for another and the agent has no reason
+to run `scp` or `rsync`. Two local terminals are refused; use `exec_command` there.
+
+The agent names a source terminal and absolute source paths, a destination terminal
+and an existing destination folder. Paths are absolute with no `.` or `..` components
+and `~` is not expanded. Each source is copied into the destination under its own
+name; folders copy recursively. The destination folder is never created. Existing files
+are skipped and counted as skipped unless the agent passes `overwrite`. Symbolic links
+and special files are skipped and reported, never followed. A file is published
+atomically: a cancelled or failed file leaves no partial file, and files already
+published stay.
+
+The copy runs in the background. `transfer_files` waits `yield_ms` (default 1000, at
+most 10 000) and returns a `transfer_id` with the current report; `read_transfer` returns
+a new report, optionally waiting while the transfer is active; `cancel_transfer` stops
+it. A report gives the state (`queued`, `discovering`, `running`, `completed`, `failed`
+or `cancelled`), the direction, the destination, file counts (discovered, completed,
+skipped, failed), byte totals, whether discovery finished and at most 16 failures with
+their path, operation and error. Paths and errors in a report honour the chat's
+secret filtering.
+
+Limits: 1 to 64 sources per call, each path at most 4096 bytes and all sources at most
+64 KiB; each chat has four active and sixteen retained transfers (the oldest finished
+records are evicted), and an agent can only read or cancel transfers its own chat
+started. Discovery stops at one million entries or 256 levels deep. Transfers share the
+queue and workers of the Files transfer activity, so they appear there and a long copy
+of yours can delay an agent's and the reverse; a full queue is an error to retry. The
+agent sees `queued` while it waits, and you can cancel an agent's transfer from the
+activity, after which it reports `cancelled`.
+
+Approval: `transfer_files` follows the write policy. The card names the source and
+destination terminals, lists the source paths, the destination folder and whether
+existing files are skipped or replaced. **Allow transfers between these terminals** is
+a separate grant from execution: it covers both terminals for the chat's session and
+is dropped, like other grants, when either terminal's session is replaced or the
+chat restarts. A local endpoint reads and writes anywhere you can, as
+`exec_command` on a local terminal does, so the same approval applies.
+`read_transfer` needs no approval; `cancel_transfer` only stops a transfer the chat
+started.
+
+Lifetime: Stop, chat closure or restart and AI disable cancel the chat's transfers,
+and so does detaching either terminal or replacing its session. Transfers do not
+reconnect: if an endpoint is offline the call fails and the agent should open the
+terminal again and retry. Quitting Nocterm freezes and drains the shared transfer
+queue like Files transfers.
+
+Cloud agents on a managed or own runner can use the same tools when their agent
+definition's tool policy allows them (`all`, or the names listed). A Cloud run's
+authority covers exactly one session, so on the runner a transfer works only within
+that session's server: source and destination terminal must both be that session.
+The runner has no local filesystem, so local endpoints are unavailable there.
+Transfers are not durable across a runner restart. A device that has not been
+updated to understand these tools cannot read a Cloud event stream that contains one.
 
 Agents also have their own permission prompts (for example before running a tool
 of their own or accessing files). **Agent permissions → Ask before an agent uses

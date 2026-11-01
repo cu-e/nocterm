@@ -36,6 +36,11 @@ its own registry from that installation, and schedules the owned runners returne
 by the injected command port. `nocterm-agent-tools` implements native execution;
 the service retains approvals, original terminal authority and its GPUI watchdog.
 No service depends on that adapter ([ADR 0106](../adr/0106-shared-terminal-tool-ownership.md)).
+A chat also receives the injected `TransferRequests` port through the runtime services
+and keeps its agent transfers in a private `OwnedTransfers` book bound to the original
+`ExpectedSession` of both endpoint terminals; it captures their filesystems through
+`TerminalFiles` and cancels a transfer whose endpoint was detached or replaced
+([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
 
 `nocterm-project-service` owns the durable workspace catalog and the
 open-window registry used to focus an already opened workspace. It uses

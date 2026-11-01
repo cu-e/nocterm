@@ -229,6 +229,19 @@ chunks with at most eight acknowledged upload chunks per batch, and owns entropy
 cancellable reservations and cleanup. Local operations run through bounded blocking
 slots; the adapter imports no concrete filesystem adapter or GPUI.
 
+A relay request walks its source tree on the source `RemoteFs`, prepares directories on
+the destination and streams each file from a `RemoteDownload` into a staged
+`RemoteUpload` with double buffering: the next read batch is in flight while the previous
+write batch is acknowledged, so a worker holds at most two batches of buffers. Staging,
+reservation, collision policy and publication are shared with uploads. `read_batch` is an
+additive `RemoteDownload` method (sequential by default); the SFTP adapter keeps up to
+eight READs in flight and returns the in-order prefix up to the first short or
+end-of-file reply, and downloads use it too. `TransferRuntimeDeps::remote_only` builds a
+runtime without a `LocalFs`, which refuses upload and download requests with
+`LocalUnavailable` and still runs relays; the managed runner composes that runtime. The
+runtime also implements the narrow `TransferRequests` port for agents
+([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
+
 Sources open relative to held directories. Local destination reservations combine
 directory identity and native name, and late Rename collisions reuse an already
 synced stage. SSH uploads seal their acknowledged stage and retry publication under
@@ -243,7 +256,7 @@ common shutdown coordinator; the adapter introduces no quit hook or separate bud
 
 ## Headless agent tools
 
-`nocterm-agent-tools::headless` implements the same eight AI terminal tools for a
+`nocterm-agent-tools::headless` implements the same eleven AI terminal tools for a
 captured Cloud run through injected `Session`/`HostExec` capabilities. Its bounded
 registry retains immutable target/authentication receipts and run-local opaque
 handles. Event workers feed the shared incremental codec, shell observer and VT
@@ -271,6 +284,17 @@ exact existing receipt; detaching or dropping a retained view fences only that
 view. Ordinary registries still close physical sessions on drop. Explicit
 supervisor close/removal ends retained physical lifetimes. `RetainedToolsFactory`
 implements the domain runtime factory without opening SSH or renewing a grant.
+
+The three transfer tools use a chat-scoped `OwnedTransfers` book that the factory
+shares with every run view through the injected `TransferRequests` port
+(`RetainedToolsFactory::with_transfers`). A physical terminal supplies its `RemoteFs`
+only when its exact receipt passes the current authority check, so a run admits a
+transfer only between terminals of its own session; a terminal without a filesystem
+(a contained local target) reports files unsupported and a run without the port
+reports transfers unavailable. Revoking the run or closing the chat cancels the book,
+and the runner's drain freezes the runtime before releasing sessions. Transfers are
+not durable across a runner restart and report an observed effect
+([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
 
 A background worker's first native poll requires its original strict dispatch
 admission. Later draining checks its original physical receipt and separately

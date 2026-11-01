@@ -134,7 +134,7 @@ the dependency graph and references update from code. The same command writes
 hand-written plugin documents name only existing capabilities.
 
 Explorer's collaborators are composed before GPUI initialization: the native local
-filesystem supplies session capabilities and the transfer runtime receives the same LocalFs port. Explorer retains the TransferService contract explicitly.
+filesystem supplies session capabilities and the transfer runtime receives the same LocalFs port. Explorer retains the TransferService contract explicitly, and the agent installation receives the same runtime as `TransferRequests`, so agent transfers share Explorer's queue and shutdown drain.
 Bootstrap installs `nocterm_files::Deps` and returns `Installed` in `Booted`; every
 window receives those handles through `build_workspace`, including GUI fixtures
 that supply session's in-memory filesystem. Neither queue access nor completion

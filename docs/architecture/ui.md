@@ -267,7 +267,10 @@ concrete capability, prompt, ownership and queue refusals. `open_on_host` return
 session. Consumers format these causes at notices or agent transcript boundaries.
 
 The Item supplies an immutable `TerminalCapabilities` record with a required state
-port and independent optional operations. `ExpectedSession` binds calls to the
+port and independent optional operations, among them `TerminalFiles`, which returns
+the filesystem of a terminal's exact current connection (`Local`, or `Remote` with its
+host and `RemoteFs`) or refuses a stale, disconnected, prompting or filesystem-less
+terminal. `ExpectedSession` binds calls to the
 workspace Item and connection epoch. `UserPromptToken` also binds the exact secret
 prompt. Unsupported operations refuse explicitly; replacement sessions cannot
 inherit queued approvals, grants or prompt answers. Reconnect returns its accepted

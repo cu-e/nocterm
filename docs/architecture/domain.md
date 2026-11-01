@@ -254,6 +254,20 @@ use core shared cause ownership through domain constructors, so standard source
 traversal retains their original concrete classification. Snapshot clones retain
 the same diagnostic identity; adapter code gains no core dependency for construction.
 
+A request is an upload, a download or a relay between two remote hosts
+(`Request::Relay`, `TransferDirection::Relay`). `Request::between` pairs two
+`TransferEndpoint`s (`Local` or a remote host with its `RemoteFs`) into the right kind,
+refuses two local endpoints and a destination equal to or inside a source on one host,
+and validates the result against the default discovery limits. Consumers that only
+start, follow and cancel transfers use the narrow `TransferRequests` port, which
+the transfer runtime implements beside `TransferService`; `TransferId` parses from its display form.
+`OwnedTransfers<B>` is the pure per-owner book over that port: at most four active and
+sixteen retained transfers (`OwnedLimits`), no access to ids the owner did not submit,
+final snapshots kept after the shared runtime trims its history, and cancellation of
+active transfers whose binding the owner no longer keeps. It reports `OwnedTransferError`
+(`TooManyActive`, `NotOwned`, `Expired`, or the underlying `TransferError`)
+([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
+
 ## SSH keys
 
 `nocterm-ssh-keys` owns the rules of an SSH key without I/O or entropy: import of OpenSSH
