@@ -208,6 +208,7 @@ fn runtime_services(
     );
     RuntimeServices {
         command_jobs: Arc::new(nocterm_session::testing::ScriptedCommandJobsFactory::default()),
+        transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
         settings,
         agents,
         connector,

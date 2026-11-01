@@ -61,6 +61,7 @@ use terminal_fixture::{Access, FakeTerminal, SignIn};
 
 struct HostEnvironment {
     jobs: Arc<nocterm_session::testing::ScriptedCommandJobsFactory>,
+    transfers: Arc<nocterm_transfers::testing::FakeTransfers>,
     directory: tempfile::TempDir,
     metadata: Arc<nocterm_ai::testing::ScriptedChatMetadata>,
 }
@@ -130,6 +131,7 @@ fn fixture_with_width(
 ) -> Fixture {
     let directory = HostEnvironment {
         jobs: Arc::new(nocterm_session::testing::ScriptedCommandJobsFactory::default()),
+        transfers: Arc::default(),
         directory: tempfile::tempdir().unwrap(),
         metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
     };
@@ -185,6 +187,7 @@ fn fixture_with_width(
             let (installed, registration) = crate::init(
                 AgentServices {
                     command_jobs: directory.jobs.clone(),
+                    transfers: directory.transfers.clone(),
                     catalog: nocterm_agent_providers::catalog(),
                     metadata: directory.metadata.clone(),
                     terminal_auth: None,
@@ -241,6 +244,7 @@ fn fixture_with_width(
 fn fixture_services(f: &Fixture) -> AgentServices {
     AgentServices {
         command_jobs: f._directory.jobs.clone(),
+        transfers: f._directory.transfers.clone(),
         catalog: nocterm_agent_providers::catalog(),
         metadata: f._directory.metadata.clone(),
         connector: f.connector.clone(),

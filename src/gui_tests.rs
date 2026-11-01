@@ -414,6 +414,7 @@ fn boot_with_ports_and_probe(
             sandbox_probe: probe,
             agent: nocterm_agent::AgentServices {
                 command_jobs: Arc::new(nocterm_agent_tools::JobsFactory),
+                transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
                 catalog: nocterm_agent_providers::catalog(),
                 metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
                 connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),

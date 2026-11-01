@@ -75,6 +75,7 @@ pub struct AgentServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub command_jobs: Arc<dyn nocterm_session::command_jobs::CommandJobsFactory>,
+    pub transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     pub storage: runtime::AgentStorage,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,

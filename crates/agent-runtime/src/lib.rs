@@ -77,6 +77,8 @@ pub struct RuntimeServices {
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
     pub command_jobs: Arc<dyn nocterm_session::command_jobs::CommandJobsFactory>,
+    /// Starts and follows the file transfers chats run for their agents.
+    pub transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     pub storage: AgentStorage,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,

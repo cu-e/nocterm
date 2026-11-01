@@ -327,6 +327,34 @@ fn local_sessions() -> nocterm_terminal::LocalSessions {
     )
 }
 
+/// Interim until composition hands agents the Files transfer runtime: refuses every request.
+struct UnwiredAgentTransfers;
+#[derive(Debug, thiserror::Error)]
+#[error("Agent file transfers are not wired into this build.")]
+struct AgentTransfersUnwired;
+impl nocterm_transfers::TransferRequests for UnwiredAgentTransfers {
+    fn submit(
+        &self,
+        _: nocterm_transfers::Request,
+    ) -> Result<nocterm_transfers::TransferId, nocterm_transfers::TransferError> {
+        Err(nocterm_transfers::TransferError::runtime(
+            AgentTransfersUnwired,
+        ))
+    }
+    fn progress(
+        &self,
+        _: nocterm_transfers::TransferId,
+    ) -> Result<nocterm_transfers::Progress, nocterm_transfers::TransferError> {
+        Err(nocterm_transfers::TransferError::Missing)
+    }
+    fn cancel(
+        &self,
+        _: nocterm_transfers::TransferId,
+    ) -> Result<(), nocterm_transfers::TransferError> {
+        Err(nocterm_transfers::TransferError::Missing)
+    }
+}
+
 fn agent_services(
     paths: &Paths,
     executable: std::path::PathBuf,
@@ -334,6 +362,7 @@ fn agent_services(
 ) -> nocterm_agent::AgentServices {
     nocterm_agent::AgentServices {
         command_jobs: Arc::new(nocterm_agent_tools::JobsFactory),
+        transfers: Arc::new(UnwiredAgentTransfers),
         catalog: nocterm_agent_providers::catalog(),
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
         connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),

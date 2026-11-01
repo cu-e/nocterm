@@ -122,6 +122,7 @@ pub(crate) fn install(
             connector: services.connector,
             bridge: services.bridge,
             command_jobs: services.command_jobs,
+            transfers: services.transfers,
             storage: services.storage,
             workdir_resolver: services.workdir_resolver,
             workdir: services.workdir,

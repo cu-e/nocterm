@@ -96,6 +96,10 @@ impl RuntimeHandle {
     pub fn command_jobs(&self, cx: &App) -> Box<dyn nocterm_session::command_jobs::CommandJobs> {
         self.runtime.read(cx).services.command_jobs.create()
     }
+    /// The transfer port this installation supplies; every chat keeps its own book over it.
+    pub fn transfers(&self, cx: &App) -> Arc<dyn nocterm_transfers::TransferRequests> {
+        self.runtime.read(cx).services.transfers.clone()
+    }
     pub fn scope(&self) -> ContextId {
         self.scope
     }
