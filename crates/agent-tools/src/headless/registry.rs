@@ -11,7 +11,10 @@ use nocterm_cloud_model::{
     identity::RemoteSessionId,
     tool::{ScopedToolRequest, ToolTimer},
 };
-use nocterm_session::{Charset, Prompt, PtySize, Session, SessionError};
+use nocterm_session::{
+    Charset, DEFAULT_PORT, HostAddress, Prompt, PtySize, Session, SessionError, Target,
+};
+use nocterm_transfers::TransferEndpoint;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, PoisonError, Weak},
@@ -416,11 +419,48 @@ impl SessionRegistry {
         &self,
         request: &ScopedToolRequest,
     ) -> Result<Arc<Mutex<PhysicalTerminal>>, HeadlessError> {
-        self.require_run(request.permit().intent().authority().run())?;
         let id = request
             .call()
             .terminal_id()
             .ok_or(HeadlessError::StaleSession)?;
+        self.terminal(request, id)
+    }
+    /// One end of a transfer: a published, connected terminal of this run whose
+    /// receipt is the request's own. A terminal of another session is stale, so a
+    /// run admits transfers only within the single session its authority names.
+    /// The host is descriptive only; the returned file system is the connection.
+    pub(super) fn endpoint(
+        &self,
+        request: &ScopedToolRequest,
+        terminal: &str,
+    ) -> Result<TransferEndpoint, HeadlessError> {
+        let entry = self.terminal(request, terminal)?;
+        let fs = entry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .filesystem()?;
+        let principal = request
+            .permit()
+            .intent()
+            .authority()
+            .session()
+            .target()
+            .principal();
+        Ok(TransferEndpoint::Remote {
+            host: HostAddress::direct(Target {
+                host: terminal.to_owned(),
+                port: DEFAULT_PORT,
+                user: principal.as_str().to_owned(),
+            }),
+            fs,
+        })
+    }
+    fn terminal(
+        &self,
+        request: &ScopedToolRequest,
+        id: &str,
+    ) -> Result<Arc<Mutex<PhysicalTerminal>>, HeadlessError> {
+        self.require_run(request.permit().intent().authority().run())?;
         let entry = self
             .entries
             .get(id)

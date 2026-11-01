@@ -7,6 +7,8 @@ mod initial_publication;
 mod retained;
 #[path = "headless_terminal/sessions.rs"]
 mod sessions;
+#[path = "headless_terminal/transfers.rs"]
+mod transfers;
 use headless_support::*;
 use nocterm_ai::{RunCommand, SendInput, TerminalCall};
 use nocterm_cloud_model::tool::{ToolEffectStatus, ToolExecutionError};

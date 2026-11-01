@@ -5345,6 +5345,7 @@ dependencies = [
  "nocterm-cloud-model",
  "nocterm-core",
  "nocterm-session",
+ "nocterm-transfers",
  "nocterm-vt",
  "serde_json",
  "thiserror 2.0.21",

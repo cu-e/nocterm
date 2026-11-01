@@ -1,4 +1,5 @@
-use nocterm_core::SharedCause;
+use nocterm_core::{SharedCause, SharedError};
+use nocterm_transfers::{OwnedTransferError, TransferError};
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum HeadlessError {
@@ -32,6 +33,22 @@ pub enum HeadlessError {
     Encoding(#[from] nocterm_session::TextEncodingError),
     #[error("the original cloud execution authority does not match")]
     Authority(#[from] nocterm_cloud_model::authority::AuthorityError),
+    #[error("this headless session has no file system capability")]
+    FilesUnsupported,
+    #[error("this headless run has no file transfer capability")]
+    TransfersUnavailable,
+    #[error("the file transfer was refused or failed")]
+    Transfer(#[source] SharedError<OwnedTransferError>),
+}
+impl From<OwnedTransferError> for HeadlessError {
+    fn from(error: OwnedTransferError) -> Self {
+        Self::Transfer(SharedError::from_error(error))
+    }
+}
+impl From<TransferError> for HeadlessError {
+    fn from(error: TransferError) -> Self {
+        OwnedTransferError::from(error).into()
+    }
 }
 impl From<HeadlessError> for nocterm_cloud_model::tool::ToolExecutionError {
     fn from(error: HeadlessError) -> Self {
@@ -43,7 +60,14 @@ impl From<HeadlessError> for nocterm_cloud_model::tool::ToolExecutionError {
             HeadlessError::Session(error) => ToolExecutionError::Execution(SharedCause::new(error)),
             HeadlessError::Capacity => ToolExecutionError::Capacity,
             HeadlessError::NeedsUnlock => ToolExecutionError::NeedsUnlock,
-            HeadlessError::ExecutionUnsupported => ToolExecutionError::UnsupportedCapability,
+            HeadlessError::ExecutionUnsupported
+            | HeadlessError::FilesUnsupported
+            | HeadlessError::TransfersUnavailable => ToolExecutionError::UnsupportedCapability,
+            HeadlessError::Transfer(error)
+                if matches!(error.as_ref(), OwnedTransferError::TooManyActive { .. }) =>
+            {
+                ToolExecutionError::Capacity
+            }
             HeadlessError::Authority(error) => error.into(),
             error => ToolExecutionError::Execution(SharedCause::new(error)),
         }

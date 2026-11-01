@@ -1,10 +1,11 @@
-//! All eight catalog calls pass through original authority and native session owners.
+//! All eleven catalog calls pass through original authority and native session owners.
 use super::{
     HeadlessError, HeadlessTerminalOptions, SessionRegistry,
     commands::{BackgroundJobs, CommandSupervisor, RuntimeOwner, deadline},
     dispatch::DispatchBook,
     presentation,
     registry::{HeadlessSessionStatus, terminal_handle},
+    transfers::{ChatTransferBook, RunTransfers},
 };
 use futures::{FutureExt, future::BoxFuture};
 use nocterm_ai::TerminalCall;
@@ -44,6 +45,7 @@ pub struct HeadlessToolServices {
     journal: Arc<dyn BackgroundCommandJournal>,
     tasks: Arc<dyn ToolTaskSpawner>,
     opener: Option<Arc<dyn ScopedSessionOpener>>,
+    transfers: Option<ChatTransferBook>,
 }
 
 impl HeadlessToolServices {
@@ -60,6 +62,7 @@ impl HeadlessToolServices {
             journal,
             tasks,
             opener: Some(opener),
+            transfers: None,
         }
     }
     /// Physical acquisition is exclusively owned by the initial-session broker.
@@ -75,7 +78,14 @@ impl HeadlessToolServices {
             journal,
             tasks,
             opener: None,
+            transfers: None,
         }
+    }
+    /// Admit file transfers through this chat's book. Without it the three
+    /// transfer calls are an unsupported capability.
+    pub fn with_transfers(mut self, book: ChatTransferBook) -> Self {
+        self.transfers = Some(book);
+        self
     }
 }
 
@@ -91,6 +101,7 @@ struct ToolRuntime {
     offered: Mutex<BTreeMap<String, OfferedSession>>,
     retained: Option<std::sync::Weak<super::retained::RetainedOwner>>,
     owner: RuntimeOwner,
+    transfers: Option<RunTransfers>,
 }
 
 /// Native composition retains this owner for one run, including background tasks.
@@ -107,9 +118,19 @@ impl HeadlessTools {
             || Arc::new(Mutex::new(BackgroundJobs::new())),
             |owner| owner.jobs(),
         );
+        let authority: Arc<dyn ToolAuthority> =
+            Arc::new(super::view::ViewAuthority::new(fence, services.authority));
+        let transfers = services.transfers.map(|book| {
+            RunTransfers::new(
+                book,
+                registry.clone(),
+                authority.clone(),
+                services.timer.clone(),
+            )
+        });
         Self(Arc::new(ToolRuntime {
             registry,
-            authority: Arc::new(super::view::ViewAuthority::new(fence, services.authority)),
+            authority,
             timer: services.timer,
             journal: services.journal,
             tasks: services.tasks,
@@ -119,6 +140,7 @@ impl HeadlessTools {
             offered: Mutex::new(BTreeMap::new()),
             retained: owner.as_ref().map(Arc::downgrade),
             owner: RuntimeOwner::new(),
+            transfers,
         }))
     }
     pub(super) fn check_session(
@@ -239,6 +261,9 @@ impl HeadlessTools {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .close();
+        if let Some(transfers) = &self.0.transfers {
+            transfers.cancel_all();
+        }
         if self.0.retained.is_some() {
             self.0
                 .jobs
@@ -344,12 +369,18 @@ impl ToolRuntime {
                     .await?;
                 (output, ToolEffectStatus::Unknown)
             }
-            // Interim: headless transfers are not composed into this executor yet.
-            TerminalCall::TransferFiles(_)
-            | TerminalCall::ReadTransfer(_)
-            | TerminalCall::CancelTransfer(_) => {
-                return Err(ToolExecutionError::UnsupportedCapability);
-            }
+            TerminalCall::TransferFiles(call) => (
+                self.transfers()?.start(request, call).await?,
+                ToolEffectStatus::Observed,
+            ),
+            TerminalCall::ReadTransfer(call) => (
+                self.transfers()?.read(request, call).await?,
+                ToolEffectStatus::Observed,
+            ),
+            TerminalCall::CancelTransfer(call) => (
+                self.transfers()?.cancel(request, call)?,
+                ToolEffectStatus::Observed,
+            ),
         };
         ToolExecutionResult::completed(
             request,
@@ -357,6 +388,11 @@ impl ToolRuntime {
             request.call().target().map(str::to_owned),
         )
         .with_effect_status(request, effect)
+    }
+    fn transfers(&self) -> Result<&RunTransfers, HeadlessError> {
+        self.transfers
+            .as_ref()
+            .ok_or(HeadlessError::TransfersUnavailable)
     }
     fn list(&self, request: &ScopedToolRequest) -> Result<serde_json::Value, ToolExecutionError> {
         let authority = request.permit().intent().authority();
@@ -629,6 +665,9 @@ impl Drop for ToolRuntime {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .cancel_all();
+            if let Some(transfers) = &self.transfers {
+                transfers.cancel_all();
+            }
         }
     }
 }

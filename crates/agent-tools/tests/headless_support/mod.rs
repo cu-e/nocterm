@@ -1,7 +1,7 @@
 use futures::{FutureExt, executor::LocalPool, task::LocalSpawnExt};
 use nocterm_agent_tools::headless::{
-    HeadlessTerminalOptions, HeadlessToolServices, HeadlessTools, RetainedTerminals,
-    SessionRegistry,
+    ChatTransferBook, HeadlessTerminalOptions, HeadlessToolServices, HeadlessTools,
+    RetainedTerminals, SessionRegistry,
 };
 use nocterm_cloud_model::{
     authority::{
@@ -15,7 +15,11 @@ use nocterm_cloud_model::{
     },
     tool::{ScopedToolExecutor, ScopedToolRequest, ToolExecutionError, ToolExecutionResult},
 };
-use nocterm_session::{Charset, Event, SessionDriver, testing::FakeExec};
+use nocterm_session::{
+    Charset, Event, RemoteFs, SessionDriver,
+    testing::{FakeExec, InMemoryFs},
+};
+use nocterm_transfers::{TransferRequests, testing::FakeTransfers};
 use std::sync::{Arc, Mutex};
 
 pub(crate) fn fingerprint(byte: u8) -> Fingerprint {
@@ -92,6 +96,13 @@ pub(crate) fn request(
     ScopedToolRequest::new(permit, call, arguments).unwrap()
 }
 
+/// What the attached session offers beyond reading and execution.
+#[derive(Default)]
+struct Capabilities {
+    files: Option<Arc<dyn RemoteFs>>,
+    transfers: Option<ChatTransferBook>,
+}
+
 pub(crate) type PendingTool =
     futures::channel::oneshot::Receiver<Result<ToolExecutionResult, ToolExecutionError>>;
 pub(crate) struct Harness {
@@ -111,17 +122,47 @@ pub(crate) struct Harness {
 }
 impl Harness {
     pub(crate) fn new(charset: Charset) -> Self {
-        Self::configured(charset, None)
+        Self::configured(charset, None, Capabilities::default())
+    }
+    /// A session with a file system (unless `files` is false) whose transfers go
+    /// to the explicitly driven `port`.
+    pub(crate) fn transferring(port: &Arc<FakeTransfers>, files: bool) -> Self {
+        Self::configured(
+            Charset::Utf8,
+            None,
+            Capabilities {
+                files: files.then(|| Arc::new(InMemoryFs::default()) as Arc<dyn RemoteFs>),
+                transfers: Some(ChatTransferBook::new(
+                    port.clone() as Arc<dyn TransferRequests>
+                )),
+            },
+        )
     }
     pub(crate) fn retained(
         charset: Charset,
+    ) -> (Self, RetainedTerminals, Arc<ScriptedToolAuthority>) {
+        Self::retained_with(charset, Capabilities::default())
+    }
+    /// A retained session that has a file system; transfers come from the factory.
+    pub(crate) fn retained_files() -> (Self, RetainedTerminals, Arc<ScriptedToolAuthority>) {
+        Self::retained_with(
+            Charset::Utf8,
+            Capabilities {
+                files: Some(Arc::new(InMemoryFs::default())),
+                transfers: None,
+            },
+        )
+    }
+    fn retained_with(
+        charset: Charset,
+        capabilities: Capabilities,
     ) -> (Self, RetainedTerminals, Arc<ScriptedToolAuthority>) {
         let observations = Arc::new(ScriptedToolAuthority::new(authority()));
         let journal = Arc::new(ScriptedBackgroundJournal::default());
         let retained =
             RetainedTerminals::new(authority().run(), observations.clone(), journal.clone());
         (
-            Self::configured(charset, Some((&retained, journal))),
+            Self::configured(charset, Some((&retained, journal)), capabilities),
             retained,
             observations,
         )
@@ -129,6 +170,7 @@ impl Harness {
     fn configured(
         charset: Charset,
         retained: Option<(&RetainedTerminals, Arc<ScriptedBackgroundJournal>)>,
+        capabilities: Capabilities,
     ) -> Self {
         let authority = authority();
         let registry = Arc::new(Mutex::new(match &retained {
@@ -145,7 +187,9 @@ impl Harness {
         let opener = Arc::new(ScriptedSessionOpener::default());
         let executor = Arc::new(FakeExec::default());
         let (session, driver) = nocterm_session::channel(None);
-        let session = session.with_exec(executor.clone());
+        let session = session
+            .with_exec(executor.clone())
+            .with_fs(capabilities.files);
         let task = registry
             .lock()
             .unwrap()
@@ -165,16 +209,17 @@ impl Harness {
         pool.spawner().spawn_local(task.into_run()).unwrap();
         pool.run_until(driver.emit(Event::Connected));
         pool.run_until_stalled();
-        let tools = HeadlessTools::new(
-            registry.clone(),
-            HeadlessToolServices::new(
-                checks.clone(),
-                timer.clone(),
-                journal.clone(),
-                tasks.clone(),
-                opener.clone(),
-            ),
+        let mut services = HeadlessToolServices::new(
+            checks.clone(),
+            timer.clone(),
+            journal.clone(),
+            tasks.clone(),
+            opener.clone(),
         );
+        if let Some(book) = capabilities.transfers {
+            services = services.with_transfers(book);
+        }
+        let tools = HeadlessTools::new(registry.clone(), services);
         Self {
             pool,
             tools,

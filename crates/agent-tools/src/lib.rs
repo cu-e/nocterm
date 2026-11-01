@@ -3,11 +3,12 @@
 //! Owns: per-chat command admission, continuous stdout draining, retained outcomes,
 //! cancellation and absolute deadlines, retaining the original executor for every job;
 //! headless session receipts, physical Session/VT lifetimes, immutable run views
-//! and eight existing catalog handlers.
+//! and eleven catalog handlers, including per-chat file transfers.
 //! Does not own: account authentication, approvals, grant policy, SSH authentication,
 //! journal execution, model execution or the supervising native task scheduler.
-//! Ports used: session::HostExec. Ports provided: session::command_jobs::{CommandJobs,
-//! CommandJobsFactory}, cloud-model::ScopedToolExecutor. Headless consumers inject
+//! Ports used: session::HostExec, transfers::TransferRequests. Ports provided:
+//! session::command_jobs::{CommandJobs, CommandJobsFactory},
+//! cloud-model::ScopedToolExecutor. Headless consumers inject
 //! current ToolAuthority, ToolTimer, ScopedSessionOpener, BackgroundCommandJournal
 //! and supervised ToolTaskSpawner. Retained consumers additionally inject original
 //! BackgroundCommandAuthority, BackgroundCommandCleanup and fresh ToolSessionHandleSource.
@@ -33,6 +34,12 @@
 //! Only an
 //! observed exit acknowledged by that journal resolves its own effect; other
 //! outcomes remain unknown. Restoring a screen never establishes a shell prompt.
+//! Transfers: one chat-scoped book (at most four active, sixteen retained) is shared
+//! by every run view of a retained chat. A run's authority names one session and
+//! both transfer endpoints are checked independently against its receipt, so only
+//! terminals of that session are admitted; any other terminal is a stale session.
+//! Transfer effects are reported observed. Revoking a run or closing the chat
+//! cancels the book; transfers do not survive a runner restart.
 pub mod headless;
 mod jobs;
 

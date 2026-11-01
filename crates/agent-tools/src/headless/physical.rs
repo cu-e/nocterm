@@ -263,6 +263,9 @@ impl PhysicalTerminal {
             .exec()
             .ok_or(HeadlessError::ExecutionUnsupported)
     }
+    pub(super) fn filesystem(&self) -> Result<Arc<dyn nocterm_session::RemoteFs>, HeadlessError> {
+        self.session.fs().ok_or(HeadlessError::FilesUnsupported)
+    }
     pub(super) fn end_live(&mut self, owner: &LiveOwner) {
         self.projection.end_live(owner);
     }

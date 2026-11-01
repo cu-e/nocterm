@@ -1,5 +1,5 @@
 //! Immutable per-run views of a separately supervised physical owner.
-use super::{HeadlessToolServices, HeadlessTools, RetainedTerminals};
+use super::{ChatTransferBook, HeadlessToolServices, HeadlessTools, RetainedTerminals};
 use futures::future::BoxFuture;
 use nocterm_cloud_model::{
     authority::{RunBinding, SessionReceipt},
@@ -10,6 +10,7 @@ use nocterm_cloud_model::{
         ToolTimer,
     },
 };
+use nocterm_transfers::TransferRequests;
 use std::sync::{Arc, Mutex};
 
 /// Application composition supplies the original retained owner and its native
@@ -21,6 +22,7 @@ pub struct RetainedToolsFactory {
     tasks: Arc<dyn ToolTaskSpawner>,
     opener: Option<Arc<dyn ScopedSessionOpener>>,
     handles: Arc<dyn ToolSessionHandleSource>,
+    transfers: Option<ChatTransferBook>,
 }
 impl RetainedToolsFactory {
     pub fn new(
@@ -38,6 +40,7 @@ impl RetainedToolsFactory {
             tasks,
             opener: Some(opener),
             handles,
+            transfers: None,
         }
     }
     /// Initial physical creation is owned by a separate authenticated broker.
@@ -55,6 +58,19 @@ impl RetainedToolsFactory {
             tasks,
             opener: None,
             handles,
+            transfers: None,
+        }
+    }
+    /// One chat-scoped transfer book shared by every run view this factory attaches.
+    /// Without a port the three transfer calls are an unsupported capability.
+    pub fn with_transfers(mut self, port: Arc<dyn TransferRequests>) -> Self {
+        self.transfers = Some(ChatTransferBook::new(port));
+        self
+    }
+    /// Cancels every running transfer of the chat, for chat close.
+    pub fn cancel_transfers(&self) {
+        if let Some(book) = &self.transfers {
+            book.cancel_all();
         }
     }
 }
@@ -75,7 +91,7 @@ impl RunToolRuntimeFactory for RetainedToolsFactory {
                         super::HeadlessError::StaleSession => ToolExecutionError::NeedsUnlock,
                         error => error.into(),
                     })?;
-            let services = if let Some(opener) = &self.opener {
+            let mut services = if let Some(opener) = &self.opener {
                 HeadlessToolServices::new(
                     authority,
                     self.timer.clone(),
@@ -91,6 +107,9 @@ impl RunToolRuntimeFactory for RetainedToolsFactory {
                     self.tasks.clone(),
                 )
             };
+            if let Some(book) = &self.transfers {
+                services = services.with_transfers(book.clone());
+            }
             let tools = HeadlessTools::new(Arc::new(Mutex::new(registry)), services);
             tools.offer_existing(handle, receipt.clone(), terminal)?;
             let runtime = Arc::new(RetainedRunTools {

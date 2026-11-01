@@ -14,6 +14,7 @@ mod retained;
 mod runtime;
 mod session_watch;
 mod terminal_failure;
+mod transfers;
 mod view;
 pub use error::HeadlessError;
 pub use executor::{HeadlessToolServices, HeadlessTools};
@@ -27,3 +28,4 @@ pub use registry::{
 };
 pub use retained::RetainedTerminals;
 pub use runtime::RetainedToolsFactory;
+pub use transfers::ChatTransferBook;
