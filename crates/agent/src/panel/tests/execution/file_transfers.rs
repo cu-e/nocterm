@@ -73,8 +73,11 @@ fn pair(cx: &mut TestAppContext) -> Pair {
 }
 
 fn transfer(pair: &Pair, destination: &str) -> TerminalCall {
+    transfer_between(&pair.source.1, destination)
+}
+fn transfer_between(source: &str, destination: &str) -> TerminalCall {
     TerminalCall::TransferFiles(TransferFiles {
-        source_terminal_id: pair.source.1.clone(),
+        source_terminal_id: source.into(),
         sources: vec!["/srv/a".into(), "/srv/dir".into()],
         destination_terminal_id: destination.into(),
         destination: "/srv/in".into(),
@@ -177,6 +180,59 @@ fn one_grant_covers_both_terminals_but_not_a_new_endpoint(cx: &mut TestAppContex
     assert!(result(repeated).is_ok());
     let _ = submit(&p.f, &p.thread, transfer(&p, &third), false, cx);
     assert_eq!(cx.update(|cx| p.thread.read(cx).tool_cards().len()), 1);
+}
+
+#[gpui_kit::test]
+fn grants_for_two_pairs_do_not_approve_a_transfer_across_them(cx: &mut TestAppContext) {
+    let p = pair(cx);
+    let (source, destination, third) =
+        (p.source.1.clone(), p.destination.1.clone(), p.third.clone());
+    let first = submit(
+        &p.f,
+        &p.thread,
+        transfer_between(&source, &destination),
+        false,
+        cx,
+    );
+    decide(&p, true, true, cx);
+    assert!(result(first).is_ok());
+    let second = submit(
+        &p.f,
+        &p.thread,
+        transfer_between(&destination, &third),
+        false,
+        cx,
+    );
+    assert_eq!(
+        cx.update(|cx| p.thread.read(cx).tool_cards().len()),
+        1,
+        "the first pair's grant does not cover the destination's new partner"
+    );
+    decide(&p, true, true, cx);
+    assert!(result(second).is_ok());
+    let crossing = submit(
+        &p.f,
+        &p.thread,
+        transfer_between(&source, &third),
+        false,
+        cx,
+    );
+    assert_eq!(
+        cx.update(|cx| p.thread.read(cx).tool_cards().len()),
+        1,
+        "each terminal holds a grant, but never together"
+    );
+    decide(&p, false, false, cx);
+    assert!(result(crossing).is_err());
+    let reverse = submit(
+        &p.f,
+        &p.thread,
+        transfer_between(&third, &destination),
+        false,
+        cx,
+    );
+    assert!(cx.update(|cx| p.thread.read(cx).tool_cards().is_empty()));
+    assert!(result(reverse).is_ok());
 }
 
 #[gpui_kit::test]
