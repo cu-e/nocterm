@@ -12,8 +12,9 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_cloud_agents::{CloudAgentsEvent, StartId};
-use nocterm_cloud_agents_model::{AgentScope, AgentStatus, CloudAgent, Section, web_panel_url};
+use nocterm_cloud_agents_model::{AgentScope, AgentStatus, CloudAgent, Section};
 use nocterm_hubs_model::{HubColor, HubId};
+use seats::Removing;
 
 use super::{
     AgentPanel,
@@ -22,6 +23,7 @@ use super::{
 use crate::cloud_access::CloudAgentsAccess;
 
 mod chats;
+mod seats;
 mod starts;
 
 pub(super) use chats::notice_text;
@@ -41,6 +43,8 @@ pub(super) struct CloudMenu {
     tab: MenuTab,
     search: Entity<InputState>,
     chats: chats::CloudChats,
+    /// The seat the person is asked to confirm removing.
+    removing: Option<Removing>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -65,7 +69,10 @@ impl CloudMenu {
                         panel.cloud.start_ready(*id, window, cx);
                         cx.notify();
                     }
-                    CloudAgentsEvent::Changed => cx.notify(),
+                    CloudAgentsEvent::Changed => {
+                        panel.cloud.drop_stale_removal(cx);
+                        cx.notify();
+                    }
                 },
             ));
             subscriptions.push(cx.observe(access.hubs(), |_, _, cx| cx.notify()));
@@ -75,6 +82,7 @@ impl CloudMenu {
             tab: MenuTab::Local,
             search,
             chats: chats::CloudChats::default(),
+            removing: None,
             _subscriptions: subscriptions,
         }
     }
@@ -209,8 +217,10 @@ impl CloudMenu {
         // A start sits under the row of its agent; only those without a shown row go on top.
         let (under_rows, unplaced): (Vec<_>, Vec<_>) = starts.drain(..).partition(|start| {
             sections.iter().any(|section| {
-                section.hub == start.hub
-                    && section.agents.iter().any(|agent| agent.id == start.agent)
+                section
+                    .agents
+                    .iter()
+                    .any(|agent| start.is_of(&section.hub, &agent.id))
             })
         });
         rows.extend(unplaced.iter().map(|start| self.render_start(start, cx)));
@@ -273,7 +283,9 @@ impl CloudMenu {
                 .child(heading),
         );
         for agent in &section.agents {
-            block = block.child(self.render_agent_row(&section.hub, &section.hub_name, agent, cx));
+            block = block
+                .child(self.render_agent_row(&section.hub, &section.hub_name, agent, cx))
+                .children(self.render_seat_actions(&section.hub, agent, cx));
             for start in starts
                 .iter()
                 .filter(|start| start.is_of(&section.hub, &agent.id))
@@ -353,13 +365,7 @@ impl CloudMenu {
             .read(cx)
             .starts()
             .filter(|start| visible.contains(start.hub()))
-            .map(|start| StartEntry {
-                id: start.id(),
-                hub: start.hub().clone(),
-                agent: start.agent().clone(),
-                name: start.name().to_owned(),
-                phase: start.phase().clone(),
-            })
+            .map(StartEntry::of)
             .collect()
     }
 
@@ -372,9 +378,10 @@ impl CloudMenu {
         let Some((hub, ..)) = hubs.first().cloned() else {
             return Vec::new();
         };
+        let url = access.service().read(cx).web_panel_url(&hub);
         let manage = menu_row("cloud-manage-agents", "Manage agents…", cx)
             .tooltip("Opens the web panel of the server")
-            .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&web_panel_url(&hub))));
+            .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url)));
         let create = menu_row("cloud-new-personal-agent", "New personal agent…", cx)
             .on_click(cx.listener(|panel, _, window, cx| panel.new_personal_agent(window, cx)));
         vec![manage.into_any_element(), create.into_any_element()]

@@ -290,9 +290,14 @@ impl CloudMenu {
         }
     }
 
+    /// Shows `notice` in the tab until the next chat opens.
+    pub(super) fn show_notice(&mut self, notice: String) {
+        self.chats.notice = Some(notice);
+    }
+
     /// Opening the chat failed: the person sees `notice`, and the start stays pending.
     pub(in crate::panel) fn chat_failed(&mut self, notice: String, start: Option<StartId>) {
-        self.chats.notice = Some(notice);
+        self.show_notice(notice);
         if let Some(id) = start {
             self.chats.started_here.insert(id);
         }

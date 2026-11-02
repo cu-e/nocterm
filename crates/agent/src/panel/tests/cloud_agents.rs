@@ -83,6 +83,7 @@ fn access(
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
                 own_runner: Arc::new(fake.clone()),
+                seats: Arc::new(fake.clone()),
                 usage: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake.clone()),
@@ -490,4 +491,65 @@ fn a_start_whose_agent_row_is_gone_stays_listed_on_top(cx: &mut TestAppContext) 
         .unwrap();
     assert!(!shown(handle, format!("cloud-agent-{HOME}-a1"), cx));
     assert!(shown(handle, "cloud-start-StartId(1)", cx));
+}
+
+#[gpui_kit::test]
+fn a_seat_is_stopped_or_removed_from_its_row_after_the_chat_opened(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let fake = ready_scribe();
+    let launcher = FakeCloudChatLauncher::default();
+    let (handle, _) = cloud_window(&f, chat_access(&fake, &launcher, cx), cx);
+    open_cloud_tab(handle, cx);
+    assert!(
+        !shown(handle, format!("cloud-stop-{HOME}-a1"), cx),
+        "no seat yet"
+    );
+    click(handle, format!("cloud-agent-{HOME}-a1"), cx);
+    assert_eq!(launcher.opened().len(), 1);
+    assert!(
+        !shown(handle, "cloud-dismiss-StartId(1)", cx),
+        "the opened chat dismissed the start"
+    );
+    open_cloud_tab(handle, cx);
+
+    click(handle, format!("cloud-remove-{HOME}-a1"), cx);
+    assert!(fake.removed().is_empty(), "asks before removing");
+    assert!(shown(handle, format!("cloud-remove-confirm-{HOME}-a1"), cx));
+    click(handle, format!("cloud-remove-keep-{HOME}-a1"), cx);
+    assert!(fake.removed().is_empty());
+
+    click(handle, format!("cloud-stop-{HOME}-a1"), cx);
+    assert_eq!(fake.stopped().len(), 1);
+
+    click(handle, format!("cloud-remove-{HOME}-a1"), cx);
+    click(handle, format!("cloud-remove-confirm-{HOME}-a1"), cx);
+    assert_eq!(fake.removed().len(), 1);
+    assert!(
+        !shown(handle, format!("cloud-stop-{HOME}-a1"), cx),
+        "a removed seat has no actions"
+    );
+}
+
+#[gpui_kit::test]
+fn a_seat_of_an_earlier_session_has_its_actions_and_an_own_runner_agent_has_none(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    let fake = FakeCloudAgents::default();
+    let mut mine = agent("a2", "Offline", AgentScope::Personal, AgentStatus::Ready);
+    mine.pools.clear();
+    fake.set_agents(
+        &hub(HOME),
+        vec![
+            agent("a1", "Scribe", AgentScope::Personal, AgentStatus::Ready),
+            mine,
+        ],
+    );
+    fake.set_seated(&AgentId::new("a1").unwrap());
+    fake.set_seated(&AgentId::new("a2").unwrap());
+    let launcher = FakeCloudChatLauncher::default();
+    let (handle, _) = cloud_window(&f, chat_access(&fake, &launcher, cx), cx);
+    open_cloud_tab(handle, cx);
+    assert!(shown(handle, format!("cloud-stop-{HOME}-a1"), cx));
+    assert!(!shown(handle, format!("cloud-stop-{HOME}-a2"), cx));
 }

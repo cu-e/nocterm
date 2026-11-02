@@ -11,7 +11,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_cloud_agents::{StartId, StartPhase};
+use nocterm_cloud_agents::{StartId, StartPhase, StartView};
 use nocterm_cloud_agents_model::{AgentId, CloudAgentError, StartStep};
 use nocterm_hubs_model::HubId;
 
@@ -21,14 +21,24 @@ use crate::panel::{AgentPanel, widgets::menu_row};
 /// One start as the tab shows it.
 #[derive(Clone)]
 pub(super) struct StartEntry {
-    pub(super) id: StartId,
-    pub(super) hub: HubId,
-    pub(super) agent: AgentId,
-    pub(super) name: String,
-    pub(super) phase: StartPhase,
+    id: StartId,
+    hub: HubId,
+    agent: AgentId,
+    name: String,
+    phase: StartPhase,
 }
 
 impl StartEntry {
+    pub(super) fn of(start: StartView<'_>) -> Self {
+        Self {
+            id: start.id(),
+            hub: start.hub().clone(),
+            agent: start.agent().clone(),
+            name: start.name().to_owned(),
+            phase: start.phase().clone(),
+        }
+    }
+
     pub(super) fn is_of(&self, hub: &HubId, agent: &AgentId) -> bool {
         &self.hub == hub && &self.agent == agent
     }
@@ -95,19 +105,23 @@ impl CloudMenu {
                     ),
                 )
                 .into_any_element(),
-            StartPhase::Ready(_) => frame
-                .child(text(format!("{name}: {}", StartStep::Ready.text()), cx))
-                .child(
-                    button("Open chat", "cloud-open-chat", cx).on_click(cx.listener(
-                        move |panel, _, window, cx| panel.cloud.open_started_chat(id, window, cx),
-                    )),
-                )
-                .child(
-                    button("Dismiss", "cloud-dismiss", cx).on_click(
-                        cx.listener(move |panel, _, _, cx| panel.cloud.dismiss_start(id, cx)),
-                    ),
-                )
-                .into_any_element(),
+            StartPhase::Ready(_) => {
+                frame
+                    .child(text(format!("{name}: {}", StartStep::Ready.text()), cx))
+                    .child(
+                        button("Open chat", "cloud-open-chat", cx).on_click(cx.listener(
+                            move |panel, _, window, cx| {
+                                panel.cloud.open_started_chat(id, window, cx);
+                            },
+                        )),
+                    )
+                    .child(
+                        button("Dismiss", "cloud-dismiss", cx).on_click(
+                            cx.listener(move |panel, _, _, cx| panel.cloud.dismiss_start(id, cx)),
+                        ),
+                    )
+                    .into_any_element()
+            }
             StartPhase::Failed(error) => frame
                 .child(self.render_failure(id, &name, &error, cx))
                 .into_any_element(),
