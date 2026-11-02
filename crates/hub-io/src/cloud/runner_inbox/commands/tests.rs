@@ -121,13 +121,8 @@ fn authenticated_stop_keeps_original_id_run_and_signed_header_digest() {
     assert!(open_command(&runner, &account.public_key(), &moved, &ciphertext).is_err());
 }
 
-#[test]
-fn a_device_inference_grant_maps_to_the_run_it_names_with_the_signed_bounds() {
-    let account = AccountKeyPair::generate().unwrap();
-    let runner = RunnerEncryptionKey::generate().unwrap();
-    let device = DeviceKey::generate().unwrap();
-    let (source, default) = stream_and_destination(&account);
-    let route = CloudRoute {
+fn grant_route() -> CloudRoute {
+    CloudRoute {
         namespace: CloudNamespace {
             hub_instance_id: CloudTextId::new("hub").unwrap(),
             account_id: CloudTextId::new("account").unwrap(),
@@ -138,7 +133,16 @@ fn a_device_inference_grant_maps_to_the_run_it_names_with_the_signed_bounds() {
         },
         chat_id: [4; 16],
         command_id: [10; 16],
-    };
+    }
+}
+
+#[test]
+fn a_device_inference_grant_maps_to_the_run_it_names_with_the_signed_bounds() {
+    let account = AccountKeyPair::generate().unwrap();
+    let runner = RunnerEncryptionKey::generate().unwrap();
+    let device = DeviceKey::generate().unwrap();
+    let (source, default) = stream_and_destination(&account);
+    let route = grant_route();
     let payload = wire::CloudCommandPayload::IssueGrant(Box::new(wire::GrantPayload::Inference {
         grant: wire::GrantReference {
             id: [20; 16],

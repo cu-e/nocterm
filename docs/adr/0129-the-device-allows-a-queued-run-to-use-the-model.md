@@ -19,8 +19,10 @@ signs, and the runner keeps narrowing it by the agent definition policy
 **Sending a prompt is the permission.** When the runner accepts the person's own prompt,
 the chat issues one `IssueGrant` inference command for the run it queued, from the same
 device and key that signed the prompt. The grant repeats the prompt's own bounds: the same
-model selection, the same calls, turns, byte, token and spend limits, and a deadline of the
-chat's inference lifetime from the moment it is issued. It never exceeds what the chat's
+model selection, the same calls, turns, byte, token and spend limits, and a deadline of half
+the chat's inference lifetime from the moment it is issued: the runner requires a grant's
+window inside the prompt's own task window, so an Allow later than half the lifetime after
+the prompt is refused. It never exceeds what the chat's
 setup (`ConversationPromptPolicy`) configured, so the agent's per-run limits and the broker
 budget stay the ceiling. Stop and grant revocation still end the run.
 

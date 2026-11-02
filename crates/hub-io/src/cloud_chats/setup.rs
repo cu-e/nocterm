@@ -14,7 +14,9 @@ use crate::cloud::{
 
 const TURNS: u32 = 64;
 const IO_BYTES: usize = 1024 * 1024;
-const OUTPUT_TOKENS: u64 = 64 * 1024;
+/// Each model call reserves the budget that remains, so the budget must stay inside the
+/// runner's pricing ceiling for one call (the node's default is 4096 output tokens).
+const OUTPUT_TOKENS: u64 = 4096;
 const SPEND_MICROS: u64 = 5_000_000;
 const LIFETIME_MS: u64 = 10 * 60 * 1000;
 

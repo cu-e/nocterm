@@ -129,17 +129,21 @@ impl ConversationPromptPolicy {
             },
         )))
     }
-    /// The run's model allowance: the prompt's own bounds, issued now, so the person's
-    /// permission never exceeds what the chat's setup configured (ADR 0129).
+    /// The run's model allowance: the prompt's own bounds, issued now for half the
+    /// inference lifetime, so the person's permission stays inside the prompt's task
+    /// window and what the chat's setup configured (ADR 0129).
     pub(super) fn inference_grant(
         &self,
         preparation: ConversationPreparation,
     ) -> Result<wire::CloudCommandPayload<'static>, ProjectionError> {
+        // The runner requires the grant's window inside the prompt's task window, which
+        // started earlier: half the lifetime leaves room for the grant to follow the prompt
+        // by up to the other half.
         let deadline = i64::try_from(
             preparation
                 .issued()
                 .as_millis()
-                .checked_add(self.inference_lifetime_ms)
+                .checked_add(self.inference_lifetime_ms / 2)
                 .ok_or(ProjectionError::InvalidRecord)?,
         )
         .map_err(|_| ProjectionError::InvalidRecord)?;
@@ -477,7 +481,21 @@ mod tests {
             grant_of(policy.inference_grant(preparation(&policy)).unwrap());
         assert_eq!(grant.epoch, 1);
         assert_eq!(model, prompt.model);
-        assert_eq!(limits, prompt.inference);
+        assert_eq!(
+            limits,
+            wire::InferenceLimits {
+                deadline_ms: 1 + 30_000,
+                ..prompt.inference
+            }
+        );
+    }
+
+    #[test]
+    fn an_inference_grant_window_stays_inside_the_prompt_window() {
+        let policy = default_destination();
+        let prompt = submitted(&policy);
+        let (_, _, limits) = grant_of(policy.inference_grant(preparation(&policy)).unwrap());
+        assert!(limits.deadline_ms <= prompt.inference.deadline_ms);
     }
 
     #[test]
