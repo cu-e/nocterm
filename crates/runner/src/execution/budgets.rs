@@ -21,7 +21,9 @@ impl ExecutionBudgets {
     pub(super) fn new(cleanup_bytes: usize) -> Result<Self, RunnerError> {
         let receive = CommandReceiveBudget::new(
             IntakeLimits::new(
-                limits(64 * 1024 * 1024, 4)?,
+                // One inbox read reserves two envelopes (ciphertext and plaintext) of up to
+                // 32 MiB each, so the ingress pool must hold more than 64 MiB.
+                limits(128 * 1024 * 1024, 4)?,
                 limits(64 * 1024 * 1024, 32)?,
                 limits(2 * 1024 * 1024, 16)?,
                 limits(1024 * 1024, 64)?,
@@ -81,4 +83,23 @@ fn pool(bytes: usize, payloads: usize) -> Result<Arc<dyn PublicationWorkBudget>,
     Ok(Arc::new(PublicationBudget::maintenance(limits(
         bytes, payloads,
     )?)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_cloud_model::{coordinator::IntakeLane, payload::MAX_ENVELOPE_BYTES};
+
+    #[test]
+    fn the_ingress_pool_holds_the_two_envelopes_one_inbox_read_reserves() {
+        let budgets = ExecutionBudgets::new(0).unwrap();
+        // The inbox reads one ciphertext and opens one plaintext, plus fixed slack.
+        let read = 2 * MAX_ENVELOPE_BYTES + 128 * 1024 + 1024 * 1024;
+        assert!(
+            budgets
+                .receive()
+                .try_reserve(IntakeLane::Ingress, read, 2)
+                .is_ok()
+        );
+    }
 }
