@@ -66,7 +66,7 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-project-service` | service | `nocterm-containers`, `nocterm-core`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-store` | Retained checked project catalog publication and window claims. |
 | `nocterm-project-storage` | adapter | `nocterm-core`, `nocterm-project-model` | Private bounded project catalog storage and native project metadata. |
 | `nocterm-projects` | feature | `nocterm-containers`, `nocterm-explorer`, `nocterm-plugin-model`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-project-service`, `nocterm-session`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace`, `nocterm-workspace-ports` | Connection-bound workspace library, creation and nested terminal presentation. |
-| `nocterm-runner` | app | `nocterm-agent-engine`, `nocterm-agent-tools`, `nocterm-ai`, `nocterm-cloud-model`, `nocterm-cloud-runner`, `nocterm-core`, `nocterm-hub-io`, `nocterm-hubs-model`, `nocterm-local`, `nocterm-session`, `nocterm-ssh`, `nocterm-ssh-keys`, `nocterm-transfer-runtime`, `nocterm-transfers` | Independent persistent Cloud runner control plane. |
+| `nocterm-runner` | app | `nocterm-agent-engine`, `nocterm-agent-tools`, `nocterm-ai`, `nocterm-cloud-agents-model`, `nocterm-cloud-model`, `nocterm-cloud-runner`, `nocterm-core`, `nocterm-hub-io`, `nocterm-hubs-model`, `nocterm-local`, `nocterm-session`, `nocterm-ssh`, `nocterm-ssh-keys`, `nocterm-transfer-runtime`, `nocterm-transfers` | Independent persistent Cloud runner control plane. |
 | `nocterm-session` | domain | `nocterm-core`, `nocterm-settings` | Transport-agnostic session contract: commands, events, prompts and the remote file system. |
 | `nocterm-settings` | foundation | `nocterm-core` | User settings: typed sections and the file that holds them. |
 | `nocterm-settings-ui` | feature | `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | Settings tab. |
@@ -431,6 +431,7 @@ graph TD
     nocterm_runner --> nocterm_agent_engine
     nocterm_runner --> nocterm_agent_tools
     nocterm_runner --> nocterm_ai
+    nocterm_runner --> nocterm_cloud_agents_model
     nocterm_runner --> nocterm_cloud_model
     nocterm_runner --> nocterm_cloud_runner
     nocterm_runner --> nocterm_core

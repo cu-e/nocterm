@@ -42,7 +42,7 @@ pub(super) fn agent(
         name: listing.name,
         description: listing.description,
         icon: listing.icon,
-        provider: listing.provider_kind,
+        provider: super::provider::canonical(&listing.provider_kind),
         models: listing.models,
         limits: AgentLimits {
             cpu_milli: listing.resources.cpu_milli,

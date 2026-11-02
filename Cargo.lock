@@ -5644,7 +5644,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-client"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3193934380f8a32b8fcad8ae0e40c5c079baf881#3193934380f8a32b8fcad8ae0e40c5c079baf881"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -5673,7 +5673,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-grpc"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3193934380f8a32b8fcad8ae0e40c5c079baf881#3193934380f8a32b8fcad8ae0e40c5c079baf881"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
 dependencies = [
  "nocterm-hub-proto",
  "prost",
@@ -5719,7 +5719,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-model"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3193934380f8a32b8fcad8ae0e40c5c079baf881#3193934380f8a32b8fcad8ae0e40c5c079baf881"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -5734,7 +5734,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-proto"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3193934380f8a32b8fcad8ae0e40c5c079baf881#3193934380f8a32b8fcad8ae0e40c5c079baf881"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
 dependencies = [
  "nocterm-hub-model",
  "prost",
@@ -5826,7 +5826,7 @@ dependencies = [
 [[package]]
 name = "nocterm-keys"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3193934380f8a32b8fcad8ae0e40c5c079baf881#3193934380f8a32b8fcad8ae0e40c5c079baf881"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -5864,7 +5864,7 @@ dependencies = [
 [[package]]
 name = "nocterm-link"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3193934380f8a32b8fcad8ae0e40c5c079baf881#3193934380f8a32b8fcad8ae0e40c5c079baf881"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -6187,6 +6187,7 @@ dependencies = [
  "nocterm-agent-engine",
  "nocterm-agent-tools",
  "nocterm-ai",
+ "nocterm-cloud-agents-model",
  "nocterm-cloud-model",
  "nocterm-cloud-runner",
  "nocterm-core",

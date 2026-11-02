@@ -1,7 +1,7 @@
 //! Reading the state of a seat the hub reports while it is being prepared.
 
 use nocterm_cloud_agents_model::{CloudAgentError, InstanceId, ReplyProblem};
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::{instance_failure_from_wire, v1};
 
 /// What the start does next with a seat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,13 +28,13 @@ pub(super) fn progress(instance: &v1::Instance) -> Result<Progress, CloudAgentEr
     }
 }
 
-/// The failure of a seat. The single place that reads why the hub gave up; the contract does
-/// not carry a reason yet.
+/// The failure of a seat. The single place that reads why the hub gave up: the operator-facing
+/// description of the code the hub stored, when it stored one.
 fn failed(instance: &v1::Instance) -> CloudAgentError {
     match InstanceId::new(instance.instance_id.clone()) {
         Ok(id) => CloudAgentError::ProvisioningFailed {
             instance: id,
-            reason: None,
+            reason: instance_failure_from_wire(instance).map(|why| why.describe().to_owned()),
         },
         Err(_) => CloudAgentError::UnexpectedReply(ReplyProblem::InstanceId),
     }
@@ -43,6 +43,7 @@ fn failed(instance: &v1::Instance) -> CloudAgentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nocterm_hub_model::agents::ProvisionFailure;
 
     fn seat(state: i32) -> v1::Instance {
         v1::Instance {
@@ -60,6 +61,18 @@ mod tests {
             CloudAgentError::ProvisioningFailed { instance, reason: None }
                 if instance.as_str() == "inst-1"
         ));
+    }
+
+    #[test]
+    fn a_failed_seat_states_who_must_act_when_the_hub_stored_a_code() {
+        let mut failed = seat(v1::InstanceState::Failed as i32);
+        failed.failure_code = "account_unpinned".into();
+        let CloudAgentError::ProvisioningFailed { reason, .. } = progress(&failed).unwrap_err()
+        else {
+            panic!("expected a provisioning failure");
+        };
+        let expected = ProvisionFailure::AccountUnpinned.describe();
+        assert_eq!(reason.as_deref(), Some(expected));
     }
 
     #[test]

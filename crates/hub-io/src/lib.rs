@@ -104,6 +104,11 @@
 //! setup/open never resets an existing identity. It exports public identity facts
 //! and neutral cipher ports, never a generic signer, private seed or SDK wire type.
 //!
+//! The managed-agent ports of `nocterm-cloud-agents-model` (`agents`) read the failure code,
+//! the web panel address and the provider kinds through the contract's own vocabulary
+//! (`ProvisionFailure`, `web_url`, `ProviderKind`); a seat is stopped or removed through the
+//! caller's own instances of the agent.
+//!
 //! Cloud chats (`cloud_chats`) implement the `CloudChatLauncher` port of
 //! `nocterm-cloud-agents-model`: the device mints a chat and its first key epoch, stores the
 //! wrapped key and the sealed runner grant in the account before publishing, waits (bounded,
@@ -138,7 +143,7 @@ mod vault;
 
 pub use account::{AdminKeyError, AdminKeys, PendingAdminKey};
 pub use account_keys::AccountKeys;
-pub use agents::CloudAgentsLink;
+pub use agents::{CloudAgentsLink, parse_provider_kind};
 pub use cloud_chats::{ChatServices, CloudChatsLink};
 pub use hub_account::HubAccount;
 pub use links::{HubLinks, HubLinksConfig, HubStartError};

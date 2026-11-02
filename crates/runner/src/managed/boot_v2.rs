@@ -7,6 +7,7 @@ use super::{
 };
 use crate::RunnerError;
 use nocterm_agent_engine::{ProviderEndpoint, ProviderKind};
+use nocterm_cloud_agents_model::ProviderKind as DesktopKind;
 use nocterm_cloud_model::{
     identity::NamespaceId,
     inference::{ConservativeModelPricing, ModelSelection},
@@ -17,14 +18,13 @@ use std::sync::Arc;
 /// The only format version of this document.
 const BOOT_VERSION: u32 = 2;
 
-/// Maps the provider kind a boot document names to the engine's. The web panel
-/// seals `anthropic` where the engine says `anthropic_messages`; both are
-/// accepted until a shared kind vocabulary replaces this mapping.
+/// Maps the provider kind a boot document names to the engine's. The contract reads the
+/// canonical spelling and the legacy `anthropic` the web panel used to seal.
 fn provider_kind(text: &str) -> Result<ProviderKind, RunnerError> {
-    match text {
-        "openai_chat" => Ok(ProviderKind::OpenAiChat),
-        "anthropic_messages" | "anthropic" => Ok(ProviderKind::AnthropicMessages),
-        _ => Err(RunnerError::Value("boot.provider")),
+    match nocterm_hub_io::parse_provider_kind(text) {
+        Some(DesktopKind::OpenAiChat) => Ok(ProviderKind::OpenAiChat),
+        Some(DesktopKind::AnthropicMessages) => Ok(ProviderKind::AnthropicMessages),
+        None => Err(RunnerError::Value("boot.provider")),
     }
 }
 

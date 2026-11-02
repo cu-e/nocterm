@@ -23,6 +23,7 @@ futures.workspace = true
 nocterm-core.workspace = true
 nocterm-hubs-model.workspace = true
 nocterm-cloud-model.workspace = true
+nocterm-cloud-agents-model.workspace = true
 nocterm-hub-io.workspace = true
 nocterm-cloud-runner.workspace = true
 tokio = { workspace = true, features = ["signal"] }
