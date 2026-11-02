@@ -56,3 +56,43 @@ pub enum RunnerError {
     #[error("this control-plane executable currently requires Unix")]
     Platform,
 }
+
+impl RunnerError {
+    /// The error and every cause beneath it as one line, outermost first.
+    ///
+    /// Every frame is a typed variant with a static message or an operating
+    /// system error; none formats a configuration value, token or path, so the
+    /// whole chain is safe for the process's standard error.
+    pub fn chain(&self) -> String {
+        let mut line = self.to_string();
+        let mut cause = std::error::Error::source(self);
+        while let Some(error) = cause {
+            line.push_str(": ");
+            line.push_str(&error.to_string());
+            cause = error.source();
+        }
+        line
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_cloud_model::coordinator::CoordinatorError;
+
+    #[test]
+    fn the_report_names_the_cause_beneath_the_execution_failure() {
+        let error = RunnerError::Execution(CoordinatorError::Journal(
+            nocterm_cloud_model::journal::JournalError::Corrupt,
+        ));
+        let line = error.chain();
+        assert!(line.starts_with("the configured Cloud execution runtime failed: "));
+        assert!(line.contains("the durable journal refused the operation: "));
+        assert!(line.split(": ").count() >= 3);
+    }
+
+    #[test]
+    fn an_error_without_a_cause_reports_only_itself() {
+        assert_eq!(RunnerError::Clock.chain(), RunnerError::Clock.to_string());
+    }
+}

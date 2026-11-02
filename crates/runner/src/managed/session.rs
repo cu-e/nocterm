@@ -91,7 +91,7 @@ async fn outcome(closed: oneshot::Receiver<ControlEnd>) -> Result<(), RunnerErro
         Ok(ControlEnd::Refused(error)) => {
             use std::io::Write as _;
             // A closed stderr leaves nowhere else to report.
-            let _ = writeln!(std::io::stderr(), "{error}");
+            let _ = writeln!(std::io::stderr(), "{}", error.chain());
             std::future::pending().await
         }
     }
