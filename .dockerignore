@@ -5,3 +5,4 @@
 .playwright-mcp
 **/target
 node_modules
+/target*/
