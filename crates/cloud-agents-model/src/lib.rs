@@ -5,7 +5,8 @@
 //! ([`arrange`]); the steps a start goes through ([`StartStep`], [`PoolOffer`],
 //! [`StartedAgent`]) and what a hub can refuse ([`Refusal`]); the validated form of a personal
 //! agent ([`PersonalAgentDraft`]); the ports [`CloudAgentCatalog`], [`CloudAgentLauncher`],
-//! [`OwnRunnerLauncher`], [`AgentUsage`] and [`PersonalAgents`] with their typed
+//! [`OwnRunnerLauncher`], [`AgentSeats`] (stop or remove the caller's seat), [`AgentUsage`] and
+//! [`PersonalAgents`] with their typed
 //! [`CloudAgentError`]; the chat port [`CloudChatLauncher`] (create, list and open Cloud
 //! chats) with its typed [`CloudChatError`].
 //!
@@ -13,7 +14,7 @@
 //! the catalog entity and the order of a start (`nocterm-cloud-agents`), views.
 //!
 //! Ports provided: `CloudAgentCatalog`, `CloudAgentLauncher`, `OwnRunnerLauncher`,
-//! `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`. Ports used: `nocterm-hubs-model`
+//! `AgentSeats`, `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`. Ports used: `nocterm-hubs-model`
 //! (`HubId`, `HubColor`, `HubError`), the `Secret` of `nocterm-session` and the
 //! `CapturedConversationSource` of `nocterm-cloud-model`.
 //!
@@ -49,14 +50,14 @@ pub use chats::{
 pub use error::{CloudAgentError, ReplyProblem};
 pub use ids::{AgentId, IdError, InstanceId, MAX_ID_BYTES, PoolId};
 pub use personal::{
-    DraftError, KeyInput, MAX_ENDPOINT_BYTES, MAX_KEY_BYTES, MAX_MODEL_BYTES, MAX_NAME_CHARS,
-    PersonalAgentDraft, ProviderKind,
+    DraftError, KeyInput, MAX_ENDPOINT_BYTES, MAX_INSTRUCTIONS_BYTES, MAX_KEY_BYTES,
+    MAX_MODEL_BYTES, MAX_NAME_CHARS, PersonalAgentDraft, ProviderKind,
 };
 pub use placement::Placement;
 pub use ports::{
-    AgentHints, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, OwnRunnerLauncher,
-    OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore, SaveOutcome, StartOutcome,
-    StepSink, web_panel_url,
+    AgentHints, AgentSeats, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture,
+    OwnRunnerLauncher, OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore,
+    SaveOutcome, StartOutcome, StepSink, web_panel_url,
 };
 pub use scope::AgentScope;
 pub use sections::{Audience, HubAgents, Section, SectionTitle, arrange};

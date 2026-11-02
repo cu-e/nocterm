@@ -13,6 +13,8 @@ mod launch;
 pub(crate) mod own_keys;
 mod personal;
 mod pins;
+mod provider;
+mod seats;
 mod usage;
 
 use std::future::Future;
@@ -20,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use nocterm_cloud_agents_model::{
-    AgentHints, AgentId, AgentUsage, CloudAgent, CloudAgentCatalog, CloudAgentError,
+    AgentHints, AgentId, AgentSeats, AgentUsage, CloudAgent, CloudAgentCatalog, CloudAgentError,
     CloudAgentLauncher, CloudFuture, ModelUsage, PersonalAgentDraft, PersonalAgents, PinnedPool,
     PoolChoice, PoolId, PoolOffer, PoolPinStore, SaveOutcome, StartOutcome, StepSink,
 };
@@ -35,6 +37,7 @@ pub(crate) use catalog::list as list_agents;
 pub(crate) use error::agent_error;
 use error::hub_error;
 use pins::PoolPins;
+pub use provider::parse_provider_kind;
 
 /// Reaches the managed agents of the hubs this device is signed in to.
 pub struct CloudAgentsLink {
@@ -90,6 +93,28 @@ impl CloudAgentCatalog for CloudAgentsLink {
 
     fn pools(&self, hub: &HubId) -> CloudFuture<Vec<PoolChoice>> {
         self.call(hub, catalog::pools)
+    }
+
+    fn web_url(&self, hub: &HubId) -> CloudFuture<Option<String>> {
+        self.call(hub, |captured| async move {
+            Ok(captured.client.web_url().map(str::to_owned))
+        })
+    }
+}
+
+impl AgentSeats for CloudAgentsLink {
+    fn seated(&self, hub: &HubId) -> CloudFuture<Vec<AgentId>> {
+        self.call(hub, seats::seated)
+    }
+
+    fn stop(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<()> {
+        let agent = agent.clone();
+        self.call(hub, move |captured| seats::stop(captured, agent))
+    }
+
+    fn remove(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<()> {
+        let agent = agent.clone();
+        self.call(hub, move |captured| seats::remove(captured, agent))
     }
 }
 

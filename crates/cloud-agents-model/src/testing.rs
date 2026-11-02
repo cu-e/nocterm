@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use futures::FutureExt as _;
 use futures::StreamExt as _;
-use futures::channel::mpsc;
-use futures::future::BoxFuture;
+use futures::channel::{mpsc, oneshot};
+use futures::future::{BoxFuture, Shared};
 use nocterm_hubs_model::HubId;
 
 use crate::agent::CloudAgent;
@@ -20,9 +20,9 @@ use crate::error::CloudAgentError;
 use crate::ids::{AgentId, InstanceId, PoolId};
 use crate::personal::PersonalAgentDraft;
 use crate::ports::{
-    AgentHints, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture, OwnRunnerLauncher,
-    OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore, SaveOutcome, StartOutcome,
-    StepSink,
+    AgentHints, AgentSeats, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture,
+    OwnRunnerLauncher, OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore,
+    SaveOutcome, StartOutcome, StepSink,
 };
 use crate::start::{PoolOffer, StartStep, StartedAgent};
 use crate::usage::{ModelUsage, UsageSample};
@@ -80,6 +80,27 @@ pub struct SavedAgent {
     pub name: String,
     /// Whether it works while the person is offline.
     pub work_offline: bool,
+    /// The instructions the form had.
+    pub instructions: String,
+}
+
+/// What the own runner was asked.
+#[derive(Default)]
+struct OwnRunnerLog {
+    starts: Vec<AgentId>,
+    renewals: Vec<AgentId>,
+    renewals_fail_after: Option<usize>,
+}
+
+/// The seats the person stopped or removed.
+#[derive(Default)]
+struct SeatLog {
+    stopped: Vec<AgentId>,
+    removed: Vec<AgentId>,
+    /// The agents the person has a seat of.
+    seated: Vec<AgentId>,
+    /// Stop and remove wait for this to resolve while it is set.
+    gate: Option<Shared<oneshot::Receiver<()>>>,
 }
 
 #[derive(Default)]
@@ -93,10 +114,10 @@ struct State {
     scripts: BTreeMap<AgentId, VecDeque<StartScript>>,
     starts: Vec<AgentId>,
     usage: BTreeMap<HubId, Vec<UsageSample>>,
-    own_starts: Vec<AgentId>,
-    renewals: Vec<AgentId>,
-    renewals_fail_after: Option<usize>,
+    own: OwnRunnerLog,
     saved: Vec<SavedAgent>,
+    web_urls: BTreeMap<HubId, String>,
+    seats: SeatLog,
     next: u64,
     revision: u64,
 }
@@ -178,17 +199,47 @@ impl FakeCloudAgents {
 
     /// Agents started on the own runner so far, in order.
     pub fn own_runner_started(&self) -> Vec<AgentId> {
-        self.state().own_starts.clone()
+        self.state().own.starts.clone()
     }
 
     /// Lease renewals so far, in order.
     pub fn renewed(&self) -> Vec<AgentId> {
-        self.state().renewals.clone()
+        self.state().own.renewals.clone()
     }
 
     /// Renewals fail after this many have succeeded (the device went offline).
     pub fn fail_renewals_after(&self, successes: usize) {
-        self.state().renewals_fail_after = Some(successes);
+        self.state().own.renewals_fail_after = Some(successes);
+    }
+
+    /// The hub states this address for its web panel.
+    pub fn set_web_url(&self, hub: &HubId, url: &str) {
+        self.state().web_urls.insert(hub.clone(), url.to_owned());
+    }
+
+    /// Seats stopped so far, in order.
+    pub fn stopped(&self) -> Vec<AgentId> {
+        self.state().seats.stopped.clone()
+    }
+
+    /// Seats removed so far, in order.
+    pub fn removed(&self) -> Vec<AgentId> {
+        self.state().seats.removed.clone()
+    }
+
+    /// The person has a seat of `agent` from an earlier session, without starting it here.
+    pub fn set_seated(&self, agent: &AgentId) {
+        let mut state = self.state();
+        if !state.seats.seated.contains(agent) {
+            state.seats.seated.push(agent.clone());
+        }
+    }
+
+    /// Stop and remove do not answer until the returned sender is used or dropped.
+    pub fn hold_seat_calls(&self) -> oneshot::Sender<()> {
+        let (sender, receiver) = oneshot::channel();
+        self.state().seats.gate = Some(receiver.shared());
+        sender
     }
 
     /// Personal agents saved so far.
@@ -235,6 +286,49 @@ impl CloudAgentCatalog for FakeCloudAgents {
             .map(|()| self.state().pools.get(hub).cloned().unwrap_or_default());
         async move { result }.boxed()
     }
+
+    fn web_url(&self, hub: &HubId) -> CloudFuture<Option<String>> {
+        let result = self
+            .check(hub)
+            .map(|()| self.state().web_urls.get(hub).cloned());
+        async move { result }.boxed()
+    }
+}
+
+impl AgentSeats for FakeCloudAgents {
+    fn seated(&self, hub: &HubId) -> CloudFuture<Vec<AgentId>> {
+        let result = self.check(hub).map(|()| self.state().seats.seated.clone());
+        async move { result }.boxed()
+    }
+
+    fn stop(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<()> {
+        let gate = self.state().seats.gate.clone();
+        let (this, hub, agent) = (self.clone(), hub.clone(), agent.clone());
+        async move {
+            if let Some(gate) = gate {
+                gate.await.ok();
+            }
+            this.check(&hub)
+                .map(|()| this.state().seats.stopped.push(agent))
+        }
+        .boxed()
+    }
+
+    fn remove(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<()> {
+        let gate = self.state().seats.gate.clone();
+        let (this, hub, agent) = (self.clone(), hub.clone(), agent.clone());
+        async move {
+            if let Some(gate) = gate {
+                gate.await.ok();
+            }
+            this.check(&hub).map(|()| {
+                let mut state = this.state();
+                state.seats.seated.retain(|seated| seated != &agent);
+                state.seats.removed.push(agent);
+            })
+        }
+        .boxed()
+    }
 }
 
 impl CloudAgentLauncher for FakeCloudAgents {
@@ -263,6 +357,9 @@ impl CloudAgentLauncher for FakeCloudAgents {
             }
             steps(StartStep::Registering);
             steps(StartStep::Ready);
+            if !state.seats.seated.contains(agent) {
+                state.seats.seated.push(agent.clone());
+            }
             Ok(StartOutcome::Ready(StartedAgent {
                 agent: agent.clone(),
                 instance: InstanceId::new(format!("seat-{agent}"))
@@ -334,6 +431,7 @@ impl PersonalAgents for FakeCloudAgents {
                 version,
                 name: draft.name().to_owned(),
                 work_offline: draft.work_offline(),
+                instructions: draft.instructions().to_owned(),
             });
             Ok(SaveOutcome::Saved(id))
         })();
@@ -354,7 +452,7 @@ pub const FAKE_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(6
 impl OwnRunnerLauncher for FakeCloudAgents {
     fn start(&self, hub: &HubId, agent: &AgentId, steps: StepSink) -> CloudFuture<OwnRunnerSeat> {
         let result = self.check(hub).map(|()| {
-            self.state().own_starts.push(agent.clone());
+            self.state().own.starts.push(agent.clone());
             steps(StartStep::Registering);
             steps(StartStep::Ready);
             OwnRunnerSeat {
@@ -369,12 +467,13 @@ impl OwnRunnerLauncher for FakeCloudAgents {
         let result = self.check(hub).and_then(|()| {
             let mut state = self.state();
             if state
+                .own
                 .renewals_fail_after
-                .is_some_and(|limit| state.renewals.len() >= limit)
+                .is_some_and(|limit| state.own.renewals.len() >= limit)
             {
                 return Err(CloudAgentError::Stale);
             }
-            state.renewals.push(agent.clone());
+            state.own.renewals.push(agent.clone());
             Ok(FAKE_LEASE_TTL)
         });
         async move { result }.boxed()

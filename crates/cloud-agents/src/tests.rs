@@ -55,6 +55,7 @@ fn install_with(fake: &FakeCloudAgents, cx: &mut TestAppContext) -> crate::Insta
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
                 own_runner: Arc::new(fake.clone()),
+                seats: Arc::new(fake.clone()),
                 usage: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake),
@@ -374,4 +375,155 @@ async fn a_failed_renewal_ends_the_renewing(cx: &mut TestAppContext) {
         cx.run_until_parked();
     }
     assert_eq!(fake.renewed().len(), 1);
+}
+
+#[gpui::test]
+async fn the_web_panel_is_where_the_hub_states_it(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let installed = install_with(&fake, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    installed.agents().read_with(cx, |agents, _| {
+        assert_eq!(agents.web_panel_url(&hub()), "https://hub.example.org/");
+    });
+
+    let stated = FakeCloudAgents::default();
+    stated.set_web_url(&hub(), "https://hub.example.org:7444/");
+    let installed = install_with(&stated, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    installed.agents().read_with(cx, |agents, _| {
+        assert_eq!(
+            agents.web_panel_url(&hub()),
+            "https://hub.example.org:7444/"
+        );
+    });
+}
+
+#[gpui::test]
+async fn stopping_a_seat_asks_the_hub_and_lets_the_agent_start_again(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    let id = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    let stopped = installed
+        .agents()
+        .update(cx, |agents, cx| agents.stop(&hub(), &scribe.id, cx));
+    stopped.await.expect("stopped");
+    cx.run_until_parked();
+    assert_eq!(fake.stopped(), std::slice::from_ref(&scribe.id));
+    installed
+        .agents()
+        .read_with(cx, |agents, _| assert!(agents.start_view(id).is_none()));
+    let again = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    assert_ne!(id, again);
+}
+
+#[gpui::test]
+async fn removing_a_seat_forgets_its_start_so_the_next_start_is_fresh(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    let id = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    let removed = installed
+        .agents()
+        .update(cx, |agents, cx| agents.remove(&hub(), &scribe.id, cx));
+    removed.await.expect("removed");
+    cx.run_until_parked();
+    assert_eq!(fake.removed(), std::slice::from_ref(&scribe.id));
+    installed
+        .agents()
+        .read_with(cx, |agents, _| assert!(agents.start_view(id).is_none()));
+    let again = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    assert_ne!(id, again);
+    assert_eq!(fake.started().len(), 2);
+}
+
+#[gpui::test]
+async fn a_refused_removal_keeps_the_start(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    let id = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    fake.fail(&hub(), FakeFailure::Stale);
+    let removed = installed
+        .agents()
+        .update(cx, |agents, cx| agents.remove(&hub(), &scribe.id, cx));
+    assert!(removed.await.is_err());
+    cx.run_until_parked();
+    installed
+        .agents()
+        .read_with(cx, |agents, _| assert!(agents.start_view(id).is_some()));
+}
+
+#[gpui::test]
+async fn a_seat_of_an_earlier_session_is_known_without_a_start(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    fake.set_agents(&hub(), vec![scribe.clone()]);
+    fake.set_seated(&scribe.id);
+    let installed = install_with(&fake, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    installed.agents().read_with(cx, |agents, _| {
+        assert!(agents.has_seat(&hub(), &scribe.id));
+        assert!(!agents.has_seat(&hub(), &AgentId::new("other").unwrap()));
+    });
+    let removed = installed
+        .agents()
+        .update(cx, |agents, cx| agents.remove(&hub(), &scribe.id, cx));
+    removed.await.expect("removed");
+    cx.run_until_parked();
+    installed.agents().read_with(cx, |agents, _| {
+        assert!(!agents.has_seat(&hub(), &scribe.id))
+    });
+}
+
+#[gpui::test]
+async fn a_late_removal_does_not_forget_a_start_begun_after_it(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    let first = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    let release = fake.hold_seat_calls();
+    let removal = installed
+        .agents()
+        .update(cx, |agents, cx| agents.remove(&hub(), &scribe.id, cx));
+    // While the hub is still deleting, the person dismisses the old start and begins a new one.
+    let second = installed.agents().update(cx, |agents, cx| {
+        agents.dismiss(first, cx);
+        agents.start(&hub(), &scribe, cx)
+    });
+    cx.run_until_parked();
+    assert_ne!(first, second);
+    release.send(()).expect("released");
+    removal.await.expect("removed");
+    cx.run_until_parked();
+    installed
+        .agents()
+        .read_with(cx, |agents, _| assert!(agents.start_view(second).is_some()));
 }

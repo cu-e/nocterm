@@ -137,7 +137,16 @@ fn organization_and_server_agents_are_managed_in_the_web_panel() {
     assert!(AgentScope::Personal.editable_here());
     assert!(!org("A").editable_here());
     assert!(!AgentScope::Server.editable_here());
-    assert_eq!(web_panel_url(&hub("hub.example")), "https://hub.example/");
+}
+
+#[test]
+fn the_web_panel_is_where_the_hub_says_else_the_hub_host() {
+    let hub = hub("hub.example");
+    assert_eq!(web_panel_url(&hub, None), "https://hub.example/");
+    assert_eq!(
+        web_panel_url(&hub, Some("https://hub.example:7444/")),
+        "https://hub.example:7444/"
+    );
 }
 
 #[test]

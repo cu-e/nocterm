@@ -166,6 +166,22 @@ impl Starts {
         self.runs.len() != before
     }
 
+    /// The run of an agent, if it has one.
+    pub(crate) fn run_of(&self, hub: &HubId, agent: &AgentId) -> Option<StartId> {
+        self.runs
+            .iter()
+            .find(|run| &run.hub == hub && &run.agent == agent)
+            .map(|run| run.id)
+    }
+
+    /// Forgets one run whatever its phase: its seat is gone. A run that replaced it in the
+    /// meantime has another id and stays.
+    pub(crate) fn forget(&mut self, id: StartId) -> bool {
+        let before = self.runs.len();
+        self.runs.retain(|run| run.id != id);
+        self.runs.len() != before
+    }
+
     /// Forgets every run of a hub (it signed out).
     pub(crate) fn drop_hub(&mut self, hub: &HubId) -> bool {
         let before = self.runs.len();

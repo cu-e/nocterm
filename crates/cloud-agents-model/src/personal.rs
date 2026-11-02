@@ -13,6 +13,8 @@ pub const MAX_ENDPOINT_BYTES: usize = 512;
 pub const MAX_MODEL_BYTES: usize = 128;
 /// Longest provider key.
 pub const MAX_KEY_BYTES: usize = 1024;
+/// Longest instructions text: the hub's bound for a system prompt.
+pub const MAX_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 
 /// How the agent's provider is spoken to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -67,6 +69,9 @@ pub enum DraftError {
     /// Running while the person is offline needs a pool to run on.
     #[error("choose the pool the agent runs on")]
     Pool,
+    /// The instructions are longer than the hub accepts.
+    #[error("the instructions are longer than {MAX_INSTRUCTIONS_BYTES} bytes")]
+    Instructions,
 }
 
 /// The provider key of a form: write-only, never read back.
@@ -88,6 +93,7 @@ pub struct PersonalAgentDraft {
     key: KeyInput,
     work_offline: bool,
     pool: Option<PoolId>,
+    instructions: String,
 }
 
 impl PersonalAgentDraft {
@@ -137,7 +143,24 @@ impl PersonalAgentDraft {
             key,
             work_offline,
             pool,
+            instructions: String::new(),
         })
+    }
+
+    /// Gives the agent instructions: the system prompt it works under, sealed with the
+    /// definition. Surrounding blank space is dropped.
+    pub fn with_instructions(mut self, instructions: &str) -> Result<Self, DraftError> {
+        let instructions = instructions.trim();
+        if instructions.len() > MAX_INSTRUCTIONS_BYTES {
+            return Err(DraftError::Instructions);
+        }
+        self.instructions = instructions.to_owned();
+        Ok(self)
+    }
+
+    /// The instructions; empty for none.
+    pub fn instructions(&self) -> &str {
+        &self.instructions
     }
 
     /// The agent's name.
@@ -278,6 +301,16 @@ mod tests {
             Err(DraftError::Key)
         );
         assert!(draft("", KeyInput::Keep, false, false).is_ok());
+    }
+
+    #[test]
+    fn instructions_are_trimmed_and_bounded() {
+        let ok = draft("", KeyInput::Keep, false, false).unwrap();
+        assert_eq!(ok.instructions(), "");
+        let told = ok.clone().with_instructions("  Be brief.\n").unwrap();
+        assert_eq!(told.instructions(), "Be brief.");
+        let long = "x".repeat(MAX_INSTRUCTIONS_BYTES + 1);
+        assert_eq!(ok.with_instructions(&long), Err(DraftError::Instructions));
     }
 
     #[test]

@@ -18,6 +18,7 @@ use super::error::agent_error;
 use super::launch::{changed, offer};
 use super::own_keys;
 use super::pins::PoolPins;
+use super::provider::to_wire;
 use crate::account::operations::OpenedWork;
 use crate::devices::Captured;
 
@@ -48,7 +49,7 @@ fn listing(
         description: String::new(),
         icon: String::new(),
         color: String::new(),
-        provider_kind: draft.provider().id().to_owned(),
+        provider_kind: to_wire(draft.provider()).as_str().to_owned(),
         models: vec![draft.model().to_owned()],
         resources: ResourceRequest {
             cpu_milli: 500,
@@ -89,7 +90,8 @@ async fn save_own(
             .map(|kept| kept.expose().to_owned())
             .ok_or(CloudAgentError::Invalid(DraftError::Key))?,
     };
-    let stored = own_keys::OwnAgentKey::new(draft.provider().id(), draft.model(), &secret);
+    let stored =
+        own_keys::OwnAgentKey::new(to_wire(draft.provider()).as_str(), draft.model(), &secret);
     // The key is durable before the listing exists, so a listed agent always has its key.
     own_keys::put(&work, &agent, &stored).await?;
     let address = captured.hub.address().clone();
@@ -157,9 +159,9 @@ pub(super) async fn save(
     };
     let definition = AgentDefinitionV1 {
         name: draft.name().to_owned(),
-        instructions: String::new(),
+        instructions: draft.instructions().to_owned(),
         provider: ProviderBlock {
-            kind: draft.provider().id().to_owned(),
+            kind: to_wire(draft.provider()).as_str().to_owned(),
             endpoint: endpoint.to_owned(),
             models: vec![draft.model().to_owned()],
             api_key: Some(secret.expose().to_owned()),

@@ -10,7 +10,7 @@ use gpui::{AppContext as _, Context, EventEmitter};
 use nocterm_cloud_agents_model::{
     AgentId, CloudAgent, CloudAgentError, InstanceId, ModelUsage, PersonalAgentDraft, PinnedPool,
     Placement, PoolChoice, PoolId, PoolOffer, SaveOutcome, StartOutcome, StartStep, StartedAgent,
-    StepSink,
+    StepSink, web_panel_url,
 };
 use nocterm_hubs_model::HubId;
 
@@ -53,12 +53,12 @@ impl CloudAgents {
         if self.catalogs.contains(hub) {
             return;
         }
-        let catalog = self.deps.catalog.clone();
+        let (catalog, seats) = (self.deps.catalog.clone(), self.deps.seats.clone());
         let hub_id = hub.clone();
         let watcher = cx.spawn(async move |this, cx| {
             let mut delay = FIRST_RETRY;
             loop {
-                let outcome = watch_once(&catalog, &hub_id, &this, &mut delay, cx).await;
+                let outcome = watch_once(&catalog, &seats, &hub_id, &this, &mut delay, cx).await;
                 match outcome {
                     Err(CloudAgentError::Unsupported) => {
                         this.update(cx, |this, cx| {
@@ -108,6 +108,17 @@ impl CloudAgents {
     /// The agents listed for `hub`.
     pub fn agents(&self, hub: &HubId) -> &[CloudAgent] {
         self.catalogs.agents(hub)
+    }
+
+    /// Where the web panel of `hub` is: the address the hub states, else a guess from its host.
+    pub fn web_panel_url(&self, hub: &HubId) -> String {
+        web_panel_url(hub, self.catalogs.web_url(hub))
+    }
+
+    /// Whether the person has a seat of `agent` on `hub` that stopping or removing concerns:
+    /// one the hub lists, or one a start of this session brought up.
+    pub fn has_seat(&self, hub: &HubId, agent: &AgentId) -> bool {
+        self.catalogs.has_seat(hub, agent)
     }
 
     /// How the catalog of `hub` stands; `None` when the hub is not tracked.
@@ -277,6 +288,59 @@ impl CloudAgents {
         cx.background_spawn(call)
     }
 
+    /// Stops the person's seat of `agent` on `hub`; its volume stays. The start of the agent
+    /// that was listed when this was called is forgotten, so starting again resumes the seat.
+    pub fn stop(
+        &mut self,
+        hub: &HubId,
+        agent: &AgentId,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<(), CloudAgentError>> {
+        let call = self.deps.seats.stop(hub, agent);
+        self.release_seat(call, hub, agent, false, cx)
+    }
+
+    /// Removes the person's seat of `agent` on `hub` with its volume. The start of the agent
+    /// that was listed when this was called is forgotten, so the next start provisions a new
+    /// seat. A start begun after the call is not touched.
+    pub fn remove(
+        &mut self,
+        hub: &HubId,
+        agent: &AgentId,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<(), CloudAgentError>> {
+        let call = self.deps.seats.remove(hub, agent);
+        self.release_seat(call, hub, agent, true, cx)
+    }
+
+    fn release_seat(
+        &mut self,
+        call: nocterm_cloud_agents_model::CloudFuture<()>,
+        hub: &HubId,
+        agent: &AgentId,
+        removed: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<(), CloudAgentError>> {
+        let (hub, agent) = (hub.clone(), agent.clone());
+        // The run the person saw when pressing the button: a later run is a new seat.
+        let seen = self.starts.run_of(&hub, &agent);
+        cx.spawn(async move |this, cx| {
+            let released = cx.background_spawn(call).await;
+            if released.is_ok() {
+                this.update(cx, |this, cx| {
+                    let forgotten = seen.is_some_and(|id| this.starts.forget(id));
+                    let unseated = removed && this.catalogs.seat_changed(&hub, &agent, false);
+                    if forgotten || unseated {
+                        cx.emit(CloudAgentsEvent::Changed);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
+            released
+        })
+    }
+
     /// Deletes a personal agent.
     pub fn delete_personal(
         &self,
@@ -315,6 +379,7 @@ impl CloudAgents {
             this.update(cx, |this, cx| match result {
                 Ok(StartOutcome::Ready(started)) => {
                     if this.starts.finish(id, started) {
+                        this.catalogs.seat_changed(&hub, &agent, true);
                         cx.emit(CloudAgentsEvent::Ready(id));
                         cx.emit(CloudAgentsEvent::Changed);
                         cx.notify();
@@ -413,12 +478,24 @@ impl CloudAgents {
 /// Lists, then waits for hints and lists again until the stream ends or a call fails.
 async fn watch_once(
     catalog: &Arc<dyn nocterm_cloud_agents_model::CloudAgentCatalog>,
+    seats: &Arc<dyn nocterm_cloud_agents_model::AgentSeats>,
     hub: &HubId,
     this: &gpui::WeakEntity<CloudAgents>,
     delay: &mut Duration,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(), CloudAgentError> {
     let mut hints = catalog.watch(hub).await?;
+    // The address is only a convenience: a hub that cannot state it keeps the last one known,
+    // else the guess.
+    if let Some(stated) = catalog.web_url(hub).await.ok().flatten() {
+        let hub_id = hub.clone();
+        this.update(cx, |this, cx| {
+            if this.catalogs.stated_web_url(&hub_id, stated) {
+                cx.notify();
+            }
+        })
+        .ok();
+    }
     loop {
         let agents = catalog.list(hub).await?;
         *delay = FIRST_RETRY;
@@ -428,6 +505,18 @@ async fn watch_once(
             .is_err()
         {
             return Ok(());
+        }
+        // Which agents the person has a seat of is a convenience too: a failed read keeps what
+        // was known.
+        if let Ok(seated) = seats.seated(hub).await {
+            let hub_id = hub.clone();
+            this.update(cx, |this, cx| {
+                if this.catalogs.seats_listed(&hub_id, seated) {
+                    cx.emit(CloudAgentsEvent::Changed);
+                    cx.notify();
+                }
+            })
+            .ok();
         }
         if hints.next().await?.is_none() {
             return Ok(());

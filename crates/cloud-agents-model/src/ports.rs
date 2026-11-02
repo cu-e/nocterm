@@ -48,6 +48,9 @@ pub trait CloudAgentCatalog: Send + Sync {
 
     /// The pools a personal agent may be sealed to.
     fn pools(&self, hub: &HubId) -> CloudFuture<Vec<PoolChoice>>;
+
+    /// The address of the hub's web panel as the hub states it; `None` when it states none.
+    fn web_url(&self, hub: &HubId) -> CloudFuture<Option<String>>;
 }
 
 /// What a start came to.
@@ -73,6 +76,20 @@ pub trait CloudAgentLauncher: Send + Sync {
     /// Pins the pool's keys as offered, after the person compared the fingerprint. Fails with
     /// [`CloudAgentError::PoolKeyChanged`] if the pool offers other keys than the ones shown.
     fn pin_pool(&self, hub: &HubId, offer: &PoolOffer) -> CloudFuture<()>;
+}
+
+/// Stops or removes the caller's own seat of an agent on a hub. Both are idempotent: an agent
+/// the person has no seat of is already stopped and already removed.
+pub trait AgentSeats: Send + Sync {
+    /// The agents of the hub the person has a seat of, whether it runs or sleeps. A seat
+    /// already being deleted is not counted.
+    fn seated(&self, hub: &HubId) -> CloudFuture<Vec<AgentId>>;
+
+    /// Stops the compute of the seat; its volume stays, and starting again resumes it.
+    fn stop(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<()>;
+
+    /// Removes the seat with its volume and its runner.
+    fn remove(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<()>;
 }
 
 /// The seat of an agent on the person's own runner, with the lease that keeps it working.
@@ -144,7 +161,11 @@ pub trait PersonalAgents: Send + Sync {
     fn delete(&self, hub: &HubId, agent: &AgentId, version: u64) -> CloudFuture<()>;
 }
 
-/// The address of the web panel of a hub, where organization and server agents are managed.
-pub fn web_panel_url(hub: &HubId) -> String {
-    format!("https://{}/", hub.address().host())
+/// The address of the web panel of a hub, where organization and server agents are managed:
+/// the one the hub `stated`, else a guess from the hub's host.
+pub fn web_panel_url(hub: &HubId, stated: Option<&str>) -> String {
+    stated.map_or_else(
+        || format!("https://{}/", hub.address().host()),
+        str::to_owned,
+    )
 }

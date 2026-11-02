@@ -35,6 +35,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_instruction_limit_is_the_contracts_system_prompt_limit() {
+        assert_eq!(
+            nocterm_cloud_agents_model::MAX_INSTRUCTIONS_BYTES,
+            nocterm_hub_model::agents::limits::MAX_SYSTEM_PROMPT_BYTES
+        );
+    }
+
+    #[test]
     fn the_desktop_kinds_and_the_contracts_agree_on_their_ids() {
         for kind in ProviderKind::ALL {
             assert_eq!(to_wire(kind).as_str(), kind.id());
