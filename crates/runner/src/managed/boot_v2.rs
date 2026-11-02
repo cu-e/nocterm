@@ -17,6 +17,17 @@ use std::sync::Arc;
 /// The only format version of this document.
 const BOOT_VERSION: u32 = 2;
 
+/// Maps the provider kind a boot document names to the engine's. The web panel
+/// seals `anthropic` where the engine says `anthropic_messages`; both are
+/// accepted until a shared kind vocabulary replaces this mapping.
+fn provider_kind(text: &str) -> Result<ProviderKind, RunnerError> {
+    match text {
+        "openai_chat" => Ok(ProviderKind::OpenAiChat),
+        "anthropic_messages" | "anthropic" => Ok(ProviderKind::AnthropicMessages),
+        _ => Err(RunnerError::Value("boot.provider")),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Pricing {
@@ -80,11 +91,7 @@ impl BootV2 {
             ssh_targets: &document.ssh_targets,
         })?;
         let provider = &document.provider;
-        let kind = match provider.kind.as_str() {
-            "openai_chat" => ProviderKind::OpenAiChat,
-            "anthropic_messages" => ProviderKind::AnthropicMessages,
-            _ => return Err(RunnerError::Value("boot.provider")),
-        };
+        let kind = provider_kind(&provider.kind)?;
         if provider.models.is_empty() || provider.models.len() > super::MAX_ENTRIES {
             return Err(RunnerError::Value("boot.provider"));
         }
@@ -118,6 +125,10 @@ impl BootV2 {
     }
     pub(crate) fn kind(&self) -> ProviderKind {
         self.kind
+    }
+    /// The agent's system prompt, empty when the web panel set none.
+    pub(crate) fn instructions(&self) -> &str {
+        &self.document.instructions
     }
     pub(crate) fn models(&self) -> &[NamespaceId] {
         &self.models
@@ -191,6 +202,24 @@ mod tests {
         assert_eq!(boot.models().len(), 1);
         assert!(boot.summary(true).contains("execution_ready=true"));
         assert!(boot.summary(false).contains("execution_ready=false"));
+    }
+    #[test]
+    fn the_web_panels_anthropic_kind_is_the_messages_kind_and_unknown_kinds_are_refused() {
+        for (text, expected) in [
+            ("openai_chat", ProviderKind::OpenAiChat),
+            ("anthropic_messages", ProviderKind::AnthropicMessages),
+            ("anthropic", ProviderKind::AnthropicMessages),
+        ] {
+            let mut value = document();
+            value["provider"]["kind"] = text.into();
+            assert_eq!(read(&value).unwrap().kind(), expected, "{text}");
+        }
+        let mut unknown = document();
+        unknown["provider"]["kind"] = "gemini".into();
+        assert!(matches!(
+            read(&unknown),
+            Err(RunnerError::Value("boot.provider"))
+        ));
     }
     #[test]
     fn a_token_other_versions_and_zero_ceilings_are_refused() {

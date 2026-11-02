@@ -1,6 +1,6 @@
 //! The host-driven model stepper. There is deliberately no tool executor field.
 use crate::{
-    attempt::ModelDriver,
+    attempt::{ModelDriver, Offer},
     call::{AdvanceContext, ModelCalls},
     checkpoint::{self, EngineIdentity},
     mapping,
@@ -20,7 +20,7 @@ use nocterm_cloud_model::{
 };
 use rig_agent::run::{AgentRun, AgentRunStep, PromptError};
 use rig_core::{DynModel, operation::Completion};
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 pub(crate) struct RigEngine {
     config: EngineConfig,
@@ -38,13 +38,13 @@ impl RigEngine {
         lease: crate::ProviderLease,
         restore: Option<EngineCheckpoint>,
         calls: ModelCalls,
-        allowed: Option<&BTreeSet<String>>,
+        offer: Offer<'_>,
     ) -> Result<Self, EngineError> {
         let state = restore
             .map(|saved| checkpoint::restore(&config, &identity, saved))
             .transpose()?
             .flatten();
-        let model = ModelDriver::new(model, config.budget, calls, allowed)?;
+        let model = ModelDriver::new(model, config.budget, calls, offer)?;
         Ok(Self {
             config,
             identity,

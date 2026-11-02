@@ -19,10 +19,19 @@ use rig_core::{
 };
 use std::{collections::BTreeSet, sync::Arc};
 
+/// What the engine offers the model beyond the conversation: the catalog
+/// tools it may call and the system prompt it is given on every request.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Offer<'a> {
+    pub(crate) tools: Option<&'a BTreeSet<String>>,
+    pub(crate) instructions: Option<&'a str>,
+}
+
 pub(crate) struct ModelDriver {
     model: DynModel<Completion>,
     budget: ModelBudget,
     tools: Vec<Arc<ToolDefinition>>,
+    instructions: Option<Arc<str>>,
     calls: ModelCalls,
 }
 pub(crate) struct FinishedTurn {
@@ -34,12 +43,13 @@ impl ModelDriver {
         model: DynModel<Completion>,
         budget: ModelBudget,
         calls: ModelCalls,
-        allowed: Option<&BTreeSet<String>>,
+        offer: Offer<'_>,
     ) -> Result<Self, EngineError> {
         Ok(Self {
             model,
             budget,
-            tools: mapping::tools(allowed)?,
+            tools: mapping::tools(offer.tools)?,
+            instructions: offer.instructions.map(Arc::from),
             calls,
         })
     }
@@ -54,6 +64,18 @@ impl ModelDriver {
         )
         .map_err(|_| EngineError::InvalidStream)
     }
+    /// The next model request: the conversation, the offered tools and the
+    /// system prompt when one is configured.
+    fn request(&self, prompt: Arc<Message>, history: Vec<Arc<Message>>) -> CompletionRequest {
+        let request = CompletionRequest::new(prompt)
+            .reasoning(rig_core::completion::Reasoning::Off)
+            .messages(history)
+            .tools(self.tools.clone());
+        match &self.instructions {
+            Some(instructions) => request.preamble(instructions.as_ref()),
+            None => request,
+        }
+    }
     pub(crate) async fn complete(
         &self,
         state: &mut ActiveRun,
@@ -64,10 +86,7 @@ impl ModelDriver {
     ) -> Result<FinishedTurn, EngineError> {
         tokio::runtime::Handle::try_current().map_err(|_| EngineError::Unavailable)?;
         state.sdk().advertise_tools(turn, self.tools.clone());
-        let request = CompletionRequest::new(prompt)
-            .reasoning(rig_core::completion::Reasoning::Off)
-            .messages(history)
-            .tools(self.tools.clone());
+        let request = self.request(prompt, history);
         let bytes = limits::encode(&request, self.budget.input_bytes())?.len();
         let before = state.accounting().output_bytes();
         let reserved = state.accounting().reserve(self.budget, bytes)?;

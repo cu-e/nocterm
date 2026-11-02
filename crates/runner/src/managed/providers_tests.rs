@@ -13,9 +13,12 @@ fn boot(root: &str) -> BootV2 {
     boot_with(root, None)
 }
 fn boot_with(root: &str, policy: Option<serde_json::Value>) -> BootV2 {
+    boot_document(root, policy, "")
+}
+fn boot_document(root: &str, policy: Option<serde_json::Value>, instructions: &str) -> BootV2 {
     let mut document = serde_json::json!({
             "version": 2, "instance": "i", "agent": "a", "lease": "l", "name": "n",
-            "instructions": "", "provider": {"kind": "openai_chat", "base_url": root,
+            "instructions": instructions, "provider": {"kind": "openai_chat", "base_url": root,
                 "models": ["gpt-x"],
                 "pricing": {"maximum_request_bytes": 1048576, "maximum_output_tokens": 1024,
                     "maximum_call_cost_micros": 50000}},
@@ -112,6 +115,44 @@ async fn a_brokered_model_call_carries_the_chats_own_bearer_token_to_the_broker(
         "{heads:?}"
     );
     assert!(!heads[0].contains("nvt1_one"));
+}
+
+#[tokio::test]
+async fn the_agents_instructions_are_the_system_prompt_of_every_brokered_call() {
+    let broker = Broker::start(vec![text_reply("a"), text_reply("b")]).await;
+    let boot = boot_document(broker.root(), None, "You are Scribe. Be brief.");
+    let providers =
+        BrokeredProviders::new(&boot, &scope(), tokio::runtime::Handle::current()).unwrap();
+    providers.tokens().issue(chat(1), &token("one")).unwrap();
+    let mut engine = create(&providers, 1).unwrap();
+    advance(engine.as_mut(), 1).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&broker.bodies()[0]).unwrap();
+    let first = &body["messages"][0];
+    assert_eq!(first["role"], "system", "{body}");
+    assert!(
+        first["content"]
+            .to_string()
+            .contains("You are Scribe. Be brief.")
+    );
+    assert_eq!(body["messages"][1]["role"], "user");
+}
+
+#[tokio::test]
+async fn a_document_without_instructions_sends_no_system_message() {
+    let broker = Broker::start(vec![text_reply("a")]).await;
+    let providers = providers(broker.root());
+    providers.tokens().issue(chat(1), &token("one")).unwrap();
+    let mut engine = create(&providers, 1).unwrap();
+    advance(engine.as_mut(), 1).await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&broker.bodies()[0]).unwrap();
+    assert!(
+        body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|message| message["role"] != "system"),
+        "{body}"
+    );
 }
 
 struct Woken(Mutex<Vec<CloudChatId>>);
