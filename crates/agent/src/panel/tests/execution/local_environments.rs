@@ -80,6 +80,76 @@ fn locked_account_host_can_capture_after_unlock_without_rebuilding_its_window(
         assert!(replacement.read(cx).source_current());
     });
 }
+fn refresh_sources(f: &Fixture, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        f.installation
+            .installed
+            .runtime()
+            .refresh_environment_sources(cx)
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+fn shown(f: &Fixture, id: &'static str, cx: &mut TestAppContext) -> bool {
+    cx.update_window(f.handle, |_, window, _| window.try_find(id).is_some())
+        .unwrap()
+}
+#[gpui_kit::test]
+fn a_locked_hub_account_shows_an_unlock_notice_and_clears_it_after_unlock(cx: &mut TestAppContext) {
+    let factory = Arc::new(ScriptedLocalAccountFactory::default());
+    let f = account_fixture(factory.clone(), cx);
+    refresh_sources(&f, cx);
+    assert!(shown(&f, "agent-account-notice", cx));
+    assert!(
+        !shown(&f, "agent-error", cx),
+        "locking is not an error line"
+    );
+
+    factory.sign_in(account("alice"));
+    refresh_sources(&f, cx);
+    assert!(!shown(&f, "agent-account-notice", cx));
+    assert!(!shown(&f, "agent-error", cx));
+}
+#[gpui_kit::test]
+fn locking_after_capture_shows_the_notice_again(cx: &mut TestAppContext) {
+    let factory = Arc::new(ScriptedLocalAccountFactory::default());
+    factory.sign_in(account("alice"));
+    let f = account_fixture(factory.clone(), cx);
+    refresh_sources(&f, cx);
+    assert!(!shown(&f, "agent-account-notice", cx));
+
+    factory.close();
+    refresh_sources(&f, cx);
+    assert!(shown(&f, "agent-account-notice", cx));
+    assert!(!shown(&f, "agent-error", cx));
+}
+#[gpui_kit::test]
+fn the_unlock_button_asks_to_open_the_unlock_dialog(cx: &mut TestAppContext) {
+    let factory = Arc::new(ScriptedLocalAccountFactory::default());
+    let f = account_fixture(factory, cx);
+    refresh_sources(&f, cx);
+    let unlocks = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = unlocks.clone();
+    cx.update_window(f.handle, |_, window, cx| {
+        cx.on_action(move |_: &nocterm_workspace::UnlockVault, _| counter.set(counter.get() + 1));
+        window.click("agent-account-action", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(unlocks.get(), 1);
+}
+#[gpui_kit::test]
+fn a_signed_out_hub_account_shows_a_notice_with_a_sign_in_button(cx: &mut TestAppContext) {
+    let factory = Arc::new(ScriptedLocalAccountFactory::default());
+    factory.sign_in(account("alice"));
+    let f = account_fixture(factory.clone(), cx);
+    factory.sign_out();
+    refresh_sources(&f, cx);
+    assert!(shown(&f, "agent-account-notice", cx));
+    assert!(shown(&f, "agent-account-action", cx));
+    assert!(!shown(&f, "agent-error", cx));
+}
 #[gpui_kit::test]
 fn old_approval_cannot_send_input_after_synchronous_account_replacement(cx: &mut TestAppContext) {
     let factory = Arc::new(ScriptedLocalAccountFactory::default());

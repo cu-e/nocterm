@@ -396,23 +396,13 @@ impl RuntimeHandle {
     pub fn ensure_history(&self, cx: &mut App) -> Result<(), crate::CatalogLoadError> {
         self.current_source()?;
         self.runtime.update(cx, |runtime, cx| {
-            runtime.chats.ensure(
-                self.chat_scope().map_err(|_| {
-                    nocterm_hubs_model::source_identity::LocalAccountSourceError::Unavailable
-                })?,
-                cx,
-            )
+            runtime.chats.ensure(self.chat_scope()?, cx)
         })
     }
     pub fn try_reload_history(&self, cx: &mut App) -> Result<(), crate::CatalogLoadError> {
         self.current_source()?;
         self.runtime.update(cx, |runtime, cx| {
-            runtime.try_scoped_reload_history(
-                self.chat_scope().map_err(|_| {
-                    nocterm_hubs_model::source_identity::LocalAccountSourceError::Unavailable
-                })?,
-                cx,
-            )
+            runtime.try_scoped_reload_history(self.chat_scope()?, cx)
         })
     }
     pub fn reload_history(&self, cx: &mut App) {

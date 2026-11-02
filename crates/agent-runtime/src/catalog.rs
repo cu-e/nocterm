@@ -19,7 +19,7 @@ use prepared::PreparedRecords;
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum CatalogLoadError {
-    #[error("The original account source is unavailable")]
+    #[error("The original account source is unavailable: {0}")]
     AccountSource(#[from] nocterm_hubs_model::source_identity::LocalAccountSourceError),
     #[error("All normal installation history payload slots are retained or loading.")]
     Capacity,

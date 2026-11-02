@@ -2,6 +2,8 @@
 use gpui_kit::{EntityId, Task};
 use std::sync::Arc;
 
+use super::account_notice::AccountNotice;
+
 struct Redraw {
     ticket: Arc<()>,
     task: Option<Task<()>>,
@@ -14,6 +16,7 @@ pub(super) enum ApprovalEffect {
 #[derive(Default)]
 pub(super) struct PanelNotices {
     error: Option<String>,
+    account: Option<AccountNotice>,
     redraw: Option<Redraw>,
     approval: Option<Vec<(EntityId, u64)>>,
 }
@@ -23,6 +26,12 @@ impl PanelNotices {
     }
     pub(super) fn set_error(&mut self, error: Option<String>) {
         self.error = error;
+    }
+    pub(super) fn account(&self) -> Option<AccountNotice> {
+        self.account
+    }
+    pub(super) fn set_account(&mut self, account: Option<AccountNotice>) {
+        self.account = account;
     }
     pub(super) fn approval_changed(
         &mut self,

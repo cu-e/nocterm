@@ -1,4 +1,6 @@
+use crate::chat_host::ChatHostError;
 use crate::thread::AgentThread;
+use account_notice::AccountNotice;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, SharedString,
     Subscription, TestSupportExt as _, Window, component::v_flex, div, prelude::*,
@@ -10,6 +12,7 @@ use nocterm_plugin_model::Side;
 use nocterm_ui::IconName;
 use nocterm_workspace::{ExpandablePanel, Panel, PanelRequest, WorkspaceEvent};
 
+mod account_notice;
 mod approvals;
 mod attach;
 mod attachments;
@@ -152,10 +155,16 @@ impl AgentPanel {
         if let Some(error) = retired.into_error() {
             self.notices.set_error(Some(error.to_string()));
         }
-        let switched = self
-            .host
-            .deps_for_source(self.source)
-            .is_ok_and(|deps| self.chats.switch_context(deps, cx));
+        let deps = self.host.deps_for_source(self.source);
+        let account_notice = match &deps {
+            Ok(_) => None,
+            Err(ChatHostError::Account(error)) => AccountNotice::from_capture(error),
+            Err(ChatHostError::WindowMismatch) => None,
+        };
+        self.notices.set_account(account_notice);
+        let switched = deps
+            .ok()
+            .is_some_and(|deps| self.chats.switch_context(deps, cx));
         if switched || removed {
             if switched && let Some(previous) = self.conversation.take() {
                 previous.detach(cx);
@@ -169,11 +178,23 @@ impl AgentPanel {
         if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled {
             return;
         }
-        if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
-            self.notices.set_error(Some(error.to_string()));
+        if account_notice.is_some() {
+            cx.notify();
+            return;
         }
+        self.load_history(cx);
         self.adopt_saved_chats(window, cx);
         cx.notify();
+    }
+    /// Asks for the history of the captured context; a failure of the account becomes the
+    /// account notice, any other the error line.
+    fn load_history(&mut self, cx: &mut Context<Self>) {
+        if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
+            match AccountNotice::from_catalog(&error) {
+                Some(notice) => self.notices.set_account(Some(notice)),
+                None => self.notices.set_error(Some(error.to_string())),
+            }
+        }
     }
     fn select_context(
         &mut self,
@@ -187,11 +208,20 @@ impl AgentPanel {
         let deps = match self.host.deps_for_source(source) {
             Ok(deps) => deps,
             Err(error) => {
-                self.notices.set_error(Some(error.to_string()));
+                match &error {
+                    ChatHostError::Account(cause) => match AccountNotice::from_capture(cause) {
+                        Some(notice) => self.notices.set_account(Some(notice)),
+                        None => self.notices.set_error(Some(error.to_string())),
+                    },
+                    ChatHostError::WindowMismatch => {
+                        self.notices.set_error(Some(error.to_string()));
+                    }
+                }
                 cx.notify();
                 return;
             }
         };
+        self.notices.set_account(None);
         self.leave_composer(cx);
         if let Some(previous) = self.conversation.take() {
             previous.detach(cx);
@@ -212,9 +242,7 @@ impl AgentPanel {
         } else {
             self.composer.set_text("", window, cx);
         }
-        if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
-            self.notices.set_error(Some(error.to_string()));
-        }
+        self.load_history(cx);
         self.adopt_saved_chats(window, cx);
         self.sync_approval_attention(window, cx);
         cx.notify();
@@ -582,6 +610,9 @@ impl Render for AgentPanel {
                 Some(thread) => body.child(self.render_chat(thread, window, cx)),
             }
         };
+        if let Some(notice) = self.notices.account() {
+            body = body.child(notice.strip(cx));
+        }
         if let Some(error) = self.notices.error() {
             body = body.child(
                 shell::ShellRenderer::error(error.to_owned(), cx)
