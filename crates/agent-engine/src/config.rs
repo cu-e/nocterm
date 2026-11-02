@@ -1,4 +1,6 @@
-use crate::{call::ModelCalls, driver::RigEngine, http::ProviderHttp, lease::ProviderLease};
+use crate::{
+    attempt::Offer, call::ModelCalls, driver::RigEngine, http::ProviderHttp, lease::ProviderLease,
+};
 use nocterm_cloud_model::{
     engine::{AgentEngine, AgentEngineFactory, EngineCheckpoint, EngineConfig, EngineError},
     identity::{AccountScope, NamespaceId},
@@ -182,6 +184,7 @@ pub struct RigEngineFactory {
     transport: ProviderHttp,
     lease: ProviderLease,
     tools: Option<BTreeSet<String>>,
+    instructions: Option<String>,
 }
 impl RigEngineFactory {
     pub fn new(lease: ProviderLease) -> Result<Self, EngineError> {
@@ -195,6 +198,7 @@ impl RigEngineFactory {
             transport,
             lease,
             tools: None,
+            instructions: None,
         })
     }
     /// Offers the model only the named catalog tools, and refuses a call to any
@@ -202,6 +206,12 @@ impl RigEngineFactory {
     /// offers the whole catalog.
     pub fn with_allowed_tools(mut self, names: BTreeSet<String>) -> Self {
         self.tools = Some(names);
+        self
+    }
+    /// Gives the model this system prompt on every request it makes. An empty
+    /// text is no prompt. The default sends none.
+    pub fn with_instructions(mut self, text: &str) -> Self {
+        self.instructions = (!text.is_empty()).then(|| text.to_owned());
         self
     }
     fn model(&self, model: &str, transport: ProviderHttp) -> DynModel<Completion> {
@@ -256,7 +266,10 @@ impl AgentEngineFactory for RigEngineFactory {
             self.lease.clone(),
             restore,
             calls,
-            self.tools.as_ref(),
+            Offer {
+                tools: self.tools.as_ref(),
+                instructions: self.instructions.as_deref(),
+            },
         )?))
     }
 }

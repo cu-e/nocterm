@@ -95,3 +95,25 @@ Fixed finite caps (not configurable): 8 concurrent runs (2 per account), 128 que
 runs, 64 staged provider/SSH answers, 128 live sessions (64 for the account), 16
 per chat. Session metadata, snapshot, cleanup and command-ingress work each use a
 separate bounded pool.
+
+## Container image
+
+A managed pool starts the runner from a container image that the server's
+compose file names in `NOCTERM_RUNNER_IMAGE`, pinned by digest.
+`deploy/runner/Dockerfile` builds it: a release `nocterm-runner` from this
+workspace (the Rust version of `rust-toolchain.toml`) on a slim Debian with
+`bubblewrap`, `util-linux` (`prlimit`), `bash` and CA certificates. It runs as
+user `10001` and its entrypoint is the runner, so the host supplies the
+arguments (`managed --config <path> --control stdin`).
+
+```sh
+docker build -f deploy/runner/Dockerfile -t registry.example.org/nocterm-runner:<tag> .
+docker push registry.example.org/nocterm-runner:<tag>
+docker inspect --format '{{index .RepoDigests 0}}' registry.example.org/nocterm-runner:<tag>
+```
+
+`docker inspect` prints `registry.example.org/nocterm-runner@sha256:<digest>`
+once the image has been pushed; that value is the `NOCTERM_RUNNER_IMAGE` pin.
+Rebuild and re-pin it when the runner changes. The containment runs `bwrap`
+inside the container, so the container runtime must allow unprivileged user
+namespaces for it.

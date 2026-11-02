@@ -1,0 +1,7 @@
+# Keeps the build context of deploy/runner/Dockerfile small. Nothing else in
+# the repository builds with docker.
+.git
+.claude
+.playwright-mcp
+**/target
+node_modules

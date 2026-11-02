@@ -30,6 +30,7 @@ pub(crate) const MANAGED_PRICING: &str = "managed-v1";
 struct ChatBrokeredFactory {
     tokens: Arc<ChatTokens>,
     policy: ManagedPolicy,
+    instructions: Arc<str>,
 }
 impl AgentEngineFactory for ChatBrokeredFactory {
     fn create(
@@ -41,7 +42,7 @@ impl AgentEngineFactory for ChatBrokeredFactory {
         // The policy lowers the command's limits and the offered tools; it
         // never raises either (ADR 0127).
         config.budget = self.policy.narrow(config.budget)?;
-        let mut factory = RigEngineFactory::new(lease)?;
+        let mut factory = RigEngineFactory::new(lease)?.with_instructions(&self.instructions);
         if let Some(tools) = self.policy.allowed_tools() {
             factory = factory.with_allowed_tools(tools.clone());
         }
@@ -55,6 +56,7 @@ pub(crate) struct BrokeredProviders {
     revision: NamespaceId,
     pricing: Vec<Arc<dyn ModelPricing>>,
     policy: ManagedPolicy,
+    instructions: Arc<str>,
 }
 impl BrokeredProviders {
     /// The boot document names the broker, the models and their ceilings. The
@@ -94,6 +96,7 @@ impl BrokeredProviders {
             revision,
             pricing,
             policy,
+            instructions: Arc::from(boot.instructions()),
         })
     }
     pub(crate) fn tokens(&self) -> &Arc<ChatTokens> {
@@ -120,6 +123,7 @@ impl CoordinatorProviders for BrokeredProviders {
         let factory = Arc::new(ChatBrokeredFactory {
             tokens: self.tokens.clone(),
             policy: self.policy.clone(),
+            instructions: self.instructions.clone(),
         });
         ConfiguredModel::new(selection.clone(), factory, pricing)
             .map_err(|_| EngineError::Unavailable)
