@@ -440,3 +440,54 @@ fn an_earlier_cloud_chat_in_the_history_opens_from_its_row(cx: &mut TestAppConte
     assert!(launcher.created().is_empty());
     assert_eq!(launcher.opened().len(), 1);
 }
+
+#[gpui_kit::test]
+fn a_failed_start_shows_one_entry_under_its_agent_and_can_be_retried(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe", AgentScope::Personal, AgentStatus::Ready);
+    for _ in 0..2 {
+        fake.script_start(
+            &scribe.id,
+            nocterm_cloud_agents_model::testing::StartScript::Fail(FakeFailure::ProvisioningFailed),
+        );
+    }
+    fake.set_agents(&hub(HOME), vec![scribe]);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    open_cloud_tab(handle, cx);
+    click(handle, format!("cloud-agent-{HOME}-a1"), cx);
+    click(handle, format!("cloud-agent-{HOME}-a1"), cx);
+
+    assert_eq!(fake.started().len(), 2);
+    assert!(!shown(handle, "cloud-start-StartId(1)", cx));
+    assert!(shown(handle, "cloud-start-StartId(2)", cx));
+    assert!(shown(handle, "cloud-retry-StartId(2)", cx));
+    assert!(shown(handle, "cloud-dismiss-StartId(2)", cx));
+    assert!(shown(handle, format!("cloud-agent-{HOME}-a1"), cx));
+
+    click(handle, "cloud-retry-StartId(2)", cx);
+    assert_eq!(fake.started().len(), 3);
+    assert!(!shown(handle, "cloud-retry-StartId(3)", cx));
+    assert!(shown(handle, "cloud-open-chat-StartId(3)", cx));
+}
+
+#[gpui_kit::test]
+fn a_start_whose_agent_row_is_gone_stays_listed_on_top(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe", AgentScope::Personal, AgentStatus::Ready);
+    fake.script_start(
+        &scribe.id,
+        nocterm_cloud_agents_model::testing::StartScript::Fail(FakeFailure::ProvisioningFailed),
+    );
+    fake.set_agents(&hub(HOME), vec![scribe]);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    open_cloud_tab(handle, cx);
+    click(handle, format!("cloud-agent-{HOME}-a1"), cx);
+    fake.set_agents(&hub(HOME), Vec::new());
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(!shown(handle, format!("cloud-agent-{HOME}-a1"), cx));
+    assert!(shown(handle, "cloud-start-StartId(1)", cx));
+}

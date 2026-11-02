@@ -46,7 +46,7 @@ pub use chats::{
     ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, CloudChatLauncher,
     OpenedChat,
 };
-pub use error::CloudAgentError;
+pub use error::{CloudAgentError, ReplyProblem};
 pub use ids::{AgentId, IdError, InstanceId, MAX_ID_BYTES, PoolId};
 pub use personal::{
     DraftError, KeyInput, MAX_ENDPOINT_BYTES, MAX_KEY_BYTES, MAX_MODEL_BYTES, MAX_NAME_CHARS,

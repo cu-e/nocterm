@@ -16,7 +16,7 @@ use nocterm_hubs_model::HubId;
 
 use crate::catalogs::{CatalogStatus, Catalogs};
 use crate::installed::Deps;
-use crate::starts::{StartId, StartView, Starts};
+use crate::starts::{StartId, StartPhase, StartView, Starts};
 
 const FIRST_RETRY: Duration = Duration::from_secs(2);
 const MAX_RETRY: Duration = Duration::from_secs(60);
@@ -138,13 +138,42 @@ impl CloudAgents {
         }
     }
 
-    /// Starts `agent` of `hub`. Starting an agent that is already starting returns that start.
+    /// Starts `agent` of `hub`. An agent that is already starting or ready returns its start; a
+    /// failed start is replaced by a new one.
     pub fn start(&mut self, hub: &HubId, agent: &CloudAgent, cx: &mut Context<Self>) -> StartId {
-        let (id, fresh) = self.starts.begin(hub, &agent.id, &agent.name);
+        self.launch(hub, &agent.id, &agent.name, agent.placement(), cx)
+    }
+
+    /// Starts again a start that failed. `None` when the start is gone or did not fail.
+    pub fn retry(&mut self, id: StartId, cx: &mut Context<Self>) -> Option<StartId> {
+        let (hub, agent, name, placement) = {
+            let view = self.starts.get(id)?;
+            if !matches!(view.phase(), StartPhase::Failed(_)) {
+                return None;
+            }
+            (
+                view.hub().clone(),
+                view.agent().clone(),
+                view.name().to_owned(),
+                view.placement(),
+            )
+        };
+        Some(self.launch(&hub, &agent, &name, placement, cx))
+    }
+
+    fn launch(
+        &mut self,
+        hub: &HubId,
+        agent: &AgentId,
+        name: &str,
+        placement: Placement,
+        cx: &mut Context<Self>,
+    ) -> StartId {
+        let (id, fresh) = self.starts.begin(hub, agent, name, placement);
         if fresh {
-            match agent.placement() {
-                Placement::Pool => self.run_start(id, hub.clone(), agent.id.clone(), cx),
-                Placement::OwnRunner => self.run_own_start(id, hub.clone(), agent.id.clone(), cx),
+            match placement {
+                Placement::Pool => self.run_start(id, hub.clone(), agent.clone(), cx),
+                Placement::OwnRunner => self.run_own_start(id, hub.clone(), agent.clone(), cx),
             }
             cx.emit(CloudAgentsEvent::Changed);
             cx.notify();

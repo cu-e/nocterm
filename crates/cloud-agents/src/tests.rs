@@ -141,6 +141,80 @@ async fn start_reaches_ready_and_is_not_duplicated(cx: &mut TestAppContext) {
     assert_eq!(fake.started().len(), 1);
 }
 
+fn script_failure(fake: &FakeCloudAgents, agent: &CloudAgent) {
+    fake.script_start(
+        &agent.id,
+        nocterm_cloud_agents_model::testing::StartScript::Fail(FakeFailure::ProvisioningFailed),
+    );
+}
+
+#[gpui::test]
+async fn starting_again_after_a_failure_replaces_the_failed_start(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    script_failure(&fake, &scribe);
+    let installed = install_with(&fake, cx);
+    let failed = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    let again = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    assert_ne!(failed, again);
+    installed.agents().read_with(cx, |agents, _| {
+        assert!(agents.start_view(failed).is_none());
+        assert_eq!(agents.starts().count(), 1);
+        let view = agents.start_view(again).expect("start");
+        assert!(matches!(view.phase(), StartPhase::Ready(_)));
+    });
+    assert_eq!(fake.started().len(), 2);
+}
+
+#[gpui::test]
+async fn retrying_a_failed_start_launches_it_again(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    script_failure(&fake, &scribe);
+    let installed = install_with(&fake, cx);
+    let failed = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    let retried = installed
+        .agents()
+        .update(cx, |agents, cx| agents.retry(failed, cx))
+        .expect("a failed start can be retried");
+    cx.run_until_parked();
+    installed.agents().read_with(cx, |agents, _| {
+        let view = agents.start_view(retried).expect("start");
+        assert!(matches!(view.phase(), StartPhase::Ready(_)));
+    });
+    let refused = installed
+        .agents()
+        .update(cx, |agents, cx| agents.retry(retried, cx));
+    assert!(refused.is_none(), "a ready start is not retried");
+    assert_eq!(fake.started().len(), 2);
+}
+
+#[gpui::test]
+async fn starting_a_ready_agent_returns_its_start_without_launching(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let scribe = agent("a1", "Scribe");
+    let installed = install_with(&fake, cx);
+    let first = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    let again = installed
+        .agents()
+        .update(cx, |agents, cx| agents.start(&hub(), &scribe, cx));
+    cx.run_until_parked();
+    assert_eq!(first, again);
+    assert_eq!(fake.started().len(), 1);
+}
+
 #[gpui::test]
 async fn unknown_pool_waits_for_trust_then_continues(cx: &mut TestAppContext) {
     let fake = FakeCloudAgents::default();

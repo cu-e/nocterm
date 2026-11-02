@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nocterm_cloud_agents_model::{
-    AgentId, CloudAgentError, InstanceId, PoolId, PoolOffer, StartOutcome, StartStep, StartedAgent,
-    StepSink,
+    AgentId, CloudAgentError, InstanceId, PoolId, PoolOffer, ReplyProblem, StartOutcome, StartStep,
+    StartedAgent, StepSink,
 };
 use nocterm_hub_client::agents::verify_instance_setup;
 use nocterm_hub_model::agents::{PoolKeyChanged, PoolKeys, PoolTrust, check_pool_keys};
@@ -16,13 +16,16 @@ use super::error::{agent_error, enrolment_error, setup_problem};
 use super::pins::PoolPins;
 use crate::devices::Captured;
 use crate::links::HubLinks;
+use progress::{Progress, progress};
+
+mod progress;
 
 const POLL: Duration = Duration::from_secs(1);
 const POLLS: u32 = 120;
 
-fn parse<T: std::str::FromStr>(text: &str) -> Result<T, CloudAgentError> {
+fn parse<T: std::str::FromStr>(text: &str, problem: ReplyProblem) -> Result<T, CloudAgentError> {
     text.parse()
-        .map_err(|_| CloudAgentError::ProvisioningFailed)
+        .map_err(|_| CloudAgentError::UnexpectedReply(problem))
 }
 
 pub(super) async fn start(
@@ -36,13 +39,13 @@ pub(super) async fn start(
     let address = captured.hub.address().clone();
     let client = captured.client.agents();
     steps(StartStep::ReservingSeat);
-    let wire_agent = parse(agent.as_str())?;
+    let wire_agent = parse(agent.as_str(), ReplyProblem::AgentId)?;
     let mut instance = client
         .start_instance(wire_agent, None)
         .await
         .map_err(|error| agent_error(&address, error))?;
     let pool_text = instance.pool_id.clone();
-    let pool: nocterm_hub_model::PoolId = parse(&pool_text)?;
+    let pool: nocterm_hub_model::PoolId = parse(&pool_text, ReplyProblem::PoolId)?;
     let offered = client
         .pool_keys(pool)
         .await
@@ -56,15 +59,13 @@ pub(super) async fn start(
         }
         PoolTrust::Pinned => {}
     }
-    let instance_id: nocterm_hub_model::InstanceId = parse(&instance.instance_id)?;
+    let instance_id: nocterm_hub_model::InstanceId =
+        parse(&instance.instance_id, ReplyProblem::InstanceId)?;
     for attempt in 0..=POLLS {
-        match v1::InstanceState::try_from(instance.state) {
-            Ok(v1::InstanceState::AwaitingEnrolment) => break,
-            Ok(v1::InstanceState::Ready | v1::InstanceState::Suspended) => {
-                return Ok(StartOutcome::Ready(started(&agent, &instance)?));
-            }
-            Ok(v1::InstanceState::Provisioning) => {}
-            _ => return Err(CloudAgentError::ProvisioningFailed),
+        match progress(&instance)? {
+            Progress::Enrol => break,
+            Progress::Ready => return Ok(StartOutcome::Ready(started(&agent, &instance)?)),
+            Progress::Wait => {}
         }
         if attempt == POLLS {
             return Err(CloudAgentError::TimedOut);
@@ -99,7 +100,7 @@ pub(super) async fn pin(
     offer: PoolOffer,
 ) -> Result<(), CloudAgentError> {
     let address = captured.hub.address().clone();
-    let pool: nocterm_hub_model::PoolId = parse(offer.pool.as_str())?;
+    let pool: nocterm_hub_model::PoolId = parse(offer.pool.as_str(), ReplyProblem::PoolId)?;
     let offered = captured
         .client
         .agents()
@@ -132,7 +133,8 @@ pub(super) async fn offer(
         .find(|info| info.pool_id == pool)
         .map_or_else(|| pool.to_owned(), |info| info.name);
     Ok(PoolOffer {
-        pool: PoolId::new(pool).map_err(|_| CloudAgentError::ProvisioningFailed)?,
+        pool: PoolId::new(pool)
+            .map_err(|_| CloudAgentError::UnexpectedReply(ReplyProblem::PoolId))?,
         name,
         fingerprint: keys.fingerprint(),
     })
@@ -149,7 +151,21 @@ fn started(agent: &AgentId, instance: &v1::Instance) -> Result<StartedAgent, Clo
     Ok(StartedAgent {
         agent: agent.clone(),
         instance: InstanceId::new(instance.instance_id.clone())
-            .map_err(|_| CloudAgentError::ProvisioningFailed)?,
+            .map_err(|_| CloudAgentError::UnexpectedReply(ReplyProblem::InstanceId))?,
         runner: instance.runner_id.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_malformed_pool_id_is_an_unexpected_reply() {
+        let parsed = parse::<nocterm_hub_model::PoolId>("not a pool id", ReplyProblem::PoolId);
+        assert!(matches!(
+            parsed,
+            Err(CloudAgentError::UnexpectedReply(ReplyProblem::PoolId))
+        ));
+    }
 }

@@ -198,3 +198,32 @@ fn usage_is_summed_per_model_with_the_largest_spender_first() {
     assert_eq!((rows[1].runs, rows[1].spend_micros), (4, 12));
     assert_eq!(rows[2].label(), "not attributed");
 }
+
+#[test]
+fn a_failed_seat_names_its_instance_and_the_hubs_reason() {
+    let instance = InstanceId::new("inst-7").unwrap();
+    let plain = CloudAgentError::ProvisioningFailed {
+        instance: instance.clone(),
+        reason: None,
+    };
+    assert!(plain.to_string().ends_with("(instance inst-7)"));
+    let explained = CloudAgentError::ProvisioningFailed {
+        instance,
+        reason: Some("no space left".into()),
+    };
+    let text = explained.to_string();
+    assert!(text.contains("inst-7") && text.ends_with(": no space left"));
+}
+
+#[test]
+fn a_seat_being_deleted_is_transient_and_a_failed_one_is_not() {
+    assert!(CloudAgentError::SeatBeingDeleted.is_transient());
+    assert!(!CloudAgentError::UnexpectedReply(ReplyProblem::InstanceState(99)).is_transient());
+    assert!(
+        !CloudAgentError::ProvisioningFailed {
+            instance: InstanceId::new("i").unwrap(),
+            reason: None,
+        }
+        .is_transient()
+    );
+}

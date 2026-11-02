@@ -47,6 +47,8 @@ pub enum FakeFailure {
     PoolKeyChanged,
     /// The account changed meanwhile.
     Stale,
+    /// The host could not create the agent's runner.
+    ProvisioningFailed,
 }
 
 impl FakeFailure {
@@ -59,6 +61,10 @@ impl FakeFailure {
                 offered: "BBBB".into(),
             },
             Self::Stale => CloudAgentError::Stale,
+            Self::ProvisioningFailed => CloudAgentError::ProvisioningFailed {
+                instance: crate::InstanceId::new("inst-1").expect("instance id"),
+                reason: None,
+            },
         }
     }
 }

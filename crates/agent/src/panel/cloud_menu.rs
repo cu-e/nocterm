@@ -11,10 +11,8 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_cloud_agents::{CloudAgentsEvent, StartId, StartPhase};
-use nocterm_cloud_agents_model::{
-    AgentScope, AgentStatus, CloudAgent, CloudAgentError, Section, web_panel_url,
-};
+use nocterm_cloud_agents::{CloudAgentsEvent, StartId};
+use nocterm_cloud_agents_model::{AgentScope, AgentStatus, CloudAgent, Section, web_panel_url};
 use nocterm_hubs_model::{HubColor, HubId};
 
 use super::{
@@ -24,8 +22,10 @@ use super::{
 use crate::cloud_access::CloudAgentsAccess;
 
 mod chats;
+mod starts;
 
 pub(super) use chats::notice_text;
+use starts::StartEntry;
 
 /// Which list the new-chat popover shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,10 +163,6 @@ fn hub_tint(color: HubColor, cx: &App) -> gpui_kit::Hsla {
     }
 }
 
-fn failure_text(error: &CloudAgentError) -> String {
-    error.to_string()
-}
-
 impl CloudMenu {
     /// The tab switch at the top of the "New agent" popover, or nothing when Cloud is not
     /// offered.
@@ -207,9 +203,17 @@ impl CloudMenu {
                 .small()
                 .into_any_element(),
         ];
-        rows.extend(self.render_starts(&access, cx));
         let query = self.query(cx);
         let sections = access.sections(&query, cx);
+        let mut starts = self.current_starts(&access, cx);
+        // A start sits under the row of its agent; only those without a shown row go on top.
+        let (under_rows, unplaced): (Vec<_>, Vec<_>) = starts.drain(..).partition(|start| {
+            sections.iter().any(|section| {
+                section.hub == start.hub
+                    && section.agents.iter().any(|agent| agent.id == start.agent)
+            })
+        });
+        rows.extend(unplaced.iter().map(|start| self.render_start(start, cx)));
         if sections.is_empty() {
             rows.push(
                 div()
@@ -229,7 +233,7 @@ impl CloudMenu {
         }
         let several_hubs = access.visible_hubs(cx).len() > 1;
         for section in sections {
-            rows.push(self.render_section(&section, several_hubs, cx));
+            rows.push(self.render_section(&section, several_hubs, &under_rows, cx));
         }
         rows.extend(self.render_chats(&access, cx));
         rows.extend(self.render_footer(&access, cx));
@@ -240,6 +244,7 @@ impl CloudMenu {
         &self,
         section: &Section,
         several_hubs: bool,
+        starts: &[StartEntry],
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let title = section.title.text();
@@ -269,6 +274,12 @@ impl CloudMenu {
         );
         for agent in &section.agents {
             block = block.child(self.render_agent_row(&section.hub, &section.hub_name, agent, cx));
+            for start in starts
+                .iter()
+                .filter(|start| start.is_of(&section.hub, &agent.id))
+            {
+                block = block.child(self.render_start(start, cx));
+            }
         }
         block.into_any_element()
     }
@@ -327,104 +338,29 @@ impl CloudMenu {
         .into_any_element()
     }
 
-    fn render_starts(
+    fn current_starts(
         &self,
         access: &CloudAgentsAccess,
         cx: &mut Context<AgentPanel>,
-    ) -> Vec<AnyElement> {
-        let service = access.service().clone();
+    ) -> Vec<StartEntry> {
         let visible: Vec<HubId> = access
             .visible_hubs(cx)
             .into_iter()
             .map(|(hub, ..)| hub)
             .collect();
-        let starts: Vec<_> = service
+        access
+            .service()
             .read(cx)
             .starts()
             .filter(|start| visible.contains(start.hub()))
-            .map(|start| (start.id(), start.name().to_owned(), start.phase().clone()))
-            .collect();
-        starts
-            .into_iter()
-            .map(|(id, name, phase)| self.render_start(id, name, phase, cx))
+            .map(|start| StartEntry {
+                id: start.id(),
+                hub: start.hub().clone(),
+                agent: start.agent().clone(),
+                name: start.name().to_owned(),
+                phase: start.phase().clone(),
+            })
             .collect()
-    }
-
-    fn render_start(
-        &self,
-        id: StartId,
-        name: String,
-        phase: StartPhase,
-        cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
-        let frame = v_flex()
-            .id(SharedString::from(format!("cloud-start-{id:?}")))
-            .test_support()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(cx.theme().secondary);
-        let text = |text: String, cx: &App| {
-            div()
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(text)
-        };
-        let button = |label: &'static str, key: &'static str, cx: &mut Context<AgentPanel>| {
-            menu_row(SharedString::from(format!("{key}-{id:?}")), label, cx)
-        };
-        match phase {
-            StartPhase::Step(step) => frame
-                .child(text(format!("{name}: {}", step.text()), cx))
-                .into_any_element(),
-            StartPhase::AwaitingTrust(offer) => frame
-                .child(text(
-                    format!(
-                        "{name}: trust pool \"{}\"? Compare this fingerprint with the one its owner publishes.",
-                        offer.name
-                    ),
-                    cx,
-                ))
-                .child(
-                    div()
-                        .id(SharedString::from(format!("cloud-pool-fingerprint-{id:?}")))
-                        .test_support()
-                        .text_xs()
-                        .font_family("monospace")
-                        .child(offer.fingerprint.clone()),
-                )
-                .child(
-                    button("Trust pool", "cloud-trust", cx).on_click(
-                        cx.listener(move |panel, _, _, cx| panel.cloud.trust_pool(id, cx)),
-                    ),
-                )
-                .child(
-                    button("Do not trust", "cloud-refuse", cx).on_click(
-                        cx.listener(move |panel, _, _, cx| panel.cloud.refuse_pool(id, cx)),
-                    ),
-                )
-                .into_any_element(),
-            StartPhase::Ready(_) => frame
-                .child(text(format!("{name}: {}", nocterm_cloud_agents_model::StartStep::Ready.text()), cx))
-                .child(
-                    button("Open chat", "cloud-open-chat", cx).on_click(
-                        cx.listener(move |panel, _, window, cx| panel.cloud.open_started_chat(id, window, cx)),
-                    ),
-                )
-                .child(
-                    button("Dismiss", "cloud-dismiss", cx)
-                        .on_click(cx.listener(move |panel, _, _, cx| panel.cloud.dismiss_start(id, cx))),
-                )
-                .into_any_element(),
-            StartPhase::Failed(error) => frame
-                .child(text(format!("{name}: {}", failure_text(&error)), cx))
-                .child(
-                    button("Dismiss", "cloud-dismiss", cx)
-                        .on_click(cx.listener(move |panel, _, _, cx| panel.cloud.dismiss_start(id, cx))),
-                )
-                .into_any_element(),
-        }
     }
 
     fn render_footer(

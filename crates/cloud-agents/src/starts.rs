@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use nocterm_cloud_agents_model::{AgentId, CloudAgentError, PoolOffer, StartStep, StartedAgent};
+use nocterm_cloud_agents_model::{
+    AgentId, CloudAgentError, Placement, PoolOffer, StartStep, StartedAgent,
+};
 use nocterm_hubs_model::HubId;
 
 /// Identifies one start.
@@ -27,6 +29,7 @@ struct Run {
     hub: HubId,
     agent: AgentId,
     name: String,
+    placement: Placement,
     phase: StartPhase,
 }
 
@@ -47,6 +50,10 @@ impl StartView<'_> {
     pub fn agent(&self) -> &AgentId {
         &self.0.agent
     }
+    /// Where the agent runs.
+    pub fn placement(&self) -> Placement {
+        self.0.placement
+    }
     /// The agent's name as the person saw it.
     pub fn name(&self) -> &str {
         &self.0.name
@@ -61,8 +68,8 @@ impl StartView<'_> {
     }
 }
 
-/// The starts of this session. Finished runs are kept until dismissed so a view that opens
-/// later still shows how they ended.
+/// The starts of this session, at most one per agent of a hub. Finished runs are kept until
+/// dismissed so a view that opens later still shows how they ended.
 #[derive(Default)]
 pub(crate) struct Starts {
     runs: Vec<Run>,
@@ -70,25 +77,39 @@ pub(crate) struct Starts {
 }
 
 impl Starts {
-    /// A new run in its first step. A running start of the same agent is returned instead of
-    /// beginning a second one.
-    pub(crate) fn begin(&mut self, hub: &HubId, agent: &AgentId, name: &str) -> (StartId, bool) {
-        if let Some(run) = self
+    /// The run of an agent. A start under way or ready is returned as it is; a failed one is
+    /// replaced in its place by a new run with a new id, so a late result of the old call
+    /// cannot touch it. `true` means a new run began and the caller launches it.
+    pub(crate) fn begin(
+        &mut self,
+        hub: &HubId,
+        agent: &AgentId,
+        name: &str,
+        placement: Placement,
+    ) -> (StartId, bool) {
+        let existing = self
             .runs
             .iter()
-            .find(|run| &run.hub == hub && &run.agent == agent && !finished(&run.phase))
+            .position(|run| &run.hub == hub && &run.agent == agent);
+        if let Some(index) = existing
+            && !matches!(self.runs[index].phase, StartPhase::Failed(_))
         {
-            return (run.id, false);
+            return (self.runs[index].id, false);
         }
         self.next += 1;
         let id = StartId(self.next);
-        self.runs.push(Run {
+        let run = Run {
             id,
             hub: hub.clone(),
             agent: agent.clone(),
             name: name.to_owned(),
+            placement,
             phase: StartPhase::Step(StartStep::ReservingSeat),
-        });
+        };
+        match existing {
+            Some(index) => self.runs[index] = run,
+            None => self.runs.push(run),
+        }
         (id, true)
     }
 

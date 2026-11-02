@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use nocterm_cloud_agents_model::{AgentId, CloudAgentError};
+use nocterm_cloud_agents_model::{AgentId, CloudAgentError, ReplyProblem};
 use nocterm_hub_client::agents::AgentError;
 use nocterm_hub_proto::v1;
 
@@ -20,9 +20,9 @@ pub(super) struct Seat {
     pub(super) pool: String,
 }
 
-fn parse<T: FromStr>(text: &str) -> Result<T, CloudChatError> {
+fn parse<T: FromStr>(text: &str, problem: ReplyProblem) -> Result<T, CloudChatError> {
     text.parse()
-        .map_err(|_| CloudChatError::Agent(CloudAgentError::ProvisioningFailed))
+        .map_err(|_| CloudChatError::Agent(CloudAgentError::UnexpectedReply(problem)))
 }
 
 fn runner_id(instance: &v1::Instance) -> Option<[u8; 16]> {
@@ -39,11 +39,13 @@ pub(super) async fn start_for_chat(
     chat: [u8; 16],
 ) -> Result<[u8; 16], CloudChatError> {
     let address = captured.hub.address().clone();
-    let pool = pool.map(parse::<nocterm_hub_model::PoolId>).transpose()?;
+    let pool = pool
+        .map(|pool| parse::<nocterm_hub_model::PoolId>(pool, ReplyProblem::PoolId))
+        .transpose()?;
     let instance = captured
         .client
         .agents()
-        .start_instance_for_chat(parse(agent.as_str())?, pool, chat)
+        .start_instance_for_chat(parse(agent.as_str(), ReplyProblem::AgentId)?, pool, chat)
         .await
         .map_err(|failure| match failure {
             AgentError::Unsupported => CloudChatError::Unsupported,

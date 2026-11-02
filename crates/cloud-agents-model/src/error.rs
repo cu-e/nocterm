@@ -2,7 +2,32 @@
 
 use nocterm_hubs_model::HubError;
 
+use crate::ids::InstanceId;
 use crate::start::{Refusal, SetupProblem};
+
+/// What in a hub reply could not be used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ReplyProblem {
+    /// The agent id is malformed.
+    #[error("malformed agent id")]
+    AgentId,
+    /// The pool id is malformed.
+    #[error("malformed pool id")]
+    PoolId,
+    /// The seat id is malformed.
+    #[error("malformed instance id")]
+    InstanceId,
+    /// The seat is in a state this client does not know (the wire value).
+    #[error("unknown instance state {0}")]
+    InstanceState(i32),
+}
+
+fn reason_suffix(reason: &Option<String>) -> String {
+    reason
+        .as_deref()
+        .map_or_else(String::new, |reason| format!(": {reason}"))
+}
 
 /// A catalog or launcher call failed.
 #[derive(Debug, thiserror::Error)]
@@ -32,9 +57,20 @@ pub enum CloudAgentError {
     /// The host's runner setup cannot be trusted or imported.
     #[error("the runner setup cannot be trusted: {0}")]
     Setup(SetupProblem),
-    /// The seat did not become usable.
-    #[error("the host could not create the agent's runner")]
-    ProvisioningFailed,
+    /// The seat ended in a failed state; the hub may say why.
+    #[error("the host could not create the agent's runner (instance {instance}){}", reason_suffix(.reason))]
+    ProvisioningFailed {
+        /// The seat that failed.
+        instance: InstanceId,
+        /// The hub's explanation, when it gave one.
+        reason: Option<String>,
+    },
+    /// The seat is being deleted, so it cannot start now; starting again provisions a new one.
+    #[error("the agent's previous runner is still being deleted")]
+    SeatBeingDeleted,
+    /// The hub's reply did not fit the contract.
+    #[error("the hub sent an unexpected reply: {0}")]
+    UnexpectedReply(ReplyProblem),
     /// The hub did not finish provisioning in time.
     #[error("the host took too long to prepare the agent")]
     TimedOut,
@@ -69,7 +105,10 @@ impl CloudAgentError {
     pub fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::Refused(Refusal::HostCapacity) | Self::TimedOut | Self::Hub(_)
+            Self::Refused(Refusal::HostCapacity)
+                | Self::TimedOut
+                | Self::SeatBeingDeleted
+                | Self::Hub(_)
         )
     }
 }
