@@ -60,6 +60,7 @@ impl ExecutionConfig {
         state: &Path,
     ) -> Result<nocterm_local::ContainedLocal, RunnerError> {
         let configured = &self.containment;
+        create_workspace(&configured.workspace)?;
         let limits = nocterm_local::ContainmentLimits::new(
             configured.maximum_address_space_bytes,
             configured.maximum_processes,
@@ -94,6 +95,17 @@ impl ExecutionConfig {
             .into_iter()
             .map(|entry| entry.policy(scope))
             .collect()
+    }
+}
+/// Makes the tool workspace on first start: private to the runner's user, inside the volume
+/// the host mounts. An existing directory is left for the containment to judge.
+#[cfg(target_os = "linux")]
+fn create_workspace(workspace: &Path) -> Result<(), RunnerError> {
+    use std::os::unix::fs::DirBuilderExt as _;
+    match std::fs::DirBuilder::new().mode(0o700).create(workspace) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(_) => Err(nocterm_local::ContainmentError::Workspace.into()),
     }
 }
 impl ProviderDocument {
@@ -200,5 +212,24 @@ mod tests {
         let state = tempfile::tempdir().unwrap();
         let prepared = futures::executor::block_on(managed.prepare_containment(state.path()));
         assert!(matches!(prepared, Err(RunnerError::Containment(_))));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_first_start_creates_a_private_workspace_and_keeps_an_existing_one() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        create_workspace(&workspace).unwrap();
+        let mode = std::fs::metadata(&workspace).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        std::fs::write(workspace.join("kept"), b"x").unwrap();
+        create_workspace(&workspace).unwrap();
+        assert!(workspace.join("kept").exists());
+        let beneath_a_file = workspace.join("kept").join("workspace");
+        assert!(matches!(
+            create_workspace(&beneath_a_file),
+            Err(RunnerError::Containment(_))
+        ));
     }
 }
