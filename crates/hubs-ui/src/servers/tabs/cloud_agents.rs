@@ -17,16 +17,16 @@ use gpui_kit::{
         checkbox::Checkbox,
         dialog::DialogFooter,
         h_flex,
-        input::Input,
+        input::{Input, Textarea},
         v_flex,
     },
     div,
     prelude::*,
+    rems,
 };
 use nocterm_cloud_agents::{CatalogStatus, CloudAgents};
 use nocterm_cloud_agents_model::{
     AgentScope, CloudAgent, CloudAgentError, PinnedPool, PoolId, ProviderKind, SaveOutcome,
-    web_panel_url,
 };
 use nocterm_hubs_model::HubId;
 
@@ -312,7 +312,7 @@ impl Render for CloudAgentsTab {
         let service = self.service.read(cx);
         let status = service.status(&hub);
         let agents: Vec<CloudAgent> = service.agents(&hub).to_vec();
-        let web = web_panel_url(&hub);
+        let web = service.web_panel_url(&hub);
         let header = v_flex()
             .gap_2()
             .child(note(
@@ -575,6 +575,19 @@ fn render_form(
         provider_buttons(form, key, view),
         offline_checkbox(form, key, view),
     );
+    let instructions = form.work_offline().then(|| {
+        field(
+            "Instructions",
+            div()
+                .id(item("cloud-agent-instructions", key))
+                .test_support()
+                .child(
+                    Textarea::new(form.instructions_input())
+                        .h(rems(8.))
+                        .aria_label("Instructions"),
+                ),
+        )
+    });
     let (pools, trust) = (
         pool_choices(form, key, view),
         trust_block(form, key, view, cx),
@@ -594,7 +607,7 @@ fn render_form(
         .child(field("Provider key", div().id(item("cloud-agent-key", key)).test_support().child(Input::new(secret))))
         .child(note(
             if form.is_edit() {
-                "Saving replaces the whole definition, so enter the endpoint and the key again. The key is stored encrypted and is never shown."
+                "Saving replaces the whole definition, so enter the endpoint, the key and the instructions again; leave the instructions empty to remove them. The key is stored encrypted and is never shown."
             } else {
                 "The key is stored encrypted and is never shown again. Use a provider key with a spending limit."
             },
@@ -605,6 +618,7 @@ fn render_form(
             "On: the agent keeps working on a server pool while this computer is off, which means the pool's host can use the key. Off: it runs only on this computer.",
             cx,
         ))
+        .children(instructions)
         .children(pools)
         .children(trust)
         .child(

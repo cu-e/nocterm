@@ -59,6 +59,7 @@ fn page(cx: &mut TestAppContext, fake: &FakeCloudAgents) -> Fixture {
                 catalog: Arc::new(fake.clone()),
                 launcher: Arc::new(fake.clone()),
                 own_runner: Arc::new(fake.clone()),
+                seats: Arc::new(fake.clone()),
                 usage: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake),
@@ -143,6 +144,31 @@ fn a_personal_agent_is_saved_with_its_key_working_offline_by_default(cx: &mut Te
 }
 
 #[gpui_kit::test]
+fn the_instructions_of_an_agent_working_offline_are_saved_with_it(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    fake.set_pools(
+        &hub_id(),
+        vec![PoolChoice {
+            pool: PoolId::new("p1").unwrap(),
+            name: "Shared".into(),
+            accepts_personal: true,
+        }],
+    );
+    let page = page(cx, &fake);
+    page.click(item("cloud-agents-new", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    type_into(&page, "cloud-agent-name", "Scribe", cx);
+    type_into(&page, "cloud-agent-model", "gpt-x", cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    type_into(&page, "cloud-agent-instructions", "Answer briefly.", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    assert_eq!(fake.saved()[0].instructions, "Answer briefly.");
+}
+
+#[gpui_kit::test]
 fn a_form_missing_its_key_is_refused_before_anything_is_sent(cx: &mut TestAppContext) {
     let fake = FakeCloudAgents::default();
     fake.set_agents(&hub_id(), Vec::new());
@@ -202,4 +228,65 @@ fn a_hub_without_usage_shows_no_table(cx: &mut TestAppContext) {
     fake.set_agents(&hub_id(), Vec::new());
     let page = page(cx, &fake);
     assert!(!page.shows(item("cloud-agents-usage", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn instructions_typed_before_switching_to_online_only_are_not_sent(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    let page = page(cx, &fake);
+    page.click(item("cloud-agents-new", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    type_into(&page, "cloud-agent-name", "Scribe", cx);
+    type_into(&page, "cloud-agent-model", "gpt-x", cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    type_into(&page, "cloud-agent-instructions", "Answer briefly.", cx);
+    page.click(item("cloud-agent-offline", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(!page.shows(item("cloud-agent-instructions", KEY), cx));
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    let saved = fake.saved();
+    assert_eq!(saved.len(), 1);
+    assert!(!saved[0].work_offline);
+    assert_eq!(saved[0].instructions, "");
+}
+
+#[gpui_kit::test]
+fn editing_an_agent_starts_with_empty_instructions_that_are_saved_as_typed(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(
+        &hub_id(),
+        vec![agent("mine", "Scribe", AgentScope::Personal)],
+    );
+    fake.set_pools(
+        &hub_id(),
+        vec![PoolChoice {
+            pool: PoolId::new("p1").unwrap(),
+            name: "Shared".into(),
+            accepts_personal: true,
+        }],
+    );
+    let page = page(cx, &fake);
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert_eq!(fake.saved()[0].instructions, "", "empty removes them");
+
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    cx.run_until_parked();
+    page.render(cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    type_into(&page, "cloud-agent-instructions", "Answer briefly.", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    assert_eq!(fake.saved()[0].instructions, "Answer briefly.");
 }

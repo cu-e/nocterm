@@ -2,7 +2,10 @@
 //! person is offline. The key is write-only: it is read out of its field once, and an edit asks
 //! for it again because the definition is sealed anew.
 
-use gpui_kit::{AppContext as _, Context, Entity, Window, component::input::InputState};
+use gpui_kit::{
+    AppContext as _, Context, Entity, Window,
+    component::input::{InputState, TextareaState},
+};
 use nocterm_cloud_agents_model::{
     AgentId, DraftError, KeyInput, PersonalAgentDraft, PoolChoice, PoolId, PoolOffer, ProviderKind,
 };
@@ -15,6 +18,7 @@ pub(super) struct Form {
     endpoint: Entity<InputState>,
     model: Entity<InputState>,
     key: Entity<InputState>,
+    instructions: Entity<TextareaState>,
     provider: ProviderKind,
     work_offline: bool,
     pools: Vec<PoolChoice>,
@@ -58,6 +62,9 @@ impl Form {
             endpoint: field("Endpoint, empty for the provider's own", false, "", cx),
             model: field("Model", false, &model, cx),
             key: field("Provider key", true, "", cx),
+            instructions: cx.new(|cx| {
+                TextareaState::new(window, cx).placeholder("How the agent should behave")
+            }),
             provider: prefill
                 .as_ref()
                 .and_then(|each| each.provider)
@@ -80,6 +87,12 @@ impl Form {
 
     pub(super) fn inputs(&self) -> [&Entity<InputState>; 4] {
         [&self.name, &self.endpoint, &self.model, &self.key]
+    }
+
+    /// The instructions field. They are sealed with the definition, so an edit asks for them
+    /// again like the key.
+    pub(super) fn instructions_input(&self) -> &Entity<TextareaState> {
+        &self.instructions
     }
 
     pub(super) fn provider(&self) -> ProviderKind {
@@ -151,7 +164,7 @@ impl Form {
         } else {
             KeyInput::Replace(Secret::new(key))
         };
-        PersonalAgentDraft::new(
+        let draft = PersonalAgentDraft::new(
             &text(&self.name, cx),
             self.provider,
             &text(&self.endpoint, cx),
@@ -159,6 +172,13 @@ impl Form {
             key,
             self.work_offline,
             self.pool.clone(),
-        )
+        )?;
+        // The field is only shown while the agent works offline, and only a sealed definition
+        // carries instructions: a hidden field's text is not sent.
+        if !self.work_offline {
+            return Ok(draft);
+        }
+        let instructions = self.instructions.read(cx).value();
+        draft.with_instructions(&instructions)
     }
 }
