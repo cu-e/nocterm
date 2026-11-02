@@ -38,7 +38,10 @@ impl State {
             config.session_targets,
             durable.cleanup_work_bytes(),
         )?;
-        if create && execution.is_some() {
+        // The execution sections can arrive after `init` (a managed host appends them at each
+        // launch), and a daemon restore never creates the cursor itself, so a fresh
+        // identity always gets its inbox now.
+        if create {
             nocterm_hub_io::cloud::RunnerInbox::initialize_storage(
                 &config.state.join("inbox"),
                 &identity,
@@ -131,5 +134,18 @@ mod tests {
         assert_eq!(current.binding(), original.binding());
         drop(restored);
         assert!(State::open(crate::config::fixture(root), true).is_err());
+    }
+    #[test]
+    fn an_initialized_runner_has_its_inbox_before_any_execution_is_configured() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("runner");
+        drop(State::open(crate::config::fixture(root.clone()), true).unwrap());
+        assert!(
+            std::fs::read_dir(root.join("inbox"))
+                .unwrap()
+                .next()
+                .is_some(),
+            "the inbox cursor was not created by init"
+        );
     }
 }
