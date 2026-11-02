@@ -30,6 +30,8 @@ mod account_cloud;
 mod cloud_runtime;
 #[path = "hub/groups.rs"]
 mod groups;
+#[path = "hub/managed_agents.rs"]
+mod managed_agents;
 #[path = "hub/revocation.rs"]
 mod revocation;
 
