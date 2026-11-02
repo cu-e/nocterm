@@ -11,7 +11,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN cargo build --locked --release -p nocterm-runner \
+# Parallel jobs of the build; pass --build-arg CARGO_BUILD_JOBS=<n> to bound memory.
+ARG CARGO_BUILD_JOBS
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --locked --release -p nocterm-runner \
     && install -D target/release/nocterm-runner /out/nocterm-runner
 
 FROM debian:bookworm-slim
