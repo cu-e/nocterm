@@ -6,10 +6,7 @@
 //! changed only while the copy is in step with it.
 use super::*;
 use nocterm_connections_store::{ReplicationFailure, ReplicationStatus};
-use nocterm_workspace::UnlockVault;
-
-/// The action that signs in to a server; named, because its crate depends on this one.
-const SIGN_IN_ACTION: &str = "hubs::SignInToServer";
+use nocterm_workspace::{UnlockVault, request_sign_in};
 
 /// Whether the list may be changed while the copy is in the state `status`.
 pub(crate) fn editable(status: &ReplicationStatus) -> bool {
@@ -71,9 +68,7 @@ impl AccountNotice {
         match self {
             Self::Locked => window.dispatch_action(Box::new(UnlockVault), cx),
             Self::SignedOut => {
-                if let Ok(action) = cx.build_action(SIGN_IN_ACTION, None) {
-                    window.dispatch_action(action, cx);
-                }
+                request_sign_in(window, cx);
             }
             _ => {}
         }

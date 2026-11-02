@@ -69,3 +69,18 @@ gpui_kit::actions!(
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod sign_in_action_tests {
+    #[gpui_kit::test]
+    fn the_sign_in_action_other_features_dispatch_by_name_exists(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let action = cx
+                .build_action(nocterm_workspace::SIGN_IN_TO_SERVER_ACTION, None)
+                .expect("registered");
+            assert!(action.partial_eq(&crate::SignInToServer));
+        });
+    }
+}

@@ -8,12 +8,9 @@ use gpui_kit::{
 };
 use nocterm_ai::storage::AgentStorageError;
 use nocterm_hubs_model::HubError;
-use nocterm_workspace::UnlockVault;
+use nocterm_workspace::{UnlockVault, request_sign_in};
 
 use nocterm_agent_runtime::CatalogLoadError;
-
-/// The action that signs in to a server; named, because its crate depends on this one.
-const SIGN_IN_ACTION: &str = "hubs::SignInToServer";
 
 /// Why the account of this window cannot serve chats right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,9 +68,7 @@ impl AccountNotice {
                 window.dispatch_action(Box::new(UnlockVault), cx);
             }
             Self::SignedOut => {
-                if let Ok(action) = cx.build_action(SIGN_IN_ACTION, None) {
-                    window.dispatch_action(action, cx);
-                }
+                request_sign_in(window, cx);
             }
         }
     }
