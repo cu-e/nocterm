@@ -8,13 +8,14 @@
 //! yet and whose start the host refuses because it holds no pin for the account's key (the
 //! host's `stated_account_keys` is `none` and `pins_file` has no `accounts` entry). Setting
 //! `NOCTERM_HUB_AGENT_CHAT` (any value) opens a chat on the demo agent, which needs a runner
-//! that can run tools; `NOCTERM_E2E_RUNNER_IMAGE` additionally checks `docker ps` for it.
+//! that can run tools, sends a prompt and expects the model's reply; `NOCTERM_E2E_RUNNER_IMAGE`
+//! additionally checks `docker ps` for it.
 use super::{hub, links, sign_in};
 use futures::executor::block_on;
 use nocterm_cloud_agents_model::{
     AgentId, CloudAgentError, CloudAgentLauncher as _, StartOutcome, StartStep, StepSink,
 };
-use nocterm_cloud_agents_model::{ChatHost, CloudChatLauncher as _};
+use nocterm_cloud_agents_model::{AgentSeats as _, ChatHost, CloudChatLauncher as _};
 use nocterm_hub_io::{ChatServices, CloudAgentsLink, CloudChatsLink};
 use nocterm_hub_model::agents::ProvisionFailure;
 use std::sync::{Arc, Mutex};
@@ -44,6 +45,25 @@ fn recording() -> (StepSink, Arc<Mutex<Vec<&'static str>>>) {
         })
     };
     (sink, seen)
+}
+
+/// Starts the seat, asking again while the hub is still deleting the one just removed: the hub
+/// names that as a transient refusal, not as a failure.
+fn start_when_deleted(
+    launcher: &CloudAgentsLink,
+    hub: &nocterm_hubs_model::HubId,
+    agent: &AgentId,
+    steps: &StepSink,
+) -> StartOutcome {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        match block_on(launcher.start(hub, agent, steps.clone())) {
+            Err(CloudAgentError::SeatBeingDeleted) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            other => return other.unwrap(),
+        }
+    }
 }
 
 #[test]
@@ -126,10 +146,13 @@ fn a_started_agent_opens_a_chat_and_its_runner_container_runs() {
     sign_in(&links, &hub).unwrap();
     let launcher = CloudAgentsLink::new(links.clone(), dir.path().join("pins"));
     let (steps, _) = recording();
-    let mut outcome = block_on(launcher.start(&hub.id(), &agent, steps.clone())).unwrap();
+    // A fresh seat every run: a runner initialized by an older build keeps its old state. The
+    // start right after the removal is what a person does, and it waits for the deletion.
+    block_on(launcher.remove(&hub.id(), &agent)).unwrap();
+    let mut outcome = start_when_deleted(&launcher, &hub.id(), &agent, &steps);
     if let StartOutcome::NeedsPoolTrust(offer) = outcome {
         block_on(launcher.pin_pool(&hub.id(), &offer)).unwrap();
-        outcome = block_on(launcher.start(&hub.id(), &agent, steps)).unwrap();
+        outcome = start_when_deleted(&launcher, &hub.id(), &agent, &steps);
     }
     assert!(matches!(outcome, StartOutcome::Ready(_)), "{outcome:?}");
 
@@ -139,6 +162,14 @@ fn a_started_agent_opens_a_chat_and_its_runner_container_runs() {
     let model = std::env::var("NOCTERM_HUB_AGENT_MODEL").unwrap_or_else(|_| "qwen2.5:0.5b".into());
     let opened = block_on(chats.create(&hub.id(), ChatHost::Agent { agent, model })).unwrap();
     assert!(opened.source.supports_prompt());
+
+    // The model answers through the host's broker, which holds the only provider credential.
+    let reply = super::chat_exchange::reply_to(
+        &opened.source,
+        "Reply with one short sentence.",
+        std::time::Duration::from_secs(60),
+    );
+    assert!(!reply.trim().is_empty(), "the model answered nothing");
 
     if let Ok(image) = std::env::var("NOCTERM_E2E_RUNNER_IMAGE") {
         let listed = std::process::Command::new("docker")

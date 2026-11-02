@@ -33,9 +33,7 @@ fn seat_being_deleted(error: &ClientError) -> bool {
 
 pub(crate) fn agent_error(address: &HubAddress, error: AgentError) -> CloudAgentError {
     match error {
-        AgentError::Hub(client) if seat_being_deleted(&client) => {
-            CloudAgentError::SeatBeingDeleted
-        }
+        AgentError::Hub(client) if seat_being_deleted(&client) => CloudAgentError::SeatBeingDeleted,
         AgentError::Unsupported => CloudAgentError::Unsupported,
         AgentError::Conflict { .. } => CloudAgentError::Conflict,
         AgentError::Refused(reason) => CloudAgentError::Refused(match reason {
@@ -110,7 +108,10 @@ mod tests {
 
     #[test]
     fn another_invalid_request_stays_a_hub_failure() {
-        let error = agent_error(&address(), invalid("invalid request: the agent is disabled"));
+        let error = agent_error(
+            &address(),
+            invalid("invalid request: the agent is disabled"),
+        );
         assert!(matches!(error, CloudAgentError::Hub(_)));
     }
 
