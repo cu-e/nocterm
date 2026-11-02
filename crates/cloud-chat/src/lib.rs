@@ -9,7 +9,8 @@
 //! Ports used: cloud-model::projection::ports::CapturedConversationSource and
 //! agent-runtime::history_admission. Ports provided: agent-chat::ConversationSource.
 //! Settings sections: none. Globals: none.
-//! Invariants: source is captured before enqueue and rechecked after every await;
+//! Invariants: an accepted own prompt issues one inference grant for its run (ADR 0129);
+//! source is captured before enqueue and rechecked after every await;
 //! atomic publication is delegated to the original native membership. Accepted
 //! prompts enter only through verified PromptAccepted. A retry retains its ID and
 //! durable body. Captured tool-card choices preserve the exact intent/args/run,
@@ -288,7 +289,9 @@ impl CloudChat {
         if coordinates != self.coordinates() {
             return Err(ProjectionError::Stale.into());
         }
-        if self.projection().phase() == ConversationPhase::Deleted {
+        if self.projection().phase() == ConversationPhase::Deleted
+            || (action == ConversationAction::Allow && !self.can_allow())
+        {
             return Err(ProjectionError::Unavailable.into());
         }
         self.pending.require_room()?;
@@ -396,13 +399,37 @@ impl CloudChat {
         &mut self,
         next: Arc<Allocated<ConversationProjection>>,
         accepted: &[CommandId],
-    ) -> Result<(), ProjectionError> {
+    ) -> Result<bool, ProjectionError> {
         let source = self.source.clone();
+        let mut prompt = false;
         source.with_current(&mut || {
             self.projection = Some(next.clone());
-            self.pending.accepted(accepted);
+            prompt = self.pending.accepted(accepted);
             self.error = None;
-        })
+        })?;
+        Ok(prompt)
+    }
+    /// Whether the displayed run waits for the person's permission to use the model.
+    pub(crate) fn can_allow(&self) -> bool {
+        self.source.supports_prompt()
+            && matches!(
+                self.projection().phase(),
+                ConversationPhase::Queued | ConversationPhase::NeedsGrant
+            )
+            && self.projection().run().is_some()
+            && !self.pending.has_inference_grant()
+    }
+    /// The person's own prompt was accepted: allow its run now, within the chat's bounds
+    /// (ADR 0129). A refusal leaves the explicit Allow action available.
+    fn allow_accepted_prompt(&mut self, cx: &mut Context<Self>) {
+        if !self.can_allow() {
+            return;
+        }
+        let (waiter, _) = oneshot::channel();
+        if let Err(error) = self.enqueue(self.coordinates(), ConversationAction::Allow, waiter, cx)
+        {
+            self.record_error(error);
+        }
     }
     fn prepare_replay(
         &self,
@@ -436,8 +463,11 @@ impl CloudChat {
         if next.resident_bytes() > allocation.bytes() {
             return Err(ProjectionError::Capacity.into());
         }
-        self.publish(Arc::new(Allocated::new(next, allocation)), &accepted)?;
+        let prompt = self.publish(Arc::new(Allocated::new(next, allocation)), &accepted)?;
         self.residency.published(payload);
+        if prompt {
+            self.allow_accepted_prompt(cx);
+        }
         cx.notify();
         self.persist_projection(cx);
         Ok(())

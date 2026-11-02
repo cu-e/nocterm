@@ -128,6 +128,17 @@ impl AgentPanel {
         };
         self.retain_conversation_action(identity, work, clear, cx);
     }
+    /// Sends the person's permission for the displayed run, if it is still the shown source.
+    pub(super) fn allow_conversation_run(&mut self, identity: EntityId, cx: &mut Context<Self>) {
+        if self.conversation_identity() != Some(identity) {
+            return;
+        }
+        self.perform_conversation_action(
+            nocterm_ai::conversation::ConversationAction::Allow,
+            None,
+            cx,
+        );
+    }
     pub(super) fn perform_rendered_stop(
         &mut self,
         identity: EntityId,

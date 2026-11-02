@@ -585,6 +585,13 @@ coordinator answers it with the memoized first-touch chat claim, which publishes
 empty head and the catalog row, so a chat the device just created becomes visible; a repeated
 grant changes nothing ([ADR 0122](../adr/0122-cloud-chat-creation-protocol.md)).
 
+A prompt the runner accepts only queues its run; the run starts when a signed inference grant
+for it installs. The device issues that grant: the chat sends one `IssueGrant` inference
+command when the runner accepts the person's own prompt, with the prompt's own bounds, and
+an Allow action issues it for any other waiting run. `ConversationPromptPolicy` builds the
+payload, so the grant never exceeds the configured per-run limits
+([ADR 0129](../adr/0129-the-device-allows-a-queued-run-to-use-the-model.md)).
+
 ### Native account admission
 
 `nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache, replica-space and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Native administrator and recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

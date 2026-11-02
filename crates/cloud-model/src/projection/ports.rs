@@ -69,7 +69,7 @@ impl ConversationCommand {
     pub fn action_bytes(action: &ConversationAction) -> usize {
         4096usize.saturating_add(match action {
             ConversationAction::Prompt(text) => text.len().saturating_mul(2),
-            ConversationAction::Stop => 0,
+            ConversationAction::Stop | ConversationAction::Allow => 0,
         })
     }
 }

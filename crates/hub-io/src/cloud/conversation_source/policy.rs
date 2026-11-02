@@ -109,14 +109,8 @@ impl ConversationPromptPolicy {
             ),
             None => (None, None),
         };
-        let inference = wire::InferenceLimits {
-            calls: self.budget.calls(),
-            turns: self.budget.turns(),
-            request_bytes: self.budget.input_bytes() as u64,
-            output_bytes: self.budget.output_bytes() as u64,
-            output_tokens: self.budget.output_tokens(),
-            spend_micros: self.spend,
-            deadline_ms: i64::try_from(
+        let inference = self.limits(
+            i64::try_from(
                 preparation
                     .issued()
                     .as_millis()
@@ -124,7 +118,7 @@ impl ConversationPromptPolicy {
                     .ok_or(ProjectionError::InvalidRecord)?,
             )
             .map_err(|_| ProjectionError::InvalidRecord)?,
-        };
+        );
         Ok(wire::CloudCommandPayload::SubmitPrompt(Box::new(
             wire::PromptPayload {
                 content: vec![wire::PromptPart::Text(text)],
@@ -134,6 +128,52 @@ impl ConversationPromptPolicy {
                 inference,
             },
         )))
+    }
+    /// The run's model allowance: the prompt's own bounds, issued now, so the person's
+    /// permission never exceeds what the chat's setup configured (ADR 0129).
+    pub(super) fn inference_grant(
+        &self,
+        preparation: ConversationPreparation,
+    ) -> Result<wire::CloudCommandPayload<'static>, ProjectionError> {
+        let deadline = i64::try_from(
+            preparation
+                .issued()
+                .as_millis()
+                .checked_add(self.inference_lifetime_ms)
+                .ok_or(ProjectionError::InvalidRecord)?,
+        )
+        .map_err(|_| ProjectionError::InvalidRecord)?;
+        let issued = i64::try_from(preparation.issued().as_millis())
+            .map_err(|_| ProjectionError::InvalidRecord)?;
+        Ok(wire::CloudCommandPayload::IssueGrant(Box::new(
+            wire::GrantPayload::Inference {
+                grant: wire::GrantReference {
+                    id: nocterm_keys::random_bytes().map_err(|_| ProjectionError::Unavailable)?,
+                    epoch: 1,
+                },
+                model: wire::ModelSelection {
+                    provider: id(self.selection.provider().as_str())?,
+                    model: id(self.selection.model().as_str())?,
+                    pricing_policy: id(self.selection.pricing().as_str())?,
+                },
+                window: wire::GrantWindow {
+                    issued_at_ms: issued,
+                    expires_at_ms: deadline,
+                },
+                limits: self.limits(deadline),
+            },
+        )))
+    }
+    fn limits(&self, deadline_ms: i64) -> wire::InferenceLimits {
+        wire::InferenceLimits {
+            calls: self.budget.calls(),
+            turns: self.budget.turns(),
+            request_bytes: self.budget.input_bytes() as u64,
+            output_bytes: self.budget.output_bytes() as u64,
+            output_tokens: self.budget.output_tokens(),
+            spend_micros: self.spend,
+            deadline_ms,
+        }
     }
     fn digest_destination(hash: &mut Sha256, destination: &RunDestination) {
         let principal = destination.target().principal().as_str();
@@ -267,6 +307,18 @@ impl ConversationPolicy {
             .ok_or(ProjectionError::Unavailable)?
             .prompt(text, preparation)
     }
+    pub(super) fn inference_grant(
+        &self,
+        preparation: ConversationPreparation,
+    ) -> Result<wire::CloudCommandPayload<'static>, ProjectionError> {
+        if preparation.policy() != self.fingerprint {
+            return Err(ProjectionError::WrongSource);
+        }
+        self.prompt
+            .as_ref()
+            .ok_or(ProjectionError::Unavailable)?
+            .inference_grant(preparation)
+    }
 }
 
 impl ConversationPolicy {
@@ -393,5 +445,72 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    fn grant_of(
+        payload: wire::CloudCommandPayload<'_>,
+    ) -> (
+        wire::GrantReference,
+        wire::ModelSelection,
+        wire::InferenceLimits,
+    ) {
+        let wire::CloudCommandPayload::IssueGrant(grant) = payload else {
+            panic!("an inference grant is an IssueGrant command");
+        };
+        let wire::GrantPayload::Inference {
+            grant,
+            model,
+            limits,
+            ..
+        } = *grant
+        else {
+            panic!("expected an inference grant");
+        };
+        (grant, model, limits)
+    }
+
+    #[test]
+    fn an_inference_grant_carries_exactly_the_prompt_bounds() {
+        let policy = default_destination();
+        let prompt = submitted(&policy);
+        let (grant, model, limits) =
+            grant_of(policy.inference_grant(preparation(&policy)).unwrap());
+        assert_eq!(grant.epoch, 1);
+        assert_eq!(model, prompt.model);
+        assert_eq!(limits, prompt.inference);
+    }
+
+    #[test]
+    fn each_inference_grant_has_its_own_identity() {
+        let policy = default_destination();
+        let first = grant_of(policy.inference_grant(preparation(&policy)).unwrap()).0;
+        let second = grant_of(policy.inference_grant(preparation(&policy)).unwrap()).0;
+        assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn an_inference_grant_needs_a_prompting_policy_and_its_own_preparation() {
+        let controls = ConversationPolicy::controls(60_000).unwrap();
+        let prepared = ConversationPreparation::new(
+            Timestamp::from_millis(1),
+            Timestamp::from_millis(10_000),
+            controls.fingerprint(),
+        )
+        .unwrap();
+        assert!(matches!(
+            controls.inference_grant(prepared),
+            Err(ProjectionError::Unavailable)
+        ));
+        let prompting = ConversationPolicy::for_prompt(default_destination());
+        let foreign = ConversationPreparation::new(
+            Timestamp::from_millis(1),
+            Timestamp::from_millis(10_000),
+            Fingerprint::from_bytes([9; 32]),
+        )
+        .unwrap();
+        assert!(matches!(
+            prompting.inference_grant(foreign),
+            Err(ProjectionError::WrongSource)
+        ));
     }
 }

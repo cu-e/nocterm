@@ -60,6 +60,7 @@ impl ConversationSource for CloudConversation {
             can_fork: false,
             can_prompt: chat.source.supports_prompt()
                 && chat.projection().phase() != ConversationPhase::Deleted,
+            can_allow: chat.can_allow(),
             can_stop: chat.projection().run().is_some()
                 && !matches!(
                     chat.projection().phase(),

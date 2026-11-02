@@ -33,10 +33,18 @@ pub(super) fn prepare(
     {
         return Err(ProjectionError::WrongSource);
     }
-    if matches!(&action, ConversationIntent::Stop) && coordinates.run.is_none() {
+    if matches!(
+        &action,
+        ConversationIntent::Stop | ConversationIntent::GrantInference
+    ) && coordinates.run.is_none()
+    {
         return Err(ProjectionError::WrongRun);
     }
-    if matches!(&action, ConversationIntent::Prompt(_)) && !core.policy.allows_prompt() {
+    if matches!(
+        &action,
+        ConversationIntent::Prompt(_) | ConversationIntent::GrantInference
+    ) && !core.policy.allows_prompt()
+    {
         return Err(ProjectionError::Unavailable);
     }
     if let ConversationIntent::AnswerApproval(request) = &action
@@ -207,13 +215,20 @@ fn seal(
         ConversationIntent::Prompt(_) => CommandKind::SubmitPrompt,
         ConversationIntent::Stop => CommandKind::Stop,
         ConversationIntent::AnswerApproval(_) => CommandKind::ResolveApproval,
-        ConversationIntent::GrantProvider(_) => CommandKind::IssueGrant,
+        ConversationIntent::GrantProvider(_) | ConversationIntent::GrantInference => {
+            CommandKind::IssueGrant
+        }
     };
     let context = CommandContext {
         nonce: random_bytes().map_err(|_| ProjectionError::Unavailable)?,
         expected_chat_revision: command.coordinates.control.get(),
         run: match kind {
-            CommandKind::SubmitPrompt | CommandKind::IssueGrant => None,
+            CommandKind::SubmitPrompt => None,
+            CommandKind::IssueGrant
+                if !matches!(&command.action, ConversationIntent::GrantInference) =>
+            {
+                None
+            }
             _ => command.coordinates.run.as_ref().map(|run| RunCoordinate {
                 id: *run.run().as_bytes(),
                 expected_epoch: run.epoch().get(),
@@ -439,6 +454,7 @@ pub(super) fn payload<'a>(
             ))
         }
         ConversationIntent::GrantProvider(access) => provider_grant(access)?,
+        ConversationIntent::GrantInference => policy.inference_grant(preparation)?,
     })
 }
 

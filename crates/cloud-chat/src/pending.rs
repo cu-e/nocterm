@@ -178,15 +178,31 @@ impl PendingCommands {
             self.0.remove(&id);
         }
     }
-    pub(crate) fn accepted(&mut self, accepted: &[CommandId]) {
+    /// Whether a pending inference grant already waits for the runner.
+    pub(crate) fn has_inference_grant(&self) -> bool {
+        self.0.values().any(|entry| {
+            matches!(
+                entry.retained.value().action,
+                nocterm_cloud_model::projection::ConversationIntent::GrantInference
+            )
+        })
+    }
+    /// Retires the accepted commands; reports whether one of them was a prompt.
+    pub(crate) fn accepted(&mut self, accepted: &[CommandId]) -> bool {
+        let mut prompt = false;
         for id in accepted {
             if let Some(mut entry) = self.0.remove(id) {
+                prompt |= matches!(
+                    entry.retained.value().action,
+                    nocterm_cloud_model::projection::ConversationIntent::Prompt(_)
+                );
                 entry.receipt.set(Some(true));
                 if let Some(waiter) = entry.waiter.take() {
                     let _ = waiter.send(Ok(()));
                 }
             }
         }
+        prompt
     }
     pub(crate) fn invalidate(&mut self) {
         for (_, mut entry) in std::mem::take(&mut self.0) {

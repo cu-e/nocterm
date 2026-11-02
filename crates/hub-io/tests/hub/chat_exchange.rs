@@ -3,7 +3,10 @@
 //! The chat view drives the same captured source this way: it prepares and stages the command in
 //! the encrypted outbox, delivers it, and replays the runner's verified pages into a projection.
 //! The test is that view with its allocations taken from a plain receive budget.
-use nocterm_ai::{conversation::ConversationAction, thread::Entry};
+use nocterm_ai::{
+    conversation::{ConversationAction, ConversationPhase},
+    thread::Entry,
+};
 use nocterm_cloud_model::coordinator::{CommandReceiveBudget, IntakeLane, IntakeLimits};
 use nocterm_cloud_model::projection::{
     ConversationProjection, MAX_REPLAY_BYTES, ProjectionBatch,
@@ -33,6 +36,47 @@ fn lease(budget: &CommandReceiveBudget, bytes: usize, payloads: usize) -> Alloca
     AllocationLease::new(bytes, payloads, reserved)
 }
 
+/// Stages and delivers one action against the projection's current run and control revision.
+fn send(
+    source: &Arc<dyn CapturedConversationSource>,
+    budget: &CommandReceiveBudget,
+    projection: &ConversationProjection,
+    action: ConversationAction,
+    patience: Duration,
+) {
+    let coordinates = ConversationCoordinates {
+        binding: projection.binding().clone(),
+        run: projection.run().cloned(),
+        control: projection.control(),
+    };
+    let command: ConversationCommand = source
+        .prepare(coordinates, action.into())
+        .expect("the action is prepared");
+    let id = command.id;
+    let stage = source
+        .allocation_requirements(ConversationWork::Stage { command: &command })
+        .unwrap();
+    let held = lease(budget, command.resident_bytes().saturating_add(4096), 1);
+    let command = Arc::new(Allocated::new(command, held));
+    within(
+        "staging the command",
+        patience,
+        source.stage(command, lease(budget, stage.bytes(), stage.payloads())),
+    )
+    .expect("the command is committed to the outbox");
+    let delivered = within(
+        "delivering the command",
+        patience,
+        source.deliver(id, lease(budget, stage.bytes(), stage.payloads())),
+    )
+    .expect("the command is delivered");
+    assert_ne!(
+        delivered,
+        CommandDelivery::NotFound,
+        "the hub never saw the command"
+    );
+}
+
 /// Sends `prompt` and returns the assistant's reply once the runner has published one, or
 /// panics with the transcript when none arrives within `patience`.
 pub(crate) fn reply_to(
@@ -42,41 +86,14 @@ pub(crate) fn reply_to(
 ) -> String {
     let budget = CommandReceiveBudget::new(IntakeLimits::default());
     let mut projection = ConversationProjection::new(source.binding().clone());
-    let coordinates = ConversationCoordinates {
-        binding: projection.binding().clone(),
-        run: None,
-        control: projection.control(),
-    };
-    let command: ConversationCommand = source
-        .prepare(
-            coordinates,
-            ConversationAction::Prompt(prompt.to_owned()).into(),
-        )
-        .expect("the prompt is prepared");
-    let id = command.id;
-    let stage = source
-        .allocation_requirements(ConversationWork::Stage { command: &command })
-        .unwrap();
-    let held = lease(&budget, command.resident_bytes().saturating_add(4096), 1);
-    let command = Arc::new(Allocated::new(command, held));
-    within(
-        "staging the prompt",
+    send(
+        source,
+        &budget,
+        &projection,
+        ConversationAction::Prompt(prompt.to_owned()),
         patience,
-        source.stage(command, lease(&budget, stage.bytes(), stage.payloads())),
-    )
-    .expect("the prompt is committed to the outbox");
-    let delivered = within(
-        "delivering the prompt",
-        patience,
-        source.deliver(id, lease(&budget, stage.bytes(), stage.payloads())),
-    )
-    .expect("the prompt is delivered");
-    assert_ne!(
-        delivered,
-        CommandDelivery::NotFound,
-        "the hub never saw the prompt"
     );
-
+    let mut allowed = false;
     let deadline = Instant::now() + patience;
     while Instant::now() < deadline {
         let need = source
@@ -88,6 +105,23 @@ pub(crate) fn reply_to(
         let work = lease(&budget, need.bytes(), need.payloads());
         if let Some(page) = next_page(source, &projection, work) {
             projection.apply(page.value()).expect("the page applies");
+        }
+        // The view allows the run its own prompt queued as soon as the runner reports it.
+        if !allowed
+            && projection.run().is_some()
+            && matches!(
+                projection.phase(),
+                ConversationPhase::Queued | ConversationPhase::NeedsGrant
+            )
+        {
+            send(
+                source,
+                &budget,
+                &projection,
+                ConversationAction::Allow,
+                patience,
+            );
+            allowed = true;
         }
         let reply = assistant_text(&projection);
         if !reply.trim().is_empty() {

@@ -124,3 +124,4 @@ acceptance; a later record supersedes an earlier one.
 | [0126](0126-own-runner-provider-lease.md) | A device leases a personal agent's key to the own runner |
 | [0127](0127-managed-runner-agent-policy.md) | The managed runner enforces the agent definition policy from boot v2 |
 | [0128](0128-agents-transfer-files-through-the-shared-transfer-runtime.md) | Agents transfer files through the shared transfer runtime, relaying between servers |
+| [0129](0129-the-device-allows-a-queued-run-to-use-the-model.md) | The device allows a queued Cloud run to use the model |

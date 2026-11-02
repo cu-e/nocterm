@@ -36,6 +36,8 @@ impl Eq for ApprovalRequest {}
 pub enum ConversationIntent {
     Prompt(String),
     Stop,
+    /// Lets the run named by the command coordinates use the model (ADR 0129).
+    GrantInference,
     AnswerApproval(Box<ApprovalRequest>),
     /// Hands the runner a sealed lease of the provider credential.
     GrantProvider(Box<ProviderAccess>),
@@ -45,6 +47,7 @@ impl From<ConversationAction> for ConversationIntent {
         match action {
             ConversationAction::Prompt(text) => Self::Prompt(text),
             ConversationAction::Stop => Self::Stop,
+            ConversationAction::Allow => Self::GrantInference,
         }
     }
 }
@@ -53,6 +56,7 @@ impl PartialEq<ConversationAction> for ConversationIntent {
         match (self, other) {
             (Self::Prompt(a), ConversationAction::Prompt(b)) => a == b,
             (Self::Stop, ConversationAction::Stop) => true,
+            (Self::GrantInference, ConversationAction::Allow) => true,
             _ => false,
         }
     }
@@ -61,7 +65,7 @@ impl ConversationIntent {
     pub fn resident_bytes(&self) -> usize {
         4096usize.saturating_add(match self {
             Self::Prompt(text) => text.len().saturating_mul(2),
-            Self::Stop | Self::AnswerApproval(_) => 0,
+            Self::Stop | Self::GrantInference | Self::AnswerApproval(_) => 0,
             Self::GrantProvider(access) => access.resident_bytes(),
         })
     }

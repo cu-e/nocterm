@@ -170,6 +170,7 @@ fn captured_conversation_preserves_edited_draft_and_delivery_after_detach(cx: &m
 }
 
 mod context_usage;
+mod inference_allow;
 
 #[gpui_kit::test]
 fn captured_conversation_retries_one_original_prompt_after_pending_and_lost_ack(
@@ -244,10 +245,18 @@ fn assert_late_admission_finishes_original_input(
         .queue(projection.page(vec![prompt_event(&run_binding(1), "accepted original", id)]))
         .unwrap();
     cx.run_until_parked();
+    // The accepted prompt's run is allowed once, on its own.
+    let allowed = source.effects().staged;
+    assert_eq!(allowed[..before.len()], before);
+    assert_eq!(allowed.len(), before.len() + 1);
+    assert!(matches!(
+        source.staged(allowed[before.len()]).unwrap().action,
+        nocterm_cloud_model::projection::ConversationIntent::GrantInference
+    ));
     cx.update_window(f.handle, |_, window, cx| window.click("agent-send", cx))
         .unwrap();
     cx.run_until_parked();
-    assert_eq!(source.effects().staged, before);
+    assert_eq!(source.effects().staged, allowed);
     cx.update(|cx| assert!(f.panel.read(cx).composer_text(cx).is_empty()));
 }
 

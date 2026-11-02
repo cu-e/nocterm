@@ -709,3 +709,13 @@ fn approval_cards_preserve_expired_facts_and_retire_finite_pending_on_actual_sto
         .unwrap();
     assert!(projection.approvals().next().is_none());
 }
+
+#[test]
+fn allowing_a_run_is_the_inference_grant_intent_and_carries_no_payload() {
+    use nocterm_ai::conversation::ConversationAction;
+    let intent = ConversationIntent::from(ConversationAction::Allow);
+    assert_eq!(intent, ConversationIntent::GrantInference);
+    assert!(intent == ConversationAction::Allow);
+    assert!(intent != ConversationAction::Stop);
+    assert_eq!(intent.resident_bytes(), 4096);
+}

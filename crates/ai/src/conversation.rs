@@ -30,6 +30,8 @@ pub struct ConversationView<'a> {
     /// Presentation capabilities; native admission still rechecks authority.
     pub can_prompt: bool,
     pub can_stop: bool,
+    /// The run waits for the person to allow model use (Cloud chats; ADR 0129).
+    pub can_allow: bool,
     pub updated_at: u64,
     pub pending_commands: usize,
 }
@@ -38,4 +40,6 @@ pub struct ConversationView<'a> {
 pub enum ConversationAction {
     Prompt(String),
     Stop,
+    /// Allows the waiting run to use the model within the chat's configured bounds.
+    Allow,
 }

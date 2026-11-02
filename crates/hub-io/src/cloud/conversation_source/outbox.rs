@@ -193,6 +193,7 @@ pub(super) fn intent_fingerprint(command: &ConversationCommand) -> Fingerprint {
         nocterm_cloud_model::projection::ConversationIntent::AnswerApproval(request) => {
             approval_fingerprint(&mut hash, request)
         }
+        nocterm_cloud_model::projection::ConversationIntent::GrantInference => hash.update([5]),
         nocterm_cloud_model::projection::ConversationIntent::GrantProvider(access) => {
             hash.update([4]);
             hash.update(access.grant());

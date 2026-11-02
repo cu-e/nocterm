@@ -62,6 +62,7 @@ impl ConversationSource for LocalConversation {
             can_fork: true,
             can_prompt: !thread.session_sign_in_required(),
             can_stop: thread.session_generating() || thread.queued_prompt_ids().len() != 0,
+            can_allow: false,
             phase: if thread.session_generating() {
                 ConversationPhase::Running
             } else if thread.has_pending_approvals() {
@@ -133,6 +134,7 @@ impl ConversationActions for LocalActions {
                     Ok(false) => Err(ConversationError::Unavailable),
                     Err(error) => Err(error.into_conversation()),
                 },
+                ConversationAction::Allow => Err(ConversationError::Unavailable),
                 ConversationAction::Stop => {
                     if thread.session_ticket() != self.ticket {
                         return Err(ConversationError::Stale);

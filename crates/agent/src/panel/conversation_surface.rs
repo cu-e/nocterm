@@ -117,6 +117,7 @@ impl ConversationSurface {
             allowed = match &action {
                 ConversationAction::Prompt(_) => view.can_prompt,
                 ConversationAction::Stop => view.can_stop,
+                ConversationAction::Allow => view.can_allow,
             }
         })?;
         if !allowed {

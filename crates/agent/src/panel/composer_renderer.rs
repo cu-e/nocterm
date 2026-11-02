@@ -77,9 +77,11 @@ impl ComposerRenderer {
     ) -> AnyElement {
         let mut can_prompt = false;
         let mut can_stop = false;
+        let mut can_allow = false;
         let _ = source.with_view(cx, &mut |view| {
             can_prompt = view.can_prompt;
             can_stop = view.can_stop;
+            can_allow = view.can_allow;
         });
         let empty = composer.text(cx).trim().is_empty();
         let stop = empty && can_stop;
@@ -103,6 +105,9 @@ impl ComposerRenderer {
                     .min_w_0()
                     .when(!can_prompt, |item| item.child("New prompts unavailable")),
             )
+            .when(can_allow, |row| {
+                row.child(Self::allow_button(source.identity(), cx))
+            })
             .child(send)
             .into_any_element();
         let input = Self::render_input(composer, cx);
@@ -341,6 +346,17 @@ impl ComposerRenderer {
             composer.input_ticket(cx).ok(),
             cx,
         )
+    }
+    /// Lets a waiting run use the model; shown only while the run waits for permission.
+    fn allow_button(origin: gpui_kit::EntityId, cx: &mut Context<AgentPanel>) -> AnyElement {
+        Button::new("agent-allow-run")
+            .small()
+            .label("Allow")
+            .accessibility_label("Allow this run to use the model")
+            .flex_shrink_0()
+            .tooltip("Allow this run to use the model")
+            .on_click(cx.listener(move |panel, _, _, cx| panel.allow_conversation_run(origin, cx)))
+            .into_any_element()
     }
     fn send_button(
         origin: gpui_kit::EntityId,

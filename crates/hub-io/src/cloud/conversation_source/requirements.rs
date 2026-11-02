@@ -10,7 +10,8 @@ fn for_action_body(
 ) -> Result<usize, ProjectionError> {
     let text = match action {
         nocterm_ai::conversation::ConversationAction::Prompt(text) => text.len(),
-        nocterm_ai::conversation::ConversationAction::Stop => 0,
+        nocterm_ai::conversation::ConversationAction::Stop
+        | nocterm_ai::conversation::ConversationAction::Allow => 0,
     };
     body_size(text)
 }
@@ -24,6 +25,7 @@ pub(super) fn stage(command: &ConversationCommand) -> Result<usize, ProjectionEr
     match &command.action {
         nocterm_cloud_model::projection::ConversationIntent::Prompt(text) => body_work(text.len()),
         nocterm_cloud_model::projection::ConversationIntent::Stop
+        | nocterm_cloud_model::projection::ConversationIntent::GrantInference
         | nocterm_cloud_model::projection::ConversationIntent::AnswerApproval(_) => body_work(0),
         nocterm_cloud_model::projection::ConversationIntent::GrantProvider(access) => {
             body_work(access.resident_bytes())

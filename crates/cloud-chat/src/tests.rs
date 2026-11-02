@@ -11,6 +11,8 @@ use nocterm_cloud_model::projection::{
 };
 use std::{rc::Rc, sync::Arc};
 
+mod inference_grant;
+
 fn installation(
     cx: &mut TestAppContext,
 ) -> (
@@ -261,7 +263,8 @@ async fn durable_stage_hub_delivery_and_runner_acceptance_remain_distinct(cx: &m
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(chat.read(cx).pending_commands().is_empty());
+        // Only the grant of the accepted prompt's run is still on its way.
+        assert_eq!(chat.read(cx).pending_commands().len(), 1);
         assert_eq!(chat.read(cx).projection().transcript().entries.len(), 1);
     });
 }
@@ -302,7 +305,7 @@ async fn lost_ack_retries_the_original_id_and_accepted_replay_adds_one_user_row(
     cx.run_until_parked();
     cx.update(|cx| {
         let chat = chat.read(cx);
-        assert!(chat.pending_commands().is_empty());
+        assert_eq!(chat.pending_commands().len(), 1);
         assert_eq!(chat.projection().transcript().entries.len(), 1);
         assert!(matches!(
             &chat.projection().transcript().entries[0],
