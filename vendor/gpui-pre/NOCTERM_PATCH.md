@@ -155,3 +155,15 @@ which focus, activation and theme changes request. Reading another entity while
 rendering does not redraw a cached view, as upstream. The regression test
 `nested_cached_views_survive_their_ancestors_reuse` covers reuse after a copied frame
 and input on the moved output.
+
+Content-sized caching adds `cached_to_content` to `Entity` and `AnyView` in
+`src/view.rs`. Upstream lays a cached view out from its style alone, so a view whose
+size follows its content (a composer that grows with its text, a status-bar widget)
+cannot be cached. A view cached to its content lays its content out, as an uncached
+view does, whenever it draws again; a frame that reuses it lays it out at its style
+with the size its content last took along the axes the style leaves auto. A reused
+size that the content no longer fits, because the bounds changed, lays the content
+out again the next frame. `AnyView::observe` calls back on the notifications of a view
+held without its type, for an owner that draws part of it from a cached view of its
+own. The regression test `views_cached_to_content_keep_their_contents_size` covers
+the measured size, its reuse and a notified size change.

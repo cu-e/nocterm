@@ -13,8 +13,8 @@ use anyhow::Result;
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, Axis, Bounds, Context, Div, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement,
-    Pixels, Point, Render, SharedString, Stateful, Styled as _, Subscription, WeakEntity, Window,
-    div, prelude::FluentBuilder as _, px,
+    Pixels, Point, Render, SharedString, Stateful, StyleRefinement, Styled as _, Subscription,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::{
@@ -133,6 +133,14 @@ impl DockArea {
         cx: &mut Context<Self>,
     ) -> Self {
         PanelRegistry::init(cx);
+        // Nocterm: the groups are drawn as cached views; the area's own change draws
+        // them again.
+        cx.observe_self(|area, cx| {
+            for group in area.groups.values() {
+                group.entity.update(cx, |_, cx| cx.notify());
+            }
+        })
+        .detach();
 
         Self {
             id: id.into(),
@@ -1007,8 +1015,14 @@ impl DockArea {
                     .child(group)
                     .into_any_element()
             }
+            // Nocterm: cached, so a change in one group draws only that group; any
+            // change of the area draws them all.
             PaneRef::Tabs { .. } => match self.groups.get(&node.id()) {
-                Some(cached) => cached.entity.clone().into_any_element(),
+                Some(cached) => cached
+                    .entity
+                    .clone()
+                    .cached(StyleRefinement::default().size_full())
+                    .into_any_element(),
                 None => Empty.into_any_element(),
             },
         }

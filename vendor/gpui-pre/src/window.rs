@@ -9572,4 +9572,88 @@ mod inspector_tests {
         .unwrap();
         assert_eq!(clicks.get(), 1);
     }
+
+    /// Nocterm: a view cached to its content takes its content's size, keeps it while
+    /// reused, and takes its new size once notified.
+    #[gpui::test]
+    fn views_cached_to_content_keep_their_contents_size(cx: &mut TestAppContext) {
+        use crate::{AnyView, Entity, StyleRefinement};
+
+        struct Lines {
+            lines: usize,
+            renders: Rc<Cell<usize>>,
+        }
+        impl Render for Lines {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .children((0..self.lines).map(|_| div().h(px(10.))))
+            }
+        }
+        struct Column {
+            lines: Entity<Lines>,
+        }
+        impl Render for Column {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(100.))
+                    .h(px(200.))
+                    .child(div().h(px(20.)))
+                    .child(
+                        AnyView::from(self.lines.clone())
+                            .cached_to_content(StyleRefinement::default().w_full()),
+                    )
+                    .child(
+                        div()
+                            .id("after")
+                            .h(px(5.))
+                            .on_mouse_down(MouseButton::Left, |_, _, _| {}),
+                    )
+            }
+        }
+
+        let renders = Rc::new(Cell::new(0));
+        let lines = cx.update(|cx| {
+            let renders = renders.clone();
+            cx.new(move |_| Lines { lines: 2, renders })
+        });
+        let window = cx.add_window({
+            let lines = lines.clone();
+            move |_, _| Column { lines }
+        });
+        let column = window.root(cx).unwrap();
+        let after = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                let hitbox = window.rendered_frame.hitboxes.last().unwrap();
+                hitbox.bounds.origin.y
+            })
+            .unwrap()
+        };
+        assert_eq!(after(cx), px(40.));
+        assert_eq!(renders.get(), 1);
+
+        // The column's own change reuses the view at the size its content took.
+        cx.update(|cx| column.update(cx, |_, cx| cx.notify()));
+        assert_eq!(after(cx), px(40.));
+        assert_eq!(renders.get(), 1);
+
+        // The notified view lays out its new content.
+        cx.update(|cx| {
+            lines.update(cx, |lines, cx| {
+                lines.lines = 4;
+                cx.notify();
+            })
+        });
+        assert_eq!(after(cx), px(60.));
+        assert_eq!(renders.get(), 2);
+        cx.update(|cx| column.update(cx, |_, cx| cx.notify()));
+        assert_eq!(after(cx), px(60.));
+        assert_eq!(renders.get(), 2);
+    }
 }
