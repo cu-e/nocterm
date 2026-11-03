@@ -25,7 +25,8 @@ impl AgentPanel {
         }
         self.sync_composer_draft(cx);
         self.sync_command_token(window, cx);
-        cx.notify();
+        // Typing redraws the footer with the composer, not the transcript or history.
+        self.layout.parts().notify(parts::PartKind::Footer, cx);
     }
     pub(super) fn submit_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send(window, cx);

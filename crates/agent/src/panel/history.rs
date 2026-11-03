@@ -269,6 +269,41 @@ impl HistoryProjection {
             .cloned()
             .collect()
     }
+    /// What the listed rows show, so a chat's change that none of them shows (a draft
+    /// keystroke, a streamed chunk) leaves the history as it is. A search matches
+    /// transcripts, so while one is typed there is no stamp.
+    pub(super) fn stamp(
+        chats: &crate::roster::ChatRoster,
+        history: &super::history_column::HistoryColumn,
+        cx: &App,
+    ) -> Option<u64> {
+        use std::hash::{Hash as _, Hasher as _};
+        if !history.query(cx).is_empty() {
+            return None;
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        chats
+            .current()
+            .map(|current| current.entity_id())
+            .hash(&mut hasher);
+        for thread in chats.iter() {
+            let chat = thread.read(cx);
+            (
+                thread.entity_id(),
+                chat.title(),
+                chat.document().pinned(),
+                chat.document().updated(),
+                chat.model(),
+                chat.session_generating(),
+                chat.document().agent_id(),
+                chat.draft_text().is_some(),
+                chat.history_entries().is_empty(),
+                chat.archive_summary().map(|row| row.has_content),
+            )
+                .hash(&mut hasher);
+        }
+        Some(hasher.finish())
+    }
     pub(super) fn render(
         chats: &crate::roster::ChatRoster,
         history_owner: &super::history_column::HistoryColumn,

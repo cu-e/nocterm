@@ -254,6 +254,9 @@ impl ChatDocument {
     pub fn take_changed_rows(&mut self) -> HashSet<usize> {
         std::mem::take(&mut self.changed_rows)
     }
+    pub fn has_changed_rows(&self) -> bool {
+        !self.changed_rows.is_empty()
+    }
     pub(super) fn mark_row(&mut self, row: usize) {
         self.changed_rows.insert(row);
         self.budget.mark(row);

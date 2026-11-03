@@ -39,6 +39,7 @@ mod message_actions;
 mod message_list;
 mod navigation;
 mod notices;
+mod parts;
 mod preview_operation;
 mod queue;
 mod queue_image_preparation;
@@ -98,6 +99,10 @@ impl AgentPanel {
         let layout = layout::PanelLayout::new(layout, cx);
         let messages = message_list::MessageList::new(images, cx);
         let subscriptions = Self::bind_panel(&host, &settings, window, cx);
+        // Whatever the panel redraws for, its cached regions redraw too; thread changes
+        // and typing redraw only their regions instead of notifying the panel.
+        cx.observe_self(|panel, cx| panel.layout.parts().invalidate(cx))
+            .detach();
         let panel = cx.weak_entity();
         window.defer(cx, move |window, cx| {
             let _ = panel.update(cx, |panel, cx| panel.on_runtime_changed(window, cx));
@@ -403,14 +408,41 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let history = history::HistoryProjection::render(
-            &self.chats,
-            &self.history,
-            self.host.agents(),
-            self.host.timestamp(),
-            cx,
-        );
+        let history = self.layout.parts().history().into_any_element();
         self.layout.render_split(chat, history, window, cx)
+    }
+    /// Draws one region of the panel for its view in [`parts`].
+    fn render_part(
+        &mut self,
+        kind: parts::PartKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match kind {
+            parts::PartKind::Transcript => self.render_transcript_part(cx),
+            parts::PartKind::History => {
+                let stamp = history::HistoryProjection::stamp(&self.chats, &self.history, cx);
+                self.layout.parts_mut().drew_history(stamp);
+                let history = history::HistoryProjection::render(
+                    &self.chats,
+                    &self.history,
+                    self.host.agents(),
+                    self.host.timestamp(),
+                    cx,
+                );
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(history)
+                    .into_any_element()
+            }
+            parts::PartKind::Footer => match (self.current(), self.conversation.is_some()) {
+                (_, true) => self.render_conversation(window, cx),
+                (Some(thread), false) => self.render_chat(thread, window, cx),
+                (None, false) => div().into_any_element(),
+            },
+        }
     }
     fn toggle_history(&mut self, cx: &mut Context<Self>) {
         self.set_history(!self.layout.history(), cx);
@@ -587,27 +619,20 @@ impl Render for AgentPanel {
             cx,
         );
         let mut body = shell::ShellRenderer::body(&self.focus, cx).child(header);
-        body = if self.conversation.is_some() {
-            let chat = self.render_conversation(window, cx);
+        body = if self.conversation.is_none() && current.is_none() {
+            body.child(self.layout.parts().history())
+        } else {
+            let chat = v_flex()
+                .size_full()
+                .min_w_0()
+                .min_h_0()
+                .child(self.layout.parts().transcript())
+                .child(self.layout.parts().footer())
+                .into_any_element();
             if self.layout.history() {
                 body.child(self.render_split(chat, window, cx))
             } else {
                 body.child(chat)
-            }
-        } else {
-            match current {
-                None => body.child(history::HistoryProjection::render(
-                    &self.chats,
-                    &self.history,
-                    self.host.agents(),
-                    self.host.timestamp(),
-                    cx,
-                )),
-                Some(thread) if self.layout.history() => {
-                    let chat = self.render_chat(thread, window, cx);
-                    body.child(self.render_split(chat, window, cx))
-                }
-                Some(thread) => body.child(self.render_chat(thread, window, cx)),
             }
         };
         if let Some(notice) = self.notices.account() {
