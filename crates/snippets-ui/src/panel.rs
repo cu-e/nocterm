@@ -9,7 +9,7 @@ use gpui_kit::{
         ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::{Input, InputState},
+        input::{Input, InputEvent, InputState},
         v_flex,
     },
     div,
@@ -45,7 +45,12 @@ impl SnippetsPanel {
             installed.observe(cx, move |cx| {
                 let _ = observed_panel.update(cx, |_, cx| cx.notify());
             }),
-            cx.observe(&search, |_, _, cx| cx.notify()),
+            // Only an edit refilters; the cursor blink and moves change no match.
+            cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
             cx.subscribe(&workspace, |_, _, event, cx| {
                 if matches!(
                     event,

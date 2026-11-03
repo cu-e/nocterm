@@ -1,0 +1,26 @@
+diff --git a/NOCTERM.md b/NOCTERM.md
+index b642cc79be30baceee8a973bc2cfd73cab6d7909..e41d8ebcb0046b89995873cf6975198bb643641d 100644
+GIT binary patch
+delta 256
+zcmXw!I}XA?3`F}h8~_PTM-$~V93WQKWGzLuv^H5%aR*v1!4XkDlztj}o<Em2zUR}c
+z>5Ex(#e1Ye)e)IdMU&O5V=xWYz${!r4#Ge~=CpwpZXhI~$;K9*nFCfDwUE0E6k-a|
+z?V`<GCR#Aj!sTe9k>shU64@THLD6xGAH5xJng2tx`>k7wnpq)h9cZ@`bxFK3aqJ45
+R+BIMbI$lEIdtuLA^8+=STg(6e
+
+delta 7
+OcmbQFFk5beG(P|enF2-t
+
+diff --git a/src/root.rs b/src/root.rs
+index 16ea0565a9db319f3176f829b4d4e9f232e48b93..933e8d7430d101cf33c93c222ef695465d4d8661 100644
+GIT binary patch
+delta 182
+zcmYk#F$%&k6adgo(M24r>mL+b2<cw%3LWeLBqTp3nC3(CYtTzL^df>c@+1x}z6-qP
+z<>OwRXzLnU(u_mjfL7X}5s(OsSAi}GR5ZY(5+@kY3@StR>}X_Qhmd_Vln)6sMaIZ-
+z3Sz%V7_7W`%+tEq%%lz!aatAIqx=PB$M=9Iv_4{wk(<V#Rb$|?lF2{tY{wAFsuD~1
+J^S+AR{0l_kJpTXy
+
+delta 47
+zcmaEq(VxB{SZDG&9d@DO)SNWEvdq+Sz2uzyyi^TM&B+UOR43mx;F~NZ#<RIj_X!&S
+DynGRi
+
+# End of generated Nocterm binary patch.

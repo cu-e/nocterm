@@ -44,7 +44,13 @@ impl AgentsHandle {
 
     /// The profile of agent `id`: its own when available, else the catalog's.
     pub fn profile(&self, id: &str, cx: &App) -> Option<AgentProfile> {
-        match self.available(cx).get(id) {
+        self.profile_in(&self.available(cx), id)
+    }
+
+    /// The profile of agent `id` among agents already resolved by [`Self::available`],
+    /// for callers that look up many agents at once.
+    pub fn profile_in(&self, available: &AvailableAgents, id: &str) -> Option<AgentProfile> {
+        match available.get(id) {
             Some(agent) => agent.profile().copied(),
             None => self.catalog.get(id).copied(),
         }

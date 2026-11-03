@@ -35,6 +35,33 @@ fn optimistic_changes_are_visible_immediately_and_coalesce(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn observers_hear_an_optimistic_edit_once_and_a_durable_publication(cx: &mut TestAppContext) {
+    let writes = Arc::default();
+    let optimistic = cx.new(|_| Persisted::new(0, recording(&writes), Publication::Optimistic, 10));
+    let durable = cx.new(|_| Persisted::new(0, recording(&writes), Publication::Durable, 10));
+    let heard = Arc::new(Mutex::new((0, 0)));
+    let _observers = cx.update(|cx| {
+        let first = heard.clone();
+        let second = heard.clone();
+        [
+            cx.observe(&optimistic, move |_, _| first.lock().unwrap().0 += 1),
+            cx.observe(&durable, move |_, _| second.lock().unwrap().1 += 1),
+        ]
+    });
+    cx.update(|cx| {
+        optimistic.update(cx, |state, cx| state.update(|v| *v = 1, cx).unwrap());
+        durable.update(cx, |state, cx| state.update(|v| *v = 1, cx).unwrap());
+    });
+    cx.run_until_parked();
+    let (optimistic_heard, durable_heard) = *heard.lock().unwrap();
+    // The optimistic value was published on admission; its write changes nothing observed.
+    assert_eq!(optimistic_heard, 1);
+    // The durable value is published when the write completes.
+    assert!(durable_heard >= 1);
+    cx.update(|cx| assert_eq!(*durable.read(cx).visible(), 1));
+}
+
+#[gpui::test]
 async fn shutdown_waits_for_inflight_and_outlives_the_entity(cx: &mut TestAppContext) {
     let writes = Arc::new(Mutex::new(Vec::new()));
     let (release, blocked) = oneshot::channel();

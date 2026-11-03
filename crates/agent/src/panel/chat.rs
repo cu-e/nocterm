@@ -239,12 +239,13 @@ impl AgentPanel {
         })
         .detach();
     }
+    /// The open conversation's footer: approvals, status and composer.
     pub(super) fn render_conversation(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(selected) = self.conversation.as_mut() else {
+        let Some(selected) = self.conversation.as_ref() else {
             return div().into_any_element();
         };
         let source = selected.source();
@@ -254,28 +255,21 @@ impl AgentPanel {
             .ok()
             .and_then(|ticket| selected.pending(&ticket))
             .is_some_and(|(_, busy)| busy);
-        let mut dirty = Vec::new();
-        let changed = selected.take_dirty();
         let mut status = None;
-        if let Err(error) = source.with_view(cx, &mut |view| {
-            status = Some(TranscriptView::conversation_status(&view));
-            if changed {
-                dirty.extend(0..view.transcript.entries.len());
-            }
-        }) {
-            return div().child(error.to_string()).into_any_element();
+        if source
+            .with_view(cx, &mut |view| {
+                status = Some(TranscriptView::conversation_status(&view));
+            })
+            .is_err()
+        {
+            // The transcript above names the error.
+            return div().into_any_element();
         }
-        let body = match self.render_transcript(source.clone(), &dirty, cx) {
-            Ok(body) => body,
-            Err(error) => return div().child(error.to_string()).into_any_element(),
-        };
         let approvals = self.render_source_approvals(source.clone(), window, cx);
         let stop = self.capture_rendered_stop(cx);
         v_flex()
-            .size_full()
-            .min_h_0()
+            .w_full()
             .min_w_0()
-            .child(body)
             .children(approvals)
             .children(status.map(|text| TranscriptView::status(source.identity(), text, false, cx)))
             .child(composer_renderer::ComposerRenderer::render_conversation(
@@ -299,8 +293,12 @@ impl AgentPanel {
                 || self.host.workspace().upgrade().is_none_or(|workspace| {
                     !workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id)
                 }));
-        // The workspace pulls the attention from `Panel::attention` when the panel notifies.
-        cx.notify();
+        // The workspace pulls the attention from `Panel::attention` when the panel notifies,
+        // so notify only when it changed: this runs on every chunk a chat streams.
+        let asks = Panel::attention(self, cx).is_some();
+        if self.notices.attention_changed(asks) {
+            cx.notify();
+        }
         let requests = needs_notice.then(|| {
             self.chats
                 .iter()
@@ -452,7 +450,8 @@ impl AgentPanel {
         });
         if let Some(changed) = changed {
             self.messages.apply_reveal(changed, cx);
-            cx.notify();
+            // The reveal animates the transcript's rows only.
+            self.layout.parts().notify(parts::PartKind::Transcript, cx);
         }
     }
     pub(super) fn on_preview_completed(
@@ -503,6 +502,37 @@ impl AgentPanel {
             )
         })
     }
+    /// The transcript of the open chat or conversation, for its cached view; the
+    /// rows changed since its last drawing redraw.
+    pub(super) fn render_transcript_part(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let (source, dirty): (Rc<dyn ConversationSource>, Vec<usize>) =
+            if let Some(selected) = self.conversation.as_mut() {
+                let source = selected.source();
+                let mut dirty = Vec::new();
+                if selected.take_dirty() {
+                    let _ = source.with_view(cx, &mut |view| {
+                        dirty.extend(0..view.transcript.entries.len());
+                    });
+                }
+                (source, dirty)
+            } else if let Some(thread) = self.current() {
+                let dirty = thread.update(cx, |thread, _| thread.take_changed_rows());
+                (
+                    Rc::new(LocalConversation::new(&thread)),
+                    dirty.into_iter().collect(),
+                )
+            } else {
+                return div().into_any_element();
+            };
+        let mut stamp = None;
+        let _ = source.with_view(cx, &mut |view| stamp = Some(parts::transcript_stamp(&view)));
+        self.layout.parts_mut().drew_transcript(stamp);
+        match self.render_transcript(source, &dirty, cx) {
+            Ok(body) => body,
+            Err(error) => div().child(error.to_string()).into_any_element(),
+        }
+    }
+    /// The open chat's footer: approvals, status, queue, commands and composer.
     pub(super) fn render_chat(
         &mut self,
         thread: Entity<AgentThread>,
@@ -510,16 +540,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let usage = thread.read(cx).transcript().usage.clone();
-        let dirty = thread
-            .update(cx, |thread, _| thread.take_changed_rows())
-            .into_iter()
-            .collect::<Vec<_>>();
-        let transcript =
-            match self.render_transcript(Rc::new(LocalConversation::new(&thread)), &dirty, cx) {
-                Ok(body) => body,
-                Err(error) => return div().child(error.to_string()).into_any_element(),
-            };
-        let mut body = v_flex().size_full().min_w_0().min_h_0().child(transcript);
+        let mut body = v_flex().w_full().min_w_0();
         if let Some(approvals) = self.render_approvals(&thread, window, cx) {
             body = body.child(approvals);
         }
@@ -555,8 +576,7 @@ impl AgentPanel {
                 .map(|plan| TranscriptView::plan(plan, cx));
         })?;
         let body = v_flex()
-            .w_full()
-            .flex_1()
+            .size_full()
             .min_h_0()
             .min_w_0()
             .child(TranscriptView::area(scroller, navigation, overlay, cx));
@@ -570,6 +590,15 @@ impl AgentPanel {
         let Some((identity, source)) = self.messages.source() else {
             return div().into_any_element();
         };
+        let mut markdown = None;
+        let _ = source.with_view(cx, &mut |view| {
+            markdown = view.transcript.entries.get(index).and_then(|entry| {
+                super::message_markdown::MessageMarkdown::text(entry, index, &self.messages)
+            });
+        });
+        if let Some(text) = markdown {
+            self.messages.prepare_markdown(index, text, cx);
+        }
         let mut rendered = None;
         let current = source.with_view(cx, &mut |view| {
             let Some(entry) = view.transcript.entries.get(index) else {

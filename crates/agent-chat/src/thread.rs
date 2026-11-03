@@ -455,6 +455,10 @@ impl AgentThread {
     pub fn take_changed_rows(&mut self) -> std::collections::HashSet<usize> {
         self.state.take_changed_rows()
     }
+    /// Whether a row changed since the last [`Self::take_changed_rows`], without taking it.
+    pub fn has_changed_rows(&self) -> bool {
+        self.state.has_changed_rows()
+    }
     pub fn document(&self) -> &document::ChatDocument {
         &self.state
     }

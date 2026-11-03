@@ -498,6 +498,26 @@ impl AgentPanel {
         window.defer(cx, move |window, cx| {
             let _ = panel.update(cx, |panel, cx| panel.sync_approval_attention(window, cx));
         });
+        // The chat on screen draws its change at once: the transcript only when what it
+        // shows changed, so typing a draft leaves it. The history waits for the coalesced
+        // redraw.
+        if self
+            .current()
+            .is_some_and(|current| current.entity_id() == loaded.entity_id())
+        {
+            use nocterm_agent_chat::conversation::{ConversationSource as _, LocalConversation};
+            // The usage card over the transcript shows the chat's usage.
+            let rows = loaded.read(cx).has_changed_rows() || self.menus.is_open(&MenuKind::Usage);
+            let mut stamp = None;
+            let _ = LocalConversation::new(&loaded).with_view(cx, &mut |view| {
+                stamp = Some(super::parts::transcript_stamp(&view));
+            });
+            let parts = self.layout.parts();
+            if let Some(stamp) = stamp {
+                parts.transcript_changed(rows, stamp, cx);
+            }
+            parts.notify(super::parts::PartKind::Footer, cx);
+        }
         let Some(ticket) = self.notices.request_redraw() else {
             return;
         };
@@ -516,7 +536,8 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if self.notices.finish_redraw(ticket) {
-            cx.notify();
+            let stamp = super::history::HistoryProjection::stamp(&self.chats, &self.history, cx);
+            self.layout.parts().history_changed(stamp, cx);
         }
     }
 }

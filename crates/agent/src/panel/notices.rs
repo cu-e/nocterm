@@ -19,8 +19,13 @@ pub(super) struct PanelNotices {
     account: Option<AccountNotice>,
     redraw: Option<Redraw>,
     approval: Option<Vec<(EntityId, u64)>>,
+    attention: bool,
 }
 impl PanelNotices {
+    /// Records whether the panel asks for attention; true when that changed.
+    pub(super) fn attention_changed(&mut self, attention: bool) -> bool {
+        std::mem::replace(&mut self.attention, attention) != attention
+    }
     pub(super) fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }

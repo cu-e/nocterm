@@ -15,7 +15,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_agent_directory::AgentsHandle;
-use nocterm_ai::agents::AgentProfile;
+use nocterm_ai::agents::{AgentProfile, AvailableAgents};
 use nocterm_ui::IconName;
 use std::time::Duration;
 
@@ -269,6 +269,41 @@ impl HistoryProjection {
             .cloned()
             .collect()
     }
+    /// What the listed rows show, so a chat's change that none of them shows (a draft
+    /// keystroke, a streamed chunk) leaves the history as it is. A search matches
+    /// transcripts, so while one is typed there is no stamp.
+    pub(super) fn stamp(
+        chats: &crate::roster::ChatRoster,
+        history: &super::history_column::HistoryColumn,
+        cx: &App,
+    ) -> Option<u64> {
+        use std::hash::{Hash as _, Hasher as _};
+        if !history.query(cx).is_empty() {
+            return None;
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        chats
+            .current()
+            .map(|current| current.entity_id())
+            .hash(&mut hasher);
+        for thread in chats.iter() {
+            let chat = thread.read(cx);
+            (
+                thread.entity_id(),
+                chat.title(),
+                chat.document().pinned(),
+                chat.document().updated(),
+                chat.model(),
+                chat.session_generating(),
+                chat.document().agent_id(),
+                chat.draft_text().is_some(),
+                chat.history_entries().is_empty(),
+                chat.archive_summary().map(|row| row.has_content),
+            )
+                .hash(&mut hasher);
+        }
+        Some(hasher.finish())
+    }
     pub(super) fn render(
         chats: &crate::roster::ChatRoster,
         history_owner: &super::history_column::HistoryColumn,
@@ -317,12 +352,14 @@ impl HistoryProjection {
                     .child("No chats match"),
             );
         }
+        // Resolved once: resolving builds the whole agent list from the catalog and settings.
+        let available = agents.available(cx);
         for thread in listed {
             history = history.child(Self::render_history_row(
                 &thread,
                 chats,
                 history_owner,
-                agents,
+                (agents, &available),
                 now,
                 cx,
             ));
@@ -333,7 +370,7 @@ impl HistoryProjection {
         thread: &Entity<AgentThread>,
         chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
-        agents: &AgentsHandle,
+        (agents, available): (&AgentsHandle, &AvailableAgents),
         now: u64,
         cx: &mut Context<AgentPanel>,
     ) -> gpui_kit::AnyElement {
@@ -359,7 +396,7 @@ impl HistoryProjection {
             when,
             model: chat.model().unwrap_or_default(),
             generating: chat.session_generating(),
-            agent: agents.profile(chat.document().agent_id(), cx),
+            agent: agents.profile_in(available, chat.document().agent_id()),
             rename: history.rename_input(id),
         };
         HistoryRowRenderer::render(row, cx)

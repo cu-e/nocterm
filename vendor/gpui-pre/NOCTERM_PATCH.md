@@ -139,3 +139,31 @@ the last old record index and its exact equality result, including false results
 Viewport shape changes or capacity failure release storage. Reserved-byte limits
 derive from these capacities and Rust type sizes, including both snapshots and
 the memo; storage cannot grow indefinitely as content moves between tiles.
+
+Nested view caching changes `src/view.rs`, `src/window.rs` and
+`src/text_system/line_layout.rs`. Upstream draws every cached view nested in a cached
+view that draws again, so one notified view redraws all cached views under each of its
+cached ancestors. Here a cached view drawn again keeps the window's refresh state, and
+the cached views nested in it are reused unless they, a view inside them or the
+window's refresh asks for a draw. Each cached view records the cached views prepainted
+inside it. When it is reused, its output is copied whole without visiting them, and
+their recorded prepaint and paint ranges move by the distance the copy moved. A cached
+view is reused only if the draw before painted it, so a range from an older frame is
+never replayed. A view still draws again when it is notified, when a view inside it is
+notified, when its bounds, content mask or text style change, or on a window refresh,
+which focus, activation and theme changes request. Reading another entity while
+rendering does not redraw a cached view, as upstream. The regression test
+`nested_cached_views_survive_their_ancestors_reuse` covers reuse after a copied frame
+and input on the moved output.
+
+Content-sized caching adds `cached_to_content` to `Entity` and `AnyView` in
+`src/view.rs`. Upstream lays a cached view out from its style alone, so a view whose
+size follows its content (a composer that grows with its text, a status-bar widget)
+cannot be cached. A view cached to its content lays its content out, as an uncached
+view does, whenever it draws again; a frame that reuses it lays it out at its style
+with the size its content last took along the axes the style leaves auto. A reused
+size that the content no longer fits, because the bounds changed, lays the content
+out again the next frame. `AnyView::observe` calls back on the notifications of a view
+held without its type, for an owner that draws part of it from a cached view of its
+own. The regression test `views_cached_to_content_keep_their_contents_size` covers
+the measured size, its reuse and a notified size change.

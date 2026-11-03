@@ -16,7 +16,7 @@ use super::{
     AgentPanel,
     image_pipeline::PreviewState,
     message_actions::{MESSAGE_GROUP, escape_markdown, message_text},
-    widgets::{chat_markdown, disclosure_header, safe_markdown},
+    widgets::{chat_markdown, chat_markdown_in, disclosure_header, safe_markdown},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -83,7 +83,7 @@ impl EntryRenderer {
                 cx,
             ),
             Entry::Agent(text) => Self::agent(row, &frame, text, messages, cx),
-            Entry::Thought(text) => Self::thought(row, &frame, text, cx),
+            Entry::Thought(text) => Self::thought(row, &frame, text, messages, cx),
             Entry::Tool(call) => Self::tool(row, &frame, call, cx),
             Entry::Content(Content::Image(image)) => {
                 let key = Self::pending_image(image, messages, &mut pending);
@@ -166,11 +166,16 @@ impl EntryRenderer {
         messages: &super::message_list::MessageList,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
-        let revealed = messages.revealed_text(frame.index, text);
-        row = row.group(MESSAGE_GROUP).child(
-            chat_markdown(("agent-message", frame.index), safe_markdown(&revealed))
-                .stream_fade(frame.generating || messages.revealing()),
-        );
+        let markdown = match messages.markdown(frame.index) {
+            Some(state) => chat_markdown_in(state),
+            None => chat_markdown(
+                ("agent-message", frame.index),
+                safe_markdown(&messages.revealed_text(frame.index, text)),
+            ),
+        };
+        row = row
+            .group(MESSAGE_GROUP)
+            .child(markdown.stream_fade(frame.generating || messages.revealing()));
         if !frame.live {
             row = row.child(
                 super::message_actions::MessageRowActions::new(
@@ -189,6 +194,7 @@ impl EntryRenderer {
         mut row: gpui_kit::Stateful<gpui_kit::Div>,
         frame: &RowPresentation,
         text: &str,
+        messages: &super::message_list::MessageList,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
         let index = frame.index;
@@ -230,10 +236,13 @@ impl EntryRenderer {
                     .max_w_full()
                     .overflow_x_scroll()
                     .child(
-                        chat_markdown(("thought-text", index), safe_markdown(text))
-                            .text_color(cx.theme().muted_foreground)
-                            .w_full()
-                            .max_w_full(),
+                        match messages.markdown(index) {
+                            Some(state) => chat_markdown_in(state),
+                            None => chat_markdown(("thought-text", index), safe_markdown(text)),
+                        }
+                        .text_color(cx.theme().muted_foreground)
+                        .w_full()
+                        .max_w_full(),
                     ),
             );
         }

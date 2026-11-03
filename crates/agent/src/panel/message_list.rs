@@ -2,12 +2,16 @@
 use super::{
     AgentPanel,
     image_pipeline::{ImageKey, ImagePipeline, PreviewState, PreviewTicket},
+    message_markdown::MessageMarkdown,
     navigation::MessageNavigation,
     stream::StreamReveal,
 };
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EntityId, Image, Task,
-    component::message_scroller::{MessageScroller, MessageScrollerState},
+    component::{
+        message_scroller::{MessageScroller, MessageScrollerState},
+        text::TextViewState,
+    },
 };
 use nocterm_agent_chat::conversation::ConversationSource;
 use nocterm_ai::{
@@ -41,6 +45,7 @@ pub(super) struct MessageList {
     expanded: HashSet<usize>,
     binding: Option<ActiveListBinding>,
     source: Option<Rc<dyn ConversationSource>>,
+    markdown: MessageMarkdown,
 }
 impl MessageList {
     pub(super) fn new(images: crate::ImageDeps, cx: &mut Context<AgentPanel>) -> Self {
@@ -54,6 +59,7 @@ impl MessageList {
             expanded: HashSet::new(),
             binding: None,
             source: None,
+            markdown: MessageMarkdown::default(),
         }
     }
     pub(super) fn bind_chat(&mut self, chat: EntityId, cx: &mut Context<AgentPanel>) {
@@ -108,6 +114,7 @@ impl MessageList {
         self.pipeline.clear();
         self.binding = None;
         self.source = None;
+        self.markdown.clear();
     }
     pub(super) fn observe_rows(
         &mut self,
@@ -136,6 +143,7 @@ impl MessageList {
             } else {
                 self.scroller
                     .update(cx, |list, cx| list.reset(rows.count, cx));
+                self.markdown.retain(rows.count);
             }
         }
         self.remeasure_rows(rows.changed, cx);
@@ -215,6 +223,18 @@ impl MessageList {
     }
     pub(super) fn revealing(&self) -> bool {
         self.reveal.pending()
+    }
+    /// Keeps the row's parsed Markdown current with what its entry draws now.
+    pub(super) fn prepare_markdown(
+        &mut self,
+        row: usize,
+        text: String,
+        cx: &mut Context<AgentPanel>,
+    ) {
+        self.markdown.prepare(row, text, cx);
+    }
+    pub(super) fn markdown(&self, row: usize) -> Option<&Entity<TextViewState>> {
+        self.markdown.state(row)
     }
     pub(super) fn preview_state(&self, key: &ImageKey) -> Option<&PreviewState> {
         self.pipeline.state(key)

@@ -493,6 +493,33 @@ pub(crate) struct LineLayoutIndex {
     wrapped_lines_by_hash_index: usize,
 }
 
+impl LineLayoutIndex {
+    /// Nocterm: this index moved by the distance from `from` to `to`, for a range copied
+    /// as part of an enclosing reused range.
+    pub(crate) fn shifted(&self, from: &Self, to: &Self) -> Self {
+        let shift = |index: usize, from: usize, to: usize| index - from + to;
+        Self {
+            font_generation: to.font_generation,
+            lines_index: shift(self.lines_index, from.lines_index, to.lines_index),
+            wrapped_lines_index: shift(
+                self.wrapped_lines_index,
+                from.wrapped_lines_index,
+                to.wrapped_lines_index,
+            ),
+            lines_by_hash_index: shift(
+                self.lines_by_hash_index,
+                from.lines_by_hash_index,
+                to.lines_by_hash_index,
+            ),
+            wrapped_lines_by_hash_index: shift(
+                self.wrapped_lines_by_hash_index,
+                from.wrapped_lines_by_hash_index,
+                to.wrapped_lines_by_hash_index,
+            ),
+        }
+    }
+}
+
 impl LineLayoutCache {
     pub fn new(
         platform_text_system: Arc<dyn PlatformTextSystem>,
