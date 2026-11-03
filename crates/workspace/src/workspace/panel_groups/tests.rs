@@ -70,6 +70,62 @@ fn cached_panel_skips_workspace_redraw_but_updates_its_content_and_badge(cx: &mu
     );
 }
 
+#[gpui_kit::test]
+fn a_panel_change_reuses_the_tabs_and_a_workspace_change_draws_them(cx: &mut TestAppContext) {
+    let (handle, workspace, _) = crate::workspace::tests::test_plugin::fixture_with_test_plugin(cx);
+    let (panel, tab) = cx
+        .update_window(handle, |_, window, cx| {
+            let panel = TestPanel::builder("probe")
+                .title("Probe")
+                .text("First")
+                .build(cx);
+            let tab = workspace.update(cx, |w, cx| {
+                register_built(w, PANEL_A, &panel, window, cx);
+                w.activate_panel(0, window, cx);
+                let tab = crate::test_support::SessionProbe::new(
+                    crate::SessionSpec {
+                        options: Default::default(),
+                        title: "vm".into(),
+                        profile: None,
+                        target: nocterm_session::Target::new("root", "vm", 22),
+                        auth: nocterm_session::Auth::Password,
+                        launch: None,
+                        credential: None,
+                        jumps: Vec::new(),
+                    },
+                    true,
+                    cx,
+                );
+                w.add_item(tab.clone(), window, cx);
+                tab
+            });
+            window.render_frame(cx);
+            (panel, tab)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    let reads = cx.update(|cx| tab.read(cx).title_reads());
+    cx.update(|cx| panel.update(cx, |panel, cx| panel.set_text("Second", cx)));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    assert_eq!(
+        cx.update(|cx| tab.read(cx).title_reads()),
+        reads,
+        "a sidebar panel's change reuses the tab strip"
+    );
+    cx.update(|cx| workspace.update(cx, |_, cx| cx.notify()));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    assert!(
+        cx.update(|cx| tab.read(cx).title_reads()) > reads,
+        "a change of the workspace's own state draws the tab strip"
+    );
+}
+
 #[test]
 fn the_shells_group_declarations_come_first_and_only_the_sidebar_is_primary() {
     use super::{GroupKey, PanelGroups};

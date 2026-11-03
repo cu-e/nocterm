@@ -276,7 +276,8 @@ impl Chrome {
                 .id("workspace-content")
                 .test_support()
                 .size_full()
-                .child(regions.tabs.view())
+                // Cached: sidebar and chrome redraws reuse the tabs unless they changed.
+                .child(cached(regions.tabs.view()))
                 .into_any_element();
         }
         tile(
