@@ -1,10 +1,10 @@
 //! The panel's regions as views, so a change redraws only the regions it touches.
 //!
-//! The transcript and the history are cached: the panel's own redraws reuse them
-//! unless they are notified. Any notify of the panel invalidates both, so state the
-//! panel changes stays correct by default; only thread changes and typing target a
-//! region. The footer (approvals, status, queue, commands and composer) sizes to its
-//! content, which a cached view cannot, so it is a plain view drawn with the panel.
+//! Every region is cached: the panel's own redraws reuse them unless they are
+//! notified. Any notify of the panel invalidates all of them, so state the panel
+//! changes stays correct by default; only thread changes and typing target a region.
+//! The footer (approvals, status, queue, commands and composer) is cached to its
+//! content: reused, it keeps the height its content last took.
 use super::AgentPanel;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, Render, StyleRefinement, Styled,
@@ -75,13 +75,17 @@ impl PanelParts {
                 .min_w_0(),
         )
     }
-    pub(super) fn footer(&self) -> Entity<PanelPart> {
-        self.footer.clone()
+    /// The footer spans the chat column below the transcript, as tall as its content.
+    pub(super) fn footer(&self) -> impl IntoElement + use<> {
+        self.footer
+            .clone()
+            .cached_to_content(StyleRefinement::default().w_full())
     }
     /// Redraws the cached regions: the panel's state changed in a way only it knows.
     pub(super) fn invalidate(&self, cx: &mut App) {
         self.transcript.update(cx, |_, cx| cx.notify());
         self.history.update(cx, |_, cx| cx.notify());
+        self.footer.update(cx, |_, cx| cx.notify());
     }
     pub(super) fn notify(&self, kind: PartKind, cx: &mut App) {
         let part = match kind {

@@ -476,3 +476,49 @@ fn typing_a_draft_saves_it_without_redrawing_the_whole_panel(cx: &mut TestAppCon
         "typing redraws the composer, not the transcript and history"
     );
 }
+
+#[gpui_kit::test]
+fn a_growing_draft_grows_the_cached_composer_below_the_transcript(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    exchange(&f, "question", "answer", cx);
+    let draw = |cx: &mut TestAppContext| {
+        // Plain draws, which reuse cached regions a refresh would redraw.
+        for _ in 0..2 {
+            cx.update_window(f.handle, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+        cx.update_window(f.handle, |_, window, _| {
+            (
+                window.find("agent-composer").bounds(),
+                window.find("agent-transcript-area").bounds(),
+            )
+        })
+        .unwrap()
+    };
+    let (before, _) = draw(cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "one\ntwo\nthree\nfour\nfive",
+            window,
+            cx,
+        );
+    })
+    .unwrap();
+    let (after, transcript) = draw(cx);
+    assert!(
+        after.size.height > before.size.height,
+        "the composer grows with its draft: {before:?} -> {after:?}"
+    );
+    assert_eq!(
+        after.bottom(),
+        before.bottom(),
+        "the composer stays at the bottom"
+    );
+    assert!(
+        transcript.bottom() <= after.top(),
+        "the transcript gives way: {transcript:?} above {after:?}"
+    );
+}
