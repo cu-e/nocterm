@@ -235,6 +235,11 @@ impl FakeCloudAgents {
         }
     }
 
+    /// The seat of `agent` was removed outside this session (the web panel, another device).
+    pub fn set_unseated(&self, agent: &AgentId) {
+        self.state().seats.seated.retain(|seated| seated != agent);
+    }
+
     /// Stop and remove do not answer until the returned sender is used or dropped.
     pub fn hold_seat_calls(&self) -> oneshot::Sender<()> {
         let (sender, receiver) = oneshot::channel();

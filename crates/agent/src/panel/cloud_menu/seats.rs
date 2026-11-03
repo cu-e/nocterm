@@ -1,11 +1,13 @@
-//! Stopping and removing the person's seat of an agent, from the agent's row.
+//! Stopping and removing the person's seat of an agent, from the context menu of the agent's
+//! row.
 
 use gpui_kit::{
-    AnyElement, Context, SharedString,
+    AnyElement, Context, SharedString, Window,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
+        menu::{PopupMenu, PopupMenuItem},
     },
     div,
     prelude::*,
@@ -20,19 +22,65 @@ use crate::panel::AgentPanel;
 pub(super) type Removing = (HubId, AgentId);
 
 impl CloudMenu {
-    /// Stop, and Remove after a confirmation, under the row of an agent the person has a seat
-    /// of. A seat on the person's own runner lives on this device, not on a host, so it has
-    /// neither.
-    pub(super) fn render_seat_actions(
+    /// Whether the person has a seat of `agent` on a host, which Stop and Remove concern. A
+    /// seat on the person's own runner lives on this device, not on a host, so it has neither.
+    pub(super) fn seat_of(
+        &self,
+        hub: &HubId,
+        agent: &CloudAgent,
+        cx: &Context<AgentPanel>,
+    ) -> bool {
+        agent.placement() == Placement::Pool
+            && self
+                .access
+                .as_ref()
+                .is_some_and(|access| access.service().read(cx).has_seat(hub, &agent.id))
+    }
+
+    /// The right-click menu of an agent row the person has a seat of: Stop, and Remove, which
+    /// asks first under the row.
+    pub(super) fn seat_menu(
+        &self,
+        hub: &HubId,
+        agent: &CloudAgent,
+        cx: &mut Context<AgentPanel>,
+    ) -> Option<impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static>
+    {
+        if !self.seat_of(hub, agent, cx) {
+            return None;
+        }
+        let seat: Removing = (hub.clone(), agent.id.clone());
+        let panel = cx.entity().downgrade();
+        Some(
+            move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+                let (stop_panel, remove_panel) = (panel.clone(), panel.clone());
+                let (stop_seat, remove_seat) = (seat.clone(), seat.clone());
+                menu.item(PopupMenuItem::new("Stop").on_click(move |_, _, cx| {
+                    let _ = stop_panel.update(cx, |panel, cx| {
+                        panel.cloud.release_seat(&stop_seat, false, cx);
+                    });
+                }))
+                .item(
+                    PopupMenuItem::new("Remove instance…").on_click(move |_, _, cx| {
+                        let _ = remove_panel.update(cx, |panel, cx| {
+                            panel.cloud.removing = Some(remove_seat.clone());
+                            cx.notify();
+                        });
+                    }),
+                )
+            },
+        )
+    }
+
+    /// The question under the row of the seat the person is removing.
+    pub(super) fn render_removal_question(
         &self,
         hub: &HubId,
         agent: &CloudAgent,
         cx: &mut Context<AgentPanel>,
     ) -> Option<AnyElement> {
-        let access = self.access.as_ref()?;
-        if agent.placement() != Placement::Pool
-            || !access.service().read(cx).has_seat(hub, &agent.id)
-        {
+        let chosen = (hub.clone(), agent.id.clone());
+        if self.removing.as_ref() != Some(&chosen) {
             return None;
         }
         let key = format!("{}-{}", hub.address(), agent.id);
@@ -42,11 +90,12 @@ impl CloudMenu {
                 .xsmall()
                 .label(label)
         };
-        let chosen = (hub.clone(), agent.id.clone());
-        let mut actions = h_flex().px_2().gap_1().items_center().flex_wrap();
-        if self.removing.as_ref() == Some(&chosen) {
-            let to_remove = chosen.clone();
-            actions = actions
+        Some(
+            h_flex()
+                .px_2()
+                .gap_1()
+                .items_center()
+                .flex_wrap()
                 .child(
                     div()
                         .min_w_0()
@@ -58,7 +107,7 @@ impl CloudMenu {
                     small("Remove", "cloud-remove-confirm").on_click(cx.listener(
                         move |panel, _, _, cx| {
                             panel.cloud.removing = None;
-                            panel.cloud.release_seat(&to_remove, true, cx);
+                            panel.cloud.release_seat(&chosen, true, cx);
                         },
                     )),
                 )
@@ -67,29 +116,9 @@ impl CloudMenu {
                         panel.cloud.removing = None;
                         cx.notify();
                     },
-                )));
-        } else {
-            let to_stop = chosen.clone();
-            actions = actions
-                .child(
-                    small("Stop", "cloud-stop")
-                        .tooltip(
-                            "Stops the agent's runner; its files stay and starting it again resumes it",
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.cloud.release_seat(&to_stop, false, cx);
-                        })),
-                )
-                .child(
-                    small("Remove instance…", "cloud-remove")
-                        .tooltip("Deletes the agent's runner with its files on the server")
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.cloud.removing = Some(chosen.clone());
-                            cx.notify();
-                        })),
-                );
-        }
-        Some(actions.into_any_element())
+                )))
+                .into_any_element(),
+        )
     }
 
     /// Stops (or removes) the seat of an agent; a refusal shows as the tab's notice.
