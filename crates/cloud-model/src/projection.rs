@@ -11,6 +11,7 @@ mod baseline;
 pub use baseline::{SnapshotBaseline, SnapshotFact};
 mod cursor;
 mod event;
+mod fault;
 pub mod ports;
 mod reducer;
 mod runs;
@@ -19,6 +20,7 @@ mod tools;
 mod usage;
 pub use cursor::{ProjectionBinding, ProjectionCursor};
 pub use event::{ProjectionBatch, ProjectionEvent};
+pub use fault::RecordKind;
 pub use reducer::ConversationProjection;
 
 pub const MAX_REPLAY_EVENTS: usize = 64;
@@ -53,8 +55,8 @@ pub enum ProjectionError {
     Unavailable,
     #[error("The signed observation uses semantics unsupported by this client.")]
     Unsupported,
-    #[error("The verified projection contains an invalid tool or content record.")]
-    InvalidRecord,
+    #[error("The verified projection contains an invalid record: {0}.")]
+    InvalidRecord(RecordKind),
     #[error("The encrypted client outbox or projection cache could not be persisted.")]
     Persistence,
 }

@@ -1,5 +1,5 @@
 //! Accepted queued runs and the displayed active run have separate identities.
-use super::{MAX_PROJECTION_ENTRIES, ProjectionError};
+use super::{MAX_PROJECTION_ENTRIES, ProjectionError, RecordKind};
 use crate::{
     authority::RunBinding,
     coordinator::RunStatus,
@@ -34,7 +34,7 @@ impl ProjectionRuns {
     }
     pub(super) fn admit(&mut self, run: &RunBinding) -> Result<(), ProjectionError> {
         if self.phases.contains_key(&key(run)) {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Run));
         }
         if self.phases.len() >= MAX_PROJECTION_ENTRIES {
             return Err(ProjectionError::Capacity);
@@ -72,7 +72,7 @@ impl ProjectionRuns {
             ConversationPhase::Stopped | ConversationPhase::Completed
         ) && old != next
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Run));
         }
         if next == ConversationPhase::Running && self.selected.as_ref() != Some(run) {
             if !terminal(self.phase()) {

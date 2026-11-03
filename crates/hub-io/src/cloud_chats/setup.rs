@@ -4,8 +4,11 @@
 use std::sync::Arc;
 
 use nocterm_cloud_model::{
-    engine::ModelBudget, identity::SourceIdentityError, inference::ModelSelection,
-    projection::ProjectionError, tool::ToolTimer,
+    engine::ModelBudget,
+    identity::SourceIdentityError,
+    inference::ModelSelection,
+    projection::{ProjectionError, RecordKind},
+    tool::ToolTimer,
 };
 
 use crate::cloud::{
@@ -50,9 +53,9 @@ impl Capability {
             return ConversationSetup::controls(LIFETIME_MS, workers, timer, storage);
         };
         let budget = ModelBudget::new(TURNS, IO_BYTES, IO_BYTES, OUTPUT_TOKENS)
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::ChatSetup))?;
         let policy = ConversationPromptPolicy::runner_default(
-            selection.map_err(|_| ProjectionError::InvalidRecord)?,
+            selection.map_err(|_| ProjectionError::InvalidRecord(RecordKind::ChatSetup))?,
             budget,
             SPEND_MICROS,
             LIFETIME_MS,

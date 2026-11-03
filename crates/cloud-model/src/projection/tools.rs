@@ -1,6 +1,6 @@
 //! Tool rows retain their original run, intent and one terminal result.
 use super::{
-    MAX_PROJECTION_ENTRIES, ProjectionError,
+    MAX_PROJECTION_ENTRIES, ProjectionError, RecordKind,
     runs::{RunKey, key},
 };
 use crate::{
@@ -52,10 +52,10 @@ impl ProjectionTools {
     ) -> Result<(), ProjectionError> {
         let key = (key(intent.authority().run()), intent.id());
         if self.0.contains_key(&key) || call.name() != display.tool || display.version != 2 {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
         }
         call.validate()
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Tool))?;
         if self.0.len() >= MAX_PROJECTION_ENTRIES {
             return Err(ProjectionError::Capacity);
         }
@@ -92,24 +92,24 @@ impl ProjectionTools {
         let row = self
             .0
             .get_mut(&(key(run), observation.intent()))
-            .ok_or(ProjectionError::InvalidRecord)?;
+            .ok_or(ProjectionError::InvalidRecord(RecordKind::Tool))?;
         if row.finished {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
         }
         let Some(Entry::Tool(record)) = transcript.entries.get_mut(row.index) else {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
         };
         if record.name.as_deref() != Some(observation.display().tool.as_str())
             || observation.display().version != 2
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
         }
         if let ObservedEffect::Background(background) = observation.effect() {
             if background.intent() != row.intent.id()
                 || background.execution() != row.intent.authority()
                 || row.terminal.as_deref() != Some(background.terminal())
             {
-                return Err(ProjectionError::InvalidRecord);
+                return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
             }
             row.background = Some((**background).clone());
         }
@@ -130,14 +130,14 @@ impl ProjectionTools {
         let row = self
             .0
             .get_mut(&(key(value.job().execution().run()), value.job().intent()))
-            .ok_or(ProjectionError::InvalidRecord)?;
+            .ok_or(ProjectionError::InvalidRecord(RecordKind::Tool))?;
         if row.terminal.as_deref() != Some(value.job().terminal())
             || value.job().execution() != row.intent.authority()
             || value.step() != row.intent.step()
             || value.arguments() != row.intent.arguments()
             || value.mutates() != row.intent.mutates()
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
         }
         if row
             .background
@@ -147,7 +147,7 @@ impl ProjectionTools {
                 previous.dispatch() != value.dispatch() || previous.job() != value.job()
             })
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
         }
         row.lifecycle = Some(value.clone());
         Ok(())

@@ -51,5 +51,9 @@ pub(super) async fn open_source(
             Err(error) => async move { Err(error) }.boxed(),
         }
     };
-    until_open(&*collaborators.timer, patience, publish, open).await
+    until_open(&*collaborators.timer, patience, publish, open)
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(error = %nocterm_core::error::chain(error), "a Cloud chat could not be opened");
+        })
 }

@@ -9,7 +9,7 @@ use nocterm_cloud_model::{
     authority::StreamBinding,
     coordinator::{ObservedBackground, ObservedJobWindow},
     identity::{Fingerprint, IntentId, StepId},
-    projection::ProjectionError,
+    projection::{ProjectionError, RecordKind},
     run::ToolIntent,
 };
 use nocterm_hub_model::cloud::{
@@ -54,15 +54,15 @@ pub(super) fn intent(
 ) -> Result<(ToolIntent, TerminalCall, ToolDisplay), ProjectionError> {
     let call = arguments(&value.arguments, budget)?;
     call.validate()
-        .map_err(|_| ProjectionError::InvalidRecord)?;
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Tool))?;
     if call.writes() != value.mutates
         || value
             .arguments
             .digest()
-            .map_err(|_| ProjectionError::InvalidRecord)?
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Tool))?
             != value.arguments_digest
     {
-        return Err(ProjectionError::InvalidRecord);
+        return Err(ProjectionError::InvalidRecord(RecordKind::Tool));
     }
     let intent = ToolIntent::from_journal(
         IntentId::from_bytes(value.id),
@@ -89,7 +89,7 @@ pub(super) fn background(
         .window
         .map(|window| ObservedJobWindow::new(window.created_at_ms, window.deadline_ms))
         .transpose()
-        .map_err(|_| ProjectionError::InvalidRecord)?;
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Tool))?;
     ObservedBackground::new(
         IntentId::from_bytes(value.intent),
         values::execution(stream, &value.execution)?,
@@ -97,7 +97,7 @@ pub(super) fn background(
         value.command.to_owned(),
         window,
     )
-    .map_err(|_| ProjectionError::InvalidRecord)
+    .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Tool))
 }
 fn string(text: &str, budget: &mut DecodeBudget<'_>) -> Result<String, ProjectionError> {
     budget.admit(text.len())?;
@@ -223,7 +223,7 @@ fn transfer_arguments(
                 transfer_id: string(transfer_id, budget)?,
             })
         }
-        _ => return Err(ProjectionError::InvalidRecord),
+        _ => return Err(ProjectionError::InvalidRecord(RecordKind::Tool)),
     })
 }
 

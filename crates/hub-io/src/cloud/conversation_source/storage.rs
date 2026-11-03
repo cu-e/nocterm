@@ -1,5 +1,8 @@
 //! Fixed-count private encrypted cells; durability is confirmed before delivery.
-use nocterm_cloud_model::{identity::CommandId, projection::ProjectionError};
+use nocterm_cloud_model::{
+    identity::CommandId,
+    projection::{ProjectionError, RecordKind},
+};
 use nocterm_core::{
     fs::{AtomicPublication, create_private, open_private_regular, require_private_regular},
     paths::ensure_private_dir,
@@ -144,15 +147,15 @@ impl OutboxFile {
         file.read_exact(&mut header)
             .map_err(|_| ProjectionError::Persistence)?;
         if &header[..8] != MAGIC {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Storage));
         }
         let writer = u64::from_be_bytes(
             header[8..]
                 .try_into()
-                .map_err(|_| ProjectionError::InvalidRecord)?,
+                .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Storage))?,
         );
         if writer == 0 {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Storage));
         }
         let mut ciphertext = vec![0; length - HEADER];
         file.read_exact(&mut ciphertext)

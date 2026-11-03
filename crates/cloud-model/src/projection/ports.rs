@@ -2,7 +2,7 @@
 //! replay and encrypted durable outbox/cache operations for ONE captured source.
 use super::{
     ConversationIntent, ConversationProjection, ProjectionBatch, ProjectionBinding,
-    ProjectionCursor, ProjectionError,
+    ProjectionCursor, ProjectionError, RecordKind,
 };
 use crate::{
     authority::RunBinding,
@@ -35,7 +35,7 @@ impl ConversationPreparation {
         policy: Fingerprint,
     ) -> Result<Self, ProjectionError> {
         if issued.as_millis() == 0 || expires <= issued {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Preparation));
         }
         Ok(Self {
             issued,

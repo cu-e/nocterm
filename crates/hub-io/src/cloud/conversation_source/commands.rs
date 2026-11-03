@@ -8,7 +8,7 @@ use futures::future::BoxFuture;
 use nocterm_cloud_model::projection::ConversationIntent;
 use nocterm_cloud_model::{
     identity::*,
-    projection::{ProjectionError, ports::*},
+    projection::{ProjectionError, RecordKind, ports::*},
 };
 use nocterm_core::allocation::{Allocated, AllocationLease};
 use nocterm_hub_model::cloud::{
@@ -84,7 +84,9 @@ pub(super) fn stage(
                 .map_err(|_| ProjectionError::Unavailable)?;
             let intent = intent_fingerprint(command.value());
             match progress.attempts.get(&command.value().id) {
-                Some(old) if old.intent != intent => return Err(ProjectionError::InvalidRecord),
+                Some(old) if old.intent != intent => {
+                    return Err(ProjectionError::InvalidRecord(RecordKind::Command));
+                }
                 Some(_) => {}
                 None => {
                     if progress.attempts.len()
@@ -154,7 +156,7 @@ fn stage_native(
         return if stored.intent == intent_fingerprint(command) {
             Ok(())
         } else {
-            Err(ProjectionError::InvalidRecord)
+            Err(ProjectionError::InvalidRecord(RecordKind::Command))
         };
     }
     if core
@@ -236,9 +238,9 @@ fn seal(
         },
         kind,
         issued_at_ms: i64::try_from(command.preparation.issued().as_millis())
-            .map_err(|_| ProjectionError::InvalidRecord)?,
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Command))?,
         accept_before_ms: i64::try_from(command.preparation.expires().as_millis())
-            .map_err(|_| ProjectionError::InvalidRecord)?,
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Command))?,
     };
     let payload = payload(&core.policy, &command.action, command.preparation)?;
     let runner = PublicKey::from_bytes(&core.native.material().request().pins.encryption)
@@ -275,7 +277,7 @@ pub(super) fn deliver(
         let frame = usize::try_from(core.native.cloud().limits().max_frame_bytes)
             .map_err(|_| ProjectionError::Capacity)?;
         if frame == 0 {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Command));
         }
         for bytes in prepared.ciphertext().chunks(frame) {
             core.check()?;
@@ -288,7 +290,7 @@ pub(super) fn deliver(
             || receipt.ciphertext_sha256.as_slice() != prepared.metadata().digest()
             || receipt.cursor == 0
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Command));
         }
         // The hub durably stored bytes. This says NOTHING about R admission.
         Ok(CommandDelivery::Delivered)
@@ -332,7 +334,7 @@ pub(super) fn query(
         .await?;
         core.check()?;
         let HeadValue::CommandReceipt(outcome) = &witness.witness().witness().value else {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Command));
         };
         Ok(match outcome {
             ReceiptOutcome::NotFound => CommandDelivery::NotFound,
@@ -386,7 +388,7 @@ async fn load(
                 .metadata
                 .binding()
                 .command_route()
-                .ok_or(ProjectionError::InvalidRecord)?;
+                .ok_or(ProjectionError::InvalidRecord(RecordKind::Command))?;
             let stream = core.binding.stream();
             if route.namespace != *core.native.cloud().namespace()
                 || route.runner.id != *stream.runner().as_bytes()
@@ -450,7 +452,7 @@ pub(super) fn payload<'a>(
         ConversationIntent::AnswerApproval(request) => {
             CloudCommandPayload::ResolveApproval(Box::new(
                 crate::cloud::events::values::approval(request.answer())
-                    .map_err(|_| ProjectionError::InvalidRecord)?,
+                    .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Command))?,
             ))
         }
         ConversationIntent::GrantProvider(access) => provider_grant(access)?,
@@ -465,11 +467,13 @@ fn provider_grant(
     let context = nocterm_hub_model::cloud::provider::ProviderLeaseContext::from_canonical_bytes(
         access.context(),
     )
-    .map_err(|_| ProjectionError::InvalidRecord)?;
+    .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Command))?;
     let allowed_models = access
         .models()
         .iter()
-        .map(|model| CloudTextId::new(model).map_err(|_| ProjectionError::InvalidRecord))
+        .map(|model| {
+            CloudTextId::new(model).map_err(|_| ProjectionError::InvalidRecord(RecordKind::Command))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(CloudCommandPayload::IssueGrant(Box::new(
         GrantPayload::Provider {

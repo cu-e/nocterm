@@ -13,8 +13,8 @@ use nocterm_cloud_model::{
     identity::{ChatControlRevision, Timestamp},
     journal::{HeadAnchor, HeadAnchorKind},
     projection::{
-        ProjectionBinding, ProjectionCursor, ProjectionError, ProjectionEvent, SnapshotBaseline,
-        SnapshotFact,
+        ProjectionBinding, ProjectionCursor, ProjectionError, ProjectionEvent, RecordKind,
+        SnapshotBaseline, SnapshotFact,
     },
 };
 use nocterm_core::{
@@ -113,7 +113,7 @@ impl AccountObservationDecoder {
         allocation: AllocationLease,
     ) -> Result<Allocated<SnapshotBaseline>, ObservationError> {
         if anchor.kind() != HeadAnchorKind::Snapshot {
-            return Err(ProjectionError::InvalidRecord.into());
+            return Err(ProjectionError::InvalidRecord(RecordKind::Observation).into());
         }
         let mut budget =
             budget::DecodeBudget::with_scratch(&allocation, Self::work_bytes(sealed.len(), true)?)?;
@@ -160,7 +160,7 @@ impl AccountObservationDecoder {
             return Err(ProjectionError::WrongSource.into());
         }
         if &Sha256::digest(sealed)[..] != anchor.ciphertext().as_bytes() {
-            return Err(ProjectionError::InvalidRecord.into());
+            return Err(ProjectionError::InvalidRecord(RecordKind::Observation).into());
         }
         let request = self.material.request();
         let context =

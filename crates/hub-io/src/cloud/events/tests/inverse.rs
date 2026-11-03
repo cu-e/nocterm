@@ -181,7 +181,7 @@ fn observation_refuses_a_transfer_intent_whose_mutation_flag_contradicts_the_cal
     assert!(matches!(
         decode_transfer_intent(false),
         Err(crate::cloud::observations::ObservationError::Projection(
-            nocterm_cloud_model::projection::ProjectionError::InvalidRecord
+            nocterm_cloud_model::projection::ProjectionError::InvalidRecord(_)
         ))
     ));
 }

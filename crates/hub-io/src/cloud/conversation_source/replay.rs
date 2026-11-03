@@ -8,7 +8,7 @@ use nocterm_cloud_model::{
     journal::HeadAnchor,
     projection::{
         MAX_REPLAY_BYTES, MAX_REPLAY_EVENTS, ProjectionBatch, ProjectionCursor, ProjectionError,
-        ProjectionEvent,
+        ProjectionEvent, RecordKind as Fault,
     },
 };
 use nocterm_core::allocation::AllocationLease;
@@ -192,12 +192,12 @@ async fn read(
                 while let Some(bytes) = record.next_chunk().await.map_err(sdk_error)? {
                     core.check()?;
                     if bytes.len() > length.saturating_sub(ciphertext.len()) {
-                        return Err(ProjectionError::InvalidRecord);
+                        return Err(ProjectionError::InvalidRecord(Fault::Replay));
                     }
                     ciphertext.extend_from_slice(&bytes);
                 }
                 if ciphertext.len() != length {
-                    return Err(ProjectionError::InvalidRecord);
+                    return Err(ProjectionError::InvalidRecord(Fault::Replay));
                 }
                 page.wire = page
                     .wire
@@ -239,7 +239,7 @@ fn anchor(
     let context = metadata
         .binding()
         .record_context()
-        .ok_or(ProjectionError::InvalidRecord)?;
+        .ok_or(ProjectionError::InvalidRecord(Fault::Replay))?;
     if context.chat() != &core.chat()? {
         return Err(ProjectionError::WrongSource);
     }

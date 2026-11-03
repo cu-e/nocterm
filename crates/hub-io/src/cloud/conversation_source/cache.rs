@@ -5,7 +5,7 @@ use super::{
 };
 use nocterm_cloud_model::{
     identity::*,
-    projection::{MAX_REPLAY_EVENTS, ProjectionCursor, ProjectionError},
+    projection::{MAX_REPLAY_EVENTS, ProjectionCursor, ProjectionError, RecordKind},
 };
 use nocterm_core::fs::{AtomicPublication, open_private_regular, require_private_regular};
 use nocterm_hub_model::cloud::{
@@ -71,12 +71,12 @@ impl CacheFile {
         file.read_exact(&mut header)
             .map_err(|_| ProjectionError::Persistence)?;
         if &header[..8] != MAGIC {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Cache));
         }
         let writer = u64::from_be_bytes(
             header[8..]
                 .try_into()
-                .map_err(|_| ProjectionError::InvalidRecord)?,
+                .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Cache))?,
         );
         let mut ciphertext = vec![0; size - 16];
         file.read_exact(&mut ciphertext)
@@ -123,7 +123,7 @@ fn coordinate(
     // Local view header uses the actual ChatId as its map key, NOT an EventId.
     let id = chat.chat_id();
     JournalCoordinate::new(chat, JournalClass::Header, id, 0, 0, writer.get())
-        .map_err(|_| ProjectionError::InvalidRecord)
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Cache))
 }
 pub(super) fn seal(
     key: &ChatKey,
@@ -159,7 +159,7 @@ pub(super) fn seal(
                 .metadata
                 .binding()
                 .canonical_bytes()
-                .map_err(|_| ProjectionError::InvalidRecord)?,
+                .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Cache))?,
         )?;
         field(&mut bytes, &record.ciphertext)?;
     }
@@ -172,16 +172,17 @@ pub(super) fn open_marker(
     upper: WriterEpoch,
     cell: &SealedCell,
 ) -> Result<CacheMarker, ProjectionError> {
-    let writer = WriterEpoch::new(cell.writer).map_err(|_| ProjectionError::InvalidRecord)?;
+    let writer = WriterEpoch::new(cell.writer)
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Cache))?;
     if writer > upper {
         return Err(ProjectionError::Rollback);
     }
     let bytes = key
         .open_journal(&coordinate(chat.clone(), writer)?, &cell.ciphertext)
-        .map_err(|_| ProjectionError::InvalidRecord)?;
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Cache))?;
     let mut input = Input(&bytes);
     if input.take(8)? != PLAIN {
-        return Err(ProjectionError::InvalidRecord);
+        return Err(ProjectionError::InvalidRecord(RecordKind::Cache));
     }
     let catalog_revision = u64::from_be_bytes(input.array()?);
     let catalog_root = Fingerprint::from_bytes(input.array()?);
@@ -189,7 +190,7 @@ pub(super) fn open_marker(
     let deleted = match input.array::<1>()? {
         [0] => false,
         [1] => true,
-        _ => return Err(ProjectionError::InvalidRecord),
+        _ => return Err(ProjectionError::InvalidRecord(RecordKind::Cache)),
     };
     let sequence = EventSequence::from_u64(u64::from_be_bytes(input.array()?));
     let known = match input.array::<1>()? {
@@ -197,16 +198,16 @@ pub(super) fn open_marker(
         [1] if sequence.get() > 0 => {
             ProjectionCursor::at(sequence, Fingerprint::from_bytes(input.array()?))
         }
-        _ => return Err(ProjectionError::InvalidRecord),
+        _ => return Err(ProjectionError::InvalidRecord(RecordKind::Cache)),
     };
     let delivered = u64::from_be_bytes(input.array()?);
     let count = usize::from(u16::from_be_bytes(input.array()?));
     if count > MAX_REPLAY_EVENTS || catalog_revision == 0 {
-        return Err(ProjectionError::InvalidRecord);
+        return Err(ProjectionError::InvalidRecord(RecordKind::Cache));
     }
     validate_records(&mut input, count, &chat, upper, known, delivered)?;
     if !input.0.is_empty() {
-        return Err(ProjectionError::InvalidRecord);
+        return Err(ProjectionError::InvalidRecord(RecordKind::Cache));
     }
     Ok(CacheMarker {
         writer,
@@ -233,11 +234,11 @@ fn validate_records(
         let _publication = input.array::<16>()?;
         let delivery = u64::from_be_bytes(input.array()?);
         let binding = RelayBinding::from_canonical_bytes(input.field(MAX_RELAY_BINDING_BYTES)?)
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Cache))?;
         let ciphertext = input.field(nocterm_hub_model::cloud::MAX_ENVELOPE_BYTES)?;
         let context = binding
             .record_context()
-            .ok_or(ProjectionError::InvalidRecord)?;
+            .ok_or(ProjectionError::InvalidRecord(RecordKind::Cache))?;
         let sequence = context.position().sequence;
         if context.chat() != chat
             || context.position().writer_epoch > upper.get()
@@ -247,12 +248,12 @@ fn validate_records(
             || delivery > delivered
             || (last_sequence != 0 && sequence != last_sequence + 1)
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Cache));
         }
         if sequence == known.sequence().get()
             && known.head() != Some(Fingerprint::from_bytes(Sha256::digest(ciphertext).into()))
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Cache));
         }
         last_delivery = delivery;
         last_sequence = sequence;

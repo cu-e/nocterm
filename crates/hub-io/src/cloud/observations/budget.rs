@@ -1,5 +1,5 @@
 //! Sub-admission inside the actual caller reservation, never a new quota owner.
-use nocterm_cloud_model::projection::ProjectionError;
+use nocterm_cloud_model::projection::{ProjectionError, RecordKind};
 use nocterm_core::allocation::AllocationLease;
 
 pub(super) struct DecodeBudget<'a> {
@@ -70,11 +70,11 @@ impl<'a> DecodeBudget<'a> {
                     nocterm_ai::history::HistoryCodecError::StructuralLimit => {
                         ProjectionError::Capacity
                     }
-                    _ => ProjectionError::InvalidRecord,
+                    _ => ProjectionError::InvalidRecord(RecordKind::Json),
                 },
             )?;
             budget.admit(bytes)?;
-            serde_json::from_str(text).map_err(|_| ProjectionError::InvalidRecord)
+            serde_json::from_str(text).map_err(|_| ProjectionError::InvalidRecord(RecordKind::Json))
         })
     }
 }

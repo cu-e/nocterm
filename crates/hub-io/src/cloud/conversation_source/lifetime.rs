@@ -20,7 +20,7 @@ impl SourceLifetime {
                 | ProjectionError::WrongSource
                 | ProjectionError::Rollback
                 | ProjectionError::Discontinuous
-                | ProjectionError::InvalidRecord
+                | ProjectionError::InvalidRecord(_)
                 | ProjectionError::Unsupported
         ) {
             return;

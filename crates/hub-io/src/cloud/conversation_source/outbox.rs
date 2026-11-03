@@ -2,7 +2,7 @@
 use super::storage::SealedCell;
 use nocterm_cloud_model::{
     identity::{CommandId, Fingerprint, WriterEpoch},
-    projection::{ProjectionError, ports::ConversationCommand},
+    projection::{ProjectionError, RecordKind, ports::ConversationCommand},
 };
 use nocterm_hub_model::cloud::{
     ChatCoordinate, JournalClass, JournalCoordinate,
@@ -34,7 +34,7 @@ impl StoredCommand {
             .metadata
             .binding()
             .canonical_bytes()
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Outbox))?;
         let mut plaintext = Zeroizing::new(Vec::with_capacity(
             FIXED + binding.len() + self.ciphertext.len(),
         ));
@@ -56,30 +56,31 @@ impl StoredCommand {
         upper: WriterEpoch,
         cell: &SealedCell,
     ) -> Result<Self, ProjectionError> {
-        let writer = WriterEpoch::new(cell.writer).map_err(|_| ProjectionError::InvalidRecord)?;
+        let writer = WriterEpoch::new(cell.writer)
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Outbox))?;
         if writer > upper {
             return Err(ProjectionError::Rollback);
         }
         let plaintext = key
             .open_journal(&coordinate(chat, id, writer)?, &cell.ciphertext)
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Outbox))?;
         let mut input = Input(&plaintext);
         if input.take(8)? != MAGIC {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Outbox));
         }
         let intent = Fingerprint::from_bytes(input.array()?);
         let semantic = input.array()?;
         let control = u64::from_be_bytes(input.array()?);
         let publication = input.array()?;
         let binding = RelayBinding::from_canonical_bytes(input.field(MAX_RELAY_BINDING_BYTES)?)
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Outbox))?;
         let ciphertext = input.field(nocterm_hub_model::cloud::MAX_ENVELOPE_BYTES)?;
         if !input.0.is_empty()
             || binding
                 .command_route()
                 .is_none_or(|route| route.command_id != *id.as_bytes())
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Outbox));
         }
         let metadata = PublicationMetadata::new(
             publication,
@@ -87,7 +88,7 @@ impl StoredCommand {
             u32::try_from(ciphertext.len()).map_err(|_| ProjectionError::Capacity)?,
             Sha256::digest(ciphertext).into(),
         )
-        .map_err(|_| ProjectionError::InvalidRecord)?;
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Outbox))?;
         Ok(Self {
             intent,
             semantic,
@@ -112,7 +113,7 @@ fn coordinate(
         0,
         writer.get(),
     )
-    .map_err(|_| ProjectionError::InvalidRecord)
+    .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Outbox))
 }
 pub(super) fn field(output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), ProjectionError> {
     output.extend_from_slice(
@@ -127,7 +128,7 @@ pub(super) struct Input<'a>(pub(super) &'a [u8]);
 impl<'a> Input<'a> {
     pub(super) fn take(&mut self, count: usize) -> Result<&'a [u8], ProjectionError> {
         if count > self.0.len() {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Outbox));
         }
         let (field, rest) = self.0.split_at(count);
         self.0 = rest;
@@ -136,7 +137,7 @@ impl<'a> Input<'a> {
     pub(super) fn array<const N: usize>(&mut self) -> Result<[u8; N], ProjectionError> {
         self.take(N)?
             .try_into()
-            .map_err(|_| ProjectionError::InvalidRecord)
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Outbox))
     }
     pub(super) fn field(&mut self, maximum: usize) -> Result<&'a [u8], ProjectionError> {
         let length = usize::try_from(u32::from_be_bytes(self.array()?))

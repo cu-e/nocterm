@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use super::ProjectionError;
+use super::{ProjectionError, RecordKind};
 use crate::identity::Timestamp;
 
 /// The most models one lease can name.
@@ -46,7 +46,7 @@ impl ProviderAccess {
             || models.len() > MAX_MODELS
             || expires.as_millis() == 0
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::ProviderAccess));
         }
         Ok(Self {
             grant,

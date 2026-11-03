@@ -1,6 +1,6 @@
 //! Immutable signed approval observations. A card never grants execution.
 use super::{
-    MAX_PENDING_COMMANDS, ProjectionError,
+    MAX_PENDING_COMMANDS, ProjectionError, RecordKind,
     runs::{RunKey, key},
 };
 use crate::{
@@ -122,7 +122,7 @@ impl ProjectionApprovals {
                     if card.intent.authority() != answer.authority()
                         || card.intent.arguments() != answer.arguments()
                     {
-                        return Err(ProjectionError::InvalidRecord);
+                        return Err(ProjectionError::InvalidRecord(RecordKind::Approval));
                     }
                     self.0
                         .remove(&(key(answer.authority().run()), answer.intent()));
@@ -151,16 +151,16 @@ impl ProjectionApprovals {
         // A historical signed card remains readable after its answer deadline.
         // The native command preparer enforces expiry before sealing an answer.
         if expires.as_millis() == 0 || call.name() != display.tool || display.version != 2 {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Approval));
         }
         call.validate()
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Approval))?;
         if call.writes() != intent.mutates() {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Approval));
         }
         let index = (key(intent.authority().run()), intent.id());
         if self.0.contains_key(&index) {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Approval));
         }
         if self.0.len() >= MAX_PENDING_COMMANDS {
             return Err(ProjectionError::Capacity);

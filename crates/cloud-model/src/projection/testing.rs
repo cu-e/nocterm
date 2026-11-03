@@ -1,7 +1,7 @@
 //! Shared scripted captured source. No production verifier or encrypted store.
 use super::{
     ConversationIntent, ConversationProjection, MAX_REPLAY_BYTES, ProjectionBatch,
-    ProjectionBinding, ProjectionCursor, ProjectionError,
+    ProjectionBinding, ProjectionCursor, ProjectionError, RecordKind,
     ports::{
         AllocationRequirements, CapturedConversationSource, CommandDelivery, ConversationCommand,
         ConversationCoordinates, ConversationWork,
@@ -179,7 +179,7 @@ impl ScriptedConversationSource {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.check(&state)?;
         if !state.staged.contains_key(&id) || outcome == CommandDelivery::Delivered {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Fixture));
         }
         state.statuses.insert(id, outcome);
         Ok(())
@@ -359,7 +359,7 @@ impl CapturedConversationSource for ScriptedConversationSource {
                         && old.action == command.value().action
                         && old.preparation == command.value().preparation)
                         .then_some(())
-                        .ok_or(ProjectionError::InvalidRecord);
+                        .ok_or(ProjectionError::InvalidRecord(RecordKind::Fixture));
                 }
                 if state.staged.len() >= 1024 {
                     return Err(ProjectionError::Capacity);

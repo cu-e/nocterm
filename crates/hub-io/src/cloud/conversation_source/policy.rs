@@ -4,7 +4,7 @@ use nocterm_cloud_model::{
     engine::ModelBudget,
     identity::Fingerprint,
     inference::ModelSelection,
-    projection::{ProjectionError, ports::ConversationPreparation},
+    projection::{ProjectionError, RecordKind, ports::ConversationPreparation},
 };
 use nocterm_hub_model::cloud::{CloudTextId, payload as wire};
 use sha2::{Digest, Sha256};
@@ -69,7 +69,7 @@ impl ConversationPromptPolicy {
             || lifetime_ms == 0
             || lifetime_ms > nocterm_hub_model::cloud::MAX_COMMAND_LIFETIME_MS as u64
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Policy));
         }
         let mut result = Self {
             selection,
@@ -115,9 +115,9 @@ impl ConversationPromptPolicy {
                     .issued()
                     .as_millis()
                     .checked_add(self.inference_lifetime_ms)
-                    .ok_or(ProjectionError::InvalidRecord)?,
+                    .ok_or(ProjectionError::InvalidRecord(RecordKind::Policy))?,
             )
-            .map_err(|_| ProjectionError::InvalidRecord)?,
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Policy))?,
         );
         Ok(wire::CloudCommandPayload::SubmitPrompt(Box::new(
             wire::PromptPayload {
@@ -144,11 +144,11 @@ impl ConversationPromptPolicy {
                 .issued()
                 .as_millis()
                 .checked_add(self.inference_lifetime_ms / 2)
-                .ok_or(ProjectionError::InvalidRecord)?,
+                .ok_or(ProjectionError::InvalidRecord(RecordKind::Policy))?,
         )
-        .map_err(|_| ProjectionError::InvalidRecord)?;
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Policy))?;
         let issued = i64::try_from(preparation.issued().as_millis())
-            .map_err(|_| ProjectionError::InvalidRecord)?;
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Policy))?;
         Ok(wire::CloudCommandPayload::IssueGrant(Box::new(
             wire::GrantPayload::Inference {
                 grant: wire::GrantReference {
@@ -234,7 +234,7 @@ impl ConversationPromptPolicy {
     }
 }
 fn id(value: &str) -> Result<CloudTextId, ProjectionError> {
-    CloudTextId::new(value).map_err(|_| ProjectionError::InvalidRecord)
+    CloudTextId::new(value).map_err(|_| ProjectionError::InvalidRecord(RecordKind::Policy))
 }
 fn target(
     target: &nocterm_cloud_model::authority::TargetBinding,
@@ -272,7 +272,7 @@ impl ConversationPolicy {
         if lifetime_ms == 0
             || lifetime_ms > nocterm_hub_model::cloud::MAX_COMMAND_LIFETIME_MS as u64
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Policy));
         }
         let mut hash = Sha256::new();
         hash.update(b"nocterm-native-cloud-control-timing-v1");
