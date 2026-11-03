@@ -293,6 +293,13 @@ impl<V: View> IntoElement for ViewElement<V> {
 }
 
 struct ViewElementState {
+    /// Nocterm: the draw that last painted this view. Its ranges index the frame
+    /// drawn last only if that draw painted it; a reused ancestor copies a nested
+    /// view's output without visiting it, which leaves its ranges stale.
+    painted_in: u64,
+    /// Nocterm: the cached views prepainted inside this one, at any depth. Reusing this
+    /// view copies their output without visiting them, so their ranges move with it.
+    nested: Vec<GlobalElementId>,
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewElementCacheKey,
@@ -487,32 +494,59 @@ fn prepaint_view(
                     && element_state.cache_key.text_style == text_style
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
+                    && element_state.painted_in + 1 == window.draw_generation
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
                     cx.entities
                         .extend_accessed(&element_state.accessed_entities);
                     let prepaint_end = window.prepaint_index();
-                    element_state.prepaint_range = prepaint_start..prepaint_end;
+                    let previous = mem::replace(
+                        &mut element_state.prepaint_range,
+                        prepaint_start..prepaint_end,
+                    );
+                    for nested in &element_state.nested {
+                        window.update_unvisited_element_state(
+                            nested,
+                            |state: &mut ViewElementState| {
+                                state.prepaint_range = state
+                                    .prepaint_range
+                                    .start
+                                    .shifted(&previous.start, &element_state.prepaint_range.start)
+                                    ..state.prepaint_range.end.shifted(
+                                        &previous.start,
+                                        &element_state.prepaint_range.start,
+                                    );
+                            },
+                        );
+                    }
+                    report_nested(window, global_id.unwrap(), &element_state.nested);
 
                     return (None, element_state);
                 }
 
-                let refreshing = mem::replace(&mut window.refreshing, true);
+                // Nocterm: a cached view drawn again keeps the window's refresh state, so
+                // the cached views nested in it are reused unless they or what they read
+                // changed. Forcing them to draw (upstream) made one notified leaf redraw
+                // every cached view under each of its cached ancestors.
                 let prepaint_start = window.prepaint_index();
+                window.cached_view_scopes.push(Vec::new());
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
                     element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
                     element.prepaint_at(bounds.origin, window, cx);
                     element
                 });
+                let nested = window.cached_view_scopes.pop().unwrap_or_default();
+                report_nested(window, global_id.unwrap(), &nested);
 
                 let prepaint_end = window.prepaint_index();
-                window.refreshing = refreshing;
 
                 (
                     Some(element),
                     ViewElementState {
+                        painted_in: 0,
+                        nested,
                         accessed_entities,
                         prepaint_range: prepaint_start..prepaint_end,
                         paint_range: PaintIndex::default()..PaintIndex::default(),
@@ -526,6 +560,15 @@ fn prepaint_view(
             },
         )
     })
+}
+
+/// Nocterm: records a prepainted cached view and those nested in it in the enclosing
+/// cached view's scope, if any.
+fn report_nested(window: &mut Window, global_id: &GlobalElementId, nested: &[GlobalElementId]) {
+    if let Some(scope) = window.cached_view_scopes.last_mut() {
+        scope.push(global_id.clone());
+        scope.extend(nested.iter().cloned());
+    }
 }
 
 #[inline(never)]
@@ -560,16 +603,36 @@ fn paint_view(
 
                     let paint_start = window.paint_index();
 
+                    let reused = element.is_none();
                     if let Some(element) = element {
-                        let refreshing = mem::replace(&mut window.refreshing, true);
                         element.paint(window, cx);
-                        window.refreshing = refreshing;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());
                     }
 
                     let paint_end = window.paint_index();
-                    element_state.paint_range = paint_start..paint_end;
+                    let previous =
+                        mem::replace(&mut element_state.paint_range, paint_start..paint_end);
+                    element_state.painted_in = window.draw_generation;
+                    if reused {
+                        let generation = window.draw_generation;
+                        for nested in &element_state.nested {
+                            window.update_unvisited_element_state(
+                                nested,
+                                |state: &mut ViewElementState| {
+                                    state.paint_range = state
+                                        .paint_range
+                                        .start
+                                        .shifted(&previous.start, &element_state.paint_range.start)
+                                        ..state.paint_range.end.shifted(
+                                            &previous.start,
+                                            &element_state.paint_range.start,
+                                        );
+                                    state.painted_in = generation;
+                                },
+                            );
+                        }
+                    }
 
                     ((), element_state)
                 },

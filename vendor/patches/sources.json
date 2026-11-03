@@ -251,7 +251,8 @@
       },
       "license": "Apache-2.0",
       "patches": [
-        "vendor/patches/gpui-pre/0001-nocterm.patch"
+        "vendor/patches/gpui-pre/0001-nocterm.patch",
+        "vendor/patches/gpui-pre/0002-nested-view-cache.patch"
       ],
       "omitted": []
     },

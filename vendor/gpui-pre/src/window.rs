@@ -1026,6 +1026,90 @@ pub(crate) struct PaintIndex {
     line_layout_index: LineLayoutIndex,
 }
 
+/// Nocterm: moves a nested index by the distance its enclosing reused range moved.
+fn shift_index(index: usize, from: usize, to: usize) -> usize {
+    index - from + to
+}
+
+impl PrepaintStateIndex {
+    /// Nocterm: this index moved with an enclosing range copied from `from` to `to`.
+    pub(crate) fn shifted(&self, from: &Self, to: &Self) -> Self {
+        Self {
+            hitboxes_index: shift_index(
+                self.hitboxes_index,
+                from.hitboxes_index,
+                to.hitboxes_index,
+            ),
+            tooltips_index: shift_index(
+                self.tooltips_index,
+                from.tooltips_index,
+                to.tooltips_index,
+            ),
+            deferred_draws_index: shift_index(
+                self.deferred_draws_index,
+                from.deferred_draws_index,
+                to.deferred_draws_index,
+            ),
+            dispatch_tree_index: shift_index(
+                self.dispatch_tree_index,
+                from.dispatch_tree_index,
+                to.dispatch_tree_index,
+            ),
+            accessed_element_states_index: shift_index(
+                self.accessed_element_states_index,
+                from.accessed_element_states_index,
+                to.accessed_element_states_index,
+            ),
+            line_layout_index: self
+                .line_layout_index
+                .shifted(&from.line_layout_index, &to.line_layout_index),
+        }
+    }
+}
+
+impl PaintIndex {
+    /// Nocterm: this index moved with an enclosing range copied from `from` to `to`.
+    pub(crate) fn shifted(&self, from: &Self, to: &Self) -> Self {
+        Self {
+            scene_index: shift_index(self.scene_index, from.scene_index, to.scene_index),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_index: shift_index(
+                self.debug_bounds_index,
+                from.debug_bounds_index,
+                to.debug_bounds_index,
+            ),
+            mouse_listeners_index: shift_index(
+                self.mouse_listeners_index,
+                from.mouse_listeners_index,
+                to.mouse_listeners_index,
+            ),
+            input_handlers_index: shift_index(
+                self.input_handlers_index,
+                from.input_handlers_index,
+                to.input_handlers_index,
+            ),
+            cursor_styles_index: shift_index(
+                self.cursor_styles_index,
+                from.cursor_styles_index,
+                to.cursor_styles_index,
+            ),
+            accessed_element_states_index: shift_index(
+                self.accessed_element_states_index,
+                from.accessed_element_states_index,
+                to.accessed_element_states_index,
+            ),
+            tab_handle_index: shift_index(
+                self.tab_handle_index,
+                from.tab_handle_index,
+                to.tab_handle_index,
+            ),
+            line_layout_index: self
+                .line_layout_index
+                .shifted(&from.line_layout_index, &to.line_layout_index),
+        }
+    }
+}
+
 impl Frame {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
@@ -1227,6 +1311,11 @@ pub struct Window {
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
+    /// Nocterm: counts draws, so a cached view can tell whether its recorded ranges
+    /// belong to the frame drawn last.
+    pub(crate) draw_generation: u64,
+    /// Nocterm: the cached views prepainted inside each cached view being prepainted.
+    pub(crate) cached_view_scopes: Vec<Vec<GlobalElementId>>,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -2116,6 +2205,8 @@ impl Window {
             long_press_timer: None,
             long_press_capture: None,
             refreshing: false,
+            draw_generation: 0,
+            cached_view_scopes: Vec::new(),
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -3300,6 +3391,7 @@ impl Window {
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
+        self.draw_generation += 1;
 
         if self.platform_window.prepare_frame() {
             self.refresh();
@@ -4224,6 +4316,27 @@ impl Window {
             cx,
             init,
         )
+    }
+
+    /// Nocterm: changes an element state that this frame has not visited, in place, without
+    /// recording an access: its owner was copied as part of an enclosing reused range,
+    /// which already carries the access forward.
+    pub(crate) fn update_unvisited_element_state<S: 'static>(
+        &mut self,
+        global_id: &GlobalElementId,
+        update: impl FnOnce(&mut S),
+    ) {
+        let key = (global_id.clone(), TypeId::of::<S>());
+        let state = match self.next_frame.element_states.get_mut(&key) {
+            Some(state) => Some(state),
+            None => self.rendered_frame.element_states.get_mut(&key),
+        };
+        if let Some(state) = state
+            .and_then(|state| state.inner.downcast_mut::<Option<S>>())
+            .and_then(Option::as_mut)
+        {
+            update(state);
+        }
     }
 
     /// Updates or initializes state for an element with the given id that lives across multiple
@@ -9328,5 +9441,135 @@ mod inspector_tests {
             }
         })
         .expect("closed inspector has no bookkeeping and no style overrides");
+    }
+
+    /// Nocterm: a cached view drawn again reuses the cached views nested in it, even after
+    /// a frame that copied its whole output, and the reused output still takes input.
+    #[gpui::test]
+    fn nested_cached_views_survive_their_ancestors_reuse(cx: &mut TestAppContext) {
+        use crate::{AnyView, App, Entity, InputEvent as _, StyleRefinement, hsla};
+
+        struct Probe {
+            renders: Rc<Cell<usize>>,
+            clicks: Rc<Cell<usize>>,
+            // Each draw adds a child, so the probe's output moves what follows it.
+            grows: bool,
+        }
+        impl Render for Probe {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.renders.set(self.renders.get() + 1);
+                let clicks = self.clicks.clone();
+                let children = if self.grows { self.renders.get() } else { 0 };
+                div()
+                    .id("probe")
+                    .w(px(40.))
+                    .h(px(20.))
+                    .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                        clicks.set(clicks.get() + 1)
+                    })
+                    .children((0..children).map(|_| div().size(px(1.)).bg(hsla(0., 0., 0., 1.))))
+            }
+        }
+        struct Middle {
+            nested: Entity<Probe>,
+            sibling: Entity<Probe>,
+        }
+        impl Render for Middle {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let fixed = StyleRefinement::default().w(px(40.)).h(px(20.));
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(self.sibling.clone())
+                    .child(AnyView::from(self.nested.clone()).cached(fixed))
+            }
+        }
+        struct Top {
+            leading: Entity<Probe>,
+            middle: Entity<Middle>,
+        }
+        impl Render for Top {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let fixed = StyleRefinement::default().w(px(40.)).h(px(40.));
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(self.leading.clone())
+                    .child(AnyView::from(self.middle.clone()).cached(fixed))
+            }
+        }
+
+        let nested_renders = Rc::new(Cell::new(0));
+        let clicks = Rc::new(Cell::new(0));
+        let probe = |renders: &Rc<Cell<usize>>, grows: bool, cx: &mut App| {
+            let renders = renders.clone();
+            let clicks = clicks.clone();
+            cx.new(move |_| Probe {
+                renders,
+                clicks,
+                grows,
+            })
+        };
+        let (leading, sibling, nested) = cx.update(|cx| {
+            (
+                probe(&Rc::new(Cell::new(0)), true, cx),
+                probe(&Rc::new(Cell::new(0)), false, cx),
+                probe(&nested_renders, false, cx),
+            )
+        });
+        let window = cx.add_window({
+            let (leading, sibling, nested) = (leading.clone(), sibling.clone(), nested.clone());
+            move |_, cx| Top {
+                leading,
+                middle: cx.new(|_| Middle { nested, sibling }),
+            }
+        });
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        };
+        let notify = |probe: &Entity<Probe>, cx: &mut TestAppContext| {
+            cx.update(|cx| probe.update(cx, |_, cx| cx.notify()));
+        };
+        draw(cx);
+        let first = nested_renders.get();
+        assert_eq!(first, 1);
+
+        // The sibling's change draws the middle view again; its nested view is reused.
+        notify(&sibling, cx);
+        draw(cx);
+        assert_eq!(nested_renders.get(), first);
+        // The leading view grows and moves the middle view's output, which is copied whole.
+        notify(&leading, cx);
+        draw(cx);
+        notify(&leading, cx);
+        draw(cx);
+        // Drawing the middle view again still reuses the nested view at its new place.
+        notify(&sibling, cx);
+        draw(cx);
+        assert_eq!(nested_renders.get(), first);
+
+        // The reused nested view still receives input where it is drawn.
+        cx.update_window(window.into(), |_, window, cx| {
+            let bounds = window
+                .rendered_frame
+                .hitboxes
+                .last()
+                .map(|hitbox| hitbox.bounds)
+                .expect("the nested probe registers a hitbox last");
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: bounds.center(),
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        assert_eq!(clicks.get(), 1);
     }
 }
