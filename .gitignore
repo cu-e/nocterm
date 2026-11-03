@@ -1,6 +1,8 @@
 # Rust / Cargo
 target/
 /target-contract-msrv/
+# Per-worktree Cargo target directories (target-<slug>)
+/target-*/
 **/*.rs.bk
 *.pdb
 
@@ -67,3 +69,6 @@ ehthumbs.db
 .claude/worktrees/
 .claude/plans/
 mcp.db
+
+# Playwright MCP session logs and snapshots
+.playwright-mcp/
