@@ -498,6 +498,13 @@ impl AgentPanel {
         window.defer(cx, move |window, cx| {
             let _ = panel.update(cx, |panel, cx| panel.sync_approval_attention(window, cx));
         });
+        // The chat on screen draws its change at once; others wait for the coalesced redraw.
+        if self
+            .current()
+            .is_some_and(|current| current.entity_id() == loaded.entity_id())
+        {
+            cx.notify();
+        }
         let Some(ticket) = self.notices.request_redraw() else {
             return;
         };

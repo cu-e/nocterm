@@ -299,8 +299,12 @@ impl AgentPanel {
                 || self.host.workspace().upgrade().is_none_or(|workspace| {
                     !workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id)
                 }));
-        // The workspace pulls the attention from `Panel::attention` when the panel notifies.
-        cx.notify();
+        // The workspace pulls the attention from `Panel::attention` when the panel notifies,
+        // so notify only when it changed: this runs on every chunk a chat streams.
+        let asks = Panel::attention(self, cx).is_some();
+        if self.notices.attention_changed(asks) {
+            cx.notify();
+        }
         let requests = needs_notice.then(|| {
             self.chats
                 .iter()

@@ -15,7 +15,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_agent_directory::AgentsHandle;
-use nocterm_ai::agents::AgentProfile;
+use nocterm_ai::agents::{AgentProfile, AvailableAgents};
 use nocterm_ui::IconName;
 use std::time::Duration;
 
@@ -317,12 +317,14 @@ impl HistoryProjection {
                     .child("No chats match"),
             );
         }
+        // Resolved once: resolving builds the whole agent list from the catalog and settings.
+        let available = agents.available(cx);
         for thread in listed {
             history = history.child(Self::render_history_row(
                 &thread,
                 chats,
                 history_owner,
-                agents,
+                (agents, &available),
                 now,
                 cx,
             ));
@@ -333,7 +335,7 @@ impl HistoryProjection {
         thread: &Entity<AgentThread>,
         chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
-        agents: &AgentsHandle,
+        (agents, available): (&AgentsHandle, &AvailableAgents),
         now: u64,
         cx: &mut Context<AgentPanel>,
     ) -> gpui_kit::AnyElement {
@@ -359,7 +361,7 @@ impl HistoryProjection {
             when,
             model: chat.model().unwrap_or_default(),
             generating: chat.session_generating(),
-            agent: agents.profile(chat.document().agent_id(), cx),
+            agent: agents.profile_in(available, chat.document().agent_id()),
             rename: history.rename_input(id),
         };
         HistoryRowRenderer::render(row, cx)
