@@ -370,7 +370,7 @@ fn deletion_rejects_new_events_without_changing_published_history() {
         projection
             .apply(&fixture.page(vec![text(&run, TextChannel::Assistant, "after delete")]))
             .unwrap_err(),
-        ProjectionError::InvalidRecord
+        ProjectionError::InvalidRecord(RecordKind::Event)
     );
     assert_eq!(state(&projection), before);
 }
@@ -591,7 +591,10 @@ fn descriptive_background_after_new_run_and_delete_preserves_original_unknown_re
     altered[0].event =
         CoordinatorEvent::BackgroundLifecycle(Box::new(fact(StepId::from_bytes([99; 16]))));
     let bad = ProjectionBatch::new(good.binding().clone(), altered, good.known_head()).unwrap();
-    assert_eq!(projection.apply(&bad), Err(ProjectionError::InvalidRecord));
+    assert_eq!(
+        projection.apply(&bad),
+        Err(ProjectionError::InvalidRecord(RecordKind::Tool))
+    );
     projection.apply(&good).unwrap();
     assert_eq!(projection.control(), control);
     assert_eq!(projection.phase(), ConversationPhase::Deleted);
@@ -651,7 +654,7 @@ fn approval_observations_preserve_exact_card_and_refuse_changed_resolution_atomi
     let wrong = ProjectionBatch::new(fixture.binding().clone(), wrong, valid.known_head()).unwrap();
     assert_eq!(
         projection.apply(&wrong),
-        Err(ProjectionError::InvalidRecord)
+        Err(ProjectionError::InvalidRecord(RecordKind::Approval))
     );
     assert_eq!(state(&projection), before);
     assert!(projection.approval(key).is_some());
@@ -686,7 +689,7 @@ fn approval_cards_preserve_expired_facts_and_retire_finite_pending_on_actual_sto
     let before = state(&projection);
     assert_eq!(
         projection.apply(&rejected.page(malformed)),
-        Err(ProjectionError::InvalidRecord)
+        Err(ProjectionError::InvalidRecord(RecordKind::Approval))
     );
     assert_eq!(state(&projection), before);
     assert!(projection.approvals().next().is_none());
@@ -718,4 +721,13 @@ fn allowing_a_run_is_the_inference_grant_intent_and_carries_no_payload() {
     assert!(intent == ConversationAction::Allow);
     assert!(intent != ConversationAction::Stop);
     assert_eq!(intent.resident_bytes(), 4096);
+}
+
+#[test]
+fn an_invalid_record_names_the_kind_of_record_it_rejected() {
+    let error = ProjectionError::InvalidRecord(RecordKind::Tool);
+    assert_eq!(
+        error.to_string(),
+        "The verified projection contains an invalid record: tool call."
+    );
 }

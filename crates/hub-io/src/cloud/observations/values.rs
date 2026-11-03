@@ -9,7 +9,7 @@ use nocterm_cloud_model::{
     identity::*,
     inference::ModelSelection,
     journal::{CommandAcceptance, CommandKind},
-    projection::ProjectionError,
+    projection::{ProjectionError, RecordKind},
 };
 use nocterm_hub_model::cloud::{
     self as wire,
@@ -18,7 +18,8 @@ use nocterm_hub_model::cloud::{
 };
 
 pub(super) fn text(value: &wire::CloudTextId) -> Result<NamespaceId, ProjectionError> {
-    NamespaceId::new(value.as_str()).map_err(|_| ProjectionError::InvalidRecord)
+    NamespaceId::new(value.as_str())
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Coordinate))
 }
 pub(super) fn run(
     stream: &StreamBinding,
@@ -30,7 +31,8 @@ pub(super) fn run(
         stream.runner_epoch(),
         stream.chat(),
         RunId::from_bytes(value.id),
-        RunEpoch::new(value.expected_epoch).map_err(|_| ProjectionError::InvalidRecord)?,
+        RunEpoch::new(value.expected_epoch)
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Coordinate))?,
     ))
 }
 pub(super) fn model(value: &body::ModelSelection) -> Result<ModelSelection, ProjectionError> {
@@ -60,7 +62,8 @@ pub(super) fn session(value: &body::SessionReference) -> Result<SessionReceipt, 
     let (target, authentication) = target(&value.access)?;
     Ok(SessionReceipt::new(
         RemoteSessionId::from_bytes(value.id),
-        SessionEpoch::new(value.epoch).map_err(|_| ProjectionError::InvalidRecord)?,
+        SessionEpoch::new(value.epoch)
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Coordinate))?,
         target,
         authentication,
     ))
@@ -73,7 +76,8 @@ pub(super) fn execution(
         run(stream, value.run)?,
         session(&value.session)?,
         GrantId::from_bytes(value.grant.id),
-        GrantEpoch::new(value.grant.epoch).map_err(|_| ProjectionError::InvalidRecord)?,
+        GrantEpoch::new(value.grant.epoch)
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Coordinate))?,
     ))
 }
 pub(super) fn accepted(value: &AcceptedCommand) -> Result<CommandAcceptance, ProjectionError> {
@@ -87,7 +91,9 @@ pub(super) fn accepted(value: &AcceptedCommand) -> Result<CommandAcceptance, Pro
         wire::CommandKind::DeleteChat => CommandKind::DeleteChat,
         wire::CommandKind::RevokeIssuerGrants => CommandKind::RevokeIssuer,
         // Managed sessions are not accepted by this desktop build yet.
-        wire::CommandKind::BeginSession => return Err(ProjectionError::InvalidRecord),
+        wire::CommandKind::BeginSession => {
+            return Err(ProjectionError::InvalidRecord(RecordKind::ManagedSession));
+        }
     };
     Ok(CommandAcceptance::new(
         CommandId::from_bytes(value.id),

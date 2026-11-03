@@ -652,3 +652,15 @@ fn conversation_source_provider_grant_carries_the_sealed_capsule_and_never_outli
         .unwrap();
     assert_eq!(opened.secret(), b"sk-secret");
 }
+
+#[test]
+fn a_refused_relay_head_names_its_kind_instead_of_a_tool_or_content_record() {
+    let relay = sdk_error(CloudError::Protocol);
+    assert_eq!(relay, ProjectionError::InvalidRecord(RecordKind::Protocol));
+    assert!(relay.to_string().contains("relay protocol"));
+    assert_eq!(
+        sdk_error(CloudError::Interrupted),
+        ProjectionError::Unavailable
+    );
+    assert_eq!(sdk_error(CloudError::NotSignedIn), ProjectionError::Stale);
+}

@@ -5,7 +5,7 @@ use nocterm_ai::model::content::{Content, Image, Text};
 use nocterm_cloud_model::{
     coordinator::{ObservedPrompt, RunDestination},
     engine::EnginePrompt,
-    projection::ProjectionError,
+    projection::{ProjectionError, RecordKind},
 };
 use nocterm_hub_model::cloud::{
     events::AcceptedPrompt,
@@ -58,14 +58,15 @@ pub(super) fn prompt(
                 .transpose()?;
             Some(
                 RunDestination::new(target, authentication, session)
-                    .map_err(|_| ProjectionError::InvalidRecord)?,
+                    .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Prompt))?,
             )
         }
         None if value.existing_session.is_none() => None,
-        None => return Err(ProjectionError::InvalidRecord),
+        None => return Err(ProjectionError::InvalidRecord(RecordKind::Prompt)),
     };
     Ok(ObservedPrompt::new(
-        EnginePrompt::new(content).map_err(|_| ProjectionError::InvalidRecord)?,
+        EnginePrompt::new(content)
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Prompt))?,
         values::model(&value.model)?,
         destination,
     ))

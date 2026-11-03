@@ -1,6 +1,6 @@
 use super::{
     MAX_PROJECTION_ENTRIES, MAX_REPLAY_EVENTS, ProjectionBatch, ProjectionBinding,
-    ProjectionCursor, ProjectionError, runs::ProjectionRuns, tools::ProjectionTools,
+    ProjectionCursor, ProjectionError, RecordKind, runs::ProjectionRuns, tools::ProjectionTools,
 };
 use crate::{
     authority::RunBinding,
@@ -145,12 +145,12 @@ impl ConversationProjection {
             }
             if next.deleted && !matches!(&envelope.event, CoordinatorEvent::BackgroundLifecycle(_))
             {
-                return Err(ProjectionError::InvalidRecord);
+                return Err(ProjectionError::InvalidRecord(RecordKind::Event));
             }
             if matches!(&envelope.event, CoordinatorEvent::BackgroundLifecycle(_))
                 && envelope.control != next.control
             {
-                return Err(ProjectionError::InvalidRecord);
+                return Err(ProjectionError::InvalidRecord(RecordKind::Event));
             }
             let now = envelope.time.as_millis() / 1000;
             next.reduce(&envelope.event, now, &mut accepted)?;
@@ -268,7 +268,7 @@ impl ConversationProjection {
                 let run = intent.authority().run();
                 self.require_current(run)?;
                 if !self.tools.contains(intent) {
-                    return Err(ProjectionError::InvalidRecord);
+                    return Err(ProjectionError::InvalidRecord(RecordKind::Event));
                 }
                 self.runs.update(run, ConversationPhase::WaitingApproval)?;
             }

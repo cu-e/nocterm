@@ -6,7 +6,7 @@ use nocterm_cloud_model::{
         CurrentChatHead, CurrentHeadFacts, HeadAnchor, HeadAnchorKind, HeadRecordPosition,
         JournalCatalogBinding,
     },
-    projection::ProjectionError,
+    projection::{ProjectionError, RecordKind as Fault},
 };
 use nocterm_hub_model::cloud::{
     RecordKind,
@@ -31,13 +31,14 @@ impl PinnedHeadMapper {
         let stream = self.binding.stream(CloudChatId::from_bytes(value.chat_id));
         CurrentChatHead::new(
             stream.clone(),
-            ChatKeyEpoch::new(value.chat_key_epoch).map_err(|_| ProjectionError::InvalidRecord)?,
+            ChatKeyEpoch::new(value.chat_key_epoch)
+                .map_err(|_| ProjectionError::InvalidRecord(Fault::Head))?,
             CurrentHeadFacts {
                 writer: value
                     .current_writer
                     .map(WriterEpoch::new)
                     .transpose()
-                    .map_err(|_| ProjectionError::InvalidRecord)?,
+                    .map_err(|_| ProjectionError::InvalidRecord(Fault::Head))?,
                 control: ChatControlRevision::from_u64(value.control_revision),
                 deleted: value.deleted,
                 head: value
@@ -53,7 +54,7 @@ impl PinnedHeadMapper {
                     .transpose()?,
             },
         )
-        .map_err(|_| ProjectionError::InvalidRecord)
+        .map_err(|_| ProjectionError::InvalidRecord(Fault::Head))
     }
     pub(super) fn anchor(
         &self,
@@ -73,18 +74,19 @@ impl PinnedHeadMapper {
                     stream.chat(),
                     RunId::from_bytes(run.id),
                     RunEpoch::new(run.expected_epoch)
-                        .map_err(|_| ProjectionError::InvalidRecord)?,
+                        .map_err(|_| ProjectionError::InvalidRecord(Fault::Head))?,
                 ))
             })
             .transpose()?;
         let position = value.position;
         let position = HeadRecordPosition::new(
-            WriterEpoch::new(position.writer_epoch).map_err(|_| ProjectionError::InvalidRecord)?,
+            WriterEpoch::new(position.writer_epoch)
+                .map_err(|_| ProjectionError::InvalidRecord(Fault::Head))?,
             EventSequence::from_u64(position.sequence),
             JournalSequence::from_u64(position.journal_sequence),
             StreamRevision::from_u64(position.revision),
         )
-        .map_err(|_| ProjectionError::InvalidRecord)?;
+        .map_err(|_| ProjectionError::InvalidRecord(Fault::Head))?;
         Ok(HeadAnchor::new(
             match value.kind {
                 RecordKind::Event => HeadAnchorKind::Event,

@@ -3,7 +3,7 @@ use futures::channel::oneshot;
 use gpui::Task;
 use nocterm_cloud_model::{
     identity::CommandId,
-    projection::{MAX_PENDING_COMMANDS, ProjectionError, ports::ConversationCommand},
+    projection::{MAX_PENDING_COMMANDS, ProjectionError, RecordKind, ports::ConversationCommand},
 };
 use nocterm_core::allocation::{Allocated, AllocationLease};
 use std::{cell::Cell, collections::BTreeMap, rc::Rc, sync::Arc};
@@ -70,7 +70,7 @@ impl PendingCommands {
     ) -> Result<(), ProjectionError> {
         self.require_room()?;
         if self.0.contains_key(&command.id) {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::PendingCommand));
         }
         self.0.insert(
             command.id,
@@ -89,7 +89,10 @@ impl PendingCommands {
         id: CommandId,
         waiter: CommandWaiter,
     ) -> Result<Arc<RetainedCommand>, ProjectionError> {
-        let entry = self.0.get_mut(&id).ok_or(ProjectionError::InvalidRecord)?;
+        let entry = self
+            .0
+            .get_mut(&id)
+            .ok_or(ProjectionError::InvalidRecord(RecordKind::PendingCommand))?;
         if entry.operation.is_some() || entry.waiter.is_some() {
             return Err(ProjectionError::Unavailable);
         }
@@ -109,13 +112,13 @@ impl PendingCommands {
         self.0
             .get(&id)
             .map(|entry| entry.retained.clone())
-            .ok_or(ProjectionError::InvalidRecord)
+            .ok_or(ProjectionError::InvalidRecord(RecordKind::PendingCommand))
     }
     pub(crate) fn receipt(&self, id: CommandId) -> Result<SubmissionReceipt, ProjectionError> {
         self.0
             .get(&id)
             .map(|entry| entry.receipt.clone())
-            .ok_or(ProjectionError::InvalidRecord)
+            .ok_or(ProjectionError::InvalidRecord(RecordKind::PendingCommand))
     }
     pub(crate) fn staged(&mut self, id: CommandId) {
         if let Some(entry) = self.0.get_mut(&id)

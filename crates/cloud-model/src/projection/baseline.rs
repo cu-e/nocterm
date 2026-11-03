@@ -1,5 +1,5 @@
 //! Snapshot facts have no event IDs or invented chain positions.
-use super::{MAX_PROJECTION_ENTRIES, ProjectionBinding, ProjectionError};
+use super::{MAX_PROJECTION_ENTRIES, ProjectionBinding, ProjectionError, RecordKind};
 use crate::{
     coordinator::CoordinatorEvent,
     identity::{ChatControlRevision, Timestamp},
@@ -36,7 +36,7 @@ impl SnapshotBaseline {
             || anchor.position().writer() > binding.writer()
             || facts.len() > MAX_PROJECTION_ENTRIES
         {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::SnapshotBaseline));
         }
         let mut previous = ChatControlRevision::default();
         let mut previous_time = Timestamp::from_millis(0);
@@ -46,7 +46,7 @@ impl SnapshotBaseline {
                 || fact.time < previous_time
                 || fact.time > time
             {
-                return Err(ProjectionError::InvalidRecord);
+                return Err(ProjectionError::InvalidRecord(RecordKind::SnapshotBaseline));
             }
             previous = fact.control;
             previous_time = fact.time;

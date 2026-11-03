@@ -1,5 +1,5 @@
 //! Cloud command requests remain distinct from neutral Local renderer actions.
-use super::{ProjectionError, ProviderAccess};
+use super::{ProjectionError, ProviderAccess, RecordKind};
 use crate::{coordinator::ApprovalAnswer, identity::Timestamp};
 use nocterm_ai::conversation::ConversationAction;
 
@@ -11,7 +11,7 @@ pub struct ApprovalRequest {
 impl ApprovalRequest {
     pub fn new(answer: ApprovalAnswer, expires: Timestamp) -> Result<Self, ProjectionError> {
         if expires.as_millis() == 0 {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::ApprovalRequest));
         }
         Ok(Self { answer, expires })
     }

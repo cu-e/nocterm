@@ -3,7 +3,7 @@ use super::{capture::NativeSource, clock::SourceClock, sdk_error};
 use nocterm_cloud_model::{
     identity::*,
     journal::{CurrentChatHead, HeadAnchor},
-    projection::ProjectionError,
+    projection::{ProjectionError, RecordKind},
 };
 use nocterm_core::allocation::{Allocated, AllocationLease};
 use nocterm_hub_client::cloud::{DeviceHeadProbes, ResidentHeadWitness};
@@ -62,7 +62,7 @@ pub(super) async fn current(
         )
         .await?;
         let HeadValue::Catalog(page) = &witness.witness().witness().value else {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::Head));
         };
         if root.is_some_and(|root| root != page.digest)
             || revision.is_some_and(|revision| revision != page.revision)
@@ -101,15 +101,17 @@ pub(super) async fn current(
     )
     .await?;
     let HeadValue::Chat(head) = &witness.witness().witness().value else {
-        return Err(ProjectionError::InvalidRecord);
+        return Err(ProjectionError::InvalidRecord(RecordKind::Head));
     };
     let head = native(source, head)?;
     require_monotonic(&old, &head)?;
     source.check()?;
     Ok(Allocated::new(
         FreshHead {
-            revision: revision.ok_or(ProjectionError::InvalidRecord)?,
-            root: Fingerprint::from_bytes(root.ok_or(ProjectionError::InvalidRecord)?),
+            revision: revision.ok_or(ProjectionError::InvalidRecord(RecordKind::Head))?,
+            root: Fingerprint::from_bytes(
+                root.ok_or(ProjectionError::InvalidRecord(RecordKind::Head))?,
+            ),
             head,
         },
         work.allocation.clone(),

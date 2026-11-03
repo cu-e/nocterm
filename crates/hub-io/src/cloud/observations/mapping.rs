@@ -7,7 +7,7 @@ use nocterm_cloud_model::{
     identity::*,
     journal::BackgroundRecordOutcome,
     payload::{BoundedJson, MAX_TOOL_RESULT_BYTES},
-    projection::ProjectionError,
+    projection::{ProjectionError, RecordKind},
     run::CommitStamp,
 };
 use nocterm_hub_model::cloud::events::{
@@ -69,7 +69,7 @@ pub(super) fn event(
         }
         // The managed-session payloads are not projected by this desktop build yet.
         CloudEventPayload::AuthenticationRequested(_) | CloudEventPayload::SessionState(_) => {
-            return Err(ProjectionError::InvalidRecord);
+            return Err(ProjectionError::InvalidRecord(RecordKind::ManagedSession));
         }
         CloudEventPayload::ApprovalResolved { command, answer } => {
             CoordinatorEvent::ApprovalResolved {
@@ -96,7 +96,7 @@ fn result(
         return Err(ProjectionError::Capacity);
     }
     let output = BoundedJson::new(budget.json(value.output_json)?)
-        .map_err(|_| ProjectionError::InvalidRecord)?;
+        .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Observation))?;
     let effect = match &value.effect {
         WireEffect::Observed => ObservedEffect::Observed,
         WireEffect::Unknown => ObservedEffect::Unknown,
@@ -121,7 +121,7 @@ fn background(
     let dispatch = CommitStamp::new(
         job.execution().run().clone(),
         WriterEpoch::new(value.dispatch_writer_epoch)
-            .map_err(|_| ProjectionError::InvalidRecord)?,
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Observation))?,
         Revision::from_u64(value.dispatch_revision),
     );
     let outcome = match value.outcome {
@@ -143,7 +143,7 @@ fn background(
         dispatch,
         outcome,
     )
-    .map_err(|_| ProjectionError::InvalidRecord)?;
+    .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Observation))?;
     Ok(CoordinatorEvent::BackgroundLifecycle(Box::new(observation)))
 }
 
@@ -165,7 +165,7 @@ fn text_event(
                 },
                 text.to_owned(),
             )
-            .map_err(|_| ProjectionError::InvalidRecord)?,
+            .map_err(|_| ProjectionError::InvalidRecord(RecordKind::Observation))?,
         ),
     })
 }

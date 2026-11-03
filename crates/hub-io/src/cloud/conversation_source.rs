@@ -31,7 +31,8 @@ use futures::future::BoxFuture;
 use nocterm_cloud_model::{
     identity::*,
     projection::{
-        ConversationProjection, ProjectionBinding, ProjectionCursor, ProjectionError, ports::*,
+        ConversationProjection, ProjectionBinding, ProjectionCursor, ProjectionError, RecordKind,
+        ports::*,
     },
     tool::ToolTimer,
 };
@@ -424,26 +425,31 @@ impl CapturedConversationSource for CloudConversationSource {
     }
 }
 fn sdk_error(error: CloudError) -> ProjectionError {
-    match error {
-        CloudError::SourceChanged | CloudError::NotSignedIn => ProjectionError::Stale,
-        CloudError::Unsupported => ProjectionError::Unsupported,
-        CloudError::Protocol
-        | CloudError::Capability(_)
-        | CloudError::Relay(_)
-        | CloudError::Command(_)
-        | CloudError::Material(_)
-        | CloudError::Encryption(_)
-        | CloudError::RunnerProof(_)
-        | CloudError::Payload(_)
-        | CloudError::Head(_)
-        | CloudError::HeadCrypto(_) => ProjectionError::InvalidRecord,
-        _ => ProjectionError::Unavailable,
-    }
+    let kind = match &error {
+        CloudError::SourceChanged | CloudError::NotSignedIn => return ProjectionError::Stale,
+        CloudError::Unsupported => return ProjectionError::Unsupported,
+        CloudError::Protocol => RecordKind::Protocol,
+        CloudError::Capability(_) => RecordKind::Capability,
+        CloudError::Relay(_) => RecordKind::RelayFormat,
+        CloudError::Command(_) => RecordKind::CommandFormat,
+        CloudError::Material(_) => RecordKind::KeyMaterial,
+        CloudError::Encryption(_) => RecordKind::Encryption,
+        CloudError::RunnerProof(_) => RecordKind::RunnerProof,
+        CloudError::Payload(_) => RecordKind::Payload,
+        CloudError::Head(_) => RecordKind::HeadProbe,
+        CloudError::HeadCrypto(_) => RecordKind::HeadCrypto,
+        _ => return ProjectionError::Unavailable,
+    };
+    tracing::warn!(error = %nocterm_core::error::chain(&error), ?kind, "the Cloud source refused a record");
+    ProjectionError::InvalidRecord(kind)
 }
 fn observation_error(error: crate::cloud::ObservationError) -> ProjectionError {
     match error {
         crate::cloud::ObservationError::Projection(error) => error,
-        _ => ProjectionError::InvalidRecord,
+        other => {
+            tracing::warn!(error = %nocterm_core::error::chain(&other), "the Cloud observation was refused");
+            ProjectionError::InvalidRecord(RecordKind::Authentication)
+        }
     }
 }
 impl SourceCore {
