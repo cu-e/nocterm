@@ -302,6 +302,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
         let Some(candidate) = self.candidate.take() else {
             return;
         };
+        let had_error = self.error.is_some();
         match &outcome {
             Ok(()) => {
                 let previous = std::mem::replace(
@@ -315,8 +316,13 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
             }
             Err(error) => self.error = Some(error.clone()),
         }
+        // An optimistic value was already published when the edit was admitted, so a
+        // successful write changes nothing observers read unless it cleared an error.
+        let changed = self.publication == Publication::Durable || outcome.is_err() || had_error;
         candidate.finish(outcome);
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
 
     /// Hydrate schema metadata in all App-facing projections, including the
