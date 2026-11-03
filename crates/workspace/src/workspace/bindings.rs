@@ -107,5 +107,12 @@ pub(super) fn prepare_topology(
     let observer = cx.observe_in(&dock, window, move |this, _, window, cx| {
         this.native_dock_visibility_changed(source, window, cx)
     });
+    // The dock draws its tab groups as cached views: a change of the surface's own
+    // state, which the tab bars show, draws them again.
+    let area = dock.downgrade();
+    cx.observe_self(move |_, cx| {
+        _ = area.update(cx, |_, cx| cx.notify());
+    })
+    .detach();
     tabs::topology::DockTopology::new(dock, events, observer)
 }

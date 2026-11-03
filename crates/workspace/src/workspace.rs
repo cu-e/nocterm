@@ -277,10 +277,12 @@ impl Workspace {
             actions: actions::ActionRegistry::default(),
             registrations: registration::Registrations::new(),
         };
-        // The tabs are drawn as a cached view: a change of the workspace's own state
-        // draws them again, a redraw for a sidebar panel's change reuses them.
+        // The tabs and the status bar's widgets are drawn as cached views: a change of
+        // the workspace's own state draws them again, a redraw for a sidebar panel's
+        // change reuses them.
         cx.observe_self(|this, cx| {
             this.surfaces.outer().update(cx, |_, cx| cx.notify());
+            this.chrome.status_bar().redraw_widgets(cx);
         })
         .detach();
         if let Some(clock) = deps.clock

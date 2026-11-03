@@ -103,6 +103,14 @@ impl StatusBar {
             .collect()
     }
 
+    /// Draws the widgets again: the bar caches them, and a widget may show the
+    /// workspace's state.
+    pub(in crate::workspace) fn redraw_widgets(&self, cx: &mut App) {
+        for view in self.widgets.iter().filter_map(|entry| entry.view.as_ref()) {
+            cx.notify(view.entity_id());
+        }
+    }
+
     /// Keeps the view a factory created.
     pub(in crate::workspace) fn fill(&mut self, id: &ContributionId, view: AnyView) {
         if let Some(entry) = self.widgets.iter_mut().find(|entry| entry.id == *id) {

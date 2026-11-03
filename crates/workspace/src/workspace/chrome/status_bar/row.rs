@@ -296,9 +296,12 @@ impl StatusBarRow {
                     })
                     .into_any_element()
             }
-            BarEntry::Widget(_, view) | BarEntry::UserWidget(_, view) => {
-                view.clone().into_any_element()
-            }
+            // Cached to its content: a redraw of the bar for another entry reuses the widget
+            // at the size it last took.
+            BarEntry::Widget(_, view) | BarEntry::UserWidget(_, view) => view
+                .clone()
+                .cached_to_content(gpui_kit::StyleRefinement::default())
+                .into_any_element(),
             BarEntry::Separator => div()
                 .w(px(1.))
                 .h_4()
