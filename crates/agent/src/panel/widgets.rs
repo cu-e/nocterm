@@ -174,10 +174,18 @@ pub(super) fn activity_text(
     }
 }
 pub(super) fn chat_markdown(id: impl Into<gpui_kit::ElementId>, text: String) -> TextView {
+    chat_text(TextView::markdown(id, text))
+}
+/// [`chat_markdown`] drawing a row's kept, already parsed state.
+pub(super) fn chat_markdown_in(
+    state: &gpui_kit::Entity<gpui_kit::component::text::TextViewState>,
+) -> TextView {
+    chat_text(TextView::new(state))
+}
+fn chat_text(view: TextView) -> TextView {
     let mut code_block = gpui_kit::StyleRefinement::default().text_sm();
     code_block.overflow.x = Some(gpui_kit::Overflow::Scroll);
-    TextView::markdown(id, text)
-        .selectable(true)
+    view.selectable(true)
         .text_sm()
         .min_w_0()
         .style(TextViewStyle {

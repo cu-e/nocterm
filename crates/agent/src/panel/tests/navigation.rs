@@ -706,6 +706,41 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_code_block_streamed_in_chunks_copies_its_whole_code(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("Show debounce".into(), cx));
+    cx.run_until_parked();
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    let code = "export function debounce() {\n  return null;\n}";
+    for chunk in [
+        "Here it is:\n\n```typescript\nexport function debounce() {\n",
+        "  return null;\n}\n```\n",
+    ] {
+        f.events
+            .try_send(AgentEvent::Session(SessionNotice::new(
+                session.clone(),
+                SessionUpdate::AgentMessageChunk(Content::text(chunk)),
+            )))
+            .unwrap();
+        cx.run_until_parked();
+        for _ in 0..3 {
+            // Plain draws, which reuse the cached transcript unless it was told to redraw.
+            cx.update_window(f.handle, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click("copy", cx);
+        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), code);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn code_blocks_in_replies_copy_their_code(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);

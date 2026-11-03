@@ -590,6 +590,15 @@ impl AgentPanel {
         let Some((identity, source)) = self.messages.source() else {
             return div().into_any_element();
         };
+        let mut markdown = None;
+        let _ = source.with_view(cx, &mut |view| {
+            markdown = view.transcript.entries.get(index).and_then(|entry| {
+                super::message_markdown::MessageMarkdown::text(entry, index, &self.messages)
+            });
+        });
+        if let Some(text) = markdown {
+            self.messages.prepare_markdown(index, text, cx);
+        }
         let mut rendered = None;
         let current = source.with_view(cx, &mut |view| {
             let Some(entry) = view.transcript.entries.get(index) else {

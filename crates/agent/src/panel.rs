@@ -37,6 +37,7 @@ mod menu;
 mod menu_view;
 mod message_actions;
 mod message_list;
+mod message_markdown;
 mod navigation;
 mod notices;
 mod parts;

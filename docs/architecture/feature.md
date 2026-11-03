@@ -607,7 +607,15 @@ tickets fence deferred action errors and successful composer clearing.
 The installation retains one `CloudChatInstallation`, sharing the runtime's
 history admission across captured environment handles and root windows.
 MessageList reuses one ImagePipeline for
-preview cache generations and remeasures rows only for accepted delivery. Attachment
+preview cache generations and remeasures rows only for accepted delivery. It keeps
+each agent message's and expanded reasoning's parsed Markdown per row, so a row
+scrolled back into view keeps its parse and streamed text parses only what was
+appended. PanelLayout keeps the panel's regions as views: the transcript and the
+history are cached, the content-sized footer (approvals, status, queue, commands and
+composer) is not. Any panel notify redraws the cached regions; a change of the open
+chat redraws the transcript only when its rows or what they show changed, typing
+redraws the footer, and the coalesced redraw of other chats redraws the history only
+when a listed row changed. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
 validated candidate collection atomically. The feature never decodes image data.
 Panel coordination retains fourteen private fields.
