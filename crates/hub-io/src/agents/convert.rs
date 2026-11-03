@@ -7,6 +7,9 @@ use nocterm_cloud_agents_model::{
 };
 use nocterm_hub_model::agents::{AgentListing, AgentScope as WireScope, Availability};
 
+/// What the heading of an organization the hub did not name says.
+const UNNAMED_ORG: &str = "Organization";
+
 pub(super) fn agent(
     listing: AgentListing,
     org_name: Option<String>,
@@ -14,12 +17,13 @@ pub(super) fn agent(
 ) -> Option<CloudAgent> {
     let scope = match listing.scope {
         WireScope::Account => AgentScope::Personal,
-        // The hub names the organization; without a name the person sees the identifier.
+        // The hub names the organization; without a name the person sees a plain label, never
+        // the identifier.
         WireScope::Org(org) => AgentScope::Org {
             id: org.to_string(),
             name: org_name
                 .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| org.to_string()),
+                .unwrap_or_else(|| UNNAMED_ORG.to_owned()),
         },
         WireScope::Instance => AgentScope::Server,
     };
@@ -124,12 +128,13 @@ mod tests {
     }
 
     #[test]
-    fn an_organization_without_a_name_shows_its_identifier() {
+    fn an_organization_without_a_name_shows_a_plain_label_not_its_identifier() {
         let org = OrgId::new();
         for missing in [None, Some("  ".to_owned())] {
             let unnamed =
                 agent(listing(WireScope::Org(org)), missing, &HashMap::new()).expect("agent");
-            assert_eq!(scope_name(&unnamed), org.to_string());
+            assert_eq!(scope_name(&unnamed), UNNAMED_ORG);
+            assert!(matches!(&unnamed.scope, AgentScope::Org { id, .. } if *id == org.to_string()));
         }
     }
 }

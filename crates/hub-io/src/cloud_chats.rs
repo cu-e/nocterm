@@ -174,7 +174,9 @@ impl CloudChatLauncher for CloudChatsLink {
             Ok(opened
                 .runners()?
                 .iter()
-                .filter(|row| !seats.contains_key(row.binding().runner().as_bytes()))
+                .filter(|row| {
+                    managed::is_own_runner(row.label(), row.binding().runner().as_bytes(), &seats)
+                })
                 .map(|row| ChatRunner {
                     id: *row.binding().runner().as_bytes(),
                     label: row.label().to_owned(),

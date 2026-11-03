@@ -289,8 +289,11 @@ pub(super) async fn start(
     let runner = opened
         .runners()?
         .iter()
+        .filter(|row| {
+            super::managed::is_own_runner(row.label(), row.binding().runner().as_bytes(), &seats)
+        })
         .map(|row| *row.binding().runner().as_bytes())
-        .find(|id| !seats.contains_key(id))
+        .next()
         .ok_or(CloudChatError::NotEnrolled)?;
     let prepared = prepare(shared, account, &opened, agent, &runner).await?;
     let ends = prepared.boot_expires().map_err(error::boot)?;
