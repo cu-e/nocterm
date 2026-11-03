@@ -59,3 +59,7 @@ close guards and explicit locks. The former zoom-lock test now asserts the reque
 zoomed drag/drop behavior; explicit lock and last-visible regressions remain intact.
 New-panel registration can target a group directly, avoiding a transient cross-group
 move that would otherwise clear zoom when adding into a nonfirst split pane.
+
+`root.rs` draws the window's content view as a cached view, so a dialog, sheet or
+notification in the overlay layer draws again without drawing the content. The content
+draws again when it or a view inside it is notified, or on a window refresh.
