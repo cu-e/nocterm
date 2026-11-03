@@ -65,6 +65,9 @@ impl AgentPanel {
     }
     pub(super) fn toggle_menu(&mut self, menu: MenuKind, cx: &mut Context<Self>) {
         self.menus.toggle(menu);
+        if self.menus.current() == Some(&MenuKind::Agents) {
+            self.cloud.reopened(cx);
+        }
         cx.notify();
     }
     pub(super) fn reset_commands(&mut self) {
@@ -328,6 +331,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if open {
+            if kind == MenuKind::Agents {
+                self.cloud.reopened(cx);
+            }
             self.menus.open(kind);
         } else {
             self.menus.close_if_same(&kind);

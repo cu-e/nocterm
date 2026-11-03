@@ -18,6 +18,8 @@ pub enum ChatFailure {
     RunnerNotReady,
     /// The runner is not registered on this device.
     NotEnrolled,
+    /// The agent has no running instance on this account.
+    AgentNotStarted,
     /// The account changed meanwhile.
     Stale,
 }
@@ -27,6 +29,7 @@ impl ChatFailure {
         match self {
             Self::RunnerNotReady => CloudChatError::RunnerNotReady,
             Self::NotEnrolled => CloudChatError::NotEnrolled,
+            Self::AgentNotStarted => CloudChatError::AgentNotStarted,
             Self::Stale => CloudChatError::Stale,
         }
     }

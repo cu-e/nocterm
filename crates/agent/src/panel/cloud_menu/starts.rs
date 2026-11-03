@@ -1,5 +1,6 @@
-//! The starts of Cloud agents in the Cloud tab: under the row of their agent, or above the
-//! sections when that row is not shown.
+//! The starts of Cloud agents in the Cloud tab. A start shows as the status of its agent's row;
+//! only a question or a failure takes a line of its own, under the row or above the sections
+//! when the row is not shown.
 
 use gpui_kit::{
     AnyElement, App, Context, SharedString, TestSupportExt as _,
@@ -12,7 +13,7 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_cloud_agents::{StartId, StartPhase, StartView};
-use nocterm_cloud_agents_model::{AgentId, CloudAgentError, StartStep};
+use nocterm_cloud_agents_model::{AgentId, CloudAgentError, Placement};
 use nocterm_hubs_model::HubId;
 
 use super::CloudMenu;
@@ -39,6 +40,10 @@ impl StartEntry {
         }
     }
 
+    pub(super) fn phase(&self) -> &StartPhase {
+        &self.phase
+    }
+
     pub(super) fn is_of(&self, hub: &HubId, agent: &AgentId) -> bool {
         &self.hub == hub && &self.agent == agent
     }
@@ -55,11 +60,15 @@ fn retryable(error: &CloudAgentError) -> bool {
 }
 
 impl CloudMenu {
+    /// What a start adds under its agent's row (`placed`) or above the sections: the progress of
+    /// a start without a row, the pool-trust question, a failure. A running or ready start is
+    /// the status of its row and needs no box of its own.
     pub(super) fn render_start(
         &self,
         entry: &StartEntry,
+        placed: bool,
         cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
+    ) -> Option<AnyElement> {
         let StartEntry {
             id, name, phase, ..
         } = entry.clone();
@@ -68,63 +77,91 @@ impl CloudMenu {
             .test_support()
             .gap_1()
             .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(cx.theme().secondary);
+            .py_1();
         let button = |label: &'static str, key: &'static str, cx: &mut Context<AgentPanel>| {
             menu_row(SharedString::from(format!("{key}-{id:?}")), label, cx)
         };
         match phase {
-            StartPhase::Step(step) => frame
-                .child(text(format!("{name}: {}", step.text()), cx))
-                .into_any_element(),
-            StartPhase::AwaitingTrust(offer) => frame
-                .child(text(
-                    format!(
-                        "{name}: trust pool \"{}\"? Compare this fingerprint with the one its owner publishes.",
-                        offer.name
-                    ),
-                    cx,
-                ))
-                .child(
-                    div()
-                        .id(SharedString::from(format!("cloud-pool-fingerprint-{id:?}")))
-                        .test_support()
-                        .text_xs()
-                        .font_family("monospace")
-                        .child(offer.fingerprint.clone()),
-                )
-                .child(
-                    button("Trust pool", "cloud-trust", cx).on_click(
-                        cx.listener(move |panel, _, _, cx| panel.cloud.trust_pool(id, cx)),
-                    ),
-                )
-                .child(
-                    button("Do not trust", "cloud-refuse", cx).on_click(
-                        cx.listener(move |panel, _, _, cx| panel.cloud.refuse_pool(id, cx)),
-                    ),
-                )
-                .into_any_element(),
-            StartPhase::Ready(_) => {
+            StartPhase::Step(step) => (!placed).then(|| {
                 frame
-                    .child(text(format!("{name}: {}", StartStep::Ready.text()), cx))
+                    .child(text(format!("{name}: {}", step.text()), cx))
+                    .into_any_element()
+            }),
+            StartPhase::AwaitingTrust(offer) => Some(
+                frame
+                    .rounded_md()
+                    .bg(cx.theme().secondary)
+                    .child(text(
+                        format!(
+                            "{name}: trust pool \"{}\"? Compare this fingerprint with the one its owner publishes.",
+                            offer.name
+                        ),
+                        cx,
+                    ))
                     .child(
-                        button("Open chat", "cloud-open-chat", cx).on_click(cx.listener(
-                            move |panel, _, window, cx| {
-                                panel.cloud.open_started_chat(id, window, cx);
-                            },
-                        )),
+                        div()
+                            .id(SharedString::from(format!("cloud-pool-fingerprint-{id:?}")))
+                            .test_support()
+                            .text_xs()
+                            .font_family("monospace")
+                            .child(offer.fingerprint.clone()),
                     )
                     .child(
-                        button("Dismiss", "cloud-dismiss", cx).on_click(
-                            cx.listener(move |panel, _, _, cx| panel.cloud.dismiss_start(id, cx)),
+                        button("Trust pool", "cloud-trust", cx).on_click(
+                            cx.listener(move |panel, _, _, cx| panel.cloud.trust_pool(id, cx)),
                         ),
                     )
-                    .into_any_element()
-            }
-            StartPhase::Failed(error) => frame
-                .child(self.render_failure(id, &name, &error, cx))
-                .into_any_element(),
+                    .child(
+                        button("Do not trust", "cloud-refuse", cx).on_click(
+                            cx.listener(move |panel, _, _, cx| panel.cloud.refuse_pool(id, cx)),
+                        ),
+                    )
+                    .into_any_element(),
+            ),
+            StartPhase::Ready(_) => None,
+            StartPhase::Failed(error) => Some(
+                frame
+                    .child(self.render_failure(id, &name, &error, cx))
+                    .into_any_element(),
+            ),
+        }
+    }
+
+    /// Dismisses the starts that ended without a seat: the person has seen them.
+    pub(super) fn dismiss_failed_starts(&self, cx: &mut Context<AgentPanel>) {
+        let Some(access) = &self.access else {
+            return;
+        };
+        let failed: Vec<StartId> = access
+            .service()
+            .read(cx)
+            .starts()
+            .filter(|start| matches!(start.phase(), StartPhase::Failed(_)))
+            .map(|start| start.id())
+            .collect();
+        for id in failed {
+            self.dismiss_start(id, cx);
+        }
+    }
+
+    /// Dismisses the ready starts whose seat is gone (removed elsewhere): opening their chat
+    /// would only fail.
+    pub(super) fn drop_orphaned_starts(&self, cx: &mut Context<AgentPanel>) {
+        let Some(access) = &self.access else {
+            return;
+        };
+        let service = access.service().read(cx);
+        let orphans: Vec<StartId> = service
+            .starts()
+            .filter(|start| {
+                matches!(start.phase(), StartPhase::Ready(_))
+                    && start.placement() == Placement::Pool
+                    && !service.has_seat(start.hub(), start.agent())
+            })
+            .map(|start| start.id())
+            .collect();
+        for id in orphans {
+            self.dismiss_start(id, cx);
         }
     }
 
@@ -160,8 +197,8 @@ impl CloudMenu {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_sm()
-                    .text_color(cx.theme().foreground)
+                    .text_xs()
+                    .text_color(cx.theme().warning)
                     .child(format!("{name}: {error}")),
             )
             .child(actions)

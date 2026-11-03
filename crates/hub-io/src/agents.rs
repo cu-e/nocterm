@@ -36,6 +36,7 @@ use crate::task::spawn;
 pub(crate) use catalog::list as list_agents;
 pub(crate) use error::agent_error;
 use error::hub_error;
+pub(crate) use launch::is_seat_label;
 use pins::PoolPins;
 pub use provider::parse_provider_kind;
 

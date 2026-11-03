@@ -10,10 +10,10 @@ use gpui_kit::{
     prelude::*,
 };
 use nocterm_cloud_agents::{StartId, StartPhase};
-use nocterm_cloud_agents_model::Placement;
 use nocterm_cloud_agents_model::{
     ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, OpenedChat,
 };
+use nocterm_cloud_agents_model::{CloudAgent, Placement};
 use nocterm_hubs_model::HubId;
 
 use super::{CloudMenu, MenuTab};
@@ -65,7 +65,9 @@ impl CloudMenu {
                         Err(CloudChatError::Unsupported) => {
                             chats.runners.remove(&hub);
                         }
-                        Err(error) => chats.notice = Some(notice_text(&error)),
+                        // A listing nobody asked to see is not worth a warning; the rows stay
+                        // as they were.
+                        Err(_) => {}
                     }
                     if let Ok(history) = history {
                         chats.history.insert(hub, history);
@@ -91,7 +93,7 @@ impl CloudMenu {
             let runners = self.chats.runners.get(&hub).cloned().unwrap_or_default();
             for runner in runners {
                 let id = format!("cloud-chat-new-{}-{}", hub.address(), runner.label);
-                let label = format!("New Cloud chat · {}", runner.label);
+                let label = format!("New chat on {}", runner.label);
                 let hub = hub.clone();
                 rows.push(
                     menu_row(SharedString::from(id), label, cx)
@@ -161,6 +163,67 @@ impl CloudMenu {
             return;
         };
         self.present_chat(launcher.create(hub, host), None, window, cx);
+    }
+
+    /// A row was chosen: "chat with this agent". A seat the person already has opens its chat
+    /// at once (waking it when it sleeps); otherwise the agent is started and its chat opens
+    /// when it is ready.
+    pub(super) fn activate_agent(
+        &mut self,
+        hub: &HubId,
+        agent: &CloudAgent,
+        window: &mut Window,
+        cx: &mut Context<AgentPanel>,
+    ) {
+        let Some(access) = self.access.clone() else {
+            return;
+        };
+        let direct = self.seat_of(hub, agent, cx)
+            && !access
+                .service()
+                .read(cx)
+                .starts()
+                .any(|start| start.hub() == hub && *start.agent() == agent.id);
+        let launcher = access.chats().cloned();
+        let model = agent.primary_model().map(str::to_owned);
+        let (Some(launcher), Some(model), true) = (launcher, model, direct) else {
+            self.start_agent(hub, agent, window, cx);
+            return;
+        };
+        self.chats.notice = None;
+        let host = ChatHost::Agent {
+            agent: agent.id.clone(),
+            model,
+        };
+        let future = launcher.create(hub, host);
+        let (hub, agent) = (hub.clone(), agent.clone());
+        cx.spawn_in(window, async move |panel, cx| {
+            let result = future.await;
+            let _ = panel.update_in(cx, |panel, window, cx| match result {
+                // The seat is not usable as it is (it never finished enrolling): starting the
+                // agent resumes and completes it.
+                Err(CloudChatError::AgentNotStarted) => {
+                    panel.cloud.start_agent(&hub, &agent, window, cx);
+                    cx.notify();
+                }
+                other => panel.finish_cloud_chat(other, None, window, cx),
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The popover opened again: what it showed before (failures, questions) is not shown
+    /// twice.
+    pub(in crate::panel) fn reopened(&mut self, cx: &mut Context<AgentPanel>) {
+        self.forget_transient();
+        self.dismiss_failed_starts(cx);
+    }
+
+    /// Forgets the notice and the removal question of an earlier visit.
+    pub(in crate::panel) fn forget_transient(&mut self) {
+        self.chats.notice = None;
+        self.removing = None;
     }
 
     /// Remembers that this window pressed Start; opens the chat at once when the start had

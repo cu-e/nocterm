@@ -20,6 +20,20 @@ use progress::{Progress, progress};
 
 mod progress;
 
+/// What every runner a start enrols is called, before the instance it hosts.
+const SEAT_RUNNER_LABEL: &str = "Cloud agent ";
+
+/// The name a start gives the runner of `instance`.
+fn seat_runner_label(instance: &str) -> String {
+    format!("{SEAT_RUNNER_LABEL}{instance}")
+}
+
+/// Whether `label` names the runner of a managed seat: such a runner belongs to its instance,
+/// never to the person, even after the instance is gone.
+pub(crate) fn is_seat_label(label: &str) -> bool {
+    label.starts_with(SEAT_RUNNER_LABEL)
+}
+
 const POLL: Duration = Duration::from_secs(1);
 const POLLS: u32 = 120;
 
@@ -82,7 +96,7 @@ pub(super) async fn start(
     let account = links
         .open_account(&captured.hub)
         .map_err(super::hub_error)?;
-    let label = format!("Cloud agent {}", instance.instance_id);
+    let label = seat_runner_label(&instance.instance_id);
     let ticket = crate::cloud::enrol(&account, handle, &verified.setup_document, label)
         .await
         .map_err(enrolment_error)?;
@@ -159,6 +173,12 @@ fn started(agent: &AgentId, instance: &v1::Instance) -> Result<StartedAgent, Clo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_label_a_start_gives_a_runner_is_recognised_as_a_seat() {
+        assert!(is_seat_label(&seat_runner_label("inst-1")));
+        assert!(!is_seat_label("laptop"));
+    }
 
     #[test]
     fn a_malformed_pool_id_is_an_unexpected_reply() {

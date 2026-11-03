@@ -78,7 +78,7 @@ impl ChatHistoryEntry for Entry {
                         managed::start_for_chat(
                             &captured,
                             &seat.agent,
-                            Some(&seat.pool),
+                            Some(seat.runner),
                             *request.stream.chat().as_bytes(),
                         )
                         .await?;

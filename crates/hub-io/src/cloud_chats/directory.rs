@@ -38,6 +38,10 @@ pub(super) async fn list(
         )
         .map_err(error::catalog)?;
         let runner = *registration.binding().runner().as_bytes();
+        // The chats of a seat that is gone cannot be opened: nothing hosts them any more.
+        if !seats.contains_key(&runner) && crate::agents::is_seat_label(registration.label()) {
+            continue;
+        }
         let mut page = catalog
             .first(
                 shared.budget().catalog_work()?,

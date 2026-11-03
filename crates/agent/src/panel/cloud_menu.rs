@@ -6,13 +6,14 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, StyledExt as _,
         input::{InputEvent, InputState},
+        menu::ContextMenuExt as _,
         v_flex,
     },
     div,
     prelude::*,
 };
 use nocterm_cloud_agents::{CloudAgentsEvent, StartId};
-use nocterm_cloud_agents_model::{AgentScope, AgentStatus, CloudAgent, Section};
+use nocterm_cloud_agents_model::{AgentScope, CloudAgent, Section};
 use nocterm_hubs_model::{HubColor, HubId};
 use seats::Removing;
 
@@ -25,6 +26,7 @@ use crate::cloud_access::CloudAgentsAccess;
 mod chats;
 mod seats;
 mod starts;
+mod status;
 
 pub(super) use chats::notice_text;
 use starts::StartEntry;
@@ -71,6 +73,7 @@ impl CloudMenu {
                     }
                     CloudAgentsEvent::Changed => {
                         panel.cloud.drop_stale_removal(cx);
+                        panel.cloud.drop_orphaned_starts(cx);
                         cx.notify();
                     }
                 },
@@ -106,15 +109,12 @@ impl CloudMenu {
 
     pub(super) fn select(&mut self, tab: MenuTab) {
         self.tab = tab;
+        self.forget_transient();
     }
 
     fn query(&self, cx: &App) -> String {
         self.search.read(cx).value().to_string()
     }
-}
-
-fn status_label(status: AgentStatus) -> &'static str {
-    status.label()
 }
 
 fn limits_text(agent: &CloudAgent) -> String {
@@ -223,7 +223,11 @@ impl CloudMenu {
                     .any(|agent| start.is_of(&section.hub, &agent.id))
             })
         });
-        rows.extend(unplaced.iter().map(|start| self.render_start(start, cx)));
+        rows.extend(
+            unplaced
+                .iter()
+                .filter_map(|start| self.render_start(start, false, cx)),
+        );
         if sections.is_empty() {
             rows.push(
                 div()
@@ -283,15 +287,13 @@ impl CloudMenu {
                 .child(heading),
         );
         for agent in &section.agents {
-            block = block
-                .child(self.render_agent_row(&section.hub, &section.hub_name, agent, cx))
-                .children(self.render_seat_actions(&section.hub, agent, cx));
-            for start in starts
+            let start = starts
                 .iter()
-                .filter(|start| start.is_of(&section.hub, &agent.id))
-            {
-                block = block.child(self.render_start(start, cx));
-            }
+                .find(|start| start.is_of(&section.hub, &agent.id));
+            block = block
+                .child(self.render_agent_row(&section.hub, &section.hub_name, agent, start, cx))
+                .children(self.render_removal_question(&section.hub, agent, cx))
+                .children(start.and_then(|start| self.render_start(start, true, cx)));
         }
         block.into_any_element()
     }
@@ -301,18 +303,16 @@ impl CloudMenu {
         hub: &HubId,
         hub_name: &str,
         agent: &CloudAgent,
+        start: Option<&StartEntry>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let id = format!("cloud-agent-{}-{}", hub.address(), agent.id);
         let startable = agent.status.can_start();
         let (hub_id, chosen) = (hub.clone(), agent.clone());
         let model = agent.primary_model().unwrap_or_default().to_owned();
-        let chip_color = if agent.status.needs_attention() {
-            cx.theme().warning
-        } else {
-            cx.theme().muted_foreground
-        };
-        menu_row_with(
+        let seated = self.seat_of(hub, agent, cx);
+        let status = status::row_status(agent.status, seated, start.map(StartEntry::phase));
+        let mut row = menu_row_with(
             SharedString::from(id),
             agent.name.clone(),
             Some(
@@ -329,25 +329,36 @@ impl CloudMenu {
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(model),
-        )
-        .child(
-            div()
-                .id(SharedString::from(format!(
-                    "cloud-agent-status-{}-{}",
-                    hub.address(),
-                    agent.id
-                )))
-                .test_support()
-                .flex_none()
-                .text_xs()
-                .text_color(chip_color)
-                .child(status_label(agent.status)),
-        )
-        .disabled(!startable)
-        .on_click(cx.listener(move |panel, _, window, cx| {
-            panel.cloud.start_agent(&hub_id, &chosen, window, cx);
-        }))
-        .into_any_element()
+        );
+        if let Some(status) = status {
+            let color = if status.attention {
+                cx.theme().warning
+            } else {
+                cx.theme().muted_foreground
+            };
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "cloud-agent-status-{}-{}",
+                        hub.address(),
+                        agent.id
+                    )))
+                    .test_support()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(color)
+                    .child(status.text),
+            );
+        }
+        let row = row
+            .disabled(!startable)
+            .on_click(cx.listener(move |panel, _, window, cx| {
+                panel.cloud.activate_agent(&hub_id, &chosen, window, cx);
+            }));
+        match self.seat_menu(hub, agent, cx) {
+            Some(menu) => row.context_menu(menu).into_any_element(),
+            None => row.into_any_element(),
+        }
     }
 
     fn current_starts(

@@ -79,6 +79,10 @@ pub enum CloudChatError {
     /// The runner of the chat is not registered on this device: start the agent again.
     #[error("the runner of this chat is not registered on this device")]
     NotEnrolled,
+    /// The agent has no instance with a registered runner on this account: it must be started
+    /// first, which also enrols its runner. Opening a chat never provisions an instance itself.
+    #[error("the agent is not running; start it first")]
+    AgentNotStarted,
     /// The runner did not open the chat in time; the chat appears once it does.
     #[error("the runner has not opened the chat yet")]
     RunnerNotReady,
