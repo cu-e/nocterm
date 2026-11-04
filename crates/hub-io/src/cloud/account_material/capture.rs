@@ -4,9 +4,10 @@ use crate::{
     account::operations::AccountOperations,
     pool::{Pool, captured::CapturedClient},
 };
+use futures::future::BoxFuture;
+use nocterm_core::allocation::Allocated;
 use nocterm_hub_model::cloud::capabilities::CLOUD_FEATURE_CHAT_KEY_MATERIAL;
 use nocterm_hubs_model::source_identity::LocalAccountSource;
-use sha2::{Digest, Sha256};
 use std::sync::Weak;
 
 pub(crate) struct CloudMaterialCapture {
@@ -59,7 +60,6 @@ impl CloudMaterialCapture {
         let operation = CaptureOperation {
             client,
             bound,
-            handle: self.handle.clone(),
             authority,
             resident: reservations.resident(),
             work: reservations.work(),
@@ -88,7 +88,6 @@ impl CloudMaterialCapture {
 struct CaptureOperation {
     client: CapturedClient,
     bound: BoundOperations,
-    handle: Handle,
     authority: [u8; 32],
     resident: AllocationLease,
     work: AllocationLease,
@@ -116,35 +115,10 @@ impl CaptureOperation {
         }
         self.bound.source().check()?;
         Ok(CloudAccountMaterial {
-            handle: self.handle.clone(),
             bound: self.bound.clone(),
             cloud: Arc::new(cloud),
             authority: self.authority,
             _allocation: self.resident.clone(),
         })
     }
-}
-
-pub(super) fn require_request(
-    bound: &BoundOperations,
-    cloud: &CloudClient,
-    authority: [u8; 32],
-    request: &ChatMaterialRequest,
-) -> Result<(), AccountMaterialError> {
-    let scope = request.stream.scope();
-    if scope.hub().instance().as_str() != cloud.namespace().hub_instance_id.as_str()
-        || scope.account().id().as_str() != cloud.namespace().account_id.as_str()
-        || scope.hub().authority().as_bytes() != &<[u8; 32]>::from(Sha256::digest(authority))
-    {
-        return Err(AccountMaterialError::Binding);
-    }
-    bound
-        .source()
-        .native()
-        .with_current(|keys| {
-            let digest: [u8; 32] = Sha256::digest(keys.keyset().public_key().to_bytes()).into();
-            Ok(digest == *scope.account().key().as_bytes())
-        })?
-        .then_some(())
-        .ok_or(AccountMaterialError::Binding)
 }

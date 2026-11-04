@@ -1,9 +1,11 @@
-//! Actual pinned codec roundtrips publish descriptive facts, never run permits.
+//! What the runner publishes is what every device shows: each event the encoder seals opens
+//! under the runner's pinned key and reduces in the contract device core's transcript.
 use super::*;
 use nocterm_ai::{
     model::content::{Content, Image},
     tool_display::ToolDisplay,
 };
+use nocterm_cloud_device::transcript::{Role, ToolStatus, Transcript};
 use nocterm_cloud_model::{
     coordinator::{BackgroundObservation, ObservedBackground, ObservedPrompt, ToolObservation},
     engine::EnginePrompt,
@@ -14,15 +16,16 @@ use nocterm_cloud_model::{
 };
 
 #[test]
-fn observation_inverse_preserves_native_facts_and_refuses_unadmitted_copies() {
+fn every_published_event_reduces_in_the_device_transcript() {
     let fixture = Fixture::new();
     let encoder = fixture.encoder();
     let work = Arc::new(Fixture::budget(8 * 1024 * 1024));
     let fingerprints = RunnerArgumentFingerprint::new(work.clone());
-    let events = observations(&fixture, &fingerprints);
     let next = JournalPosition::default().next(1, 1, true).unwrap();
-    legacy_reconciliation(&fixture, work.as_ref());
-    for event in events {
+    let mut transcript = Transcript::new();
+    let mut tools = 0;
+    for event in observations(&fixture, &fingerprints) {
+        tools += usize::from(matches!(event, CoordinatorEvent::ToolIntent { .. }));
         let publication =
             CoordinatorEventEncoder::encode(&encoder, &fixture.lease, next, &event, work.as_ref())
                 .unwrap();
@@ -40,66 +43,43 @@ fn observation_inverse_preserves_native_facts_and_refuses_unadmitted_copies() {
             publication.sealed().as_bytes(),
         )
         .unwrap();
-        let allocation = work
-            .try_reserve(PublicationAllocation::new(1024 * 1024, 1).unwrap())
-            .unwrap();
-        let observed = crate::cloud::observations::decode_opened_event(
-            fixture.lease.stream(),
-            &opened,
-            &allocation,
-        )
-        .unwrap();
-        let too_small = work
-            .try_reserve(PublicationAllocation::new(8192, 1).unwrap())
-            .unwrap();
+        let record = opened.record().unwrap();
+        transcript.apply(&CloudEvent::from_record(&record).unwrap());
+    }
+    let rows = transcript.rows();
+    assert_eq!(rows[0].role, Role::User);
+    assert_eq!((rows[0].text.as_str(), rows[0].images), ("accepted", 1));
+    let calls: Vec<_> = rows.iter().filter_map(|row| row.tool.as_ref()).collect();
+    assert_eq!(calls.len(), tools, "one row per announced tool call");
+    for call in &calls {
+        assert_eq!(call.destination.as_deref(), Some("trusted destination"));
         assert!(
-            crate::cloud::observations::decode_opened_event(
-                fixture.lease.stream(),
-                &opened,
-                &too_small
-            )
-            .is_err()
-        );
-        let republished = CoordinatorEventEncoder::encode(
-            &encoder,
-            &fixture.lease,
-            next,
-            &observed,
-            work.as_ref(),
-        )
-        .unwrap();
-        let second_context = crate::cloud::runner_transport::record_context(
-            republished.stream(),
-            republished.key_epoch(),
-            republished.anchor(),
-        )
-        .unwrap();
-        let second = open_event(
-            &fixture.key,
-            signer.signing_key(),
-            &second_context,
-            republished.sealed().as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(
-            opened.record().unwrap().payload(),
-            second.record().unwrap().payload()
+            matches!(call.status, ToolStatus::Unknown | ToolStatus::Failed),
+            "{:?}",
+            call.status
         );
     }
+    // The background job of a command exited with 7.
+    assert!(calls.iter().any(|call| call.status == ToolStatus::Failed));
+    assert_eq!(transcript.runs().len(), 1);
 }
 
-fn observations(
-    fixture: &Fixture,
-    fingerprints: &RunnerArgumentFingerprint,
-) -> Vec<CoordinatorEvent> {
-    let mut events = Vec::new();
-    let mut prompt = nocterm_cloud_model::projection::testing::prompt_event(
-        &fixture.run,
-        "accepted",
-        CommandId::from_bytes([31; 16]),
-    );
-    if let CoordinatorEvent::PromptAccepted { request, .. } = &mut prompt {
-        *request = ObservedPrompt::new(
+/// The prompt with an image that starts the run.
+fn accepted_prompt(fixture: &Fixture) -> CoordinatorEvent {
+    CoordinatorEvent::PromptAccepted {
+        command: nocterm_cloud_model::journal::CommandAcceptance::new(
+            CommandId::from_bytes([31; 16]),
+            nocterm_cloud_model::journal::CommandKind::SubmitPrompt,
+            Fingerprint::from_bytes([12; 32]),
+            nocterm_cloud_model::authority::CommandIssuer::new(
+                NamespaceId::new("device").unwrap(),
+                Fingerprint::from_bytes([13; 32]),
+                Fingerprint::from_bytes([14; 32]),
+            ),
+            ChatControlRevision::default(),
+        ),
+        run: fixture.run.clone(),
+        request: ObservedPrompt::new(
             EnginePrompt::new(vec![
                 Content::text("accepted"),
                 Content::Image(Image::new("YWJj", "image/png")),
@@ -111,9 +91,16 @@ fn observations(
                 NamespaceId::new("price").unwrap(),
             ),
             None,
-        );
+        ),
     }
-    events.push(prompt);
+}
+
+fn observations(
+    fixture: &Fixture,
+    fingerprints: &RunnerArgumentFingerprint,
+) -> Vec<CoordinatorEvent> {
+    let mut events = Vec::new();
+    events.push(accepted_prompt(fixture));
     for (index, (call, _)) in super::tools::calls().into_iter().enumerate() {
         let intent = ToolIntent::new(
             IntentId::from_bytes([index as u8; 16]),
@@ -170,172 +157,4 @@ fn observations(
         }
     }
     events
-}
-
-#[test]
-fn observation_refuses_a_transfer_intent_whose_mutation_flag_contradicts_the_call() {
-    let Ok(CoordinatorEvent::ToolIntent { call, .. }) = decode_transfer_intent(true) else {
-        panic!("missing descriptive intent")
-    };
-    assert!(matches!(call, nocterm_ai::TerminalCall::TransferFiles(_)));
-    assert!(matches!(
-        decode_transfer_intent(false),
-        Err(crate::cloud::observations::ObservationError::Projection(
-            nocterm_cloud_model::projection::ProjectionError::InvalidRecord(_)
-        ))
-    ));
-}
-
-/// Seals a `transfer_files` intent with the given mutation flag and decodes it.
-fn decode_transfer_intent(
-    mutates: bool,
-) -> Result<CoordinatorEvent, crate::cloud::observations::ObservationError> {
-    use nocterm_hub_model::cloud::{
-        events::{ToolIntentPayload, ToolPresentation},
-        tool_arguments::ToolArguments,
-    };
-    let fixture = Fixture::new();
-    let work = Arc::new(Fixture::budget(8 * 1024 * 1024));
-    let next = JournalPosition::default().next(1, 1, true).unwrap();
-    let publication = CoordinatorEventEncoder::encode(
-        &fixture.encoder(),
-        &fixture.lease,
-        next,
-        &CoordinatorEvent::Status {
-            run: fixture.run.clone(),
-            status: RunStatus::Interrupted,
-        },
-        work.as_ref(),
-    )
-    .unwrap();
-    let context = crate::cloud::runner_transport::record_context(
-        publication.stream(),
-        publication.key_epoch(),
-        publication.anchor(),
-    )
-    .unwrap();
-    let arguments = ToolArguments::TransferFiles {
-        source_terminal_id: "terminal",
-        sources: vec!["/srv/a", "/srv/dir b"],
-        destination_terminal_id: "terminal-2",
-        destination: "/home/alice/in",
-        overwrite: false,
-        yield_ms: Some(1000),
-    };
-    let digest = arguments.digest().unwrap();
-    let body = CloudEvent {
-        control_revision: next.control().get(),
-        timestamp_ms: 1_700_000_000_000,
-        payload: CloudEventPayload::ToolIntent(Box::new(ToolIntentPayload {
-            id: [61; 16],
-            step: [62; 16],
-            execution: crate::cloud::events::values::execution(&fixture.authority()).unwrap(),
-            arguments_digest: digest,
-            mutates,
-            arguments: arguments.clone(),
-            display: ToolPresentation {
-                tool: "transfer_files",
-                arguments_json: "{}",
-                destination: None,
-                redacted: false,
-                outcome: None,
-            },
-        })),
-    }
-    .canonical_bytes()
-    .unwrap();
-    let sealed = fixture
-        .material
-        .with_material(fixture.lease.stream(), |key, _, signer| {
-            nocterm_keys::cloud::seal_event(key, signer, context.clone(), &body)
-                .map_err(crate::cloud::events::encoding_error)
-        })
-        .unwrap();
-    let public = fixture.identity.public_identity().unwrap();
-    let opened = open_event(&fixture.key, public.signing_key(), &context, &sealed).unwrap();
-    let allocation = work
-        .try_reserve(PublicationAllocation::new(1024 * 1024, 1).unwrap())
-        .unwrap();
-    crate::cloud::observations::decode_opened_event(fixture.lease.stream(), &opened, &allocation)
-}
-
-fn legacy_reconciliation(fixture: &Fixture, work: &dyn PublicationWorkBudget) {
-    use nocterm_hub_model::cloud::{events::CloudEventPayload, payload::ApprovalChoice};
-    let next = JournalPosition::default().next(1, 1, true).unwrap();
-    let publication = CoordinatorEventEncoder::encode(
-        &fixture.encoder(),
-        &fixture.lease,
-        next,
-        &CoordinatorEvent::Status {
-            run: fixture.run.clone(),
-            status: RunStatus::Interrupted,
-        },
-        work,
-    )
-    .unwrap();
-    let context = crate::cloud::runner_transport::record_context(
-        publication.stream(),
-        publication.key_epoch(),
-        publication.anchor(),
-    )
-    .unwrap();
-    for choice in [
-        ApprovalChoice::ReconcileSucceeded,
-        ApprovalChoice::ReconcileFailed,
-        ApprovalChoice::ReconcileKnown {
-            result_digest: [47; 32],
-        },
-    ] {
-        let body = CloudEvent {
-            control_revision: next.control().get(),
-            timestamp_ms: 1_700_000_000_000,
-            payload: CloudEventPayload::ApprovalResolved {
-                command: [44; 16],
-                answer: Box::new(nocterm_hub_model::cloud::payload::ApprovalPayload {
-                    intent: [45; 16],
-                    execution: crate::cloud::events::values::execution(&fixture.authority())
-                        .unwrap(),
-                    arguments_digest: [46; 32],
-                    choice,
-                }),
-            },
-        }
-        .canonical_bytes()
-        .unwrap();
-        let sealed = fixture
-            .material
-            .with_material(fixture.lease.stream(), |key, _, signer| {
-                nocterm_keys::cloud::seal_event(key, signer, context.clone(), &body)
-                    .map_err(crate::cloud::events::encoding_error)
-            })
-            .unwrap();
-        let public = fixture.identity.public_identity().unwrap();
-        let opened = open_event(&fixture.key, public.signing_key(), &context, &sealed).unwrap();
-        let allocation = work
-            .try_reserve(PublicationAllocation::new(1024 * 1024, 1).unwrap())
-            .unwrap();
-        let result = crate::cloud::observations::decode_opened_event(
-            fixture.lease.stream(),
-            &opened,
-            &allocation,
-        );
-        if matches!(choice, ApprovalChoice::ReconcileKnown { .. }) {
-            let CoordinatorEvent::ApprovalResolved { answer, .. } = result.unwrap() else {
-                panic!("missing descriptive answer")
-            };
-            assert_eq!(
-                answer.choice(),
-                nocterm_cloud_model::coordinator::ApprovalChoice::ReconcileKnown(
-                    Fingerprint::from_bytes([47; 32])
-                )
-            );
-        } else {
-            assert!(matches!(
-                result,
-                Err(crate::cloud::observations::ObservationError::Projection(
-                    nocterm_cloud_model::projection::ProjectionError::Unsupported
-                ))
-            ));
-        }
-    }
 }

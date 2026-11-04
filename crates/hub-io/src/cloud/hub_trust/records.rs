@@ -1,11 +1,14 @@
-//! Private closed storage layout, located using only normal account metadata.
+//! The hub-trust record of the signed-in account. Its layout is the contract's
+//! (`nocterm_cloud_device::records::HubTrustRecord`, the same bytes every device reads); this
+//! module captures what names the account and converts to and from the record.
 use super::*;
+use nocterm_cloud_device::CloudDeviceError;
+use nocterm_cloud_device::records::{HUB_TRUST_KIND, HUB_TRUST_OBJECT, HubTrustRecord};
 use nocterm_cloud_model::identity::{AccountIdentity, Fingerprint, HubIdentity, NamespaceId};
 use sha2::{Digest, Sha256};
 pub(super) const MAX_PLAINTEXT: usize = 4 * 1024;
-pub(super) const KIND: &str = "cloud-hub-trust";
-pub(super) const OBJECT: &str = "hub-authority-v1";
-const LABEL: &[u8] = b"nocterm/private-hub-trust/v1";
+pub(super) const KIND: &str = HUB_TRUST_KIND;
+pub(super) const OBJECT: &str = HUB_TRUST_OBJECT;
 
 #[derive(Clone)]
 pub(super) struct NormalAccount {
@@ -61,37 +64,36 @@ impl NormalAccount {
         }
         Ok(())
     }
+    /// The record's context: everything but the pinned authority.
     pub(super) fn context(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(
-            LABEL.len()
-                + self.origin.len()
-                + self.raw_hub.len()
-                + self.account.id().as_str().len()
-                + 38,
-        );
-        bytes.extend_from_slice(LABEL);
-        for text in [
-            self.origin.as_str(),
-            self.raw_hub.as_str(),
+        HubTrustRecord::new(
+            &self.origin,
+            &self.raw_hub,
             self.account.id().as_str(),
-        ] {
-            bytes.extend_from_slice(&(text.len() as u16).to_be_bytes());
-            bytes.extend_from_slice(text.as_bytes());
-        }
-        bytes.extend_from_slice(self.account.key().as_bytes());
-        bytes
+            *self.account.key().as_bytes(),
+            [0; 32],
+        )
+        .and_then(|record| record.context())
+        .unwrap_or_default()
+    }
+}
+/// The record of `context` pinning `authority`, as the contract reads it.
+fn record(context: &[u8], authority: [u8; 32]) -> Result<HubTrustRecord, CloudTrustError> {
+    let mut bytes = zeroize::Zeroizing::new(context.to_vec());
+    bytes.extend_from_slice(&authority);
+    HubTrustRecord::decode(&bytes).map_err(refused)
+}
+fn refused(error: CloudDeviceError) -> CloudTrustError {
+    match error {
+        CloudDeviceError::Capacity => CloudTrustError::Capacity,
+        CloudDeviceError::Binding => CloudTrustError::Binding,
+        _ => CloudTrustError::Format,
     }
 }
 pub(super) fn collection_id(context: &[u8]) -> String {
-    let mut hash = Sha256::new();
-    hash.update(b"nocterm/private-hub-trust/collection/v1");
-    hash.update(context);
-    let digest: [u8; 32] = hash.finalize().into();
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    uuid::Builder::from_custom_bytes(bytes)
-        .into_uuid()
-        .to_string()
+    record(context, [0; 32])
+        .and_then(|record| record.collection_id().map_err(refused))
+        .unwrap_or_default()
 }
 pub(super) fn encode(
     context: &[u8],
@@ -100,19 +102,15 @@ pub(super) fn encode(
     if context.len().saturating_add(32) > MAX_PLAINTEXT {
         return Err(CloudTrustError::Capacity);
     }
-    let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(context.len() + 32));
-    bytes.extend_from_slice(context);
-    bytes.extend_from_slice(&authority);
-    Ok(bytes)
+    record(context, authority)?.encode().map_err(refused)
 }
 pub(super) fn decode(context: &[u8], bytes: &[u8]) -> Result<[u8; 32], CloudTrustError> {
     if bytes.len() > MAX_PLAINTEXT {
         return Err(CloudTrustError::Capacity);
     }
-    if bytes.len() != context.len() + 32 || !bytes.starts_with(context) {
+    let record = HubTrustRecord::decode(bytes).map_err(refused)?;
+    if record.context().map_err(refused)? != context {
         return Err(CloudTrustError::Binding);
     }
-    bytes[context.len()..]
-        .try_into()
-        .map_err(|_| CloudTrustError::Format)
+    Ok(record.authority())
 }

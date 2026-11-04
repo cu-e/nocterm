@@ -10,7 +10,6 @@ use prost::Message as _;
 pub(super) async fn load_or_register(
     work: &OpenedWork,
     scope: &AccountScope,
-    context: &[u8],
     registration: Option<&RunnerRegistration>,
 ) -> Result<(u64, Vec<RunnerRegistration>), RunnerRegistryError> {
     work.source().check().map_err(account)?;
@@ -33,8 +32,8 @@ pub(super) async fn load_or_register(
         return Err(RunnerRegistryError::Binding);
     }
     let store = work.transient_store();
-    let collection_id = codec::collection_id(context);
-    let collection = ExactPersonalCollection::new(&store, codec::KIND, &collection_id);
+    let collection_id = records::collection_id(scope)?;
+    let collection = ExactPersonalCollection::new(&store, records::KIND, &collection_id);
     let found = work
         .source()
         .during(collection.find())
@@ -51,14 +50,14 @@ pub(super) async fn load_or_register(
             .map_err(account)?
             .map_err(store_error)?,
     };
-    let (version, mut rows) = read(work, &at, scope, context).await?;
+    let (version, mut rows) = read(work, &at, scope).await?;
     let Some(registration) = registration else {
         return Ok((version, rows));
     };
     if existing(&rows, registration)? {
         return Ok((version, rows));
     }
-    if rows.len() >= codec::MAX_RUNNERS {
+    if rows.len() >= records::MAX_RUNNERS {
         return Err(RunnerRegistryError::Capacity);
     }
     rows.push(RunnerRegistration::new(
@@ -67,13 +66,12 @@ pub(super) async fn load_or_register(
         registration.label.clone(),
     )?);
     rows.sort_by_key(|row| *row.binding.runner().as_bytes());
-    publish(work, &at, scope, context, registration, version, rows).await
+    publish(work, &at, scope, registration, version, rows).await
 }
 async fn publish(
     work: &OpenedWork,
     at: &Located,
     scope: &AccountScope,
-    context: &[u8],
     registration: &RunnerRegistration,
     version: u64,
     rows: Vec<RunnerRegistration>,
@@ -81,16 +79,16 @@ async fn publish(
     let next = version
         .checked_add(1)
         .ok_or(RunnerRegistryError::Capacity)?;
-    let bytes = codec::encode(context, next, &rows)?;
+    let bytes = records::encode(scope, next, &rows)?;
     let ciphertext = at
         .key()
-        .seal_object(at.id(), codec::OBJECT, codec::KIND, &bytes)
+        .seal_object(at.id(), records::OBJECT, records::KIND, &bytes)
         .map_err(backend)?;
     let request = v1::PutObjectRequest {
         collection_id: at.id().to_owned(),
-        object_id: codec::OBJECT.to_owned(),
+        object_id: records::OBJECT.to_owned(),
         expected_version: version,
-        kind: codec::KIND.to_owned(),
+        kind: records::KIND.to_owned(),
         ciphertext,
     };
     if request.encoded_len() > MAX_RESPONSE {
@@ -104,7 +102,7 @@ async fn publish(
     match written {
         Ok(receipt)
             if receipt.collection_id == at.id()
-                && receipt.object_id == codec::OBJECT
+                && receipt.object_id == records::OBJECT
                 && receipt.version == next
                 && receipt.stream_version != 0 =>
         {
@@ -112,7 +110,7 @@ async fn publish(
         }
         Ok(_) => Err(RunnerRegistryError::Format),
         Err(error) => {
-            let winner = read(work, at, scope, context).await?;
+            let winner = read(work, at, scope).await?;
             if existing(&winner.1, registration)? {
                 return Ok(winner);
             }
@@ -141,23 +139,23 @@ async fn read(
     work: &OpenedWork,
     at: &Located,
     scope: &AccountScope,
-    context: &[u8],
 ) -> Result<(u64, Vec<RunnerRegistration>), RunnerRegistryError> {
     let object = work
         .source()
-        .during(work.ops().object(at.id(), codec::OBJECT))
+        .during(work.ops().object(at.id(), records::OBJECT))
         .await
         .map_err(account)?
         .map_err(store_error)?;
     let Some(object) = object else {
         return Ok((0, Vec::new()));
     };
-    if object.encoded_len() > MAX_RESPONSE || object.ciphertext.len() > codec::MAX_PLAINTEXT + 42 {
+    if object.encoded_len() > MAX_RESPONSE || object.ciphertext.len() > records::MAX_PLAINTEXT + 42
+    {
         return Err(RunnerRegistryError::Capacity);
     }
     if object.collection_id != at.id()
-        || object.object_id != codec::OBJECT
-        || object.kind != codec::KIND
+        || object.object_id != records::OBJECT
+        || object.kind != records::KIND
         || object.updated_by_device.len() > 128
         || object.stream_version == 0
     {
@@ -166,14 +164,14 @@ async fn read(
     if object.deleted {
         return Err(RunnerRegistryError::Deleted);
     }
-    if object.version == 0 || object.version > codec::MAX_RUNNERS as u64 {
+    if object.version == 0 || object.version > records::MAX_RUNNERS as u64 {
         return Err(RunnerRegistryError::Format);
     }
     let plaintext = at
         .key()
-        .open_object(at.id(), codec::OBJECT, codec::KIND, &object.ciphertext)
+        .open_object(at.id(), records::OBJECT, records::KIND, &object.ciphertext)
         .map_err(backend)?;
-    let rows = codec::decode(scope, context, object.version, &plaintext)?;
+    let rows = records::decode(scope, object.version, &plaintext)?;
     Ok((object.version, rows))
 }
 fn store_error(error: OpError) -> RunnerRegistryError {

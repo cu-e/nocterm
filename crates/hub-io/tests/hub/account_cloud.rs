@@ -2,14 +2,12 @@
 use super::{account::Device, hub};
 use nocterm_cloud_model::{
     coordinator::IntakePoolLimits,
-    identity::{AccountScope, Timestamp},
+    identity::AccountScope,
     journal::{PublicationAllocation, PublicationBudget, PublicationWorkBudget},
-    tool::ToolTimer,
 };
 use nocterm_core::allocation::AllocationLease;
 use nocterm_hub_io::cloud::*;
 use nocterm_hubs_model::KeyStatus;
-use std::{sync::Arc, time::Duration};
 
 struct Reservations {
     work: PublicationBudget,
@@ -22,7 +20,6 @@ impl Reservations {
             cloud_trust_work_bytes().unwrap(),
             account_material_work_bytes().unwrap(),
             runner_registry_work_bytes().unwrap(),
-            runner_catalog_work_bytes(),
         ]
         .into_iter()
         .max()
@@ -55,15 +52,6 @@ impl Reservations {
     }
     fn registry(&self) -> RunnerRegistryReservations {
         RunnerRegistryReservations::new(self.work(), self.resident()).unwrap()
-    }
-}
-struct NativeTimer;
-impl ToolTimer for NativeTimer {
-    fn now(&self) -> Timestamp {
-        Timestamp::from_millis(nocterm_hub_client::now_ms().try_into().unwrap())
-    }
-    fn delay(&self, duration: Duration) -> futures::future::BoxFuture<'static, ()> {
-        Box::pin(tokio::time::sleep(duration))
     }
 }
 #[test]
@@ -153,25 +141,7 @@ fn verify_second_device(
     let roster = runtime.block_on(registry.load(budget.registry())).unwrap();
     let rows = roster.runners().unwrap();
     assert_eq!(rows.len(), 1);
-    let catalog = AccountRunnerCatalog::capture(
-        &material,
-        &rows[0],
-        budget.resident(),
-        runtime.handle().clone(),
-        Arc::new(NativeTimer),
-    )
-    .unwrap();
-    let page = runtime
-        .block_on(catalog.first(
-            budget.work(),
-            Reservations::reserve(&budget.resident, runner_catalog_page_bytes()),
-        ))
-        .unwrap();
-    assert_eq!(page.binding(), rows[0].binding());
-    assert_eq!(page.total_chats(), 0);
-    assert!(page.entries().unwrap().is_empty());
-    assert!(!page.has_more());
+    // The runner's chats are listed by the device core's `ListChats` over the same records.
     drop(second);
-    assert!(catalog.check_current().is_err());
-    assert!(page.entries().is_err());
+    assert!(roster.runners().is_err());
 }

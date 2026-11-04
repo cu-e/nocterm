@@ -23,6 +23,8 @@
 //! neutral summary, revision ledger and publication cadence; ChatSummaryJournal and
 //! ChatSummaryDirectory are the runner journal's summary rows and its signed directory
 //! (ADR 0135). A summary admits, grants or proves nothing.
+//! This crate is the runner's domain only: what a device shows of a chat is the contract
+//! device core's transcript, mapped to `nocterm-cloud-conversation-model` (ADR 0136).
 //! Ports used: neutral AI content,
 //! tool calls and tool presentation;
 //! hubs-model captured descriptive hub/account identities.
@@ -52,5 +54,3 @@ pub mod tool;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
-
-pub mod projection;
