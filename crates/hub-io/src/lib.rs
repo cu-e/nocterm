@@ -115,7 +115,9 @@
 //! republishing) for the runner to claim the chat, and lists chats from the authenticated
 //! catalogs of the registered runners. Managed chats start their seat for the chat first and
 //! prompt at the runner's default destination
-//! ([ADR 0122](../../../docs/adr/0122-cloud-chat-creation-protocol.md)).
+//! ([ADR 0122](../../../docs/adr/0122-cloud-chat-creation-protocol.md)); their source wakes
+//! the seat again before it delivers a command the runner must admit
+//! ([ADR 0133](../../../docs/adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md)).
 
 mod account;
 mod account_keys;

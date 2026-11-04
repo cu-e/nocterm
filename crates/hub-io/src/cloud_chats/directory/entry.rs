@@ -4,12 +4,14 @@ use std::sync::Arc;
 
 use nocterm_cloud_agents_model::{ChatFuture, ChatHistoryEntry, OpenedChat};
 use nocterm_cloud_model::journal::CurrentChatHead;
+use nocterm_cloud_model::projection::ports::CapturedConversationSource;
 
 use crate::cloud::{ChatMaterialRequest, CloudAccountMaterial, RunnerRegistration};
 use crate::cloud_chats::Shared;
 use crate::cloud_chats::error::{self, CloudChatError};
 use crate::cloud_chats::managed::{self, Seat};
 use crate::cloud_chats::open::open_source;
+use crate::cloud_chats::seat_wake::{ManagedSeat, WakingSource};
 use crate::cloud_chats::setup::Capability;
 use crate::cloud_chats::wait::PATIENCE;
 use crate::devices::Captured;
@@ -67,6 +69,7 @@ impl ChatHistoryEntry for Entry {
         let captured = self.captured.clone();
         let access = self.access.clone();
         let request = self.request.clone();
+        let chat_id = *request.stream.chat().as_bytes();
         let seat = self.seat.clone();
         let title = self.label.clone();
         let work = {
@@ -75,13 +78,8 @@ impl ChatHistoryEntry for Entry {
                 // A sleeping seat is woken first; waiting for it uses the same bounded loop.
                 let (capability, patience) = match &seat {
                     Some(seat) => {
-                        managed::start_for_chat(
-                            &captured,
-                            &seat.agent,
-                            Some(seat.runner),
-                            *request.stream.chat().as_bytes(),
-                        )
-                        .await?;
+                        managed::start_for_chat(&captured, &seat.agent, Some(seat.runner), chat_id)
+                            .await?;
                         (
                             Capability::Prompting {
                                 model: seat.model.clone(),
@@ -97,7 +95,7 @@ impl ChatHistoryEntry for Entry {
                         .await
                         .map_err(error::material)?,
                 );
-                let source = open_source(
+                let source: Arc<dyn CapturedConversationSource> = open_source(
                     &access,
                     chat,
                     &capability,
@@ -107,6 +105,20 @@ impl ChatHistoryEntry for Entry {
                     patience,
                 )
                 .await?;
+                // The seat sleeps again after its idle time while the chat stays open.
+                let source = match seat {
+                    Some(seat) => WakingSource::wrap(
+                        source,
+                        Arc::new(ManagedSeat::new(
+                            shared.handle().clone(),
+                            captured.clone(),
+                            seat.agent,
+                            seat.runner,
+                            chat_id,
+                        )),
+                    ),
+                    None => source,
+                };
                 Ok::<_, CloudChatError>(OpenedChat { source, title })
             }
         };

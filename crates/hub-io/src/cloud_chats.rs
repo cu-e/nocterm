@@ -4,7 +4,8 @@
 //! Creating a chat mints its identifier and first key epoch on this device, stores the wrapped
 //! key and the sealed grant in the account, and publishes the grant to the runner, which claims
 //! the chat; the call returns the verified source once that claim is visible. Listing walks the
-//! authenticated catalogs of the registered runners. Every call captures the signed-in
+//! authenticated catalogs of the registered runners. The source of a managed chat wakes its seat
+//! before a command the runner must admit (`seat_wake`). Every call captures the signed-in
 //! membership before it is spawned and rechecks it when it ends, as [`crate::agents`] does
 //! ([ADR 0122](../../../docs/adr/0122-cloud-chat-creation-protocol.md)).
 
@@ -15,6 +16,7 @@ mod error;
 mod managed;
 mod open;
 mod own_runner;
+mod seat_wake;
 mod session;
 mod setup;
 mod timer;
