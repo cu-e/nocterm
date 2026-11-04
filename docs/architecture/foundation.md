@@ -47,6 +47,10 @@ the crate that uses it: `[ssh]`, `[local]` and `[logging]` in `nocterm-session`,
 read them with `cx.setting::<S>()`; `cargo xtask architecture` fails if the
 settings reference does not list a section.
 
+`nocterm-core::bounded_io` supplies in-memory counting and byte-buffer writers with
+caller-supplied caps. Refused writes preserve the accepted prefix; consumers own
+codec errors, envelope versions and product memory budgets.
+
 ## Design tokens
 
 `nocterm-design` owns typed visual tokens and theme overrides. Resize widths and their
