@@ -103,6 +103,11 @@
 //! Its encryption, transcript-signing and Cloud-token proof keys are independent;
 //! setup/open never resets an existing identity. It exports public identity facts
 //! and neutral cipher ports, never a generic signer, private seed or SDK wire type.
+//! `RunnerChatDirectory` implements cloud-model's `ChatSummaryDirectory`: it maps a neutral
+//! summary draft and the chat's current head to the contract summary, signs it with the
+//! runner signing key, seals it to the pinned account key and publishes it to the runner's
+//! directory stream only while the hub negotiated the chat directory (bit 256)
+//! ([ADR 0135](../../../docs/adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)).
 //!
 //! The managed-agent ports of `nocterm-cloud-agents-model` (`agents`) read the failure code,
 //! the web panel address and the provider kinds through the contract's own vocabulary

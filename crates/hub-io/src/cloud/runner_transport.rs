@@ -218,7 +218,7 @@ fn purge_receipt(candidate: &SnapshotCandidate) -> Result<OutboxStored, JournalE
     record_context(candidate.stream(), candidate.material(), candidate.anchor())?;
     Ok(stored.clone())
 }
-fn native_error(error: RunnerHubError) -> JournalError {
+pub(super) fn native_error(error: RunnerHubError) -> JournalError {
     match error {
         RunnerHubError::Binding
         | RunnerHubError::Unavailable
@@ -227,10 +227,10 @@ fn native_error(error: RunnerHubError) -> JournalError {
         error => storage_error(error),
     }
 }
-fn transport_error(error: CloudError) -> JournalError {
+pub(super) fn transport_error(error: CloudError) -> JournalError {
     native_error(sdk_error(error))
 }
-fn storage_error(error: impl std::error::Error + Send + Sync + 'static) -> JournalError {
+pub(super) fn storage_error(error: impl std::error::Error + Send + Sync + 'static) -> JournalError {
     JournalError::Storage(SharedCause::new(error))
 }
 
