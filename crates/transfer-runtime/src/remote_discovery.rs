@@ -1,29 +1,92 @@
-//! Walks the source tree of a relay on the source filesystem and prepares the
-//! matching directories on the destination filesystem.
+//! One bounded DFS over a remote source, preserving each destination's authority.
 use crate::{
     discovery::{send, skip},
-    scheduler::{FileJob, RelayJob, Work},
+    scheduler::{DownloadJob, FileJob, RelayJob, Work},
 };
 use nocterm_session::{
     DirEntry, EntryKind, FsError, RemoteFs,
     fs::{path, valid_publication_name},
+    local_fs::LocalDirectory,
 };
 use nocterm_transfers::{
-    DiscoveryBudget, LimitKind, RelayRequest, TransferCause, TransferEvent, TransferOperation,
-    TransferPath,
+    DiscoveryBudget, LimitKind, TransferCause, TransferEvent, TransferOperation, TransferPath,
+    valid_download_name,
 };
-use std::sync::Arc;
+use std::{ffi::OsString, sync::Arc};
 use tokio::sync::mpsc;
 
-pub(crate) async fn run(work: &Work, sender: &mpsc::Sender<FileJob>, request: RelayRequest) {
-    let mut discovery =
-        RelayDiscovery::new(work.clone(), sender.clone(), request.source_fs, request.fs);
-    for source in request.sources {
-        if work.batch().cancelled() {
+/// The already admitted parent, never recovered from a display path.
+pub(crate) enum Destination {
+    Local(Arc<dyn LocalDirectory>),
+    Remote { fs: Arc<dyn RemoteFs>, path: String },
+}
+impl Destination {
+    fn for_entry(&self, name: &str) -> Self {
+        match self {
+            Self::Local(directory) => Self::Local(directory.clone()),
+            Self::Remote { fs, path: parent } => Self::Remote {
+                fs: fs.clone(),
+                path: path::join(parent, name),
+            },
+        }
+    }
+    fn valid_name(&self, name: &str) -> bool {
+        match self {
+            Self::Local(_) => valid_download_name(name),
+            Self::Remote { .. } => valid_publication_name(name),
+        }
+    }
+    async fn child(self, work: &Work, name: String) -> Result<Self, TransferCause> {
+        match self {
+            Self::Local(directory) => work
+                .state()
+                .blocking()
+                .call(work.cancel(), move || {
+                    directory.create_child(&OsString::from(name))
+                })
+                .await
+                .map(Self::Local),
+            Self::Remote { fs, path } => {
+                work.remote(fs.create_dir(&path)).await?;
+                Ok(Self::Remote { fs, path })
+            }
+        }
+    }
+    fn job(self, source_fs: Arc<dyn RemoteFs>, source: String, entry: DirEntry) -> FileJob {
+        match self {
+            Self::Local(directory) => FileJob::Download(DownloadJob::new(
+                source,
+                directory,
+                entry.name.into(),
+                entry.size,
+            )),
+            Self::Remote { path, .. } => {
+                FileJob::Relay(RelayJob::new(source_fs, source, path, entry.size))
+            }
+        }
+    }
+}
+pub(crate) async fn run(
+    work: Work,
+    sender: mpsc::Sender<FileJob>,
+    source_fs: Arc<dyn RemoteFs>,
+    sources: Vec<String>,
+    destination: Destination,
+) {
+    let budget = DiscoveryBudget::new(work.state().limits().discovery());
+    let mut discovery = RemoteDiscovery {
+        work,
+        sender,
+        source_fs,
+        budget,
+        stack: Vec::new(),
+    };
+    for source in sources {
+        if discovery.work.batch().cancelled() {
             break;
         }
-        if let Err(cause) = discovery.root(source.clone(), &request.destination).await {
-            work.fail(
+        if let Err(cause) = discovery.root(source.clone(), &destination).await {
+            discovery.work.fail(
                 Some(TransferPath::Remote(source)),
                 TransferOperation::Discover,
                 cause,
@@ -33,42 +96,29 @@ pub(crate) async fn run(work: &Work, sender: &mpsc::Sender<FileJob>, request: Re
 }
 struct Frame {
     source: String,
-    remote: String,
+    destination: Destination,
     entries: std::vec::IntoIter<DirEntry>,
     depth: usize,
 }
 struct Node {
     source: String,
-    remote: String,
+    destination: Destination,
     entry: DirEntry,
     depth: usize,
 }
-struct RelayDiscovery {
+struct RemoteDiscovery {
     work: Work,
     sender: mpsc::Sender<FileJob>,
     source_fs: Arc<dyn RemoteFs>,
-    destination_fs: Arc<dyn RemoteFs>,
     budget: DiscoveryBudget,
     stack: Vec<Frame>,
 }
-impl RelayDiscovery {
-    fn new(
-        work: Work,
-        sender: mpsc::Sender<FileJob>,
-        source_fs: Arc<dyn RemoteFs>,
-        destination_fs: Arc<dyn RemoteFs>,
-    ) -> Self {
-        let budget = DiscoveryBudget::new(work.state().limits().discovery());
-        Self {
-            work,
-            sender,
-            source_fs,
-            destination_fs,
-            budget,
-            stack: Vec::new(),
-        }
-    }
-    async fn root(&mut self, source: String, destination: &str) -> Result<(), TransferCause> {
+impl RemoteDiscovery {
+    async fn root(
+        &mut self,
+        source: String,
+        destination: &Destination,
+    ) -> Result<(), TransferCause> {
         let entry = self
             .work
             .remote(self.source_fs.stat(&source))
@@ -82,10 +132,10 @@ impl RelayDiscovery {
             name: path::file_name(&source).to_owned(),
             ..entry
         };
-        let remote = path::join(destination, &entry.name);
+        let destination = destination.for_entry(&entry.name);
         self.node(Node {
             source,
-            remote,
+            destination,
             entry,
             depth: 0,
         })
@@ -109,7 +159,7 @@ impl RelayDiscovery {
     async fn node(&mut self, node: Node) -> Result<(), TransferCause> {
         self.work.check()?;
         self.budget.visit(node.depth)?;
-        if !valid_publication_name(&node.entry.name) {
+        if !node.destination.valid_name(&node.entry.name) {
             return Err(TransferCause::InvalidName);
         }
         if node.entry.is_symlink || node.entry.kind == EntryKind::Other {
@@ -120,21 +170,16 @@ impl RelayDiscovery {
             self.work.batch().event(TransferEvent::DiscoveredFile {
                 bytes: node.entry.size.unwrap_or(0),
             });
-            let job = RelayJob::new(
-                self.source_fs.clone(),
-                node.source,
-                node.remote,
-                node.entry.size,
-            );
-            send(&self.work, &self.sender, FileJob::Relay(job)).await
+            let job = node
+                .destination
+                .job(self.source_fs.clone(), node.source, node.entry);
+            send(&self.work, &self.sender, job).await
         } else {
             self.directory(node).await
         }
     }
     async fn directory(&mut self, node: Node) -> Result<(), TransferCause> {
-        self.work
-            .remote(self.destination_fs.create_dir(&node.remote))
-            .await?;
+        let destination = node.destination.child(&self.work, node.entry.name).await?;
         self.work.batch().event(TransferEvent::DirectoryPrepared);
         let entries = self
             .work
@@ -146,7 +191,7 @@ impl RelayDiscovery {
         self.budget.hold_listing(entries.len(), bytes)?;
         self.stack.push(Frame {
             source: node.source,
-            remote: node.remote,
+            destination,
             entries: entries.into_iter(),
             depth: node.depth + 1,
         });
@@ -158,7 +203,7 @@ impl RelayDiscovery {
                 self.budget.consumed_name(entry.name.len());
                 return Some(Node {
                     source: path::join(&frame.source, &entry.name),
-                    remote: path::join(&frame.remote, &entry.name),
+                    destination: frame.destination.for_entry(&entry.name),
                     entry,
                     depth: frame.depth,
                 });
