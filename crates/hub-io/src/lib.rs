@@ -105,6 +105,12 @@
 //! runner signing key, seals it to the pinned account key and publishes it to the runner's
 //! directory stream only while the hub negotiated the chat directory (bit 256)
 //! ([ADR 0135](../../../docs/adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)).
+//! The runner inbox maps chat SSH bindings and certificates (contract ADR 0009) to native
+//! commands for this chat's key epoch with each server's principal, the event encoder maps
+//! SSH access events to tags 14 and 15, and `RunnerSshCertificates` reads a certificate
+//! under the binding's CA key; the journal's SSH row is sealed as an effect slot because the
+//! contract has no class for it
+//! ([ADR 0137](../../../docs/adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md)).
 //!
 //! The managed-agent ports of `nocterm-cloud-agents-model` (`agents`) read the failure code,
 //! the web panel address and the provider kinds through the contract's own vocabulary

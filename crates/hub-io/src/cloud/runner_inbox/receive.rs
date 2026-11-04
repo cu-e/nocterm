@@ -508,6 +508,7 @@ fn prepare(
         stream,
         acceptance,
         &owner.principal.default,
+        owner.material.chat_key_epoch(acknowledgement.stream()),
     ) {
         Ok(value) => value,
         Err(_) => {

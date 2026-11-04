@@ -29,7 +29,7 @@ pub(super) fn original_run(event: &CoordinatorEvent) -> Option<&RunBinding> {
         CoordinatorEvent::BackgroundLifecycle(value) => Some(value.job().execution().run()),
         CoordinatorEvent::AuthenticationRequested { request, .. } => Some(request.binding().run()),
         CoordinatorEvent::SessionState(value) => Some(value.binding().run()),
-        CoordinatorEvent::Deleted { .. } => None,
+        CoordinatorEvent::Deleted { .. } | CoordinatorEvent::SshAccess(_) => None,
     }
 }
 
@@ -58,6 +58,7 @@ pub(super) fn with_payload<T>(
                 prompt: Box::new(prompt),
             })
         }),
+        CoordinatorEvent::SshAccess(event) => super::ssh::with_payload(event, emit),
         CoordinatorEvent::Status { run, status } => emit(CloudEventPayload::Status {
             run: values::run(run),
             status: values::status(*status),
@@ -220,6 +221,7 @@ pub(super) fn mapping_bytes(event: &CoordinatorEvent) -> Result<usize, JournalEr
         CoordinatorEvent::AuthenticationRequested { .. } | CoordinatorEvent::SessionState(_) => {
             return Err(JournalError::UnsupportedFormat);
         }
+        CoordinatorEvent::SshAccess(event) => super::ssh::mapping_bytes(event)?,
         CoordinatorEvent::Status { .. }
         | CoordinatorEvent::Progress { .. }
         | CoordinatorEvent::Deleted { .. } => 0,

@@ -21,6 +21,8 @@ pub use runner_reclaim::{ChatRetirementOutcome, RunnerReclaimError, retire_until
 mod runner_directory;
 pub use runner_directory::{RunnerChatDirectory, RunnerChatHost, RunnerDirectoryError};
 mod runner_horizons;
+mod runner_ssh_certificates;
+pub use runner_ssh_certificates::RunnerSshCertificates;
 mod runner_retirement;
 pub use runner_retirement::RunnerChatRetirement;
 #[cfg(test)]

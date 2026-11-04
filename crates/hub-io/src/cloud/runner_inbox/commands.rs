@@ -1,5 +1,6 @@
 //! Sole authenticated public command payload -> native semantic DTO mapping.
 mod body;
+mod ssh;
 #[cfg(test)]
 mod tests;
 use super::attachments::PreparedAttachment;
@@ -124,6 +125,7 @@ pub(super) fn map(
     stream: StreamBinding,
     acceptance: CommandAcceptance,
     default: &RunDestination,
+    key_epoch: Option<ChatKeyEpoch>,
 ) -> Result<MappedCommand, CoordinatorError> {
     let context = signed.header().context();
     let window = GrantWindow::new(
@@ -168,11 +170,9 @@ pub(super) fn map(
                     });
                     CommandBody::ProviderGrant(offer)
                 }
-                // Chat SSH bindings and certificates (contract ADR 0009) are not admitted
-                // by this runner build yet.
-                wire::GrantPayload::SshBinding { .. }
-                | wire::GrantPayload::SshCertificate { .. } => {
-                    return Err(CoordinatorError::Unsupported);
+                grant @ (wire::GrantPayload::SshBinding { .. }
+                | wire::GrantPayload::SshCertificate { .. }) => {
+                    ssh::grant(grant, run.is_some(), &stream, key_epoch)?
                 }
             }
         }
@@ -291,7 +291,7 @@ fn grant_reference(value: wire::ScopedGrantReference) -> Result<GrantReference, 
         wire::GrantClass::Inference => GrantClass::Inference,
         wire::GrantClass::Tools => GrantClass::Tools,
         wire::GrantClass::Provider => GrantClass::Provider,
-        wire::GrantClass::SshBinding => return Err(CoordinatorError::Unsupported),
+        wire::GrantClass::SshBinding => GrantClass::SshBinding,
     };
     Ok(GrantReference::new(
         class,
