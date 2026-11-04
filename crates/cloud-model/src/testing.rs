@@ -27,3 +27,5 @@ pub use tool_ports::{
 
 mod login;
 pub use login::ScriptedLoginAuthority;
+mod summaries;
+pub use summaries::RecordedSummaryDirectory;

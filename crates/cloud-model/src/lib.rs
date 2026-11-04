@@ -19,6 +19,10 @@
 //! account/runner independently of chat keys. CurrentCloudHeads observes bounded
 //! revision-bound native head metadata; JournalChatHeadCipher protects it after
 //! content-key retirement. Neither port admits commands or acquires a writer.
+//! ChatSummaryFacts/ChatSummaryTracker reduce journaled observations of one chat to its
+//! neutral summary, revision ledger and publication cadence; ChatSummaryJournal and
+//! ChatSummaryDirectory are the runner journal's summary rows and its signed directory
+//! (ADR 0135). A summary admits, grants or proves nothing.
 //! Ports used: neutral AI content,
 //! tool calls and tool presentation;
 //! hubs-model captured descriptive hub/account identities.
