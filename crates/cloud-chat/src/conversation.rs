@@ -5,7 +5,9 @@ use nocterm_agent_chat::conversation::{
     ConversationActions, ConversationError, ConversationSource, ConversationToolApproval,
     ToolApprovalChoice, ToolApprovalView,
 };
-use nocterm_ai::conversation::{ConversationAction, ConversationPhase, ConversationView};
+use nocterm_ai::conversation::{
+    ConversationAction, ConversationPhase, ConversationView, PendingPromptKey,
+};
 use nocterm_cloud_model::projection::ports::ConversationCoordinates;
 use std::rc::Rc;
 
@@ -50,6 +52,7 @@ impl ConversationSource for CloudConversation {
         let chat = chat.read(cx);
         chat.check_current()
             .map_err(CloudChatError::into_conversation)?;
+        let pending_prompts = chat.pending.prompts();
         visitor(ConversationView {
             transcript: chat.projection().transcript(),
             phase: chat.projection().phase(),
@@ -71,6 +74,9 @@ impl ConversationSource for CloudConversation {
             updated_at: chat.projection().updated_at(),
             pending_commands: chat.pending_commands().len(),
             reconnecting: chat.reconnecting(),
+            // The runner owns its terminals, model and usage; a Cloud prompt is text.
+            composer: nocterm_ai::conversation::ComposerCapabilities::default(),
+            pending_prompts: &pending_prompts,
         });
         Ok(())
     }
@@ -110,6 +116,7 @@ impl ConversationActions for CloudActions {
     ) -> Result<nocterm_agent_chat::conversation::ConversationSubmissionStart, ConversationError>
     {
         let chat = self.chat.upgrade().ok_or(ConversationError::Stale)?;
+        let prompt = matches!(action, ConversationAction::Prompt(_));
         let (id, receipt, completion) =
             chat.update(cx, |chat, cx| -> Result<_, ConversationError> {
                 let (id, completion) = chat.submit(self.coordinates.clone(), action, cx)?;
@@ -124,6 +131,7 @@ impl ConversationActions for CloudActions {
                 chat: self.chat.clone(),
                 id,
                 receipt,
+                prompt,
             }),
             completion,
         ))
@@ -140,11 +148,36 @@ impl ConversationActions for CloudActions {
             chat.perform(self.coordinates.clone(), action, cx)
         })
     }
+    fn retry_prompt(
+        &self,
+        prompt: PendingPromptKey,
+        cx: &mut App,
+    ) -> Task<Result<(), ConversationError>> {
+        let Some(chat) = self.chat.upgrade() else {
+            return Task::ready(Err(ConversationError::Stale));
+        };
+        if let Err(error) = chat.read(cx).check_current() {
+            return Task::ready(Err(error.into_conversation()));
+        }
+        chat.update(cx, |chat, cx| chat.retry_prompt(command(prompt), cx))
+    }
+    fn dismiss_prompt(
+        &self,
+        prompt: PendingPromptKey,
+        cx: &mut App,
+    ) -> Result<(), ConversationError> {
+        let chat = self.chat.upgrade().ok_or(ConversationError::Stale)?;
+        chat.update(cx, |chat, cx| chat.dismiss_prompt(command(prompt), cx))
+    }
+}
+fn command(prompt: PendingPromptKey) -> nocterm_cloud_model::identity::CommandId {
+    nocterm_cloud_model::identity::CommandId::from_bytes(*prompt.as_bytes())
 }
 struct CloudSubmission {
     chat: WeakEntity<CloudChat>,
     id: nocterm_cloud_model::identity::CommandId,
     receipt: super::pending::SubmissionReceipt,
+    prompt: bool,
 }
 impl nocterm_agent_chat::conversation::ConversationSubmission for CloudSubmission {
     fn retry(&self, cx: &mut App) -> Task<Result<(), ConversationError>> {
@@ -170,6 +203,9 @@ impl nocterm_agent_chat::conversation::ConversationSubmission for CloudSubmissio
                 .upgrade()
                 .is_none_or(|chat| !chat.read(cx).pending.contains(self.id)),
         }
+    }
+    fn pending_prompt(&self) -> Option<PendingPromptKey> {
+        self.prompt.then(|| super::pending::prompt_key(self.id))
     }
 }
 

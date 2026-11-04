@@ -77,6 +77,14 @@ impl ConversationSource for LocalConversation {
             updated_at: thread.updated_at(),
             pending_commands: thread.queued_prompt_ids().len(),
             reconnecting: false,
+            composer: nocterm_ai::conversation::ComposerCapabilities {
+                attach: true,
+                configure: true,
+                usage: true,
+            },
+            // A Local prompt enters the transcript as it is sent, or waits in the composer's
+            // own queue.
+            pending_prompts: &[],
         });
         Ok(())
     }

@@ -129,3 +129,4 @@ acceptance; a later record supersedes an earlier one.
 | [0131](0131-one-container-watch-per-host-connection.md) | One container watch per host connection, relisted only for listing changes |
 | [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local |
 | [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat |
+| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript |

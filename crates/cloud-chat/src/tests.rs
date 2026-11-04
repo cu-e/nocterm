@@ -12,6 +12,7 @@ use nocterm_cloud_model::projection::{
 use std::{rc::Rc, sync::Arc};
 
 mod inference_grant;
+mod pending_prompts;
 mod unreachable_runner;
 
 fn installation(

@@ -18,6 +18,9 @@
 //! Viewer close never sends Stop. Native ports have no fake default. An unanswered replay
 //! poll is retried with a growing delay and reported as reconnecting, never as the end of the
 //! chat; a delivery nobody answered is `Unreachable`, a refused one `Rejected` (ADR 0133).
+//! Prompts not yet accepted are presented as pending prompts in send order; a refusal retires
+//! its command and payload and keeps at most four refused texts under a bytes reservation
+//! until they are sent again or dismissed (ADR 0134).
 mod admission;
 mod command_operation;
 mod conversation;
@@ -198,6 +201,37 @@ impl CloudChat {
         self.pending.attach(id, task);
         Self::wait_for_command(receive, cx)
     }
+    /// Sends a failed prompt again: a refused one as a new prompt with its text, which replaces
+    /// it, an unanswered one under its original ID.
+    fn retry_prompt(
+        &mut self,
+        id: CommandId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConversationError>> {
+        let Some(text) = self.pending.refused_text(id).map(str::to_owned) else {
+            return self.retry(id, cx);
+        };
+        match self.submit(self.coordinates(), ConversationAction::Prompt(text), cx) {
+            Ok((_, completion)) => {
+                self.pending.forget_refused(id);
+                cx.notify();
+                completion
+            }
+            Err(error) => Task::ready(Err(error)),
+        }
+    }
+    /// Forgets a refused prompt; only a refused prompt can be dismissed.
+    fn dismiss_prompt(
+        &mut self,
+        id: CommandId,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ConversationError> {
+        if !self.pending.forget_refused(id) {
+            return Err(ConversationError::Unavailable);
+        }
+        cx.notify();
+        Ok(())
+    }
     fn coordinates(&self) -> ConversationCoordinates {
         ConversationCoordinates {
             binding: self.projection().binding().clone(),
@@ -375,7 +409,12 @@ impl CloudChat {
         cx: &mut Context<Self>,
     ) {
         let reached = result.is_ok();
-        self.pending.finish(id, result);
+        if let Some(refusal) = self.pending.finish(id, result) {
+            // Without room the refusal is still reported to its sender; only its row is lost.
+            if let Ok(allocation) = self.residency.retained_text(refusal.bytes(), cx) {
+                self.pending.keep_refused(refusal, allocation);
+            }
+        }
         // The command reached the hub, and a managed seat was woken for it: a replay waiting
         // out an unanswered poll polls again now instead of after its delay.
         if reached && self.reconnecting && self.subscription.is_some() {

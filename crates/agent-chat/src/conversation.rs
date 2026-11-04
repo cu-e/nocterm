@@ -1,6 +1,6 @@
 //! The renderer's borrowed source and captured action ports. No view or wire types.
 use gpui::{App, EntityId, Subscription, Task};
-use nocterm_ai::conversation::{ConversationAction, ConversationView};
+use nocterm_ai::conversation::{ConversationAction, ConversationView, PendingPromptKey};
 use std::rc::Rc;
 
 mod approval;
@@ -35,6 +35,10 @@ pub trait ConversationSubmission {
     /// change nothing and sending the same input again is a new action. An accepted action is
     /// not refused: retrying it reports that it succeeded.
     fn refused(&self, cx: &App) -> bool;
+    /// The pending prompt this submission shows in its conversation, when it shows one.
+    fn pending_prompt(&self) -> Option<PendingPromptKey> {
+        None
+    }
 }
 pub type ConversationSubmissionStart = (
     Rc<dyn ConversationSubmission>,
@@ -52,6 +56,24 @@ pub trait ConversationActions {
         action: ConversationAction,
         cx: &mut App,
     ) -> Task<Result<(), ConversationError>>;
+    /// Sends a pending prompt that failed again: an unanswered one under its own identity, a
+    /// refused one as a new prompt with the same text. A source without pending prompts has
+    /// none to retry.
+    fn retry_prompt(
+        &self,
+        _prompt: PendingPromptKey,
+        _cx: &mut App,
+    ) -> Task<Result<(), ConversationError>> {
+        Task::ready(Err(ConversationError::Unavailable))
+    }
+    /// Forgets a refused prompt the person no longer sends.
+    fn dismiss_prompt(
+        &self,
+        _prompt: PendingPromptKey,
+        _cx: &mut App,
+    ) -> Result<(), ConversationError> {
+        Err(ConversationError::Unavailable)
+    }
 }
 
 /// Implementations borrow rows only during the visitor and retain weak entities.
