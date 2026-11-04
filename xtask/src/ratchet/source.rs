@@ -20,9 +20,12 @@ pub(crate) struct Module {
 }
 
 pub(crate) fn load(root: &Path) -> anyhow::Result<Vec<Module>> {
-    let metadata = crate::metadata(root)?;
+    load_metadata(&crate::metadata(root)?)
+}
+
+pub(super) fn load_metadata(metadata: &crate::Metadata) -> anyhow::Result<Vec<Module>> {
     let mut modules = Vec::new();
-    for package in metadata.packages {
+    for package in &metadata.packages {
         let layer = package
             .metadata
             .pointer("/nocterm/layer")
@@ -213,6 +216,27 @@ pub(crate) fn attributes(item: &Item) -> &[Attribute] {
         Item::Type(i) => &i.attrs,
         Item::Union(i) => &i.attrs,
         Item::Use(i) => &i.attrs,
+        _ => &[],
+    }
+}
+
+/// Attributes on associated items; opaque future syntax is still traversed.
+pub(super) fn impl_attributes(item: &syn::ImplItem) -> &[Attribute] {
+    match item {
+        syn::ImplItem::Fn(item) => &item.attrs,
+        syn::ImplItem::Const(item) => &item.attrs,
+        syn::ImplItem::Type(item) => &item.attrs,
+        syn::ImplItem::Macro(item) => &item.attrs,
+        _ => &[],
+    }
+}
+
+pub(super) fn trait_attributes(item: &syn::TraitItem) -> &[Attribute] {
+    match item {
+        syn::TraitItem::Fn(item) => &item.attrs,
+        syn::TraitItem::Const(item) => &item.attrs,
+        syn::TraitItem::Type(item) => &item.attrs,
+        syn::TraitItem::Macro(item) => &item.attrs,
         _ => &[],
     }
 }
