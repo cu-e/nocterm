@@ -8,7 +8,6 @@ use crate::thread::Attachment;
 use gpui_kit::{AnyElement, PathPromptOptions};
 use nocterm_ai::images::PromptImage;
 use nocterm_ai::model::ids::AuthMethodId;
-use nocterm_ai::model::usage::ContextUsage;
 use std::path::PathBuf;
 
 impl AgentPanel {
@@ -175,38 +174,54 @@ impl AgentPanel {
     ) {
         self.composer.select_command_token(range, window, cx);
     }
+    /// The composer of the open chat or conversation: the same field, controls and frame for
+    /// every source. Attachments and the Local chat's notices need its thread.
     pub(super) fn render_composer(
         &mut self,
-        thread: &Entity<AgentThread>,
-        usage: Option<&ContextUsage>,
-        labels: &attachments::AttachmentLabels,
+        frame: &composer_frame::ComposerFrame,
+        local: Option<&Entity<AgentThread>>,
+        labels: Option<&attachments::AttachmentLabels>,
+        busy: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let chips =
-            composer_renderer::ComposerRenderer::render_attachment_chips(thread, labels, cx);
-        let previews =
-            preview_operation::PreviewOperation::composer_previews(&mut self.messages, thread, cx);
-        let images = composer_renderer::ComposerRenderer::render_image_strip(
-            thread.entity_id(),
-            previews,
-            cx,
-        );
+        let attach = local.filter(|_| frame.can_attach());
+        let chips = attach.zip(labels).and_then(|(thread, labels)| {
+            composer_renderer::ComposerRenderer::render_attachment_chips(thread, labels, cx)
+        });
+        let images = attach.and_then(|thread| {
+            let previews = preview_operation::PreviewOperation::composer_previews(
+                &mut self.messages,
+                thread,
+                cx,
+            );
+            composer_renderer::ComposerRenderer::render_image_strip(
+                thread.entity_id(),
+                previews,
+                cx,
+            )
+        });
         let input = composer_renderer::ComposerRenderer::render_input(&self.composer, cx);
         let stop = self.capture_rendered_stop(cx);
         let footer = composer_renderer::ComposerRenderer::render_footer(
+            frame,
             &self.composer,
             &self.menus,
-            thread,
-            usage,
+            local,
             stop,
+            busy,
             cx,
         );
-        let notices = composer_renderer::ComposerRenderer::render_notices(
-            &self.composer,
-            self.host.sign_in().is_some(),
-            thread,
-            cx,
-        );
+        let terminal = self.host.sign_in().is_some();
+        let notices = local
+            .map(|thread| {
+                composer_renderer::ComposerRenderer::render_notices(
+                    &self.composer,
+                    terminal,
+                    thread,
+                    cx,
+                )
+            })
+            .unwrap_or_default();
         composer_renderer::ComposerRenderer::compose(
             chips,
             images,
@@ -214,6 +229,35 @@ impl AgentPanel {
             footer,
             notices,
             self.command_matches(cx),
+            cx,
+        )
+    }
+    /// The Local chat's queued prompts above the composer; none while the queue is empty.
+    pub(super) fn render_queue(
+        &mut self,
+        thread: &Entity<AgentThread>,
+        labels: &attachments::AttachmentLabels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if thread.read(cx).composer().queue().is_empty() {
+            return None;
+        }
+        let height = queue::QueueRenderer::visible_height(&self.composer, thread, window, cx);
+        let prompts = if self.composer.queue_open() || height > gpui_kit::px(0.) {
+            thread.read(cx).composer().queue().to_vec()
+        } else {
+            Vec::new()
+        };
+        let previews =
+            preview_operation::PreviewOperation::queued_previews(&mut self.messages, &prompts, cx);
+        queue::QueueRenderer::render_queue(
+            &self.composer,
+            prompts,
+            previews,
+            thread,
+            labels,
+            height,
             cx,
         )
     }
@@ -305,7 +349,22 @@ impl AgentPanel {
             self.add_images(paths, cx);
         }
     }
+    /// Whether the composer takes images and files: the open source attaches them, and only
+    /// a Local thread holds a composer's attachments.
+    pub(super) fn composer_attaches(&self, cx: &App) -> bool {
+        use nocterm_agent_chat::conversation::ConversationSource as _;
+        let Some(thread) = self.current() else {
+            return false;
+        };
+        let mut attaches = false;
+        let _ = nocterm_agent_chat::conversation::LocalConversation::new(&thread)
+            .with_view(cx, &mut |view| attaches = view.composer.attach);
+        attaches
+    }
     pub(super) fn pick_images(&mut self, cx: &mut Context<Self>) {
+        if !self.composer_attaches(cx) {
+            return;
+        }
         let operation = image_picker::ImagePickerOperation::new(
             self.current().map(|thread| thread.entity_id()),
             self.composer.revision(),
@@ -644,12 +703,12 @@ impl AgentPanel {
             self.submit_conversation(false, window, cx);
             return;
         }
-        if let Some(thread) = self.current().filter(|thread| thread.entity_id() == chat) {
-            if composer_renderer::ComposerRenderer::stops(&self.composer, &thread, cx) {
-                thread.update(cx, |thread, cx| thread.stop(cx));
-            } else {
-                self.send(window, cx);
-            }
+        // The send button stops a run through its rendered stop; this sends.
+        if self
+            .current()
+            .is_some_and(|thread| thread.entity_id() == chat)
+        {
+            self.send(window, cx);
         }
     }
     pub(super) fn on_restart_clicked(

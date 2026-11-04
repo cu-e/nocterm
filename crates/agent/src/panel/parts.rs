@@ -118,7 +118,7 @@ impl PanelParts {
 }
 
 /// What the transcript draws besides its changed rows: the rows' count and liveness,
-/// the fork action and the plan.
+/// the fork action, the pending prompts and the plan.
 pub(super) fn transcript_stamp(view: &ConversationView<'_>) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (
@@ -128,6 +128,9 @@ pub(super) fn transcript_stamp(view: &ConversationView<'_>) -> u64 {
         view.can_fork,
     )
         .hash(&mut hasher);
+    for prompt in view.pending_prompts {
+        (prompt.key, prompt.state).hash(&mut hasher);
+    }
     if let Some(plan) = &view.transcript.plan {
         for entry in &plan.entries {
             entry.content.hash(&mut hasher);

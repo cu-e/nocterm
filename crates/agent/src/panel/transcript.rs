@@ -13,7 +13,7 @@ pub(super) struct TranscriptView;
 impl TranscriptView {
     /// The status line of a conversation, as a chat shows its own: hidden while nothing
     /// happens, and live (the thinking indicator and a shimmering label) while the person waits
-    /// for the agent: a run starts or runs, or the source reconnects to it.
+    /// for the agent: a prompt is on its way, a run starts or runs, or the source reconnects.
     pub(super) fn conversation_status(
         view: &nocterm_ai::conversation::ConversationView<'_>,
     ) -> Option<(String, bool)> {
@@ -32,27 +32,27 @@ impl TranscriptView {
             Completed => "Completed",
             Deleted => "Deleted",
         };
-        let quiet = matches!(view.phase, Idle | Completed)
-            && view.pending_commands == 0
-            && !view.reconnecting;
-        if quiet {
+        // The prompts on their way are shown as rows; the line says that the person waits.
+        let waiting = matches!(view.phase, Idle | Completed)
+            && view
+                .pending_prompts
+                .iter()
+                .any(|prompt| prompt.state.on_its_way());
+        if matches!(view.phase, Idle | Completed) && !waiting && !view.reconnecting {
             return None;
         }
         let mut text = if view.reconnecting {
             "Reconnecting to the agent".to_owned()
+        } else if waiting {
+            "Waiting for the agent".to_owned()
         } else {
             phase.to_owned()
         };
-        match view.pending_commands {
-            0 => {}
-            1 => text.push_str(" · 1 message on its way"),
-            count => text.push_str(&format!(" · {count} messages on their way")),
-        }
         if let Some(tokens) = &view.transcript.tokens {
             text.push_str(&format!(" · {} tokens", tokens.total));
         }
         let live = view.accepts_updates
-            && (view.generating || matches!(view.phase, Queued) || view.reconnecting);
+            && (view.generating || matches!(view.phase, Queued) || view.reconnecting || waiting);
         Some((text, live))
     }
     pub(super) fn area(

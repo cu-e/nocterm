@@ -22,6 +22,7 @@ mod cloud_history;
 mod cloud_menu;
 pub(crate) mod commands;
 mod composer;
+mod composer_frame;
 mod composer_renderer;
 mod composer_view;
 mod conversation_surface;
@@ -42,6 +43,7 @@ mod message_markdown;
 mod navigation;
 mod notices;
 mod parts;
+mod pending_prompt;
 mod preview_operation;
 mod queue;
 mod queue_image_preparation;
@@ -403,7 +405,9 @@ impl AgentPanel {
         if open {
             self.history.cloud_mut().refresh(true, cx);
         }
-        if let Some(width) = self.layout.set_history(open, self.current().is_some(), cx) {
+        // A Cloud conversation is a chat too: the history opens beside it the same way.
+        let chat = self.current().is_some() || self.conversation.is_some();
+        if let Some(width) = self.layout.set_history(open, chat, cx) {
             cx.emit(PanelRequest::Widen(width));
         }
         cx.notify();
@@ -443,11 +447,7 @@ impl AgentPanel {
                     .child(history)
                     .into_any_element()
             }
-            parts::PartKind::Footer => match (self.current(), self.conversation.is_some()) {
-                (_, true) => self.render_conversation(window, cx),
-                (Some(thread), false) => self.render_chat(thread, window, cx),
-                (None, false) => div().into_any_element(),
-            },
+            parts::PartKind::Footer => self.render_footer(window, cx),
         }
     }
     fn toggle_history(&mut self, cx: &mut Context<Self>) {

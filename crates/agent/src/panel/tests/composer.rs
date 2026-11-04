@@ -4,7 +4,7 @@ use nocterm_ai::model::controls::{ConfigChoice, ConfigOption};
 use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
-fn captured_panel(
+pub(super) fn captured_panel(
     f: &Fixture,
     cx: &mut TestAppContext,
 ) -> (

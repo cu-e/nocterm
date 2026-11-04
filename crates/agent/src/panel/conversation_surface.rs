@@ -114,14 +114,16 @@ impl ConversationSurface {
     ) -> Result<Option<gpui_kit::Task<Result<(), ConversationError>>>, ConversationError> {
         use nocterm_ai::conversation::ConversationAction;
         let prompt = matches!(&action, ConversationAction::Prompt(_));
+        let mut replaces = None;
         if prompt && let Some((submission, busy)) = self.pending(&input) {
             if busy {
                 return Ok(None);
             }
             // A refused prompt is over: the same text sent again is a new prompt, never a
-            // retry that can only be refused again.
+            // retry that can only be refused again. The new prompt replaces its row.
             if submission.refused(cx) {
                 self.pending = None;
+                replaces = submission.pending_prompt();
             } else {
                 self.submitted(input, submission.clone());
                 return Ok(Some(submission.retry(cx)));
@@ -142,6 +144,10 @@ impl ConversationSurface {
         let (submission, completion) = actions.submit(action, cx)?;
         if prompt {
             self.submitted(input, submission);
+        }
+        if let Some(refused) = replaces {
+            // The refused row may already be dismissed; nothing else depends on it.
+            let _ = actions.dismiss_prompt(refused, cx);
         }
         Ok(Some(completion))
     }

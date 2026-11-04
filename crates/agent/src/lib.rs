@@ -10,6 +10,8 @@
 //! Installed retains one CloudChatInstallation with the runtime's shared history admission.
 //! ConversationPanel selects an already captured source in the same renderer;
 //! its weak handle and original window fence deferred UI actions. Detach never sends Stop.
+//! Every source draws one footer and composer; ComposerFrame reads the source's capabilities,
+//! and its pending prompts follow the transcript as marked user rows (ADR 0134).
 //! SignInCards owns secret controls and prompt tokens. PanelNotices owns errors, approval
 //! identity and cancellable redraw work; PanelBindings retains installation subscriptions.
 //! Stateless renderers take immutable projections; finite presentation operations return

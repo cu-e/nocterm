@@ -39,6 +39,8 @@ pub(super) struct RowPresentation {
     time: Option<u64>,
     redact: bool,
     can_fork: bool,
+    /// The row draws a prompt its source has not accepted yet.
+    pending: Option<super::pending_prompt::PendingMark>,
 }
 pub(super) struct EntryRenderer;
 impl EntryRenderer {
@@ -123,7 +125,11 @@ impl EntryRenderer {
             .px_3()
             .py_2()
             .rounded(px(12.))
-            .bg(cx.theme().muted);
+            .bg(cx.theme().muted)
+            .when(
+                frame.pending.is_some_and(|pending| pending.on_its_way()),
+                |bubble| bubble.opacity(0.6),
+            );
         let mut images = h_flex().flex_wrap().gap_2();
         let mut has_images = false;
         for (part_index, part) in parts.iter().enumerate() {
@@ -147,6 +153,11 @@ impl EntryRenderer {
         }
         if has_images {
             bubble = bubble.child(images);
+        }
+        if let Some(pending) = frame.pending {
+            return row
+                .child(bubble)
+                .child(pending.render(frame.chat, frame.index, cx));
         }
         row.child(bubble).child(
             super::message_actions::MessageRowActions::new(
@@ -313,7 +324,12 @@ impl RowPresentation {
             time,
             redact,
             can_fork: false,
+            pending: None,
         }
+    }
+    pub(super) fn with_pending(mut self, pending: super::pending_prompt::PendingMark) -> Self {
+        self.pending = Some(pending);
+        self
     }
     pub(super) fn with_fork_available(mut self, available: bool) -> Self {
         self.can_fork = available;
