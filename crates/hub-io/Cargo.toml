@@ -10,6 +10,7 @@ publish = false
 layer = "adapter"
 
 [dependencies]
+hex.workspace = true
 nocterm-core.workspace = true
 nocterm-cloud-model.workspace = true
 nocterm-ai.workspace = true

@@ -157,16 +157,10 @@ impl ProjectionTools {
     }
 }
 fn row_id(run: &RunBinding, id: IntentId) -> String {
-    let hex = |bytes: &[u8]| {
-        bytes
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    };
     format!(
         "{}-{}-{}",
-        hex(run.run().as_bytes()),
+        hex::encode(run.run().as_bytes()),
         run.epoch().get(),
-        hex(id.as_bytes())
+        hex::encode(id.as_bytes())
     )
 }

@@ -43,9 +43,7 @@ pub(super) fn store_error(error: OpError) -> AgentAccessError {
 pub(super) fn server_object(connection: &str) -> String {
     let digest = Sha256::digest(connection.as_bytes());
     let mut id = String::from("srv-");
-    for byte in &digest[..16] {
-        id.push_str(&format!("{byte:02x}"));
-    }
+    id.push_str(&hex::encode(&digest[..16]));
     id
 }
 

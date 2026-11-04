@@ -398,3 +398,13 @@ fn turning_an_option_off_removes_it_and_keeps_the_rest_in_order() {
     assert_eq!(toggle(&["c", "a", "b"], "a", false, true), ["c", "b"]);
     assert_eq!(toggle(&["a"], "z", false, true), ["a"]);
 }
+
+#[test]
+fn unicode_table_upgrade_does_not_silently_change_sanitizing() {
+    assert_eq!(unicode_general_category::UNICODE_VERSION, (16, 0, 0));
+    // These marks were introduced in Unicode 17 and remain ordinary characters here.
+    assert_eq!(
+        sanitize_text("a\u{1acf}\u{1acf}\u{1acf}"),
+        "a\u{1acf}\u{1acf}\u{1acf}"
+    );
+}
