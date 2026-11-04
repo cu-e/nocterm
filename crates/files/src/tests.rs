@@ -714,6 +714,8 @@ mod listing_ui;
 mod operations_ui;
 #[path = "plugin_tests.rs"]
 mod plugin;
+#[path = "selection_ui_tests.rs"]
+mod selection_ui;
 #[path = "transfer_ui_tests.rs"]
 mod transfer_ui;
 

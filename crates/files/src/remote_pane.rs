@@ -27,8 +27,7 @@ pub(super) struct RemotePane {
     source: Option<nocterm_workspace::ExplorerSource>,
     browser: Browser,
     requested: Option<String>,
-    selected: BTreeSet<usize>,
-    anchor: Option<usize>,
+    selection: RowSelection,
     path: Entity<path_input::PathInput>,
     _subscription: Subscription,
     counter: statistics::Counter,
@@ -55,8 +54,7 @@ impl RemotePane {
             source: None,
             browser: Browser::default(),
             requested: None,
-            selected: BTreeSet::new(),
-            anchor: None,
+            selection: RowSelection::default(),
             path,
             _subscription: subscription,
             counter: statistics::Counter::default(),
@@ -82,7 +80,7 @@ impl RemotePane {
                 .iter()
                 .map(|entry| entry.name.clone())
                 .collect(),
-            selected: self.selected.iter().copied().collect(),
+            selected: self.selection.indices().collect(),
             loading: self.browser.loading(),
             error: self.browser.error().map(ToString::to_string),
             statistics: statistics::summary(self.counter.shown()),
@@ -192,8 +190,7 @@ impl RemotePane {
             .update(cx, |input, cx| input.replace_reader(reader, cx));
         self.requested = None;
         self.browser.clear();
-        self.selected.clear();
-        self.anchor = None;
+        self.selection.clear();
         self.task = None;
         self.counter.set(Default::default());
         if self.filesystem().is_some() {
@@ -230,8 +227,7 @@ impl RemotePane {
         self.path
             .update(cx, |input, cx| input.begin_navigation_with_mode(mode, cx));
         let generation = self.browser.begin();
-        self.selected.clear();
-        self.anchor = None;
+        self.selection.clear();
         self.requested = directory.clone();
         cx.notify();
         let window = self.presentation.host.window;
@@ -348,19 +344,11 @@ impl RemotePane {
         event: &gpui_kit::MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
-        if event.modifiers.shift {
-            let anchor = self.anchor.unwrap_or(ix);
-            self.selected.extend(anchor.min(ix)..=anchor.max(ix));
-        } else if event.modifiers.control || event.modifiers.platform {
-            if !self.selected.insert(ix) {
-                self.selected.remove(&ix);
-            }
-            self.anchor = Some(ix);
-        } else {
-            self.selected.clear();
-            self.selected.insert(ix);
-            self.anchor = Some(ix);
-        }
+        self.selection.click(
+            ix,
+            event.modifiers.shift,
+            event.modifiers.control || event.modifiers.platform,
+        );
         if event.click_count == 2
             && let Some(entry) = self
                 .browser
@@ -394,32 +382,21 @@ impl RemotePane {
     }
 
     fn select_for_menu(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if !self.selected.contains(&ix) {
-            self.selected.clear();
-            self.selected.insert(ix);
-            self.anchor = Some(ix);
+        if self.selection.context_click(ix) {
             cx.notify();
-        }
-    }
-
-    fn selection_for_row(&self, ix: usize) -> Vec<usize> {
-        if self.selected.contains(&ix) {
-            self.selected.iter().copied().collect()
-        } else {
-            vec![ix]
         }
     }
 
     pub(super) fn render_remote_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let entry = &self.browser.entries()[ix];
         let directory = entry.kind == EntryKind::Directory;
-        let selected = self.selection_for_row(ix);
+        let selected = self.selection.for_row(ix).collect::<Vec<_>>();
         let download = self.paths(selected.iter().copied());
         let visual = ExplorerRow {
             name: entry.name.clone(),
             directory: entry.kind == EntryKind::Directory,
             symlink: entry.is_symlink,
-            selected: self.selected.contains(&ix),
+            selected: self.selection.contains(ix),
             font_size: cx.design().typography.explorer_size.unwrap_or(12.0),
         };
         let source = nocterm_ui::DragSource::default();
@@ -550,10 +527,12 @@ impl RemotePane {
                     .icon(IconName::ArrowDown)
                     .tooltip("Download selected items to the local Explorer directory")
                     .disabled(
-                        !enabled || self.selected.is_empty() || !self.presentation.download_enabled,
+                        !enabled
+                            || self.selection.is_empty()
+                            || !self.presentation.download_enabled,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(files) = this.paths(this.selected.iter().copied()) {
+                        if let Some(files) = this.paths(this.selection.indices()) {
                             cx.emit(PaneIntent::Download {
                                 files,
                                 destination: None,

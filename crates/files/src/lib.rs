@@ -1,5 +1,5 @@
 //! Explorer navigation, file dialogs and transfer presentation.
-//! Browser generations, scan results and completion cursors remain private transition owners.
+//! Browser generations, shared row selections, scan results and completion cursors remain private transition owners.
 //!
 //! Owns: independent pane views, acknowledged browser navigation, selection and pinned dialogs.
 //! Shared path editors and navigation controls belong to nocterm-ui.
@@ -27,6 +27,7 @@ mod registration;
 mod remote;
 mod remote_pane;
 mod row;
+mod selection;
 mod settings;
 mod settings_page;
 mod statistics;
@@ -60,7 +61,8 @@ use nocterm_workspace::{
 };
 use operations::FileTarget;
 use remote::{Browser, listing};
-use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use selection::RowSelection;
+use std::{path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 #[cfg(feature = "user-plugins")]
 pub use host_capabilities::TransferCounts;
