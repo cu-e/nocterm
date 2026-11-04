@@ -552,6 +552,9 @@ impl Reading {
                     tracing::debug!(%error, "the run's model grant was not sent");
                 }
             }
+            // This desktop does not answer a runner's certificate requests yet; another
+            // unlocked device of the account may.
+            ChatUpdate::SshRequest { .. } => {}
             ChatUpdate::Refused(error) => {
                 tracing::debug!(error = %nocterm_core::error::chain(&error), "a Cloud chat round was refused");
                 self.broadcast(ConversationUpdate::Refused(mapping::error(error)));

@@ -168,6 +168,12 @@ pub(super) fn map(
                     });
                     CommandBody::ProviderGrant(offer)
                 }
+                // Chat SSH bindings and certificates (contract ADR 0009) are not admitted
+                // by this runner build yet.
+                wire::GrantPayload::SshBinding { .. }
+                | wire::GrantPayload::SshCertificate { .. } => {
+                    return Err(CoordinatorError::Unsupported);
+                }
             }
         }
         wire::CloudCommandPayload::RevokeGrant(reference) => {
@@ -285,6 +291,7 @@ fn grant_reference(value: wire::ScopedGrantReference) -> Result<GrantReference, 
         wire::GrantClass::Inference => GrantClass::Inference,
         wire::GrantClass::Tools => GrantClass::Tools,
         wire::GrantClass::Provider => GrantClass::Provider,
+        wire::GrantClass::SshBinding => return Err(CoordinatorError::Unsupported),
     };
     Ok(GrantReference::new(
         class,

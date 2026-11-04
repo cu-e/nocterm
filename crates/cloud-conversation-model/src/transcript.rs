@@ -170,6 +170,8 @@ pub enum CommandKind {
     Allow,
     Answer,
     Provider,
+    /// Binds or unbinds the chat's servers, or answers a certificate request.
+    Servers,
 }
 
 /// Where a command this device sent stands.

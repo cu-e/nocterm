@@ -192,6 +192,9 @@ fn pending_command(command: &transcript::PendingCommand) -> PendingCommand {
             transcript::PendingKind::Allow => CommandKind::Allow,
             transcript::PendingKind::Answer => CommandKind::Answer,
             transcript::PendingKind::Provider => CommandKind::Provider,
+            transcript::PendingKind::Bind
+            | transcript::PendingKind::Unbind
+            | transcript::PendingKind::Certificate => CommandKind::Servers,
         },
         text: command.text.clone(),
         run: command.run.as_ref().map(run_key),
