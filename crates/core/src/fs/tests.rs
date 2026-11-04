@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn namespace_commit_is_visible_before_parent_sync_and_receipt_drop_never_rolls_it_back() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("snapshot");
+    fs::write(&path, b"old").unwrap();
+    let committed = AtomicPublication::stage_private(&path, b"new")
+        .unwrap()
+        .commit()
+        .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"new");
+    drop(committed);
+    assert_eq!(fs::read(&path).unwrap(), b"new");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    AtomicPublication::stage_private(&path, b"synced")
+        .unwrap()
+        .commit()
+        .unwrap()
+        .sync_parent();
+    assert_eq!(fs::read(path).unwrap(), b"synced");
+}
+
+#[test]
 fn binary_snapshot_round_trips_and_creates_parents() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("nested/bytes");

@@ -81,6 +81,19 @@ pub struct AtomicPublication {
     destination: PathBuf,
 }
 
+/// A completed namespace replacement whose parent directory still needs best-effort sync.
+/// Dropping this receipt cannot remove or roll back the published file.
+#[must_use = "finish parent sync outside the owner's publication lock"]
+pub struct CommittedPublication {
+    destination: PathBuf,
+}
+
+impl CommittedPublication {
+    pub fn sync_parent(self) {
+        sync_parent_best_effort(&self.destination);
+    }
+}
+
 impl AtomicPublication {
     /// Stages a mode-0600 snapshot in an existing parent directory.
     pub fn stage_private(path: &Path, bytes: &[u8]) -> Result<Self, FileError> {
@@ -141,11 +154,19 @@ impl AtomicPublication {
     /// in-memory state. Best-effort directory sync cannot turn a commit into an
     /// apparent failed write. Ancestors are not pinned against concurrent changes.
     pub fn publish(self) -> Result<(), FileError> {
+        self.commit()?.sync_parent();
+        Ok(())
+    }
+
+    /// Commits only the namespace replacement. The caller can publish matching
+    /// memory under its authority lock, then sync the parent after releasing it.
+    pub fn commit(self) -> Result<CommittedPublication, FileError> {
         self.temporary
             .persist(&self.destination)
             .map_err(|error| FileError::at(&self.destination, error.error))?;
-        sync_parent_best_effort(&self.destination);
-        Ok(())
+        Ok(CommittedPublication {
+            destination: self.destination,
+        })
     }
 
     /// Publishes only if the final path does not exist, including a dangling link.
