@@ -198,18 +198,6 @@ impl KeyAdmission {
         &self,
         future: impl std::future::Future<Output = T>,
     ) -> Result<T, HubError> {
-        let mut future = std::pin::pin!(future);
-        std::future::poll_fn(|cx| {
-            if let Err(error) = self.check() {
-                return std::task::Poll::Ready(Err(error));
-            }
-            match future.as_mut().poll(cx) {
-                std::task::Poll::Pending => std::task::Poll::Pending,
-                std::task::Poll::Ready(value) => {
-                    std::task::Poll::Ready(self.check().map(|()| value))
-                }
-            }
-        })
-        .await
+        crate::checked::during(|| self.check(), future).await
     }
 }
