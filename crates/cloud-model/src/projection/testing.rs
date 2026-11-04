@@ -37,6 +37,8 @@ struct OperationControls {
     replay: Gate,
     lose_ack: bool,
     reject_next: bool,
+    delivery_failure: Option<ProjectionError>,
+    replay_failure: Option<ProjectionError>,
 }
 impl Default for OperationControls {
     fn default() -> Self {
@@ -47,6 +49,8 @@ impl Default for OperationControls {
             replay: Gate::open(),
             lose_ack: false,
             reject_next: false,
+            delivery_failure: None,
+            replay_failure: None,
         }
     }
 }
@@ -184,6 +188,23 @@ impl ScriptedConversationSource {
         state.statuses.insert(id, outcome);
         Ok(())
     }
+    /// The next delivery fails with `error` before the hub stores anything, as an unreachable
+    /// hub or runner does; the command stays staged.
+    pub fn fail_next_delivery(&self, error: ProjectionError) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .controls
+            .delivery_failure = Some(error);
+    }
+    /// The next replay poll fails with `error`, as a poll that no runner answers does.
+    pub fn fail_next_replay(&self, error: ProjectionError) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .controls
+            .replay_failure = Some(error);
+    }
     pub fn reject_next_command(&self) {
         self.state
             .lock()
@@ -283,6 +304,9 @@ impl CapturedConversationSource for ScriptedConversationSource {
                 let gate = {
                     let mut state = source.state.lock().unwrap_or_else(PoisonError::into_inner);
                     state.effects.replayed.push((after, maximum_bytes));
+                    if let Some(error) = state.controls.replay_failure.take() {
+                        return Err(error);
+                    }
                     state.controls.replay.clone()
                 };
                 let page = source
@@ -397,6 +421,9 @@ impl CapturedConversationSource for ScriptedConversationSource {
             source.check(&state)?;
             if !state.staged.contains_key(&id) {
                 return Err(ProjectionError::Persistence);
+            }
+            if let Some(error) = state.controls.delivery_failure.take() {
+                return Err(error);
             }
             state.effects.delivered.push(id);
             let outcome = if std::mem::take(&mut state.controls.reject_next) {

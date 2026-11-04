@@ -70,6 +70,7 @@ impl ConversationSource for CloudConversation {
                 ),
             updated_at: chat.projection().updated_at(),
             pending_commands: chat.pending_commands().len(),
+            reconnecting: chat.reconnecting(),
         });
         Ok(())
     }
@@ -155,10 +156,20 @@ impl nocterm_agent_chat::conversation::ConversationSubmission for CloudSubmissio
         }
         match self.receipt.get() {
             Some(true) => return Task::ready(Ok(())),
-            Some(false) => return Task::ready(Err(ConversationError::Unavailable)),
+            Some(false) => return Task::ready(Err(ConversationError::Rejected)),
             None => {}
         }
         chat.update(cx, |chat, cx| chat.retry(self.id, cx))
+    }
+    /// Refused by the runner, or no longer held because its source ended.
+    fn refused(&self, cx: &App) -> bool {
+        match self.receipt.get() {
+            Some(accepted) => !accepted,
+            None => self
+                .chat
+                .upgrade()
+                .is_none_or(|chat| !chat.read(cx).pending.contains(self.id)),
+        }
     }
 }
 

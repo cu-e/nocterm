@@ -31,7 +31,17 @@ impl PendingCommandView {
     }
 }
 
-pub(crate) type CommandWaiter = oneshot::Sender<Result<(), ProjectionError>>;
+/// Why the waiter of one command learned that it did not succeed.
+#[derive(Clone, Debug)]
+pub(crate) enum CommandFailure {
+    /// The source refused to stage, deliver or query it; its exact ID stays for a retry.
+    Source(ProjectionError),
+    /// The hub or the runner did not answer its delivery; its exact ID stays for a retry.
+    Unreachable,
+    /// The runner refused it for good.
+    Rejected,
+}
+pub(crate) type CommandWaiter = oneshot::Sender<Result<(), CommandFailure>>;
 pub(crate) type RetainedCommand = Allocated<ConversationCommand>;
 pub(crate) type SubmissionReceipt = Rc<Cell<Option<bool>>>;
 
@@ -56,6 +66,9 @@ impl PendingCommands {
     }
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+    pub(crate) fn contains(&self, id: CommandId) -> bool {
+        self.0.contains_key(&id)
     }
     pub(crate) fn require_room(&self) -> Result<(), ProjectionError> {
         (self.0.len() < MAX_PENDING_COMMANDS)
@@ -165,13 +178,14 @@ impl PendingCommands {
                 entry.state = observed;
             }
             if let Some(waiter) = entry.waiter.take() {
-                let result = result.and_then(|state| {
-                    if state == PendingCommandState::Rejected {
-                        Err(ProjectionError::Unavailable)
-                    } else {
-                        Ok(())
-                    }
-                });
+                let result = match result {
+                    Ok(PendingCommandState::Rejected) => Err(CommandFailure::Rejected),
+                    Ok(_) => Ok(()),
+                    // Delivery results come from the transport: an unavailable one did not
+                    // answer, which a retry can change.
+                    Err(ProjectionError::Unavailable) => Err(CommandFailure::Unreachable),
+                    Err(error) => Err(CommandFailure::Source(error)),
+                };
                 let _ = waiter.send(result);
             }
         }
@@ -210,7 +224,7 @@ impl PendingCommands {
     pub(crate) fn invalidate(&mut self) {
         for (_, mut entry) in std::mem::take(&mut self.0) {
             if let Some(waiter) = entry.waiter.take() {
-                let _ = waiter.send(Err(ProjectionError::Stale));
+                let _ = waiter.send(Err(CommandFailure::Source(ProjectionError::Stale)));
             }
         }
     }

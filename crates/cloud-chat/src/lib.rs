@@ -15,7 +15,9 @@
 //! prompts enter only through verified PromptAccepted. A retry retains its ID and
 //! durable body. Captured tool-card choices preserve the exact intent/args/run,
 //! observed source/control and cutoff through the same durable command owner.
-//! Viewer close never sends Stop. Native ports have no fake default.
+//! Viewer close never sends Stop. Native ports have no fake default. An unanswered replay
+//! poll is retried with a growing delay and reported as reconnecting, never as the end of the
+//! chat; a delivery nobody answered is `Unreachable`, a refused one `Rejected` (ADR 0133).
 mod admission;
 mod command_operation;
 mod conversation;
@@ -57,6 +59,8 @@ pub struct CloudChat {
     error: Option<CloudChatError>,
     cache: Option<Task<()>>,
     membership: Option<Task<()>>,
+    /// The replay lost its producer (a hub or runner that does not answer) and retries.
+    reconnecting: bool,
 }
 impl CloudChat {
     /// Every partition receives the same handle from RuntimeHandle::history_admission.
@@ -86,6 +90,7 @@ impl CloudChat {
             error: None,
             cache: None,
             membership: None,
+            reconnecting: false,
         });
         entity.update(cx, |chat, cx| {
             chat.residency.register(cx)?;
@@ -112,6 +117,10 @@ impl CloudChat {
     }
     pub fn is_shown(&self) -> bool {
         self.residency.shown()
+    }
+    /// Whether the replay lost contact and is retrying; what the chat shows may be behind.
+    pub fn reconnecting(&self) -> bool {
+        self.reconnecting && self.subscription.is_some()
     }
     pub fn conversation(
         entity: &Entity<Self>,
@@ -268,14 +277,14 @@ impl CloudChat {
             .map(|_| ())
     }
     fn wait_for_command(
-        receive: oneshot::Receiver<Result<(), ProjectionError>>,
+        receive: oneshot::Receiver<Result<(), pending::CommandFailure>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), ConversationError>> {
         cx.spawn(async move |_, _| {
             receive
                 .await
-                .unwrap_or(Err(ProjectionError::Stale))
-                .map_err(|error| CloudChatError::from(error).into_conversation())
+                .unwrap_or(Err(pending::CommandFailure::Source(ProjectionError::Stale)))
+                .map_err(|failure| CloudChatError::from(failure).into_conversation())
         })
     }
     fn enqueue(
@@ -365,11 +374,27 @@ impl CloudChat {
         result: Result<PendingCommandState, ProjectionError>,
         cx: &mut Context<Self>,
     ) {
+        let reached = result.is_ok();
         self.pending.finish(id, result);
+        // The command reached the hub, and a managed seat was woken for it: a replay waiting
+        // out an unanswered poll polls again now instead of after its delay.
+        if reached && self.reconnecting && self.subscription.is_some() {
+            self.subscription.take();
+            if let Err(error) = self.resume(cx) {
+                self.record_error(error);
+            }
+        }
         cx.notify();
     }
     fn record_error(&mut self, error: CloudChatError) {
         self.error = Some(error);
+    }
+    /// A replay poll was not answered; the subscription waits and polls again. A sleeping seat
+    /// answers no poll until a prompt wakes it, so this is not the end of the chat.
+    fn replay_interrupted(&mut self, error: CloudChatError, cx: &mut Context<Self>) {
+        self.error = Some(error);
+        self.reconnecting = true;
+        cx.notify();
     }
     fn fail(&mut self, error: CloudChatError, cx: &mut Context<Self>) {
         if matches!(error, CloudChatError::Source(ProjectionError::Stale)) {
@@ -406,6 +431,7 @@ impl CloudChat {
             self.projection = Some(next.clone());
             prompt = self.pending.accepted(accepted);
             self.error = None;
+            self.reconnecting = false;
         })?;
         Ok(prompt)
     }

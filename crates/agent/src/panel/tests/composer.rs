@@ -169,6 +169,7 @@ fn captured_conversation_preserves_edited_draft_and_delivery_after_detach(cx: &m
     });
 }
 
+mod cloud_delivery;
 mod context_usage;
 mod inference_allow;
 

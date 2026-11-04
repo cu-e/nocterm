@@ -128,3 +128,4 @@ acceptance; a later record supersedes an earlier one.
 | [0130](0130-cloud-agents-only-in-hub-windows.md) | Cloud agents are offered only in the window of their hub |
 | [0131](0131-one-container-watch-per-host-connection.md) | One container watch per host connection, relisted only for listing changes |
 | [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local |
+| [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat |

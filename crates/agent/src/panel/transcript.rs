@@ -11,9 +11,12 @@ use super::widgets::activity_text;
 
 pub(super) struct TranscriptView;
 impl TranscriptView {
+    /// The status line of a conversation, as a chat shows its own: hidden while nothing
+    /// happens, and live (the thinking indicator and a shimmering label) while the person waits
+    /// for the agent: a run starts or runs, or the source reconnects to it.
     pub(super) fn conversation_status(
         view: &nocterm_ai::conversation::ConversationView<'_>,
-    ) -> String {
+    ) -> Option<(String, bool)> {
         use nocterm_ai::conversation::ConversationPhase::*;
         let phase = match view.phase {
             Idle => "Ready",
@@ -29,14 +32,28 @@ impl TranscriptView {
             Completed => "Completed",
             Deleted => "Deleted",
         };
-        let mut text = phase.to_owned();
-        if view.pending_commands != 0 {
-            text.push_str(&format!(" · {} pending commands", view.pending_commands));
+        let quiet = matches!(view.phase, Idle | Completed)
+            && view.pending_commands == 0
+            && !view.reconnecting;
+        if quiet {
+            return None;
+        }
+        let mut text = if view.reconnecting {
+            "Reconnecting to the agent".to_owned()
+        } else {
+            phase.to_owned()
+        };
+        match view.pending_commands {
+            0 => {}
+            1 => text.push_str(" · 1 message on its way"),
+            count => text.push_str(&format!(" · {count} messages on their way")),
         }
         if let Some(tokens) = &view.transcript.tokens {
             text.push_str(&format!(" · {} tokens", tokens.total));
         }
-        text
+        let live = view.accepts_updates
+            && (view.generating || matches!(view.phase, Queued) || view.reconnecting);
+        Some((text, live))
     }
     pub(super) fn area(
         scroller: gpui_kit::component::message_scroller::MessageScroller,

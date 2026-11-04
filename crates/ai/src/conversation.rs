@@ -34,6 +34,9 @@ pub struct ConversationView<'a> {
     pub can_allow: bool,
     pub updated_at: u64,
     pub pending_commands: usize,
+    /// The source lost contact with its producer and keeps trying; what it shows may be
+    /// behind until it reconnects.
+    pub reconnecting: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

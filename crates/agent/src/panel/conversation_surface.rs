@@ -109,8 +109,14 @@ impl ConversationSurface {
             if busy {
                 return Ok(None);
             }
-            self.submitted(input, submission.clone());
-            return Ok(Some(submission.retry(cx)));
+            // A refused prompt is over: the same text sent again is a new prompt, never a
+            // retry that can only be refused again.
+            if submission.refused(cx) {
+                self.pending = None;
+            } else {
+                self.submitted(input, submission.clone());
+                return Ok(Some(submission.retry(cx)));
+            }
         }
         let mut allowed = false;
         self.source.with_view(cx, &mut |view| {

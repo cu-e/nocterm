@@ -271,7 +271,11 @@ impl AgentPanel {
             .w_full()
             .min_w_0()
             .children(approvals)
-            .children(status.map(|text| TranscriptView::status(source.identity(), text, false, cx)))
+            .children(
+                status
+                    .flatten()
+                    .map(|(text, live)| TranscriptView::status(source.identity(), text, live, cx)),
+            )
             .child(composer_renderer::ComposerRenderer::render_conversation(
                 &self.composer,
                 source,

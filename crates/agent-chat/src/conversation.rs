@@ -14,6 +14,12 @@ pub enum ConversationError {
     Stale,
     #[error("This conversation cannot accept that action.")]
     Unavailable,
+    /// The conversation's host could not be reached; the same action can be sent again.
+    #[error("The agent cannot be reached right now. Send again to retry.")]
+    Unreachable,
+    /// The host refused this exact request; sending it again changes nothing.
+    #[error("The agent refused this request.")]
+    Rejected,
     #[error("The prompt exceeds the conversation history limits.")]
     Capacity,
     #[error("The conversation request has an unknown outcome; retry its original ID.")]
@@ -25,6 +31,10 @@ pub enum ConversationError {
 /// One admitted action, whose retries preserve its original identity and body.
 pub trait ConversationSubmission {
     fn retry(&self, cx: &mut App) -> Task<Result<(), ConversationError>>;
+    /// Whether the host refused the action for good, or no longer holds it, so retrying it can
+    /// change nothing and sending the same input again is a new action. An accepted action is
+    /// not refused: retrying it reports that it succeeded.
+    fn refused(&self, cx: &App) -> bool;
 }
 pub type ConversationSubmissionStart = (
     Rc<dyn ConversationSubmission>,
