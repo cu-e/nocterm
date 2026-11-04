@@ -5,7 +5,7 @@ use nocterm_hubs_model::source_identity::LocalAccountSource;
 use nocterm_vault::VaultError;
 
 use crate::account::{OpenKeys, Slot, source::CapturedAccount};
-use crate::cache::AccountCache;
+use crate::cache::{AccountCache, VaultCopy};
 
 pub(super) struct LedgerAccess {
     slot: Arc<Slot>,
@@ -50,15 +50,19 @@ impl LedgerAccess {
         }
     }
 
-    pub(super) fn update(&self, change: impl FnOnce(&mut AccountCache)) -> Result<(), VaultError> {
+    pub(super) fn publish_vault(&self, vault: VaultCopy) -> Result<(), VaultError> {
         match &self.capture {
             Some(capture) => {
                 let keys = self.keys()?;
-                self.slot.update_cache_if(&keys, change)?;
+                self.slot
+                    .update_cache_if_changed(&keys, |cache| cache.accept_vault(vault))?;
                 capture.check_current().map_err(|_| VaultError::Stale)
             }
             None => {
-                if let Err(error) = self.slot.update_cache(change) {
+                if let Err(error) = self
+                    .slot
+                    .update_cache_changed(|cache| cache.accept_vault(vault))
+                {
                     tracing::warn!(%error, "the vault cache cannot be written");
                 }
                 Ok(())

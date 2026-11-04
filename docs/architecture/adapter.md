@@ -498,6 +498,12 @@ before the file lock. Captured revocation compares the original local file login
 an old response cannot erase replacement credentials in the publication window.
 Already admitted remote A operations retain their existing cancellation limits.
 
+Personal-vault refresh snapshots publish monotonically within a collection: an older
+cursor cannot replace a newer cached deletion. Identical refreshes leave the cache file
+untouched, and reading one credential copies only its encrypted object and envelope.
+Account-cache encoding and acquisition share a 32 MiB file limit; a refused oversized
+publication preserves the previous readable file.
+
 `HubAccount::local_source` captures the configured hub, actual pooled account and
 the opened account public key's fingerprint for device-local history. Older hubs
 use `LegacyConfiguredAccount`; an address or leaf certificate does not establish

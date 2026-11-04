@@ -13,6 +13,7 @@ use nocterm_connections_model::{
     replica::{ProfileReplica as _, ReplicaError, ReplicaScope},
     test_support::profile_id_for,
 };
+mod refresh;
 mod source_binding;
 
 fn vault() -> (NativeVault, Arc<MemoryHub>, tempfile::TempDir) {

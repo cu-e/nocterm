@@ -95,3 +95,14 @@ fn erasing_a_missing_cache_is_not_an_error() {
     file.erase().unwrap();
     assert!(file.load().unwrap().is_none());
 }
+
+#[test]
+fn an_oversized_cache_write_preserves_the_last_readable_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = CacheFile::new(dir.path(), &address()).unwrap();
+    file.save(&account()).unwrap();
+    let mut oversized = account();
+    oversized.hub_uid = "x".repeat(MAX_FILE_BYTES);
+    assert!(matches!(file.save(&oversized), Err(CacheError::Limit)));
+    assert_eq!(file.load().unwrap(), Some(account()));
+}

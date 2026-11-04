@@ -181,7 +181,7 @@ impl Ledger {
                 break;
             }
         }
-        self.access.update(|cache| cache.vault = Some(vault))?;
+        self.access.publish_vault(vault)?;
         Ok(())
     }
 
@@ -189,7 +189,8 @@ impl Ledger {
     /// error when it does not authenticate.
     fn open(
         keys: &OpenKeys,
-        vault: &VaultCopy,
+        collection: &str,
+        envelope: &[u8],
         object_id: &str,
         object: &ObjectCopy,
     ) -> Result<Option<Decoded>, VaultError> {
@@ -197,9 +198,9 @@ impl Ledger {
             return Ok(None);
         }
         let key = keys
-            .own_collection(&vault.collection_id, &vault.key_envelope)
+            .own_collection(collection, envelope)
             .map_err(|_| VaultError::Authentication)?;
-        codec::open_sealed(&key, &vault.collection_id, object_id, object)
+        codec::open_sealed(&key, collection, object_id, object)
     }
 
     fn cached(&self) -> Result<Option<VaultCopy>, VaultError> {
@@ -215,8 +216,13 @@ impl Ledger {
         };
         let mut listed = Vec::new();
         for (object_id, object) in &vault.objects {
-            if let Some(Decoded::Known(record)) = Self::open(&keys, &vault, object_id, object)?
-                && let Ok(id) = object_id.parse::<CredentialId>()
+            if let Some(Decoded::Known(record)) = Self::open(
+                &keys,
+                &vault.collection_id,
+                &vault.key_envelope,
+                object_id,
+                object,
+            )? && let Ok(id) = object_id.parse::<CredentialId>()
             {
                 listed.push(CredentialInfo {
                     id,
@@ -246,18 +252,23 @@ impl Ledger {
         let keys = self.keys()?;
         self.sync(&keys).await?;
         let object_id = id.to_string();
-        let personal = self.cached()?.filter(|vault| {
-            vault
+        let personal = self.access.read(|cache| {
+            let vault = cache?.vault.as_ref()?;
+            let object = vault
                 .objects
                 .get(&object_id)
-                .is_some_and(|object| !object.deleted)
-        });
-        let Some(vault) = personal else {
+                .filter(|object| !object.deleted)?;
+            Some((
+                vault.collection_id.clone(),
+                vault.key_envelope.clone(),
+                object.clone(),
+            ))
+        })?;
+        let Some((collection, envelope, object)) = personal else {
             self.groups.sync(&self.store(&keys)).await?;
             return self.groups.secret(&object_id, &binding);
         };
-        let object = vault.objects.get(&object_id).ok_or(VaultError::NotFound)?;
-        match Self::open(&keys, &vault, &object_id, object)? {
+        match Self::open(&keys, &collection, &envelope, &object_id, &object)? {
             Some(Decoded::Known(record)) if record.binding == binding => Ok(record.secret),
             Some(Decoded::Known(_)) => Err(VaultError::Binding),
             Some(Decoded::Unrecognized) | None => Err(VaultError::NotFound),
@@ -373,7 +384,13 @@ impl Ledger {
                 Err(VaultError::NotFound)
             };
         }
-        match Self::open(keys, &vault, object_id, object)? {
+        match Self::open(
+            keys,
+            &vault.collection_id,
+            &vault.key_envelope,
+            object_id,
+            object,
+        )? {
             Some(Decoded::Known(_)) => Ok(object.version),
             _ if creating => Err(VaultError::Format),
             _ => Err(VaultError::NotFound),

@@ -7,12 +7,17 @@
 //! administrators this device pinned, which are kept in the clear. Nothing secret in it opens
 //! without the vault password, so it may sit on disk, and it lets the vault unlock while the hub
 //! is unreachable.
+//! Read and write share a 32 MiB byte limit. Personal-vault refresh publication
+//! keeps the newest collection cursor and skips identical snapshots.
 
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
-use nocterm_core::fs::{BoundedReadError, FileError, read_regular_bounded, write_private_atomic};
+use nocterm_core::{
+    bounded_io::BoundedBuffer,
+    fs::{BoundedReadError, FileError, read_regular_bounded, write_private_atomic},
+};
 use nocterm_hub_proto::v1;
 use nocterm_hubs_model::HubAddress;
 use nocterm_keys::{PinnedKeys, PublicKey};
@@ -38,6 +43,8 @@ pub(crate) enum CacheError {
     Format(#[source] serde_json::Error),
     #[error("the account cache was written by a newer version")]
     Newer,
+    #[error("the account cache exceeds its 32 MiB limit")]
+    Limit,
     #[error("the hub address is too long for a file name")]
     NameTooLong,
 }
@@ -165,6 +172,18 @@ pub(crate) struct AccountCache {
 }
 
 impl AccountCache {
+    /// A delayed refresh never replaces a more recent personal-vault snapshot.
+    /// Equal snapshots need neither another memory publication nor a disk write.
+    pub(crate) fn accept_vault(&mut self, next: VaultCopy) -> bool {
+        if self.vault.as_ref().is_some_and(|held| {
+            held == &next || (held.collection_id == next.collection_id && held.cursor > next.cursor)
+        }) {
+            return false;
+        }
+        self.vault = Some(next);
+        true
+    }
+
     pub(crate) fn new(
         hub_uid: String,
         account_id: String,
@@ -253,8 +272,15 @@ impl CacheFile {
         if let Some(parent) = self.path.parent() {
             prepare_private_directory(parent).map_err(CacheError::Prepare)?;
         }
-        let text = serde_json::to_vec(cache).map_err(CacheError::Format)?;
-        write_private_atomic(&self.path, &text)?;
+        let mut bytes = BoundedBuffer::new(MAX_FILE_BYTES);
+        if let Err(error) = serde_json::to_writer(&mut bytes, cache) {
+            return Err(if bytes.exceeded() {
+                CacheError::Limit
+            } else {
+                CacheError::Format(error)
+            });
+        }
+        write_private_atomic(&self.path, &bytes.into_inner())?;
         Ok(())
     }
 

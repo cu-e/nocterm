@@ -155,10 +155,18 @@ impl Ledger {
                 let Some(object) = vault.objects.get(object_id) else {
                     return Ok(None);
                 };
-                Ok(match Self::open(keys, &vault, object_id, object)? {
-                    Some(Decoded::Known(record)) => Some(record),
-                    Some(Decoded::Unrecognized) | None => None,
-                })
+                Ok(
+                    match Self::open(
+                        keys,
+                        &vault.collection_id,
+                        &vault.key_envelope,
+                        object_id,
+                        object,
+                    )? {
+                        Some(Decoded::Known(record)) => Some(record),
+                        Some(Decoded::Unrecognized) | None => None,
+                    },
+                )
             }
             Space::Group(org_id) => {
                 let Some(owner) = self.groups.target(org_id, object_id)? else {

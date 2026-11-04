@@ -345,6 +345,17 @@ impl Slot {
         expected: &Arc<OpenKeys>,
         change: impl FnOnce(&mut AccountCache),
     ) -> Result<(), nocterm_vault::VaultError> {
+        self.update_cache_if_changed(expected, |cache| {
+            change(cache);
+            true
+        })
+    }
+
+    pub(crate) fn update_cache_if_changed(
+        &self,
+        expected: &Arc<OpenKeys>,
+        change: impl FnOnce(&mut AccountCache) -> bool,
+    ) -> Result<(), nocterm_vault::VaultError> {
         let mut state = self.state();
         let current = matches!(&state.keys, KeyState::Open(keys) if Arc::ptr_eq(keys, expected));
         let cache = state
@@ -352,8 +363,9 @@ impl Slot {
             .as_mut()
             .filter(|cache| current && cache.account_id == expected.keyset().account_id())
             .ok_or(nocterm_vault::VaultError::Stale)?;
-        change(cache);
-        if let Err(error) = self.file.save(cache) {
+        if change(cache)
+            && let Err(error) = self.file.save(cache)
+        {
             tracing::warn!(%error, "the captured vault cache cannot be written");
         }
         Ok(())
@@ -372,12 +384,24 @@ impl Slot {
         &self,
         change: impl FnOnce(&mut AccountCache),
     ) -> Result<(), CacheError> {
+        self.update_cache_changed(|cache| {
+            change(cache);
+            true
+        })
+    }
+
+    pub(crate) fn update_cache_changed(
+        &self,
+        change: impl FnOnce(&mut AccountCache) -> bool,
+    ) -> Result<(), CacheError> {
         let mut state = self.state();
         let Some(cache) = state.cache.as_mut() else {
             return Ok(());
         };
-        change(cache);
-        self.file.save(cache)
+        if change(cache) {
+            self.file.save(cache)?;
+        }
+        Ok(())
     }
 
     /// Opens the vault with `keys`, remembering `cache` on disk. A cache that cannot be
