@@ -30,6 +30,8 @@ mod session_publication;
 mod session_request;
 mod session_services;
 pub use session_services::CoordinatorSessions;
+mod summary_publication;
+pub use summary_publication::CoordinatorSummaries;
 mod supervisor;
 mod worker;
 
@@ -306,6 +308,11 @@ impl RunCoordinator {
         publication::start(self.services.clone(), stream, false)
             .await
             .map(|_| ())
+    }
+    /// Publishes the chat's summary to the runner directory when it changed and is due
+    /// (ADR 0135). Without configured summaries it does nothing.
+    pub async fn publish_summary(&self, stream: StreamBinding) -> Result<(), CoordinatorError> {
+        summary_publication::publish(self.services.clone(), stream).await
     }
     pub fn fence(&self) {
         self.services.tasks().begin_drain();

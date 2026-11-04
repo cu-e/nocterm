@@ -348,7 +348,7 @@ impl ReplayedRun {
         }))
     }
 }
-fn status(tag: u8) -> Result<RunStatus, CoordinatorError> {
+pub(super) fn status(tag: u8) -> Result<RunStatus, CoordinatorError> {
     Ok(match tag {
         0 => RunStatus::Queued,
         1 => RunStatus::Running,

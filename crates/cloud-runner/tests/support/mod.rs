@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 mod metadata;
 pub(crate) type RootStateSnapshot = metadata::RootStateSnapshot;
+use nocterm_cloud_model::coordinator::{ChatRetirement, ChatRetirementRequest};
 use nocterm_cloud_model::{
     authority::*, engine::EngineCheckpoint, identity::*, journal::*, payload::OpaqueBytes,
 };
@@ -484,4 +485,18 @@ pub(crate) fn publication_budgets() -> nocterm_cloud_runner::CoordinatorPublicat
         nocterm_cloud_model::coordinator::IntakeLimits::default()
             .pool(nocterm_cloud_model::coordinator::IntakeLane::Ordinary),
     )
+}
+
+/// Records the deleted chats the coordinator announced.
+#[derive(Default)]
+pub(crate) struct RecordedRetirements(Mutex<Vec<ChatRetirementRequest>>);
+impl ChatRetirement for RecordedRetirements {
+    fn retire(&self, request: ChatRetirementRequest) {
+        self.0.lock().unwrap().push(request);
+    }
+}
+impl RecordedRetirements {
+    pub(crate) fn requests(&self) -> Vec<ChatRetirementRequest> {
+        self.0.lock().unwrap().clone()
+    }
 }

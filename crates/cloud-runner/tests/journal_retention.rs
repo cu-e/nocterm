@@ -554,7 +554,9 @@ fn a_version_5_journal_is_upgraded_with_a_horizon_computed_once() {
     let cipher = Arc::new(TestCipher::default());
     stored_with_one_entry(root.path(), &cipher);
     let db = rusqlite::Connection::open(root.path().join("cloud-runs.sqlite3")).unwrap();
-    db.execute_batch("ALTER TABLE outbox DROP COLUMN retry_until; PRAGMA user_version=5")
+    db.execute_batch(
+        "DROP TABLE chat_summaries; ALTER TABLE outbox DROP COLUMN retry_until; PRAGMA user_version=5",
+    )
         .unwrap();
     drop(db);
     let before = clock_ms();
@@ -564,7 +566,7 @@ fn a_version_5_journal_is_upgraded_with_a_horizon_computed_once() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
     drop(db);
     assert_eq!(first_horizon(root.path(), &cipher), upgraded);
 }

@@ -18,6 +18,7 @@ pub struct CoordinatorStorage {
     runs: super::authority::RunAuthorities,
     tasks: TaskSupervisor,
     publication: Option<Arc<super::publication::CoordinatorPublication>>,
+    summaries: Option<Arc<super::summary_publication::CoordinatorSummaries>>,
 }
 impl CoordinatorStorage {
     pub fn new(
@@ -56,6 +57,7 @@ impl CoordinatorStorage {
             runs: super::authority::RunAuthorities::default(),
             tasks,
             publication: None,
+            summaries: None,
         }
     }
     pub fn with_publication(
@@ -63,6 +65,14 @@ impl CoordinatorStorage {
         publication: Arc<super::publication::CoordinatorPublication>,
     ) -> Self {
         self.publication = Some(publication);
+        self
+    }
+    /// Publishes chat summaries to the runner directory from the delivery sweep.
+    pub fn with_summaries(
+        mut self,
+        summaries: Arc<super::summary_publication::CoordinatorSummaries>,
+    ) -> Self {
+        self.summaries = Some(summaries);
         self
     }
     /// Supply this exact tracked owner to retained native tools at composition.
@@ -209,6 +219,11 @@ impl CoordinatorServices {
     }
     pub(super) fn publication(&self) -> Option<&Arc<super::publication::CoordinatorPublication>> {
         self.storage.publication.as_ref()
+    }
+    pub(super) fn summaries(
+        &self,
+    ) -> Option<&Arc<super::summary_publication::CoordinatorSummaries>> {
+        self.storage.summaries.as_ref()
     }
     pub(super) fn source(&self) -> &Arc<dyn AuthenticatedCommandSource> {
         &self.source

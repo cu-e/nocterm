@@ -15,6 +15,8 @@ mod provider_wake;
 mod reconciliation;
 #[path = "coordinator/snapshots.rs"]
 mod snapshots;
+#[path = "coordinator/summary_publication.rs"]
+mod summary_publication;
 #[path = "coordinator/supervision.rs"]
 mod supervision;
 mod support;
@@ -24,28 +26,15 @@ use nocterm_cloud_model::{
     inference::*, journal::*, testing::*,
 };
 use nocterm_cloud_runner::coordinator::{
-    CoordinatorExecution, CoordinatorServices, CoordinatorStorage, RunCoordinator,
-    ToolApprovalPolicy,
+    CoordinatorExecution, CoordinatorServices, CoordinatorStorage, CoordinatorSummaries,
+    RunCoordinator, ToolApprovalPolicy,
 };
 use std::sync::Arc;
 use support::*;
 
-/// Records the deleted chats the coordinator announced.
-#[derive(Default)]
-struct RecordedRetirements(std::sync::Mutex<Vec<ChatRetirementRequest>>);
-impl ChatRetirement for RecordedRetirements {
-    fn retire(&self, request: ChatRetirementRequest) {
-        self.0.lock().unwrap().push(request);
-    }
-}
-impl RecordedRetirements {
-    fn requests(&self) -> Vec<ChatRetirementRequest> {
-        self.0.lock().unwrap().clone()
-    }
-}
-
 struct Fixture {
     retirements: Arc<RecordedRetirements>,
+    directory: Arc<RecordedSummaryDirectory>,
     root: tempfile::TempDir,
     journal: Arc<nocterm_cloud_runner::DurableRunJournal>,
     actor: RunCoordinator,
@@ -133,6 +122,8 @@ impl Fixture {
             task_limits,
         )
         .with_publication(publication_config(&journal, transport));
+        let directory = Arc::new(RecordedSummaryDirectory::default());
+        let storage = storage.with_summaries(summaries(&journal, &directory));
         let tools = Arc::new(ScriptedRunTools::default());
         let mut execution = CoordinatorExecution::new(
             providers,
@@ -153,20 +144,15 @@ impl Fixture {
             timer.clone(),
         )
         .unwrap();
-        let admissions = AdmissionLimits::new(
-            task_limits.workers(),
-            task_limits.workers().min(2),
-            128,
-            32,
-            8,
-            64,
+        let actor = RunCoordinator::with_receive_budget(
+            services,
+            admissions(task_limits),
+            receive_budget.clone(),
         )
         .unwrap();
-        let actor =
-            RunCoordinator::with_receive_budget(services, admissions, receive_budget.clone())
-                .unwrap();
         Self {
             retirements,
+            directory,
             root,
             journal,
             actor,
@@ -209,7 +195,8 @@ impl Fixture {
         .with_publication(publication_config(
             &self.journal,
             Arc::new(ScriptedPublicationTransport::default()),
-        ));
+        ))
+        .with_summaries(summaries(&self.journal, &self.directory));
         let execution = CoordinatorExecution::new(
             providers,
             Arc::new(RefusedSessionConsent),
@@ -226,18 +213,12 @@ impl Fixture {
             self.timer.clone(),
         )
         .unwrap();
-        let admissions = AdmissionLimits::new(
-            self.task_limits.workers(),
-            self.task_limits.workers().min(2),
-            128,
-            32,
-            8,
-            64,
+        self.actor = RunCoordinator::with_receive_budget(
+            services,
+            admissions(self.task_limits),
+            self.receive_budget.clone(),
         )
         .unwrap();
-        self.actor =
-            RunCoordinator::with_receive_budget(services, admissions, self.receive_budget.clone())
-                .unwrap();
     }
     async fn binding(&self) -> RunBinding {
         let page = self
@@ -265,6 +246,19 @@ impl Fixture {
             .position()
             .control()
     }
+}
+fn admissions(task_limits: SupervisorLimits) -> AdmissionLimits {
+    let workers = task_limits.workers();
+    AdmissionLimits::new(workers, workers.min(2), 128, 32, 8, 64).unwrap()
+}
+fn summaries(
+    journal: &Arc<nocterm_cloud_runner::DurableRunJournal>,
+    directory: &Arc<RecordedSummaryDirectory>,
+) -> Arc<CoordinatorSummaries> {
+    Arc::new(CoordinatorSummaries::new(
+        journal.clone(),
+        directory.clone(),
+    ))
 }
 fn issuer() -> CommandIssuer {
     CommandIssuer::new(NamespaceId::new("device").unwrap(), fp(51), fp(52))

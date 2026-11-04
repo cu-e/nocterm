@@ -124,5 +124,17 @@ CREATE TABLE snapshot_payloads (
   body BLOB NOT NULL,
   PRIMARY KEY(chat,kind)
 ) WITHOUT ROWID;
-PRAGMA user_version=6;
+CREATE TABLE chat_summaries (
+  chat BLOB PRIMARY KEY REFERENCES chats(chat),
+  revision INTEGER NOT NULL CHECK(revision>0),
+  published INTEGER NOT NULL CHECK(published>=0 AND published<=revision),
+  created_at INTEGER NOT NULL CHECK(created_at>0),
+  last_activity INTEGER NOT NULL CHECK(last_activity>=created_at),
+  deleted INTEGER NOT NULL CHECK(deleted IN(0,1)),
+  key_epoch INTEGER CHECK(key_epoch IS NULL OR key_epoch>0),
+  sealed BLOB CHECK(sealed IS NULL OR length(sealed) BETWEEN 1 AND 4096),
+  CHECK((sealed IS NULL)=(key_epoch IS NULL)),
+  CHECK((published<revision)=(sealed IS NOT NULL))
+) WITHOUT ROWID;
+PRAGMA user_version=7;
 COMMIT;

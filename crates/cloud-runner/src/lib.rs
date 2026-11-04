@@ -9,7 +9,7 @@
 //! metadata reader cannot prolong content-key retention.
 //! Does not own: cryptography, signed hub formats, SSH, provider SDKs, GPUI,
 //! device credentials or remote execution. Ports provided: RunJournalWriter and
-//! JournalReader and CurrentCloudHeads. Ports used: JournalCipher, account/runner-bound
+//! JournalReader and CurrentCloudHeads and ChatSummaryJournal. Ports used: JournalCipher, account/runner-bound
 //! JournalCatalogCipher and independent JournalChatHeadCipher, injected explicitly. Its implementation
 //! must check full native account/runner pins before mapping contract coordinates.
 //! Settings sections: none. Globals: none.
@@ -30,6 +30,11 @@
 //! admitted control commands keep urgent publication capacity, and terminal facts
 //! use a separate finite cleanup reserve that snapshots cannot consume.
 //! All blocking work is polled off UI threads.
+//! Journal v7 keeps one summary row per chat (staged/published revision, times, sealed
+//! bytes while unconfirmed; no chat key needed); versions 5 and 6 are upgraded in order.
+//! CoordinatorSummaries derives each chat's summary from its committed records (the
+//! first sweep backfills from the whole journal) and publishes due revisions through an
+//! injected ChatSummaryDirectory from the delivery sweep (ADR 0135).
 //! Initial sessions use an injected native broker. Durable Established precedes
 //! actual physical publication, current-source/writer activation and original-run
 //! wake. Native recovery restores descriptions as Lost; no receipt restores live
