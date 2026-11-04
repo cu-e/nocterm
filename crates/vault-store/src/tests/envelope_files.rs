@@ -238,6 +238,12 @@ fn bounded_file_reads_reject_oversized_envelopes_and_non_files() {
     fs::remove_file(&path).unwrap();
     fs::create_dir(&path).unwrap();
     assert!(matches!(vault.unlock(password()), Err(VaultError::Format)));
+    #[cfg(unix)]
+    {
+        fs::remove_dir(&path).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(matches!(vault.unlock(password()), Err(VaultError::Format)));
+    }
 }
 
 #[cfg(unix)]

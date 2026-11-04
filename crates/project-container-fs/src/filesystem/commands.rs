@@ -43,21 +43,14 @@ impl FilesystemCommands {
         let path = args.first().cloned().unwrap_or_else(|| "/".into());
         timed(
             async {
-                let mut output = self.open(script, args, stdin).await?;
-                let mut bytes = Vec::new();
-                while let Some(chunk) = output.next().await {
-                    if bytes.len().saturating_add(chunk.len()) > limit {
-                        return Err(FsError::Other(
-                            "container filesystem response exceeded its bound".into(),
-                        ));
-                    }
-                    bytes.extend(chunk);
+                let output = self.open(script, args, stdin).await?;
+                let collected = output.collect_bounded(limit).await.map_err(|_| {
+                    FsError::Other("container filesystem response exceeded its bound".into())
+                })?;
+                if !collected.exit.success() {
+                    return Err(status(collected.exit.status, &path));
                 }
-                let exit = output.exit().await;
-                if !exit.success() {
-                    return Err(status(exit.status, &path));
-                }
-                Ok(bytes)
+                Ok(collected.stdout)
             },
             Duration::from_secs(15),
         )

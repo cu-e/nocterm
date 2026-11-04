@@ -50,22 +50,18 @@ async fn search(
         query.as_str(),
     ]);
     let operation = async {
-        let mut output = exec.exec(request).await.map_err(|error| match error {
+        let output = exec.exec(request).await.map_err(|error| match error {
             ExecError::NotFound(_) | ExecError::Unsupported => ImageSearchError::Unavailable,
             error => ImageSearchError::Execution(error),
         })?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = output.next().await {
-            if bytes.len().saturating_add(chunk.len()) > BYTE_LIMIT {
-                return Err(ImageSearchError::OutputLimit);
-            }
-            bytes.extend(chunk);
+        let collected = output
+            .collect_bounded(BYTE_LIMIT)
+            .await
+            .map_err(|_| ImageSearchError::OutputLimit)?;
+        if !collected.exit.success() {
+            return Err(failure(collected.exit.status, &collected.exit.stderr));
         }
-        let exit = output.exit().await;
-        if !exit.success() {
-            return Err(failure(exit.status, &exit.stderr));
-        }
-        decode(engine, &bytes)
+        decode(engine, &collected.stdout)
     }
     .fuse();
     let deadline = async_io::Timer::after(timeout).fuse();
