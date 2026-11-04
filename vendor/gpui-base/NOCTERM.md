@@ -60,9 +60,9 @@ zoomed drag/drop behavior; explicit lock and last-visible regressions remain int
 New-panel registration can target a group directly, avoiding a transient cross-group
 move that would otherwise clear zoom when adding into a nonfirst split pane.
 
-`root.rs` draws the window's content view as a cached view, so a dialog, sheet or
-notification in the overlay layer draws again without drawing the content. The content
-draws again when it or a view inside it is notified, or on a window refresh.
+`root.rs` draws the window's content view uncached again. Drawing it as a cached view
+(patch 0003) moved the focus a click gives away from a text input in the content, so the
+input registered no input handler and typed text never reached it; patch 0005 undoes it.
 
 `dock/dock_area.rs` draws each tab group as a cached view, so a change in one group,
 such as its active panel's output, draws neither the other groups nor their tab bars.

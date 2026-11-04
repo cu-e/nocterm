@@ -291,12 +291,7 @@ impl Render for Root {
             .relative()
             .size_full()
             .child(TextSelectionLayer)
-            // Nocterm: cached, so dialogs and toasts redraw without the window's content.
-            .child(
-                self.view
-                    .clone()
-                    .cached(StyleRefinement::default().size_full()),
-            )
+            .child(self.view.clone())
             .child(
                 div()
                     .absolute()
