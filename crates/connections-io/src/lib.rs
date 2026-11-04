@@ -1,12 +1,15 @@
 //! Native connection files, environment/entropy/clock and network observations.
 //!
-//! Owns: three-document repositories, the private file of the agreed profile-replica state, native defaults/UUID/clock, DNS, bounded remote OS reads and HTTP/flag cache.
+//! Owns: three-document repositories, the private file of the agreed profile-replica state, native defaults/UUID/clock, a finite native DNS worker budget, bounded remote OS reads and HTTP/flag cache.
 //! Does not own: profile rules, GPUI images, observation scheduling or persistence workers.
 //! Ports used: foundation persistence. Ports provided: ConnectionRepository, ProfileIds,
 //! ConnectionClock, PublicAddressResolver, CountryLocator,
 //! FlagRepository, RemoteOsDetector. Settings section: none. Globals: none.
 //! Invariants: country services receive public IPs only; bodies and cached flags
-//! are bounded; failure to cache never discards an acquired flag. Blocking document
+//! are bounded; failure to cache never discards an acquired flag. DNS admits four workers
+//! and four pending queries with an eight-second caller deadline; uncancellable OS work
+//! retains its physical worker until it ends. One lazy HTTP client is shared per installation.
+//! Blocking document
 //! acquisition and writes run off foreground; profiles retain configuration publication semantics.
 
 mod os_probe;
@@ -37,10 +40,11 @@ pub struct NativeObservations {
 
 impl NativeObservations {
     pub fn new(flags_dir: PathBuf) -> Self {
+        let client = Arc::new(http::HttpClient::default());
         Self {
-            resolver: Arc::new(NativeResolver),
-            locator: Arc::new(http::HttpCountry::default()),
-            flags: Arc::new(flags::CachedFlags::new(flags_dir)),
+            resolver: Arc::new(NativeResolver::default()),
+            locator: Arc::new(http::HttpCountry::with_client(client.clone())),
+            flags: Arc::new(flags::CachedFlags::new(flags_dir, client)),
         }
     }
 
