@@ -1,5 +1,6 @@
-//! Periodic FIFO delivery of the durable outbox. The coordinator only queues
-//! sealed publications; without this owner no event would reach the hub.
+//! Periodic FIFO delivery of the durable outbox and of chat summaries. The coordinator
+//! only queues sealed publications and keeps summary rows; without this owner no event
+//! or summary would reach the hub.
 use nocterm_cloud_model::{
     coordinator::CoordinatorError,
     journal::{JournalCatalogReader, JournalError},
@@ -46,10 +47,17 @@ impl OutboxPublisher {
             };
             for chat in page.chats() {
                 let stream = page.binding().stream(*chat);
-                match self.coordinator.flush_outbox(stream).await {
+                match self.coordinator.flush_outbox(stream.clone()).await {
                     Ok(()) => {}
                     Err(error) if fatal(&error) => return Err(error),
                     // The same durable delivery IDs are reloaded by the next sweep.
+                    Err(_) => {}
+                }
+                match self.coordinator.publish_summary(stream).await {
+                    Ok(()) => {}
+                    Err(error) if fatal(&error) => return Err(error),
+                    // A staged summary keeps its bytes; a chat that failed to load is
+                    // reloaded from its journal by the next sweep.
                     Err(_) => {}
                 }
             }

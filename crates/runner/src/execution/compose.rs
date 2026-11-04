@@ -27,13 +27,13 @@ use nocterm_cloud_runner::{
     DurableRunJournal, DurableSnapshotPublication, NativeToolTimer,
     coordinator::{
         CoordinatorExecution, CoordinatorPublication, CoordinatorServices, CoordinatorSessions,
-        CoordinatorStorage, RunCoordinator, ToolApprovalPolicy,
+        CoordinatorStorage, CoordinatorSummaries, RunCoordinator, ToolApprovalPolicy,
     },
 };
 use nocterm_hub_io::cloud::{
-    InboxResume, RunnerArgumentFingerprint, RunnerChatRetirement, RunnerCommandAttachments,
-    RunnerHubPeer, RunnerInbox, RunnerInboxOptions, RunnerInboxPrincipal,
-    RunnerProviderCredentialSource,
+    InboxResume, RunnerArgumentFingerprint, RunnerChatDirectory, RunnerChatHost,
+    RunnerChatRetirement, RunnerCommandAttachments, RunnerHubPeer, RunnerInbox, RunnerInboxOptions,
+    RunnerInboxPrincipal, RunnerProviderCredentialSource,
 };
 use nocterm_local::SystemClock;
 use nocterm_ssh::{SshConfig, SshTransport};
@@ -185,7 +185,8 @@ pub(super) async fn compose(
         budgets.publication(),
         handle,
     )
-    .with_publication(Arc::new(publication));
+    .with_publication(Arc::new(publication))
+    .with_summaries(summaries(state, &journal, &peer, brokered.as_ref())?);
     let source: Arc<dyn AuthenticatedCommandSource> = Arc::new(inbox);
     let tool_timer: Arc<dyn ToolTimer> = timer.clone();
     let broker_setup = SessionBrokerSetup::new(
@@ -206,13 +207,8 @@ pub(super) async fn compose(
         &tool_timer,
         grants,
     )?;
-    let retirement = Arc::new(RunnerChatRetirement::new(
-        peer.clone(),
-        state.material(),
-        tokio::runtime::Handle::current(),
-    ));
     let execution = execution(binding, providers, &broker, &journal, &budgets, approval)?
-        .with_retirement(retirement);
+        .with_retirement(retirement(state, &peer));
     let services = CoordinatorServices::new(
         source,
         storage,
@@ -262,6 +258,40 @@ fn execution(
         Some(policy) => execution.with_approval_policy(policy),
         None => execution,
     })
+}
+
+/// Deleted chats are announced to the same hub peer, which may reclaim their capacity.
+fn retirement(state: &State, peer: &RunnerHubPeer) -> Arc<RunnerChatRetirement> {
+    Arc::new(RunnerChatRetirement::new(
+        peer.clone(),
+        state.material(),
+        tokio::runtime::Handle::current(),
+    ))
+}
+
+/// Chat summaries go to this runner's directory on the same hub peer, naming the managed
+/// agent when a pool host started the runner (ADR 0135).
+fn summaries(
+    state: &State,
+    journal: &DurableRunJournal,
+    peer: &RunnerHubPeer,
+    brokered: Option<&Arc<BrokeredProviders>>,
+) -> Result<Arc<CoordinatorSummaries>, RunnerError> {
+    let host = match brokered {
+        Some(brokered) => RunnerChatHost::managed(brokered.agent())?,
+        None => RunnerChatHost::own(),
+    };
+    let directory = RunnerChatDirectory::new(
+        peer.clone(),
+        state.identity(),
+        state.account(),
+        Arc::new(state.heads()),
+        host,
+    )?;
+    Ok(Arc::new(CoordinatorSummaries::new(
+        Arc::new(journal.clone()),
+        Arc::new(directory),
+    )))
 }
 
 /// The one FIFO outbox transport is the already-restored authenticated hub peer.

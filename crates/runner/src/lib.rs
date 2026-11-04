@@ -3,7 +3,8 @@
 //! Owns: explicit private R initialization/enrollment/restoration, configured
 //! native collaborators, bounded fresh-head service, explicit execution
 //! composition (command inbox, coordinator, providers, session broker, outbox
-//! delivery) when configured, and graceful task drain.
+//! and chat summary delivery) when configured, and graceful task drain. Chat summaries
+//! name the managed agent from the boot document, or the own runner (ADR 0135).
 //! Managed mode (`managed --config <path>`) is started by a pool host. Boot v1 on stdin
 //! (ADR 0121) validates and stays control-plane only. With `--control stdin` (ADR 0123)
 //! stdin is a framed channel: a boot v2 document, then contract chat access frames that
@@ -13,7 +14,7 @@
 //! unless both `[execution]` and `[session_targets]` are configured.
 //! Control channel reader: a blocking thread owning stdin; the token store, wake hook and
 //! brokered providers live in `managed/`.
-//! Ports used: hub-io runner identity/session/head responder, cloud-runner native
+//! Ports used: hub-io runner identity/session/head responder/chat directory, cloud-runner native
 //! journal/current heads and cloud-model finite budgets. Agent file transfers run on
 //! one remote-only `nocterm-transfer-runtime` runtime owned by the session broker: it
 //! relays between hosts, refuses local upload/download, cancels a chat's transfers when

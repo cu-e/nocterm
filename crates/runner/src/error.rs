@@ -24,6 +24,8 @@ pub enum RunnerError {
     Hub(#[from] nocterm_hub_io::cloud::RunnerHubError),
     #[error("native journal access failed")]
     Journal(#[from] nocterm_cloud_model::journal::JournalError),
+    #[error("the runner chat directory could not be composed")]
+    Directory(#[from] nocterm_hub_io::cloud::RunnerDirectoryError),
     #[error("the bounded native head responder failed")]
     Head(#[from] nocterm_hub_io::cloud::RunnerHeadError),
     #[error("the configured Cloud execution runtime failed")]

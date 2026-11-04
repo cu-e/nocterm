@@ -51,6 +51,7 @@ impl AgentEngineFactory for ChatBrokeredFactory {
 }
 
 pub(crate) struct BrokeredProviders {
+    agent: String,
     tokens: Arc<ChatTokens>,
     provider: NamespaceId,
     revision: NamespaceId,
@@ -91,6 +92,7 @@ impl BrokeredProviders {
             })
             .collect();
         Ok(Self {
+            agent: boot.agent().to_owned(),
             tokens: Arc::new(ChatTokens::new(binding, runtime)),
             provider,
             revision,
@@ -107,6 +109,9 @@ impl BrokeredProviders {
     }
     pub(crate) fn provider(&self) -> &NamespaceId {
         &self.provider
+    }
+    pub(crate) fn agent(&self) -> &str {
+        &self.agent
     }
 }
 impl CoordinatorProviders for BrokeredProviders {

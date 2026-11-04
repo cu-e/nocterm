@@ -127,6 +127,10 @@ impl BootV2 {
         self.kind
     }
     /// The agent's system prompt, empty when the web panel set none.
+    /// The agent this seat runs, as its chat summaries name it.
+    pub(crate) fn agent(&self) -> &str {
+        &self.document.agent
+    }
     pub(crate) fn instructions(&self) -> &str {
         &self.document.instructions
     }
