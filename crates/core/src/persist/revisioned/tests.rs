@@ -89,3 +89,22 @@ fn symlink_aliases_use_the_same_lock_and_lock_symlinks_are_refused() {
     assert!(file.save_preserving(&values("a = 3")).is_err());
     assert_eq!(fs::read_to_string(victim).unwrap(), "untouched");
 }
+
+#[test]
+fn serialization_refusal_does_not_touch_an_unreadable_document_or_create_a_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    fs::write(&path, "bad = =").unwrap();
+    let file = RevisionedFile::new(&path);
+    assert!(matches!(
+        file.save_preserving(&42u32),
+        Err(PersistError::Serialize { .. })
+    ));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "bad = =");
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    assert!(matches!(
+        super::super::save_preserving(&path, &42u32),
+        Err(PersistError::Serialize { .. })
+    ));
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+}

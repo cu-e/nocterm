@@ -73,6 +73,7 @@ impl RevisionedFile {
         value: &T,
         owns: impl Fn(&str) -> bool,
     ) -> Result<(), PersistError> {
+        let fresh = super::fresh_document(&self.path, value)?;
         let mut observed = self.observed.lock().unwrap_or_else(PoisonError::into_inner);
         let target = resolve(&self.path).map_err(|error| PersistError::io(&self.path, error))?;
         let parent = target.parent().unwrap_or(Path::new("."));
@@ -94,7 +95,7 @@ impl RevisionedFile {
             // Preserve the existing malformed-file backup contract after conflict admission.
             _ => super::formatting_document(&target, text.as_deref())?,
         };
-        super::merge_document(&target, value, &owns, text.is_some(), &mut document)?;
+        super::merge_document(fresh, &owns, text.is_some(), &mut document);
         let published = document.to_string();
         super::write_atomic(&target, &published)
             .map_err(|error| PersistError::io(&target, error))?;

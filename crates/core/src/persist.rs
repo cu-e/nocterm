@@ -123,10 +123,11 @@ pub fn save_preserving_owned<T: Serialize>(
     value: &T,
     owns: impl Fn(&str) -> bool,
 ) -> Result<(), PersistError> {
+    let fresh = fresh_document(path, value)?;
     let original = read(path)?;
     let existing = original.is_some();
     let mut document = formatting_document(path, original.as_deref())?;
-    merge_document(path, value, owns, existing, &mut document)?;
+    merge_document(fresh, owns, existing, &mut document);
     write_atomic(path, &document.to_string()).map_err(|source| PersistError::io(path, source))
 }
 
@@ -145,16 +146,18 @@ fn formatting_document(path: &Path, original: Option<&str>) -> Result<DocumentMu
     }
 }
 
-fn merge_document<T: Serialize>(
-    path: &Path,
-    value: &T,
+fn fresh_document<T: Serialize>(path: &Path, value: &T) -> Result<DocumentMut, PersistError> {
+    Ok(serialize(path, value)?
+        .parse()
+        .expect("serialised TOML is valid TOML"))
+}
+
+fn merge_document(
+    mut fresh: DocumentMut,
     owns: impl Fn(&str) -> bool,
     existing: bool,
     document: &mut DocumentMut,
-) -> Result<(), PersistError> {
-    let mut fresh = serialize(path, value)?
-        .parse::<DocumentMut>()
-        .expect("serialised TOML is valid TOML");
+) {
     if existing {
         fresh.as_table_mut().retain(|key, _| owns(key));
         for (key, item) in document.iter().filter(|(key, _)| !owns(key)) {
@@ -162,7 +165,6 @@ fn merge_document<T: Serialize>(
         }
     }
     sync_table(document.as_table_mut(), fresh.as_table());
-    Ok(())
 }
 
 fn read(path: &Path) -> Result<Option<String>, PersistError> {
