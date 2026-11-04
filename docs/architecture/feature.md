@@ -609,6 +609,11 @@ Detaching a captured observer never sends Stop. Original source identity and inp
 tickets fence deferred action errors and successful composer clearing.
 The installation retains one `CloudChatInstallation`, sharing the runtime's
 history admission across captured environment handles and root windows.
+HistoryColumn owns `CloudHistory`, the Cloud chats of the window's hub; the history renders
+local and Cloud rows through one neutral row model, and a Cloud row offers only opening
+([ADR 0133](../adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md)).
+A refused submission (`ConversationSubmission::refused`) releases the composer, so sending
+the same text again is a new prompt; an unanswered one is retried under its original ID.
 MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. It keeps
 each agent message's and expanded reasoning's parsed Markdown per row, so a row

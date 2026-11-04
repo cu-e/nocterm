@@ -57,13 +57,34 @@ pub struct OpenedChat {
     pub source: Arc<dyn CapturedConversationSource>,
     /// What the window's tab is called.
     pub title: String,
+    /// The [`ChatSummary::key`] the history lists this chat under.
+    pub key: String,
 }
 
-/// An earlier chat of the account. Holding it is the only way to open it: a label alone grants
+/// What a history row of an earlier chat shows. Descriptive only: it grants nothing, and the hub
+/// learns nothing from it, because it is built from the authenticated catalog of the chat's
+/// runner and the account's own seats.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatSummary {
+    /// Stable for the same chat across listings (the chat's identifier, as text), so a window
+    /// can tell which row is the open chat.
+    pub key: String,
+    /// What the row is called.
+    pub title: String,
+    /// Who hosts the chat: the managed agent's name, or the name of the person's own runner.
+    pub host: String,
+    /// The model the chat prompts, when it can prompt.
+    pub model: Option<String>,
+    /// When the chat last changed (Unix seconds), when the listing knows it. The catalog of a
+    /// runner carries no time, so a chat this device has not observed has none.
+    pub updated_at: Option<u64>,
+}
+
+/// An earlier chat of the account. Holding it is the only way to open it: a summary alone grants
 /// nothing.
 pub trait ChatHistoryEntry: Send + Sync {
     /// What the history row shows.
-    fn label(&self) -> &str;
+    fn summary(&self) -> &ChatSummary;
 
     /// Opens the chat, waking its agent's seat first when it sleeps.
     fn open(&self) -> ChatFuture<OpenedChat>;

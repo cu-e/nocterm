@@ -14,6 +14,8 @@ pub(super) struct ConversationSurface {
     dirty: bool,
     previous_local: Option<EntityId>,
     pending: Option<PendingInput>,
+    /// The key the history column lists this conversation under, when it lists it.
+    origin: Option<String>,
 }
 struct PendingInput {
     ticket: InputTicket,
@@ -71,7 +73,14 @@ impl ConversationSurface {
             dirty: true,
             previous_local,
             pending: None,
+            origin: None,
         })
+    }
+    pub(super) fn set_origin(&mut self, origin: Option<String>) {
+        self.origin = origin;
+    }
+    pub(super) fn origin(&self) -> Option<&str> {
+        self.origin.as_deref()
     }
     pub(super) fn identity(&self) -> EntityId {
         self.source.identity()

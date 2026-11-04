@@ -146,5 +146,6 @@ pub(super) async fn create(
         ),
         None => source,
     };
-    Ok(OpenedChat { source, title })
+    let key = super::chat_key(&chat_bytes);
+    Ok(OpenedChat { source, title, key })
 }

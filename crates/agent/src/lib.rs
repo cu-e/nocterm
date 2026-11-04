@@ -3,7 +3,8 @@
 //! and auth collaborators. New hub-window actions capture fresh account sources;
 //! existing chats keep their original source and are withdrawn when it becomes stale.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
-//! disposable presentation transitions and their subscription/task lifetimes.
+//! disposable presentation transitions and their subscription/task lifetimes. HistoryColumn's
+//! CloudHistory lists the window hub's Cloud chats beside local ones through one row model.
 //! Transcript rows borrow ConversationSource into the existing EntryRenderer;
 //! original producer activity controls streaming and fork is explicitly source-bound.
 //! Installed retains one CloudChatInstallation with the runtime's shared history admission.

@@ -1,18 +1,13 @@
-//! Cloud chats in the Cloud tab: new chats on the person's own runners, the history of earlier
-//! chats, and the chat of a Cloud agent that has just become ready.
+//! Cloud chats in the Cloud tab: new chats on the person's own runners and the chat of a Cloud
+//! agent that has just become ready. Earlier chats are listed in the history column.
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use gpui_kit::{
-    AnyElement, Context, SharedString, TestSupportExt as _, Window,
-    component::{ActiveTheme as _, StyledExt as _, v_flex},
-    div,
-    prelude::*,
+    AnyElement, Context, SharedString, TestSupportExt as _, Window, component::ActiveTheme as _,
+    div, prelude::*,
 };
 use nocterm_cloud_agents::{StartId, StartPhase};
-use nocterm_cloud_agents_model::{
-    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, OpenedChat,
-};
+use nocterm_cloud_agents_model::{ChatFuture, ChatHost, ChatRunner, CloudChatError, OpenedChat};
 use nocterm_cloud_agents_model::{CloudAgent, Placement};
 use nocterm_hubs_model::HubId;
 
@@ -20,12 +15,11 @@ use super::{CloudMenu, MenuTab};
 use crate::cloud_access::CloudAgentsAccess;
 use crate::panel::{AgentPanel, widgets::menu_row};
 
-/// What the Cloud tab remembers about chats: the runners and earlier chats the window's hub
-/// last listed, the starts this window began, and the last failure to show.
+/// What the Cloud tab remembers about chats: the runners the window's hub last listed, the
+/// starts this window began, and the last failure to show.
 #[derive(Default)]
 pub(super) struct CloudChats {
     runners: Vec<ChatRunner>,
-    history: Vec<Arc<dyn ChatHistoryEntry>>,
     started_here: BTreeSet<StartId>,
     notice: Option<String>,
 }
@@ -40,7 +34,7 @@ pub(in crate::panel) fn notice_text(error: &CloudChatError) -> String {
 }
 
 impl CloudMenu {
-    /// Lists the runners and earlier chats of the window's hub while the Cloud tab is selected.
+    /// Lists the runners of the window's hub while the Cloud tab is selected.
     pub(super) fn refresh_chats(&mut self, cx: &mut Context<AgentPanel>) {
         let Some(access) = self.access.clone() else {
             return;
@@ -54,7 +48,6 @@ impl CloudMenu {
         if let Some(hub) = access.shown_hub(cx) {
             cx.spawn(async move |panel, cx| {
                 let runners = launcher.runners(&hub).await;
-                let history = launcher.history(&hub).await;
                 let _ = panel.update(cx, |panel, cx| {
                     let chats = &mut panel.cloud.chats;
                     match runners {
@@ -64,9 +57,6 @@ impl CloudMenu {
                         // as they were.
                         Err(_) => {}
                     }
-                    if let Ok(history) = history {
-                        chats.history = history;
-                    }
                     cx.notify();
                 });
             })
@@ -74,7 +64,7 @@ impl CloudMenu {
         }
     }
 
-    /// The rows of the chat section: new chats per runner, then the history.
+    /// The rows of the chat section: a new chat per runner.
     pub(super) fn render_chats(
         &self,
         access: &CloudAgentsAccess,
@@ -101,32 +91,6 @@ impl CloudMenu {
                         }))
                         .into_any_element(),
                 );
-            }
-            let history = self.chats.history.clone();
-            if !history.is_empty() {
-                let mut block = v_flex().gap_1().child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "cloud-chat-history-{}",
-                            hub.address()
-                        )))
-                        .test_support()
-                        .px_2()
-                        .text_xs()
-                        .font_semibold()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("History"),
-                );
-                for (index, entry) in history.into_iter().enumerate() {
-                    let id = format!("cloud-chat-entry-{}-{index}", hub.address());
-                    let label = entry.label().to_owned();
-                    block = block.child(menu_row(SharedString::from(id), label, cx).on_click(
-                        cx.listener(move |panel, _, window, cx| {
-                            panel.cloud.present_chat(entry.open(), None, window, cx);
-                        }),
-                    ));
-                }
-                rows.push(block.into_any_element());
             }
         }
         if let Some(notice) = &self.chats.notice {

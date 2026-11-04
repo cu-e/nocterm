@@ -478,19 +478,49 @@ fn a_new_cloud_chat_opens_on_the_chosen_runner(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn an_earlier_cloud_chat_in_the_history_opens_from_its_row(cx: &mut TestAppContext) {
+fn an_earlier_cloud_chat_is_a_row_of_the_history_column_and_opens_from_it(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let launcher = FakeCloudChatLauncher::default();
     launcher.add_history("Release notes");
     let (handle, _) = cloud_window(&f, chat_access(&ready_scribe(), &launcher, cx), cx);
-    open_cloud_tab(handle, cx);
-    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
-    assert!(shown(handle, format!("cloud-chat-history-{HOME}"), cx));
-    click(handle, format!("cloud-chat-entry-{HOME}-0"), cx);
+    // With no chat open the panel is its history, and the Cloud chat is a row of it.
+    let row = "history-thread-cloud-chat-0";
+    assert!(shown(handle, row, cx));
+    assert!(shown(handle, "history-when-cloud-chat-0", cx));
+    assert!(!shown(handle, "agent-history-empty", cx));
+
+    click(handle, row, cx);
     assert!(launcher.created().is_empty());
     assert_eq!(launcher.opened().len(), 1);
+    // The open chat stays listed in the column, and choosing it again opens nothing new.
+    if !shown(handle, "agent-history-column", cx) {
+        click(handle, "agent-history", cx);
+    }
+    assert!(shown(handle, row, cx));
+    click(handle, row, cx);
+    assert_eq!(launcher.opened().len(), 1);
+    // The new-agent popover lists no earlier chats.
+    open_cloud_tab(handle, cx);
+    cx.run_until_parked();
+    assert!(shown(handle, format!("cloud-agent-{HOME}-a1"), cx));
+    assert!(!shown(handle, format!("cloud-chat-history-{HOME}"), cx));
+}
+
+#[gpui_kit::test]
+fn a_new_cloud_chat_is_listed_in_the_history_once_it_is_created(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let launcher = FakeCloudChatLauncher::default();
+    let (handle, _) = cloud_window(&f, chat_access(&ready_scribe(), &launcher, cx), cx);
+    let listed = launcher.listings();
+    open_cloud_tab(handle, cx);
+    click(handle, format!("cloud-agent-{HOME}-a1"), cx);
+    assert_eq!(launcher.opened().len(), 1);
+    assert!(
+        launcher.listings() > listed,
+        "creating a chat lists the history again"
+    );
 }
 
 #[gpui_kit::test]

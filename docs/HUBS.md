@@ -215,6 +215,13 @@ and the first start on a pool asks you to compare the pool's fingerprint with th
 administrator gives you before it is trusted. **New personal agent…** opens the Servers page.
 The tab is hidden while no server offers agents.
 
+Earlier Cloud chats of the server are listed in the chat history (the clock button of the
+assistant panel), after your local chats, and the search finds them by name, agent and model.
+Opening one wakes its agent if it sleeps. Sending a message to a chat whose agent fell asleep
+wakes it too; until it answers, the chat shows "Reconnecting to the agent". If a message cannot
+reach the agent, send it again to retry it; if the agent refuses it, sending it again sends a
+new message.
+
 - **Agent access (SSH)** controls how cloud agents sign in to your own servers. A personal CA
   (shown with its fingerprint and date) signs certificates that are valid for hours at most,
   only from the runner's address, with a terminal and no forwarding. The CA key stays in your

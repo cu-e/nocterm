@@ -1,8 +1,9 @@
 //! The chat history: search, pinned chats first, and each chat's actions —
-//! rename, fork, pin and delete.
+//! rename, fork, pin and delete — then the Cloud chats of the window's hub, drawn by the
+//! same row renderer with only the actions their port supports.
 
 use gpui_kit::{
-    Anchor, App, Context, Entity, TestSupportExt as _,
+    Anchor, App, Context, Entity, SharedString, TestSupportExt as _,
     component::{
         ActiveTheme as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -16,6 +17,7 @@ use gpui_kit::{
 };
 use nocterm_agent_directory::AgentsHandle;
 use nocterm_ai::agents::{AgentProfile, AvailableAgents};
+use nocterm_cloud_agents_model::ChatSummary;
 use nocterm_ui::IconName;
 use std::time::Duration;
 
@@ -40,16 +42,36 @@ pub(super) fn order(chats: &[(bool, u64)]) -> Vec<usize> {
     order
 }
 
+/// What one row of the history is: a local chat of the roster, or a Cloud chat the hub lists.
+#[derive(Clone)]
+enum RowTarget {
+    Local(EntityId),
+    Cloud(String),
+}
+impl RowTarget {
+    /// The element id of the row's `part`.
+    fn element(&self, part: &'static str) -> gpui_kit::ElementId {
+        match self {
+            Self::Local(id) => (part, id.as_u64()).into(),
+            Self::Cloud(key) => SharedString::from(format!("{part}-cloud-{key}")).into(),
+        }
+    }
+}
+/// What a history row shows, the same for both kinds of chat.
 struct HistoryRow {
-    id: EntityId,
+    target: RowTarget,
     title: String,
     pinned: bool,
     selected: bool,
     when: String,
     model: String,
     generating: bool,
-    agent: Option<AgentProfile>,
+    icon: RowIcon,
     rename: Option<Input>,
+}
+enum RowIcon {
+    Agent(Option<AgentProfile>),
+    Cloud,
 }
 struct HistoryRowRenderer;
 impl HistoryRowRenderer {
@@ -80,15 +102,18 @@ impl HistoryRowRenderer {
         }
     }
     fn details(row: &HistoryRow, name: gpui_kit::AnyElement, cx: &gpui_kit::App) -> gpui_kit::Div {
-        let icon = if row.generating {
-            gpui_kit::component::spinner::Spinner::new()
+        let icon = match (&row.icon, row.generating) {
+            (_, true) => gpui_kit::component::spinner::Spinner::new()
                 .small()
                 .color(cx.theme().muted_foreground)
-                .into_any_element()
-        } else {
-            crate::agent_icon::agent_icon(row.agent)
+                .into_any_element(),
+            (RowIcon::Agent(agent), false) => crate::agent_icon::agent_icon(*agent)
                 .small()
-                .into_any_element()
+                .into_any_element(),
+            (RowIcon::Cloud, false) => gpui_kit::component::Icon::new(IconName::Cloud)
+                .small()
+                .text_color(cx.theme().muted_foreground)
+                .into_any_element(),
         };
         v_flex()
             .flex_1()
@@ -119,7 +144,7 @@ impl HistoryRowRenderer {
                     .text_color(cx.theme().muted_foreground)
                     .child(
                         div()
-                            .id(("history-when", row.id.as_u64()))
+                            .id(row.target.element("history-when"))
                             .test_support()
                             .aria_label(row.when.clone())
                             .flex_shrink_0()
@@ -133,14 +158,19 @@ impl HistoryRowRenderer {
         mut row: HistoryRow,
         cx: &mut Context<AgentPanel>,
     ) -> gpui_kit::AnyElement {
-        let id = row.id;
+        let target = row.target.clone();
         let title = row.title.clone();
         let hover = cx.theme().muted.blend(cx.theme().foreground.opacity(0.04));
         let name = Self::name(&row.title, row.rename.take(), cx);
         let details = Self::details(&row, name, cx);
-        let actions = Self::actions(row.id, row.pinned, cx);
+        // A Cloud chat offers only what the hub's port supports: opening it.
+        let actions = match &target {
+            RowTarget::Local(id) => Some(Self::actions(*id, row.pinned, cx)),
+            RowTarget::Cloud(_) => None,
+        };
+        let open = target.clone();
         h_flex()
-            .id(("history-thread", id.as_u64()))
+            .id(target.element("history-thread"))
             .test_support()
             .role(gpui_kit::Role::Button)
             .aria_label(title.clone())
@@ -159,9 +189,12 @@ impl HistoryRowRenderer {
                 cx.new(|_| gpui_kit::component::tooltip::Tooltip::new(title.clone()))
                     .into()
             })
-            .on_click(cx.listener(move |panel, _, _, cx| panel.on_history_selected(id, cx)))
+            .on_click(cx.listener(move |panel, _, window, cx| match &open {
+                RowTarget::Local(id) => panel.on_history_selected(*id, cx),
+                RowTarget::Cloud(key) => panel.open_cloud_history(key, window, cx),
+            }))
             .child(details)
-            .child(actions)
+            .children(actions)
             .into_any_element()
     }
     fn actions(id: EntityId, pinned: bool, cx: &mut Context<AgentPanel>) -> gpui_kit::AnyElement {
@@ -275,6 +308,7 @@ impl HistoryProjection {
     pub(super) fn stamp(
         chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
+        open_cloud: Option<&str>,
         cx: &App,
     ) -> Option<u64> {
         use std::hash::{Hash as _, Hasher as _};
@@ -286,6 +320,7 @@ impl HistoryProjection {
             .current()
             .map(|current| current.entity_id())
             .hash(&mut hasher);
+        (history.cloud().revision(), open_cloud).hash(&mut hasher);
         for thread in chats.iter() {
             let chat = thread.read(cx);
             (
@@ -305,12 +340,16 @@ impl HistoryProjection {
         Some(hasher.finish())
     }
     pub(super) fn render(
-        chats: &crate::roster::ChatRoster,
-        history_owner: &super::history_column::HistoryColumn,
+        sources: HistorySources<'_>,
         agents: &AgentsHandle,
         now: u64,
         cx: &mut Context<AgentPanel>,
     ) -> gpui_kit::AnyElement {
+        let HistorySources {
+            chats,
+            column,
+            open_cloud,
+        } = sources;
         let mut history = v_flex()
             .id("agent-history-list")
             .test_support()
@@ -319,7 +358,7 @@ impl HistoryProjection {
             .overflow_y_scroll()
             .p_2()
             .gap_1();
-        if chats.is_empty() {
+        if chats.is_empty() && column.cloud().is_empty(cx) {
             return history
                 .child(
                     div()
@@ -334,14 +373,15 @@ impl HistoryProjection {
         }
         history = history.child(
             div().pb_1().child(
-                history_owner
+                column
                     .query_input()
                     .prefix(gpui_kit::component::Icon::new(IconName::Search).small())
                     .cleanable(true),
             ),
         );
-        let listed = Self::listed_threads(chats, history_owner, cx);
-        if listed.is_empty() {
+        let listed = Self::listed_threads(chats, column, cx);
+        let cloud = column.cloud().matching(&column.query(cx), cx);
+        if listed.is_empty() && cloud.is_empty() {
             history = history.child(
                 div()
                     .id("agent-history-no-match")
@@ -355,25 +395,25 @@ impl HistoryProjection {
         // Resolved once: resolving builds the whole agent list from the catalog and settings.
         let available = agents.available(cx);
         for thread in listed {
-            history = history.child(Self::render_history_row(
-                &thread,
-                chats,
-                history_owner,
-                (agents, &available),
-                now,
-                cx,
-            ));
+            let row = Self::local_row(&thread, chats, column, (agents, &available), now, cx);
+            history = history.child(HistoryRowRenderer::render(row, cx));
+        }
+        // The hub's catalog carries no time, so Cloud chats follow the local ones in the order
+        // the hub lists them.
+        for summary in cloud {
+            let row = Self::cloud_row(summary, open_cloud.as_deref(), now);
+            history = history.child(HistoryRowRenderer::render(row, cx));
         }
         history.into_any_element()
     }
-    fn render_history_row(
+    fn local_row(
         thread: &Entity<AgentThread>,
         chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
         (agents, available): (&AgentsHandle, &AvailableAgents),
         now: u64,
-        cx: &mut Context<AgentPanel>,
-    ) -> gpui_kit::AnyElement {
+        cx: &App,
+    ) -> HistoryRow {
         let id = thread.entity_id();
         let chat = thread.read(cx);
         let when = if chat.archive_summary().is_none_or(|row| !row.has_content)
@@ -386,8 +426,8 @@ impl HistoryProjection {
                 now.saturating_sub(chat.updated_at()),
             )))
         };
-        let row = HistoryRow {
-            id,
+        HistoryRow {
+            target: RowTarget::Local(id),
             title: chat.title().to_string(),
             pinned: chat.document().pinned(),
             selected: chats
@@ -396,10 +436,50 @@ impl HistoryProjection {
             when,
             model: chat.model().unwrap_or_default(),
             generating: chat.session_generating(),
-            agent: agents.profile_in(available, chat.document().agent_id()),
+            icon: RowIcon::Agent(agents.profile_in(available, chat.document().agent_id())),
             rename: history.rename_input(id),
+        }
+    }
+    /// A Cloud chat's row: its time when the hub's listing knows it, else who hosts it.
+    fn cloud_row(summary: ChatSummary, open: Option<&str>, now: u64) -> HistoryRow {
+        let when = match summary.updated_at {
+            Some(updated) => {
+                relative_prompt_time(Some(Duration::from_secs(now.saturating_sub(updated))))
+            }
+            None => summary.host,
         };
-        HistoryRowRenderer::render(row, cx)
+        HistoryRow {
+            selected: open == Some(summary.key.as_str()),
+            target: RowTarget::Cloud(summary.key),
+            title: summary.title,
+            pinned: false,
+            when,
+            model: summary.model.unwrap_or_default(),
+            generating: false,
+            icon: RowIcon::Cloud,
+            rename: None,
+        }
+    }
+}
+
+/// What the history lists: the roster's local chats, and the Cloud chats of the history
+/// column with the key of the one that is open.
+pub(super) struct HistorySources<'a> {
+    chats: &'a crate::roster::ChatRoster,
+    column: &'a super::history_column::HistoryColumn,
+    open_cloud: Option<String>,
+}
+impl<'a> HistorySources<'a> {
+    pub(super) fn new(
+        chats: &'a crate::roster::ChatRoster,
+        column: &'a super::history_column::HistoryColumn,
+        open_cloud: Option<&str>,
+    ) -> Self {
+        Self {
+            chats,
+            column,
+            open_cloud: open_cloud.map(str::to_owned),
+        }
     }
 }
 

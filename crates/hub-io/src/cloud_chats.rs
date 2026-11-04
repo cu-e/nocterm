@@ -53,6 +53,11 @@ pub struct ChatServices {
     pub timer: Arc<dyn ToolTimer>,
 }
 
+/// The key the history lists a chat under: its identifier, as text.
+fn chat_key(chat: &[u8; 16]) -> String {
+    chat.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// Most chat namespaces that are open at once.
 const MAX_OPEN_CHATS: usize = 32;
 /// Most blocking operations of all sources at once.
