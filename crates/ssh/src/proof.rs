@@ -67,6 +67,32 @@ impl SessionLoginAttempt {
         Ok(())
     }
 }
+/// A purpose-bound login: a device's one-use proof or a chat's certificate.
+pub(crate) enum PurposeLogin {
+    Proof(SessionLoginAttempt),
+    Certificate(crate::certificate_login::CertificateLogin),
+}
+impl PurposeLogin {
+    pub(crate) fn check(&self, request: &ConnectRequest) -> Result<(), SessionError> {
+        match self {
+            Self::Proof(attempt) => attempt.check(request),
+            Self::Certificate(login) => login.check(request),
+        }
+    }
+    pub(crate) async fn establish(
+        self,
+        request: &ConnectRequest,
+        driver: &SessionDriver,
+        observed: &Arc<Mutex<Observed>>,
+    ) -> Result<Handle<Client>, SessionError> {
+        match self {
+            Self::Proof(attempt) => establish(attempt, request, driver, observed).await,
+            Self::Certificate(login) => {
+                crate::certificate_login::establish(login, request, driver, observed).await
+            }
+        }
+    }
+}
 pub(crate) async fn establish(
     attempt: SessionLoginAttempt,
     request: &ConnectRequest,

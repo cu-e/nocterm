@@ -36,7 +36,7 @@ pub(crate) async fn run(
     driver: SessionDriver,
     fs_requests: FsRequests,
     exec_requests: ExecRequests,
-    login: Option<crate::proof::SessionLoginAttempt>,
+    login: Option<crate::proof::PurposeLogin>,
 ) {
     let _cleanup = crate::source_stream::CloseOnDrop::new(driver.clone());
     let source = driver.source().clone();
@@ -72,7 +72,7 @@ async fn session(
     driver: &SessionDriver,
     fs_requests: FsRequests,
     exec_requests: ExecRequests,
-    login: Option<crate::proof::SessionLoginAttempt>,
+    login: Option<crate::proof::PurposeLogin>,
 ) -> CloseReason {
     let observed = Arc::new(Mutex::new(Observed::default()));
     let mut size = request.size;
@@ -83,7 +83,7 @@ async fn session(
         () = driver.closed() => return CloseReason::ClosedByUser,
         result = async {
             if let Some(login)=login {
-                let handle=timeout(request.connect_timeout,crate::proof::establish(login,request,driver,&observed)).await
+                let handle=timeout(request.connect_timeout,login.establish(request,driver,&observed)).await
                     .map_err(|_|SessionError::TimedOut{host:request.target.host.clone(),seconds:request.connect_timeout.as_secs()})??;
                 Ok((handle,route::Route::new(None)))
             } else {route::establish(config,request,relay,driver,&observed).await}

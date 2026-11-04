@@ -484,5 +484,7 @@ async fn rejected_write_batch_invalidates_its_prefix_and_cannot_publish_partial_
     closed(&session, no_prompts).await;
 }
 
+#[path = "cases/chat_certificate.rs"]
+mod chat_certificate;
 #[path = "cases/vault_certificate.rs"]
 mod vault_certificate;
