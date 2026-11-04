@@ -78,8 +78,11 @@ impl CommandHandler {
             CommandBody::ToolGrant(grant) => self.tool_grant(&chat, command, grant).await,
             CommandBody::Approval(answer) => self.approval(&chat, command, answer, now).await,
             CommandBody::Stop => self.stop(&chat, command).await,
+            CommandBody::SshBinding(_) | CommandBody::SshCertificate(_) => {
+                self.ssh(&chat, command, now).await
+            }
             CommandBody::RevokeGrant(reference) => {
-                self.revoke_grant(&chat, command, *reference).await
+                self.revoke_grant(&chat, command, *reference, now).await
             }
             CommandBody::RevokeIssuer(revoke) => self.revoke_issuer(&chat, command, revoke).await,
             CommandBody::DeleteChat => self.delete_chat(&chat, command).await,
@@ -125,6 +128,7 @@ impl CommandHandler {
         self.services.source().check_current()?;
         chat.log().require_current()?;
         match command.body() {
+            CommandBody::RevokeGrant(reference) if reference.class() == GrantClass::SshBinding => {}
             CommandBody::Stop | CommandBody::RevokeGrant(_) => {
                 let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
                 run.control().stop();
@@ -245,7 +249,12 @@ impl CommandHandler {
         chat: &Chat,
         command: &ReceivedCommand,
         reference: GrantReference,
+        now: Timestamp,
     ) -> Result<CommandReceipt, CoordinatorError> {
+        // A chat's SSH binding is revoked for the whole chat (ADR 0137).
+        if reference.class() == GrantClass::SshBinding {
+            return self.ssh(chat, command, now).await;
+        }
         let run = chat.run(command.run().ok_or(CoordinatorError::InvalidCommand)?)?;
         run.control().stop();
         self.queue.cancel(run.binding());
@@ -294,6 +303,13 @@ impl CommandHandler {
         if let Ok(setup) = self.services.session_setup() {
             setup.broker().close_chat(chat.log().lease().stream());
         }
+        // A deleted chat keeps no SSH key; the row stays only to refuse replays.
+        if let Some(ssh) = self.services.ssh() {
+            let transition = ssh
+                .prepare(&self.services, command, self.services.timer().now())
+                .await?;
+            ssh.settle(&self.services, transition, true).await?;
+        }
         let record = JournalRecord::new(
             RecordContext::Chat,
             JournalRecordKind::Tombstone {
@@ -322,6 +338,22 @@ impl CommandHandler {
             ));
         }
         Ok(receipt)
+    }
+    /// A chat SSH binding, certificate or unbind (ADR 0137): the row is stored first, then
+    /// the command and its events are journaled together.
+    async fn ssh(
+        &self,
+        chat: &Chat,
+        command: &ReceivedCommand,
+        now: Timestamp,
+    ) -> Result<CommandReceipt, CoordinatorError> {
+        let ssh = self.services.ssh().ok_or(CoordinatorError::Unsupported)?;
+        let transition = ssh.prepare(&self.services, command, now).await?;
+        let records = transition.records()?;
+        let accepted = chat.accept(command, None, records, &self.work).await;
+        ssh.settle(&self.services, transition, accepted.is_ok())
+            .await?;
+        accepted
     }
     /// Runs after the command lock is released: provider installation may wait
     /// on external work that must not hold the chat's command order.

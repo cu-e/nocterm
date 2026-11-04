@@ -29,7 +29,9 @@ pub(crate) mod session_fact;
 mod session_publication;
 mod session_request;
 mod session_services;
+mod ssh_access;
 pub use session_services::CoordinatorSessions;
+pub use ssh_access::CoordinatorSsh;
 mod summary_publication;
 pub use summary_publication::CoordinatorSummaries;
 mod supervisor;
@@ -313,6 +315,18 @@ impl RunCoordinator {
     /// (ADR 0135). Without configured summaries it does nothing.
     pub async fn publish_summary(&self, stream: StreamBinding) -> Result<(), CoordinatorError> {
         summary_publication::publish(self.services.clone(), stream).await
+    }
+    /// Renews, lapses or ends the SSH access of every chat whose deadline passed
+    /// (ADR 0137). Without configured SSH access it does nothing.
+    pub async fn renew_ssh(&self) -> Result<(), CoordinatorError> {
+        let Some(ssh) = self.services.ssh().cloned() else {
+            return Ok(());
+        };
+        for stream in ssh.due(&self.services).await? {
+            let chat = self.chat(stream).await?;
+            ssh.renew(&self.services, &chat).await?;
+        }
+        Ok(())
     }
     pub fn fence(&self) {
         self.services.tasks().begin_drain();

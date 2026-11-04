@@ -555,7 +555,7 @@ fn a_version_5_journal_is_upgraded_with_a_horizon_computed_once() {
     stored_with_one_entry(root.path(), &cipher);
     let db = rusqlite::Connection::open(root.path().join("cloud-runs.sqlite3")).unwrap();
     db.execute_batch(
-        "DROP TABLE chat_summaries; ALTER TABLE outbox DROP COLUMN retry_until; PRAGMA user_version=5",
+        "DROP TABLE chat_summaries; DROP TABLE chat_ssh_keys; ALTER TABLE outbox DROP COLUMN retry_until; PRAGMA user_version=5",
     )
         .unwrap();
     drop(db);
@@ -566,7 +566,7 @@ fn a_version_5_journal_is_upgraded_with_a_horizon_computed_once() {
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
     drop(db);
     assert_eq!(first_horizon(root.path(), &cipher), upgraded);
 }

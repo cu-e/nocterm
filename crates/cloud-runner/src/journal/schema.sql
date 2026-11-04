@@ -136,5 +136,11 @@ CREATE TABLE chat_summaries (
   CHECK((sealed IS NULL)=(key_epoch IS NULL)),
   CHECK((published<revision)=(sealed IS NOT NULL))
 ) WITHOUT ROWID;
-PRAGMA user_version=7;
+CREATE TABLE chat_ssh_keys (
+  chat BLOB PRIMARY KEY REFERENCES chats(chat),
+  revision INTEGER NOT NULL CHECK(revision>0),
+  key_epoch INTEGER NOT NULL CHECK(key_epoch>0),
+  body BLOB NOT NULL CHECK(length(body) BETWEEN 1 AND 131072)
+) WITHOUT ROWID;
+PRAGMA user_version=8;
 COMMIT;

@@ -15,6 +15,8 @@ mod provider_wake;
 mod reconciliation;
 #[path = "coordinator/snapshots.rs"]
 mod snapshots;
+#[path = "coordinator/ssh_access.rs"]
+mod ssh_access;
 #[path = "coordinator/summary_publication.rs"]
 mod summary_publication;
 #[path = "coordinator/supervision.rs"]
@@ -49,6 +51,7 @@ struct Fixture {
     cipher: Arc<TestCipher>,
     task_limits: SupervisorLimits,
     receive_budget: CommandReceiveBudget,
+    ssh: Option<Arc<nocterm_cloud_runner::coordinator::CoordinatorSsh>>,
 }
 impl Fixture {
     fn new() -> Self {
@@ -75,7 +78,7 @@ impl Fixture {
         receive_budget: CommandReceiveBudget,
         transport: Arc<ScriptedPublicationTransport>,
     ) -> Self {
-        Self::build(task_limits, receive_budget, transport, None)
+        Self::build(task_limits, receive_budget, transport, None, None)
     }
     fn with_approval_policy(policy: Arc<dyn ToolApprovalPolicy>) -> Self {
         Self::build(
@@ -83,6 +86,7 @@ impl Fixture {
             CommandReceiveBudget::new(IntakeLimits::default()),
             Arc::new(ScriptedPublicationTransport::default()),
             Some(policy),
+            None,
         )
     }
     fn build(
@@ -90,6 +94,7 @@ impl Fixture {
         receive_budget: CommandReceiveBudget,
         transport: Arc<ScriptedPublicationTransport>,
         approval: Option<Arc<dyn ToolApprovalPolicy>>,
+        ssh: Option<ssh_access::SshAccessInputs>,
     ) -> Self {
         let root = private_root();
         let retirements = Arc::new(RecordedRetirements::default());
@@ -135,6 +140,7 @@ impl Fixture {
         if let Some(policy) = approval {
             execution = execution.with_approval_policy(policy);
         }
+        let (execution, ssh) = ssh_access::with_ssh_access(execution, &journal, ssh);
         let identity = Arc::new(ScriptedCoordinatorIdentity::default());
         let services = CoordinatorServices::new(
             source.clone(),
@@ -167,6 +173,7 @@ impl Fixture {
             cipher,
             task_limits,
             receive_budget,
+            ssh,
         }
     }
     fn restart(&mut self) {

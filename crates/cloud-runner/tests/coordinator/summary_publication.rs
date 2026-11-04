@@ -114,7 +114,7 @@ async fn an_upgraded_version_6_journal_backfills_titles_from_its_records() {
     prompted(&fixture).await;
     fixture.actor.fence();
     let db = rusqlite::Connection::open(fixture.root.path().join(DATABASE)).unwrap();
-    db.execute_batch("DROP TABLE chat_summaries; PRAGMA user_version=6")
+    db.execute_batch("DROP TABLE chat_summaries; DROP TABLE chat_ssh_keys; PRAGMA user_version=6")
         .unwrap();
     drop(db);
     fixture.restart();

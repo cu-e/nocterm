@@ -249,6 +249,7 @@ fn checksum(context: &JournalCipherContext, plain: &[u8]) -> [u8; 32] {
         JournalStorageClass::BackgroundCommand => 7,
         JournalStorageClass::Effect => 8,
         JournalStorageClass::RunHead => 9,
+        JournalStorageClass::SshAccess => 10,
     };
     hash.update([class]);
     hash.update(context.sequence().get().to_be_bytes());

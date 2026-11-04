@@ -17,6 +17,7 @@ mod snapshot_publication;
 pub use snapshot_publication::DurableSnapshotPublication;
 mod run_heads;
 mod session_loss;
+mod ssh_access;
 mod summaries;
 
 use crate::{
@@ -90,7 +91,7 @@ impl Default for JournalLimits {
     }
 }
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 struct Driver {
     connection: Connection,

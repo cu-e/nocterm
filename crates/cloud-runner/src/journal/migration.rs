@@ -1,6 +1,6 @@
 //! Explicit schema upgrades of an existing journal database.
 //!
-//! Versions 5 and 6 are upgraded in order, each step in its own transaction; every other
+//! Versions 5, 6 and 7 are upgraded in order, each step in its own transaction; every other
 //! version stays `UnsupportedFormat` and needs explicit recovery.
 //!
 //! Version 5 to 6 adds `outbox.retry_until`, the promised retry horizon of a publication
@@ -12,6 +12,9 @@
 //! Version 6 to 7 adds the empty `chat_summaries` table (ADR 0135). Existing chats get no
 //! row here: deriving a summary needs the chat keys and the coordinator's record codec, so
 //! the runner backfills each chat from its journal at its first summary sweep.
+//!
+//! Version 7 to 8 adds the empty `chat_ssh_keys` table (ADR 0137): no chat had an SSH
+//! binding before it.
 use crate::storage::storage;
 use nocterm_cloud_model::journal::{JournalError, OUTBOX_RETRY_WINDOW_MS};
 use rusqlite::Connection;
@@ -46,7 +49,10 @@ pub(super) fn upgrade(db: &Connection, version: i64) -> Result<(), JournalError>
     if version == 5 {
         to_v6(db, now_ms()?)?;
     }
-    to_v7(db)
+    if version <= 6 {
+        to_v7(db)?;
+    }
+    to_v8(db)
 }
 
 fn to_v6(db: &Connection, now_ms: i64) -> Result<(), JournalError> {
@@ -68,5 +74,13 @@ fn to_v7(db: &Connection) -> Result<(), JournalError> {
     let tx = db.unchecked_transaction().map_err(storage)?;
     tx.execute_batch(super::summaries::TABLE).map_err(storage)?;
     tx.pragma_update(None, "user_version", 7).map_err(storage)?;
+    tx.commit().map_err(storage)
+}
+
+fn to_v8(db: &Connection) -> Result<(), JournalError> {
+    let tx = db.unchecked_transaction().map_err(storage)?;
+    tx.execute_batch(super::ssh_access::TABLE)
+        .map_err(storage)?;
+    tx.pragma_update(None, "user_version", 8).map_err(storage)?;
     tx.commit().map_err(storage)
 }

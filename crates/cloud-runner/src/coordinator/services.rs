@@ -136,6 +136,7 @@ pub struct CoordinatorExecution {
     session_setup: Option<super::session_services::CoordinatorSessions>,
     retirement: Option<Arc<dyn ChatRetirement>>,
     approval: Option<Arc<dyn super::ToolApprovalPolicy>>,
+    ssh: Option<Arc<super::ssh_access::CoordinatorSsh>>,
 }
 impl CoordinatorExecution {
     pub fn new(
@@ -152,7 +153,14 @@ impl CoordinatorExecution {
             session_setup: None,
             retirement: None,
             approval: None,
+            ssh: None,
         }
+    }
+    /// Admits chat SSH bindings and keeps each chat's key and certificate (ADR 0137).
+    /// Without it a binding is refused as unsupported.
+    pub fn with_ssh(mut self, ssh: Arc<super::ssh_access::CoordinatorSsh>) -> Self {
+        self.ssh = Some(ssh);
+        self
     }
     /// Lets the embedding runner decide which mutating calls need a person.
     /// Without it every mutating call asks.
@@ -253,6 +261,9 @@ impl CoordinatorServices {
     }
     pub(super) fn retirement(&self) -> Option<&Arc<dyn ChatRetirement>> {
         self.execution.retirement.as_ref()
+    }
+    pub(super) fn ssh(&self) -> Option<&Arc<super::ssh_access::CoordinatorSsh>> {
+        self.execution.ssh.as_ref()
     }
     pub(super) fn approval(&self) -> Option<&Arc<dyn super::ToolApprovalPolicy>> {
         self.execution.approval.as_ref()
