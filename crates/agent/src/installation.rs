@@ -56,8 +56,9 @@ impl Installed {
             source: SourceBinding::account(self.runtime(), factory),
         }
     }
-    /// The Cloud agents of the signed-in hubs, offered in the new-chat menu of every window
-    /// made from this installation. `None` keeps the menu local-only.
+    /// The Cloud agents of the signed-in hubs. Only a hub window made from this installation
+    /// ([`Self::for_hub_window`]) offers them in its new-chat menu; `None` keeps every menu
+    /// local-only.
     pub fn with_cloud_agents(&self, access: Option<CloudAgentsAccess>) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -68,7 +69,7 @@ impl Installed {
     /// A window of one hub offers only that hub's Cloud agents.
     pub fn for_hub_window(&self, hub: &nocterm_hubs_model::HubId) -> Self {
         Self {
-            cloud: self.cloud.as_ref().map(|access| access.for_hub(hub)),
+            cloud: self.cloud.as_ref().map(|access| access.for_hub_window(hub)),
             ..self.clone()
         }
     }

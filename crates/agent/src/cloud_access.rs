@@ -1,10 +1,11 @@
-//! The Cloud agents a window offers: the shared service, the hubs that name them, and which
-//! hubs this window shows.
+//! The Cloud agents a window offers: the shared service, the hubs that name them, and the hub
+//! of the window. Only a hub window offers Cloud agents; the window of this computer shows none
+//! of a hub's data (ADR 0130).
 use std::sync::Arc;
 
 use gpui_kit::{App, Entity};
 use nocterm_cloud_agents::CloudAgents;
-use nocterm_cloud_agents_model::{Audience, CloudChatLauncher, HubAgents, Section, arrange};
+use nocterm_cloud_agents_model::{CloudChatLauncher, HubAgents, Section, arrange};
 use nocterm_hubs::{HubStatus, Hubs};
 use nocterm_hubs_model::{HubColor, HubId};
 
@@ -14,17 +15,19 @@ use nocterm_hubs_model::{HubColor, HubId};
 pub struct CloudAgentsAccess {
     agents: Entity<CloudAgents>,
     hubs: Entity<Hubs>,
-    audience: Audience,
+    /// The hub of the window; without one the window offers no Cloud agents.
+    hub: Option<HubId>,
     chats: Option<Arc<dyn CloudChatLauncher>>,
 }
 
 impl CloudAgentsAccess {
-    /// The access of the window of this computer: every signed-in hub.
+    /// The installation-wide access. It offers nothing until it is bound to the window of a
+    /// hub with [`Self::for_hub_window`].
     pub fn new(agents: Entity<CloudAgents>, hubs: Entity<Hubs>) -> Self {
         Self {
             agents,
             hubs,
-            audience: Audience::AllHubs,
+            hub: None,
             chats: None,
         }
     }
@@ -42,14 +45,10 @@ impl CloudAgentsAccess {
         self.chats.as_ref()
     }
 
-    /// The access of a window of one hub.
+    /// The access of a window of one hub: it offers that hub's Cloud agents.
     pub fn for_hub_window(&self, hub: &HubId) -> Self {
-        self.for_hub(hub)
-    }
-
-    pub(crate) fn for_hub(&self, hub: &HubId) -> Self {
         Self {
-            audience: Audience::Hub(hub.clone()),
+            hub: Some(hub.clone()),
             ..self.clone()
         }
     }
@@ -63,42 +62,43 @@ impl CloudAgentsAccess {
         &self.hubs
     }
 
-    /// The hubs this window shows that are signed in and answer the catalog.
-    pub(crate) fn visible_hubs(&self, cx: &App) -> Vec<(HubId, String, HubColor)> {
-        let service = self.agents.read(cx);
+    /// The hub of the window while it is signed in and answers the catalog.
+    pub(crate) fn shown_hub(&self, cx: &App) -> Option<HubId> {
+        self.shown(cx).map(|hub| hub.hub)
+    }
+
+    /// The window's hub with its name and colour and no agents yet, while it is shown.
+    fn shown(&self, cx: &App) -> Option<HubAgents> {
+        let id = self.hub.as_ref()?;
+        if !self.agents.read(cx).is_offered(id) {
+            return None;
+        }
         self.hubs
             .read(cx)
             .list()
             .into_iter()
-            .filter(|hub| match &self.audience {
-                Audience::Hub(only) => *only == hub.id,
-                Audience::AllHubs => true,
-            })
+            .find(|hub| hub.id == *id)
             .filter(|hub| !matches!(hub.status, HubStatus::SignedOut | HubStatus::Revoked))
-            .filter(|hub| service.is_offered(&hub.id))
-            .map(|hub| (hub.id, hub.label, hub.color.unwrap_or(HubColor::Blue)))
-            .collect()
-    }
-
-    /// Whether the Cloud tab is shown at all: a hub answered UNIMPLEMENTED or none is signed in
-    /// otherwise.
-    pub(crate) fn offered(&self, cx: &App) -> bool {
-        !self.visible_hubs(cx).is_empty()
-    }
-
-    /// The sections for `query`, grouped by hub.
-    pub(crate) fn sections(&self, query: &str, cx: &App) -> Vec<Section> {
-        let service = self.agents.read(cx);
-        let hubs: Vec<HubAgents> = self
-            .visible_hubs(cx)
-            .into_iter()
-            .map(|(hub, name, color)| HubAgents {
-                agents: service.agents(&hub).to_vec(),
-                hub,
-                name,
-                color,
+            .map(|hub| HubAgents {
+                hub: hub.id,
+                name: hub.label,
+                color: hub.color.unwrap_or(HubColor::Blue),
+                agents: Vec::new(),
             })
-            .collect();
-        arrange(&hubs, &self.audience, query)
+    }
+
+    /// Whether the Cloud tab is shown at all: only in the window of a signed-in hub that
+    /// answers the catalog (a hub that does not know agents answers UNIMPLEMENTED).
+    pub(crate) fn offered(&self, cx: &App) -> bool {
+        self.shown_hub(cx).is_some()
+    }
+
+    /// The sections for `query`.
+    pub(crate) fn sections(&self, query: &str, cx: &App) -> Vec<Section> {
+        let Some(mut hub) = self.shown(cx) else {
+            return Vec::new();
+        };
+        hub.agents = self.agents.read(cx).agents(&hub.hub).to_vec();
+        arrange(&hub, query)
     }
 }

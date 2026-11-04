@@ -245,9 +245,8 @@ impl CloudMenu {
                     .into_any_element(),
             );
         }
-        let several_hubs = access.visible_hubs(cx).len() > 1;
         for section in sections {
-            rows.push(self.render_section(&section, several_hubs, &under_rows, cx));
+            rows.push(self.render_section(&section, &under_rows, cx));
         }
         rows.extend(self.render_chats(&access, cx));
         rows.extend(self.render_footer(&access, cx));
@@ -257,20 +256,10 @@ impl CloudMenu {
     fn render_section(
         &self,
         section: &Section,
-        several_hubs: bool,
         starts: &[StartEntry],
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let title = section.title.text();
-        let heading = if several_hubs
-            && !matches!(
-                section.title,
-                nocterm_cloud_agents_model::SectionTitle::Server(_)
-            ) {
-            format!("{title} ({})", section.hub_name)
-        } else {
-            title
-        };
+        let heading = section.title.text();
         let tint = hub_tint(section.color, cx);
         let mut block = v_flex().gap_1().child(
             div()
@@ -331,7 +320,7 @@ impl CloudMenu {
                 .child(model),
         );
         if let Some(status) = status {
-            let color = if status.attention {
+            let color = if status.attention() {
                 cx.theme().warning
             } else {
                 cx.theme().muted_foreground
@@ -347,7 +336,7 @@ impl CloudMenu {
                     .flex_none()
                     .text_xs()
                     .text_color(color)
-                    .child(status.text),
+                    .child(status.text()),
             );
         }
         let row = row
@@ -366,16 +355,14 @@ impl CloudMenu {
         access: &CloudAgentsAccess,
         cx: &mut Context<AgentPanel>,
     ) -> Vec<StartEntry> {
-        let visible: Vec<HubId> = access
-            .visible_hubs(cx)
-            .into_iter()
-            .map(|(hub, ..)| hub)
-            .collect();
+        let Some(shown) = access.shown_hub(cx) else {
+            return Vec::new();
+        };
         access
             .service()
             .read(cx)
             .starts()
-            .filter(|start| visible.contains(start.hub()))
+            .filter(|start| *start.hub() == shown)
             .map(StartEntry::of)
             .collect()
     }
@@ -385,11 +372,10 @@ impl CloudMenu {
         access: &CloudAgentsAccess,
         cx: &mut Context<AgentPanel>,
     ) -> Vec<AnyElement> {
-        let hubs = access.visible_hubs(cx);
-        let Some((hub, ..)) = hubs.first().cloned() else {
+        let Some(shown) = access.shown_hub(cx) else {
             return Vec::new();
         };
-        let url = access.service().read(cx).web_panel_url(&hub);
+        let url = access.service().read(cx).web_panel_url(&shown);
         let manage = menu_row("cloud-manage-agents", "Manage agents…", cx)
             .tooltip("Opens the web panel of the server")
             .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&url)));

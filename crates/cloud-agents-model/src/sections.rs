@@ -57,32 +57,20 @@ pub struct Section {
     pub agents: Vec<CloudAgent>,
 }
 
-/// Where the tab is shown: a window of one hub lists only that hub's agents, the window of
-/// this computer lists every signed-in hub.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Audience {
-    /// The window of one hub.
-    Hub(HubId),
-    /// The window of this computer.
-    AllHubs,
-}
-
-/// Sections for the tab: hubs in the given order, within a hub Personal, organizations by
-/// name, then the server; empty sections are left out. `query` filters by [`CloudAgent::matches`].
-pub fn arrange(hubs: &[HubAgents], audience: &Audience, query: &str) -> Vec<Section> {
-    let mut sections = Vec::new();
-    for hub in hubs {
-        if matches!(audience, Audience::Hub(only) if *only != hub.hub) {
-            continue;
+/// Sections for the tab of a hub window: Personal, organizations by name, then the server;
+/// empty sections are left out. `query` filters by [`CloudAgent::matches`]. The window of this
+/// computer shows no hub's agents (ADR 0130).
+pub fn arrange(hub: &HubAgents, query: &str) -> Vec<Section> {
+    let mut scopes: Vec<&AgentScope> = Vec::new();
+    for agent in &hub.agents {
+        if !scopes.contains(&&agent.scope) {
+            scopes.push(&agent.scope);
         }
-        let mut scopes: Vec<&AgentScope> = Vec::new();
-        for agent in &hub.agents {
-            if !scopes.contains(&&agent.scope) {
-                scopes.push(&agent.scope);
-            }
-        }
-        scopes.sort_by(|a, b| a.display_order(b));
-        for scope in scopes {
+    }
+    scopes.sort_by(|a, b| a.display_order(b));
+    scopes
+        .into_iter()
+        .filter_map(|scope| {
             let mut agents: Vec<CloudAgent> = hub
                 .agents
                 .iter()
@@ -90,7 +78,7 @@ pub fn arrange(hubs: &[HubAgents], audience: &Audience, query: &str) -> Vec<Sect
                 .cloned()
                 .collect();
             if agents.is_empty() {
-                continue;
+                return None;
             }
             agents.sort_by(|a, b| {
                 a.status
@@ -99,7 +87,7 @@ pub fn arrange(hubs: &[HubAgents], audience: &Audience, query: &str) -> Vec<Sect
                     .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                     .then_with(|| a.id.cmp(&b.id))
             });
-            sections.push(Section {
+            Some(Section {
                 hub: hub.hub.clone(),
                 hub_name: hub.name.clone(),
                 color: hub.color,
@@ -110,8 +98,7 @@ pub fn arrange(hubs: &[HubAgents], audience: &Audience, query: &str) -> Vec<Sect
                 },
                 scope: scope.clone(),
                 agents,
-            });
-        }
-    }
-    sections
+            })
+        })
+        .collect()
 }

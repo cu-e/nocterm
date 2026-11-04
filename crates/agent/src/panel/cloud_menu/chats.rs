@@ -1,6 +1,6 @@
 //! Cloud chats in the Cloud tab: new chats on the person's own runners, the history of earlier
 //! chats, and the chat of a Cloud agent that has just become ready.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use gpui_kit::{
@@ -20,12 +20,12 @@ use super::{CloudMenu, MenuTab};
 use crate::cloud_access::CloudAgentsAccess;
 use crate::panel::{AgentPanel, widgets::menu_row};
 
-/// What the Cloud tab remembers about chats: the runners and earlier chats last listed per
-/// hub, the starts this window began, and the last failure to show.
+/// What the Cloud tab remembers about chats: the runners and earlier chats the window's hub
+/// last listed, the starts this window began, and the last failure to show.
 #[derive(Default)]
 pub(super) struct CloudChats {
-    runners: BTreeMap<HubId, Vec<ChatRunner>>,
-    history: BTreeMap<HubId, Vec<Arc<dyn ChatHistoryEntry>>>,
+    runners: Vec<ChatRunner>,
+    history: Vec<Arc<dyn ChatHistoryEntry>>,
     started_here: BTreeSet<StartId>,
     notice: Option<String>,
 }
@@ -40,7 +40,7 @@ pub(in crate::panel) fn notice_text(error: &CloudChatError) -> String {
 }
 
 impl CloudMenu {
-    /// Lists the runners and earlier chats of the shown hubs while the Cloud tab is selected.
+    /// Lists the runners and earlier chats of the window's hub while the Cloud tab is selected.
     pub(super) fn refresh_chats(&mut self, cx: &mut Context<AgentPanel>) {
         let Some(access) = self.access.clone() else {
             return;
@@ -51,26 +51,21 @@ impl CloudMenu {
         if self.tab(cx) != MenuTab::Cloud {
             return;
         }
-        for (hub, ..) in access.visible_hubs(cx) {
-            let launcher = launcher.clone();
+        if let Some(hub) = access.shown_hub(cx) {
             cx.spawn(async move |panel, cx| {
                 let runners = launcher.runners(&hub).await;
                 let history = launcher.history(&hub).await;
                 let _ = panel.update(cx, |panel, cx| {
                     let chats = &mut panel.cloud.chats;
                     match runners {
-                        Ok(runners) => {
-                            chats.runners.insert(hub.clone(), runners);
-                        }
-                        Err(CloudChatError::Unsupported) => {
-                            chats.runners.remove(&hub);
-                        }
+                        Ok(runners) => chats.runners = runners,
+                        Err(CloudChatError::Unsupported) => chats.runners.clear(),
                         // A listing nobody asked to see is not worth a warning; the rows stay
                         // as they were.
                         Err(_) => {}
                     }
                     if let Ok(history) = history {
-                        chats.history.insert(hub, history);
+                        chats.history = history;
                     }
                     cx.notify();
                 });
@@ -89,9 +84,8 @@ impl CloudMenu {
             return Vec::new();
         }
         let mut rows = Vec::new();
-        for (hub, ..) in access.visible_hubs(cx) {
-            let runners = self.chats.runners.get(&hub).cloned().unwrap_or_default();
-            for runner in runners {
+        if let Some(hub) = access.shown_hub(cx) {
+            for runner in self.chats.runners.clone() {
                 let id = format!("cloud-chat-new-{}-{}", hub.address(), runner.label);
                 let label = format!("New chat on {}", runner.label);
                 let hub = hub.clone();
@@ -108,33 +102,32 @@ impl CloudMenu {
                         .into_any_element(),
                 );
             }
-            let history = self.chats.history.get(&hub).cloned().unwrap_or_default();
-            if history.is_empty() {
-                continue;
+            let history = self.chats.history.clone();
+            if !history.is_empty() {
+                let mut block = v_flex().gap_1().child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "cloud-chat-history-{}",
+                            hub.address()
+                        )))
+                        .test_support()
+                        .px_2()
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("History"),
+                );
+                for (index, entry) in history.into_iter().enumerate() {
+                    let id = format!("cloud-chat-entry-{}-{index}", hub.address());
+                    let label = entry.label().to_owned();
+                    block = block.child(menu_row(SharedString::from(id), label, cx).on_click(
+                        cx.listener(move |panel, _, window, cx| {
+                            panel.cloud.present_chat(entry.open(), None, window, cx);
+                        }),
+                    ));
+                }
+                rows.push(block.into_any_element());
             }
-            let mut block = v_flex().gap_1().child(
-                div()
-                    .id(SharedString::from(format!(
-                        "cloud-chat-history-{}",
-                        hub.address()
-                    )))
-                    .test_support()
-                    .px_2()
-                    .text_xs()
-                    .font_semibold()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("History"),
-            );
-            for (index, entry) in history.into_iter().enumerate() {
-                let id = format!("cloud-chat-entry-{}-{index}", hub.address());
-                let label = entry.label().to_owned();
-                block = block.child(menu_row(SharedString::from(id), label, cx).on_click(
-                    cx.listener(move |panel, _, window, cx| {
-                        panel.cloud.present_chat(entry.open(), None, window, cx);
-                    }),
-                ));
-            }
-            rows.push(block.into_any_element());
         }
         if let Some(notice) = &self.chats.notice {
             rows.push(
@@ -291,8 +284,8 @@ impl CloudMenu {
                         let label = self
                             .chats
                             .runners
-                            .get(start.hub())
-                            .and_then(|runners| runners.iter().find(|runner| runner.id == id))
+                            .iter()
+                            .find(|runner| runner.id == id)
                             .map_or_else(
                                 || "your runner".to_owned(),
                                 |runner| runner.label.clone(),

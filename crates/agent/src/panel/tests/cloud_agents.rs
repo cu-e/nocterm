@@ -41,11 +41,12 @@ fn agent(id: &str, name: &str, scope: AgentScope, status: AgentStatus) -> CloudA
     }
 }
 
-/// Signed-in hubs over fakes, and the access a window of `audience` is given.
+/// Signed-in hubs over fakes, and the access the window of `window_hub` is given; `None` is the
+/// window of this computer.
 fn access(
     fake: &FakeCloudAgents,
     hubs: &[&str],
-    only: Option<&str>,
+    window_hub: Option<&str>,
     cx: &mut TestAppContext,
 ) -> crate::CloudAgentsAccess {
     let mut fake_hub = FakeHub::new();
@@ -97,7 +98,7 @@ fn access(
         }
         let access =
             crate::CloudAgentsAccess::new(service.agents().clone(), registry.hubs().clone());
-        match only {
+        match window_hub {
             Some(address) => access.for_hub_window(&hub(address)),
             None => access,
         }
@@ -152,7 +153,7 @@ fn the_cloud_tab_is_hidden_while_no_hub_offers_agents(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let fake = FakeCloudAgents::default();
     fake.fail(&hub(HOME), FakeFailure::Unsupported);
-    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], Some(HOME), cx), cx);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("agent-new-thread", cx);
@@ -176,7 +177,7 @@ fn a_cloud_agent_starts_through_its_steps_and_reports_ready(cx: &mut TestAppCont
             AgentStatus::Ready,
         )],
     );
-    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], Some(HOME), cx), cx);
     open_cloud_tab(handle, cx);
     assert!(shown(handle, format!("cloud-agent-{HOME}-a1"), cx));
     assert!(shown(handle, "cloud-manage-agents", cx));
@@ -217,7 +218,7 @@ fn an_unpinned_pool_asks_for_trust_before_the_start_continues(cx: &mut TestAppCo
             fingerprint: "AB12 CD34".into(),
         },
     );
-    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], Some(HOME), cx), cx);
     open_cloud_tab(handle, cx);
     cx.update_window(handle, |_, window, cx| {
         window.click(format!("cloud-agent-{HOME}-a1"), cx);
@@ -243,7 +244,7 @@ fn an_unpinned_pool_asks_for_trust_before_the_start_continues(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
-fn a_hub_window_lists_only_its_own_agents_and_the_local_window_every_hub(cx: &mut TestAppContext) {
+fn a_hub_window_lists_only_its_own_agents_and_the_local_window_none(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let fake = FakeCloudAgents::default();
     fake.set_agents(
@@ -264,10 +265,15 @@ fn a_hub_window_lists_only_its_own_agents_and_the_local_window_every_hub(cx: &mu
             AgentStatus::Sleeping,
         )],
     );
-    let (all, _) = cloud_window(&f, access(&fake, &[HOME, WORK], None, cx), cx);
-    open_cloud_tab(all, cx);
-    assert!(shown(all, format!("cloud-agent-{HOME}-a1"), cx));
-    assert!(shown(all, format!("cloud-agent-{WORK}-b1"), cx));
+    let (local, _) = cloud_window(&f, access(&fake, &[HOME, WORK], None, cx), cx);
+    cx.update_window(local, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("agent-new-thread", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("new-agent-tab-cloud").is_none());
+        assert!(window.try_find(format!("cloud-agent-{HOME}-a1")).is_none());
+    })
+    .unwrap();
 
     let (only, _) = cloud_window(&f, access(&fake, &[HOME, WORK], Some(WORK), cx), cx);
     open_cloud_tab(only, cx);
@@ -288,7 +294,7 @@ fn a_key_that_is_missing_blocks_the_row(cx: &mut TestAppContext) {
             AgentStatus::NeedsKey,
         )],
     );
-    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], Some(HOME), cx), cx);
     open_cloud_tab(handle, cx);
     cx.update_window(handle, |_, window, cx| {
         window.click(format!("cloud-agent-{HOME}-a1"), cx);
@@ -303,7 +309,7 @@ fn chat_access(
     launcher: &FakeCloudChatLauncher,
     cx: &mut TestAppContext,
 ) -> crate::CloudAgentsAccess {
-    access(fake, &[HOME], None, cx).with_chats(Arc::new(launcher.clone()))
+    access(fake, &[HOME], Some(HOME), cx).with_chats(Arc::new(launcher.clone()))
 }
 
 fn ready_scribe() -> FakeCloudAgents {
@@ -499,7 +505,7 @@ fn a_failed_start_shows_one_entry_under_its_agent_and_can_be_retried(cx: &mut Te
         );
     }
     fake.set_agents(&hub(HOME), vec![scribe]);
-    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], Some(HOME), cx), cx);
     open_cloud_tab(handle, cx);
     click(handle, format!("cloud-agent-{HOME}-a1"), cx);
     click(handle, format!("cloud-agent-{HOME}-a1"), cx);
@@ -527,7 +533,7 @@ fn a_start_whose_agent_row_is_gone_stays_listed_on_top(cx: &mut TestAppContext) 
         nocterm_cloud_agents_model::testing::StartScript::Fail(FakeFailure::ProvisioningFailed),
     );
     fake.set_agents(&hub(HOME), vec![scribe]);
-    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], Some(HOME), cx), cx);
     open_cloud_tab(handle, cx);
     click(handle, format!("cloud-agent-{HOME}-a1"), cx);
     fake.set_agents(&hub(HOME), Vec::new());
@@ -634,7 +640,7 @@ fn a_ready_start_whose_seat_was_removed_elsewhere_is_forgotten_and_the_row_start
 ) {
     let f = fixture(cx);
     let fake = ready_scribe();
-    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], None, cx), cx);
+    let (handle, _) = cloud_window(&f, access(&fake, &[HOME], Some(HOME), cx), cx);
     open_cloud_tab(handle, cx);
     click(handle, format!("cloud-agent-{HOME}-a1"), cx);
     assert_eq!(fake.started().len(), 1);

@@ -207,9 +207,10 @@ The selected server has four tabs:
 
 ### Cloud agents in the chat menu
 
-The **+** menu of the assistant panel has **Local** and **Cloud** tabs. **Cloud** lists the
-agents of every signed-in server (a server window lists only its own), with a search field,
-sections per server and a status chip per agent. Pick one to start it: the steps are shown,
+In the window of a server, the **+** menu of the assistant panel has **Local** and **Cloud**
+tabs. **Cloud** lists the agents of that server, with a search field, sections per scope and a
+status chip per agent. The window of this computer has no **Cloud** tab: open the server's
+window to chat with its agents. Pick one to start it: the steps are shown,
 and the first start on a pool asks you to compare the pool's fingerprint with the one its
 administrator gives you before it is trusted. **New personal agent…** opens the Servers page.
 The tab is hidden while no server offers agents.

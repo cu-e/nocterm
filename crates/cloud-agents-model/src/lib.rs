@@ -60,7 +60,7 @@ pub use ports::{
     SaveOutcome, StartOutcome, StepSink, web_panel_url,
 };
 pub use scope::AgentScope;
-pub use sections::{Audience, HubAgents, Section, SectionTitle, arrange};
+pub use sections::{HubAgents, Section, SectionTitle, arrange};
 pub use start::{PoolOffer, Refusal, SetupProblem, StartStep, StartedAgent};
 pub use status::AgentStatus;
 pub use usage::{ModelUsage, UsageSample};

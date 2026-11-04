@@ -50,7 +50,7 @@ fn titles(sections: &[Section]) -> Vec<String> {
 
 #[test]
 fn a_hub_lists_personal_then_organizations_by_name_then_the_server() {
-    let hubs = [catalog(
+    let hubs = catalog(
         "work.example",
         "Work",
         vec![
@@ -59,8 +59,8 @@ fn a_hub_lists_personal_then_organizations_by_name_then_the_server() {
             agent("3", "Mine", AgentScope::Personal, AgentStatus::Ready),
             agent("4", "A", org("alpha"), AgentStatus::Ready),
         ],
-    )];
-    let sections = arrange(&hubs, &Audience::AllHubs, "");
+    );
+    let sections = arrange(&hubs, "");
     assert_eq!(
         titles(&sections),
         ["Personal", "alpha", "Zeta", "Server Work"]
@@ -69,7 +69,7 @@ fn a_hub_lists_personal_then_organizations_by_name_then_the_server() {
 
 #[test]
 fn usable_agents_come_before_blocked_ones_then_by_name() {
-    let hubs = [catalog(
+    let hubs = catalog(
         "work.example",
         "Work",
         vec![
@@ -79,31 +79,10 @@ fn usable_agents_come_before_blocked_ones_then_by_name() {
             agent("4", "Cat", AgentScope::Personal, AgentStatus::NeedsKey),
             agent("5", "Abe", AgentScope::Personal, AgentStatus::Ready),
         ],
-    )];
-    let sections = arrange(&hubs, &Audience::AllHubs, "");
+    );
+    let sections = arrange(&hubs, "");
     let names: Vec<_> = sections[0].agents.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(names, ["Abe", "Zed", "Bob", "Cat", "Amy"]);
-}
-
-#[test]
-fn a_hub_window_shows_only_its_own_agents_and_the_local_window_groups_by_hub() {
-    let hubs = [
-        catalog(
-            "one.example",
-            "One",
-            vec![agent("1", "A", AgentScope::Server, AgentStatus::Ready)],
-        ),
-        catalog(
-            "two.example",
-            "Two",
-            vec![agent("2", "B", AgentScope::Server, AgentStatus::Ready)],
-        ),
-    ];
-    let only = arrange(&hubs, &Audience::Hub(hub("two.example")), "");
-    assert_eq!(titles(&only), ["Server Two"]);
-    let all = arrange(&hubs, &Audience::AllHubs, "");
-    assert_eq!(titles(&all), ["Server One", "Server Two"]);
-    assert_eq!(all[1].hub, hub("two.example"));
 }
 
 #[test]
@@ -111,10 +90,10 @@ fn search_matches_every_word_across_name_model_and_description_and_drops_empty_s
     let mut helper = agent("1", "Code helper", AgentScope::Personal, AgentStatus::Ready);
     helper.models = vec!["claude-sonnet".into()];
     let other = agent("2", "Writer", org("Acme"), AgentStatus::Ready);
-    let hubs = [catalog("w.example", "W", vec![helper, other])];
-    let found = arrange(&hubs, &Audience::AllHubs, "HELP sonnet");
+    let hubs = catalog("w.example", "W", vec![helper, other]);
+    let found = arrange(&hubs, "HELP sonnet");
     assert_eq!(titles(&found), ["Personal"]);
-    assert!(arrange(&hubs, &Audience::AllHubs, "nothing here").is_empty());
+    assert!(arrange(&hubs, "nothing here").is_empty());
 }
 
 #[test]

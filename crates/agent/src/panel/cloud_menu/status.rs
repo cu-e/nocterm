@@ -6,9 +6,21 @@ use nocterm_cloud_agents_model::AgentStatus;
 /// What the row says beside the agent's name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct RowStatus {
-    pub(super) text: &'static str,
+    text: &'static str,
     /// Whether the text asks for the person's attention.
-    pub(super) attention: bool,
+    attention: bool,
+}
+
+impl RowStatus {
+    /// What the row says.
+    pub(super) fn text(self) -> &'static str {
+        self.text
+    }
+
+    /// Whether the text asks for the person's attention.
+    pub(super) fn attention(self) -> bool {
+        self.attention
+    }
 }
 
 const fn plain(text: &'static str) -> Option<RowStatus> {
