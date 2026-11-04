@@ -42,9 +42,10 @@ async fn startup(state: &mut State, session: Option<&Session>) -> Result<Startup
     let execution = match state.take_execution() {
         Some(setup) => {
             let brokered = session.map(|session| session.providers().clone());
+            let boot_ssh = session.map(Session::ssh);
             let started = tokio::time::timeout(
                 operation,
-                ExecutionRuntime::start(setup, state, peer.clone(), brokered),
+                ExecutionRuntime::start(setup, state, peer.clone(), brokered, boot_ssh),
             )
             .await
             .map_err(|_| RunnerError::Timeout)?;

@@ -1,4 +1,5 @@
-//! Periodic FIFO delivery of the durable outbox and of chat summaries. The coordinator
+//! Periodic FIFO delivery of the durable outbox and of chat summaries, and the chats'
+//! SSH certificate renewal (ADR 0137). The coordinator
 //! only queues sealed publications and keeps summary rows; without this owner no event
 //! or summary would reach the hub.
 use nocterm_cloud_model::{
@@ -37,6 +38,13 @@ impl OutboxPublisher {
         }
     }
     async fn sweep(&self) -> Result<(), CoordinatorError> {
+        // Chat SSH access: certificate renewal at 80 %, lapse and binding expiry.
+        match self.coordinator.renew_ssh().await {
+            Ok(()) => {}
+            Err(error) if fatal(&error) => return Err(error),
+            // A transition that failed keeps its previous row and is retried next sweep.
+            Err(_) => {}
+        }
         let mut cursor = None;
         loop {
             let page = match self.journal.catalog(cursor, PAGE).await {

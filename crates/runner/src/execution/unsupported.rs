@@ -11,6 +11,7 @@ impl ExecutionRuntime {
         _: &crate::bootstrap::State,
         _: nocterm_hub_io::cloud::RunnerHubPeer,
         _: Option<Arc<crate::managed::BrokeredProviders>>,
+        _: Option<crate::sessions::reach::BootSsh>,
     ) -> Result<Self, RunnerError> {
         Err(RunnerError::Platform)
     }

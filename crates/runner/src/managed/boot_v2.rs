@@ -1,6 +1,8 @@
-//! Boot document version 2: the managed document of a runner whose chat tokens
-//! arrive on the control channel. It is boot v1 without `provider.token`, plus
-//! the pricing ceilings the runner applies to every model (ADR 0123).
+//! Boot document versions 2 and 3: the managed document of a runner whose chat tokens
+//! arrive on the control channel. Version 2 is boot v1 without `provider.token`, plus
+//! the pricing ceilings the runner applies to every model (ADR 0123). Version 3 adds
+//! `ssh_egress`, the addresses the host's SSH connections come from, which chat
+//! certificate requests state; version 2 means no egress (ADR 0137).
 use super::{
     MAX_BOOT_BYTES, Shape, SshTarget, check_shape,
     policy::{ManagedPolicy, PolicyDocument},
@@ -15,8 +17,10 @@ use nocterm_cloud_model::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-/// The only format version of this document.
+/// The format version without SSH egress.
 const BOOT_VERSION: u32 = 2;
+/// The format version that states the host's SSH egress.
+const BOOT_VERSION_WITH_EGRESS: u32 = 3;
 
 /// Maps the provider kind a boot document names to the engine's. The contract reads the
 /// canonical spelling and the legacy `anthropic` the web panel used to seal.
@@ -59,6 +63,9 @@ struct Document {
     /// Absent means every tool, the existing approval rule and no extra limits.
     #[serde(default)]
     policy: Option<Box<PolicyDocument>>,
+    /// Boot v3 only: one to eight IP addresses or CIDRs.
+    #[serde(default)]
+    ssh_egress: Option<Vec<String>>,
 }
 
 /// A validated boot v2 document. It holds no secret.
@@ -80,8 +87,14 @@ impl BootV2 {
         Self::prepare(document)
     }
     fn prepare(mut document: Document) -> Result<Self, RunnerError> {
-        if document.version != BOOT_VERSION {
-            return Err(RunnerError::Value("boot.version"));
+        match (document.version, &document.ssh_egress) {
+            (BOOT_VERSION, None) => {}
+            (BOOT_VERSION_WITH_EGRESS, Some(egress))
+                if crate::sessions::reach::valid_egress(egress) => {}
+            (BOOT_VERSION | BOOT_VERSION_WITH_EGRESS, _) => {
+                return Err(RunnerError::Value("boot.ssh_egress"));
+            }
+            _ => return Err(RunnerError::Value("boot.version")),
         }
         check_shape(&Shape {
             identity: [&document.instance, &document.agent, &document.lease],
@@ -130,6 +143,17 @@ impl BootV2 {
     /// The agent this seat runs, as its chat summaries name it.
     pub(crate) fn agent(&self) -> &str {
         &self.document.agent
+    }
+    /// The SSH targets the host lets the agent reach, as host, port and user.
+    pub(crate) fn ssh_targets(&self) -> impl Iterator<Item = (&str, u16, &str)> {
+        self.document
+            .ssh_targets
+            .iter()
+            .map(|target| (target.host.as_str(), target.port, target.user.as_str()))
+    }
+    /// The host's SSH egress; empty for boot v2.
+    pub(crate) fn ssh_egress(&self) -> &[String] {
+        self.document.ssh_egress.as_deref().unwrap_or_default()
     }
     pub(crate) fn instructions(&self) -> &str {
         &self.document.instructions
@@ -233,6 +257,9 @@ mod tests {
         let mut v1 = document();
         v1["version"] = 1.into();
         assert!(read(&v1).is_err());
+        let mut v4 = document();
+        v4["version"] = 4.into();
+        assert!(matches!(read(&v4), Err(RunnerError::Value("boot.version"))));
         let mut zero = document();
         zero["provider"]["pricing"]["maximum_call_cost_micros"] = 0.into();
         assert!(matches!(
@@ -242,6 +269,40 @@ mod tests {
         let mut public = document();
         public["provider"]["base_url"] = "http://api.example.org/v1".into();
         assert!(read(&public).is_err());
+    }
+    #[test]
+    fn boot_v2_states_no_egress_and_boot_v3_states_its_addresses() {
+        let v2 = read(&document()).unwrap();
+        assert!(v2.ssh_egress().is_empty());
+        assert_eq!(v2.ssh_targets().collect::<Vec<_>>(), vec![("h", 22, "u")]);
+        let mut v3 = document();
+        v3["version"] = 3.into();
+        v3["ssh_egress"] = serde_json::json!(["203.0.113.7", "2001:db8::/64"]);
+        assert_eq!(
+            read(&v3).unwrap().ssh_egress(),
+            ["203.0.113.7", "2001:db8::/64"]
+        );
+    }
+    #[test]
+    fn egress_in_v2_none_in_v3_and_host_names_or_bad_prefixes_are_refused() {
+        let mut v2 = document();
+        v2["ssh_egress"] = serde_json::json!(["203.0.113.7"]);
+        let mut empty = document();
+        empty["version"] = 3.into();
+        let mut bad = Vec::new();
+        for entry in ["host.example", "10.0.0.0/33", "2001:db8::/129", ""] {
+            let mut value = empty.clone();
+            value["ssh_egress"] = serde_json::json!([entry]);
+            bad.push(value);
+        }
+        let mut many = empty.clone();
+        many["ssh_egress"] = serde_json::json!(vec!["10.0.0.1"; 9]);
+        for value in [v2, empty, many].iter().chain(&bad) {
+            assert!(matches!(
+                read(value),
+                Err(RunnerError::Value("boot.ssh_egress"))
+            ));
+        }
     }
     #[test]
     fn a_document_with_or_without_a_policy_parses_and_a_bad_policy_is_refused() {

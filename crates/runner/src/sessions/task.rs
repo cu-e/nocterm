@@ -89,6 +89,7 @@ impl SessionTask {
             scope.source(),
             authorizer,
             self.attempt.admission.allocation(),
+            self.setup.timer().now(),
         )?;
         let lifetime = NativeSessionLifetime {
             session: session.clone(),

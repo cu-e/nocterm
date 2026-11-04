@@ -7,6 +7,7 @@ pub(crate) mod config;
 mod login;
 #[cfg(target_os = "linux")]
 mod publication;
+pub(crate) mod reach;
 #[cfg(target_os = "linux")]
 mod resources;
 #[cfg(target_os = "linux")]

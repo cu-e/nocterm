@@ -12,6 +12,7 @@ use crate::{
     sessions::{
         ConfiguredSessionTargets, ContainedApproval, NativeSessionBroker, SessionBrokerSetup,
         SessionCapacity, SessionResources,
+        reach::{BootSsh, reach},
     },
 };
 use nocterm_agent_engine::ConfiguredProviderCatalog;
@@ -27,13 +28,14 @@ use nocterm_cloud_runner::{
     DurableRunJournal, DurableSnapshotPublication, NativeToolTimer,
     coordinator::{
         CoordinatorExecution, CoordinatorPublication, CoordinatorServices, CoordinatorSessions,
-        CoordinatorStorage, CoordinatorSummaries, RunCoordinator, ToolApprovalPolicy,
+        CoordinatorSsh, CoordinatorStorage, CoordinatorSummaries, RunCoordinator,
+        ToolApprovalPolicy,
     },
 };
 use nocterm_hub_io::cloud::{
     InboxResume, RunnerArgumentFingerprint, RunnerChatDirectory, RunnerChatHost,
     RunnerChatRetirement, RunnerCommandAttachments, RunnerHubPeer, RunnerInbox, RunnerInboxOptions,
-    RunnerInboxPrincipal, RunnerProviderCredentialSource,
+    RunnerInboxPrincipal, RunnerProviderCredentialSource, RunnerSshCertificates,
 };
 use nocterm_local::SystemClock;
 use nocterm_ssh::{SshConfig, SshTransport};
@@ -153,11 +155,13 @@ pub(super) async fn compose(
     state: &State,
     peer: RunnerHubPeer,
     brokered: Option<Arc<BrokeredProviders>>,
+    boot_ssh: Option<BootSsh>,
 ) -> Result<ExecutionRuntime, RunnerError> {
     let ExecutionSetup {
         configuration,
         targets,
         budgets,
+        ssh_egress,
     } = setup;
     let handle = tokio::runtime::Handle::current();
     let timer: Arc<NativeToolTimer> = Arc::new(NativeToolTimer::new(handle.clone()));
@@ -168,7 +172,8 @@ pub(super) async fn compose(
     let local = configuration.prepare_containment(state.directory()).await?;
     let ssh = ssh_transport(state)?;
     let destination = targets.default_destination()?;
-    let targets = targets.build(binding.clone(), &local, ssh)?;
+    let ssh_access = ssh_access(state, reach(&targets, ssh_egress, boot_ssh)?);
+    let targets = targets.build(binding.clone(), &local, ssh, ssh_access.clone())?;
     let approval = approval_policy(brokered.as_ref(), &targets);
 
     let (attachments, inbox) = ingress(state, &timer, &budgets, destination)?;
@@ -208,7 +213,8 @@ pub(super) async fn compose(
         grants,
     )?;
     let execution = execution(binding, providers, &broker, &journal, &budgets, approval)?
-        .with_retirement(retirement(state, &peer));
+        .with_retirement(retirement(state, &peer))
+        .with_ssh(ssh_access);
     let services = CoordinatorServices::new(
         source,
         storage,
@@ -258,6 +264,19 @@ fn execution(
         Some(policy) => execution.with_approval_policy(policy),
         None => execution,
     })
+}
+
+/// Chat SSH bindings: rows in the same journal, certificates read under the binding's CA
+/// and the runner's reach (ADR 0137).
+fn ssh_access(
+    state: &State,
+    reach: nocterm_cloud_model::ssh_access::SshReach,
+) -> Arc<CoordinatorSsh> {
+    Arc::new(CoordinatorSsh::new(
+        Arc::new(state.journal()),
+        Arc::new(RunnerSshCertificates),
+        reach,
+    ))
 }
 
 /// Deleted chats are announced to the same hub peer, which may reclaim their capacity.

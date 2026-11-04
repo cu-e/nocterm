@@ -1,16 +1,22 @@
 //! Trusted native targets; signed fingerprints select, never construct, I/O.
+//!
+//! An SSH target signs in with a device's one-use consent proof or, without one, with
+//! the chat's in-memory key and the certificate a device issued for that bound server
+//! (ADR 0137). Without an active certificate such a request waits for a device.
 use nocterm_cloud_model::{
     authority::{AuthenticationBinding, TargetBinding},
     coordinator::{CoordinatorError, SessionRequest, SessionStartup},
+    identity::Timestamp,
     journal::JournalCatalogBinding,
     login::SessionLoginAuthorizer,
+    ssh_access::{ChatSshCredentials, SshEndpoint},
 };
 use nocterm_core::{SharedCause, allocation::AllocationLease};
 use nocterm_local::ContainedLocal;
 use nocterm_session::{
     Auth, ConnectRequest, ConnectionOpenOptions, ConnectionSource, PtySize, Session, ShellLaunch,
 };
-use nocterm_ssh::{SshTransport, proof::SessionLoginAttempt};
+use nocterm_ssh::{CertificateLogin, SshTransport, proof::SessionLoginAttempt};
 use nocterm_ssh_keys::PublicKeyText;
 use std::sync::Arc;
 
@@ -19,6 +25,7 @@ pub(crate) const TARGET_CAPTURE_BYTES: usize = 64 * 1024;
 pub(crate) struct ConfiguredSessionTargets {
     binding: JournalCatalogBinding,
     entries: Vec<ConfiguredSessionTarget>,
+    credentials: Option<Arc<dyn ChatSshCredentials>>,
 }
 pub(crate) struct ConfiguredSessionTarget {
     target: TargetBinding,
@@ -132,7 +139,16 @@ impl ConfiguredSessionTargets {
                 return Err(CoordinatorError::Conflict);
             }
         }
-        Ok(Self { binding, entries })
+        Ok(Self {
+            binding,
+            entries,
+            credentials: None,
+        })
+    }
+    /// Lets SSH targets sign in with the chats' certificates (ADR 0137).
+    pub(crate) fn with_credentials(mut self, credentials: Arc<dyn ChatSshCredentials>) -> Self {
+        self.credentials = Some(credentials);
+        self
     }
     /// The targets that run inside this runner's own containment. Every other
     /// target is a remote machine the runner does not contain.
@@ -152,6 +168,7 @@ impl ConfiguredSessionTargets {
         source: ConnectionSource,
         authorizer: Option<Arc<dyn SessionLoginAuthorizer>>,
         allocation: &AllocationLease,
+        now: Timestamp,
     ) -> Result<Session, CoordinatorError> {
         if !self.binding.contains(&request.binding().run().stream()) || !source.is_restricted() {
             return Err(CoordinatorError::StaleSource);
@@ -190,9 +207,17 @@ impl ConfiguredSessionTargets {
                 request: connect,
                 host,
             } => {
-                let consent = request
-                    .ssh_consent()
-                    .ok_or(CoordinatorError::InvalidCommand)?;
+                let Some(consent) = request.ssh_consent() else {
+                    if authorizer.is_some() {
+                        return Err(CoordinatorError::Conflict);
+                    }
+                    let login = self.certificate(request, &target.target, connect, host, now)?;
+                    return Ok(transport.open_certificate(
+                        (**connect).clone(),
+                        ConnectionOpenOptions::new(source),
+                        login,
+                    ));
+                };
                 let attempt = SessionLoginAttempt::new(
                     consent.clone(),
                     connect.target.clone(),
@@ -209,6 +234,42 @@ impl ConfiguredSessionTargets {
                 ))
             }
         }
+    }
+}
+impl ConfiguredSessionTargets {
+    /// The chat's certificate login for this configured target, when one is active.
+    fn certificate(
+        &self,
+        request: &SessionRequest,
+        target: &TargetBinding,
+        connect: &ConnectRequest,
+        host: &PublicKeyText,
+        now: Timestamp,
+    ) -> Result<CertificateLogin, CoordinatorError> {
+        let endpoint = SshEndpoint {
+            host: connect.target.host.clone(),
+            port: connect.target.port,
+            user: connect.target.user.clone(),
+        };
+        let credential = self
+            .credentials
+            .as_ref()
+            .and_then(|credentials| {
+                credentials.credential(
+                    &request.binding().run().stream(),
+                    &endpoint,
+                    &target.host(),
+                    now,
+                )
+            })
+            .ok_or(CoordinatorError::NeedsUnlock)?;
+        CertificateLogin::new(
+            connect.target.clone(),
+            host,
+            credential.seed.expose(),
+            credential.certificate.as_bytes(),
+        )
+        .map_err(backend)
     }
 }
 fn validate_launch(

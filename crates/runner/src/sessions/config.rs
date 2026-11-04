@@ -93,12 +93,32 @@ impl SessionTargetConfiguration {
         let (target, authentication) = selected.bindings()?;
         Ok(RunDestination::new(target, authentication, None)?)
     }
+    /// The configured SSH targets as endpoints with their host key fingerprints.
+    pub(crate) fn ssh_endpoints(
+        &self,
+    ) -> Result<Vec<(nocterm_cloud_model::ssh_access::SshEndpoint, Fingerprint)>, RunnerError> {
+        self.validate()?;
+        let mut endpoints = Vec::new();
+        for entry in &self.targets {
+            if let ConnectorDocument::Ssh { host, port, .. } = &entry.connector {
+                let (target, _) = entry.bindings()?;
+                let endpoint = nocterm_cloud_model::ssh_access::SshEndpoint {
+                    host: host.clone(),
+                    port: *port,
+                    user: entry.principal.clone(),
+                };
+                endpoints.push((endpoint, target.host()));
+            }
+        }
+        Ok(endpoints)
+    }
     #[cfg(target_os = "linux")]
     pub(crate) fn build(
         &self,
         binding: JournalCatalogBinding,
         local: &ContainedLocal,
         ssh: Arc<SshTransport>,
+        credentials: Arc<dyn nocterm_cloud_model::ssh_access::ChatSshCredentials>,
     ) -> Result<Arc<ConfiguredSessionTargets>, RunnerError> {
         self.default_destination()?;
         let entries = self
@@ -106,7 +126,9 @@ impl SessionTargetConfiguration {
             .iter()
             .map(|entry| entry.build(local, ssh.clone()))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Arc::new(ConfiguredSessionTargets::new(binding, entries)?))
+        Ok(Arc::new(
+            ConfiguredSessionTargets::new(binding, entries)?.with_credentials(credentials),
+        ))
     }
 }
 impl ConnectorDocument {
