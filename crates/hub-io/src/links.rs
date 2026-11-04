@@ -2,9 +2,7 @@
 
 use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use futures::FutureExt as _;
 use futures::channel::oneshot;
@@ -17,7 +15,6 @@ use nocterm_hubs_model::{
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
-use tokio::task::AbortHandle;
 
 use crate::account::{Accounts, KeyFlow};
 use crate::classify::{probe_failed, remote};
@@ -60,30 +57,6 @@ pub struct HubLinks {
 #[derive(Debug, thiserror::Error)]
 #[error("the hub connection threads have stopped")]
 struct Stopped;
-
-/// The result of a task on the adapter's runtime; abandons the task when dropped.
-struct Call<T> {
-    result: oneshot::Receiver<Result<T, HubError>>,
-    task: Option<AbortHandle>,
-}
-
-impl<T> Future for Call<T> {
-    type Output = Result<T, HubError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.result
-            .poll_unpin(cx)
-            .map(|received| received.unwrap_or_else(|_| Err(remote(Stopped))))
-    }
-}
-
-impl<T> Drop for Call<T> {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-    }
-}
 
 impl HubLinks {
     pub fn start(config: HubLinksConfig) -> Result<Arc<Self>, HubStartError> {
@@ -136,29 +109,13 @@ impl HubLinks {
         (self.handle.clone(), Arc::clone(&self.pool))
     }
 
-    /// Runs `work` on the adapter's threads.
-    fn run<T: Send + 'static>(
-        &self,
-        work: impl Future<Output = Result<T, HubError>> + Send + 'static,
-    ) -> Call<T> {
-        let (sender, result) = oneshot::channel();
-        let task = self
-            .handle
-            .spawn(async move {
-                let _ = sender.send(work.await);
-            })
-            .abort_handle();
-        Call {
-            result,
-            task: Some(task),
-        }
-    }
-
     fn run_boxed<T: Send + 'static>(
         &self,
         work: impl Future<Output = Result<T, HubError>> + Send + 'static,
     ) -> HubFuture<T> {
-        Box::pin(self.run(work))
+        crate::task::spawn(&self.handle, work)
+            .map(|result| result.unwrap_or_else(|| Err(remote(Stopped))))
+            .boxed()
     }
 }
 
