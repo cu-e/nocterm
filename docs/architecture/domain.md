@@ -4,7 +4,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
-`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-cloud-model`, `nocterm-monitor`,
+`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-cloud-model`, `nocterm-cloud-conversation-model`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
 `nocterm-vault`, `nocterm-ssh-keys`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
@@ -528,6 +528,18 @@ replace the existing certificate fingerprint and address trust rules.
 
 A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-environments.md)), so the crate holds no record of open windows.
 
+
+## Cloud conversations
+
+`nocterm-cloud-conversation-model` is what a desktop window shows of one Cloud chat: the
+neutral `CloudTranscript` (rows, runs, approvals, this device's pending commands) changed only
+by `ConversationDelta`s, the `Freshness` the device core reports (`Current`, `Unconfirmed` for a
+runner that did not answer, `Withheld`), the `ConversationAction`s a person sends, and the
+`CloudConversation` port with its typed `CloudConversationError`. It holds no protocol types and
+does no I/O; `nocterm-hub-io` implements the port over the contract's device core and
+`nocterm-cloud-chat` presents it. Its `test-support` `FakeConversation` scripts deltas,
+freshness and command outcomes for consumers' tests
+([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)).
 
 ## Cloud run contracts
 

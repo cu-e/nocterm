@@ -464,7 +464,8 @@ Native identity files do not become public wire formats, and generic signing or
 private-key access is not an application port.
 
 `nocterm-hub-io` is the only crate that speaks the hub protocol. It uses the hub contract
-(`nocterm-hub-client`, `nocterm-hub-proto`, `nocterm-keys`), a public repository outside this
+(`nocterm-hub-client`, `nocterm-hub-grpc`, `nocterm-hub-proto`, `nocterm-keys`,
+`nocterm-cloud-device`), a public repository outside this
 workspace that is pinned by commit, and implements the `HubTrust`, `HubSignIn` and
 `HubAdminKeys` ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`. `tonic` and
 `prost` values stop at its boundary. The device key and tokens of each hub are kept in one
@@ -597,11 +598,33 @@ empty head and the catalog row, so a chat the device just created becomes visibl
 grant changes nothing ([ADR 0122](../adr/0122-cloud-chat-creation-protocol.md)).
 
 A prompt the runner accepts only queues its run; the run starts when a signed inference grant
-for it installs. The device issues that grant: the chat sends one `IssueGrant` inference
-command when the runner accepts the person's own prompt, with the prompt's own bounds, and
-an Allow action issues it for any other waiting run. `ConversationPromptPolicy` builds the
-payload, so the grant never exceeds the configured per-run limits
+for it installs. The device issues that grant: the device core's `OpenChat` asks for it once
+(`AllowRun`) when the runner accepts the person's own prompt, the conversation delivers it,
+and an Allow action issues it for any other waiting run. The core's prompt policy builds the
+payload, so the grant never exceeds the per-run limits
 ([ADR 0129](../adr/0129-the-device-allows-a-queued-run-to-use-the-model.md)).
+
+### Cloud device side
+
+The device side of Cloud chats is the contract's sans-I/O `nocterm-cloud-device`, run by
+`nocterm-hub-io::cloud_device`. A `DeviceAccount` copies the unlocked account keys for the
+core, discovers the account's session with `Discover` (hub trust, the hub's capability proof,
+trusted runners) and drops it when the account's keys change. The `driver` runs a flow,
+starting every `Effect` it asks for through an `EffectRunner` and answering each with its
+input or its replay and Watch frames in arrival order; `effects` performs them over the
+hub's Store, Cloud and agent services and signs with the hub client's `sign_cloud`. Raw Cloud calls
+carry a request proof `rpc` signs with the device key of the adapter's credential file until
+the contract's client offers a transport for core-built requests. `DeviceConversation`
+implements the `CloudConversation` port with one task per open chat over `OpenChat` and the
+`Deliver` flows of its commands; it never polls (it probes on open, on Watch reconnect, after
+its own receipts and on Refresh), keeps the core's sealed `VerifiedChat` checkpoints and its
+commands' exact publications in private files under the chats root, and publishes a
+publication left from an earlier run again with the same bytes. `cloud_chats` implements
+`CloudChatLauncher` with `ListChats` (runner directories confirmed by catalogs, kept as sealed
+`VerifiedDirectory` checkpoints), `CreateChat` and, for an own-agent chat, `ProviderLease`.
+Runner enrolment keeps writing the account's hub-trust and registry objects through the
+contract's record layouts
+([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)).
 
 ### Native account admission
 

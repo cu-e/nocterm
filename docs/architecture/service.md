@@ -399,3 +399,16 @@ providers recheck their retained source immediately before capability effects.
 ### Original recipients of account confirmations
 
 `nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. The existing acknowledgement flow remains unchanged. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+
+## Cloud chats
+
+`nocterm-cloud-chat` owns one GPUI entity per open Cloud chat over the `CloudConversation`
+port of `nocterm-cloud-conversation-model`. The entity subscribes while a window shows the chat
+or a command of it is on its way, applies each delta to its `CloudTranscript`, follows it with
+the thread the renderer draws (only rows from the first changed one are rebuilt), shows the
+freshness the device core reports after its first round, and presents this device's pending
+prompts (ADR 0134): a prompt shows at once, follows its command's state, and a refused or
+unanswered one stays until it is sent again as a new prompt or dismissed. Actions captured for
+one run never act on a run that replaced it. `CloudChatInstallation` keeps the bounded registry
+of chats and window observers, sharing the Local installation's history admission
+([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)).

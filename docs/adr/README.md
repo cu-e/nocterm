@@ -113,7 +113,7 @@ acceptance; a later record supersedes an earlier one.
 | [0115](0115-retained-physical-terminals.md) | Physical terminals outlive immutable run views |
 | [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix |
 | [0117](0117-contained-local-tool-processes.md) | Cloud local tools receive an explicit contained process capability |
-| [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account |
+| [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account (device-flow freshness and work leases superseded by 0136) |
 | [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers |
 | [0120](0120-cloud-agent-catalog-in-the-chat-menu.md) | The Cloud agent catalog lives in the new-chat menu |
 | [0121](0121-managed-pools-as-a-trusted-gateway.md) | Managed pools are a trusted gateway with per-lease broker tokens |
@@ -124,10 +124,11 @@ acceptance; a later record supersedes an earlier one.
 | [0126](0126-own-runner-provider-lease.md) | A device leases a personal agent's key to the own runner |
 | [0127](0127-managed-runner-agent-policy.md) | The managed runner enforces the agent definition policy from boot v2 |
 | [0128](0128-agents-transfer-files-through-the-shared-transfer-runtime.md) | Agents transfer files through the shared transfer runtime, relaying between servers |
-| [0129](0129-the-device-allows-a-queued-run-to-use-the-model.md) | The device allows a queued Cloud run to use the model |
+| [0129](0129-the-device-allows-a-queued-run-to-use-the-model.md) | The device allows a queued Cloud run to use the model (projection placement superseded by 0136) |
 | [0130](0130-cloud-agents-only-in-hub-windows.md) | Cloud agents are offered only in the window of their hub |
 | [0131](0131-one-container-watch-per-host-connection.md) | One container watch per host connection, relisted only for listing changes |
 | [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local |
-| [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat |
-| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript |
+| [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat (row titles and projection superseded by 0136) |
+| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript (projection placement superseded by 0136) |
 | [0135](0135-the-runner-publishes-chat-summaries-journal-v7.md) | The runner publishes signed chat summaries to its directory; journal v7 |
+| [0136](0136-the-device-side-runs-on-the-contract-device-core.md) | The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter |
