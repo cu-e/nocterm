@@ -58,6 +58,33 @@ def resulting_text(payload):
     return text
 
 
+def applied_edits(payload):
+    """Exact fragments of a successful Edit/MultiEdit; Write has no old text."""
+    data = payload.get("tool_input") or {}
+    if payload.get("tool_name") == "Edit":
+        return [data]
+    if payload.get("tool_name") == "MultiEdit":
+        return data.get("edits")
+    return None
+
+
+def previous_text(payload, text):
+    """Undo only unambiguous replacements to recover a post-edit predecessor.
+
+    Repeated replacement text, deletions and replace_all are ambiguous without
+    a pre-edit snapshot. Leave them unknown rather than guessing the edit site.
+    """
+    edits = applied_edits(payload)
+    if not edits:
+        return None
+    for edit in reversed(edits):
+        old, new = edit.get("old_string"), edit.get("new_string")
+        if old is None or not new or edit.get("replace_all") or text.count(new) != 1:
+            return None
+        text = text.replace(new, old, 1)
+    return text
+
+
 def deny(event_name, reason):
     print(json.dumps({
         "hookSpecificOutput": {

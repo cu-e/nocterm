@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks that the committed Claude Code configuration in .claude/ stays coherent.
+"""Checks repository agent instructions and the configuration in .claude/.
 
 Skills and agents name each other, cite repository paths and are loaded by
 frontmatter. A renamed skill, a moved file or a malformed header fails silently
@@ -9,13 +9,18 @@ at runtime, so this check fails instead:
   1536-character limit; procedure skills (no `argument-hint`) are hidden from
   the menu with `user-invocable: false`; workflow skills take `$ARGUMENTS`;
 - every skill an agent preloads with `skills:` exists;
-- relative Markdown links and cited repository paths resolve;
+- relative Markdown links, local heading anchors and cited repository paths resolve,
+  including in AGENTS.md, CLAUDE.md and CONTRIBUTING.md;
+- CLAUDE.md's file imports resolve;
 - every hook command in .claude/settings.json names an existing script.
 """
+import html
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 DESCRIPTION_LIMIT = 1536
 PATH_ROOTS = ("crates/", "src/", "docs/", "xtask/", "scripts/", ".claude/", ".github/")
@@ -24,7 +29,51 @@ EPHEMERAL = (".claude/plans/", ".claude/worktrees/")
 CITED_PATH = re.compile(r"`([^`\s]+)`")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 HOOK_SCRIPT = re.compile(r"\$CLAUDE_PROJECT_DIR/([^\"'\s]+)")
-CODE = re.compile(r"```.*?```|`[^`]*`", re.DOTALL)
+INLINE_CODE = re.compile(r"(`+)(.*?)\1", re.DOTALL)
+ROOT_DOCUMENTS = ("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md")
+
+
+def outside_fences(text):
+    """Keep prose outside Markdown backtick/tilde fences, including unclosed ones."""
+    lines, fence = [], None
+    for line in text.splitlines():
+        marker = re.match(r" {0,3}(`{3,}|~{3,})(.*)$", line)
+        if fence:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                fence = None
+        elif marker:
+            fence = marker[1]
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def markdown_anchors(text):
+    """GitHub-style anchors for ATX headings and explicit HTML anchors in prose."""
+    text = outside_fences(text)
+    anchors, headings = set(), set()
+    for tag in re.findall(r"<[^>]+>", INLINE_CODE.sub("", text)):
+        for match in re.finditer(r"\b(id|name)\s*=\s*([\"'])(.*?)\2", tag, re.IGNORECASE):
+            if match[1].lower() == "id" or re.match(r"<a\s", tag, re.IGNORECASE):
+                anchors.add(html.unescape(match[3]))
+    for line in text.splitlines():
+        heading = re.match(r" {0,3}#{1,6}(?:[ \t]+(.*?)|[ \t]*)$", line)
+        if not heading:
+            continue
+        title = re.sub(r"[ \t]+#+[ \t]*$", "", heading[1] or "").strip()
+        title = re.sub(r"!?\[([^\]]+)\]\([^)]*\)", r"\1", title)
+        title = INLINE_CODE.sub(lambda match: html.escape(match[2]).replace("_", "&#95;"), title)
+        title = re.sub(r"(?<!\w)_{1,2}(.+?)_{1,2}(?!\w)", r"\1", title)
+        title = html.unescape(re.sub(r"<[^>]+>", "", title)).lower()
+        slug = "".join(character for character in title
+                       if character in "-_ " or unicodedata.category(character)[0] in "LNM")
+        slug = slug.replace(" ", "-")
+        candidate, suffix = slug, 0
+        while candidate in headings:
+            suffix += 1
+            candidate = f"{slug}-{suffix}"
+        headings.add(candidate)
+    return anchors | headings
 
 
 def frontmatter(text):
@@ -65,14 +114,30 @@ def cited_paths(text):
 
 def check_document(root, path, text):
     errors = []
-    for target in LINK.findall(CODE.sub("", text)):
-        if re.match(r"[a-z]+:", target) or target.startswith("#"):
+    prose = outside_fences(text)
+    for target in LINK.findall(INLINE_CODE.sub("", prose)):
+        if re.match(r"[a-zA-Z][\w+.-]*:", target) or target.startswith("//"):
             continue
-        if not (path.parent / target.split("#")[0]).exists():
+        link = urlsplit(target)
+        destination = path.parent / unquote(link.path) if link.path else path
+        if not destination.exists():
             errors.append(f"{path.relative_to(root)}: broken link {target}")
-    for cited in cited_paths(text):
+        elif link.fragment and destination.suffix.lower() == ".md" and destination.is_file():
+            content = text if destination == path else destination.read_text()
+            if unquote(link.fragment) not in markdown_anchors(content):
+                errors.append(f"{path.relative_to(root)}: broken anchor {target}")
+    for cited in cited_paths(prose):
         if not (root / cited).exists():
             errors.append(f"{path.relative_to(root)}: cited path {cited} does not exist")
+    return errors
+
+
+def check_imports(root, path, text):
+    """Check CLAUDE.md's standalone local @file imports."""
+    errors = []
+    for target in re.findall(r"^\s*@([^\s]+)\s*$", outside_fences(text), re.MULTILINE):
+        if not (path.parent / target).is_file():
+            errors.append(f"{path.relative_to(root)}: imported file {target} does not exist")
     return errors
 
 
@@ -133,6 +198,13 @@ def check(root):
     directories = sorted(path for path in skills_dir.iterdir() if path.is_dir()) if skills_dir.exists() else []
     skills = {directory.name for directory in directories}
     errors = []
+    for name in ROOT_DOCUMENTS:
+        path = root / name
+        if path.is_file():
+            text = path.read_text()
+            errors += check_document(root, path, text)
+            if name == "CLAUDE.md":
+                errors += check_imports(root, path, text)
     for directory in directories:
         errors += check_skill(root, directory)
         for extra in sorted(directory.glob("*.md")):

@@ -57,7 +57,7 @@ acceptance; a later record supersedes an earlier one.
 | [0056](0056-owner-settings-pages.md) | Settings controls and pure schemas live with their actual owners |
 | [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition (page list and navigation superseded in part by 0086, Appearance sections by 0087) |
 | [0058](0058-neutral-agent-protocol-boundary.md) | Agent protocol types stop at the ACP adapter |
-| [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards |
+| [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards (orchestration/resources superseded by 0132; procedures refined by 0135) |
 | [0060](0060-ssh-jump-host-routes.md) | SSH jump-host routes are resolved from saved profiles before opening and established by the SSH adapter |
 | [0061](0061-agent-profiles-and-directory.md) | Agent profiles, an injected catalog and one directory of available agents |
 | [0062](0062-terminal-contracts-below-the-workspace.md) | Terminal and connection contracts live below the window shell |
@@ -127,6 +127,7 @@ acceptance; a later record supersedes an earlier one.
 | [0129](0129-the-device-allows-a-queued-run-to-use-the-model.md) | The device allows a queued Cloud run to use the model |
 | [0130](0130-cloud-agents-only-in-hub-windows.md) | Cloud agents are offered only in the window of their hub |
 | [0131](0131-one-container-watch-per-host-connection.md) | One container watch per host connection, relisted only for listing changes |
-| [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local |
+| [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local (supersedes process/resource rules of 0059; document organization refined by 0135) |
 | [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat |
 | [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript |
+| [0135](0135-responsibility-and-cost-guided-agent-work.md) | Agent procedures verify responsibility and runtime cost; gate owns the detailed check matrix |

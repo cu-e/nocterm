@@ -94,6 +94,13 @@ fail-closed policy rejects `include!` source, including literal, dynamic and
 locally aliased calls: declare a Rust module instead. Passing the
 inventory does not waive the design rules.
 
+Ownership review traces authoritative state, transitions, lifetime and late
+asynchronous delivery. It applies beyond the measured feature/service public
+fields and impl-file threshold. Performance review covers affected rendering,
+repeated work and cache bounds/invalidation; source metrics cannot establish
+either responsiveness or correct reuse. Procedures are linked from
+[the agent guide](../../AGENTS.md#performance).
+
 ## Crate cards
 
 Every package under `crates/` starts its crate root (library, else binary) with
@@ -120,6 +127,9 @@ use together, coordinators that reach most of the state, fields only they use,
 cross-cluster methods and methods without direct field access. The survey is syntactic and
 keys types by name; it refuses a matrix for an ambiguous name and is a planning
 aid, not a check.
+Co-access clusters are hypotheses: a shared invariant and lifetime must justify
+an extracted owner. Limits are ceilings, not desired file/type sizes; unrelated
+responsibilities separate even below the warning thresholds.
 
 ## Isolation of the plugin crates
 

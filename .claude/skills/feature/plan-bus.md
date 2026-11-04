@@ -4,6 +4,9 @@ Use one compact document under ignored `.claude/plans/<slug>/` by default.
 Record the goal, branch/base, scope, approach, material decisions and risks,
 checks/results and remaining work. Scale detail to the task. No plan files are
 required for trivial edits; AGENTS.md governs authorization and completion.
+For ownership changes include state, invariant, transitions and lifetime. For
+hot-path changes include the representative workload and cost evidence when
+applicable; these are short sections, not additional stages or mandatory files.
 
 Delegates receive the task and relevant context or a plan location explicitly.
 Do not assume either that every tool shares history or that every delegate

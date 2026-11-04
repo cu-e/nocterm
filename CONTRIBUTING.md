@@ -87,10 +87,13 @@ Pick the type by what the *user of the software* sees, not by which files change
 ## Code size
 
 A Rust source file may have at most 800 lines, tests included. `cargo xtask architecture`
-(run in CI) enforces it. When a file approaches the limit, split it by responsibility into
-child modules (`foo.rs` + `foo/part.rs`); move a large `mod tests` into `foo/tests.rs`.
-For production code, an extracted module owns a responsibility and its own type;
-moving more methods of the same growing type into another file is not an extraction.
+(run in CI) enforces this ceiling; it is not a target size. Keep files focused on
+one coherent responsibility. Separate independent responsibilities as they emerge,
+even below warning thresholds, into named child modules; move a large `mod tests`
+into `foo/tests.rs`. Stateful extractions own their state and transitions; pure
+logic can be a cohesive module of functions without an artificial owner type.
+Moving more methods of the same growing type into another file is not an extraction.
+Do not fragment a coherent module just to meet an arbitrary preferred line count.
 The legacy exception list `xtask/oversized-files.toml` is empty; never add an entry to make
 a check pass.
 
@@ -119,13 +122,19 @@ coherent edit before checking it. Do not run a fixed build/lint/test/architectur
 bundle after every edit or extraction. A test compiles its target; running both
 `cargo check` and `cargo build` first is usually redundant.
 
-At completion, follow the input-based [Definition of done](AGENTS.md#definition-of-done).
+At completion, follow the input-based [completion matrix](.claude/skills/gate/SKILL.md#definition-of-done).
 Scoped changes use affected targets and consumers; broad shared changes or
 uncertain workspace impact need full workspace verification. Required CI is
 independent. Reuse valid results and rerun a failing check first; keep evidence
 tied to its source/configuration. The [gate procedure](.claude/skills/gate/SKILL.md)
 provides examples. Documentation and script-only work use relevant links,
 script tests and configuration validators unless they affect Rust/generator inputs.
+
+For changed hot paths, account for work per event, frequency and retained memory.
+Rendering and input callbacks consume prepared state; expensive work has bounded
+background execution. Cache repeated work only with clear keys, invalidation,
+bounds and lifecycle. Verify affected interaction and measure optimization claims
+with representative before/after workloads; see the [performance procedure](.claude/skills/performance/SKILL.md).
 
 ### Cargo resources
 
