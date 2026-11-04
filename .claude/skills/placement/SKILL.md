@@ -7,7 +7,7 @@ user-invocable: false
 # Placement
 
 Input: one responsibility in a sentence ("parse container listings", "retain
-chat drafts across restarts"). Output: `10-placement.md` in the plan directory
+chat drafts across restarts"). Output: a compact plan section or `10-placement.md`
 (contract: `.claude/skills/feature/plan-bus.md`).
 
 The rules are AGENTS.md "Where code goes" and docs/ARCHITECTURE.md layers; this
@@ -55,10 +55,12 @@ its type owns (never `utils`, `helpers`, `common`, `misc`).
 Existing mixed responsibilities are migration debt, not precedent: "agent
 already does X" is not a reason to put more X there.
 
-## 4. Stop conditions
+## 4. Boundary decisions
 
-- The code needs a dependency its layer forbids → `escalate` with the options
-  (move a narrow contract down a layer, split the responsibility, new crate).
+- If the code needs a dependency its layer forbids, resolve the boundary within
+  the authorized design (move a narrow contract down, split the responsibility,
+  or choose a fitting crate). Ask only when a material choice or scope change
+  remains; never introduce a forbidden dependency.
 - The decision changes a crate boundary or a port between layers → mark
   "ADR needed" for the `docs-adr` skill.
 
@@ -74,4 +76,4 @@ already does X" is not a reason to put more X there.
 - Module: <module name> — owns <state/behaviour>
 ```
 
-End with the Result block from the plan contract.
+Report placement and any material unresolved decision in the shared plan.

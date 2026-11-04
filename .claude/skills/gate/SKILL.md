@@ -1,121 +1,60 @@
 ---
 name: gate
-description: Choose scoped checks during development and run one centralized final verification of the integrated task. Reuse valid results; record scope, failures and pending final checks in 50-gate.md. No fixed per-edit or per-step bundle.
+description: Select local checks by changed inputs, reuse valid evidence, and finish the applicable Definition of done without per-edit or per-stage command bundles.
 user-invocable: false
 ---
 
 # Verification
 
-Follow AGENTS.md "Verification policy" and "Definition of done". Every Cargo
-command uses `.claude/hooks/cargo-serial.sh` (jobs2 and the shared lock).
-These are local agent-work rules; required CI checks still run independently.
-In older plans, read "quick" as scoped mode, not as a fixed command bundle.
+AGENTS.md's Verification policy and Definition of done are authoritative for
+scope, completion checks, fixtures and result reuse. Required CI is independent.
+Cargo resources follow CONTRIBUTING.md; the coordination helper is optional.
 
-## Ownership and timing
+## Select by the uncertainty
 
-- The orchestrator owns one queue and names the final-gate executor. Agents
-  request checks with their scope and reason; do not start independent full
-  pipelines or queue the same check while one is pending/running.
-- Finish a coherent edit before checking its source. Stop editing that source
-  and its manifests until the check finishes; unrelated work may continue.
-- There is no required bundle after every edit, step, extraction, subagent,
-  worktree or backlog slice. Use scoped checks during Build/Verify and fixes.
-- Full mode belongs to completion of the integrated task, after review fixes
-  and before Done. A partial handoff/review does not require it. Each changed
-  repository in a multi-repository task needs its own final evidence.
-
-## Scoped mode (choose by uncertainty)
-
-These are alternatives, not a sequence to execute in full:
-
-| Question/change | Smallest useful check |
+| Question/change | Useful scoped check |
 | --- | --- |
-| One reproduced regression or fixture fix | `cargo test -p <package> --lib <behavior-filter>` or the existing `--test <target> <filter>` |
-| A coherent behavior change in one owner | Its affected test target; expand to package tests if the affected behavior spans that package |
-| Compilation/API uncertainty | `cargo check -p <package> --lib` and affected consumers; omit if the selected test already compiles them |
-| A lint failure | `cargo clippy -p <package> --lib -- -D warnings` or the affected test/binary target |
-| Formatting | Format changed Rust files; defer the workspace format check to the final gate |
-| Owner shape/early warning | Inspect the diff/counts; use `cargo xtask survey <package> --type <Type>` when needed |
-| Skills/agent instructions only | `python3 scripts/check-claude-config.py`, links and stale references |
-| Other prose only | Links and stale references; no Cargo unless executable/generator inputs also changed |
+| Reproduced regression | One `cargo test -p <package> --lib <filter>` or existing integration target/filter |
+| Behavior spans an owner/package | Affected test targets and consumers |
+| API/compilation uncertainty | `cargo check -p <package> --lib` plus affected consumers, unless tests already compile them |
+| Lint failure | Clippy for the affected package/targets/features |
+| Rust formatting | Format changed sources; use `cargo fmt --all --check` for completion |
+| Ownership/guarded structure | Inspect changed counts; survey when useful; run architecture for affected guardrails |
+| Skills/agent instructions | Configuration validator, links and stale references |
+| Hooks/scripts | Their behavior tests and language syntax/configuration checks |
+| Prose only | Links/references; Cargo/generated checks only for affected generator inputs |
 
-Prefix the Cargo examples above with `.claude/hooks/cargo-serial.sh`.
-A test already builds its target: do not routinely run check, build, clippy and
-all package tests for the same small edit. Full architecture scans, workspace
-builds/tests, rustdoc, dependency and licensing audits are not per-step checks.
-Expand to a consumer/feature/platform when an API, dependency/feature graph or
-observed failure affects it; state the concrete reason rather than repeating a
-standard bundle. Batch generated-reference updates after their inputs settle.
+Finish a coherent edit before checking. Do not edit checked inputs while their
+check runs. A test already compiles its target; do not routinely precede it with
+both check and build. In parallel work, coordinate one executor and avoid
+queuing the same pending check twice.
 
-## Final mode (one integrated completion checkpoint)
+## Completion and failures
 
-The assigned executor runs the applicable AGENTS.md final checks:
+At integrated completion, choose the applicable AGENTS.md scope after review
+fixes. Broad shared changes, uncertain workspace impact or a user request need
+the full workspace suite listed there. A small change does not inherit that
+suite merely because a stage or worktree ended. Apply required plugin-feature,
+SSH/hub, guest, dependency/notice and vendor checks when their inputs change;
+confirm fixtures actually ran, rather than counting skipped/zero tests.
 
-```sh
-W=.claude/hooks/cargo-serial.sh
-$W cargo fmt --all --check
-$W cargo build --workspace --all-targets
-$W cargo clippy --workspace --all-targets -- -D warnings
-$W cargo test --workspace
-$W cargo xtask architecture
-$W cargo xtask docs --check
-```
+Rerun a failing target first. Preserve successful evidence when relevant
+source/configuration is unchanged; identify which results a fix invalidates.
+A new stage/report does not invalidate evidence. Reviewers inspect it and rerun
+only missing, stale or specifically suspect checks. Keep stable targets and
+investigate concrete stale artifacts before cleaning or touching all sources.
+Do not change checks, architecture limits or baselines to obtain a pass.
 
-Documentation/instruction-only tasks use scoped documentation checks instead.
-Add the applicable SSH/hub, user-plugin, SDK/example/guest and vendor checks
-specified in AGENTS.md and CONTRIBUTING.md. Do not run an optional matrix for
-unchanged inputs. Where compatible, enable required live fixtures in the final
-workspace test run rather than rebuilding the app with several package/feature
-selections; confirm the gated tests actually executed. Do not count skipped
-fixtures or zero matching tests as coverage.
+## Evidence
 
-| Additional changed inputs | Check at the relevant completion point |
-| --- | --- |
-| Dependencies/manifests | `cargo machete --skip-target-dir`; notice inputs/freshness as required by AGENTS.md |
-| Public Rust documentation | `cargo doc -p <affected-package> --no-deps`; expand only for affected cross-crate docs |
-| Hooks | `python3 scripts/test-claude-hooks.py` |
-| Skills/agent instructions | `python3 scripts/check-claude-config.py` |
-
-## Failures, reuse and caches
-
-- A failure stops that check chain. Reproduce/fix the failing target first,
-  then resume pending/invalidated checks; do not restart a pipeline at fmt/build
-  automatically. Do not fix lint thresholds, baselines or hooks to get a pass.
-- Keep a successful result when its relevant inputs/configuration are unchanged.
-  Record the worktree/source snapshot (HEAD and relevant uncommitted/untracked
-  changes), command, packages/targets/features and toolchain. A new stage or
-  report is not a new source snapshot. Never count an aborted/queued command as
-  executed or carry evidence across unrelated source/configurations.
-- A reviewer reads existing evidence. It reruns only a missing, stale or
-  specifically suspect check, not architecture/the whole suite by default.
-- For a final-gate fix, identify affected evidence explicitly. A dependency,
-  feature, shared API or cross-cutting change may invalidate broad coverage;
-  a prose edit does not invalidate compiled behavior. Do not claim Done with
-  required coverage still missing.
-- Keep one stable target directory per worktree. Do not routinely touch source
-  timestamps, clean caches or create another cold target. Investigate concrete
-  provenance/cache failures and invalidate only what is necessary.
-- Baseline delta must only decrease. Early warnings are advisory; inspect a
-  touched type near its limit with `responsibility-map` before growing it.
-
-## Output: `50-gate.md`
-
-One shared record is enough; append new evidence instead of cloning full gate
-reports for each agent. Use a compact table:
+One compact record in the plan or a shared `50-gate.md` is enough:
 
 ```text
-Scope: scoped | final; worktree/source snapshot; toolchain/features
-Owner/executor: <agent>
-Command | Packages/targets | Result | Log
-...
-Reused: <valid prior results and why they still cover this state>
-Pending final checks: <list | none>
-Baseline delta / touched early warnings: <facts | not checked yet>
-Not run: <check and input-based reason>
-Timing, if available: queue wait / build / test execution
+Command | Source/configuration and targets/features | Result | Log if needed
+Reused: <prior evidence and why it still applies>
+Pending/unavailable: <check, reason and scope limitation>
 ```
 
-Report what actually ran. A scoped PASS is not a full-gate PASS; deferred final
-checks are pending, not failures. End with the plan Result block; report a
-failed prerequisite/check as blocked until fixed, without launching a new full
-pipeline merely to change that status.
+Record the worktree/source snapshot, including relevant uncommitted/untracked
+inputs. Separate queue wait and execution time when available. Report scoped
+coverage as scoped; a completion pass does not assert a full-workspace pass.

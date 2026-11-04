@@ -1,43 +1,43 @@
-# Plan directory contract
+# Plans and handoffs
 
-Subagents start without context, so every workflow keeps its decisions in one
-ignored directory, `.claude/plans/<slug>/`, and each step reads what earlier
-steps wrote. Chat summaries are not a substitute: if a decision is not in the
-directory, the next step does not know it.
+Use one compact document under ignored `.claude/plans/<slug>/` by default.
+Record the goal, branch/base, scope, approach, material decisions and risks,
+checks/results and remaining work. Scale detail to the task. No plan files are
+required for trivial edits; AGENTS.md governs authorization and completion.
 
-| File | Written by | Contents |
-| --- | --- | --- |
-| `00-task.md` | workflow | task, workflow name, target branch (`master`/`dev`), feature branch, verification scope, **success metric** (from `cargo xtask survey`, e.g. "`Thread` fields 15 → ≤ 9; files ≥ 640 lines in `thread/`: 0") |
-| `10-placement.md` | `placement` | crate, layer, reason, card check, new-crate decision |
-| `20-map.md` | `responsibility-map` | survey facts, matrix interpretation, candidate owners with draft cards |
-| `30-design.md` | architect / workflow | owners, ports, errors, wiring, tests, docs/ADR, commit plan; approved by the user |
-| `40-steps.md` | implementer | ordered steps with `- [ ]` / `- [x]`, one transformation each, relevant scoped evidence or pending check |
-| `50-gate.md` | `gate` | shared scoped/final evidence, source/configuration, reused results, pending final checks, baseline delta |
-| `60-review.md` | `design-review` / reviewer | findings (`file:line`, severity, scenario, fix) and verdict |
+Delegates receive the task and relevant context or a plan location explicitly.
+Do not assume either that every tool shares history or that every delegate
+starts without it. Record durable decisions that the next owner needs; avoid
+copying the same evidence into several reports.
 
-Rules:
+For larger work, the following are optional sections or separate files:
 
-- Create the directory in the first step; never write plans into `docs/`.
-- Append, do not rewrite, earlier decisions; a changed decision records why.
-- A step is complete only when its file exists with the sections above filled.
-- A planning/build step does not require a fresh full gate. One shared
-  verification record follows the integrated task across agents and slices;
-  command frequency and result reuse follow the `gate` skill. Record queue
-  wait separately from build/test execution when available.
+| Section / suggested file | Useful content |
+| --- | --- |
+| Task / `00-task.md` | goal, branch/base, scope, behavior or migration metric |
+| Placement / `10-placement.md` | crate/layer choice and boundary rationale |
+| Map / `20-map.md` | survey facts and candidate owners for a structural change |
+| Design / `30-design.md` | approach, public surface, errors, tests, docs/ADR |
+| Progress / `40-steps.md` | meaningful steps and deviations |
+| Evidence / `50-gate.md` | command, source/configuration, scope, result/log, pending checks |
+| Review / `60-review.md` | ranked findings and verdict |
 
-## Result block
+Use only sections relevant to the task. A stage is complete when its work and
+needed evidence are available, not when a file list has been filled. Revise a
+changed decision with a short reason; an append-only transcript is unnecessary.
+Store plans/progress here rather than in current-system `docs/`.
 
-Every procedure skill ends its turn with this block, and the workflow checks it
-before the next step:
+A handoff may use this optional compact block (a normal concise report is fine):
 
-```
-## Result
-status: done | blocked | escalate
-wrote: <files in the plan directory, and source files if any>
-next: <next skill, or "return to workflow">
-escalation: <question for the user, or "none">
+```text
+status: done | blocked | needs-decision
+changed: <files or sections>
+evidence: <results and scope>
+remaining: <next action or material unresolved choice>
 ```
 
-`blocked` means a check or precondition failed and the step can be retried after
-a fix; `escalate` means the decision belongs to the user (a layer conflict, a
-new ADR, a rule that cannot be met). Never continue past `escalate`.
+All procedure-skill output filenames and Result blocks are suggestions under
+this contract; their content may live in the shared compact plan. A new ADR or
+routine implementation detail does not itself require another user approval.
+Never proceed with a genuinely required unresolved authorization; follow
+AGENTS.md for material decisions and concrete blockers.

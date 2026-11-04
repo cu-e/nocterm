@@ -8,14 +8,14 @@ user-invocable: false
 
 Input: the diff against the recorded target, including uncommitted changes
 (`git diff <target>...` plus `git diff` and untracked files), and the plan
-directory. Output: `60-review.md`.
+or review context. Output may be a compact review section or `60-review.md`.
 
 Automated checks cover limits and debt counts; this review covers intent.
 Inspect existing scoped/final evidence and pending checks. Do not rerun full
 architecture or tests just because review started; the `gate` skill governs
-reuse and any missing/suspect check. Final full verification may follow review
-fixes and must pass before the integrated task is reported Done. Read the plan's
-`10-placement.md`, `20-map.md` and `30-design.md` first and check the code against them.
+reuse and any missing/suspect check. Finish the applicable input-based Definition
+of done after review fixes. Read relevant plan/placement/map notes when present
+and check the code against the authorized task.
 
 ## Anti-patterns
 
@@ -36,8 +36,8 @@ fixes and must pass before the integrated task is reported Done. Read the plan's
 | 13 | A duplicated non-fake test helper (for example a `click` wrapper) | advisory |
 | 14 | Crate card, layer note or ADR not updated for a boundary change | blocking for boundary changes |
 | 15 | `#[allow]`/`#[expect]` for `too_many_lines`/`cognitive_complexity`; raised baseline; new oversized entry | always |
-| 16 | A file or type that crossed an early warning in this change with no map or split plan | advisory |
-| 17 | A built-in panel or widget outside a `PLUGIN` or the registration path, a panel entity held outside the workspace, an eagerly created widget, or a getter or `pub` item added for plugins | blocking |
+| 16 | A touched responsibility near a hard limit whose growth has not been considered | advisory |
+| 17 | A built-in panel or widget outside a `PLUGIN` or the registration path, a panel entity held outside the workspace, an eagerly created widget, or a native getter misrepresented as guest capability access | blocking |
 
 For each finding give: file:line, the rule (AGENTS.md section or ADR), the
 concrete consequence, and the smallest fix.
@@ -53,5 +53,5 @@ concrete consequence, and the smallest fix.
 Verdict: approve | changes requested
 ```
 
-Changes requested go back to the implementer; after two failed rounds escalate
-to the user (AGENTS.md "Pipeline").
+Fix actionable findings under AGENTS.md's Workflow. Escalate material unresolved
+choices or concrete blockers, without a fixed round count.

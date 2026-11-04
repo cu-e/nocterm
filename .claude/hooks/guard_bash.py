@@ -6,8 +6,6 @@
 - `master` and `dev` change only through pull requests: no commits, merges,
   cherry-picks, reverts or patches on them, and no pushes to them.
 - Tags are created by release automation only.
-- Compiling Cargo commands run through `cargo-serial.sh`, which applies
-  `CARGO_BUILD_JOBS=4` and one lock shared by every agent of the user.
 - Release files and debt inventories are changed with Edit/Write, where
   `guard_files.py` can check them, not with shell redirection.
 
@@ -25,12 +23,6 @@ from pathlib import Path
 import hooklib
 
 EVENT = "PreToolUse"
-WRAPPER = "cargo-serial.sh"
-COMPILING = {
-    "build", "b", "check", "c", "clippy", "test", "t", "run", "r", "xtask", "doc", "d",
-    "bench", "nextest", "llvm-cov", "install", "rustc", "fix",
-}
-CARGO_OPTIONS_WITH_VALUE = {"--config", "-Z", "-C", "--color"}
 PROTECTED = {
     "CHANGELOG.md", "version.txt", ".release-please-manifest.json",
     "xtask/baseline.toml", "xtask/oversized-files.toml",
@@ -448,27 +440,6 @@ def check_git(state, assignments, words):
             hooklib.deny(EVENT, f"{', '.join(sorted(reached))} change only through pull requests; push the feature branch instead (CONTRIBUTING.md, Branching).")
 
 
-def check_cargo(state, assignments, words):
-    if cargo_subcommand(words[1:]) in COMPILING:
-        wrapper = hooklib.project_dir(state.payload) / ".claude" / "hooks" / WRAPPER
-        suggestion = " ".join([*map(shlex.quote, assignments), shlex.quote(str(wrapper)), shlex.join(words)])
-        hooklib.deny(
-            EVENT,
-            "Compiling Cargo commands run through the shared lock with CARGO_BUILD_JOBS=4 "
-            f"(AGENTS.md, Hard rules). Run it as (keeping any pipes and redirections):\n{suggestion}",
-        )
-
-
-def cargo_subcommand(arguments):
-    while arguments:
-        argument, arguments = arguments[0], arguments[1:]
-        if argument in CARGO_OPTIONS_WITH_VALUE:
-            arguments = arguments[1:]
-        elif not argument.startswith(("-", "+")):
-            return argument
-    return None
-
-
 def writes_protected(state, words, targets):
     """Whether a command rewrites a protected file in place."""
     if any(state.protected(target) for target in targets):
@@ -509,8 +480,6 @@ def check(state, command, depth=0):
             check_git(state, assignments, words)
         elif name == "eval":
             check(state, " ".join(words[1:]), depth + 1)
-        elif name == "cargo":
-            check_cargo(state, assignments, words)
         elif name in SHELLS and shell_script(words):
             check(state, shell_script(words), depth + 1)
 

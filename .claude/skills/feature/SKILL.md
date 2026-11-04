@@ -1,68 +1,39 @@
 ---
 name: feature
-description: Run the full agent pipeline (architect → implementer → tester → reviewer) for a feature or non-trivial change. Use when the user asks to build a feature end to end or invokes /feature.
+description: Carry a feature or non-trivial change through design, implementation, verification and review, scaling delegation and planning to the task. Use for end-to-end work or /feature.
 ---
 
-Drive the pipeline described in AGENTS.md for the task: $ARGUMENTS
+Task: $ARGUMENTS
 
-You are the orchestrator. Subagents start with no context, so every prompt must
-carry the task, plan directory, branch name, target/base branch, verification scope
-and prior findings, plus paths to docs/ARCHITECTURE.md, relevant layer notes and
-docs/adr/README.md (AGENTS.md is loaded automatically). Decisions live in
-`.claude/plans/<slug>/` as described in [plan-bus.md](plan-bus.md); every stage
-reads the files earlier stages wrote and ends with its Result block.
+Follow AGENTS.md's Workflow and Definition of done. Use one agent for scoped work;
+delegate distinct responsibilities when complexity, risk or independent work
+benefits from it. The role files in `.claude/agents/` are optional and inherit
+caller model settings. Never assume a delegate has unseen context: supply task,
+branch/base, plan/evidence location, scope and relevant prior findings.
 
-Own one shared verification queue. Build and intermediate Verify use `gate`
-scoped mode; read-only Review reuses valid evidence. One executor runs the full
-local gate at integrated task completion, after review fixes. Do not create a
-full gate for each backlog item, subagent, branch handoff or nested workflow.
-Keep CI independent and mandatory; never change checks to make them pass.
+1. Record a compact goal, approach, affected crates/layers, risks and check scope.
+   Use [plan-bus.md](plan-bus.md) for optional structured handoffs. Honor an
+   existing authorized plan; resolve only material unanswered choices.
+2. Select relevant procedures rather than launching every workflow:
 
-0. **Route** — classify the task and follow the matching workflow skill instead
-   of the generic stages below when one fits:
-
-   | Task | Workflow |
+   | Need | Procedure/workflow |
    | --- | --- |
-   | responsibility with no fitting crate, or "new crate" | `crate-new` |
-   | behaviour added inside one crate | `crate-extend` |
-   | restructure inside a crate, early warning or limit hit | `refactor` |
-   | move a module or subject to another crate | `crate-split` |
-   | shrink an `xtask/baseline.toml` or oversized-file entry | `debt-paydown` |
+   | Responsibility with no fitting crate | `crate-new` |
+   | Behavior inside an existing crate | `crate-extend` |
+   | Restructure within a crate | `refactor` |
+   | Move ownership across crates | `crate-split` |
+   | Shrink a debt inventory entry | `debt-paydown` |
 
-   Spanning several rows: run them as separate branches in the order
-   refactor → split → extend. None fits (cross-cutting, app-only): continue
-   with the stages below, using the procedure skills each agent preloads.
-
-1. **Design** — spawn `architect` with the task and reading paths above. Require
-   placement, shape, public surface, reuse, typed errors, docs/ADR and the target
-   branch in the plan. Show it to the user and wait for approval; an explicit
-   instruction to implement an already supplied plan supplies that approval.
-   Relay unresolved design questions.
-2. **Branch** — create `<type>/<slug>` from the recorded target: `master` for
-   release-ready changes or `dev` for integration, per CONTRIBUTING.md. Verify
-   the local base against its remote; do not reset or overwrite unrelated work.
-3. **Build** — spawn `implementer` with the full approved plan.
-4. **Verify** — spawn `tester` with the plan, implementer report and existing
-   evidence. Require scoped behavior checks; after a defect, verify the failing
-   target and affected consumers. Do not restart the full suite on every fix.
-5. **Review** — spawn `reviewer` with the plan and target. Include committed,
-   uncommitted and untracked task changes; review must finish before requesting
-   commit authorization. Require the blocking design checklist. Send `blocking`
-   and `should-fix` findings to `implementer`, then verify/review the affected
-   delta using valid prior evidence.
-6. **Final verification** — after all planned changes are integrated and review
-   findings fixed, assign one executor for `gate` full. Preserve valid results,
-   rerun failures first and invalidate only affected evidence; do not restart
-   the pipeline automatically. Resolve final failures before Done, with review
-   of any resulting code changes.
-7. **Stop conditions** — after two failed formal Verify or Review rounds, stop
-   and escalate with outstanding findings. Ordinary Build iterations or a
-   deliberately failing regression test are not formal verification rounds.
-8. **Wrap up** — summarise what was built, each applicable verification command
-   and result, review verdict and remaining nits. Propose Conventional Commit
-   headers and a PR title. Include the target branch and the `xtask/baseline.toml`
-   delta in the proposed PR description. Keep vendor changes separate from
-   application changes. Commit, push and open the PR only if the user asks.
-
-Documentation/instruction-only changes skip subagents under AGENTS.md and use its documented
-verification scope.
+   A cohesive change may combine them on one branch; an early warning alone
+   does not require a refactor workflow. Split independently reviewable work
+   when useful, respecting the user's requested base/branch and existing work.
+3. Implement the authorized design with behavior tests. Use `gate` scoped mode
+   after coherent edits where a check answers a concrete uncertainty.
+4. Review committed, uncommitted and relevant untracked task changes against the
+   recorded target. Use `design-review`; fix actionable findings and verify
+   affected inputs. Escalation follows AGENTS.md, without a fixed round count.
+5. Assign one completion executor when working in parallel. Finish the
+   input-based Definition of done after review fixes; preserve valid evidence.
+6. Report what changed, commands/results, scope and remaining limitations.
+   Propose commit/PR text only when useful. Vendor and app changes belong in
+   separate commits; commit, push and PR actions require the user's request.

@@ -3,7 +3,7 @@
 
 Adds context for the agent; it never blocks. The signals mirror the
 early warnings of `cargo xtask architecture` and the design-review skill:
-- a Rust file at or above 640 lines needs a split designed by responsibility;
+- a Rust file at or above 640 lines invites responsibility/limit inspection;
 - a new Rust file holding only `impl` blocks moves methods without an owner;
 - a catch-all module name hides a responsibility;
 - a new crate manifest starts the crate-new workflow;
@@ -31,9 +31,10 @@ def signals(path, text, created):
         lines = text.count("\n") + (0 if text.endswith("\n") or not text else 1)
         if lines >= WARN_LINES:
             found.append(
-                f"{path} has {lines} lines (warn at {WARN_LINES}, limit {LIMIT}). Before it grows, run the "
-                "responsibility-map skill on its main type and extract an owner with private state; "
-                "do not cut the file at the limit or move methods of the same type to another file."
+                f"{path} has {lines} lines (advisory warning at {WARN_LINES}, hard limit {LIMIT}). "
+                "Inspect its responsibility and remaining room; use responsibility-map if separation is unclear. "
+                "A warning alone does not require extraction. If a split is needed, extract an owner, "
+                "rather than moving methods of the same type to another file."
             )
         stem = Path(path).stem
         if created and stem in GENERIC:

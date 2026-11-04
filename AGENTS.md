@@ -7,9 +7,6 @@ Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `master` or `dev` directly. Record the target (`master` release / `dev` integration) and branch from it.
 - Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
 - Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
-- Run every Cargo command with `CARGO_BUILD_JOBS=4` and serialize top-level Cargo
-  commands, including those from other agents, to stay within available memory:
-  prefix them with `.claude/hooks/cargo-serial.sh`, which does both.
 - Commit, push and open PRs only when the user asks.
 - Report verification honestly: what was run, what passed, what wasn't checked.
 - Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
@@ -86,7 +83,8 @@ errors. See [architecture guardrails](docs/architecture/guardrails.md) and
 6. Never add `#[expect]` or `#[allow]` for `clippy::too_many_lines` or
    `clippy::cognitive_complexity`, and never raise a baseline to pass a check.
 7. Extract responsibilities into modules that own types, not extra methods of a
-   parent type. Keep vendor changes separate from application code changes.
+   parent type. Keep vendor and application changes in separate commits; one PR
+   may contain both under the merge rules in CONTRIBUTING.md.
 
 ## Tests
 
@@ -110,105 +108,95 @@ errors. See [architecture guardrails](docs/architecture/guardrails.md) and
   `Does not own:`, ports used/provided, settings section, globals and invariants.
   Describe actual boundaries; existing crates gain cards when their boundaries change.
 
+## Workflow
+
+Scale the process to the task. One agent may design, implement, verify and review
+an ordinary scoped change. For large or risky work, delegate independent parts
+or use the optional roles in `.claude/agents/`; use only the roles and models the
+available tools and task need. `/feature` and the workflow skills are procedures,
+not a requirement to launch four agents.
+
+For non-trivial work, record the goal, affected crates/layers, approach, risks
+and verification scope in a compact ignored plan. One document is enough;
+[the plan contract](.claude/skills/feature/plan-bus.md) offers optional detail for
+complex handoffs. Pass task, branch/base, scope and relevant evidence to delegates.
+Review committed, uncommitted and relevant untracked changes.
+
+A request to implement a supplied plan or proposed fix authorizes that work.
+Resolve routine implementation details within that scope. Ask when a material
+choice remains unresolved, scope or authority must change, or the user reserved
+the decision. Continue fixing actionable findings; escalate a concrete blocker
+or repeated lack of progress, rather than stopping at a fixed round count.
+No blocking findings may remain at completion.
+
+Architecture early warnings (640 lines, 12 fields, four implementation files)
+are advisory. Inspect the responsibility and explain consequential growth;
+refactor when the design needs it or a hard limit would be crossed. A warning
+alone does not require an extraction, new branch or separate workflow.
+
 ## Verification policy
 
-Use [the gate procedure](.claude/skills/gate/SKILL.md) to choose checks by changed
-inputs and the failure being investigated. Verification has two different scopes:
+Choose local checks by this task's changed inputs and affected consumers;
+[the gate procedure](.claude/skills/gate/SKILL.md) gives selection examples.
+Required CI, lint thresholds, architecture limits and release gates are unchanged.
 
-- **During implementation and fixes:** finish a coherent edit, then run the
-  smallest useful check (one test/filter, test target, library or package).
-  A test already compiles its target; do not routinely precede it with both
-  `check` and `build`. There is no mandatory command bundle after every edit,
-  extraction, backlog item or agent handoff.
-- **At completion:** run the full Definition of done once on the integrated
-  deliverable, after review fixes and before reporting Done. Intermediate
-  slices and worktrees are not separate final gates. For a multi-repository
-  task, each changed repository has its own final gate.
+During implementation, finish a coherent edit, then run the smallest useful
+check for the uncertainty. A test compiles its target; do not routinely precede
+it with check and build. At completion, finish the applicable Definition of done
+after review fixes. A handoff, extracted owner or backlog slice is not another
+completion gate. Unrelated pre-existing changes are outside the task's evidence;
+report that scope explicitly.
 
-These are local agent-work rules; required CI checks run independently.
-Older plans that prescribe quick/full checks after each step follow this policy:
-quick means a selected scoped check, not the old fixed bundle.
+For parallel work, name one verification executor and coordinate checks on shared
+sources or targets. Do not edit checked inputs while their check runs. Preserve
+PASS evidence whose relevant source/configuration is unchanged; rerun a failing
+target first and invalidate only affected results. Record command, scope,
+source/configuration, result and any log once; do not rerun for another report.
+Use stable Cargo targets; investigate stale artifacts before touching sources,
+cleaning caches or creating cold targets.
 
-The orchestrator owns the shared verification queue and assigns one executor
-for the final gate. Subagents report scoped evidence; they do not independently
-queue full pipelines. Do not queue speculative checks while their source or
-dependency graph is still being edited. Reviewers inspect existing evidence
-instead of repeating successful commands on unchanged inputs.
-
-After a failure, rerun the failing target first. Expand only when an affected
-consumer, dependency/feature change or unresolved failure requires it. Preserve
-successful results whose relevant inputs and configuration are unchanged;
-neither a new stage nor a new report invalidates them. A failed final gate does
-not automatically restart every earlier command: identify which results the
-fix actually invalidates. Never reuse evidence from a different source snapshot
-or configuration without establishing that it covers the current change.
-
-Keep a stable Cargo target directory per worktree. Do not routinely touch all
-sources, clean caches or create a new cold target for another verification run.
-Investigate a concrete stale-artifact problem before forcing a rebuild.
-Record command, scope, source snapshot, result and log once; distinguish queue
-wait from compilation and test execution when reporting duration. Reuse that
-record across stages rather than re-running commands to produce a new report.
-
-Documentation/instruction-only edits use link/reference checks and applicable
-configuration validators. Run Cargo/generated-doc checks only if their inputs
-(Rust, manifests, schemas or generator inputs) changed; prose alone does not
-require workspace builds, tests or architecture scans.
-
-## Pipeline
-
-Non-trivial work goes through four stages. Each stage is a subagent in `.claude/agents/`; the main session orchestrates (run it with `/feature <task>`).
-
-| #   | Stage  | Agent         | Writes code | Output                                            |
-| --- | ------ | ------------- | ----------- | ------------------------------------------------- |
-| 1   | Design | `architect`   | plan only   | plan: files, steps, risks, test strategy          |
-| 2   | Build  | `implementer` | yes         | code + tests on a feature branch                  |
-| 3   | Verify | `tester`      | tests only  | test run results, added coverage, reproduced bugs |
-| 4   | Review | `reviewer`    | plan only   | findings ranked by severity, verdict              |
-
-Gates:
-
-- **Design → Build**: the user approves the plan.
-- **Verify → Review**: the scoped checks needed for the change are green;
-  reuse existing results on unchanged inputs. The full gate is deferred to completion.
-- **Review → Done**: no blocking findings and the final integrated Definition
-  of done passes. Blocking findings go back to `implementer`; after two failed
-  review rounds, stop and escalate to the user.
-
-Trivial changes (typos, one-line fixes, docs) skip the pipeline.
-
-`/feature` routes a task to a workflow skill (`crate-new`, `crate-extend`,
-`refactor`, `crate-split`, `debt-paydown`) built from procedure skills that each
-agent preloads. Stages share decisions through `.claude/plans/<slug>/`
-([plan contract](.claude/skills/feature/plan-bus.md)). Committed hooks in
-`.claude/settings.json` enforce the hard rules and stage roles
-([ADR 0059](docs/adr/0059-architecture-procedure-skills.md)); CI stays authoritative.
-Pass the target branch and verification scope to every stage. Review includes
-uncommitted changes as well as commits so it can finish before commit authorization.
+Cargo uses the caller's environment and configuration. Set a local job budget or
+coordinate builds when the machine needs it. The optional
+[Cargo coordination helper](CONTRIBUTING.md#cargo-resources) preserves those
+settings and can share a lock between worktrees or an explicitly selected group.
+Machine resource preferences are not shell-hook denials.
 
 ## Definition of done
 
-At the end of a code task, the integrated result requires `cargo fmt --all --check`,
+Run the checks applicable to the integrated change, and report each actual
+command and result plus omitted/unavailable checks and why:
+
+| Changed inputs / impact | Local completion checks |
+| --- | --- |
+| Documentation or agent instructions | Links and stale references; `python3 scripts/check-claude-config.py` for skills/agent configuration |
+| Hooks or repository scripts only | Relevant script tests and syntax/configuration validators; no Cargo unless Rust or generator inputs are affected |
+| Scoped Rust behavior | Formatting, lint and behavior tests for affected targets and consumers; architecture checks when guarded structure/ownership changes; generated references when their inputs change |
+| Broad shared APIs, dependency/feature graph changes affecting many consumers, cross-cutting behavior, or uncertain workspace impact | Full workspace suite below, plus affected feature/platform fixtures |
+| Explicit request for full verification | Full workspace suite and relevant additional checks |
+
+The full workspace suite is `cargo fmt --all --check`,
 `cargo build --workspace --all-targets`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
-`cargo xtask architecture` and `cargo xtask docs --check` to pass. This is the
-final gate, not an implementation-loop checklist. Run additional
-checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes, or the
-hub end-to-end test for `nocterm-hub-io` changes). Changes to
-user plugins (`nocterm-plugin-*`, `plugins-ui`, `src/shell_setup/user_plugin*`) also run
-`cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings` and
-`cargo test --workspace --features nocterm/user-plugins`: the default build compiles the feature out.
-Changes to the plugin SDK or the example (`nocterm-plugin-sdk`, `examples/plugins/`) also build and
-test the example and run the gated guest test (see Commands).
-For documentation/instruction-only changes, check links and stale references;
-run `python3 scripts/check-claude-config.py` when skills or agent instructions
-change. Check generated-doc freshness only when generator inputs changed.
-Cargo build, lint, runtime tests and architecture scans are not required when
-their executable inputs did not change.
+`cargo xtask architecture` and `cargo xtask docs --check`. A scoped result must
+not be presented as a full-workspace pass. Prose/tooling-only edits do not
+require Cargo, generated-doc checks or product runtime tests when their inputs
+are unchanged.
 
-Report each command and its result. Report omitted or unavailable checks with the
-reason. No blocking review findings may remain; commit, push and PR creation
-still require the user's request.
+Additional checks follow actual changed inputs:
+
+- SSH/SFTP changes run the required SSH fixture; hub adapter changes run the
+  hub end-to-end test (see Commands).
+- User-plugin code (`nocterm-plugin-*`, `plugins-ui`,
+  `src/shell_setup/user_plugin*`) also runs workspace clippy and tests with
+  `--features nocterm/user-plugins`; the default build compiles it out.
+  Plugin SDK/example changes also build/test the example and run the gated
+  WASM guest test. Preserve API/ABI compatibility checks for contract changes.
+- Dependencies/manifests require applicable unused-dependency and notice checks;
+  vendored changes follow CONTRIBUTING.md's replay/history checks.
+- Hook changes run `python3 scripts/test-claude-hooks.py`; configuration-validator
+  changes run `python3 scripts/test-claude-config.py` as well.
+
+Commit, push and PR creation still require the user's request.
 
 ## Scopes
 
@@ -218,8 +206,7 @@ A commit scope is the crate directory name under `crates/` (`agent-runtime`,
 ## Commands
 
 ```sh
-# Agents prefix each cargo command with .claude/hooks/cargo-serial.sh.
-export CARGO_BUILD_JOBS=4
+# Choose resource settings locally; cargo-serial.sh is optional.
 cargo run
 cargo fmt --all --check
 cargo build --workspace --all-targets

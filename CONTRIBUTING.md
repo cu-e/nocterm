@@ -119,21 +119,36 @@ coherent edit before checking it. Do not run a fixed build/lint/test/architectur
 bundle after every edit or extraction. A test compiles its target; running both
 `cargo check` and `cargo build` first is usually redundant.
 
-Run the full [Definition of done](AGENTS.md#definition-of-done) at the end of the
-integrated task, after review fixes. A backlog item, worktree or pipeline handoff
-does not create another final gate. Preserve valid PASS results and rerun a
-failed check first; expand coverage when changed inputs or a concrete failure
-require it. Keep results tied to the checked source and configuration.
+At completion, follow the input-based [Definition of done](AGENTS.md#definition-of-done).
+Scoped changes use affected targets and consumers; broad shared changes or
+uncertain workspace impact need full workspace verification. Required CI is
+independent. Reuse valid results and rerun a failing check first; keep evidence
+tied to its source/configuration. The [gate procedure](.claude/skills/gate/SKILL.md)
+provides examples. Documentation and script-only work use relevant links,
+script tests and configuration validators unless they affect Rust/generator inputs.
 
-For parallel agent work, the orchestrator owns one verification queue and assigns
-one final-gate executor. Use a stable target directory per worktree; do not
-invalidate caches by touching all sources or cleaning for each check. Report
-queue wait separately from compilation/test time where available. Detailed
-scope selection is in the [gate procedure](.claude/skills/gate/SKILL.md).
+### Cargo resources
 
-Documentation/instruction-only changes need reference/link checks and relevant
-configuration validators, not Cargo checks unless executable/generator inputs
-also changed. These scheduling rules do not change CI checks or lint thresholds.
+Cargo keeps the caller's `CARGO_BUILD_JOBS`, Cargo configuration and normal
+defaults. Choose a local budget for the machine; no fixed job count is required.
+When parallel builds need coordination, the optional helper serializes commands:
+
+```sh
+.claude/hooks/cargo-serial.sh cargo test -p nocterm-ssh
+```
+
+Its default lock lives in the Git common directory, so linked worktrees share it
+and independent clones do not. `NOCTERM_CARGO_LOCK=<path>` selects another lock
+(use an absolute path to coordinate different working directories or repositories).
+`NOCTERM_CARGO_LOCK=off` runs without the helper lock. The helper needs `flock`
+when locking; if unavailable it fails promptly with instructions. Direct Cargo
+is supported on every platform and keeps Cargo's own target-directory locking.
+
+For shared verification, coordinate one executor and avoid duplicate checks on
+the same inputs. Keep a stable target directory per worktree; do not touch all
+sources or clean caches to start another check. Investigate a concrete stale
+artifact first. Local resource settings may be supplied in the shell or personal
+configuration and do not belong in committed product rules.
 
 ## Pull requests
 

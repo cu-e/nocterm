@@ -4,17 +4,12 @@ Hooks read one JSON event on stdin and answer with JSON on stdout. They are
 deterministic guards for rules in AGENTS.md; CI remains the authoritative gate.
 """
 import json
-import os
 import sys
 from pathlib import Path
 
 
 def event():
     return json.load(sys.stdin)
-
-
-def project_dir(payload):
-    return Path(os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or ".").resolve()
 
 
 def absolute(payload, path):

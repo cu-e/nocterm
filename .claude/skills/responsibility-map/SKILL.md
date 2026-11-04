@@ -1,30 +1,29 @@
 ---
 name: responsibility-map
-description: Read-only analysis of a type, module or crate that finds its responsibilities and candidate state owners from `cargo xtask survey` facts. Run before any split, owner extraction or crate split, and when a file or type reaches an early-warning threshold.
+description: Read-only analysis of a type, module or crate that finds its responsibilities and candidate state owners from `cargo xtask survey` facts. Use for a split or unclear ownership; early warnings invite inspection rather than mandatory extraction.
 user-invocable: false
 ---
 
 # Responsibility map
 
 Input: a type (`AgentThread`), a module (`agent/thread`) or a crate. Output:
-`20-map.md` in the plan directory (`.claude/skills/feature/plan-bus.md`). This
+the compact plan or optional `20-map.md` (`.claude/skills/feature/plan-bus.md`). This
 step writes no source code.
 
 The goal is to find where responsibilities separate **by state**, because an
 owner is a set of fields with the transitions that keep them consistent
-(AGENTS.md design rules 1, 2 and 7). Line counts only say that a split is due;
-they never say where.
+(AGENTS.md design rules 1, 2 and 7). Line counts signal remaining room; they do not decide whether or where to split.
 
 ## 1. Collect facts
 
-Run through the shared lock (AGENTS.md hard rules):
+Use a survey when it helps resolve ownership (Cargo resources follow CONTRIBUTING.md):
 
 ```sh
-.claude/hooks/cargo-serial.sh cargo xtask survey <package> --json > .claude/plans/<slug>/survey.json
-.claude/hooks/cargo-serial.sh cargo xtask survey <package> --type <Type>
+cargo xtask survey <package> --json > .claude/plans/<slug>/survey.json
+cargo xtask survey <package> --type <Type>
 ```
 
-Record in `20-map.md`: the warnings, the largest files, the type's fields,
+Record relevant facts in the plan: the warnings, the largest files, the type's fields,
 methods and impl files, and the module reference counts. The survey is
 syntactic: it keys types by name and does not expand macros, so confirm any
 surprising fact in the source.
@@ -82,5 +81,5 @@ is under `Does not own:` or missing from `Owns:`; these go to `docs-adr`.
 ## Recommended order (smallest safe extraction first)
 ```
 
-End with the Result block; `next` is usually `behavior-tests` (characterize)
-and then `owner-extract`.
+Report the map and next useful step; `behavior-tests` and `owner-extract`
+apply when an extraction is needed.

@@ -44,11 +44,11 @@ and so do files named after review rounds.
 
 ## Run
 
-Through the shared lock, narrowest first:
+Choose the narrowest useful check; Cargo resources follow CONTRIBUTING.md:
 
 ```sh
-.claude/hooks/cargo-serial.sh cargo test -p <package> <test-name-filter>
+cargo test -p <package> <test-name-filter>
 ```
 
-End with the Result block listing tests added and their pass state on the
-unchanged code (characterize) or after the change (cover).
+Report tests added and their pass state on unchanged code (characterize)
+or after the change (cover), in the shared plan or handoff.

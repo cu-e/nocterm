@@ -61,4 +61,4 @@ methods of the parent into another file is not an extraction and fails review.
 | Fields moved but the parent keeps setters for each | the parent still owns the transitions |
 | Splitting a function into `step1`/`step2` helpers | complexity moved, not reduced |
 
-End with the Result block and the before/after field counts.
+Report behavior evidence and before/after field counts in the shared plan or handoff.

@@ -70,4 +70,4 @@ to an existing broad trait for a new feature pair: write a separate port.
 - Rejected alternative: <broader trait / direct dependency> because …
 ```
 
-End with the Result block.
+Report the relevant changes, evidence and remaining work concisely.

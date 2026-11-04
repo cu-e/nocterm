@@ -67,9 +67,9 @@ No session status, dates of work, or "implemented by" notes.
 For each removed or renamed symbol, module or crate:
 
 ```sh
-grep -rn "<old name>" docs/ AGENTS.md CONTRIBUTING.md .claude/skills .claude/agents
+rg -n "<old name>" docs/ AGENTS.md CONTRIBUTING.md .claude/skills .claude/agents
 ```
 
 Update current documents; leave accepted ADRs as historical text.
 
-End with the Result block listing documents written or changed.
+Report documents written or changed in the shared plan or handoff.

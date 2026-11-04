@@ -3,6 +3,7 @@
 import json
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -125,6 +126,13 @@ class ShellGuard(HookCase):
             "git commit --no-verify -m x", "git commit -nm x", "git commit --no-verif -m x",
             "git push --no-verify origin feat/x", "git -c core.hooksPath=/dev/null commit -m x",
             "git config core.hooksPath /tmp/none",
+            "env EXAMPLE=1 nice -n 5 git commit --no-verify -m x",
+            "bash -c 'git commit --no-verify -m x'",
+            "bash <<'EOF'\ngit commit --no-verify -m x\nEOF",
+            'echo "$(git commit --no-verify -m x)"',
+            "echo `git tag v999`",
+            "eval 'git tag v999'",
+            "if true; then git tag v999; fi",
         ]:
             self.assertTrue(self.denied(command), command)
         self.assertTrue(self.denied(
@@ -178,49 +186,20 @@ class ShellGuard(HookCase):
         self.assertIsNone(self.command("git tag -l 'v*'"))
         self.assertIsNone(self.command("git tag --contains HEAD"))
 
-    def test_compiling_cargo_runs_through_the_shared_lock(self):
-        denied = self.command("cd crates && CARGO_BUILD_JOBS=4 cargo test -p nocterm-vt")
-        self.assertEqual(denied["permissionDecision"], "deny")
-        self.assertIn("cargo-serial.sh cargo test -p nocterm-vt", denied["permissionDecisionReason"])
+    def test_cargo_resource_choices_are_not_shell_denials(self):
         wrapper = HOOKS / "cargo-serial.sh"
         for command in [
+            "cargo test --workspace 2>&1 | tail -40",
+            "cd crates && CARGO_BUILD_JOBS=7 cargo test -p nocterm-vt",
+            "NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd",
+            "env CARGO_BUILD_JOBS=9 nice -n 5 cargo +nightly clippy",
+            "bash -c 'cargo build'",
+            "bash <<'EOF'\ncargo build\nEOF",
             f"{wrapper} cargo test -p nocterm-vt",
-            f"'{wrapper}' cargo clippy --workspace --all-targets -- -D warnings",
             "cargo fmt --all --check",
             "cargo metadata --no-deps",
-            "grep -rn cargo build.rs",
         ]:
             self.assertIsNone(self.command(command), command)
-
-    def test_suggested_command_keeps_environment_and_drops_redirections(self):
-        reason = self.command("cargo test --workspace 2>&1 | tail -40")["permissionDecisionReason"]
-        self.assertTrue(reason.endswith("cargo-serial.sh cargo test --workspace"), reason)
-        reason = self.command("NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd")["permissionDecisionReason"]
-        self.assertIn("NOCTERM_REQUIRE_SSHD=1 ", reason)
-        self.assertTrue(reason.endswith("cargo test -p nocterm-ssh --test sshd"), reason)
-
-    def test_cargo_hidden_behind_prefixes_and_shells_is_found(self):
-        for command in [
-            "time cargo build --workspace",
-            "env CARGO_BUILD_JOBS=4 nice -n 5 cargo +nightly clippy",
-            "bash -c 'cd crates && cargo test'",
-            "cargo --locked test",
-            "echo start\ncargo check",
-            "for i in 1; do cargo test; done",
-            "if true; then cargo build; fi",
-            "{ cargo test; }",
-            "! cargo build",
-            'echo "$(cargo build)"',
-            "echo `cargo build`",
-            "bash <<'EOF'\ncargo build\nEOF",
-            "echo x | xargs cargo test",
-            "sudo cargo build",
-            'echo "see <<EOF"\ncargo build',
-            "eval 'cargo build'",
-            "git log --format=%h#%s && cargo build",
-            "cat <<''\nx\n\ncargo build",
-        ]:
-            self.assertTrue(self.denied(command), command)
 
     def test_cargo_mentioned_as_data_is_not_a_command(self):
         for command in [
@@ -267,45 +246,169 @@ class ShellGuard(HookCase):
 
 
 class CargoLock(unittest.TestCase):
-    def run_locked(self, directory, script, **env):
-        env = {**os.environ, "NOCTERM_CARGO_LOCK": str(Path(directory) / "lock"), **env}
+    def run_locked(self, directory, script, cwd=None, **overrides):
+        env = {**os.environ, "NOCTERM_CARGO_LOCK": str(Path(directory) / "lock"), **overrides}
+        env = {key: value for key, value in env.items() if value is not None}
         return subprocess.Popen(
-            [str(HOOKS / "cargo-serial.sh"), "sh", "-c", script], env=env, stderr=subprocess.DEVNULL, start_new_session=True,
+            [str(HOOKS / "cargo-serial.sh"), "sh", "-c", script], env=env, cwd=cwd, stderr=subprocess.DEVNULL, start_new_session=True,
         )
 
-    def test_commands_run_one_at_a_time_with_two_jobs(self):
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
+    def test_shared_lock_serializes_commands_and_preserves_caller_jobs(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "log"
             script = f'echo "start $CARGO_BUILD_JOBS" >> {log}; sleep 0.3; echo end >> {log}'
             runs = [self.run_locked(directory, script, CARGO_BUILD_JOBS="16") for _ in range(2)]
-            self.assertEqual([run.wait() for run in runs], [0, 0])
-            self.assertEqual(log.read_text().split("\n")[:4], ["start 2", "end", "start 2", "end"])
+            self.assertEqual([run.wait(timeout=5) for run in runs], [0, 0])
+            self.assertEqual(log.read_text().split("\n")[:4], ["start 16", "end", "start 16", "end"])
 
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
+    def test_unset_jobs_stay_unset_for_cargo_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(self.run_locked(directory, 'test "${CARGO_BUILD_JOBS+x}" != x', CARGO_BUILD_JOBS=None).wait(timeout=5), 0)
+
+    def test_off_mode_needs_neither_git_nor_flock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [shutil.which("bash"), str(HOOKS / "cargo-serial.sh"), shutil.which("sh"), "-c", "exit 5"],
+                cwd=directory, env={**os.environ, "PATH": directory, "NOCTERM_CARGO_LOCK": "off"}, timeout=2,
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 5, result.stderr)
+
+    def test_missing_flock_fails_promptly_with_recovery_choices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [shutil.which("bash"), str(HOOKS / "cargo-serial.sh"), "true"],
+                env={**os.environ, "PATH": directory, "NOCTERM_CARGO_LOCK": str(Path(directory) / "lock")},
+                capture_output=True, text=True, timeout=2,
+            )
+            self.assertEqual(result.returncode, 69)
+            self.assertIn("NOCTERM_CARGO_LOCK=off", result.stderr)
+            self.assertFalse((Path(directory) / "lock.d").exists())
+
+    def git(self, cwd, *arguments):
+        subprocess.run(["git", *arguments], cwd=cwd, check=True, capture_output=True)
+
+    def wait_until_ready(self, process, marker):
+        deadline = time.monotonic() + 3
+        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(marker.exists(), "lock holder did not start its command")
+
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
+    def test_default_lock_resolution_ignores_cdpath_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.git(directory, "init", "-q", "-b", "feat/example")
+            command = self.run_locked(directory, "exit 0", cwd=directory,
+                                      NOCTERM_CARGO_LOCK=None, CDPATH=".")
+            self.assertEqual(command.wait(timeout=5), 0)
+
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
+    def test_default_lock_is_shared_by_worktrees_and_invocation_subdirectories(self):
+        with tempfile.TemporaryDirectory(prefix="cargo locks ") as directory:
+            repo, worktree = Path(directory) / "repo", Path(directory) / "worktree"
+            repo.mkdir()
+            self.git(repo, "init", "-q", "-b", "feat/example")
+            self.git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "--allow-empty", "-m", "test: fixture")
+            self.git(repo, "worktree", "add", "-q", "--detach", str(worktree))
+            nested = worktree / "nested"
+            nested.mkdir()
+            ready = Path(directory) / "ready"
+            held = self.run_locked(directory, 'printf ready > "$NOCTERM_TEST_READY"; exec sleep 30',
+                                   cwd=repo, NOCTERM_CARGO_LOCK=None, NOCTERM_TEST_READY=str(ready))
+            try:
+                self.wait_until_ready(held, ready)
+                second = self.run_locked(directory, "exit 0", cwd=nested, NOCTERM_CARGO_LOCK=None)
+                try:
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        second.wait(timeout=0.2)
+                    held.terminate()
+                    held.wait(timeout=3)
+                    self.assertEqual(second.wait(timeout=3), 0)
+                finally:
+                    if second.poll() is None:
+                        second.terminate()
+                        second.wait(timeout=3)
+            finally:
+                if held.poll() is None:
+                    held.terminate()
+                    held.wait(timeout=3)
+
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
+    def test_distinct_default_repository_locks_do_not_block_each_other(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repos = [Path(directory) / name for name in ("a", "b")]
+            for repo in repos:
+                repo.mkdir()
+                self.git(repo, "init", "-q", "-b", "feat/example")
+            ready = Path(directory) / "ready"
+            first = self.run_locked(directory, 'printf ready > "$NOCTERM_TEST_READY"; exec sleep 30',
+                                    cwd=repos[0], NOCTERM_CARGO_LOCK=None, NOCTERM_TEST_READY=str(ready))
+            try:
+                self.wait_until_ready(first, ready)
+                second = self.run_locked(directory, "exit 0", cwd=repos[1], NOCTERM_CARGO_LOCK=None)
+                self.assertEqual(second.wait(timeout=3), 0)
+            finally:
+                first.terminate()
+                first.wait(timeout=3)
+
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
+    def test_explicit_path_shares_a_lock_between_independent_repositories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repos = [Path(directory) / name for name in ("a", "b")]
+            for repo in repos:
+                repo.mkdir()
+                self.git(repo, "init", "-q", "-b", "feat/example")
+            ready = Path(directory) / "ready"
+            first = self.run_locked(directory, 'printf ready > "$NOCTERM_TEST_READY"; exec sleep 30',
+                                    cwd=repos[0], NOCTERM_TEST_READY=str(ready))
+            try:
+                self.wait_until_ready(first, ready)
+                second = self.run_locked(directory, "exit 0", cwd=repos[1])
+                try:
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        second.wait(timeout=0.2)
+                    first.terminate()
+                    first.wait(timeout=3)
+                    self.assertEqual(second.wait(timeout=3), 0)
+                finally:
+                    if second.poll() is None:
+                        second.terminate()
+                        second.wait(timeout=3)
+            finally:
+                if first.poll() is None:
+                    first.terminate()
+                    first.wait(timeout=3)
+
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
     def test_exit_status_passes_through_and_background_children_release_the_lock(self):
         with tempfile.TemporaryDirectory() as directory:
-            self.assertEqual(self.run_locked(directory, "exit 5").wait(), 5)
-            self.assertEqual(self.run_locked(directory, "sleep 3 >/dev/null 2>&1 &").wait(), 0)
+            self.assertEqual(self.run_locked(directory, "exit 5").wait(timeout=5), 5)
+            self.assertEqual(self.run_locked(directory, "sleep 3 >/dev/null 2>&1 &").wait(timeout=5), 0)
             started = time.monotonic()
-            self.assertEqual(self.run_locked(directory, "true").wait(), 0)
+            self.assertEqual(self.run_locked(directory, "true").wait(timeout=5), 0)
             self.assertLess(time.monotonic() - started, 2)
 
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
     def test_stopping_the_wrapper_stops_its_command(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "finished"
             run = self.run_locked(directory, f"sleep 2; touch {marker}")
             time.sleep(0.5)
             run.terminate()
-            self.assertNotEqual(run.wait(), 0)
+            self.assertNotEqual(run.wait(timeout=5), 0)
             time.sleep(2)
             self.assertFalse(marker.exists())
 
+    @unittest.skipUnless(shutil.which("flock"), "optional helper locking requires flock")
     def test_interrupting_the_terminal_stops_every_process_the_command_started(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "finished"
             run = self.run_locked(directory, f"sh -c 'sleep 2; touch {marker}'; touch {marker}")
             time.sleep(0.5)
             os.killpg(run.pid, signal.SIGINT)
-            self.assertNotEqual(run.wait(), 0)
+            self.assertNotEqual(run.wait(timeout=5), 0)
             time.sleep(2)
             self.assertFalse(marker.exists())
 
@@ -320,8 +423,10 @@ class EditSignals(HookCase):
         })
         return output["additionalContext"] if output else ""
 
-    def test_files_near_the_limit_ask_for_a_responsibility_split(self):
-        self.assertIn("responsibility-map", self.written("crates/a/src/big.rs", "fn a() {}\n" * 640))
+    def test_files_near_the_limit_receive_an_advisory(self):
+        warning = self.written("crates/a/src/big.rs", "fn a() {}\n" * 640)
+        self.assertIn("responsibility-map", warning)
+        self.assertIn("advisory", warning)
         self.assertEqual(self.written("crates/a/src/small.rs", "fn a() {}\n" * 639), "")
 
     def test_new_files_with_only_foreign_impls_are_file_slicing(self):

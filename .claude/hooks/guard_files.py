@@ -6,7 +6,7 @@
   only shrink: new entries and raised counts are denied.
 - DTO exemptions in `xtask/architecture-policy.toml` need design review, so
   adding one asks the user.
-- Pipeline stages keep to their role (AGENTS.md, Pipeline): `architect` and
+- Delegated agents keep to their explicit role (AGENTS.md, Workflow): `architect` and
   `reviewer` write only their plan files; `tester` edits tests, and editing
   anything else asks the user.
 """
@@ -38,9 +38,9 @@ def is_test_file(path):
 def check_role(agent, path):
     """Stage-specific write limits; `path` is None outside any checkout."""
     if agent in PLAN_ONLY and not (path or "").startswith(PLANS):
-        hooklib.deny(EVENT, f"The {agent} stage does not write code; write its output under {PLANS}<slug>/ (AGENTS.md, Pipeline).")
+        hooklib.deny(EVENT, f"The {agent} stage does not write code; write its output under {PLANS}<slug>/ (AGENTS.md, Workflow; .claude/agents/).")
     if agent == "tester" and path and not path.startswith(PLANS) and not is_test_file(path):
-        hooklib.ask(EVENT, f"The tester stage changes tests only; {path} looks like production code (AGENTS.md, Pipeline).")
+        hooklib.ask(EVENT, f"The tester stage changes tests only; {path} looks like production code (AGENTS.md, Workflow; .claude/agents/).")
 
 
 def flatten(document, prefix=""):

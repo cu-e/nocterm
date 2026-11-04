@@ -1,7 +1,8 @@
 # Architecture guardrails
 
 Part of the [architecture overview](../ARCHITECTURE.md). Run
-`cargo xtask architecture` after changing source or crate boundaries.
+`cargo xtask architecture` when guarded Rust structure or crate boundaries are
+affected, following the [local verification policy](../../AGENTS.md#verification-policy).
 
 The check combines the Cargo dependency layers, the 800-line file inventory,
 complexity-attribute policy, and the AST debt inventory in
@@ -107,7 +108,8 @@ whether the card describes the actual boundary, which remains a review duty.
 `cargo xtask architecture` also prints, without failing, each package that has
 reached about four fifths of a structural limit: files of 640 lines or more,
 structs with 12 or more fields and types implemented in four files. A warning
-asks for a split by responsibility to be designed before the limit forces one.
+invites inspection of responsibility and remaining room. It is advisory and
+does not require extraction on its own; hard limits and ownership rules still apply.
 
 `cargo xtask survey <package> [--json] [--type <Type>]` reports the facts such
 a design needs: file sizes, struct shapes and visibility, implementation spread,
@@ -206,8 +208,8 @@ command run the same history check.
 Maintained Markdown under `docs/` rejects session authorization and progress
 phrases. Inline references to known repository types check their members;
 fully qualified repository symbols must exist. Fenced examples and external
-APIs are not treated as repository declarations. Accepted ADRs and
-`docs/history/` retain their historical context. Generated references still have
+APIs are not treated as repository declarations. Accepted ADRs retain their
+historical context. Generated references still have
 the separate `cargo xtask docs --check` freshness gate.
 
 Cargo `test-support` activation is restricted to development dependencies. Normal

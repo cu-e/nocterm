@@ -70,4 +70,4 @@ Writing `std::fs::write` in a feature or service is a review blocker.
 - [ ] bootstrap order respects dependencies; GUI test services updated
 - [ ] references regenerated (`cargo xtask docs`)
 
-End with the Result block.
+Report the relevant changes, evidence and remaining work concisely.
