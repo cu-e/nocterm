@@ -1,48 +1,25 @@
 //! Fixed native160-byte identity record. These bytes are never a public wire format.
 use super::{CloudRunnerIdentityError as Error, IdentityKeys};
+use crate::cloud::private_snapshot::{PrivateSnapshot, SnapshotError};
 use nocterm_cloud_model::journal::JournalCatalogBinding;
-use nocterm_core::{
-    SharedCause,
-    fs::{AtomicPublication, create_private, open_private_regular, require_private_regular},
-};
 use nocterm_keys::DeviceKey;
 use nocterm_keys::cloud::{RunnerEncryptionKey, RunnerSigningKey};
 use sha2::{Digest, Sha256};
-use std::{
-    fs::File,
-    io::{self, Read as _},
-    path::{Path, PathBuf},
-};
+use std::{fs::File, io::Read as _, path::Path};
 use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 8] = b"NCRID001";
 const BYTES: usize = 160;
 
 pub(super) struct IdentityFile {
-    path: PathBuf,
-    parent: File,
-    _lock: File,
+    file: PrivateSnapshot,
     identity: Option<File>,
 }
 impl IdentityFile {
     pub(super) fn acquire(root: &Path) -> Result<Self, Error> {
-        nocterm_core::paths::ensure_private_dir(root).map_err(Error::Directory)?;
-        let parent = File::open(root).map_err(Error::Directory)?;
-        let lock_path = root.join("runner-identity.lock");
-        let lock = match create_private(&lock_path) {
-            Ok(lock) => lock,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                open_private_regular(&lock_path).map_err(Error::Private)?
-            }
-            Err(error) => return Err(Error::Publication(error)),
-        };
-        require_private_regular(&lock).map_err(Error::Private)?;
-        lock.try_lock()
-            .map_err(|source| Error::Lock(io::Error::other(source)))?;
         Ok(Self {
-            path: root.join("runner-identity.v1"),
-            parent,
-            _lock: lock,
+            file: PrivateSnapshot::acquire(root, "runner-identity.lock", "runner-identity.v1")
+                .map_err(snapshot)?,
             identity: None,
         })
     }
@@ -60,16 +37,13 @@ impl IdentityFile {
         bytes[128..160].copy_from_slice(keys.proof().seed().as_ref());
         let digest = identity_digest(binding, &bytes[40..160]);
         bytes[8..40].copy_from_slice(&digest);
-        let file = AtomicPublication::stage_private(&self.path, bytes.as_ref())
-            .map_err(Error::Publication)?
-            .publish_new()
-            .map_err(Error::Publication)?;
+        let file = self.file.publish_new(bytes.as_ref()).map_err(snapshot)?;
         // From here failure means the identity already exists, never rollback.
         self.identity = Some(file);
         self.confirm_ready()
     }
     pub(super) fn open(&mut self, binding: &JournalCatalogBinding) -> Result<IdentityKeys, Error> {
-        let mut file = open_private_regular(&self.path).map_err(Error::Private)?;
+        let mut file = self.file.open().map_err(Error::Private)?;
         let mut bytes = Zeroizing::new([0u8; BYTES + 1]);
         let mut used = 0;
         loop {
@@ -104,14 +78,17 @@ impl IdentityFile {
     }
     fn confirm_ready(&self) -> Result<(), Error> {
         let identity = self.identity.as_ref().ok_or(Error::Unavailable)?;
-        require_private_regular(identity)
-            .map_err(|source| Error::StoredButUnavailable(SharedCause::new(source)))?;
-        identity
-            .sync_all()
-            .map_err(|source| Error::StoredButUnavailable(SharedCause::new(source)))?;
-        self.parent
-            .sync_all()
-            .map_err(|source| Error::StoredButUnavailable(SharedCause::new(source)))
+        self.file.confirm(identity).map_err(snapshot)
+    }
+}
+
+fn snapshot(error: SnapshotError) -> Error {
+    match error {
+        SnapshotError::Directory(source) => Error::Directory(source),
+        SnapshotError::Lock(source) => Error::Lock(source),
+        SnapshotError::Private(source) => Error::Private(source),
+        SnapshotError::Publication(source) => Error::Publication(source),
+        SnapshotError::Stored(source) => Error::StoredButUnavailable(source),
     }
 }
 
