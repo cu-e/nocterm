@@ -611,6 +611,14 @@ not verify cryptography, source authority or durability. The native adapter owns
 complete physical row checks and explicit create/open lifecycle
 ([ADR 0113](../adr/0113-account-bound-journal-catalog.md)).
 
+A chat summary is runner-derived display data. `ChatSummaryFacts` reduces journaled
+observations (first prompt line, latest model, unfinished run statuses, open approvals,
+deletion) to a `ChatActivity`; `ChatSummaryTracker` adds the revision ledger and the
+cadence (one attempt per chat per 5 s, longer after failures, a deletion at once and last).
+`ChatSummaryJournal` and `ChatSummaryDirectory` are the ports for its durable row and its
+signed publication; the contract format stays in the adapter
+([ADR 0135](../adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)).
+
 ### Displayed account confirmations
 
 `nocterm-hubs-model` owns `AdminKeyOffer`, `RecoveryKeyOffer` and `RecoveryKeyReissue`, opaque consumer capabilities supplied by adapters. Display DTOs remain descriptive. The offers preserve their original recipient and exact recovery action through deferred UI callbacks; typed stale errors cross the port. The domain performs no native source lookup or I/O. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

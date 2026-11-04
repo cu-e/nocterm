@@ -120,7 +120,7 @@ acceptance; a later record supersedes an earlier one.
 | [0122](0122-cloud-chat-creation-protocol.md) | Cloud chats are created on the device and claimed by the runner on key admission |
 | [0123](0123-runner-control-channel.md) | The managed runner reads per-chat broker tokens from a framed control channel |
 | [0124](0124-managed-execution-containment.md) | Managed execution runs tools in nested containment behind the host broker |
-| [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) | Account-key lock port, journal v6 horizon and own-runner placement |
+| [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) | Account-key lock port, journal v6 horizon and own-runner placement (journal version rule superseded by 0135) |
 | [0126](0126-own-runner-provider-lease.md) | A device leases a personal agent's key to the own runner |
 | [0127](0127-managed-runner-agent-policy.md) | The managed runner enforces the agent definition policy from boot v2 |
 | [0128](0128-agents-transfer-files-through-the-shared-transfer-runtime.md) | Agents transfer files through the shared transfer runtime, relaying between servers |
@@ -130,3 +130,4 @@ acceptance; a later record supersedes an earlier one.
 | [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local |
 | [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat |
 | [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript |
+| [0135](0135-the-runner-publishes-chat-summaries-journal-v7.md) | The runner publishes signed chat summaries to its directory; journal v7 |

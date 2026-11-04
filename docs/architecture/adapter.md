@@ -578,6 +578,17 @@ after restart still requires an external trusted head to detect. See
 [ADR 0109](../adr/0109-native-cloud-journal-and-effect-recovery.md) and
 [ADR 0113](../adr/0113-account-bound-journal-catalog.md).
 
+The journal (v7) also keeps one `chat_summaries` row per chat: the newest staged and
+published summary revisions, creation and last-activity times and, while the hub has not
+confirmed the newest revision, its sealed bytes and chat key epoch. The row needs no chat
+key. Versions 5 and 6 are upgraded in order on open; other versions are refused.
+`CoordinatorSummaries` follows each chat's committed records through the coordinator's
+journal gate (the first call derives the whole journal, backfilling older chats) and
+publishes due revisions from the runner's delivery sweep. `RunnerChatDirectory` in
+`nocterm-hub-io` signs and seals them with the chat's current head and publishes them to the
+runner's directory stream while the hub negotiated bit 256
+([ADR 0135](../adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)).
+
 A runner's command source also reports `CommandInput::ChatOpened { stream }` after it
 durably admits (or finds already installed) a chat key grant. It is not a command: it has no
 acceptance, acknowledgement or control position, and a retired generation reports nothing. The
