@@ -26,7 +26,7 @@ mod port;
 mod public;
 
 pub use error::{KeyImportError, VaultSshKeysError};
-pub use material::{KeyMaterial, MIN_RSA_BITS};
+pub use material::{KeyMaterial, MIN_RSA_BITS, ed25519_public_key};
 pub use port::{KeySource, NoVaultSshKeys, StoredKey, VaultSshKeys};
 pub use public::PublicKeyText;
 
