@@ -16,7 +16,7 @@
 //! Ports provided: `CloudAgentCatalog`, `CloudAgentLauncher`, `OwnRunnerLauncher`,
 //! `AgentSeats`, `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`. Ports used: `nocterm-hubs-model`
 //! (`HubId`, `HubColor`, `HubError`), the `Secret` of `nocterm-session` and the
-//! `CapturedConversationSource` of `nocterm-cloud-model`.
+//! `CloudConversation` port of `nocterm-cloud-conversation-model`.
 //!
 //! Settings: none. Globals: none.
 //!
@@ -44,8 +44,8 @@ mod usage;
 
 pub use agent::{AgentLimits, CloudAgent, PoolLabel};
 pub use chats::{
-    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, ChatSummary, CloudChatError,
-    CloudChatLauncher, OpenedChat,
+    ChatActivity, ChatFuture, ChatHistoryEntry, ChatHost, ChatListing, ChatRunner, ChatSummary,
+    CloudChatError, CloudChatLauncher, OpenedChat,
 };
 pub use error::{CloudAgentError, ReplyProblem};
 pub use ids::{AgentId, IdError, InstanceId, MAX_ID_BYTES, PoolId};

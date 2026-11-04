@@ -1,151 +1,110 @@
-//! Creating a chat: material, stored grant, then the runner's claim (ADR 0122).
+//! Creating a chat with the device core's `CreateChat` flow (ADR 0122): a managed agent's seat
+//! is started for the new chat, or one of the person's own runners is named; the chat material
+//! and its sealed grant are compare-created in the account, the grant is published, and the
+//! flow waits (bounded, republishing) for the runner to take the chat.
 
 use std::sync::Arc;
 
-use nocterm_cloud_agents_model::{AgentId, ChatHost, OpenedChat};
-use nocterm_cloud_model::identity::{ChatKeyEpoch, CloudChatId};
-use nocterm_cloud_model::projection::ports::CapturedConversationSource;
+use nocterm_cloud_agents_model::{ChatHost, CloudChatError, OpenedChat};
+use nocterm_cloud_conversation_model::CloudConversation as _;
+use nocterm_cloud_device::create::{ChatHost as CoreHost, CreateChat};
+use nocterm_cloud_device::open::ModelChoice;
+use nocterm_cloud_device::policy::MANAGED_PROVIDER;
 use nocterm_hubs_model::HubId;
 
-use super::error::{self, CloudChatError};
-use super::open::open_source;
-use super::seat_wake::{ManagedSeat, WakingSource};
-use super::session::OpenedAccount;
-use super::setup::Capability;
-use super::wait::PATIENCE;
-use super::{Shared, managed, own_runner};
-use crate::cloud::ChatMaterialRequest;
+use super::leases::{self, LeaseRequest};
+use super::{Shared, error};
+use crate::cloud_device::{ChatSetup, driver};
 use crate::devices::Captured;
 use crate::hub_account::HubAccount;
 
-/// The first key epoch of a chat; rotation is a separate transition.
-const FIRST_EPOCH: u64 = 1;
-
-/// Where a new chat runs and what it may do there.
-struct Destination {
-    runner: [u8; 16],
+/// What a new chat runs on, and what its window prompts with.
+struct Plan {
+    host: CoreHost,
     title: String,
-    capability: Capability,
+    model: Option<ModelChoice>,
+    wake: Option<String>,
     /// The personal agent whose key this device leases to the person's own runner.
-    own: Option<(AgentId, String)>,
-    /// The managed agent whose seat hosts the chat and is woken for its prompts.
-    seat: Option<AgentId>,
+    lease: Option<nocterm_cloud_agents_model::AgentId>,
 }
 
-/// Resolves `host`; a managed agent's seat is started (or woken) for the chat first.
-async fn destination(
-    captured: &Arc<Captured>,
-    host: ChatHost,
-    chat: [u8; 16],
-) -> Result<Destination, CloudChatError> {
+async fn plan(account: &HubAccount, host: ChatHost) -> Result<Plan, CloudChatError> {
     Ok(match host {
-        ChatHost::Agent { agent, model } => Destination {
-            runner: managed::start_for_chat(captured, &agent, None, chat).await?,
+        ChatHost::Agent { agent, model } => Plan {
+            host: CoreHost::Managed {
+                agent_id: agent.to_string(),
+            },
             title: agent.to_string(),
-            capability: Capability::Prompting { model },
-            own: None,
-            seat: Some(agent),
+            model: Some(ModelChoice {
+                provider: MANAGED_PROVIDER.to_owned(),
+                model,
+            }),
+            wake: Some(agent.to_string()),
+            lease: None,
         },
-        ChatHost::Runner(runner) => Destination {
-            runner: runner.id,
+        ChatHost::Runner(runner) => Plan {
+            host: CoreHost::Own { runner: runner.id },
             title: runner.label,
-            capability: Capability::Controls,
-            own: None,
-            seat: None,
+            model: None,
+            wake: None,
+            lease: None,
         },
-        ChatHost::OwnAgent {
-            runner,
-            agent,
-            model,
-        } => Destination {
-            runner: runner.id,
+        // The key is checked before any chat material exists, so a missing key leaves nothing
+        // behind.
+        ChatHost::OwnAgent { runner, agent, .. } => Plan {
+            host: CoreHost::Own { runner: runner.id },
             title: runner.label,
-            capability: Capability::Controls,
-            own: Some((agent, model)),
-            seat: None,
+            model: Some(leases::key_model(account, &agent).await?),
+            wake: None,
+            lease: Some(agent),
         },
     })
 }
 
 pub(super) async fn create(
-    shared: Arc<Shared>,
+    shared: &Arc<Shared>,
     captured: Arc<Captured>,
-    account: HubAccount,
-    hub: HubId,
+    account: &HubAccount,
+    hub: &HubId,
     host: ChatHost,
 ) -> Result<OpenedChat, CloudChatError> {
-    let chat_bytes = nocterm_keys::random_bytes::<16>()
-        .map_err(|failure| CloudChatError::Backend(nocterm_core::SharedCause::new(failure)))?;
-    let Destination {
-        runner,
-        title,
-        mut capability,
-        own,
-        seat,
-    } = destination(&captured, host, chat_bytes).await?;
-    let opened = OpenedAccount::open(&account, shared.handle(), shared.budget()).await?;
-    // The key and the runner's boot are checked before any chat material exists, so a missing
-    // key or an offline runner leaves nothing behind.
-    let prepared = match &own {
-        Some((agent, model)) => {
-            let prepared = own_runner::prepare(&shared, &account, &opened, agent, &runner).await?;
-            capability = Capability::OwnProvider {
-                provider: prepared.provider().to_owned(),
-                model: model.clone(),
-            };
-            Some(prepared)
-        }
-        None => None,
-    };
-    let registration = opened.runner(&runner)?;
-    let request = ChatMaterialRequest {
-        stream: registration
-            .binding()
-            .stream(CloudChatId::from_bytes(chat_bytes)),
-        epoch: ChatKeyEpoch::new(FIRST_EPOCH).map_err(|_| CloudChatError::Capacity)?,
-        pins: registration.pins(),
-    };
-    let access = opened.material();
-    let chat = Arc::new(
-        access
-            .create(request, shared.budget().material()?)
-            .await
-            .map_err(error::material)?,
-    );
-    // The grant bytes are durable in the account before the first publication, so a retry
-    // after a crash sends the same blob.
-    let grant = access
-        .store_chat_key_grant(chat.clone(), shared.budget().material()?)
-        .await
-        .map_err(error::material)?;
-    let source = open_source(
-        access,
-        chat,
-        &capability,
-        shared.collaborators(),
-        shared.budget(),
-        Some(Arc::new(grant)),
-        PATIENCE,
-    )
-    .await?;
-    if let (Some((agent, _)), Some(prepared)) = (&own, &prepared) {
-        own_runner::lease_chat(&shared, prepared, &hub, agent, runner, &source).await?;
+    let plan = plan(account, host).await?;
+    let opened = shared.account(captured, account).await?;
+    let device = opened.device().map_err(error::hub)?;
+    let mut flow =
+        CreateChat::new(opened.session(), device, plan.host, None).map_err(error::device)?;
+    let mut created = None;
+    driver::run(&mut flow, opened.effects().clone(), |_, chat| {
+        created = Some(chat);
+        driver::Control::Stop
+    })
+    .await
+    .map_err(error::device)?;
+    let created = created.ok_or(CloudChatError::RunnerNotReady)?;
+    if let Some(runners) = created.runners {
+        opened.adopt_runners(runners);
     }
-    let source: Arc<dyn CapturedConversationSource> = source;
-    // The seat of a managed agent sleeps again after its idle time while the chat stays open.
-    let source = match seat {
-        Some(agent) => WakingSource::wrap(
-            source,
-            Arc::new(ManagedSeat::new(
-                shared.handle().clone(),
-                captured,
-                agent,
-                runner,
-                chat_bytes,
-            )),
-        ),
-        None => source,
-    };
-    let key = super::chat_key(&chat_bytes);
-    Ok(OpenedChat { source, title, key })
+    let conversation = shared.conversation(
+        opened.clone(),
+        ChatSetup {
+            chat: created.chat,
+            model: plan.model,
+            wake: plan.wake,
+        },
+    );
+    if let Some(agent) = plan.lease {
+        let request = LeaseRequest {
+            hub,
+            agent: &agent,
+            chat: created.chat,
+            control_revision: 0,
+        };
+        leases::lease(shared, opened, request, Arc::downgrade(&conversation)).await?;
+    }
+    let key = conversation.key().to_string();
+    Ok(OpenedChat {
+        conversation,
+        title: plan.title,
+        key,
+    })
 }

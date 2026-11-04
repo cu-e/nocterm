@@ -5210,7 +5210,7 @@ dependencies = [
  "nocterm-cloud-agents",
  "nocterm-cloud-agents-model",
  "nocterm-cloud-chat",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-hubs",
  "nocterm-hubs-model",
  "nocterm-plugin-model",
@@ -5386,7 +5386,7 @@ dependencies = [
  "futures",
  "gpui-pre",
  "nocterm-cloud-agents-model",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-hubs-model",
  "nocterm-session",
  "tracing",
@@ -5397,7 +5397,7 @@ name = "nocterm-cloud-agents-model"
 version = "0.0.0"
 dependencies = [
  "futures",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-core",
  "nocterm-hubs-model",
  "nocterm-session",
@@ -5413,9 +5413,18 @@ dependencies = [
  "nocterm-agent-chat",
  "nocterm-agent-runtime",
  "nocterm-ai",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-core",
- "nocterm-session",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-cloud-conversation-model"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-core",
  "thiserror 2.0.21",
 ]
 
@@ -5719,10 +5728,13 @@ dependencies = [
  "futures",
  "nocterm-ai",
  "nocterm-cloud-agents-model",
+ "nocterm-cloud-conversation-model",
+ "nocterm-cloud-device",
  "nocterm-cloud-model",
  "nocterm-connections-model",
  "nocterm-core",
  "nocterm-hub-client",
+ "nocterm-hub-grpc",
  "nocterm-hub-model",
  "nocterm-hub-proto",
  "nocterm-hubs-model",
@@ -5807,7 +5819,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-cloud-agents",
  "nocterm-cloud-agents-model",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-core",
  "nocterm-hubs",
  "nocterm-hubs-model",

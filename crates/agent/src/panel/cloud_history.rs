@@ -166,13 +166,12 @@ mod tests {
     use super::*;
 
     fn row() -> ChatSummary {
-        ChatSummary {
-            key: "k".into(),
-            title: "Release notes".into(),
-            host: "Scribe".into(),
-            model: Some("gpt-x".into()),
-            updated_at: None,
-        }
+        ChatSummary::plain(
+            "k".into(),
+            "Release notes".into(),
+            "Scribe".into(),
+            Some("gpt-x".into()),
+        )
     }
 
     #[test]

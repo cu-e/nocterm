@@ -308,6 +308,8 @@ nocterm-vault-store = { path = "crates/vault-store" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
 # The hub contract lives outside this workspace (ADR 0096); only nocterm-hub-io may use it.
 nocterm-hub-client = { git = "https://github.com/cu-e/nocterm-contract", rev = "897c759964ec109ee893b13aefdf921811275f0c" }
+nocterm-cloud-device = { git = "https://github.com/cu-e/nocterm-contract", rev = "897c759964ec109ee893b13aefdf921811275f0c" }
+nocterm-hub-grpc = { git = "https://github.com/cu-e/nocterm-contract", rev = "897c759964ec109ee893b13aefdf921811275f0c" }
 nocterm-hub-model = { git = "https://github.com/cu-e/nocterm-contract", rev = "897c759964ec109ee893b13aefdf921811275f0c" }
 nocterm-hub-proto = { git = "https://github.com/cu-e/nocterm-contract", rev = "897c759964ec109ee893b13aefdf921811275f0c" }
 nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "897c759964ec109ee893b13aefdf921811275f0c" }

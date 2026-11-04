@@ -1,13 +1,13 @@
 //! The port through which the Cloud menu creates, lists and opens Cloud chats.
 //!
 //! Named for the menu's need: a chat is created on a host (an agent or one of the person's own
-//! runners), the person's earlier chats are listed, and either comes back as a captured
-//! conversation source that a window presents. Every call is for one hub.
+//! runners), the person's earlier chats are listed, and either comes back as a verified
+//! conversation that a window presents. Every call is for one hub.
 
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use nocterm_cloud_model::projection::{ProjectionError, ports::CapturedConversationSource};
+use nocterm_cloud_conversation_model::{CloudConversation, CloudConversationError};
 use nocterm_core::error::SharedCause;
 use nocterm_hubs_model::{HubError, HubId};
 
@@ -53,17 +53,45 @@ pub enum ChatHost {
 /// A chat ready to be presented in a window.
 #[derive(Clone)]
 pub struct OpenedChat {
-    /// The captured, verified source of the conversation.
-    pub source: Arc<dyn CapturedConversationSource>,
+    /// The verified conversation, bound to the account it was opened for.
+    pub conversation: Arc<dyn CloudConversation>,
     /// What the window's tab is called.
     pub title: String,
     /// The [`ChatSummary::key`] the history lists this chat under.
     pub key: String,
 }
 
+/// What a chat is doing, as its runner last summarized it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatActivity {
+    Idle,
+    Running,
+    WaitingApproval,
+    /// A run waits for the person to allow model use.
+    NeedsGrant,
+    /// A run waits for this device to lease its provider key.
+    NeedsProvider,
+    /// A run waits for server access.
+    NeedsSsh,
+    Failed,
+}
+
+/// How far a history row is confirmed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatListing {
+    /// The runner's summary matches the head it witnessed just now.
+    Current,
+    /// The runner did not answer: the row is as of its last summary.
+    AsOf,
+    /// The runner's chat moved on since its last summary (a running chat).
+    Stale,
+    /// The runner published no summary of the chat (an older runner or hub).
+    Unsummarized,
+}
+
 /// What a history row of an earlier chat shows. Descriptive only: it grants nothing, and the hub
-/// learns nothing from it, because it is built from the authenticated catalog of the chat's
-/// runner and the account's own seats.
+/// learns nothing from it, because it is built from the runner-signed summary sealed to the
+/// account, the authenticated catalog of the chat's runner and the account's own seats.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatSummary {
     /// Stable for the same chat across listings (the chat's identifier, as text), so a window
@@ -75,9 +103,29 @@ pub struct ChatSummary {
     pub host: String,
     /// The model the chat prompts, when it can prompt.
     pub model: Option<String>,
-    /// When the chat last changed (Unix seconds), when the listing knows it. The catalog of a
-    /// runner carries no time, so a chat this device has not observed has none.
+    /// When the chat last changed (Unix seconds), from the runner's summary.
     pub updated_at: Option<u64>,
+    /// What the chat is doing, from the runner's summary.
+    pub activity: Option<ChatActivity>,
+    /// How far the row is confirmed.
+    pub listing: ChatListing,
+    /// The servers the chat is bound to, as `user@host`.
+    pub servers: Vec<String>,
+}
+impl ChatSummary {
+    /// A row with nothing but its key, title, host and model.
+    pub fn plain(key: String, title: String, host: String, model: Option<String>) -> Self {
+        Self {
+            key,
+            title,
+            host,
+            model,
+            updated_at: None,
+            activity: None,
+            listing: ChatListing::Unsummarized,
+            servers: Vec::new(),
+        }
+    }
 }
 
 /// An earlier chat of the account. Holding it is the only way to open it: a summary alone grants
@@ -86,7 +134,8 @@ pub trait ChatHistoryEntry: Send + Sync {
     /// What the history row shows.
     fn summary(&self) -> &ChatSummary;
 
-    /// Opens the chat, waking its agent's seat first when it sleeps.
+    /// Opens the chat. A sleeping seat is not woken: the chat shows its stored history as
+    /// unconfirmed until the person wakes it or prompts.
     fn open(&self) -> ChatFuture<OpenedChat>;
 }
 
@@ -122,9 +171,9 @@ pub enum CloudChatError {
     /// The account cannot be reached.
     #[error(transparent)]
     Hub(#[from] HubError),
-    /// The conversation source refused.
+    /// The conversation refused.
     #[error(transparent)]
-    Projection(#[from] ProjectionError),
+    Conversation(#[from] CloudConversationError),
     /// The encrypted account data or the runner's Cloud channel failed.
     #[error("the Cloud chat could not be set up")]
     Backend(#[source] SharedCause),

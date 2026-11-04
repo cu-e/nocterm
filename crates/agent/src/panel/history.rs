@@ -1,6 +1,6 @@
 //! The chat history: search, pinned chats first, and each chat's actions —
-//! rename, fork, pin and delete — then the Cloud chats of the window's hub, drawn by the
-//! same row renderer with only the actions their port supports.
+//! rename, fork, pin and delete — beside the Cloud chats of the window's hub in one order by
+//! last activity, drawn by the same row renderer with only the actions their port supports.
 
 use gpui_kit::{
     Anchor, App, Context, Entity, SharedString, TestSupportExt as _,
@@ -394,14 +394,21 @@ impl HistoryProjection {
         }
         // Resolved once: resolving builds the whole agent list from the catalog and settings.
         let available = agents.available(cx);
+        // Local and Cloud chats share one order: pinned first, then the most recently changed.
+        // A Cloud chat's time is its runner's last activity; one without a summary goes last.
+        let mut rows: Vec<((bool, u64), HistoryRow)> = Vec::with_capacity(listed.len());
         for thread in listed {
+            let document = thread.read(cx).document();
+            let key = (document.pinned(), document.updated());
             let row = Self::local_row(&thread, chats, column, (agents, &available), now, cx);
-            history = history.child(HistoryRowRenderer::render(row, cx));
+            rows.push((key, row));
         }
-        // The hub's catalog carries no time, so Cloud chats follow the local ones in the order
-        // the hub lists them.
         for summary in cloud {
-            let row = Self::cloud_row(summary, open_cloud.as_deref(), now);
+            let key = (false, summary.updated_at.unwrap_or(0));
+            rows.push((key, Self::cloud_row(summary, open_cloud.as_deref(), now)));
+        }
+        rows.sort_by_key(|(key, _)| std::cmp::Reverse(*key));
+        for (_, row) in rows {
             history = history.child(HistoryRowRenderer::render(row, cx));
         }
         history.into_any_element()
@@ -440,14 +447,34 @@ impl HistoryProjection {
             rename: history.rename_input(id),
         }
     }
-    /// A Cloud chat's row: its time when the hub's listing knows it, else who hosts it.
+    /// A Cloud chat's row: its runner's last activity and what the chat is doing, else who
+    /// hosts it. A row the runner did not confirm says "as of".
     fn cloud_row(summary: ChatSummary, open: Option<&str>, now: u64) -> HistoryRow {
-        let when = match summary.updated_at {
+        use nocterm_cloud_agents_model::{ChatActivity, ChatListing};
+        let mut when = match summary.updated_at {
             Some(updated) => {
-                relative_prompt_time(Some(Duration::from_secs(now.saturating_sub(updated))))
+                let ago =
+                    relative_prompt_time(Some(Duration::from_secs(now.saturating_sub(updated))));
+                match summary.listing {
+                    ChatListing::AsOf => format!("as of {ago}"),
+                    _ => ago,
+                }
             }
-            None => summary.host,
+            None => summary.host.clone(),
         };
+        let state = match summary.activity {
+            Some(ChatActivity::Running) => Some("running"),
+            Some(ChatActivity::WaitingApproval) => Some("waiting for approval"),
+            Some(ChatActivity::NeedsGrant) => Some("waiting for permission"),
+            Some(ChatActivity::NeedsProvider) => Some("needs provider access"),
+            Some(ChatActivity::NeedsSsh) => Some("needs server access"),
+            Some(ChatActivity::Failed) => Some("failed"),
+            Some(ChatActivity::Idle) | None => None,
+        };
+        if let Some(state) = state {
+            when.push_str(" · ");
+            when.push_str(state);
+        }
         HistoryRow {
             selected: open == Some(summary.key.as_str()),
             target: RowTarget::Cloud(summary.key),

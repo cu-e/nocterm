@@ -15,6 +15,7 @@ pub(super) struct ComposerFrame {
     can_configure: bool,
     usage: Option<Option<ContextUsage>>,
     status: Option<(String, bool)>,
+    can_wake: bool,
 }
 impl ComposerFrame {
     /// None when the source can no longer be read; the transcript names why.
@@ -31,6 +32,10 @@ impl ComposerFrame {
                     can_configure: view.composer.configure,
                     usage: view.composer.usage.then(|| view.transcript.usage.clone()),
                     status: TranscriptView::conversation_status(&view),
+                    can_wake: view.freshness
+                        == nocterm_ai::conversation::ConversationFreshness::Unconfirmed {
+                            can_wake: true,
+                        },
                 });
             })
             .ok()?;
@@ -55,6 +60,10 @@ impl ComposerFrame {
     /// The context usage the usage ring shows, when the source reports one.
     pub(super) fn usage(&self) -> Option<Option<&ContextUsage>> {
         self.usage.as_ref().map(Option::as_ref)
+    }
+    /// Whether the source's producer sleeps and can be woken (a Cloud chat's seat).
+    pub(super) fn can_wake(&self) -> bool {
+        self.can_wake
     }
     /// The status line the source describes: its text and whether it is live.
     pub(super) fn status(&self) -> Option<(String, bool)> {

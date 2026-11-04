@@ -108,6 +108,14 @@ impl HubAccount {
         self.admin_keys.clone()
     }
 
+    /// The account's operations bound to the captured `source`, holding its keys weakly.
+    pub(crate) fn bind(
+        &self,
+        source: Arc<dyn LocalAccountSource>,
+    ) -> Result<crate::account::operations::BoundOperations, HubError> {
+        self.operations.bind(source)
+    }
+
     /// The encrypted store of the account, captured from its current signed-in membership.
     pub(crate) fn work(&self) -> Result<crate::account::operations::OpenedWork, HubError> {
         self.operations.opened()

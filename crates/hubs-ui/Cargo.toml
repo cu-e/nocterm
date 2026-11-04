@@ -23,7 +23,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 nocterm-cloud-agents-model = { workspace = true, features = ["test-support"] }
-nocterm-cloud-model = { workspace = true, features = ["test-support"] }
+nocterm-cloud-conversation-model = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-settings.workspace = true

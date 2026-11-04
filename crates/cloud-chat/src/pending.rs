@@ -1,347 +1,172 @@
-//! Pending identities and durable bodies outlive an individual action waiter.
+//! The prompts the person sent that the runner has not accepted, as the chat shows them
+//! (ADR 0134), and the waiters of submitted commands.
+//!
+//! A prompt shows at once, before the conversation has tracked it; then it follows its
+//! command's state in the transcript. A refused or unanswered prompt stays until it is sent
+//! again (as a new prompt that replaces it) or dismissed; at most four refused ones are shown.
 use futures::channel::oneshot;
-use gpui::Task;
 use nocterm_ai::conversation::{PendingPrompt, PendingPromptKey, PendingPromptState};
-use nocterm_cloud_model::projection::ConversationIntent;
-use nocterm_cloud_model::{
-    identity::CommandId,
-    projection::{MAX_PENDING_COMMANDS, ProjectionError, RecordKind, ports::ConversationCommand},
-};
-use nocterm_core::allocation::{Allocated, AllocationLease};
-use std::{
-    cell::Cell,
-    collections::{BTreeMap, VecDeque},
-    rc::Rc,
-    sync::Arc,
-};
+use nocterm_cloud_conversation_model::{CloudTranscript, CommandKey, CommandKind, CommandState};
+use std::collections::BTreeSet;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PendingCommandState {
-    Staging,
-    Pending,
-    Delivered,
-    Accepted,
-    Rejected,
-    OutcomeUnknown,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PendingCommandView {
-    id: CommandId,
-    state: PendingCommandState,
-}
-impl PendingCommandView {
-    pub fn id(&self) -> CommandId {
-        self.id
-    }
-    pub fn state(&self) -> PendingCommandState {
-        self.state
-    }
-}
-
-/// Why the waiter of one command learned that it did not succeed.
-#[derive(Clone, Debug)]
-pub(crate) enum CommandFailure {
-    /// The source refused to stage, deliver or query it; its exact ID stays for a retry.
-    Source(ProjectionError),
-    /// The hub or the runner did not answer its delivery; its exact ID stays for a retry.
-    Unreachable,
-    /// The runner refused it for good.
-    Rejected,
-}
-pub(crate) type CommandWaiter = oneshot::Sender<Result<(), CommandFailure>>;
-pub(crate) type RetainedCommand = Allocated<ConversationCommand>;
-pub(crate) type SubmissionReceipt = Rc<Cell<Option<bool>>>;
-
-struct PendingCommand {
-    retained: Arc<RetainedCommand>,
-    state: PendingCommandState,
-    operation: Option<Task<()>>,
-    waiter: Option<CommandWaiter>,
-    receipt: SubmissionReceipt,
-    /// When it was sent, relative to the other commands and refused prompts.
-    order: u64,
-}
-impl PendingCommand {
-    fn prompt_state(&self) -> PendingPromptState {
-        if self.operation.is_some() || self.waiter.is_some() {
-            return PendingPromptState::Sending;
-        }
-        match self.state {
-            PendingCommandState::Staging => PendingPromptState::Sending,
-            PendingCommandState::Pending
-            | PendingCommandState::Delivered
-            | PendingCommandState::Accepted => PendingPromptState::Delivered,
-            PendingCommandState::OutcomeUnknown => PendingPromptState::Unreachable,
-            PendingCommandState::Rejected => PendingPromptState::Refused,
-        }
-    }
-}
 /// At most this many refused prompts stay shown; older ones are forgotten.
 const MAX_REFUSED_PROMPTS: usize = 4;
-/// A prompt the runner refused. Its command and payload retire with the refusal; only its
-/// text stays, under a bytes reservation, until it is sent again or dismissed.
-pub(crate) struct Refusal {
-    id: CommandId,
-    text: String,
-    order: u64,
+/// Dismissed commands remembered; the conversation tracks at most 32 commands.
+const MAX_DISMISSED: usize = 64;
+/// Keys of prompts not tracked yet start with this byte, which no command id is made of on
+/// purpose; a collision only affects which row a click names.
+const PLACEHOLDER: u8 = 0xff;
+
+/// How a command a waiter waits for ended badly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommandFailure {
+    Rejected,
+    Unreachable,
+    Stale,
 }
-impl Refusal {
-    pub(crate) fn bytes(&self) -> usize {
-        self.text.len()
+pub(crate) type CommandWaiter = oneshot::Sender<Result<(), CommandFailure>>;
+
+pub(crate) fn prompt_key(command: CommandKey) -> PendingPromptKey {
+    PendingPromptKey::from_bytes(*command.as_bytes())
+}
+pub(crate) fn command_key(prompt: PendingPromptKey) -> CommandKey {
+    CommandKey::from_bytes(*prompt.as_bytes())
+}
+
+/// What a command's settled state means for its waiter; `None` while it is on its way.
+pub(crate) fn outcome(state: CommandState) -> Option<Result<(), CommandFailure>> {
+    match state {
+        CommandState::Sending => None,
+        CommandState::Delivered | CommandState::Accepted => Some(Ok(())),
+        CommandState::Refused => Some(Err(CommandFailure::Rejected)),
+        CommandState::Unreachable => Some(Err(CommandFailure::Unreachable)),
     }
 }
-struct RefusedPrompt {
-    refusal: Refusal,
-    _allocation: AllocationLease,
-}
+
 #[derive(Default)]
-pub(crate) struct PendingCommands {
-    commands: BTreeMap<CommandId, PendingCommand>,
-    refused: VecDeque<RefusedPrompt>,
-    sent: u64,
+pub(crate) struct PendingPrompts {
+    /// Prompts handed to the conversation that it has not tracked yet.
+    placeholders: Vec<(PendingPromptKey, String)>,
+    dismissed: BTreeSet<CommandKey>,
+    waiters: Vec<(CommandKey, CommandWaiter)>,
+    next: u64,
 }
-pub(crate) fn prompt_key(id: CommandId) -> PendingPromptKey {
-    PendingPromptKey::from_bytes(*id.as_bytes())
-}
-fn prompt_text(command: &RetainedCommand) -> Option<&str> {
-    match &command.value().action {
-        ConversationIntent::Prompt(text) => Some(text),
-        _ => None,
+impl PendingPrompts {
+    /// Shows `text` at once; returns the key of its placeholder row.
+    pub(crate) fn sending(&mut self, text: &str) -> PendingPromptKey {
+        self.next = self.next.wrapping_add(1);
+        let mut bytes = [PLACEHOLDER; 16];
+        bytes[8..].copy_from_slice(&self.next.to_be_bytes());
+        let key = PendingPromptKey::from_bytes(bytes);
+        self.placeholders.push((key, text.to_owned()));
+        key
     }
-}
-impl PendingCommands {
-    /// The prompts the runner has not accepted, in the order they were sent.
-    pub(crate) fn prompts(&self) -> Vec<PendingPrompt<'_>> {
-        let mut prompts: Vec<(u64, PendingPrompt<'_>)> = self
-            .commands
-            .iter()
-            .filter_map(|(id, entry)| {
-                let text = prompt_text(&entry.retained)?;
-                Some((
-                    entry.order,
-                    PendingPrompt {
-                        key: prompt_key(*id),
-                        text,
-                        state: entry.prompt_state(),
-                    },
-                ))
-            })
-            .chain(self.refused.iter().map(|refused| {
-                (
-                    refused.refusal.order,
-                    PendingPrompt {
-                        key: prompt_key(refused.refusal.id),
-                        text: &refused.refusal.text,
-                        state: PendingPromptState::Refused,
-                    },
-                )
-            }))
-            .collect();
-        prompts.sort_by_key(|(order, _)| *order);
-        prompts.into_iter().map(|(_, prompt)| prompt).collect()
+    /// The conversation took (or refused) the placeholder's prompt.
+    pub(crate) fn tracked(&mut self, placeholder: PendingPromptKey) {
+        self.placeholders.retain(|(key, _)| *key != placeholder);
     }
-    /// The text of a refused prompt.
-    pub(crate) fn refused_text(&self, id: CommandId) -> Option<&str> {
-        self.refused
-            .iter()
-            .find(|refused| refused.refusal.id == id)
-            .map(|refused| refused.refusal.text.as_str())
-    }
-    /// Removes a refused prompt; whether there was one.
-    pub(crate) fn forget_refused(&mut self, id: CommandId) -> bool {
-        let before = self.refused.len();
-        self.refused.retain(|refused| refused.refusal.id != id);
-        self.refused.len() != before
-    }
-    /// Shows a refused prompt, within the bound, for as long as its reservation lives.
-    pub(crate) fn keep_refused(&mut self, refusal: Refusal, allocation: AllocationLease) {
-        if self.refused.len() >= MAX_REFUSED_PROMPTS {
-            self.refused.pop_front();
-        }
-        self.refused.push_back(RefusedPrompt {
-            refusal,
-            _allocation: allocation,
-        });
-    }
-    pub(crate) fn views(&self) -> Vec<PendingCommandView> {
-        self.commands
-            .iter()
-            .map(|(id, entry)| PendingCommandView {
-                id: *id,
-                state: entry.state,
-            })
-            .collect()
-    }
-    pub(crate) fn is_empty(&self) -> bool {
-        self.commands.is_empty()
-    }
-    pub(crate) fn contains(&self, id: CommandId) -> bool {
-        self.commands.contains_key(&id)
-    }
-    pub(crate) fn require_room(&self) -> Result<(), ProjectionError> {
-        (self.commands.len() < MAX_PENDING_COMMANDS)
-            .then_some(())
-            .ok_or(ProjectionError::Capacity)
-    }
-    pub(crate) fn insert(
+    /// Waits for `command` to settle; settles at once when `transcript` already says how.
+    pub(crate) fn wait(
         &mut self,
-        command: ConversationCommand,
-        allocation: AllocationLease,
+        command: CommandKey,
         waiter: CommandWaiter,
-    ) -> Result<(), ProjectionError> {
-        self.require_room()?;
-        if self.commands.contains_key(&command.id) {
-            return Err(ProjectionError::InvalidRecord(RecordKind::PendingCommand));
-        }
-        self.sent = self.sent.saturating_add(1);
-        self.commands.insert(
-            command.id,
-            PendingCommand {
-                retained: Arc::new(Allocated::new(command, allocation)),
-                state: PendingCommandState::Staging,
-                operation: None,
-                waiter: Some(waiter),
-                receipt: Rc::new(Cell::new(None)),
-                order: self.sent,
-            },
-        );
-        Ok(())
-    }
-    pub(crate) fn retry(
-        &mut self,
-        id: CommandId,
-        waiter: CommandWaiter,
-    ) -> Result<Arc<RetainedCommand>, ProjectionError> {
-        let entry = self
-            .commands
-            .get_mut(&id)
-            .ok_or(ProjectionError::InvalidRecord(RecordKind::PendingCommand))?;
-        if entry.operation.is_some() || entry.waiter.is_some() {
-            return Err(ProjectionError::Unavailable);
-        }
-        if matches!(
-            entry.state,
-            PendingCommandState::Accepted | PendingCommandState::Rejected
-        ) {
-            return Err(ProjectionError::Unavailable);
-        }
-        entry.waiter = Some(waiter);
-        Ok(entry.retained.clone())
-    }
-    pub(crate) fn has_approval(&self, key: nocterm_cloud_model::projection::ApprovalKey) -> bool {
-        self.commands.values().any(|entry| matches!(&entry.retained.value().action, ConversationIntent::AnswerApproval(request) if key.matches_request(request)))
-    }
-    pub(crate) fn item(&self, id: CommandId) -> Result<Arc<RetainedCommand>, ProjectionError> {
-        self.commands
-            .get(&id)
-            .map(|entry| entry.retained.clone())
-            .ok_or(ProjectionError::InvalidRecord(RecordKind::PendingCommand))
-    }
-    pub(crate) fn receipt(&self, id: CommandId) -> Result<SubmissionReceipt, ProjectionError> {
-        self.commands
-            .get(&id)
-            .map(|entry| entry.receipt.clone())
-            .ok_or(ProjectionError::InvalidRecord(RecordKind::PendingCommand))
-    }
-    pub(crate) fn staged(&mut self, id: CommandId) {
-        if let Some(entry) = self.commands.get_mut(&id)
-            && !matches!(
-                entry.state,
-                PendingCommandState::Delivered
-                    | PendingCommandState::Accepted
-                    | PendingCommandState::Rejected
-            )
+        transcript: &CloudTranscript,
+    ) {
+        match transcript
+            .pending_command(command)
+            .and_then(|known| outcome(known.state))
         {
-            entry.state = PendingCommandState::Pending;
-        }
-    }
-    pub(crate) fn attach(&mut self, id: CommandId, task: Task<()>) {
-        if let Some(entry) = self.commands.get_mut(&id) {
-            entry.operation = Some(task);
-        }
-    }
-    /// Records the outcome of a delivery; a refused prompt's command retires and its text is
-    /// returned for the owner to keep under a reservation.
-    pub(crate) fn finish(
-        &mut self,
-        id: CommandId,
-        result: Result<PendingCommandState, ProjectionError>,
-    ) -> Option<Refusal> {
-        let rejected = matches!(result, Ok(PendingCommandState::Rejected));
-        if let Some(entry) = self.commands.get_mut(&id) {
-            entry.operation.take();
-            let observed = result
-                .as_ref()
-                .copied()
-                .unwrap_or(PendingCommandState::OutcomeUnknown);
-            match observed {
-                PendingCommandState::Accepted => entry.receipt.set(Some(true)),
-                PendingCommandState::Rejected => entry.receipt.set(Some(false)),
-                _ => {}
-            }
-            // A later runner Unknown/error does not erase an already matched
-            // durable storage ACK. Only authenticated terminal facts supersede it.
-            if entry.state != PendingCommandState::Delivered
-                || matches!(
-                    observed,
-                    PendingCommandState::Accepted | PendingCommandState::Rejected
-                )
-            {
-                entry.state = observed;
-            }
-            if let Some(waiter) = entry.waiter.take() {
-                let result = match result {
-                    Ok(PendingCommandState::Rejected) => Err(CommandFailure::Rejected),
-                    Ok(_) => Ok(()),
-                    // Delivery results come from the transport: an unavailable one did not
-                    // answer, which a retry can change.
-                    Err(ProjectionError::Unavailable) => Err(CommandFailure::Unreachable),
-                    Err(error) => Err(CommandFailure::Source(error)),
-                };
+            Some(result) => {
                 let _ = waiter.send(result);
             }
+            None => self.waiters.push((command, waiter)),
         }
-        // A definitive refusal cannot produce a later accepted replay. Retire
-        // its body after notifying the waiter; uncertain outcomes retain exactID.
-        if !rejected {
-            return None;
-        }
-        let entry = self.commands.remove(&id)?;
-        Some(Refusal {
-            id,
-            text: prompt_text(&entry.retained)?.to_owned(),
-            order: entry.order,
-        })
     }
-    /// Whether a pending inference grant already waits for the runner.
-    pub(crate) fn has_inference_grant(&self) -> bool {
-        self.commands.values().any(|entry| {
-            matches!(
-                entry.retained.value().action,
-                ConversationIntent::GrantInference
-            )
-        })
-    }
-    /// Retires the accepted commands; reports whether one of them was a prompt.
-    pub(crate) fn accepted(&mut self, accepted: &[CommandId]) -> bool {
-        let mut prompt = false;
-        for id in accepted {
-            if let Some(mut entry) = self.commands.remove(id) {
-                prompt |= prompt_text(&entry.retained).is_some();
-                entry.receipt.set(Some(true));
-                if let Some(waiter) = entry.waiter.take() {
-                    let _ = waiter.send(Ok(()));
+    /// Settles the waiters whose commands settled in `transcript`.
+    pub(crate) fn follow(&mut self, transcript: &CloudTranscript) {
+        let mut index = 0;
+        while index < self.waiters.len() {
+            let command = self.waiters[index].0;
+            match transcript
+                .pending_command(command)
+                .and_then(|known| outcome(known.state))
+            {
+                Some(result) => {
+                    let (_, waiter) = self.waiters.remove(index);
+                    let _ = waiter.send(result);
                 }
+                None => index += 1,
             }
         }
-        prompt
     }
-    pub(crate) fn invalidate(&mut self) {
-        self.refused.clear();
-        for (_, mut entry) in std::mem::take(&mut self.commands) {
-            if let Some(waiter) = entry.waiter.take() {
-                let _ = waiter.send(Err(CommandFailure::Source(ProjectionError::Stale)));
+    /// Forgets a refused or unanswered prompt; whether there was one to forget.
+    pub(crate) fn dismiss(&mut self, command: CommandKey, transcript: &CloudTranscript) -> bool {
+        let failed = transcript.pending_command(command).is_some_and(|known| {
+            known.kind == CommandKind::Prompt
+                && matches!(
+                    known.state,
+                    CommandState::Refused | CommandState::Unreachable
+                )
+        });
+        if !failed || !self.dismissed.insert(command) {
+            return false;
+        }
+        while self.dismissed.len() > MAX_DISMISSED {
+            self.dismissed.pop_first();
+        }
+        true
+    }
+    /// The rows: tracked prompts in send order, then those on their way to the conversation.
+    pub(crate) fn rows<'a>(&'a self, transcript: &'a CloudTranscript) -> Vec<PendingPrompt<'a>> {
+        let tracked: Vec<_> = transcript
+            .pending()
+            .iter()
+            .filter(|known| {
+                known.kind == CommandKind::Prompt
+                    && known.state != CommandState::Accepted
+                    && !self.dismissed.contains(&known.command)
+            })
+            .collect();
+        let refused = tracked
+            .iter()
+            .filter(|known| known.state == CommandState::Refused)
+            .count();
+        let mut skip = refused.saturating_sub(MAX_REFUSED_PROMPTS);
+        let mut rows = Vec::with_capacity(tracked.len() + self.placeholders.len());
+        for known in tracked {
+            if known.state == CommandState::Refused && skip > 0 {
+                skip -= 1;
+                continue;
             }
+            rows.push(PendingPrompt {
+                key: prompt_key(known.command),
+                text: &known.text,
+                state: match known.state {
+                    CommandState::Sending => PendingPromptState::Sending,
+                    CommandState::Delivered | CommandState::Accepted => {
+                        PendingPromptState::Delivered
+                    }
+                    CommandState::Unreachable => PendingPromptState::Unreachable,
+                    CommandState::Refused => PendingPromptState::Refused,
+                },
+            });
+        }
+        rows.extend(self.placeholders.iter().map(|(key, text)| PendingPrompt {
+            key: *key,
+            text,
+            state: PendingPromptState::Sending,
+        }));
+        rows
+    }
+    /// Whether a command is still on its way: nothing may evict the chat meanwhile.
+    pub(crate) fn busy(&self) -> bool {
+        !self.placeholders.is_empty() || !self.waiters.is_empty()
+    }
+    /// The conversation ended: every waiter learns it.
+    pub(crate) fn invalidate(&mut self) {
+        self.placeholders.clear();
+        for (_, waiter) in self.waiters.drain(..) {
+            let _ = waiter.send(Err(CommandFailure::Stale));
         }
     }
 }

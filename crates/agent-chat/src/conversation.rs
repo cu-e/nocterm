@@ -74,6 +74,11 @@ pub trait ConversationActions {
     ) -> Result<(), ConversationError> {
         Err(ConversationError::Unavailable)
     }
+    /// Wakes the producer of an unconfirmed history (a sleeping Cloud seat) and reads again.
+    /// A source whose producer cannot be woken has nothing to wake.
+    fn wake(&self, _cx: &mut App) -> Task<Result<(), ConversationError>> {
+        Task::ready(Err(ConversationError::Unavailable))
+    }
 }
 
 /// Implementations borrow rows only during the visitor and retain weak entities.

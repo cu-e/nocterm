@@ -1,770 +1,190 @@
-use crate::{CloudChat, CloudChatError, PendingCommandState};
+use crate::CloudChat;
 use gpui::{Entity, TestAppContext};
 use nocterm_agent_chat::conversation::{ConversationActions, ConversationError};
-use nocterm_agent_runtime::history_admission::{
-    HistoryAdmissionHandle, MAX_NORMAL_HISTORY_PAYLOADS, testing::HistoryProbe,
-};
-use nocterm_ai::{conversation::ConversationAction, thread::Entry};
-use nocterm_cloud_model::projection::{
-    ProjectionError,
-    testing::{ProjectionFixture, ScriptedConversationSource, prompt_event, run_binding},
+use nocterm_agent_runtime::history_admission::testing::HistoryProbe;
+use nocterm_ai::conversation::{ConversationAction, ConversationFreshness, ConversationPhase};
+use nocterm_ai::thread::Entry;
+use nocterm_cloud_conversation_model::testing::{FakeConversation, row, session_row};
+use nocterm_cloud_conversation_model::{
+    CloudConversationError, Freshness, RowRole, RunKey, SessionState,
 };
 use std::{rc::Rc, sync::Arc};
 
-mod inference_grant;
+mod commands;
 mod pending_prompts;
-mod unreachable_runner;
 
-fn installation(
-    cx: &mut TestAppContext,
-) -> (
-    Arc<ScriptedConversationSource>,
-    crate::CloudChatInstallation,
-    Rc<dyn nocterm_agent_chat::conversation::ConversationSource>,
-) {
-    let fixture = ProjectionFixture::new();
-    let source = Arc::new(ScriptedConversationSource::new(fixture.binding().clone()));
-    let installed =
-        cx.update(|cx| crate::CloudChatInstallation::new(HistoryProbe::installation(), cx));
-    let view = cx.update(|cx| installed.open(source.clone(), cx).unwrap());
-    cx.run_until_parked();
-    (source, installed, view)
-}
-
-fn view_phase(
-    view: &dyn nocterm_agent_chat::conversation::ConversationSource,
-    cx: &mut TestAppContext,
-) -> nocterm_ai::conversation::ConversationPhase {
-    let mut phase = None;
-    cx.update(|cx| {
-        view.with_view(cx, &mut |view| phase = Some(view.phase))
-            .unwrap()
+pub(super) fn opened(cx: &mut TestAppContext) -> (FakeConversation, Entity<CloudChat>) {
+    let fake = FakeConversation::new("runner-chat-1");
+    let chat = cx.update(|cx| {
+        CloudChat::open(Arc::new(fake.clone()), HistoryProbe::installation(), cx).unwrap()
     });
-    phase.unwrap()
+    cx.run_until_parked();
+    (fake, chat)
 }
 
-#[gpui::test]
-fn installation_window_observers_share_replay_and_only_the_last_detach_pauses_it(
+pub(super) fn actions(
+    chat: &Entity<CloudChat>,
     cx: &mut TestAppContext,
-) {
-    use nocterm_ai::conversation::ConversationPhase;
-    use nocterm_cloud_model::coordinator::{CoordinatorEvent, RunStatus};
-    let (source, installed, first) = installation(cx);
-    let second = cx.update(|cx| installed.open(source.clone(), cx).unwrap());
-    cx.run_until_parked();
-    assert_eq!(source.effects().replayed.len(), 1);
-    cx.update(|cx| first.set_shown(false, cx).unwrap());
-    let mut fixture = ProjectionFixture::new();
-    source
-        .queue(fixture.page(vec![prompt_event(
-            &run_binding(1),
-            "shared",
-            nocterm_cloud_model::identity::CommandId::from_bytes([77; 16]),
-        )]))
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(view_phase(first.as_ref(), cx), ConversationPhase::Queued);
-    assert_eq!(view_phase(second.as_ref(), cx), ConversationPhase::Queued);
-    cx.update(|_| drop(second));
-    cx.run_until_parked();
-    source
-        .queue(fixture.page(vec![CoordinatorEvent::Status {
-            run: run_binding(1),
-            status: RunStatus::Stopped,
-        }]))
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(view_phase(first.as_ref(), cx), ConversationPhase::Queued);
-    cx.update(|cx| first.set_shown(true, cx).unwrap());
-    cx.run_until_parked();
-    assert_eq!(view_phase(first.as_ref(), cx), ConversationPhase::Stopped);
-    assert!(source.effects().staged.is_empty());
-}
-
-#[gpui::test]
-async fn installation_keeps_a_staged_command_alive_after_its_last_window_closes(
-    cx: &mut TestAppContext,
-) {
-    let (source, installed, view) = installation(cx);
-    let delivery = source.pause_delivery();
-    let controls = cx.update(|cx| view.capture_actions(cx).unwrap());
-    let sent = cx.update(|cx| controls.perform(ConversationAction::Prompt("retained".into()), cx));
-    cx.run_until_parked();
-    assert_eq!(source.effects().staged.len(), 1);
-    cx.update(|_| drop((view, controls)));
-    cx.run_until_parked();
-    delivery.release();
-    sent.await.unwrap();
-    assert_eq!(source.effects().delivered, source.effects().staged);
-    let reopened = cx.update(|cx| installed.open(source.clone(), cx).unwrap());
-    cx.update(|cx| {
-        reopened
-            .with_view(cx, &mut |view| assert_eq!(view.pending_commands, 1))
-            .unwrap()
-    });
-    assert_eq!(source.effects().staged.len(), 1);
-}
-
-#[gpui::test]
-async fn installation_same_account_login_creates_a_new_capture_without_retargeting_old_views(
-    cx: &mut TestAppContext,
-) {
-    let (old, installed, view) = installation(cx);
-    let controls = cx.update(|cx| view.capture_actions(cx).unwrap());
-    let fresh = Arc::new(old.replace_membership());
-    let next = cx.update(|cx| installed.open(fresh.clone(), cx).unwrap());
-    let refused = cx.update(|cx| controls.perform(ConversationAction::Prompt("old".into()), cx));
-    assert!(matches!(refused.await, Err(ConversationError::Stale)));
-    cx.update(|cx| {
-        assert!(matches!(
-            view.with_view(cx, &mut |_| {}),
-            Err(ConversationError::Stale)
-        ))
-    });
-    let next_controls = cx.update(|cx| next.capture_actions(cx).unwrap());
-    cx.update(|cx| next_controls.perform(ConversationAction::Prompt("new".into()), cx))
-        .await
-        .unwrap();
-    assert_eq!(fresh.effects().staged.len(), 1);
-    let id = fresh.effects().staged[0];
-    assert_eq!(
-        fresh.staged(id).unwrap().action,
-        ConversationAction::Prompt("new".into())
-    );
-}
-
-#[gpui::test]
-async fn installation_independent_policy_captures_keep_original_actions_with_the_same_binding(
-    cx: &mut TestAppContext,
-) {
-    let (old, installed, first) = installation(cx);
-    let second = Arc::new(ScriptedConversationSource::new(
-        ProjectionFixture::new().binding().clone(),
-    ));
-    let current = cx.update(|cx| installed.open(second.clone(), cx).unwrap());
-    let before = cx.update(|cx| first.capture_actions(cx).unwrap());
-    let after = cx.update(|cx| current.capture_actions(cx).unwrap());
-    cx.update(|cx| before.perform(ConversationAction::Prompt("old policy".into()), cx))
-        .await
-        .unwrap();
-    cx.update(|cx| after.perform(ConversationAction::Prompt("new policy".into()), cx))
-        .await
-        .unwrap();
-    assert_eq!(old.effects().staged.len(), 1);
-    assert_eq!(second.effects().staged.len(), 1);
-    assert_eq!(
-        old.staged(old.effects().staged[0]).unwrap().action,
-        ConversationAction::Prompt("old policy".into())
-    );
-    assert_eq!(
-        second.staged(second.effects().staged[0]).unwrap().action,
-        ConversationAction::Prompt("new policy".into())
-    );
-}
-
-#[gpui::test]
-fn installation_observer_capacity_is_reclaimed_only_after_the_last_rc_drops(
-    cx: &mut TestAppContext,
-) {
-    let (source, installed, first) = installation(cx);
-    let mut views = (1..256)
-        .map(|_| cx.update(|cx| installed.open(source.clone(), cx).unwrap()))
-        .collect::<Vec<_>>();
-    assert!(cx.update(|cx| installed.open(source.clone(), cx)).is_err());
-    let retained = views.pop().unwrap();
-    let shared = retained.clone();
-    cx.update(|_| drop(retained));
-    cx.run_until_parked();
-    assert!(cx.update(|cx| installed.open(source.clone(), cx)).is_err());
-    cx.update(|_| drop(shared));
-    cx.run_until_parked();
-    let replacement = cx.update(|cx| installed.open(source.clone(), cx).unwrap());
-    assert_eq!(source.effects().replayed.len(), 1);
-    drop((first, replacement, views));
-}
-
-fn opened(
-    cx: &mut TestAppContext,
-) -> (
-    Arc<ScriptedConversationSource>,
-    Entity<CloudChat>,
-    HistoryAdmissionHandle,
-) {
-    let fixture = ProjectionFixture::new();
-    let source = Arc::new(ScriptedConversationSource::new(fixture.binding().clone()));
-    let admission = HistoryProbe::installation();
-    let chat = cx.update(|cx| CloudChat::open(source.clone(), admission.clone(), cx).unwrap());
-    cx.run_until_parked();
-    (source, chat, admission)
-}
-fn actions(chat: &Entity<CloudChat>, cx: &mut TestAppContext) -> Rc<dyn ConversationActions> {
+) -> Rc<dyn ConversationActions> {
     cx.update(|cx| CloudChat::conversation(chat).capture_actions(cx).unwrap())
 }
 
-#[gpui::test]
-async fn durable_stage_hub_delivery_and_runner_acceptance_remain_distinct(cx: &mut TestAppContext) {
-    use nocterm_cloud_model::projection::ports::CommandDelivery;
-    let (source, chat, _) = opened(cx);
-    let stage = source.pause_stage();
-    let delivery = source.pause_delivery();
-    let controls = actions(&chat, cx);
-    let sent = cx.update(|cx| controls.perform(ConversationAction::Prompt("original".into()), cx));
-    cx.run_until_parked();
-    let pending = cx.update(|cx| chat.read(cx).pending_commands());
-    assert_eq!(pending.len(), 1);
-    let id = pending[0].id();
-    assert_eq!(pending[0].state(), PendingCommandState::Staging);
-    assert!(source.effects().staged.is_empty());
-    stage.release();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        assert_eq!(
-            chat.read(cx).pending_commands()[0].state(),
-            PendingCommandState::Pending
-        )
-    });
-    assert_eq!(source.effects().staged, [id]);
-    assert!(source.effects().delivered.is_empty());
-    delivery.release();
-    sent.await.unwrap();
-    cx.update(|cx| {
-        assert_eq!(
-            chat.read(cx).pending_commands()[0].state(),
-            PendingCommandState::Delivered
-        );
-        assert!(chat.read(cx).projection().transcript().entries.is_empty());
-    });
-    source.runner_receipt(id, CommandDelivery::Pending).unwrap();
-    chat.update(cx, |chat, cx| chat.retry(id, cx))
-        .await
-        .unwrap();
-    cx.update(|cx| {
-        assert_eq!(
-            chat.read(cx).pending_commands()[0].state(),
-            PendingCommandState::Delivered
-        )
-    });
-    source
-        .runner_receipt(id, CommandDelivery::Accepted)
-        .unwrap();
-    chat.update(cx, |chat, cx| chat.retry(id, cx))
-        .await
-        .unwrap();
-    cx.update(|cx| {
-        assert_eq!(
-            chat.read(cx).pending_commands()[0].state(),
-            PendingCommandState::Accepted
-        )
-    });
-    assert_eq!(source.effects().staged, [id]);
-    assert_eq!(source.effects().delivered, [id]);
-    assert_eq!(source.effects().queried, [id, id]);
-    let mut fixture = ProjectionFixture::new();
-    source
-        .queue(fixture.page(vec![prompt_event(&run_binding(1), "original", id)]))
-        .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        // Only the grant of the accepted prompt's run is still on its way.
-        assert_eq!(chat.read(cx).pending_commands().len(), 1);
-        assert_eq!(chat.read(cx).projection().transcript().entries.len(), 1);
-    });
-}
-
-#[gpui::test]
-async fn lost_ack_retries_the_original_id_and_accepted_replay_adds_one_user_row(
-    cx: &mut TestAppContext,
-) {
-    let (source, chat, _) = opened(cx);
-    let controls = actions(&chat, cx);
-    source.lose_next_ack();
-    let sent = cx.update(|cx| controls.perform(ConversationAction::Prompt("question".into()), cx));
-    assert!(matches!(sent.await, Err(ConversationError::OutcomeUnknown)));
-    let pending = cx.update(|cx| chat.read(cx).pending_commands());
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].state(), PendingCommandState::OutcomeUnknown);
-    let id = pending[0].id();
-    assert_eq!(
-        source.staged(id).unwrap().action,
-        ConversationAction::Prompt("question".into())
-    );
-    let retried = chat.update(cx, |chat, cx| chat.retry(id, cx));
-    retried.await.unwrap();
-    cx.update(|cx| {
-        assert_eq!(
-            chat.read(cx).pending_commands()[0].state(),
-            PendingCommandState::Pending
-        )
-    });
-    assert_eq!(source.effects().staged, [id]);
-    assert_eq!(source.effects().delivered, [id]);
-    assert_eq!(source.effects().queried, [id]);
-    let mut fixture = ProjectionFixture::new();
-    let page = fixture.page(vec![prompt_event(&run_binding(1), "question", id)]);
-    source.queue(page.clone()).unwrap();
-    cx.run_until_parked();
-    source.queue(page).unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        let chat = chat.read(cx);
-        assert_eq!(chat.pending_commands().len(), 1);
-        assert_eq!(chat.projection().transcript().entries.len(), 1);
-        assert!(matches!(
-            &chat.projection().transcript().entries[0],
-            Entry::User(_)
-        ));
-    });
-}
-
-#[gpui::test]
-async fn same_account_replacement_before_first_poll_prevents_outbox_and_delivery(
-    cx: &mut TestAppContext,
-) {
-    let (source, chat, _) = opened(cx);
-    let controls = actions(&chat, cx);
-    let sent =
-        cx.update(|cx| controls.perform(ConversationAction::Prompt("old account".into()), cx));
-    let next = source.replace_membership();
-    let _again = next.replace_membership(); // A -> B -> A still ends original A.
-    cx.run_until_parked();
-    assert!(matches!(sent.await, Err(ConversationError::Stale)));
-    assert!(source.effects().staged.is_empty());
-    assert!(source.effects().delivered.is_empty());
-    cx.update(|cx| {
-        let chat = chat.read(cx);
-        assert!(chat.pending_commands().is_empty());
-        assert!(chat.projection().transcript().entries.is_empty());
-        assert!(matches!(
-            chat.last_error(),
-            Some(CloudChatError::Source(ProjectionError::Stale))
-        ));
-    });
-}
-
-#[gpui::test]
-async fn replaced_source_cannot_publish_a_ready_old_stage_or_cache(cx: &mut TestAppContext) {
-    let (source, chat, _) = opened(cx);
-    let stage = source.pause_stage();
-    let cache = source.pause_cache();
-    let mut fixture = ProjectionFixture::new();
-    source
-        .queue(fixture.page(vec![prompt_event(
-            &run_binding(1),
-            "accepted old history",
-            nocterm_cloud_model::identity::CommandId::from_bytes([9; 16]),
-        )]))
-        .unwrap();
-    cx.run_until_parked();
-    let controls = actions(&chat, cx);
-    let sent = cx.update(|cx| controls.perform(ConversationAction::Prompt("old stage".into()), cx));
-    cx.run_until_parked();
-    stage.release();
-    cache.release();
-    let _new = source.replace_membership();
-    cx.run_until_parked();
-    assert!(matches!(sent.await, Err(ConversationError::Stale)));
-    assert!(source.effects().staged.is_empty());
-    assert!(source.effects().cached.is_empty());
-    cx.update(|cx| assert!(chat.read(cx).projection().transcript().entries.is_empty()));
-}
-
-#[gpui::test]
-async fn dropping_an_action_waiter_does_not_cancel_its_owner_held_delivery(
-    cx: &mut TestAppContext,
-) {
-    let (source, chat, _) = opened(cx);
-    let delivery = source.pause_delivery();
-    let controls = actions(&chat, cx);
-    let waiter = cx
-        .update(|cx| controls.perform(ConversationAction::Prompt("retained operation".into()), cx));
-    cx.run_until_parked();
-    assert_eq!(source.effects().staged.len(), 1);
-    drop(waiter);
-    delivery.release();
-    cx.run_until_parked();
-    let effects = source.effects();
-    assert_eq!(effects.delivered, effects.staged);
-    cx.update(|cx| {
-        assert_eq!(
-            chat.read(cx).pending_commands()[0].state(),
-            PendingCommandState::Delivered
-        )
-    });
-}
-
-#[gpui::test]
-async fn closing_a_viewer_detaches_observation_without_sending_stop(cx: &mut TestAppContext) {
-    let (source, chat, _) = opened(cx);
-    let controls = actions(&chat, cx);
-    let sent = cx.update(|cx| {
-        controls.perform(
-            ConversationAction::Prompt("continue independently".into()),
-            cx,
-        )
-    });
-    sent.await.unwrap();
-    let effects = source.effects();
-    cx.update(|cx| CloudChat::conversation(&chat).set_shown(false, cx).unwrap());
-    cx.run_until_parked();
-    assert_eq!(source.effects().delivered, effects.delivered);
-    assert!(
-        source
-            .effects()
-            .staged
-            .iter()
-            .all(|id| source.staged(*id).unwrap().action != ConversationAction::Stop)
-    );
-    let _new = source.replace_membership();
-    cx.run_until_parked();
-    cx.update(|cx| assert!(chat.read(cx).pending_commands().is_empty()));
-}
-
-#[gpui::test]
-fn cloud_admission_reclaims_a_hidden_neighbor_payload_on_the_shared_installation(
-    cx: &mut TestAppContext,
-) {
-    let admission = HistoryProbe::installation();
-    let neighbor = HistoryProbe::default();
-    neighbor.set_history(nocterm_agent_runtime::HistoryUsage::new(0, 1, false), true);
-    let registration = admission.register(neighbor.participant()).unwrap();
-    for _ in 0..MAX_NORMAL_HISTORY_PAYLOADS {
-        neighbor.retain_payload(admission.reserve_payload().unwrap());
-    }
-    let fixture = ProjectionFixture::new();
-    let source = Arc::new(ScriptedConversationSource::new(fixture.binding().clone()));
-    let chat = cx.update(|cx| CloudChat::open(source, admission.clone(), cx).unwrap());
-    assert_eq!(neighbor.payload_count(), MAX_NORMAL_HISTORY_PAYLOADS - 1);
-    cx.update(|cx| CloudChat::conversation(&chat).set_shown(false, cx).unwrap());
-    drop(registration);
-    drop(neighbor);
-    drop(chat);
-}
-
-#[gpui::test]
-fn hidden_cloud_payload_is_reclaimed_by_another_source_without_a_borrow_cycle(
-    cx: &mut TestAppContext,
-) {
-    let (_source, chat, admission) = opened(cx);
-    cx.update(|cx| CloudChat::conversation(&chat).set_shown(false, cx).unwrap());
-    // Cancellation retires the page only when its actual future is dropped.
-    cx.run_until_parked();
-    let retained = (1..MAX_NORMAL_HISTORY_PAYLOADS)
-        .map(|_| admission.reserve_payload().unwrap())
-        .collect::<Vec<_>>();
-    let incoming = cx.update(|cx| admission.reserve_payload_reclaiming(None, cx).unwrap());
-    assert!(admission.reserve_payload().is_err());
-    drop(incoming);
-    cx.update(|cx| CloudChat::conversation(&chat).set_shown(true, cx).unwrap());
-    assert!(admission.reserve_payload().is_err());
-    drop(retained);
-}
-
-#[gpui::test]
-async fn pending_command_generations_share_the_installation_slots_with_projection_and_replay(
-    cx: &mut TestAppContext,
-) {
-    let (source, chat, _) = opened(cx);
-    let controls = actions(&chat, cx);
-    let command_slots = MAX_NORMAL_HISTORY_PAYLOADS - 3; // projection + page + one native staging work allocation
-    for _ in 0..command_slots {
-        cx.update(|cx| controls.perform(ConversationAction::Prompt("queued".into()), cx))
-            .await
-            .unwrap();
-    }
-    let last =
-        cx.update(|cx| controls.perform(ConversationAction::Prompt("over capacity".into()), cx));
-    assert!(matches!(last.await, Err(ConversationError::Capacity)));
-    assert_eq!(source.effects().staged.len(), command_slots);
-}
-
-#[gpui::test]
-async fn captured_actions_do_not_retarget_a_newly_displayed_run_or_control_revision(
-    cx: &mut TestAppContext,
-) {
-    let (source, chat, _) = opened(cx);
-    let old_controls = actions(&chat, cx);
-    let mut fixture = ProjectionFixture::new();
-    source
-        .queue(fixture.page(vec![prompt_event(
-            &run_binding(1),
-            "new accepted run",
-            nocterm_cloud_model::identity::CommandId::from_bytes([9; 16]),
-        )]))
-        .unwrap();
-    cx.run_until_parked();
-    let sent = cx.update(|cx| old_controls.perform(ConversationAction::Stop, cx));
-    assert!(matches!(sent.await, Err(ConversationError::Stale)));
-    assert!(source.effects().staged.is_empty());
-    assert!(source.effects().delivered.is_empty());
-}
-
-#[gpui::test]
-async fn definitive_rejections_retire_their_bodies_and_leave_room_for_stop(
-    cx: &mut TestAppContext,
-) {
-    let (source, chat, _) = opened(cx);
-    let controls = actions(&chat, cx);
-    for _ in 0..40 {
-        source.reject_next_command();
-        let result = cx
-            .update(|cx| controls.perform(ConversationAction::Prompt("refused".into()), cx))
-            .await;
-        assert!(matches!(result, Err(ConversationError::Rejected)));
-        cx.update(|cx| assert!(chat.read(cx).pending_commands().is_empty()));
-    }
-    cx.update(|cx| controls.perform(ConversationAction::Stop, cx))
-        .await
-        .unwrap();
-    assert_eq!(source.effects().delivered.len(), 41);
-}
-
-#[gpui::test]
-fn cancelled_observers_leave_native_stage_cache_and_replay_generations_charged(
-    cx: &mut TestAppContext,
-) {
-    let mut fixture = ProjectionFixture::new();
-    let source = Arc::new(ScriptedConversationSource::new(fixture.binding().clone()));
-    let executor = cx.background_executor.clone();
-    source.run_native_workers_with(Arc::new(move |work| {
-        executor.spawn(work).detach();
-    }));
-    let cache = source.pause_cache();
-    let stage = source.pause_stage();
-    let admission = HistoryProbe::installation();
-    let chat = cx.update(|cx| CloudChat::open(source.clone(), admission.clone(), cx).unwrap());
-    cx.run_until_parked();
-    source
-        .queue(fixture.page(vec![prompt_event(
-            &run_binding(1),
-            "cached original generation",
-            nocterm_cloud_model::identity::CommandId::from_bytes([99; 16]),
-        )]))
-        .unwrap();
-    cx.run_until_parked();
-    let controls = actions(&chat, cx);
-    let sent = cx.update(|cx| {
-        controls.perform(
-            ConversationAction::Prompt("native staged command".into()),
-            cx,
-        )
-    });
-    cx.run_until_parked();
-    let _new = source.replace_membership();
-    cx.run_until_parked();
-    drop(sent);
-    // All GUI owners have retired. Three independent native workers still own
-    // exactly their original page, projection and command plus two output proofs.
-    let retained = (0..MAX_NORMAL_HISTORY_PAYLOADS - 5)
-        .map(|_| admission.reserve_payload().unwrap())
-        .collect::<Vec<_>>();
-    assert!(admission.reserve_payload().is_err());
-    cx.update(|cx| {
-        assert!(
-            admission
-                .reserve_unowned_bytes(
-                    nocterm_agent_runtime::history_admission::MAX_NORMAL_HISTORY_BYTES,
-                    cx
-                )
-                .is_err()
-        )
-    });
-    cache.release();
-    stage.release();
-    source.queue(fixture.page(Vec::new())).unwrap();
-    cx.run_until_parked();
-    drop(retained);
-    let all = (0..MAX_NORMAL_HISTORY_PAYLOADS)
-        .map(|_| admission.reserve_payload().unwrap())
-        .collect::<Vec<_>>();
-    cx.update(|cx| {
-        drop(
-            admission
-                .reserve_unowned_bytes(
-                    nocterm_agent_runtime::history_admission::MAX_NORMAL_HISTORY_BYTES,
-                    cx,
-                )
-                .unwrap(),
-        )
-    });
-    drop(all);
-}
-
-#[gpui::test]
-fn publishing_new_projections_counts_old_native_cache_generations_until_their_actual_drop(
-    cx: &mut TestAppContext,
-) {
-    let mut fixture = ProjectionFixture::new();
-    let source = Arc::new(ScriptedConversationSource::new(fixture.binding().clone()));
-    let executor = cx.background_executor.clone();
-    source.run_native_workers_with(Arc::new(move |work| {
-        executor.spawn(work).detach();
-    }));
-    let cache = source.pause_cache();
-    let admission = HistoryProbe::installation();
-    let chat = cx.update(|cx| CloudChat::open(source.clone(), admission.clone(), cx).unwrap());
-    cx.run_until_parked();
-    source
-        .queue(fixture.page(vec![prompt_event(
-            &run_binding(1),
-            "first",
-            nocterm_cloud_model::identity::CommandId::from_bytes([99; 16]),
-        )]))
-        .unwrap();
-    cx.run_until_parked();
-    source
-        .queue(fixture.page(vec![
-            nocterm_cloud_model::coordinator::CoordinatorEvent::Status {
-                run: run_binding(1),
-                status: nocterm_cloud_model::coordinator::RunStatus::Running,
-            },
-        ]))
-        .unwrap();
-    cx.run_until_parked();
-    // Currentprojection, oldcacheprojection and pendingnativepage are distinct.
-    let retained = (0..MAX_NORMAL_HISTORY_PAYLOADS - 4)
-        .map(|_| admission.reserve_payload().unwrap())
-        .collect::<Vec<_>>();
-    assert!(admission.reserve_payload().is_err());
-    cache.release();
-    cx.run_until_parked();
-    let released = admission.reserve_payload().unwrap();
-    drop((released, retained, chat));
-}
-
-#[gpui::test]
-async fn full_normal_pending_load_still_admits_stop_for_the_original_run(cx: &mut TestAppContext) {
-    let (source, chat, admission) = opened(cx);
-    let mut fixture = ProjectionFixture::new();
-    source
-        .queue(fixture.page(vec![prompt_event(
-            &run_binding(1),
-            "originalrun",
-            nocterm_cloud_model::identity::CommandId::from_bytes([99; 16]),
-        )]))
-        .unwrap();
-    cx.run_until_parked();
-    let controls = actions(&chat, cx);
-    for _ in 0..MAX_NORMAL_HISTORY_PAYLOADS - 3 {
-        cx.update(|cx| controls.perform(ConversationAction::Prompt("normalpending".into()), cx))
-            .await
-            .unwrap();
-    }
-    let last_normal = admission.reserve_payload().unwrap();
-    assert!(admission.reserve_payload().is_err());
-    cx.update(|cx| controls.perform(ConversationAction::Stop, cx))
-        .await
-        .unwrap();
-    let stop = source
-        .staged(*source.effects().delivered.last().unwrap())
-        .unwrap();
-    assert_eq!(stop.action, ConversationAction::Stop);
-    assert_eq!(stop.coordinates.run, Some(run_binding(1)));
-    drop(last_normal);
-}
-
-fn replay_approval_page(
-    source: &ScriptedConversationSource,
+/// Reads one value of the chat's view.
+pub(super) fn view<T>(
     chat: &Entity<CloudChat>,
-    page: nocterm_cloud_model::projection::ProjectionBatch,
+    cx: &mut TestAppContext,
+    read: impl Fn(&nocterm_ai::conversation::ConversationView<'_>) -> T,
+) -> T {
+    let source = CloudChat::conversation(chat);
+    let mut value = None;
+    cx.update(|cx| {
+        source
+            .with_view(cx, &mut |view| value = Some(read(&view)))
+            .unwrap()
+    });
+    value.unwrap()
+}
+
+#[gpui::test]
+fn a_chat_shows_its_verified_rows_including_the_sessions_its_runner_opened(
     cx: &mut TestAppContext,
 ) {
-    let sizes = cx.update(|cx| {
-        let old = chat.read(cx).projection();
-        let candidate = old.advanced(&page).unwrap().0;
-        (
-            old.resident_bytes(),
-            page.resident_bytes(),
-            old.resident_bytes() + page.projection_growth_bytes().unwrap() + 4096,
-            candidate.resident_bytes(),
-        )
-    });
-    assert!(
-        sizes.3 <= sizes.2,
-        "candidate admission (old/page/reservation/actual): {sizes:?}"
-    );
-    source.queue(page).unwrap();
+    let (fake, chat) = opened(cx);
+    let run = Some(RunKey::from_bytes([1; 16]));
+    fake.push_rows(vec![
+        row(RowRole::User, run, "deploy"),
+        row(RowRole::Assistant, run, "on it"),
+        session_row(
+            RunKey::from_bytes([1; 16]),
+            [9; 16],
+            "deploy",
+            SessionState::Established,
+        ),
+    ]);
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(
-            chat.read(cx).last_error().is_none(),
-            "approval replay: {:?}; old/page/reservation/actual: {sizes:?}",
-            chat.read(cx).last_error()
-        );
+        let thread = chat.read(cx).thread();
+        assert!(matches!(
+            thread.entries.as_slice(),
+            [Entry::User(_), Entry::Agent(text), Entry::Tool(session)]
+                if text == "on it" && session.title.contains("SSH") && session.title.contains("connected")
+        ));
+    });
+    // A streamed row grows in place; the earlier entries stay.
+    fake.replace_last(row(RowRole::Assistant, run, "done"));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let thread = chat.read(cx).thread();
+        assert_eq!(thread.entries.len(), 3);
+        assert!(matches!(&thread.entries[2], Entry::Agent(text) if text == "done"));
     });
 }
 
 #[gpui::test]
-async fn captured_approval_keeps_actual_intent_and_one_durable_answer_until_resolution(
+async fn a_sleeping_seat_shows_its_stored_history_as_unconfirmed_and_offers_wake(
     cx: &mut TestAppContext,
 ) {
-    use nocterm_agent_chat::conversation::ToolApprovalChoice;
-    use nocterm_cloud_model::{
-        coordinator::CoordinatorEvent,
-        identity::Timestamp,
-        projection::{ConversationIntent, ports::CommandDelivery, testing::approval_events},
-    };
-    let (source, chat, _) = opened(cx);
-    let run = run_binding(1);
-    let mut fixture = ProjectionFixture::new();
-    let (intent, mut events) = approval_events(&run, 7, Timestamp::from_millis(20_000));
-    events.insert(
-        0,
-        prompt_event(
-            &run,
-            "waiting",
-            nocterm_cloud_model::identity::CommandId::from_bytes([9; 16]),
-        ),
+    let (fake, chat) = opened(cx);
+    // The subscription's first freshness is the one before any round: nothing is claimed yet.
+    assert_eq!(
+        view(&chat, cx, |view| view.freshness),
+        ConversationFreshness::Live
     );
-    replay_approval_page(&source, &chat, fixture.page(events), cx);
-    let facade = CloudChat::conversation(&chat);
-    let card = cx.update(|cx| facade.tool_approvals(cx).unwrap().pop().unwrap());
-    cx.update(|cx| {
-        card.with_view(cx, &mut |view| {
-            assert_eq!(view.target(), "original target");
-            assert_eq!(view.principal(), Some("user"));
-            assert_eq!(view.expires_ms(), Some(20_000));
-            assert!(!view.reusable());
-        })
-        .unwrap()
+    fake.set_freshness(Freshness::Unconfirmed {
+        last_witnessed_at_ms: None,
     });
-    let stage = source.pause_stage();
-    let answer = cx.update(|cx| card.choose(ToolApprovalChoice::AllowOnce, cx));
     cx.run_until_parked();
-    let duplicate = cx.update(|cx| card.choose(ToolApprovalChoice::Deny, cx));
-    assert!(matches!(
-        duplicate.await,
-        Err(ConversationError::Unavailable)
-    ));
-    stage.release();
-    answer.await.unwrap();
-    let id = source.effects().staged[0];
-    let command = source.staged(id).unwrap();
-    let ConversationIntent::AnswerApproval(request) = &command.action else {
-        panic!("expected typed approval");
-    };
-    assert_eq!(request.answer().intent(), intent.id());
-    assert_eq!(request.answer().authority(), intent.authority());
-    assert_eq!(request.answer().arguments(), intent.arguments());
-    assert_eq!(request.expires(), Timestamp::from_millis(20_000));
-    assert_eq!(command.coordinates.run, Some(run.clone()));
-    assert_eq!(source.effects().staged, [id]);
-    assert_eq!(source.effects().delivered, [id]);
-    source
-        .runner_receipt(id, CommandDelivery::Accepted)
-        .unwrap();
-    chat.update(cx, |chat, cx| chat.retry(id, cx))
-        .await
-        .unwrap();
-    fixture.set_control(nocterm_cloud_model::identity::ChatControlRevision::from_u64(2));
-    source
-        .queue(fixture.page(vec![CoordinatorEvent::ApprovalResolved {
-            command: id,
-            answer: request.answer().clone(),
-        }]))
-        .unwrap();
+    assert_eq!(
+        view(&chat, cx, |view| view.freshness),
+        ConversationFreshness::Unconfirmed { can_wake: true }
+    );
+    let controls = actions(&chat, cx);
+    let woken = cx.update(|cx| controls.wake(cx));
+    woken.await.unwrap();
     cx.run_until_parked();
-    assert!(cx.update(|cx| facade.tool_approvals(cx).unwrap().is_empty()));
-    let stale = cx.update(|cx| card.choose(ToolApprovalChoice::Deny, cx));
-    assert!(matches!(stale.await, Err(ConversationError::Stale)));
-    cx.update(|cx| assert!(chat.read(cx).pending_commands().is_empty()));
+    assert_eq!(fake.wakes(), 1);
+    fake.set_freshness(Freshness::Current { witnessed_at_ms: 5 });
+    cx.run_until_parked();
+    assert_eq!(
+        view(&chat, cx, |view| view.freshness),
+        ConversationFreshness::Live
+    );
+    fake.set_freshness(Freshness::Withheld { witnessed_at_ms: 6 });
+    cx.run_until_parked();
+    assert_eq!(
+        view(&chat, cx, |view| view.freshness),
+        ConversationFreshness::Withheld
+    );
+}
+
+#[gpui::test]
+fn an_unanswered_round_reconnects_until_the_next_change(cx: &mut TestAppContext) {
+    let (fake, chat) = opened(cx);
+    fake.refuse_round(CloudConversationError::Unavailable);
+    cx.run_until_parked();
+    assert!(view(&chat, cx, |view| view.reconnecting));
+    assert!(cx.update(|cx| chat.read(cx).last_error().is_some()));
+    fake.push_rows(vec![row(RowRole::Assistant, None, "back")]);
+    cx.run_until_parked();
+    assert!(!view(&chat, cx, |view| view.reconnecting));
+}
+
+#[gpui::test]
+fn window_observers_share_one_reading_and_the_last_hidden_one_pauses_it(cx: &mut TestAppContext) {
+    let fake = FakeConversation::new("shared");
+    let installed =
+        cx.update(|cx| crate::CloudChatInstallation::new(HistoryProbe::installation(), cx));
+    let first = cx.update(|cx| installed.open(Arc::new(fake.clone()), cx).unwrap());
+    let second = cx.update(|cx| installed.open(Arc::new(fake.clone()), cx).unwrap());
+    cx.run_until_parked();
+    assert_eq!(fake.subscribers(), 1, "one chat reads for both windows");
+    cx.update(|cx| first.set_shown(false, cx).unwrap());
+    cx.run_until_parked();
+    assert_eq!(fake.subscribers(), 1);
+    cx.update(|cx| second.set_shown(false, cx).unwrap());
+    cx.run_until_parked();
+    assert_eq!(fake.subscribers(), 0, "nobody looks: reading pauses");
+    fake.push_rows(vec![row(RowRole::Assistant, None, "while hidden")]);
+    cx.update(|cx| first.set_shown(true, cx).unwrap());
+    cx.run_until_parked();
+    let mut rows = 0;
+    cx.update(|cx| {
+        first
+            .with_view(cx, &mut |view| rows = view.transcript.entries.len())
+            .unwrap()
+    });
+    assert_eq!(
+        rows, 1,
+        "the reopened reading starts with the whole transcript"
+    );
+}
+
+#[gpui::test]
+async fn a_chat_whose_account_ended_is_stale_and_refuses_actions(cx: &mut TestAppContext) {
+    let (fake, chat) = opened(cx);
+    let controls = actions(&chat, cx);
+    fake.end();
+    cx.run_until_parked();
+    let source = CloudChat::conversation(&chat);
+    cx.update(|cx| {
+        assert!(matches!(
+            source.with_view(cx, &mut |_| {}),
+            Err(ConversationError::Stale)
+        ))
+    });
+    let refused = cx.update(|cx| controls.perform(ConversationAction::Prompt("late".into()), cx));
+    assert!(matches!(refused.await, Err(ConversationError::Stale)));
+    assert!(fake.delivered().is_empty());
+}
+
+#[gpui::test]
+fn a_deleted_chat_shows_deleted_and_takes_no_prompt(cx: &mut TestAppContext) {
+    let (fake, chat) = opened(cx);
+    fake.set_deleted();
+    cx.run_until_parked();
+    assert_eq!(
+        view(&chat, cx, |view| view.phase),
+        ConversationPhase::Deleted
+    );
+    assert!(!view(&chat, cx, |view| view.can_prompt));
 }

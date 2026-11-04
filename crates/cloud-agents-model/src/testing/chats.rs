@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use futures::FutureExt as _;
-use nocterm_cloud_model::projection::testing::{ProjectionFixture, ScriptedConversationSource};
+use nocterm_cloud_conversation_model::testing::FakeConversation;
 use nocterm_hubs_model::HubId;
 
 use crate::chats::{
@@ -38,10 +38,10 @@ impl ChatFailure {
 #[derive(Default)]
 struct State {
     runners: Vec<ChatRunner>,
-    history: Vec<(ChatSummary, Arc<ScriptedConversationSource>)>,
+    history: Vec<(ChatSummary, FakeConversation)>,
     failure: Option<ChatFailure>,
     created: Vec<ChatHost>,
-    opened: Vec<Arc<ScriptedConversationSource>>,
+    opened: Vec<FakeConversation>,
     listed: usize,
 }
 
@@ -66,18 +66,17 @@ impl FakeCloudChatLauncher {
     /// with the model "gpt-x" and no known time.
     pub fn add_history(&self, title: &str) {
         let key = format!("chat-{}", self.state().history.len());
-        self.add_history_summary(ChatSummary {
+        self.add_history_summary(ChatSummary::plain(
             key,
-            title: title.to_owned(),
-            host: "Scribe".to_owned(),
-            model: Some("gpt-x".to_owned()),
-            updated_at: None,
-        });
+            title.to_owned(),
+            "Scribe".to_owned(),
+            Some("gpt-x".to_owned()),
+        ));
     }
 
     /// An earlier chat that the history lists with exactly `summary`.
     pub fn add_history_summary(&self, summary: ChatSummary) {
-        let source = Self::source();
+        let source = FakeConversation::new(&summary.key);
         self.state().history.push((summary, source));
     }
 
@@ -96,8 +95,8 @@ impl FakeCloudChatLauncher {
         self.state().created.clone()
     }
 
-    /// The sources handed to the caller, by creating or by opening a history entry.
-    pub fn opened(&self) -> Vec<Arc<ScriptedConversationSource>> {
+    /// The conversations handed to the caller, by creating or by opening a history entry.
+    pub fn opened(&self) -> Vec<FakeConversation> {
         self.state().opened.clone()
     }
 
@@ -105,18 +104,12 @@ impl FakeCloudChatLauncher {
     pub fn listings(&self) -> usize {
         self.state().listed
     }
-
-    fn source() -> Arc<ScriptedConversationSource> {
-        Arc::new(ScriptedConversationSource::new(
-            ProjectionFixture::new().binding().clone(),
-        ))
-    }
 }
 
 struct FakeEntry {
     launcher: FakeCloudChatLauncher,
     summary: ChatSummary,
-    source: Arc<ScriptedConversationSource>,
+    source: FakeConversation,
 }
 
 impl ChatHistoryEntry for FakeEntry {
@@ -127,7 +120,7 @@ impl ChatHistoryEntry for FakeEntry {
     fn open(&self) -> ChatFuture<OpenedChat> {
         self.launcher.state().opened.push(self.source.clone());
         let chat = OpenedChat {
-            source: self.source.clone(),
+            conversation: Arc::new(self.source.clone()),
             title: self.summary.title.clone(),
             key: self.summary.key.clone(),
         };
@@ -147,14 +140,18 @@ impl CloudChatLauncher for FakeCloudChatLauncher {
         let result = match state.failure {
             Some(failure) => Err(failure.error()),
             None => {
-                let source = Self::source();
+                let key = format!("created-{}", state.created.len());
+                let source = FakeConversation::new(&key);
                 state.opened.push(source.clone());
                 let title = match host {
                     ChatHost::Agent { agent, .. } => agent.to_string(),
                     ChatHost::Runner(runner) | ChatHost::OwnAgent { runner, .. } => runner.label,
                 };
-                let key = format!("created-{}", state.created.len());
-                Ok(OpenedChat { source, title, key })
+                Ok(OpenedChat {
+                    conversation: Arc::new(source),
+                    title,
+                    key,
+                })
             }
         };
         async move { result }.boxed()

@@ -37,11 +37,27 @@ pub struct ConversationView<'a> {
     /// The source lost contact with its producer and keeps trying; what it shows may be
     /// behind until it reconnects.
     pub reconnecting: bool,
+    /// How far the shown history is confirmed by its producer.
+    pub freshness: ConversationFreshness,
     /// What the composer offers besides prompts.
     pub composer: ComposerCapabilities,
     /// Prompts the person sent that the producer has not accepted yet, oldest first. They are
     /// shown after the transcript until the accepted prompt replaces them.
     pub pending_prompts: &'a [PendingPrompt<'a>],
+}
+
+/// How far a conversation's shown history is confirmed by its producer. A local producer is
+/// always live; a Cloud chat is live only after its runner confirmed the head it shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConversationFreshness {
+    /// Confirmed by the producer, or produced here.
+    #[default]
+    Live,
+    /// A verified prefix of stored history: the producer did not answer (a sleeping seat), so
+    /// newer history may follow. `can_wake` says the source offers to wake it.
+    Unconfirmed { can_wake: bool },
+    /// The producer confirmed newer history than the hub delivered: the hub withholds it.
+    Withheld,
 }
 
 /// What a conversation's composer offers besides prompts; a source without any takes text.
@@ -73,7 +89,8 @@ pub enum PendingPromptState {
     Sending,
     /// The host holds it and the agent has not accepted it yet.
     Delivered,
-    /// Nobody answered its delivery; retrying sends the same prompt under its own identity.
+    /// Nobody answered its delivery before it expired; retrying sends its text again as a new
+    /// prompt.
     Unreachable,
     /// The agent refused it; retrying sends its text again as a new prompt.
     Refused,

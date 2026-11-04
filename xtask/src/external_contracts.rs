@@ -26,6 +26,10 @@ pub(crate) struct ExternalContract {
 
 pub(crate) const EXTERNAL_CONTRACTS: &[ExternalContract] = &[
     ExternalContract {
+        package: "nocterm-cloud-device",
+        consumer: HUB_ADAPTER,
+    },
+    ExternalContract {
         package: "nocterm-hub-client",
         consumer: HUB_ADAPTER,
     },

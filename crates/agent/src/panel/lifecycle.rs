@@ -4,6 +4,29 @@ use crate::roster::ChatStart;
 use std::collections::HashSet;
 
 impl AgentPanel {
+    /// Wakes the sleeping seat of the shown Cloud chat; the chat reads again once it answers.
+    pub(super) fn wake_conversation(&mut self, identity: EntityId, cx: &mut Context<Self>) {
+        let Some(selected) = self
+            .conversation
+            .as_ref()
+            .filter(|selected| selected.identity() == identity)
+        else {
+            return;
+        };
+        let work = match selected.source().capture_actions(cx) {
+            Ok(actions) => actions.wake(cx),
+            Err(error) => gpui_kit::Task::ready(Err(error)),
+        };
+        cx.spawn(async move |panel, cx| {
+            if let Err(error) = work.await {
+                let _ = panel.update(cx, |panel, cx| {
+                    panel.notices.set_error(Some(error.to_string()));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
     pub(super) fn search_archives(&mut self, cx: &mut Context<Self>) {
         self.on_history_catalog_changed(cx);
     }

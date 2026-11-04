@@ -572,7 +572,7 @@ impl AgentPanel {
             Ok(opened) => opened,
             Err(error) => return Some(cloud_menu::notice_text(&error)),
         };
-        let source = match self.host.cloud_chats().open(opened.source, cx) {
+        let source = match self.host.cloud_chats().open(opened.conversation, cx) {
             Ok(source) => source,
             Err(error) => return Some(error.to_string()),
         };

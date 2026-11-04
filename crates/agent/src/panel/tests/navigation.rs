@@ -47,34 +47,23 @@ fn borrowed_local_rows_keep_their_copy_and_fork_actions(cx: &mut TestAppContext)
 fn borrowed_cloud_rows_copy_their_own_content_and_never_offer_a_local_fork(
     cx: &mut TestAppContext,
 ) {
-    use nocterm_cloud_model::{
-        identity::CommandId,
-        projection::testing::{
-            ProjectionFixture, ScriptedConversationSource, prompt_event, run_binding,
-        },
+    use nocterm_cloud_conversation_model::{
+        RowRole,
+        testing::{FakeConversation, row},
     };
     let f = fixture(cx);
     new_chat(&f, cx);
     exchange(&f, "Local question", "Local answer", cx);
     let local = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let mut projection = ProjectionFixture::new();
-    let source = Arc::new(ScriptedConversationSource::new(
-        projection.binding().clone(),
-    ));
+    let source = FakeConversation::new("cloud-copy");
     let cloud = cx.update(|cx| {
         f.installation
             .installed
             .cloud_chats()
-            .open(source.clone(), cx)
+            .open(Arc::new(source.clone()), cx)
             .unwrap()
     });
-    source
-        .queue(projection.page(vec![prompt_event(
-            &run_binding(1),
-            "Original Cloud question",
-            CommandId::from_bytes([31; 16]),
-        )]))
-        .unwrap();
+    source.push_rows(vec![row(RowRole::User, None, "Original Cloud question")]);
     cx.run_until_parked();
     let (window, _view) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
@@ -99,7 +88,8 @@ fn borrowed_cloud_rows_copy_their_own_content_and_never_offer_a_local_fork(
         );
     })
     .unwrap();
-    let _replacement = source.replace_membership();
+    // The account of the chat ends (sign-out or a replacement login).
+    source.end();
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
@@ -117,13 +107,9 @@ fn borrowed_cloud_rows_copy_their_own_content_and_never_offer_a_local_fork(
 
 #[gpui_kit::test]
 fn borrowed_cloud_disclosure_does_not_inherit_local_expansion(cx: &mut TestAppContext) {
-    use nocterm_cloud_model::{
-        coordinator::CoordinatorEvent,
-        engine::{EngineEvent, EngineText, TextChannel},
-        identity::CommandId,
-        projection::testing::{
-            ProjectionFixture, ScriptedConversationSource, prompt_event, run_binding,
-        },
+    use nocterm_cloud_conversation_model::{
+        RowRole,
+        testing::{FakeConversation, row},
     };
     let f = fixture(cx);
     transcript(&f, cx);
@@ -135,29 +121,18 @@ fn borrowed_cloud_disclosure_does_not_inherit_local_expansion(cx: &mut TestAppCo
         assert!(window.try_find(("thought-output", 1usize)).is_some());
     })
     .unwrap();
-    let mut projection = ProjectionFixture::new();
-    let source = Arc::new(ScriptedConversationSource::new(
-        projection.binding().clone(),
-    ));
+    let source = FakeConversation::new("cloud-disclosure");
     let cloud = cx.update(|cx| {
         f.installation
             .installed
             .cloud_chats()
-            .open(source.clone(), cx)
+            .open(Arc::new(source.clone()), cx)
             .unwrap()
     });
-    let run = run_binding(1);
-    source
-        .queue(projection.page(vec![
-            prompt_event(&run, "Cloud question", CommandId::from_bytes([32; 16])),
-            CoordinatorEvent::Progress {
-                run,
-                event: EngineEvent::Text(
-                    EngineText::new(TextChannel::Thought, "Cloud reasoning".into()).unwrap(),
-                ),
-            },
-        ]))
-        .unwrap();
+    source.push_rows(vec![
+        row(RowRole::User, None, "Cloud question"),
+        row(RowRole::Thought, None, "Cloud reasoning"),
+    ]);
     cx.run_until_parked();
     let (window, _view) = cx.update(|cx| {
         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
