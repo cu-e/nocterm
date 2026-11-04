@@ -21,6 +21,12 @@ PersistError retains owned boxed TOML parse/serialization errors; standard sourc
 traversal exposes the original concrete codec error directly. Serialization refusal
 leaves the previous configuration untouched, including comment-preserving saves.
 See [private file publication](../adr/0015-private-file-publication.md).
+`persist::RevisionedFile` retains observed top-level table fingerprints and coordinates
+configuration publication with a persistent sibling OS lock. Settings compare owned tables;
+profiles compare the whole document. External changes return a typed conflict and preserve
+the newer file. Unknown settings tables retain their current formatting and values. This
+coordinates Nocterm writers; a non-cooperating editor can still race the final rename.
+See [ADR0137](../adr/0137-observed-configuration-publication.md).
 `AtomicPublication::publish_new` instead refuses every existing destination and
 returns the published descriptor. Its no-clobber commit does not prove single-link
 privacy or directory durability: a tempfile fallback may retain a staging hard

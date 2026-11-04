@@ -2,7 +2,8 @@
 //!
 //! Owns: paths, exclusive private creation, replacing or no-clobber atomic publication,
 //! strict opened private-file policy, bounded no-follow reads of
-//! regular files, bounded in-memory byte sinks, TOML persistence,
+//! regular files, bounded in-memory byte sinks, TOML persistence with cooperative
+//! document locks and observed-revision conflict detection,
 //! ordered write queues, shutdown deadlines, opaque allocation lifetime carriers,
 //! immutable concrete error causes and the wall-clock
 //! contract (`clock::{WallClock, WallTime}`; no I/O, no time-zone data).

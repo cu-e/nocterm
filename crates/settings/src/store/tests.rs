@@ -175,3 +175,19 @@ fn a_file_that_is_not_toml_is_an_error() {
     fs::write(file.path(), "[terminal\n").unwrap();
     assert!(file.load().is_err());
 }
+
+#[test]
+fn a_second_settings_owner_reports_conflict_instead_of_losing_a_parallel_edit() {
+    let (_directory, first) = file();
+    let second = SettingsFile::new(first.path());
+    let mut a = load(&first);
+    let mut b = load(&second);
+    a.update::<Terminal>(|terminal| terminal.copy_on_select = true);
+    b.update::<Monitor>(|monitor| monitor.interval_secs = 9);
+    first.save(&a).unwrap();
+    assert!(matches!(
+        second.save(&b),
+        Err(PersistError::Conflict { .. })
+    ));
+    assert!(load(&first).get::<Terminal>().copy_on_select);
+}
