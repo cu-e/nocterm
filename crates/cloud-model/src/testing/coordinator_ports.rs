@@ -323,7 +323,7 @@ impl CoordinatorEventEncoder for ObservedCoordinatorEvents {
                 Some(request.binding().run().clone())
             }
             CoordinatorEvent::SessionState(value) => Some(value.binding().run().clone()),
-            CoordinatorEvent::Deleted { .. } => None,
+            CoordinatorEvent::Deleted { .. } | CoordinatorEvent::SshAccess(_) => None,
         };
         fixture_outbox_with_work(
             lease,

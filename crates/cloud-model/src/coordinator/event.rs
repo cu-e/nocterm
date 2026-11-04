@@ -141,6 +141,8 @@ pub enum CoordinatorEvent {
         startup: super::SessionStartup,
     },
     SessionState(Box<super::SessionObservation>),
+    /// A chat's SSH binding state or certificate request (ADR 0137).
+    SshAccess(Box<crate::ssh_access::SshAccessEvent>),
     Deleted {
         command: CommandId,
     },

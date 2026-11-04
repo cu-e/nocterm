@@ -156,6 +156,8 @@ pub enum GrantClass {
     Inference,
     Tools,
     Provider,
+    /// A chat's binding to servers (ADR 0137); chat-scoped like a provider grant.
+    SshBinding,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GrantReference {
@@ -357,6 +359,10 @@ pub enum CommandBody {
     BeginSession(Box<super::SessionRequest>),
     DeleteChat,
     RevokeIssuer(IssuerRevocation),
+    /// A CA-signed binding of the chat to servers.
+    SshBinding(Box<crate::ssh_access::SshBindingOffer>),
+    /// A device's certificate for the runner's open request.
+    SshCertificate(Box<crate::ssh_access::SshCertificateOffer>),
 }
 impl CommandBody {
     pub fn kind(&self) -> CommandKind {
@@ -364,9 +370,11 @@ impl CommandBody {
             Self::Submit(_) => CommandKind::SubmitPrompt,
             Self::Stop => CommandKind::Stop,
             Self::Approval(_) => CommandKind::ResolveApproval,
-            Self::InferenceGrant(_) | Self::ToolGrant(_) | Self::ProviderGrant(_) => {
-                CommandKind::IssueGrant
-            }
+            Self::InferenceGrant(_)
+            | Self::ToolGrant(_)
+            | Self::ProviderGrant(_)
+            | Self::SshBinding(_)
+            | Self::SshCertificate(_) => CommandKind::IssueGrant,
             Self::RevokeGrant(_) => CommandKind::RevokeGrant,
             Self::SessionConsent(_) => CommandKind::AuthenticationConsent,
             Self::BeginSession(_) => CommandKind::BeginSession,
@@ -413,8 +421,16 @@ impl ReceivedCommand {
             CommandBody::BeginSession(request) => Some(request.binding().run()),
             _ => None,
         };
+        // A chat binding is revoked for the whole chat, every other grant per run.
+        let chat_scoped = matches!(
+            &body,
+            CommandBody::SshBinding(_) | CommandBody::SshCertificate(_)
+        ) || matches!(&body, CommandBody::RevokeGrant(reference) if reference.class() == GrantClass::SshBinding);
         if expected.is_some_and(|expected| run.as_ref() != Some(expected))
-            || (matches!(body, CommandBody::Stop | CommandBody::RevokeGrant(_)) && run.is_none())
+            || (chat_scoped && run.is_some())
+            || (matches!(body, CommandBody::Stop | CommandBody::RevokeGrant(_))
+                && run.is_none()
+                && !chat_scoped)
             || (matches!(body, CommandBody::Submit(_)) && run.is_some())
         {
             return Err(CoordinatorError::InvalidCommand);

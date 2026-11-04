@@ -23,6 +23,10 @@
 //! neutral summary, revision ledger and publication cadence; ChatSummaryJournal and
 //! ChatSummaryDirectory are the runner journal's summary rows and its signed directory
 //! (ADR 0135). A summary admits, grants or proves nothing.
+//! ChatSshAccess admits a chat's CA-signed SSH binding to the servers this runner may
+//! reach, asks devices for per-chat user certificates, accepts one only for its open
+//! request, key and servers, and ends access on revocation or expiry (ADR 0137). It
+//! holds public values; the subject key's custody belongs to the runner journal.
 //! This crate is the runner's domain only: what a device shows of a chat is the contract
 //! device core's transcript, mapped to `nocterm-cloud-conversation-model` (ADR 0136).
 //! Ports used: neutral AI content,
@@ -50,6 +54,7 @@ pub mod journal;
 pub mod login;
 pub mod payload;
 pub mod run;
+pub mod ssh_access;
 pub mod tool;
 
 #[cfg(any(test, feature = "test-support"))]
