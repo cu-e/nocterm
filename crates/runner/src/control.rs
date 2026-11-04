@@ -36,6 +36,7 @@ async fn startup(state: &mut State, session: Option<&Session>) -> Result<Startup
     let peer = tokio::time::timeout(operation, state.connection().restore())
         .await
         .map_err(|_| RunnerError::Timeout)??;
+    worker::renew_for_boot(state).await?;
     let work = worker::work()?;
     let endpoint = health::Endpoint::bind(state.directory())?;
     let execution = match state.take_execution() {
@@ -60,7 +61,9 @@ async fn startup(state: &mut State, session: Option<&Session>) -> Result<Startup
 }
 /// A managed runner whose host cannot give it nested containment still serves
 /// its controls and reports `execution_ready=false`; it never runs a tool
-/// without containment. Every other failure refuses the daemon.
+/// without containment, and it claims no chat. The cause goes to stderr, the
+/// container log, because nothing else shows why its chats never open. Every
+/// other failure refuses the daemon.
 #[cfg(unix)]
 fn tolerate_missing_containment(
     started: Result<ExecutionRuntime, RunnerError>,
@@ -69,7 +72,16 @@ fn tolerate_missing_containment(
     match started {
         Ok(execution) => Ok(Some(execution)),
         #[cfg(target_os = "linux")]
-        Err(RunnerError::Containment(_)) if managed => Ok(None),
+        Err(error @ RunnerError::Containment(_)) if managed => {
+            use std::io::Write as _;
+            // A closed stderr leaves nowhere else to report.
+            let _ = writeln!(
+                std::io::stderr(),
+                "managed execution is unavailable, so this runner opens no chat: {}",
+                error.chain()
+            );
+            Ok(None)
+        }
         Err(error) => {
             let _ = managed;
             Err(error)

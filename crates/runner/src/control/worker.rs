@@ -106,6 +106,47 @@ pub(super) async fn serve(
     }
 }
 
+/// Renews the access of a runner whose seat slept: the access token outlives a few minutes
+/// only, while the refresh credential lasts for weeks. The hub refuses every call made with an
+/// expired access, the boot announcement first, so a restored runner whose access ends before
+/// the boot can finish refreshes it now; the serving loop keeps it fresh afterwards. Nothing
+/// else uses the connection yet, so the refresh needs no serialization with head work.
+pub(super) async fn renew_for_boot(state: &State) -> Result<(), RunnerError> {
+    let lead = u64::try_from(state.limits().operation().as_millis()).unwrap_or(u64::MAX);
+    let now = NativeToolTimer::new(tokio::runtime::Handle::current())
+        .now()
+        .as_millis();
+    let deadlines = state.connection().credential_deadlines()?;
+    let access = u64::try_from(deadlines.access_expires_at_ms()).map_err(|_| RunnerError::Clock)?;
+    let refresh_expires =
+        u64::try_from(deadlines.refresh_expires_at_ms()).map_err(|_| RunnerError::Clock)?;
+    if !boot_needs_renewal(now, access, refresh_expires, lead)? {
+        return Ok(());
+    }
+    tokio::time::timeout(state.limits().operation(), state.connection().refresh())
+        .await
+        .map_err(|_| RunnerError::Timeout)??;
+    let renewed = state.connection().credential_deadlines()?;
+    if renewed.access_expires_at_ms() <= deadlines.access_expires_at_ms() {
+        return Err(RunnerError::Expired);
+    }
+    Ok(())
+}
+
+/// Whether a booting runner must refresh first: its access ends within `lead` of `now`. A
+/// refresh credential that has ended cannot renew anything.
+fn boot_needs_renewal(
+    now: u64,
+    access: u64,
+    refresh_expires: u64,
+    lead: u64,
+) -> Result<bool, RunnerError> {
+    if now >= refresh_expires {
+        return Err(RunnerError::Expired);
+    }
+    Ok(access.saturating_sub(now) <= lead)
+}
+
 // One serialized native credential operation: old head owners finish before
 // rotation, and only observed RPC plus durable publication establishes success.
 async fn refresh(
@@ -137,4 +178,37 @@ async fn refresh(
         return Err(RunnerError::Expired);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINUTE: u64 = 60_000;
+
+    #[test]
+    fn a_runner_woken_after_its_access_expired_refreshes_before_booting() {
+        let slept = 100 * MINUTE;
+        assert!(boot_needs_renewal(slept, 15 * MINUTE, 30 * 24 * 60 * MINUTE, MINUTE).unwrap());
+    }
+
+    #[test]
+    fn a_runner_whose_access_ends_during_the_boot_refreshes_first() {
+        assert!(
+            boot_needs_renewal(10 * MINUTE, 10 * MINUTE + 30_000, 60 * MINUTE, MINUTE).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_runner_with_fresh_access_boots_without_refreshing() {
+        assert!(!boot_needs_renewal(MINUTE, 15 * MINUTE, 60 * MINUTE, MINUTE).unwrap());
+    }
+
+    #[test]
+    fn a_runner_whose_refresh_credential_ended_cannot_boot() {
+        assert!(matches!(
+            boot_needs_renewal(61 * MINUTE, 15 * MINUTE, 60 * MINUTE, MINUTE),
+            Err(RunnerError::Expired)
+        ));
+    }
 }
