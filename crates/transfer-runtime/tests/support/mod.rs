@@ -112,12 +112,13 @@ pub(super) struct RelayFixture {
 }
 impl RelayFixture {
     pub(super) fn new() -> Self {
+        Self::with_limits(TransferLimits::default())
+    }
+    pub(super) fn with_limits(limits: TransferLimits) -> Self {
         let source = Arc::new(InMemoryFs::default());
         let destination = Arc::new(InMemoryFs::default());
         futures::executor::block_on(destination.create_dir("/dest")).unwrap();
-        let runtime =
-            TransferRuntime::start(TransferRuntimeDeps::remote_only(TransferLimits::default()))
-                .unwrap();
+        let runtime = TransferRuntime::start(TransferRuntimeDeps::remote_only(limits)).unwrap();
         Self {
             runtime,
             source,

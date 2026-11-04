@@ -229,6 +229,12 @@ chunks with at most eight acknowledged upload chunks per batch, and owns entropy
 cancellable reservations and cleanup. Local operations run through bounded blocking
 slots; the adapter imports no concrete filesystem adapter or GPUI.
 
+Downloads and relays walk remote sources through one bounded DFS. Its destination
+retains either a held `LocalDirectory` or the admitted remote filesystem and parent
+path, with separate native-download and remote-publication name policies. Their
+shared double-buffer pipeline joins both pending operations before returning a
+failure, so a local writer regains its stage before cleanup.
+
 A relay request walks its source tree on the source `RemoteFs`, prepares directories on
 the destination and streams each file from a `RemoteDownload` into a staged
 `RemoteUpload` with double buffering: the next read batch is in flight while the previous

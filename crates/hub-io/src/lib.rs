@@ -124,6 +124,7 @@ mod account_keys;
 pub mod agent_access;
 mod agents;
 mod cache;
+mod checked;
 mod classify;
 pub mod cloud;
 mod cloud_chats;

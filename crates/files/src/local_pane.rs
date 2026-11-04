@@ -20,8 +20,7 @@ struct LocalBrowser {
     path: Option<PathBuf>,
     requested: Option<PathBuf>,
     entries: Vec<local::LocalEntry>,
-    selected: BTreeSet<usize>,
-    anchor: Option<usize>,
+    selection: RowSelection,
     loading: bool,
     error: Option<String>,
     counter: statistics::Counter,
@@ -103,7 +102,7 @@ impl LocalPane {
                 .iter()
                 .map(|entry| entry.name.clone())
                 .collect(),
-            selected: self.browser.selected.iter().copied().collect(),
+            selected: self.browser.selection.indices().collect(),
             loading: self.browser.loading,
             error: self.browser.error.clone(),
             statistics: statistics::summary(self.browser.counter.shown()),
@@ -305,8 +304,7 @@ impl LocalPane {
                 });
                 self.browser.path = Some(directory.to_owned());
                 self.browser.entries = entries;
-                self.browser.selected.clear();
-                self.browser.anchor = None;
+                self.browser.selection.clear();
             }
             Err(error) => {
                 self.path.update(cx, |input, cx| {
@@ -329,21 +327,11 @@ impl LocalPane {
         event: &gpui_kit::MouseDownEvent,
         cx: &mut Context<Self>,
     ) {
-        if event.modifiers.shift {
-            let anchor = self.browser.anchor.unwrap_or(ix);
-            self.browser
-                .selected
-                .extend(anchor.min(ix)..=anchor.max(ix));
-        } else if event.modifiers.control || event.modifiers.platform {
-            if !self.browser.selected.insert(ix) {
-                self.browser.selected.remove(&ix);
-            }
-            self.browser.anchor = Some(ix);
-        } else {
-            self.browser.selected.clear();
-            self.browser.selected.insert(ix);
-            self.browser.anchor = Some(ix);
-        }
+        self.browser.selection.click(
+            ix,
+            event.modifiers.shift,
+            event.modifiers.control || event.modifiers.platform,
+        );
         if event.click_count == 2
             && let Some(entry) = self
                 .browser
@@ -373,27 +361,16 @@ impl LocalPane {
     }
 
     pub(super) fn paths(&self, index: usize) -> Vec<PathBuf> {
-        if self.browser.selected.contains(&index) {
-            self.browser
-                .selected
-                .iter()
-                .filter_map(|ix| self.browser.entries.get(*ix))
-                .map(|e| e.path.clone())
-                .collect()
-        } else {
-            self.browser
-                .entries
-                .get(index)
-                .map(|e| vec![e.path.clone()])
-                .unwrap_or_default()
-        }
+        self.browser
+            .selection
+            .for_row(index)
+            .filter_map(|ix| self.browser.entries.get(ix))
+            .map(|entry| entry.path.clone())
+            .collect()
     }
 
     fn select_for_menu(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if !self.browser.selected.contains(&ix) {
-            self.browser.selected.clear();
-            self.browser.selected.insert(ix);
-            self.browser.anchor = Some(ix);
+        if self.browser.selection.context_click(ix) {
             cx.notify();
         }
     }
@@ -401,7 +378,7 @@ impl LocalPane {
     pub(super) fn render_local_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let entry = &self.browser.entries[ix];
         let paths = self.paths(ix);
-        let visual = ExplorerRow::local(entry, self.browser.selected.contains(&ix), cx);
+        let visual = ExplorerRow::local(entry, self.browser.selection.contains(ix), cx);
         let source = nocterm_ui::DragSource::default();
         let destination = entry.path.clone();
         let directory = entry.kind == EntryKind::Directory && !entry.symlink;

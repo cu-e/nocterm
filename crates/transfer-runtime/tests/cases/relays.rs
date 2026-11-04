@@ -237,3 +237,53 @@ fn a_missing_relay_source_fails_and_unknown_ids_are_missing() {
         Err(TransferError::Missing)
     ));
 }
+
+#[test]
+fn relay_walk_preserves_remote_names_and_bounds_each_frontier() {
+    use nocterm_transfers::{DiscoveryLimits, LimitKind, TransferCause, TransferLimits};
+    let fixture = RelayFixture::new();
+    fixture
+        .source
+        .seed_file("/tree/CON", b"remote name")
+        .unwrap();
+    let progress = fixture.finished(fixture.relay(vec!["/tree"], CollisionPolicy::Skip));
+    assert_eq!(progress.state, TransferState::Completed);
+    assert_eq!(
+        fixture.destination.bytes("/dest/tree/CON").unwrap(),
+        b"remote name"
+    );
+    for (depth, visited, pending, name_bytes, expected) in [
+        (1, 100, 100, 4096, LimitKind::Depth),
+        (4, 2, 100, 4096, LimitKind::Visited),
+        (4, 100, 1, 4096, LimitKind::PendingEntries),
+        (4, 100, 100, 1, LimitKind::PendingNames),
+    ] {
+        let discovery =
+            DiscoveryLimits::with_walk_bounds(depth, visited, pending, name_bytes).unwrap();
+        let fixture = RelayFixture::with_limits(TransferLimits::new(
+            Default::default(),
+            discovery,
+            Default::default(),
+        ));
+        fixture
+            .source
+            .seed_file("/tree/a/b/file", b"nested")
+            .unwrap();
+        fixture.source.seed_file("/tree/second", b"other").unwrap();
+        let progress = fixture.finished(fixture.relay(vec!["/tree"], CollisionPolicy::Skip));
+        assert_eq!(progress.state, TransferState::Failed);
+        assert!(
+            progress.errors.iter().any(
+                |issue| matches!(issue.cause(), TransferCause::Limit(kind) if *kind == expected)
+            )
+        );
+        if expected == LimitKind::Visited {
+            assert_eq!(
+                progress.failed_files, 1,
+                "one terminal walk-limit diagnostic"
+            );
+        }
+        assert_eq!(fixture.source.activity().live_downloads, 0);
+        assert_eq!(fixture.destination.activity().live_uploads, 0);
+    }
+}

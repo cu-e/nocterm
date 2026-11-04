@@ -2,12 +2,15 @@
 //!
 //! Persistent identity is explicit create/open, never a restart-time reset.
 //! Enrollment, material installation and network composition are separate owners.
+//! Identity, session, material and cursor files share private snapshot locking and
+//! durable publication; source binding and codecs remain with their native owners.
 mod identity;
 pub use identity::{CloudRunnerIdentity, CloudRunnerIdentityError, RunnerPublicIdentity};
 mod metadata_crypto;
 pub use metadata_crypto::RunnerMetadataCrypto;
 mod journal_crypto;
 pub use journal_crypto::{RunnerJournalCrypto, RunnerMaterialError};
+mod private_snapshot;
 mod runner_heads;
 mod runner_peer;
 mod runner_reclaim;

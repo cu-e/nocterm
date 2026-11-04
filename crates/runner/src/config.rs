@@ -191,24 +191,9 @@ pub(crate) fn fixed_hex<const N: usize>(
     text: &str,
     field: &'static str,
 ) -> Result<[u8; N], RunnerError> {
-    if text.len() != 2 * N {
-        return Err(RunnerError::Value(field));
-    }
     let mut result = [0; N];
-    for (out, pair) in result.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
-        let high = digit(pair[0]).ok_or(RunnerError::Value(field))?;
-        let low = digit(pair[1]).ok_or(RunnerError::Value(field))?;
-        *out = high * 16 + low;
-    }
+    hex::decode_to_slice(text, &mut result).map_err(|_| RunnerError::Value(field))?;
     Ok(result)
-}
-fn digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -250,5 +235,16 @@ mod tests {
         assert!(limits.validate().is_err());
         assert!(fixed_hex::<32>(&"ff".repeat(31), "pin").is_err());
         assert!(fixed_hex::<32>(&"gg".repeat(32), "pin").is_err());
+    }
+
+    #[test]
+    fn configured_hex_accepts_both_cases_and_preserves_the_named_error() {
+        assert_eq!(fixed_hex::<2>("aF0b", "pin").unwrap(), [175, 11]);
+        for text in ["+f0b", "af0", "af0bb", "é0b", "0g00"] {
+            assert!(matches!(
+                fixed_hex::<2>(text, "pin"),
+                Err(RunnerError::Value("pin"))
+            ));
+        }
     }
 }

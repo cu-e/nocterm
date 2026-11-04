@@ -1,5 +1,8 @@
 //! The remote file system, as far as nocterm browses it.
 
+mod collect;
+pub use collect::{DownloadReadError, read_bounded};
+
 use futures::future::BoxFuture;
 
 /// The result of a file system request, resolved off the calling thread.

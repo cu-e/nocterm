@@ -1,5 +1,6 @@
 pub mod catalog;
 mod failure;
+pub mod output;
 pub mod transfer;
 
 pub use failure::{TerminalCallError, ToolArgumentsError, ToolFailure};

@@ -97,13 +97,7 @@ impl OutboxFile {
                 return Err(ProjectionError::Persistence);
             }
             let mut id = [0u8; 16];
-            for (slot, pair) in id.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
-                *slot = u8::from_str_radix(
-                    std::str::from_utf8(pair).map_err(|_| ProjectionError::Persistence)?,
-                    16,
-                )
-                .map_err(|_| ProjectionError::Persistence)?;
-            }
+            hex::decode_to_slice(hex, &mut id).map_err(|_| ProjectionError::Persistence)?;
             ids.push(CommandId::from_bytes(id));
         }
         Ok(ids)
@@ -234,11 +228,7 @@ impl OutboxFile {
             .map_err(|_| ProjectionError::Persistence)
     }
     fn path(&self, id: CommandId) -> PathBuf {
-        let hex: String = id
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let hex = hex::encode(id.as_bytes());
         self.root.join(format!("{hex}.outbox"))
     }
 }

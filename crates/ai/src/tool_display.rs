@@ -63,9 +63,9 @@ impl ToolDisplay {
             Ok(value) => ToolOutcome::Ok(value),
             Err(error) => ToolOutcome::Err(crate::redact::redact(error.message())),
         };
-        self.outcome = serde_json::to_vec(&outcome)
+        self.outcome = crate::history::json_size(&outcome)
             .ok()
-            .filter(|bytes| bytes.len() <= 256 * 1024)
+            .filter(|bytes| *bytes <= 256 * 1024)
             .map(|_| outcome);
     }
 

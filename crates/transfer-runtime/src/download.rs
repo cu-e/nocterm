@@ -1,15 +1,14 @@
 use crate::{
-    chunks, reservations,
+    pipeline, reservations,
     scheduler::{DownloadJob, FileOutcome, Work},
 };
-use futures::future::join;
 use nocterm_session::{
-    fs::{RemoteDownload, UploadMode},
+    fs::UploadMode,
     local_fs::{LocalFsError, LocalStage, PublicationOutcome},
 };
 use nocterm_transfers::{
-    CollisionPolicy, LimitKind, StreamBudget, TransferCause, TransferEvent, TransferIssue,
-    TransferOperation, TransferPath,
+    CollisionPolicy, LimitKind, TransferCause, TransferEvent, TransferIssue, TransferOperation,
+    TransferPath,
 };
 use std::ffi::OsString;
 
@@ -129,7 +128,9 @@ async fn receive(
     let mut reader = work
         .remote(work.batch().request().fs().download(job.remote()))
         .await?;
-    let result = stream(work, job, stage, reader.as_mut()).await;
+    let result = pipeline::copy(work, job.expected(), reader.as_mut(), stage)
+        .await
+        .map_err(|(_, cause)| cause);
     let closed = reader.close().await.map_err(TransferCause::from);
     match result {
         Ok(()) => {
@@ -148,58 +149,16 @@ async fn receive(
         }
     }
 }
-async fn stream(
-    work: &Work,
-    job: &DownloadJob,
-    stage: &mut StageWriter,
-    reader: &mut dyn RemoteDownload,
-) -> Result<(), TransferCause> {
-    let limits = work.state().limits().stream();
-    let mut budget = StreamBudget::new(limits, job.expected());
-    let mut pending: Vec<Vec<u8>> = Vec::new();
-    let mut eof = false;
-    // The next batch is read from the remote while the previous one is written.
-    loop {
-        let writing = std::mem::take(&mut pending);
-        if eof && writing.is_empty() {
-            break;
-        }
-        let wrote = chunks::total(&writing);
-        let read = async {
-            if eof {
-                Ok(Vec::new())
-            } else {
-                work.remote(reader.read_batch(limits.chunk(), limits.acknowledgements()))
-                    .await
-            }
-        };
-        let write = async {
-            if writing.is_empty() {
-                Ok(())
-            } else {
-                stage.write_batch(work, writing).await
-            }
-        };
-        // A local write owns the stage until it returns it, so both sides finish before
-        // either result is read: dropping a pending write would skip `StageWriter::cancel`.
-        let (read, written) = join(read, write).await;
-        written?;
-        let read = read?;
-        if wrote > 0 {
-            budget.acknowledged(wrote)?;
-            work.batch().event(TransferEvent::Acknowledged {
-                bytes: wrote as u64,
-            });
-        }
-        if read.is_empty() {
-            eof = true;
-        } else {
-            chunks::accept_batch(&budget, &read)?;
-            pending = read;
-        }
+impl pipeline::BatchWriter for StageWriter {
+    async fn write_batch(
+        &mut self,
+        work: &Work,
+        chunks: Vec<Vec<u8>>,
+    ) -> Result<(), TransferCause> {
+        StageWriter::write_batch(self, work, chunks).await
     }
-    budget.finish()
 }
+
 async fn publish(
     work: &Work,
     job: &DownloadJob,

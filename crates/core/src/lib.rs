@@ -2,7 +2,7 @@
 //!
 //! Owns: paths, exclusive private creation, replacing or no-clobber atomic publication,
 //! strict opened private-file policy, bounded no-follow reads of
-//! regular files, TOML persistence,
+//! regular files, bounded in-memory byte sinks, TOML persistence,
 //! ordered write queues, shutdown deadlines, opaque allocation lifetime carriers,
 //! immutable concrete error causes and the wall-clock
 //! contract (`clock::{WallClock, WallTime}`; no I/O, no time-zone data).
@@ -15,6 +15,7 @@
 //! Parent directories must be trusted; traversal capabilities belong to adapters.
 
 pub mod allocation;
+pub mod bounded_io;
 pub mod clock;
 pub mod error;
 pub mod fs;

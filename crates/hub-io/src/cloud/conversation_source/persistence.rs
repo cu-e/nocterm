@@ -101,11 +101,7 @@ fn namespace_root(root: PathBuf, native: &NativeSource) -> PathBuf {
     }
     hash.update(stream.runner_epoch().get().to_be_bytes());
     hash.update(request.epoch.get().to_be_bytes());
-    let suffix: String = hash
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let suffix = hex::encode(hash.finalize());
     root.join(suffix)
 }
 fn chat(native: &NativeSource) -> Result<ChatCoordinate, ProjectionError> {

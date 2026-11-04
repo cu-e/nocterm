@@ -104,15 +104,12 @@ impl State {
         let identity = self.identity.public_identity()?;
         crate::output::report(&format!(
             "mode=control-plane\nexecution_ready=false\nrunner={}\nencryption={}\nsigning={}\nproof={}\n",
-            hex(identity.binding().runner().as_bytes()),
-            hex(identity.encryption_key()),
-            hex(identity.signing_key()),
-            hex(identity.proof_key())
+            hex::encode(identity.binding().runner().as_bytes()),
+            hex::encode(identity.encryption_key()),
+            hex::encode(identity.signing_key()),
+            hex::encode(identity.proof_key())
         ))
     }
-}
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]

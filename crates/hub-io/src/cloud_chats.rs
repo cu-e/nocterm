@@ -55,7 +55,7 @@ pub struct ChatServices {
 
 /// The key the history lists a chat under: its identifier, as text.
 fn chat_key(chat: &[u8; 16]) -> String {
-    chat.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex::encode(chat)
 }
 
 /// Most chat namespaces that are open at once.

@@ -11,7 +11,7 @@ pub(super) enum Part {
 }
 
 pub(super) fn normalized(tool: Option<&str>, value: &Value, depth: usize) -> Option<Vec<Part>> {
-    if serde_json::to_vec(value).ok()?.len() > MAX_DECODE_BYTES {
+    if nocterm_ai::history::json_size(value).ok()? > MAX_DECODE_BYTES {
         return None;
     }
     let mut parts = Vec::new();

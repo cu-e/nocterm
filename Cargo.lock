@@ -5221,7 +5221,6 @@ dependencies = [
  "nocterm-ui",
  "nocterm-workspace",
  "nocterm-workspace-ports",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
@@ -5266,6 +5265,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "gpui-pre-reqwest",
+ "hex",
  "nocterm-ai",
  "nocterm-cloud-model",
  "nocterm-core",
@@ -5424,6 +5424,7 @@ name = "nocterm-cloud-model"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "hex",
  "nocterm-ai",
  "nocterm-core",
  "nocterm-hubs-model",
@@ -5700,6 +5701,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "futures",
+ "hex",
  "nocterm-ai",
  "nocterm-cloud-agents-model",
  "nocterm-cloud-model",
@@ -6003,6 +6005,7 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
+ "unicode-general-category",
 ]
 
 [[package]]
@@ -6195,6 +6198,7 @@ name = "nocterm-runner"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "hex",
  "nocterm-agent-engine",
  "nocterm-agent-tools",
  "nocterm-ai",
@@ -6322,6 +6326,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-socks",
  "tracing",
  "uuid",
  "zeroize",
@@ -10983,6 +10988,12 @@ name = "unicode-ccc"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce61d488bcdc9bc8b5d1772c404828b17fc481c0a582b5581e95fb233aef503e"
+
+[[package]]
+name = "unicode-general-category"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24adfe8311434967077a6adff125729161e6e4934d76f6b7c55318ac5c9246d3"
 
 [[package]]
 name = "unicode-id"

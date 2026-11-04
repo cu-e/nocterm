@@ -33,9 +33,7 @@ const LINE_COMMENT: &str = "nocterm agent access";
 pub(super) fn principal_of(ca_key: &[u8; 32]) -> String {
     let digest = Sha256::digest(ca_key);
     let mut principal = String::from(PRINCIPAL_PREFIX);
-    for byte in &digest[..8] {
-        principal.push_str(&format!("{byte:02x}"));
-    }
+    principal.push_str(&hex::encode(&digest[..8]));
     principal
 }
 

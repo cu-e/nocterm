@@ -14,10 +14,6 @@ fn failed(error: nocterm_hub_client::agents::AgentError) -> HubError {
     remote(error)
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 pub(super) async fn list(
     pool: Arc<Pool>,
     handle: Handle,
@@ -34,7 +30,7 @@ pub(super) async fn list(
             .map(|grant| AgentAccessGrant {
                 grant_id: grant.grant_id,
                 agent_id: grant.agent_id,
-                chat_id: hex(&grant.chat_id),
+                chat_id: hex::encode(&grant.chat_id),
                 targets: grant.targets,
                 issued_at_ms: grant.issued_at_ms,
                 expires_at_ms: grant.expires_at_ms,

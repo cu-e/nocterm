@@ -1,20 +1,13 @@
 //! Fixed bounded private material snapshot; stores sealed grants, never chat keys.
 use super::{MAX_MATERIALS, MaterialStoreError as Error, StoredGrant};
+use crate::cloud::private_snapshot::{PrivateSnapshot, SnapshotError};
 use nocterm_cloud_model::{
     identity::{ChatKeyEpoch, CloudChatId},
     journal::JournalCatalogBinding,
 };
-use nocterm_core::{
-    SharedCause,
-    fs::{AtomicPublication, create_private, open_private_regular, require_private_regular},
-};
+use nocterm_core::SharedCause;
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeMap,
-    fs::File,
-    io::{self, Read},
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, io::Read, path::Path};
 
 const MAGIC: &[u8; 8] = b"NCRMG001";
 const HEADER: usize = 44;
@@ -22,11 +15,8 @@ const ENTRY: usize = 363;
 const MAX_BYTES: usize = HEADER + MAX_MATERIALS * ENTRY;
 
 pub(super) struct MaterialFile {
-    path: PathBuf,
-    parent: File,
-    _lock: File,
+    file: PrivateSnapshot,
     source: [u8; 32],
-    published: bool,
 }
 impl MaterialFile {
     pub(super) fn acquire(
@@ -34,19 +24,8 @@ impl MaterialFile {
         binding: &JournalCatalogBinding,
         encryption: &[u8; 32],
     ) -> Result<Self, Error> {
-        nocterm_core::paths::ensure_private_dir(root).map_err(storage)?;
-        let parent = File::open(root).map_err(storage)?;
-        let lock_path = root.join("runner-material.lock");
-        let lock = match create_private(&lock_path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                open_private_regular(&lock_path).map_err(storage)?
-            }
-            Err(error) => return Err(storage(error)),
-        };
-        require_private_regular(&lock).map_err(storage)?;
-        lock.try_lock()
-            .map_err(|error| storage(io::Error::other(error)))?;
+        let file = PrivateSnapshot::acquire(root, "runner-material.lock", "runner-material.v1")
+            .map_err(snapshot)?;
         let mut hash = Sha256::new();
         hash.update(b"nocterm-native-material-source-v1");
         let runner = binding.runner();
@@ -64,18 +43,15 @@ impl MaterialFile {
             hash.update(field);
         }
         Ok(Self {
-            path: root.join("runner-material.v1"),
-            parent,
-            _lock: lock,
+            file,
             source: hash.finalize().into(),
-            published: false,
         })
     }
     pub(super) fn read(
         &mut self,
         maximum: usize,
     ) -> Result<BTreeMap<CloudChatId, StoredGrant>, Error> {
-        let mut file = open_private_regular(&self.path).map_err(storage)?;
+        let mut file = self.file.open().map_err(storage)?;
         let size = usize::try_from(file.metadata().map_err(storage)?.len())
             .map_err(|_| Error::Capacity)?;
         if !(HEADER..=MAX_BYTES).contains(&size) || !(size - HEADER).is_multiple_of(ENTRY) {
@@ -102,8 +78,7 @@ impl MaterialFile {
                 return Err(Error::Format);
             }
         }
-        self.confirm(&file)?;
-        self.published = true;
+        self.file.accept_read(&file).map_err(snapshot)?;
         Ok(entries)
     }
     pub(super) fn save(
@@ -124,23 +99,7 @@ impl MaterialFile {
         }
         let digest = self.digest(&bytes[40..]);
         bytes[8..40].copy_from_slice(&digest);
-        let stage = AtomicPublication::stage_private(&self.path, &bytes).map_err(storage)?;
-        let file = if self.published {
-            let previous = open_private_regular(&self.path).map_err(storage)?;
-            require_private_regular(&previous).map_err(storage)?;
-            stage.publish().map_err(storage)?;
-            open_private_regular(&self.path).map_err(stored)?
-        } else {
-            let file = stage.publish_new().map_err(storage)?;
-            self.published = true;
-            file
-        };
-        self.confirm(&file)
-    }
-    fn confirm(&self, file: &File) -> Result<(), Error> {
-        require_private_regular(file).map_err(stored)?;
-        file.sync_all().map_err(stored)?;
-        self.parent.sync_all().map_err(stored)
+        self.file.save(&bytes).map_err(snapshot)
     }
     fn digest(&self, bytes: &[u8]) -> [u8; 32] {
         let mut hash = Sha256::new();
@@ -196,6 +155,9 @@ fn decode(row: &[u8]) -> Result<(CloudChatId, StoredGrant), Error> {
 fn storage(error: impl std::error::Error + Send + Sync + 'static) -> Error {
     Error::Storage(SharedCause::new(error))
 }
-fn stored(error: impl std::error::Error + Send + Sync + 'static) -> Error {
-    Error::StoredButUnavailable(SharedCause::new(error))
+fn snapshot(error: SnapshotError) -> Error {
+    match error {
+        SnapshotError::Stored(cause) => Error::StoredButUnavailable(cause),
+        error => storage(error),
+    }
 }

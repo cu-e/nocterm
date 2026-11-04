@@ -42,6 +42,10 @@ notifications, including selection recomputation in vi mode.
 `SettingsTextField` owns native input, a 600 ms debounce, checked admission and
 the latest original receipt. Feature-provided typed bindings read and validate
 actual settings candidates; UI keeps no feature validators or document cache.
+`SettingsTextField::section` builds those typed bindings, preserving the caller's
+validation cause and publishing only a successful section candidate. Stateless
+`form` controls and checked-field rows share their presentation; pages keep their
+labels, callbacks, validation policy, field membership and teardown.
 Each distinct flush immediately enters the existing bounded settings queue,
 including while an older write is pending. Same waiting literal is deduplicated
 only at an unchanged published semantic revision; a later publication admits a

@@ -186,6 +186,13 @@ pub struct Collected {
     pub exit: ExecExit,
 }
 
+/// A short command produced more output than its caller admitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("command output exceeds {limit} bytes")]
+pub struct OutputLimitExceeded {
+    pub limit: usize,
+}
+
 impl Collected {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.stdout).into_owned()
@@ -250,16 +257,34 @@ impl ExecOutput {
 
     /// The whole output and how the program ended. Output beyond `limit`
     /// bytes stops the program, whose end is then unknown.
-    pub async fn collect(mut self, limit: usize) -> Collected {
+    pub async fn collect(self, limit: usize) -> Collected {
+        self.collect_limited(limit).await.0
+    }
+
+    /// Collects a complete bounded response, reporting overflow separately from
+    /// an unknown exit. Overflow drops the output and stops the owned program.
+    pub async fn collect_bounded(self, limit: usize) -> Result<Collected, OutputLimitExceeded> {
+        let (collected, exceeded) = self.collect_limited(limit).await;
+        if exceeded {
+            Err(OutputLimitExceeded { limit })
+        } else {
+            Ok(collected)
+        }
+    }
+
+    async fn collect_limited(mut self, limit: usize) -> (Collected, bool) {
         let mut stdout = Vec::new();
         while let Some(chunk) = self.next().await {
-            stdout.extend(chunk);
-            if stdout.len() > limit {
-                stdout.truncate(limit);
-                return Collected {
-                    stdout,
-                    exit: ExecExit::default(),
-                };
+            let remaining = limit.saturating_sub(stdout.len());
+            stdout.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+            if chunk.len() > remaining {
+                return (
+                    Collected {
+                        stdout,
+                        exit: ExecExit::default(),
+                    },
+                    true,
+                );
             }
         }
         let exit = self
@@ -267,7 +292,7 @@ impl ExecOutput {
             .guard(async { self.exit.await.map_err(|_| ExecError::Disconnected) })
             .await
             .unwrap_or_default();
-        Collected { stdout, exit }
+        (Collected { stdout, exit }, false)
     }
 }
 
@@ -385,6 +410,35 @@ mod tests {
             let (collected, ()) = futures::join!(output.collect(4), program);
             assert_eq!(collected.stdout, b"0123");
             assert_eq!(collected.exit, ExecExit::default());
+        });
+    }
+
+    #[test]
+    fn bounded_collection_distinguishes_overflow_from_an_unknown_exit() {
+        futures::executor::block_on(async {
+            for (bytes, limit, expected) in [
+                (b"data".as_slice(), 4, true),
+                (b"extra".as_slice(), 4, false),
+                (b"".as_slice(), 0, true),
+                (b"x".as_slice(), 0, false),
+            ] {
+                let (sink, output) = ExecOutput::channel();
+                let program = async move {
+                    sink.send(bytes.to_vec()).await;
+                    sink.finish(ExecExit::default());
+                    if !expected {
+                        sink.closed().await;
+                    }
+                };
+                let (result, ()) = futures::join!(output.collect_bounded(limit), program);
+                if expected {
+                    let collected = result.unwrap();
+                    assert_eq!(collected.stdout, bytes);
+                    assert_eq!(collected.exit.status, None);
+                } else {
+                    assert_eq!(result.unwrap_err(), OutputLimitExceeded { limit });
+                }
+            }
         });
     }
 

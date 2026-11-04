@@ -9,7 +9,7 @@ use futures::future::BoxFuture;
 use nocterm_core::error::SharedCause;
 use nocterm_session::{
     FsError, RemoteFs,
-    fs::{UploadMode, path},
+    fs::{DownloadReadError, UploadMode, path, read_bounded},
 };
 use nocterm_ssh_keys::authorized_keys::{
     AgentHosts, AuthorizedKeysFile, ConnectedHost, ConnectedHosts, HostAccess, HostAccessError,
@@ -53,17 +53,15 @@ async fn read_text(fs: &dyn RemoteFs, file: &str) -> Result<String, HostAccessEr
         Err(FsError::NotFound { .. }) => return Ok(String::new()),
         Err(error) => return Err(host(error)),
     };
-    let mut bytes = Vec::new();
-    loop {
-        let chunk = download.read(CHUNK).await.map_err(host)?;
-        if chunk.is_empty() {
-            break;
-        }
-        bytes.extend_from_slice(&chunk);
-        if bytes.len() > MAX_AUTHORIZED_KEYS_BYTES {
-            return Err(HostAccessError::TooLarge);
-        }
-    }
+    let bytes = read_bounded(download.as_mut(), MAX_AUTHORIZED_KEYS_BYTES, CHUNK)
+        .await
+        .map_err(|error| match error {
+            DownloadReadError::Read(source) => host(source),
+            DownloadReadError::TooLarge { .. } => HostAccessError::TooLarge,
+            error @ DownloadReadError::InvalidChunk { .. } => {
+                HostAccessError::Host(SharedCause::new(error))
+            }
+        })?;
     download.close().await.map_err(host)?;
     String::from_utf8(bytes).map_err(|_| HostAccessError::NotText)
 }

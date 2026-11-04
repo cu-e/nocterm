@@ -13,6 +13,7 @@ layer = "domain"
 test-support = ["dep:sha2"]
 
 [dependencies]
+hex.workspace = true
 nocterm-ai.workspace = true
 nocterm-session.workspace = true
 nocterm-ssh-keys.workspace = true

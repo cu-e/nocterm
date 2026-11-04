@@ -131,3 +131,4 @@ acceptance; a later record supersedes an earlier one.
 | [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat |
 | [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript |
 | [0135](0135-responsibility-and-cost-guided-agent-work.md) | Agent procedures verify responsibility and runtime cost; gate owns the detailed check matrix |
+| [0136](0136-shared-bounded-streams-and-tool-result-formats.md) | Bounded byte collection and terminal-tool result formats have shared owners |

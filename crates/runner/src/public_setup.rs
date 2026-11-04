@@ -41,14 +41,14 @@ impl PublicSetup {
             hub_address: &self.origin,
             raw_hub_id: &self.raw_hub,
             hub_namespace: scope.hub().instance().as_str(),
-            hub_authority: hex(&self.authority),
+            hub_authority: hex::encode(self.authority),
             account_id: scope.account().id().as_str(),
-            account_key_fingerprint: hex(scope.account().key().as_bytes()),
-            runner: hex(self.binding.runner().as_bytes()),
+            account_key_fingerprint: hex::encode(scope.account().key().as_bytes()),
+            runner: hex::encode(self.binding.runner().as_bytes()),
             runner_key_epoch: self.binding.epoch().get(),
-            encryption_key: hex(identity.encryption_key()),
-            signing_key: hex(identity.signing_key()),
-            proof_key: hex(identity.proof_key()),
+            encryption_key: hex::encode(identity.encryption_key()),
+            signing_key: hex::encode(identity.signing_key()),
+            proof_key: hex::encode(identity.proof_key()),
         };
         // Every string is pre-bounded above/by native identity constructors.
         // TOML escapes those fixed inputs; no secret-bearing value is borrowed.
@@ -68,7 +68,7 @@ impl PublicSetup {
                 signing: *identity.signing_key(),
                 proof: *identity.proof_key(),
             },
-            hex(self.binding.runner().as_bytes()),
+            hex::encode(self.binding.runner().as_bytes()),
         )
         .map_err(|_| RunnerError::Value("setup runner"))?;
         let origin =
@@ -92,9 +92,6 @@ struct PublicDocument<'a> {
     encryption_key: String,
     signing_key: String,
     proof_key: String,
-}
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -161,11 +158,11 @@ mod tests {
         );
         assert_eq!(
             parsed["encryption_key"].as_str(),
-            Some(hex(public.encryption_key()).as_str())
+            Some(hex::encode(public.encryption_key()).as_str())
         );
         assert_eq!(
             parsed["hub_authority"].as_str(),
-            Some(hex(&[5; 32]).as_str())
+            Some(hex::encode([5; 32]).as_str())
         );
         assert!(output.len() <= MAX_PUBLIC_BYTES);
         assert!(

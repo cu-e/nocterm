@@ -86,6 +86,13 @@ commands, events, prompts and the `RemoteFs` contract. Launch and session-overri
 validation returns typed field/constraint errors without filesystem access or
 value expansion; native transports reject invalid launches before starting I/O.
 `TextEncodingError` carries the configured `Charset` without retaining input text.
+`ExecOutput::collect_bounded` reports typed output overflow separately from an
+unknown command exit; the existing `collect` retains its bounded-prefix behavior.
+`fs::read_bounded` collects a small document from an already admitted
+`RemoteDownload`, validating requested chunk sizes and total bytes. Callers retain
+the stream and their own close-error policy. Neither helper opens a transport or
+adds native I/O to the domain.
+
 Incremental text conversion belongs to `nocterm-vt`; the session domain only
 names the charset and typed conversion refusal.
 `Event::Restore` is the screen a host holds when a session is attached again: the owner
@@ -309,6 +316,13 @@ adapter create/open acknowledgement, not a new-file or new-directory count. Its 
 survives later failure or cancellation without advancing file or byte counters.
 
 ## Agent profiles
+
+`nocterm-ai::tools::output` owns the shared terminal, command and live-observation
+report DTOs. Desktop and headless tools normalize their terminal snapshots into
+that format; command reports share explicit redaction policy and retain the actual
+exit, byte count and truncation. The panel decodes the same DTOs while retaining
+its labels, unknown-field display and historical provider-envelope fallbacks.
+These reports are observations, never execution or cancellation capabilities.
 
 `nocterm-ai::agents` describes how a known agent deviates from plain ACP as an
 `AgentProfile`: its pinned launch, the home directories it writes, how it reports
