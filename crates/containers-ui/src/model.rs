@@ -1,31 +1,30 @@
 //! The containers of the active host, kept current.
 //!
 //! The model follows the workspace's active host ([`nocterm_workspace::host`]),
-//! like the resource monitor, over the connection that host already has. It
-//! keeps watching while the panel is hidden, so the footer's count stays
-//! right. The engine's event stream says when to list again; where there is
-//! none, or it ends, the listing is repeated every [`RETRY`].
+//! like the resource monitor, over the connection that host already has. Its
+//! containers come from the application's [`ContainerHosts`], which watches each
+//! host connection once for every window showing it. The model holds that watch
+//! while the panel is hidden, so the footer's count stays right.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use futures::FutureExt as _;
-use gpui_kit::{AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use nocterm_containers::{Action, ContainersError, Engine, Snapshot, detect};
+use gpui_kit::{App, Context, Entity, Subscription, Task};
+use nocterm_containers::{Action, Changes, ContainersError, Engine, Snapshot};
+use nocterm_containers_service::{ContainerHosts, HostContainers, ListingStatus};
 use nocterm_session::{ExecRequest, HostExec};
 use nocterm_workspace::{
     Host, ProgramSpec, SessionContext, Workspace, host::follow_active_session,
 };
 
-/// How long a failed listing, or an ended event stream, waits before the
-/// host is listed again.
-const RETRY: Duration = Duration::from_secs(10);
-/// How long a burst of events (a Compose project starting) may take before
-/// the host is listed once for all of it.
-const SETTLE: Duration = Duration::from_millis(300);
+/// What a host shows before its engine has answered.
+static NOTHING: Snapshot = Snapshot {
+    containers: Vec::new(),
+    images: Vec::new(),
+};
 
 /// Where the listing of the current host stands.
 #[derive(Debug)]
-pub(crate) enum Status {
+pub(crate) enum Status<'a> {
     /// There is no host to list.
     Off,
     /// The host's session is not connected.
@@ -34,7 +33,7 @@ pub(crate) enum Status {
     Ready,
     /// The last attempt failed; unless the host has no engine, another
     /// follows shortly.
-    Failed(ContainersError),
+    Failed(&'a ContainersError),
 }
 
 /// A confirmed operation belongs to one observed host connection. Moving
@@ -57,13 +56,17 @@ impl ActionIntent {
 pub(crate) struct ContainersModel {
     epoch: Arc<()>,
     local: Option<Arc<dyn HostExec>>,
+    hosts: ContainerHosts,
     host: Option<Host>,
-    /// The engine the host was found to have.
-    engine: Option<Engine>,
-    snapshot: Snapshot,
-    status: Status,
-    task: Option<Task<()>>,
+    /// The shared watch of a connected host.
+    watched: Option<Watched>,
     _follow: Subscription,
+}
+
+/// A host's shared watch, redrawn by this model when it changes.
+struct Watched {
+    containers: Entity<HostContainers>,
+    _observe: Subscription,
 }
 
 impl ContainersModel {
@@ -71,16 +74,15 @@ impl ContainersModel {
         workspace: &Entity<Workspace>,
         session: Option<SessionContext>,
         local: Option<Arc<dyn HostExec>>,
+        hosts: ContainerHosts,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             epoch: Arc::new(()),
             local,
+            hosts,
             host: None,
-            engine: None,
-            snapshot: Snapshot::default(),
-            status: Status::Off,
-            task: None,
+            watched: None,
             _follow: follow_active_session(workspace, cx, Self::follow),
         };
         this.follow(session, cx);
@@ -91,16 +93,33 @@ impl ContainersModel {
         self.host.as_ref()
     }
 
-    pub(crate) fn engine(&self) -> Option<Engine> {
-        self.engine
+    fn containers<'a>(&self, cx: &'a App) -> Option<&'a HostContainers> {
+        self.watched
+            .as_ref()
+            .map(|watched| watched.containers.read(cx))
     }
 
-    pub(crate) fn snapshot(&self) -> &Snapshot {
-        &self.snapshot
+    pub(crate) fn engine(&self, cx: &App) -> Option<Engine> {
+        self.containers(cx)?.engine()
     }
 
-    pub(crate) fn status(&self) -> &Status {
-        &self.status
+    pub(crate) fn snapshot<'a>(&self, cx: &'a App) -> &'a Snapshot {
+        self.containers(cx)
+            .map_or(&NOTHING, HostContainers::snapshot)
+    }
+
+    pub(crate) fn status<'a>(&self, cx: &'a App) -> Status<'a> {
+        let Some(host) = &self.host else {
+            return Status::Off;
+        };
+        if !host.connected {
+            return Status::Offline;
+        }
+        match self.containers(cx).map(HostContainers::status) {
+            Some(ListingStatus::Ready) => Status::Ready,
+            Some(ListingStatus::Failed(error)) => Status::Failed(error),
+            Some(ListingStatus::Loading) | None => Status::Loading,
+        }
     }
 
     fn follow(&mut self, session: Option<SessionContext>, cx: &mut Context<Self>) {
@@ -113,49 +132,58 @@ impl ContainersModel {
         if unchanged {
             return;
         }
-        let key = |host: &Option<Host>| host.as_ref().map(|host| host.key.clone());
-        if key(&self.host) != key(&host) {
-            self.engine = None;
-            self.snapshot = Snapshot::default();
-        }
         self.epoch = Arc::new(());
+        self.watched = host
+            .as_ref()
+            .filter(|host| host.connected)
+            .map(|host| self.watch(&host.exec, cx));
         self.host = host;
-        self.refresh(cx);
+        cx.notify();
     }
 
-    /// Lists the host again, and follows it from there.
-    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.task = None;
-        let Some(host) = self.host.clone() else {
-            self.set_status(Status::Off, cx);
-            return;
-        };
-        if !host.connected {
-            self.set_status(Status::Offline, cx);
-            return;
+    fn watch(&self, exec: &Arc<dyn HostExec>, cx: &mut Context<Self>) -> Watched {
+        let containers = self.hosts.watch(exec, cx);
+        Watched {
+            _observe: cx.observe(&containers, |_, _, cx| cx.notify()),
+            containers,
         }
-        self.set_status(Status::Loading, cx);
-        let engine = self.engine;
-        self.task = Some(cx.spawn(async move |this, cx| watch(this, host, engine, cx).await));
     }
 
-    pub(crate) fn intent(&self, action: Action, ids: Vec<String>) -> Option<ActionIntent> {
+    /// Lists the host again, as the person asked.
+    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.relist(Changes::ALL, cx);
+    }
+
+    fn relist(&self, changes: Changes, cx: &mut Context<Self>) {
+        if let Some(watched) = &self.watched {
+            watched
+                .containers
+                .update(cx, |containers, cx| containers.relist(changes, cx));
+        }
+    }
+
+    pub(crate) fn intent(
+        &self,
+        action: Action,
+        ids: Vec<String>,
+        cx: &App,
+    ) -> Option<ActionIntent> {
         let host = self.host.clone()?;
         if !host.connected {
             return None;
         }
         Some(ActionIntent {
             host,
-            engine: self.engine?,
+            engine: self.engine(cx)?,
             epoch: self.epoch.clone(),
             action,
             ids,
         })
     }
 
-    fn accepts(&self, intent: &ActionIntent) -> bool {
+    fn accepts(&self, intent: &ActionIntent, cx: &App) -> bool {
         Arc::ptr_eq(&self.epoch, &intent.epoch)
-            && self.engine == Some(intent.engine)
+            && self.engine(cx) == Some(intent.engine)
             && self
                 .host
                 .as_ref()
@@ -169,7 +197,7 @@ impl ContainersModel {
         ids: Vec<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), ContainersError>> {
-        let Some(intent) = self.intent(action, ids) else {
+        let Some(intent) = self.intent(action, ids, cx) else {
             return Task::ready(Err(ContainersError::Disconnected));
         };
         self.perform_intent(intent, cx)
@@ -183,7 +211,7 @@ impl ContainersModel {
         cx: &mut Context<Self>,
     ) -> Task<Result<(), ContainersError>> {
         cx.spawn(async move |this, cx| {
-            let accepted = this.update(cx, |this, _| this.accepts(&intent));
+            let accepted = this.update(cx, |this, cx| this.accepts(&intent, cx));
             if !matches!(accepted, Ok(true)) {
                 return Err(ContainersError::Disconnected);
             }
@@ -191,10 +219,11 @@ impl ContainersModel {
                 .engine
                 .perform(intent.host.exec.as_ref(), intent.action, &intent.ids)
                 .await;
-            // Finishing on A must not interrupt B's watcher.
+            // Its events say so too, but not every engine reports them. Finishing on A
+            // must not relist B.
             let _ = this.update(cx, |this, cx| {
-                if this.accepts(&intent) {
-                    this.refresh(cx);
+                if this.accepts(&intent, cx) {
+                    this.relist(intent.action.changes(), cx);
                 }
             });
             done
@@ -207,94 +236,13 @@ impl ContainersModel {
         &self,
         title: String,
         program: impl FnOnce(Engine) -> ExecRequest,
+        cx: &App,
     ) -> Option<ProgramSpec> {
         Some(ProgramSpec {
             title: title.into(),
             host: self.host.clone()?,
-            program: program(self.engine?),
+            program: program(self.engine(cx)?),
             shell_syntax: None,
         })
     }
-
-    fn apply(&mut self, engine: Engine, snapshot: Snapshot, cx: &mut Context<Self>) {
-        self.engine = Some(engine);
-        if self.snapshot != snapshot {
-            self.snapshot = snapshot;
-            cx.notify();
-        }
-        self.set_status(Status::Ready, cx);
-    }
-
-    fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
-        // Native error sources have no equality contract. Deduplicate only the
-        // visible status category and text; recovery always matches typed variants.
-        let unchanged = match (&self.status, &status) {
-            (Status::Failed(previous), Status::Failed(next)) => {
-                std::mem::discriminant(previous) == std::mem::discriminant(next)
-                    && previous.to_string() == next.to_string()
-            }
-            (previous, next) => std::mem::discriminant(previous) == std::mem::discriminant(next),
-        };
-        if !unchanged {
-            self.status = status;
-            cx.notify();
-        }
-    }
-}
-
-/// Lists the host and follows its changes, again after failures, until the
-/// host has no engine or the model moves on.
-async fn watch(
-    this: WeakEntity<ContainersModel>,
-    host: Host,
-    mut engine: Option<Engine>,
-    cx: &mut AsyncApp,
-) {
-    loop {
-        let outcome = follow_engine(&this, &host, &mut engine, cx).await;
-        let retry = this.update(cx, |this, cx| match outcome {
-            // The event stream ended; the listing still stands.
-            Ok(()) => true,
-            Err(error) => {
-                let retry = !matches!(
-                    error,
-                    ContainersError::NotInstalled | ContainersError::Unsupported
-                );
-                this.set_status(Status::Failed(error), cx);
-                retry
-            }
-        });
-        if !matches!(retry, Ok(true)) {
-            return;
-        }
-        cx.background_executor().timer(RETRY).await;
-    }
-}
-
-/// One attempt: a listing, then another after each change the engine
-/// reports, until its event stream ends.
-async fn follow_engine(
-    this: &WeakEntity<ContainersModel>,
-    host: &Host,
-    engine: &mut Option<Engine>,
-    cx: &mut AsyncApp,
-) -> Result<(), ContainersError> {
-    let exec = host.exec.as_ref();
-    let (found, snapshot) = match *engine {
-        Some(known) => (known, known.snapshot(exec).await?),
-        None => detect(exec).await?,
-    };
-    *engine = Some(found);
-    let apply = |snapshot, cx: &mut AsyncApp| {
-        this.update(cx, |this, cx| this.apply(found, snapshot, cx))
-            .map_err(|_| ContainersError::Disconnected)
-    };
-    apply(snapshot, cx)?;
-    let mut events = found.events(exec).await?;
-    while events.next().await.is_some() {
-        cx.background_executor().timer(SETTLE).await;
-        while let Some(Some(_)) = events.next().now_or_never() {}
-        apply(found.snapshot(exec).await?, cx)?;
-    }
-    Ok(())
 }

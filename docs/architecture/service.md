@@ -42,6 +42,12 @@ and keeps its agent transfers in a private `OwnedTransfers` book bound to the or
 `TerminalFiles` and cancels a transfer whose endpoint was detached or replaced
 ([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
 
+`nocterm-containers-service` owns `ContainerHosts`, the one watch of each host
+connection's containers and images, shared by every window. Each watch is keyed by its
+`HostExec`. It follows one engine event stream, lists only what `EventReader` reports
+changed (once per burst), and stops its programs when the last holder lets it go
+([ADR 0131](../adr/0131-one-container-watch-per-host-connection.md)).
+
 `nocterm-project-service` owns the durable workspace catalog and the
 open-window registry used to focus an already opened workspace. It uses
 `Persisted` and the shared shutdown coordinator. Catalog bindings identify the

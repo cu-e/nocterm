@@ -5537,12 +5537,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-containers-service"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-containers",
+ "nocterm-session",
+]
+
+[[package]]
 name = "nocterm-containers-ui"
 version = "0.0.0"
 dependencies = [
  "futures",
  "gpui-kit",
  "nocterm-containers",
+ "nocterm-containers-service",
  "nocterm-plugin-model",
  "nocterm-session",
  "nocterm-settings",

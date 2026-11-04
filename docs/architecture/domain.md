@@ -234,6 +234,10 @@ execution and retention behavior belong to the adapter's conformance tests.
 Podman command lines over `HostExec` — detection (exit 127 or
 `ExecError::NotFound` means not installed), listings parsed from either JSON
 dialect, the event stream and actions — and knows nothing of GPUI.
+`EventReader` turns the event stream into `Changes`: which of the two listings an event
+made stale. Commands run inside a container (health checks), attached terminals and
+copies change neither, an unchanged health status changes nothing, and an unreadable line
+changes both ([ADR 0131](../adr/0131-one-container-watch-per-host-connection.md)).
 `ListingError` distinguishes native JSON failures (with line and column), non-object
 entries and missing container/image identifiers. `ContainersError` preserves those
 parse sources and startup `ExecError` sources separately from process exit status

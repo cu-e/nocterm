@@ -191,7 +191,8 @@ pub(crate) struct VaultSetup {
 pub(crate) struct Booted {
     #[cfg(test)]
     keymap: nocterm_keymap::KeymapHandle,
-    local_host: Option<Arc<dyn nocterm_session::HostExec>>,
+    /// This computer's executor and the one watch of each host's containers.
+    containers: nocterm_containers_ui::Installed,
     terminal: nocterm_terminal::Installed,
     settings_ui: crate::settings_pages::SettingsPages,
     monitor: nocterm_monitor_ui::Installed,
@@ -393,7 +394,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let booted = Booted {
         #[cfg(test)]
         keymap,
-        local_host,
+        containers: nocterm_containers_ui::install(local_host),
         terminal,
         settings_ui,
         monitor,

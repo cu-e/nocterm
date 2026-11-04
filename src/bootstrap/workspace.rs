@@ -51,7 +51,7 @@ pub(crate) fn build_workspace(
     }
     report_registration(
         "containers",
-        nocterm_containers_ui::register(booted.local_host.clone(), workspace, window, cx),
+        nocterm_containers_ui::register(&booted.containers, workspace, window, cx),
     );
     // Workspaces, like containers and files, work over the connection the window opened,
     // whichever source that connection came from. The terminals they open and the profiles

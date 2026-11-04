@@ -254,6 +254,7 @@ nocterm-connections-store = { path = "crates/connections-store" }
 nocterm-connections-model = { path = "crates/connections-model" }
 nocterm-connections-io = { path = "crates/connections-io" }
 nocterm-containers = { path = "crates/containers" }
+nocterm-containers-service = { path = "crates/containers-service" }
 nocterm-containers-ui = { path = "crates/containers-ui" }
 nocterm-snippets = { path = "crates/snippets" }
 nocterm-snippets-ui = { path = "crates/snippets-ui" }

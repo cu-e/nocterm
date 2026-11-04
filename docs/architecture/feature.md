@@ -418,16 +418,19 @@ the normal terminal lifecycle and their original workspace surface
 ## Containers
 
 `nocterm-containers-ui` lists the active host's containers in a sidebar panel
-whose switcher shows the running count, re-listing whenever the engine reports
-a change. A container's log and a shell inside it are `ProgramSpec`s opened
+whose switcher shows the running count. Its model follows the active host and
+reads that host's shared `HostContainers` from `nocterm-containers-service`, so
+every window on one host connection shares one watch
+([ADR 0131](../adr/0131-one-container-watch-per-host-connection.md)). A container's log and a shell inside it are `ProgramSpec`s opened
 through `Workspace::open_program`; the terminal runs them with
 `ProgramTransport` over `HostExec::terminal`, so no feature opens a
 connection of its own and the tab follows as the same host.
 Destructive confirmation captures the host executor, engine, object IDs and
 connection epoch when the dialog opens. Switching hosts or reconnecting
-invalidates that confirmation; completion refreshes only its original context.
-Its optional local executor is supplied at registration; another window cannot
-replace it through workspace service lookup.
+invalidates that confirmation; completion asks only its original context's watch to
+relist what the action changed. Its optional local executor and the shared
+`ContainerHosts` come from the `install`ed handle at registration; another window
+cannot replace them through workspace service lookup.
 
 ## Vault
 
