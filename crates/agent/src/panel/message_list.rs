@@ -116,18 +116,22 @@ impl MessageList {
         self.source = None;
         self.markdown.clear();
     }
+    /// `pending` rows follow the entries: the prompts the source has not accepted yet. They
+    /// are few and their state changes in place, so they are always measured again.
     pub(super) fn observe_rows(
         &mut self,
         chat: EntityId,
         entries: &[Entry],
+        pending: usize,
         dirty: &[usize],
         live: bool,
         reduced: bool,
     ) -> MessageRows {
         let previous = self.row_count;
-        self.row_count = entries.len();
+        self.row_count = entries.len() + pending;
         self.navigation.observe(chat, entries, dirty);
         let mut changed = dirty.to_vec();
+        changed.extend(entries.len()..self.row_count.min(previous));
         changed.extend(self.reveal.observe(entries, dirty, live, reduced));
         MessageRows {
             previous,

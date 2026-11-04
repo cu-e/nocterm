@@ -12,6 +12,8 @@ use nocterm_cloud_model::projection::{
 use std::{rc::Rc, sync::Arc};
 
 mod inference_grant;
+mod pending_prompts;
+mod unreachable_runner;
 
 fn installation(
     cx: &mut TestAppContext,
@@ -507,7 +509,7 @@ async fn definitive_rejections_retire_their_bodies_and_leave_room_for_stop(
         let result = cx
             .update(|cx| controls.perform(ConversationAction::Prompt("refused".into()), cx))
             .await;
-        assert!(matches!(result, Err(ConversationError::Unavailable)));
+        assert!(matches!(result, Err(ConversationError::Rejected)));
         cx.update(|cx| assert!(chat.read(cx).pending_commands().is_empty()));
     }
     cx.update(|cx| controls.perform(ConversationAction::Stop, cx))

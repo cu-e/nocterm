@@ -14,6 +14,8 @@ pub(super) struct ConversationSurface {
     dirty: bool,
     previous_local: Option<EntityId>,
     pending: Option<PendingInput>,
+    /// The key the history column lists this conversation under, when it lists it.
+    origin: Option<String>,
 }
 struct PendingInput {
     ticket: InputTicket,
@@ -71,7 +73,14 @@ impl ConversationSurface {
             dirty: true,
             previous_local,
             pending: None,
+            origin: None,
         })
+    }
+    pub(super) fn set_origin(&mut self, origin: Option<String>) {
+        self.origin = origin;
+    }
+    pub(super) fn origin(&self) -> Option<&str> {
+        self.origin.as_deref()
     }
     pub(super) fn identity(&self) -> EntityId {
         self.source.identity()
@@ -105,12 +114,20 @@ impl ConversationSurface {
     ) -> Result<Option<gpui_kit::Task<Result<(), ConversationError>>>, ConversationError> {
         use nocterm_ai::conversation::ConversationAction;
         let prompt = matches!(&action, ConversationAction::Prompt(_));
+        let mut replaces = None;
         if prompt && let Some((submission, busy)) = self.pending(&input) {
             if busy {
                 return Ok(None);
             }
-            self.submitted(input, submission.clone());
-            return Ok(Some(submission.retry(cx)));
+            // A refused prompt is over: the same text sent again is a new prompt, never a
+            // retry that can only be refused again. The new prompt replaces its row.
+            if submission.refused(cx) {
+                self.pending = None;
+                replaces = submission.pending_prompt();
+            } else {
+                self.submitted(input, submission.clone());
+                return Ok(Some(submission.retry(cx)));
+            }
         }
         let mut allowed = false;
         self.source.with_view(cx, &mut |view| {
@@ -127,6 +144,10 @@ impl ConversationSurface {
         let (submission, completion) = actions.submit(action, cx)?;
         if prompt {
             self.submitted(input, submission);
+        }
+        if let Some(refused) = replaces {
+            // The refused row may already be dismissed; nothing else depends on it.
+            let _ = actions.dismiss_prompt(refused, cx);
         }
         Ok(Some(completion))
     }

@@ -90,6 +90,21 @@ impl ProjectionResidency {
         let lease = AllocationLease::new(bytes.bytes(), 1, Arc::new((bytes, payload.clone())));
         Ok((lease, payload))
     }
+    /// Bytes without a payload permit, for presentation text kept beside the projection.
+    pub(crate) fn retained_text(
+        &self,
+        bytes: usize,
+        cx: &mut Context<CloudChat>,
+    ) -> Result<AllocationLease, HistoryAdmissionError> {
+        let bytes = self.admission.reserve_bytes(
+            self.registration
+                .as_ref()
+                .ok_or(HistoryAdmissionError::Closed)?,
+            bytes,
+            cx,
+        )?;
+        Ok(AllocationLease::new(bytes.bytes(), 0, bytes))
+    }
     pub(crate) fn work(
         &self,
         required: AllocationRequirements,

@@ -7,8 +7,8 @@
 //! agent ([`PersonalAgentDraft`]); the ports [`CloudAgentCatalog`], [`CloudAgentLauncher`],
 //! [`OwnRunnerLauncher`], [`AgentSeats`] (stop or remove the caller's seat), [`AgentUsage`] and
 //! [`PersonalAgents`] with their typed
-//! [`CloudAgentError`]; the chat port [`CloudChatLauncher`] (create, list and open Cloud
-//! chats) with its typed [`CloudChatError`].
+//! [`CloudAgentError`]; the chat port [`CloudChatLauncher`] (create, list with a
+//! [`ChatSummary`] per row, and open Cloud chats) with its typed [`CloudChatError`].
 //!
 //! Does not own: the hub protocol, sealing and signatures (`nocterm-hub-io` is the adapter),
 //! the catalog entity and the order of a start (`nocterm-cloud-agents`), views.
@@ -44,8 +44,8 @@ mod usage;
 
 pub use agent::{AgentLimits, CloudAgent, PoolLabel};
 pub use chats::{
-    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, CloudChatLauncher,
-    OpenedChat,
+    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, ChatSummary, CloudChatError,
+    CloudChatLauncher, OpenedChat,
 };
 pub use error::{CloudAgentError, ReplyProblem};
 pub use ids::{AgentId, IdError, InstanceId, MAX_ID_BYTES, PoolId};

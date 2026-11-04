@@ -18,9 +18,11 @@ mod attach;
 mod attachments;
 mod bindings;
 mod chat;
+mod cloud_history;
 mod cloud_menu;
 pub(crate) mod commands;
 mod composer;
+mod composer_frame;
 mod composer_renderer;
 mod composer_view;
 mod conversation_surface;
@@ -41,6 +43,7 @@ mod message_markdown;
 mod navigation;
 mod notices;
 mod parts;
+mod pending_prompt;
 mod preview_operation;
 mod queue;
 mod queue_image_preparation;
@@ -96,7 +99,7 @@ impl AgentPanel {
         let composer = composer_view::ComposerView::new(window, cx);
         let menus = menu_view::MenuView::new(composer.focus(cx), window, cx);
         let cloud = cloud_menu::CloudMenu::new(host.cloud_agents().cloned(), window, cx);
-        let history = history_column::HistoryColumn::new(window, cx);
+        let history = history_column::HistoryColumn::new(host.cloud_agents().cloned(), window, cx);
         let layout = layout::PanelLayout::new(layout, cx);
         let messages = message_list::MessageList::new(images, cx);
         let subscriptions = Self::bind_panel(&host, &settings, window, cx);
@@ -189,6 +192,7 @@ impl AgentPanel {
             return;
         }
         self.load_history(cx);
+        self.history.cloud_mut().refresh(false, cx);
         self.adopt_saved_chats(window, cx);
         cx.notify();
     }
@@ -315,7 +319,7 @@ impl AgentPanel {
     }
     fn history_is_visible(&self, cx: &App) -> bool {
         self.layout.history()
-            && !self.chats.is_empty()
+            && (!self.chats.is_empty() || !self.history.cloud().is_empty(cx))
             && self
                 .host
                 .workspace()
@@ -398,7 +402,12 @@ impl AgentPanel {
             .or_else(|| agents.iter().next().map(|agent| agent.id().to_owned()))
     }
     pub(super) fn set_history(&mut self, open: bool, cx: &mut Context<Self>) {
-        if let Some(width) = self.layout.set_history(open, self.current().is_some(), cx) {
+        if open {
+            self.history.cloud_mut().refresh(true, cx);
+        }
+        // A Cloud conversation is a chat too: the history opens beside it the same way.
+        let chat = self.current().is_some() || self.conversation.is_some();
+        if let Some(width) = self.layout.set_history(open, chat, cx) {
             cx.emit(PanelRequest::Widen(width));
         }
         cx.notify();
@@ -422,11 +431,11 @@ impl AgentPanel {
         match kind {
             parts::PartKind::Transcript => self.render_transcript_part(cx),
             parts::PartKind::History => {
-                let stamp = history::HistoryProjection::stamp(&self.chats, &self.history, cx);
+                let open = self.conversation.as_ref().and_then(|view| view.origin());
+                let stamp = history::HistoryProjection::stamp(&self.chats, &self.history, open, cx);
                 self.layout.parts_mut().drew_history(stamp);
                 let history = history::HistoryProjection::render(
-                    &self.chats,
-                    &self.history,
+                    history::HistorySources::new(&self.chats, &self.history, open),
                     self.host.agents(),
                     self.host.timestamp(),
                     cx,
@@ -438,11 +447,7 @@ impl AgentPanel {
                     .child(history)
                     .into_any_element()
             }
-            parts::PartKind::Footer => match (self.current(), self.conversation.is_some()) {
-                (_, true) => self.render_conversation(window, cx),
-                (Some(thread), false) => self.render_chat(thread, window, cx),
-                (None, false) => div().into_any_element(),
-            },
+            parts::PartKind::Footer => self.render_footer(window, cx),
         }
     }
     fn toggle_history(&mut self, cx: &mut Context<Self>) {
@@ -534,25 +539,53 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let outcome = result
-            .map_err(|error| cloud_menu::notice_text(&error))
-            .and_then(|opened| {
-                let source = self
-                    .host
-                    .cloud_chats()
-                    .open(opened.source, cx)
-                    .map_err(|error| error.to_string())?;
-                self.open_conversation(source, SharedString::from(opened.title), window, cx)
-                    .map_err(|error| error.to_string())
-            });
-        match outcome {
-            Ok(()) => {
+        match self.present_cloud_chat(result, window, cx) {
+            None => {
                 self.cloud.chat_opened(start, cx);
                 self.menus.reset();
             }
-            Err(notice) => self.cloud.chat_failed(notice, start),
+            Some(notice) => self.cloud.chat_failed(notice, start),
         }
         cx.notify();
+    }
+    /// Shows the chat a history row opened, or says on the error line why it could not.
+    fn finish_cloud_history_chat(
+        &mut self,
+        result: Result<OpenedChat, CloudChatError>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(notice) = self.present_cloud_chat(result, window, cx) {
+            self.notices.set_error(Some(notice));
+        }
+        cx.notify();
+    }
+    /// Presents an opened Cloud chat in this panel; its history row is the open one, and the
+    /// history lists it at once if it is new. Returns what to tell the person when it could not.
+    fn present_cloud_chat(
+        &mut self,
+        result: Result<OpenedChat, CloudChatError>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let opened = match result {
+            Ok(opened) => opened,
+            Err(error) => return Some(cloud_menu::notice_text(&error)),
+        };
+        let source = match self.host.cloud_chats().open(opened.source, cx) {
+            Ok(source) => source,
+            Err(error) => return Some(error.to_string()),
+        };
+        if let Err(error) =
+            self.open_conversation(source, SharedString::from(opened.title), window, cx)
+        {
+            return Some(error.to_string());
+        }
+        if let Some(open) = &mut self.conversation {
+            open.set_origin(Some(opened.key));
+        }
+        self.history.cloud_mut().refresh(true, cx);
+        None
     }
 }
 

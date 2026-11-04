@@ -13,7 +13,6 @@ use gpui_kit::{
     px, rems,
 };
 use nocterm_ai::model::auth::AuthFlow;
-use nocterm_ai::model::usage::ContextUsage;
 use nocterm_ui::IconName;
 use std::rc::Rc;
 
@@ -34,12 +33,19 @@ fn remove_image(origin: gpui_kit::EntityId, index: usize, cx: &mut Context<Agent
         }))
 }
 
-/// Pasted files and images become attachments; anything else is text.
+/// Pasted files and images become attachments where the composer takes them; anything else
+/// is text.
 pub(super) fn paste(
     panel: &WeakEntity<AgentPanel>,
     clipboard: &ClipboardItem,
     cx: &mut App,
 ) -> bool {
+    if !panel
+        .upgrade()
+        .is_some_and(|panel| panel.read(cx).composer_attaches(cx))
+    {
+        return false;
+    }
     let paths = clipboard
         .entries()
         .iter()
@@ -66,53 +72,6 @@ pub(super) fn paste(
 
 pub(super) struct ComposerRenderer;
 impl ComposerRenderer {
-    /// Uses the same input, send button and frame as Local. Configuration and
-    /// attachments remain on their actual Local capability path.
-    pub(super) fn render_conversation(
-        composer: &super::composer_view::ComposerView,
-        source: std::rc::Rc<dyn nocterm_agent_chat::conversation::ConversationSource>,
-        busy: bool,
-        captured: Option<Rc<super::conversation_surface::RenderedStop>>,
-        cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
-        let mut can_prompt = false;
-        let mut can_stop = false;
-        let mut can_allow = false;
-        let _ = source.with_view(cx, &mut |view| {
-            can_prompt = view.can_prompt;
-            can_stop = view.can_stop;
-            can_allow = view.can_allow;
-        });
-        let empty = composer.text(cx).trim().is_empty();
-        let stop = empty && can_stop;
-        let send = Self::send_button(
-            source.identity(),
-            stop,
-            if empty {
-                !can_stop
-            } else {
-                !can_prompt || busy
-            },
-            captured,
-            composer.input_ticket(cx).ok(),
-            cx,
-        );
-        let footer = h_flex()
-            .gap_1()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .when(!can_prompt, |item| item.child("New prompts unavailable")),
-            )
-            .when(can_allow, |row| {
-                row.child(Self::allow_button(source.identity(), cx))
-            })
-            .child(send)
-            .into_any_element();
-        let input = Self::render_input(composer, cx);
-        Self::compose(None, None, input, footer, Vec::new(), Vec::new(), cx)
-    }
     /// Removable chips for the attached terminals and servers.
     pub(super) fn render_attachment_chips(
         thread: &Entity<AgentThread>,
@@ -268,15 +227,61 @@ impl ComposerRenderer {
         }
         controls.into_any_element()
     }
-    /// Attach buttons, session controls, usage and send.
+    /// The attach controls, the session's options, usage, Allow and send: one footer for every
+    /// source, showing what the source's capabilities offer.
     pub(super) fn render_footer(
+        frame: &super::composer_frame::ComposerFrame,
+        composer: &super::composer_view::ComposerView,
+        menus: &super::menu_view::MenuView,
+        local: Option<&Entity<AgentThread>>,
+        stop: Option<Rc<super::conversation_surface::RenderedStop>>,
+        busy: bool,
+        cx: &mut Context<AgentPanel>,
+    ) -> AnyElement {
+        let attach = local.filter(|_| frame.can_attach());
+        let images = attach.is_some_and(|thread| !thread.read(cx).composer().images().is_empty());
+        let stops = frame.stops(composer, images, cx);
+        let attach = attach.map(|thread| Self::render_attach(composer, menus, thread, cx));
+        let options = match local.filter(|_| frame.can_configure()) {
+            Some(thread) => Some(Self::render_config_controls(composer, menus, thread, cx)),
+            None => (!frame.can_prompt()).then(|| {
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("New prompts unavailable")
+                    .into_any_element()
+            }),
+        };
+        let usage = frame.usage().map(|usage| {
+            super::usage::UsageCard::usage_button(menus.is_open(&MenuKind::Usage), usage, cx)
+        });
+        let allow = frame
+            .can_allow()
+            .then(|| Self::allow_button(frame.origin(), cx));
+        let send = Self::send_button(
+            frame.origin(),
+            stops,
+            frame.send_disabled(stops, composer, busy),
+            stop,
+            composer.input_ticket(cx).ok(),
+            cx,
+        );
+        h_flex()
+            .gap_1()
+            .children(attach.into_iter().flatten())
+            .child(div().flex_1().min_w_0().children(options))
+            .children(usage)
+            .children(allow)
+            .child(send)
+            .into_any_element()
+    }
+    /// Attach a terminal or server, and an image.
+    fn render_attach(
         composer: &super::composer_view::ComposerView,
         menus: &super::menu_view::MenuView,
         thread: &Entity<AgentThread>,
-        usage: Option<&ContextUsage>,
-        stop: Option<Rc<super::conversation_surface::RenderedStop>>,
         cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
+    ) -> [AnyElement; 2] {
         let context_tooltip = format!(
             "{} attached terminals · sent metadata {} B · terminal output {} B",
             thread.read(cx).composer().attachments().len(),
@@ -287,10 +292,8 @@ impl ComposerRenderer {
             .read(cx)
             .agent_info()
             .is_some_and(|info| info.capabilities.image_prompts);
-        let controls = Self::render_config_controls(composer, menus, thread, cx);
-        h_flex()
-            .gap_1()
-            .child(super::menu::ConfigMenuRenderer::popover(
+        [
+            super::menu::ConfigMenuRenderer::popover(
                 menus,
                 "context-popover",
                 MenuKind::Context,
@@ -301,51 +304,17 @@ impl ComposerRenderer {
                     .tooltip(format!("Attach terminal or server\n{context_tooltip}")),
                 Anchor::BottomLeft,
                 cx,
-            ))
-            .child(
-                Button::new("agent-attach-image")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ImagePlus)
-                    .tooltip("Attach image")
-                    .disabled(composer.preparing() || !images_supported)
-                    .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
             )
-            .child(div().flex_1().min_w_0().child(controls))
-            .child(super::usage::UsageCard::usage_button(
-                menus.is_open(&MenuKind::Usage),
-                usage,
-                cx,
-            ))
-            .child(Self::render_send(composer, thread, stop, cx))
-            .into_any_element()
-    }
-    /// Whether the send button stops the running turn instead.
-    pub(super) fn stops(
-        composer: &super::composer_view::ComposerView,
-        thread: &Entity<AgentThread>,
-        cx: &App,
-    ) -> bool {
-        thread.read(cx).session_generating()
-            && composer.text(cx).trim().is_empty()
-            && thread.read(cx).composer().images().is_empty()
-            && !composer.editing()
-    }
-    pub(super) fn render_send(
-        composer: &super::composer_view::ComposerView,
-        thread: &Entity<AgentThread>,
-        captured: Option<Rc<super::conversation_surface::RenderedStop>>,
-        cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
-        let stop = Self::stops(composer, thread, cx);
-        Self::send_button(
-            thread.entity_id(),
-            stop,
-            thread.read(cx).session_sign_in_required() || composer.preparing(),
-            captured,
-            composer.input_ticket(cx).ok(),
-            cx,
-        )
+            .into_any_element(),
+            Button::new("agent-attach-image")
+                .ghost()
+                .small()
+                .icon(IconName::ImagePlus)
+                .tooltip("Attach image")
+                .disabled(composer.preparing() || !images_supported)
+                .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx)))
+                .into_any_element(),
+        ]
     }
     /// Lets a waiting run use the model; shown only while the run waits for permission.
     fn allow_button(origin: gpui_kit::EntityId, cx: &mut Context<AgentPanel>) -> AnyElement {

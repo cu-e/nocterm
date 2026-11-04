@@ -250,6 +250,49 @@ impl AgentPanel {
             self.open_thread(id, cx);
         }
     }
+    pub(super) fn on_cloud_history_listed(
+        &mut self,
+        ticket: &super::cloud_history::CloudListingTicket,
+        hub: nocterm_hubs_model::HubId,
+        result: Result<
+            Vec<std::sync::Arc<dyn nocterm_cloud_agents_model::ChatHistoryEntry>>,
+            nocterm_cloud_agents_model::CloudChatError,
+        >,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history.cloud_mut().accept(ticket, hub, result) {
+            cx.notify();
+        }
+    }
+    /// A Cloud row of the history was chosen: its entry opens the chat, waking its seat.
+    pub(super) fn open_cloud_history(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.history.renaming()
+            || self
+                .conversation
+                .as_ref()
+                .is_some_and(|open| open.origin() == Some(key))
+        {
+            return;
+        }
+        let Some(entry) = self.history.cloud().entry(key, cx) else {
+            return;
+        };
+        let opening = entry.open();
+        self.notices.set_error(None);
+        cx.spawn_in(window, async move |panel, cx| {
+            let result = opening.await;
+            let _ = panel.update_in(cx, |panel, window, cx| {
+                panel.finish_cloud_history_chat(result, window, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     pub(super) fn on_history_rename_key(
         &mut self,
         event: &gpui_kit::KeyDownEvent,
@@ -536,7 +579,9 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if self.notices.finish_redraw(ticket) {
-            let stamp = super::history::HistoryProjection::stamp(&self.chats, &self.history, cx);
+            let open = self.conversation.as_ref().and_then(|view| view.origin());
+            let stamp =
+                super::history::HistoryProjection::stamp(&self.chats, &self.history, open, cx);
             self.layout.parts().history_changed(stamp, cx);
         }
     }

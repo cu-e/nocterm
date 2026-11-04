@@ -7,6 +7,7 @@ use super::{
 };
 use gpui_kit::AnyElement;
 use nocterm_agent_chat::conversation::{ConversationError, ConversationSource, LocalConversation};
+use nocterm_ai::conversation::PendingPromptKey;
 use nocterm_ai::usage::{Breakdown, RateLimit};
 use std::rc::Rc;
 
@@ -139,6 +140,62 @@ impl AgentPanel {
             cx,
         );
     }
+    /// Sends a failed pending prompt of the shown conversation again. While the composer still
+    /// holds it, this is the composer's own send: a refused prompt becomes a new one and an
+    /// unanswered one keeps its ID. Otherwise its source retries it.
+    pub(super) fn retry_pending_prompt(
+        &mut self,
+        identity: EntityId,
+        prompt: PendingPromptKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected) = self
+            .conversation
+            .as_ref()
+            .filter(|selected| selected.identity() == identity)
+        else {
+            return;
+        };
+        let composing = self
+            .composer
+            .input_ticket(cx)
+            .ok()
+            .and_then(|ticket| selected.pending(&ticket))
+            .is_some_and(|(submission, _)| submission.pending_prompt() == Some(prompt));
+        if composing {
+            self.submit_conversation(false, window, cx);
+            return;
+        }
+        let work = match selected.source().capture_actions(cx) {
+            Ok(actions) => actions.retry_prompt(prompt, cx),
+            Err(error) => gpui_kit::Task::ready(Err(error)),
+        };
+        self.retain_conversation_action(identity, work, None, cx);
+    }
+    /// Forgets a refused prompt of the shown conversation.
+    pub(super) fn dismiss_pending_prompt(
+        &mut self,
+        identity: EntityId,
+        prompt: PendingPromptKey,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected) = self
+            .conversation
+            .as_ref()
+            .filter(|selected| selected.identity() == identity)
+        else {
+            return;
+        };
+        let dismissed = selected
+            .source()
+            .capture_actions(cx)
+            .and_then(|actions| actions.dismiss_prompt(prompt, cx));
+        if let Err(error) = dismissed {
+            self.notices.set_error(Some(error.to_string()));
+        }
+        cx.notify();
+    }
     pub(super) fn perform_rendered_stop(
         &mut self,
         identity: EntityId,
@@ -239,46 +296,52 @@ impl AgentPanel {
         })
         .detach();
     }
-    /// The open conversation's footer: approvals, status and composer.
-    pub(super) fn render_conversation(
+    /// The open chat's or conversation's footer: approvals, status, queue, commands and the
+    /// composer. Every source draws the same footer; its capabilities decide what it offers.
+    /// A Local chat adds what its thread owns: its status, queue and requests.
+    pub(super) fn render_footer(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(selected) = self.conversation.as_ref() else {
+        let local = self.current();
+        let source: Rc<dyn ConversationSource> = match (&self.conversation, &local) {
+            (Some(selected), _) => selected.source(),
+            (None, Some(thread)) => Rc::new(LocalConversation::new(thread)),
+            (None, None) => return div().into_any_element(),
+        };
+        // The transcript above names why a source cannot be read.
+        let Some(frame) = super::composer_frame::ComposerFrame::read(source.as_ref(), cx) else {
             return div().into_any_element();
         };
-        let source = selected.source();
-        let busy = self
-            .composer
-            .input_ticket(cx)
-            .ok()
-            .and_then(|ticket| selected.pending(&ticket))
-            .is_some_and(|(_, busy)| busy);
-        let mut status = None;
-        if source
-            .with_view(cx, &mut |view| {
-                status = Some(TranscriptView::conversation_status(&view));
-            })
-            .is_err()
-        {
-            // The transcript above names the error.
-            return div().into_any_element();
-        }
-        let approvals = self.render_source_approvals(source.clone(), window, cx);
-        let stop = self.capture_rendered_stop(cx);
+        let busy = match (&self.conversation, self.composer.input_ticket(cx)) {
+            (Some(selected), Ok(ticket)) => selected.pending(&ticket).is_some_and(|(_, busy)| busy),
+            _ => false,
+        };
+        let approvals = self.render_approvals(source, local.as_ref(), window, cx);
+        let status = match &local {
+            Some(thread) => self.chat_status(thread, cx),
+            None => frame
+                .status()
+                .map(|(text, live)| TranscriptView::status(frame.origin(), text, live, cx)),
+        };
+        let labels = local
+            .as_ref()
+            .map(|thread| attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx));
+        let queue = match (&local, &labels) {
+            (Some(thread), Some(labels)) => self.render_queue(thread, labels, window, cx),
+            _ => None,
+        };
+        let commands = self.render_commands(window, cx);
+        let composer = self.render_composer(&frame, local.as_ref(), labels.as_ref(), busy, cx);
         v_flex()
             .w_full()
             .min_w_0()
             .children(approvals)
-            .children(status.map(|text| TranscriptView::status(source.identity(), text, false, cx)))
-            .child(composer_renderer::ComposerRenderer::render_conversation(
-                &self.composer,
-                source,
-                busy,
-                stop,
-                cx,
-            ))
+            .children(status)
+            .children(queue)
+            .children(commands)
+            .child(composer)
             .into_any_element()
     }
     pub(super) fn sync_approval_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -353,71 +416,51 @@ impl AgentPanel {
             cx.notify();
         }
     }
-    /// The cards of every pending request of `thread`; none when nothing waits.
+    /// The cards of every pending request: the source's tool approvals and, of a Local chat,
+    /// its sign-in and permission requests; none when nothing waits.
     pub(super) fn render_approvals(
         &mut self,
-        thread: &Entity<AgentThread>,
+        source: Rc<dyn ConversationSource>,
+        local: Option<&Entity<AgentThread>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let permissions = thread.read(cx).permission_cards();
-        let tools = LocalConversation::new(thread)
-            .tool_approvals(cx)
-            .unwrap_or_default();
-        let pending = permissions.len() + tools.len() + thread.read(cx).sign_in_waits().len();
-        let asking: Vec<EntityId> = self
-            .chats
-            .iter()
-            .flat_map(|thread| {
-                thread
-                    .read(cx)
-                    .sign_in_waits()
-                    .iter()
-                    .map(|wait| wait.item())
-            })
-            .collect();
-        self.sign_ins.reconcile(&asking);
-        if pending == 0 {
-            return None;
-        }
         let mut list = Vec::new();
-        for index in 0..thread.read(cx).sign_in_waits().len() {
-            let wait = thread.read(cx).sign_in_waits()[index].clone();
-            let (input, submission) = self.sign_ins.input_for(thread, &wait, window, cx);
-            list.push(approvals::ApprovalCardsRenderer::sign_in_card(
-                wait, input, submission, index, cx,
-            ));
+        if let Some(thread) = local {
+            let asking: Vec<EntityId> = self
+                .chats
+                .iter()
+                .flat_map(|thread| {
+                    thread
+                        .read(cx)
+                        .sign_in_waits()
+                        .iter()
+                        .map(|wait| wait.item())
+                })
+                .collect();
+            self.sign_ins.reconcile(&asking);
+            for index in 0..thread.read(cx).sign_in_waits().len() {
+                let wait = thread.read(cx).sign_in_waits()[index].clone();
+                let (input, submission) = self.sign_ins.input_for(thread, &wait, window, cx);
+                list.push(approvals::ApprovalCardsRenderer::sign_in_card(
+                    wait, input, submission, index, cx,
+                ));
+            }
+            for (index, permission) in thread.read(cx).permission_cards().into_iter().enumerate() {
+                list.push(approvals::ApprovalCardsRenderer::permission_card(
+                    thread, permission, index, cx,
+                ));
+            }
         }
-        for (index, permission) in permissions.into_iter().enumerate() {
-            list.push(approvals::ApprovalCardsRenderer::permission_card(
-                thread, permission, index, cx,
-            ));
-        }
+        let tools = source.tool_approvals(cx).unwrap_or_default();
         for (index, tool) in tools.into_iter().enumerate() {
             if let Some(card) =
-                approvals::ApprovalCardsRenderer::tool_card(tool, thread.entity_id(), index, cx)
+                approvals::ApprovalCardsRenderer::tool_card(tool, source.identity(), index, cx)
             {
                 list.push(card);
             }
         }
         approvals::ApprovalCardsRenderer::list(list, window, cx)
-    }
-    fn render_source_approvals(
-        &mut self,
-        source: Rc<dyn ConversationSource>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let cards = source
-            .tool_approvals(cx)
-            .ok()?
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, card)| {
-                approvals::ApprovalCardsRenderer::tool_card(card, source.identity(), index, cx)
-            })
-            .collect();
-        approvals::ApprovalCardsRenderer::list(cards, window, cx)
     }
     pub(super) fn submit_sign_in(
         &mut self,
@@ -511,7 +554,7 @@ impl AgentPanel {
                 let mut dirty = Vec::new();
                 if selected.take_dirty() {
                     let _ = source.with_view(cx, &mut |view| {
-                        dirty.extend(0..view.transcript.entries.len());
+                        dirty.extend(0..view.transcript.entries.len() + view.pending_prompts.len());
                     });
                 }
                 (source, dirty)
@@ -531,28 +574,6 @@ impl AgentPanel {
             Ok(body) => body,
             Err(error) => div().child(error.to_string()).into_any_element(),
         }
-    }
-    /// The open chat's footer: approvals, status, queue, commands and composer.
-    pub(super) fn render_chat(
-        &mut self,
-        thread: Entity<AgentThread>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let usage = thread.read(cx).transcript().usage.clone();
-        let mut body = v_flex().w_full().min_w_0();
-        if let Some(approvals) = self.render_approvals(&thread, window, cx) {
-            body = body.child(approvals);
-        }
-        let labels = attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx);
-        let composer = self.render_composer(&thread, usage.as_ref(), &labels, cx);
-        let status = self.chat_status(&thread, cx);
-        body = body
-            .children(status)
-            .children(self.render_queue(&thread, &labels, window, cx))
-            .children(self.render_commands(window, cx))
-            .child(composer);
-        body.into_any_element()
     }
     fn render_transcript(
         &mut self,
@@ -601,10 +622,16 @@ impl AgentPanel {
         }
         let mut rendered = None;
         let current = source.with_view(cx, &mut |view| {
-            let Some(entry) = view.transcript.entries.get(index) else {
+            let pending = super::pending_prompt::PendingMark::at(&view, index);
+            let Some(entry) = view
+                .transcript
+                .entries
+                .get(index)
+                .or(pending.as_ref().map(|(_, entry)| entry))
+            else {
                 return;
             };
-            let frame = RowPresentation::new(
+            let mut frame = RowPresentation::new(
                 identity,
                 self.messages.binding(),
                 index,
@@ -622,6 +649,9 @@ impl AgentPanel {
                     .redact_secrets,
             )
             .with_fork_available(view.can_fork);
+            if let Some((mark, _)) = &pending {
+                frame = frame.with_pending(*mark);
+            }
             rendered = Some(EntryRenderer::render(frame, entry, &self.messages, cx));
         });
         let Some((row, pending)) = current.ok().and(rendered) else {
@@ -656,6 +686,7 @@ impl AgentPanel {
             rows = Some(self.messages.observe_rows(
                 identity,
                 &view.transcript.entries,
+                view.pending_prompts.len(),
                 dirty,
                 view.generating,
                 reduced,
@@ -747,36 +778,5 @@ impl AgentPanel {
         if !self.menus.usage_contains_focus(window, cx) {
             self.dismiss_usage(cx);
         }
-    }
-}
-
-impl AgentPanel {
-    pub(super) fn render_queue(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        labels: &attachments::AttachmentLabels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if thread.read(cx).composer().queue().is_empty() {
-            return None;
-        }
-        let height = queue::QueueRenderer::visible_height(&self.composer, thread, window, cx);
-        let prompts = if self.composer.queue_open() || height > gpui_kit::px(0.) {
-            thread.read(cx).composer().queue().to_vec()
-        } else {
-            Vec::new()
-        };
-        let previews =
-            preview_operation::PreviewOperation::queued_previews(&mut self.messages, &prompts, cx);
-        queue::QueueRenderer::render_queue(
-            &self.composer,
-            prompts,
-            previews,
-            thread,
-            labels,
-            height,
-            cx,
-        )
     }
 }

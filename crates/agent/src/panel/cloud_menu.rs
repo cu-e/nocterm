@@ -74,11 +74,16 @@ impl CloudMenu {
                     CloudAgentsEvent::Changed => {
                         panel.cloud.drop_stale_removal(cx);
                         panel.cloud.drop_orphaned_starts(cx);
+                        // The window's hub may have just become shown.
+                        panel.history.cloud_mut().refresh(false, cx);
                         cx.notify();
                     }
                 },
             ));
-            subscriptions.push(cx.observe(access.hubs(), |_, _, cx| cx.notify()));
+            subscriptions.push(cx.observe(access.hubs(), |panel, _, cx| {
+                panel.history.cloud_mut().refresh(false, cx);
+                cx.notify();
+            }));
         }
         Self {
             access,

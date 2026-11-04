@@ -4,7 +4,7 @@ use nocterm_ai::model::controls::{ConfigChoice, ConfigOption};
 use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
-fn captured_panel(
+pub(super) fn captured_panel(
     f: &Fixture,
     cx: &mut TestAppContext,
 ) -> (
@@ -169,6 +169,7 @@ fn captured_conversation_preserves_edited_draft_and_delivery_after_detach(cx: &m
     });
 }
 
+mod cloud_delivery;
 mod context_usage;
 mod inference_allow;
 
