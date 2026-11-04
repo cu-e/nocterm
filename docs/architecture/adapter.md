@@ -553,6 +553,11 @@ purge T-1 remain distinct. Later records, the current writer, command receipts,
 tombstones and unresolved target effects survive. Native archives retain the
 original ModelAction checkpoint binding, independently from public Snapshot S;
 a genuinely absent action has no invented checkpoint anchor.
+`CoordinatorSsh` keeps each chat's SSH binding, certificate request, certificate and
+Ed25519 subject seed in one journal v8 row sealed by the chat's journal cipher, stores a
+transition's row before it journals the command and events, restores the previous row when
+journaling fails, and lends the session broker the in-memory key and certificate
+(`ChatSshCredentials`, [ADR 0137](../adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md)).
 `CoordinatorPublicationBudgets` shares the exact command receive owner for normal
 and urgent publication lanes. Immutable accepted Stop/Revoke/Delete kinds select
 the urgent reserve; subsequent status uses that actual durable receipt. Observed
