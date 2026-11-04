@@ -9,7 +9,9 @@
 //! host's `stated_account_keys` is `none` and `pins_file` has no `accounts` entry). Setting
 //! `NOCTERM_HUB_AGENT_CHAT` (any value) opens a chat on the demo agent, which needs a runner
 //! that can run tools, sends a prompt and expects the model's reply; `NOCTERM_E2E_RUNNER_IMAGE`
-//! additionally checks `docker ps` for it.
+//! additionally checks `docker ps` for it. Setting `NOCTERM_HUB_AGENT_WAKE` opens a chat on the
+//! account's existing seat of the agent the way a row of the Cloud tab does, without removing
+//! it: a seat that slept wakes, and its runner must claim the chat.
 use super::{hub, links, sign_in};
 use futures::executor::block_on;
 use nocterm_cloud_agents_model::{
@@ -188,4 +190,23 @@ fn a_started_agent_opens_a_chat_and_its_runner_container_runs() {
             "no runner container of {image} is running"
         );
     }
+}
+
+#[test]
+fn a_sleeping_seat_wakes_for_a_new_chat_and_its_runner_claims_it() {
+    let (Some(hub), Some(agent)) = (hub(), agent("NOCTERM_HUB_AGENT")) else {
+        return;
+    };
+    if std::env::var_os("NOCTERM_HUB_AGENT_WAKE").is_none() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let links = links(&dir);
+    sign_in(&links, &hub).unwrap();
+    let services = ChatServices::native(&links, dir.path().join("chats")).unwrap();
+    let chats = CloudChatsLink::new(links.clone(), services).unwrap();
+    let model = std::env::var("NOCTERM_HUB_AGENT_MODEL").unwrap_or_else(|_| "qwen2.5:0.5b".into());
+    let opened = block_on(chats.create(&hub.id(), ChatHost::Agent { agent, model }))
+        .unwrap_or_else(|error| panic!("{}", nocterm_core::error::chain(&error)));
+    assert!(opened.source.supports_prompt());
 }
