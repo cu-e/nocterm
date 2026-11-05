@@ -1,5 +1,6 @@
 # Explicit plain-data exemptions only. Stateful entities are never DTOs.
 [dto]
+"nocterm_monitor_service::WatchPlan" = "Immutable metric set and cadence supplied by each monitor consumer."
 "nocterm_agent::AgentServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::RuntimeServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
@@ -68,7 +69,8 @@ base = [
     "thiserror-impl",
     "unicode-ident",
 ]
-# The closure of nocterm-core as `cargo metadata` resolves it for every target (59 crates).
+# Platform/persistence closure of nocterm-core for every target; its SHA-256
+# dependency uses the already reviewed sha2 group below.
 core = [
     "bitflags",
     "bumpalo",

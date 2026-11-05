@@ -5819,6 +5819,7 @@ version = "0.0.0"
 dependencies = [
  "gpui-kit",
  "nocterm-core",
+ "nocterm-store",
  "serde",
  "tempfile",
  "thiserror 2.0.21",
@@ -5929,6 +5930,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nocterm-monitor-service"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "gpui-pre",
+ "nocterm-monitor",
+ "nocterm-session",
+]
+
+[[package]]
 name = "nocterm-monitor-ui"
 version = "0.0.0"
 dependencies = [
@@ -5936,6 +5947,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-containers",
  "nocterm-monitor",
+ "nocterm-monitor-service",
  "nocterm-plugin-api",
  "nocterm-plugin-enablement",
  "nocterm-plugin-model",
