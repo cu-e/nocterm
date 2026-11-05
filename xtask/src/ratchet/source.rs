@@ -19,10 +19,6 @@ pub(crate) struct Module {
     pub(crate) inner_attributes: Vec<Attribute>,
 }
 
-pub(crate) fn load(root: &Path) -> anyhow::Result<Vec<Module>> {
-    load_metadata(&crate::metadata(root)?)
-}
-
 pub(super) fn load_metadata(metadata: &crate::Metadata) -> anyhow::Result<Vec<Module>> {
     let mut modules = Vec::new();
     for package in &metadata.packages {

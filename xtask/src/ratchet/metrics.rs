@@ -52,6 +52,9 @@ fn run(
     let mut implementations = BTreeMap::<String, BTreeSet<String>>::new();
     let mut symbols = symbols.clone();
     for module in modules {
+        if paths.as_ref().is_some_and(|(wanted, _)| !wanted(module)) {
+            continue;
+        }
         super::includes::check(&module.items)?;
         let mut visitor = Collector {
             module,

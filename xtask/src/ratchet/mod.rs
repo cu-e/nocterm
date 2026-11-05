@@ -12,7 +12,7 @@ mod symbols;
 pub(crate) use metrics::{io_path, walk_paths};
 #[cfg(test)]
 pub(crate) use source::imports;
-pub(crate) use source::{Module, attributes, flatten, load as load_modules, test_only};
+pub(crate) use source::{Module, attributes, flatten, test_only};
 pub(crate) use symbols::Symbols;
 /// Production structs may have at most this many fields.
 pub(crate) const MAX_FIELDS: usize = 15;
@@ -46,7 +46,7 @@ struct Policy {
     _isolation: serde::de::IgnoredAny,
 }
 
-pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
+pub(crate) fn check(root: &Path) -> anyhow::Result<(Vec<Module>, Symbols)> {
     let policy: Policy = toml::from_str(&fs::read_to_string(
         root.join("xtask/architecture-policy.toml"),
     )?)?;
@@ -78,7 +78,7 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
         }
     }
     docs::check(root, &symbols)?;
-    Ok(())
+    Ok((modules, symbols))
 }
 
 fn count_complexity(
