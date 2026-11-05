@@ -3,7 +3,9 @@
 //! Enable `test-support` in a dev-dependency. A call completes when it is polled. Clones share
 //! one state, so a test keeps a handle while the code under test holds another.
 
+mod certifier;
 mod chats;
+pub use certifier::FakeChatSshCertifier;
 pub use chats::{ChatFailure, FakeCloudChatLauncher};
 
 use std::collections::{BTreeMap, VecDeque};
@@ -105,9 +107,6 @@ struct SeatLog {
 
 #[derive(Default)]
 struct State {
-    /// Sweeps per hub, and the hubs forgotten, in order.
-    sweeps: BTreeMap<HubId, usize>,
-    forgotten: Vec<HubId>,
     agents: BTreeMap<HubId, Vec<CloudAgent>>,
     failing: BTreeMap<HubId, FakeFailure>,
     watchers: Vec<(HubId, mpsc::UnboundedSender<u64>)>,
@@ -253,16 +252,6 @@ impl FakeCloudAgents {
     /// Personal agents saved so far.
     pub fn saved(&self) -> Vec<SavedAgent> {
         self.state().saved.clone()
-    }
-
-    /// How many times the bound chats of `hub` were swept.
-    pub fn sweeps(&self, hub: &HubId) -> usize {
-        self.state().sweeps.get(hub).copied().unwrap_or(0)
-    }
-
-    /// The hubs whose bound chats are no longer read, in order.
-    pub fn forgotten(&self) -> Vec<HubId> {
-        self.state().forgotten.clone()
     }
 
     fn check(&self, hub: &HubId) -> Result<(), CloudAgentError> {
@@ -495,20 +484,6 @@ impl OwnRunnerLauncher for FakeCloudAgents {
             Ok(FAKE_LEASE_TTL)
         });
         async move { result }.boxed()
-    }
-}
-
-impl crate::ChatSshCertifier for FakeCloudAgents {
-    fn sweep(&self, hub: &HubId) -> CloudFuture<usize> {
-        let result = self.check(hub).map(|()| {
-            *self.state().sweeps.entry(hub.clone()).or_default() += 1;
-            0
-        });
-        async move { result }.boxed()
-    }
-
-    fn forget(&self, hub: &HubId) {
-        self.state().forgotten.push(hub.clone());
     }
 }
 

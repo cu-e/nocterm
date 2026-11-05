@@ -51,8 +51,11 @@ fn conversation(error: impl Into<CloudChatError>) -> ConversationError {
 }
 
 /// The servers of one chat, captured for a window.
-pub(crate) struct CloudServers(pub(crate) WeakEntity<CloudChat>);
+pub(crate) struct CloudServers(WeakEntity<CloudChat>);
 impl CloudServers {
+    pub(crate) fn new(chat: WeakEntity<CloudChat>) -> Self {
+        Self(chat)
+    }
     fn chat(&self) -> Result<gpui::Entity<CloudChat>, ConversationError> {
         self.0.upgrade().ok_or(ConversationError::Stale)
     }

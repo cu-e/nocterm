@@ -53,17 +53,9 @@ impl PreparedApp {
             &ssh_config(&paths),
         ));
         let transport = ssh_transport(&paths, hub_links.as_deref())?;
-        // One agent access service: the hub's Agent access tab and the servers Cloud chats are
-        // bound to read the same registry (ADR 0139).
-        let agent_access = hub_links.as_ref().map(|links| {
-            Arc::new(nocterm_hub_io::agent_access::AgentAccess::new(
-                links.clone(),
-                agent_hosts.clone(),
-            ))
-        });
+        let agent_access = agent_access(hub_links.as_ref(), &agent_hosts);
         // One chat link serves the chat, own-runner and certificate ports: it owns the leases of
-        // the keys it hands to the own runner, which the agents service renews, and reads the
-        // bound chats the agents service sweeps.
+        // the keys it hands to the own runner and reads the bound chats the agents service sweeps.
         let chats_link = cloud_chats_link(hub_links.as_ref(), agent_access.clone(), &paths);
         let cloud_agents = cloud_agents_dependencies(hub_links.clone(), chats_link.clone(), &paths);
         let cloud_chats =
@@ -242,6 +234,20 @@ fn hub_links(paths: &Paths) -> Option<Arc<nocterm_hub_io::HubLinks>> {
             None
         }
     }
+}
+
+/// One agent access service: the hub's Agent access tab and the servers Cloud chats are bound
+/// to read the same registry (ADR 0139).
+fn agent_access(
+    links: Option<&Arc<nocterm_hub_io::HubLinks>>,
+    hosts: &Arc<nocterm_ssh::authorized_keys::HostDirectory>,
+) -> Option<Arc<nocterm_hub_io::agent_access::AgentAccess>> {
+    links.map(|links| {
+        Arc::new(nocterm_hub_io::agent_access::AgentAccess::new(
+            links.clone(),
+            hosts.clone(),
+        ))
+    })
 }
 
 /// The hub access ports of the links, if there are any.

@@ -559,21 +559,7 @@ impl AgentAccess {
         let theme = cx.theme();
         let (view, connection) = (cx.entity(), server.connection.clone());
         let (copy, copied) = (view.clone(), connection.clone());
-        let (slug, state, colour) = match server.state {
-            ServerTrust::Trusted if server.needs_ca_update => (
-                "update",
-                "Needs a CA update: connect to give it its own line",
-                theme.warning,
-            ),
-            ServerTrust::Trusted => ("trusted", "Trusted", theme.success),
-            ServerTrust::RemovalPending => (
-                "pending",
-                "Removal pending: connect to finish",
-                theme.warning,
-            ),
-            ServerTrust::Removed => ("removed", "Removed", theme.muted_foreground),
-            ServerTrust::Drifted => ("drifted", "Drifted: the CA line is missing", theme.danger),
-        };
+        let (slug, state, colour) = trust_label(server, cx);
         let verified = server.last_verified_at_ms.map_or_else(
             || "never verified".to_owned(),
             |at| format!("verified {}", utc(at)),
@@ -704,5 +690,25 @@ impl AgentAccess {
             })
             .children(rows)
             .into_any_element()
+    }
+}
+
+/// The slug, text and colour of where `server` stands.
+fn trust_label(server: &TrustedServer, cx: &App) -> (&'static str, &'static str, gpui_kit::Hsla) {
+    let theme = cx.theme();
+    match server.state {
+        ServerTrust::Trusted if server.needs_ca_update => (
+            "update",
+            "Needs a CA update: connect to give it its own line",
+            theme.warning,
+        ),
+        ServerTrust::Trusted => ("trusted", "Trusted", theme.success),
+        ServerTrust::RemovalPending => (
+            "pending",
+            "Removal pending: connect to finish",
+            theme.warning,
+        ),
+        ServerTrust::Removed => ("removed", "Removed", theme.muted_foreground),
+        ServerTrust::Drifted => ("drifted", "Drifted: the CA line is missing", theme.danger),
     }
 }

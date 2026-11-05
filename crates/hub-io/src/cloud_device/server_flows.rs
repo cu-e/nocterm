@@ -52,8 +52,21 @@ impl ServerFlows {
     pub(super) fn bind(&mut self, slot: u32, flow: BindServers, reply: BindReply) {
         self.flows.push((slot, ServerFlow::Bind(flow, Some(reply))));
     }
-    pub(super) fn answer(&mut self, slot: u32, flow: SshAnswer) {
-        self.flows.push((slot, ServerFlow::Answer(flow)));
+    /// Answers `request` of `chat` under `slot` when the core allows it; a refusal (outside
+    /// the binding, superseded, revoked) leaves the request to the runner's next one.
+    pub(super) fn answer(
+        &mut self,
+        chat: &mut OpenChat,
+        slot: u32,
+        request: &[u8; 16],
+        now_ms: i64,
+    ) {
+        match chat.answer_ssh(request, now_ms) {
+            Ok(flow) => self.flows.push((slot, ServerFlow::Answer(flow))),
+            Err(error) => {
+                tracing::debug!(error = %nocterm_core::error::chain(&error), "a Cloud chat's SSH certificate request was not answered");
+            }
+        }
     }
     pub(super) fn is_empty(&self) -> bool {
         self.flows.is_empty()

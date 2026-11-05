@@ -63,6 +63,9 @@ fn page(cx: &mut TestAppContext, fake: &FakeCloudAgents) -> Fixture {
                 usage: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake),
+                certifier: Arc::new(
+                    nocterm_cloud_agents_model::testing::FakeChatSshCertifier::default(),
+                ),
             },
             cx,
         );

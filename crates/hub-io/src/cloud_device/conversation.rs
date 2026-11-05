@@ -672,15 +672,11 @@ impl Reading {
             }
             // The account is unlocked while the chat is read: answer inside the binding the
             // person signed (the core refuses anything else).
-            ChatUpdate::SshRequest { request } => match self.chat.answer_ssh(&request, now_ms()) {
-                Ok(flow) => {
-                    let slot = self.slot();
-                    self.servers.answer(slot, flow);
-                }
-                Err(error) => {
-                    tracing::debug!(error = %nocterm_core::error::chain(&error), "a Cloud chat's SSH certificate request was not answered");
-                }
-            },
+            ChatUpdate::SshRequest { request } => {
+                let slot = self.slot();
+                self.servers
+                    .answer(&mut self.chat, slot, &request, now_ms());
+            }
             ChatUpdate::Refused(error) => {
                 tracing::debug!(error = %nocterm_core::error::chain(&error), "a Cloud chat round was refused");
                 self.broadcast(ConversationUpdate::Refused(mapping::error(error)));

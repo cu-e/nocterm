@@ -98,7 +98,7 @@ impl ConversationSource for CloudConversationView {
         &self,
         _cx: &App,
     ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationServers>> {
-        Some(Rc::new(crate::servers::CloudServers(self.0.clone())))
+        Some(Rc::new(crate::servers::CloudServers::new(self.0.clone())))
     }
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError> {
         self.chat()?
