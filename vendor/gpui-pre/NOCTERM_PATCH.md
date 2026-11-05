@@ -167,3 +167,13 @@ out again the next frame. `AnyView::observe` calls back on the notifications of 
 held without its type, for an owner that draws part of it from a cached view of its
 own. The regression test `views_cached_to_content_keep_their_contents_size` covers
 the measured size, its reuse and a notified size change.
+
+## Virtual list height estimates
+
+Nocterm preserves `ListItem::size_hint()` when a new viewport width invalidates
+measured rows in `src/elements/list.rs`. The rows remain `Unmeasured`, so visible
+content is laid out at the actual new width; the previous size is only an estimate
+for scroll extent, matching explicit `remeasure_items` behavior. Initial uniform
+hints now survive the first prepaint, and native wheel jumps can reach unseen rows
+without eagerly constructing the whole list. The public integration regression
+`nocterm_list_estimates` covers first paint, a width change and bounded row rendering.
