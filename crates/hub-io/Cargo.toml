@@ -20,7 +20,6 @@ nocterm-session.workspace = true
 nocterm-ssh-keys.workspace = true
 nocterm-hub-client.workspace = true
 nocterm-cloud-device.workspace = true
-nocterm-hub-grpc.workspace = true
 nocterm-hub-model.workspace = true
 nocterm-hub-proto.workspace = true
 nocterm-keys.workspace = true

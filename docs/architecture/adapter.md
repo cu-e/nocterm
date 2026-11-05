@@ -464,7 +464,7 @@ Native identity files do not become public wire formats, and generic signing or
 private-key access is not an application port.
 
 `nocterm-hub-io` is the only crate that speaks the hub protocol. It uses the hub contract
-(`nocterm-hub-client`, `nocterm-hub-grpc`, `nocterm-hub-proto`, `nocterm-keys`,
+(`nocterm-hub-client`, `nocterm-hub-model`, `nocterm-hub-proto`, `nocterm-keys`,
 `nocterm-cloud-device`), a public repository outside this
 workspace that is pinned by commit, and implements the `HubTrust`, `HubSignIn` and
 `HubAdminKeys` ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`. `tonic` and

@@ -5735,7 +5735,6 @@ dependencies = [
  "nocterm-connections-model",
  "nocterm-core",
  "nocterm-hub-client",
- "nocterm-hub-grpc",
  "nocterm-hub-model",
  "nocterm-hub-proto",
  "nocterm-hubs-model",

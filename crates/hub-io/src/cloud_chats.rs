@@ -115,7 +115,7 @@ impl Shared {
             return Ok(held);
         }
         let hub = captured.hub.clone();
-        let opened = DeviceAccount::open(&self.pool, captured, account)
+        let opened = DeviceAccount::open(captured, account)
             .await
             .map_err(error::account)?;
         self.accounts

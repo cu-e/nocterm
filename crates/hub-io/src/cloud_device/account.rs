@@ -7,11 +7,9 @@
 //! outlives the unlocked keys.
 use super::driver::{self, Control};
 use super::effects::{EffectRunner, HubEffects};
-use super::rpc::{DeviceRpc, DeviceRpcError};
 use crate::account::operations::BoundOperations;
 use crate::devices::Captured;
 use crate::hub_account::HubAccount;
-use crate::pool::Pool;
 use nocterm_cloud_device::context::{AccountKeys, CloudSession};
 use nocterm_cloud_device::discover::{Discover, Discovery};
 use nocterm_cloud_device::records::TrustedRunner;
@@ -24,10 +22,6 @@ use std::sync::{Arc, Mutex, PoisonError};
 pub(crate) enum DeviceAccountError {
     #[error(transparent)]
     Hub(#[from] HubError),
-    #[error("the device credential of this hub could not be read")]
-    Credential(#[source] crate::credentials::CredentialError),
-    #[error(transparent)]
-    Rpc(#[from] DeviceRpcError),
     /// Cloud chats were never set up for this account from a native device.
     #[error("Cloud chats are not set up for this account")]
     NotSetUp,
@@ -47,7 +41,6 @@ pub(crate) struct DeviceAccount {
 impl DeviceAccount {
     /// Captures the signed-in, unlocked account and discovers its Cloud session on the hub.
     pub(crate) async fn open(
-        pool: &Arc<Pool>,
         captured: Arc<Captured>,
         account: &HubAccount,
     ) -> Result<Arc<Self>, DeviceAccountError> {
@@ -61,13 +54,12 @@ impl DeviceAccount {
                 keyset.key_pair().clone(),
             ))
         })?;
-        let device = pool
-            .file(captured.hub.address())?
-            .load()
-            .map_err(DeviceAccountError::Credential)?
-            .ok_or(HubError::NotSignedIn)?;
-        let rpc = Arc::new(DeviceRpc::new(captured.client.clone(), device.key)?);
-        let effects: Arc<dyn EffectRunner> = Arc::new(HubEffects::new(rpc));
+        // The client signs every call with the device key it holds; nothing here reads it.
+        captured
+            .client
+            .cloud_device()
+            .map_err(|_| HubError::NotSignedIn)?;
+        let effects: Arc<dyn EffectRunner> = Arc::new(HubEffects::new(captured.client.clone()));
         let raw_hub = captured.client.info().hub_id.clone();
         let mut discover = Discover::new(Arc::new(keys), &raw_hub, Some(captured.hub.to_string()));
         let mut found = None;

@@ -24,7 +24,6 @@ pub(super) fn account(error: DeviceAccountError) -> CloudChatError {
         DeviceAccountError::NotSetUp => CloudChatError::NotEnrolled,
         DeviceAccountError::Unsupported => CloudChatError::Unsupported,
         DeviceAccountError::Device(error) => device(error),
-        other => CloudChatError::Backend(SharedCause::new(other)),
     }
 }
 
