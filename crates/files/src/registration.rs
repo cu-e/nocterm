@@ -1,6 +1,6 @@
 //! The Explorer's place in the workspace: its sidebar panel, the transfer
 //! status and the commands that show them.
-use gpui_kit::{App, AppContext as _, Context, Window};
+use gpui_kit::{App, AppContext as _, Context, Entity, Window};
 use nocterm_workspace::{PanelRegistration, RegistrationError, WidgetRegistration, Workspace};
 
 use crate::{Deps, FilesPanel, plugin, transfers};
@@ -23,8 +23,12 @@ gpui_kit::actions!(
 pub struct Installed {
     deps: Deps,
     settings: nocterm_store::SettingsHandle,
+    projection: Entity<crate::projection::TransferProjection>,
 }
 impl Installed {
+    pub(crate) fn projection(&self) -> &Entity<crate::projection::TransferProjection> {
+        &self.projection
+    }
     pub(crate) fn directories(
         &self,
     ) -> &std::sync::Arc<dyn nocterm_explorer::directory::DirectoryReaders> {
@@ -61,7 +65,10 @@ pub fn install(deps: Deps, ready: &nocterm_ui::UiReady, cx: &mut App) -> Install
     ready
         .settings()
         .register::<nocterm_session::LocalShellSettings>(cx);
+    let projection =
+        cx.new(|cx| crate::projection::TransferProjection::new(deps.transfers.clone(), cx));
     Installed {
+        projection,
         deps,
         settings: ready.settings().clone(),
     }
@@ -79,12 +86,15 @@ pub fn register(
         workspace.toggle_panel(&plugin::EXPLORER.id, window, cx);
     });
     let service = installed.deps.transfers.clone();
+    let projection = installed.projection.clone();
     workspace.register_action(move |workspace, _: &ShowTransfers, window, cx| {
         if let Some(view) = workspace.find_item::<transfers::TransfersView>(cx) {
             workspace.activate_item_by_id(view.entity_id(), window, cx);
         } else {
             let handle = cx.entity().downgrade();
-            let view = cx.new(|cx| transfers::TransfersView::new(service.clone(), handle, cx));
+            let view = cx.new(|cx| {
+                transfers::TransfersView::new(service.clone(), projection.clone(), handle, cx)
+            });
             workspace.add_item(view, window, cx);
         }
     });
@@ -98,7 +108,7 @@ pub fn register(
         window,
         cx,
     );
-    let transfers = installed.deps.transfers.clone();
+    let transfers = installed.projection.clone();
     let status = workspace.register_widget(
         WidgetRegistration::new(&plugin::TRANSFERS, move |_, window, cx| {
             let transfers = transfers.clone();

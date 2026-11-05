@@ -51,3 +51,35 @@ fn the_toggle_action_hides_the_shown_explorer_and_shows_it_again(cx: &mut TestAp
     dispatch(cx);
     assert!(open(cx));
 }
+
+#[gpui_kit::test]
+fn explorer_status_and_queue_share_one_periodic_transfer_snapshot(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
+    let (window, workspace, _, _panel, installed) =
+        panel_fixture_with_installation(cx, Arc::new(FakeFs), deps);
+    cx.update_window(window, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            crate::register(&installed, workspace, window, cx).unwrap()
+        });
+        let queue = cx.new(|cx| {
+            crate::transfers::TransfersView::new(
+                installed.transfers().clone(),
+                installed.projection().clone(),
+                workspace.downgrade(),
+                cx,
+            )
+        });
+        workspace.update(cx, |workspace, cx| workspace.add_item(queue, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let before = recording.snapshot_count();
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(
+        recording.snapshot_count(),
+        before + 1,
+        "legacy polling is shared by all views"
+    );
+}

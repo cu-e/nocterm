@@ -1,7 +1,9 @@
 //! Presentation of the retained transfer service. Available outside Explorer.
+use crate::projection::TransferProjection;
 use crate::{ShowTransfers, local::bytes};
 use gpui_kit::{
-    App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Task, WeakEntity, Window,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
+    WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -13,78 +15,66 @@ use gpui_kit::{
 use nocterm_transfers::{Progress, TransferDirection, TransferService};
 use nocterm_ui::IconName;
 use nocterm_workspace::{Item, ItemEvent, Workspace};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 pub(super) struct TransferStatus {
-    service: Arc<dyn TransferService>,
-    snapshot: Vec<Progress>,
-    _poll: Task<()>,
+    snapshot: Arc<[Progress]>,
+    _projection: Entity<TransferProjection>,
+    _observation: Subscription,
 }
 impl TransferStatus {
     pub(super) fn new(
-        service: Arc<dyn TransferService>,
+        projection: Entity<TransferProjection>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let snapshot = projection.read(cx).entries().clone();
+        let observation = cx.observe_in(&projection, window, |this, projection, window, cx| {
+            let snapshot = projection.read(cx).entries().clone();
+            this.changed(snapshot, window, cx);
+        });
         Self {
-            snapshot: service.snapshot(),
-            service,
-            _poll: cx.spawn_in(window, async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(150))
-                        .await;
-                    if this
-                        .update_in(cx, |this, window, cx| {
-                            let snapshot = this.service.snapshot();
-                            if snapshot != this.snapshot {
-                                for job in &snapshot {
-                                    if job.state.finished()
-                                        && job.failed_files > 0
-                                        && !this
-                                            .snapshot
-                                            .iter()
-                                            .any(|old| old.id == job.id && old.state.finished())
-                                    {
-                                        let error = job
-                                            .errors
-                                            .first()
-                                            .map(ToString::to_string)
-                                            .unwrap_or_else(|| {
-                                                format!(
-                                                    "{} files failed; review the transfer queue.",
-                                                    job.failed_files
-                                                )
-                                            });
-                                        nocterm_ui::notice::error_action(
-                                            window,
-                                            cx,
-                                            "files-transfer-failed",
-                                            "Transfer failed",
-                                            error,
-                                            "Open Transfers",
-                                            |window, cx| {
-                                                window.defer(cx, |window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(ShowTransfers),
-                                                        cx,
-                                                    )
-                                                });
-                                            },
-                                        );
-                                    }
-                                }
-                                this.snapshot = snapshot;
-                                cx.notify();
-                            }
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            }),
+            snapshot,
+            _projection: projection,
+            _observation: observation,
         }
+    }
+    fn changed(&mut self, snapshot: Arc<[Progress]>, window: &mut Window, cx: &mut Context<Self>) {
+        for job in snapshot.iter() {
+            if job.state.finished()
+                && job.failed_files > 0
+                && !self
+                    .snapshot
+                    .iter()
+                    .any(|old| old.id == job.id && old.state.finished())
+            {
+                let error = job
+                    .errors
+                    .first()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{} files failed; review the transfer queue.",
+                            job.failed_files
+                        )
+                    });
+                nocterm_ui::notice::error_action(
+                    window,
+                    cx,
+                    "files-transfer-failed",
+                    "Transfer failed",
+                    error,
+                    "Open Transfers",
+                    |window, cx| {
+                        window.defer(cx, |window, cx| {
+                            window.dispatch_action(Box::new(ShowTransfers), cx)
+                        })
+                    },
+                );
+            }
+        }
+        self.snapshot = snapshot;
+        cx.notify();
     }
 }
 impl Render for TransferStatus {
@@ -110,40 +100,31 @@ pub(super) struct TransfersView {
     service: Arc<dyn TransferService>,
     focus: FocusHandle,
     workspace: WeakEntity<Workspace>,
-    snapshot: Vec<Progress>,
-    _poll: Task<()>,
+    snapshot: Arc<[Progress]>,
+    _projection: Entity<TransferProjection>,
+    _observation: Subscription,
 }
 impl TransfersView {
     pub(super) fn new(
         service: Arc<dyn TransferService>,
+        projection: Entity<TransferProjection>,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot = service.snapshot();
+        // One bounded initial read preserves immediate queue actions when opened.
+        // Periodic reads and all subsequent fan-out use the background projection.
+        let snapshot = service.snapshot().into();
+        let observation = cx.observe(&projection, |this, projection, cx| {
+            this.snapshot = projection.read(cx).entries().clone();
+            cx.notify();
+        });
         Self {
             service,
             focus: cx.focus_handle(),
             workspace,
             snapshot,
-            _poll: cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(150))
-                        .await;
-                    if this
-                        .update(cx, |this, cx| {
-                            let snapshot = this.service.snapshot();
-                            if this.snapshot != snapshot {
-                                this.snapshot = snapshot;
-                                cx.notify();
-                            }
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            }),
+            _projection: projection,
+            _observation: observation,
         }
     }
 }
