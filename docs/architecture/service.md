@@ -319,6 +319,11 @@ The original infallible edits and their consumers retain their behavior. Dev-onl
 store test-support supplies the shared first-write gate and snapshot recording used
 by service and UI persistence fixtures.
 
+Transient flag acquisition failures retry at most three times with shared cooldown scheduling
+(five seconds, then thirty seconds). Missing/invalid responses stay negative; repeated view
+requests do not start another attempt before the cooldown. Ready bytes retain source identity
+for bounded presentation caches.
+
 ## Snippet library publication
 
 `nocterm-snippets-store` owns the viewless library and exposes `SnippetsHandle`.
