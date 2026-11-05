@@ -72,6 +72,38 @@ fn the_keys_of_an_account_open_on_a_second_device() {
 }
 
 #[test]
+fn a_retained_account_factory_recovers_after_forget_and_preserves_captured_source_fencing() {
+    use nocterm_hubs_model::AccountDevices as _;
+    let Some(hub) = hub() else { return };
+    let (device, _) = Device::sign_in(&hub);
+    let account = device.account(&hub);
+    let original = account.local_source().unwrap();
+    let replica = account.local_replica(original.clone()).unwrap();
+    let old_device = block_on(device.links.list(&hub.id()))
+        .unwrap()
+        .into_iter()
+        .find(|device| device.is_current)
+        .unwrap()
+        .id;
+    device.links.forget(&hub.id()).unwrap();
+    assert!(original.check_current().is_err());
+    assert!(account.local_source().is_err());
+    // A failed settings save leaves this general factory installed, then the
+    // same configured hub signs in again through a fresh native membership.
+    sign_in(&device.links, &hub).unwrap();
+    block_on(device.links.revoke(&hub.id(), &old_device)).unwrap();
+    let replacement = account.local_source().unwrap();
+    assert!(replacement.check_current().is_ok());
+    assert_eq!(replacement.partition(), original.partition());
+    assert!(account.vault().is_unlocked());
+    assert!(original.check_current().is_err());
+    assert!(matches!(
+        block_on(replica.changes(None)),
+        Err(nocterm_connections_model::replica::ReplicaError::Stale)
+    ));
+}
+
+#[test]
 fn local_history_capture_survives_reconnect_but_not_lock_or_a_replacement_login() {
     let Some(hub) = hub() else { return };
     let (device, _) = Device::sign_in(&hub);

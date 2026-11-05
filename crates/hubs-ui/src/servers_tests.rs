@@ -470,6 +470,7 @@ fn a_key_the_account_no_longer_offers_is_reported_and_stays_unconfirmed(cx: &mut
     })
     .unwrap();
 
+    cx.run_until_parked();
     assert_eq!(notices(&page, cx), before + 1);
     assert!(page.admin_keys.confirmed().is_empty());
 }

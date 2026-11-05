@@ -97,6 +97,15 @@ pub enum AgentAccessError {
     /// `authorized_keys` changed while it was edited; nothing was written.
     #[error("the server's authorized_keys changed meanwhile")]
     HostChanged,
+    /// A cooperating edit or an interrupted edit holds the remote lock.
+    #[error("authorized_keys editing is locked at {path}")]
+    HostEditLocked { path: String },
+    /// The host does not support the automatic cooperative editing protocol.
+    #[error("the server cannot safely edit authorized_keys automatically")]
+    HostEditUnsupported {
+        #[source]
+        cause: SharedCause,
+    },
     /// `authorized_keys` cannot be edited as text, or is too large.
     #[error("the server's authorized_keys cannot be edited")]
     HostUnsupported,

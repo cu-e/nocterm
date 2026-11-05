@@ -243,8 +243,8 @@ fn a_capture_alone_keeps_neither_the_account_owner_nor_its_open_keys_alive() {
     assert_eq!(source.check_current(), Err(LocalAccountSourceError::Stale));
 }
 
-#[test]
-fn locked_membership_admits_unlock_but_an_explicit_lock_retires_its_receipt() {
+#[tokio::test]
+async fn locked_membership_admits_unlock_but_an_explicit_lock_retires_its_receipt() {
     let fixture = Fixture::new();
     fixture.slot.lock();
     let membership = fixture.provider.membership().unwrap();
@@ -254,14 +254,17 @@ fn locked_membership_admits_unlock_but_an_explicit_lock_retires_its_receipt() {
         .unwrap();
     assert!(membership.check().is_ok());
     fixture.slot.lock();
-    let result = membership.with_current(|| {
-        fixture.slot.install_if(
-            &subject,
-            &receipt,
-            open(&fixture.record, &fixture.unlock),
-            cache(&fixture.record, UnlockMethod::Passphrase),
-        )
-    });
+    let next = cache(&fixture.record, UnlockMethod::Passphrase);
+    let keys = fixture
+        .slot
+        .noticed_keys(open(&fixture.record, &fixture.unlock), &next);
+    let draft = fixture
+        .slot
+        .stage_cache(fixture.slot.cache_snapshot(), next)
+        .await
+        .unwrap();
+    let result =
+        membership.with_current(|| fixture.slot.commit_install(&subject, &receipt, keys, draft));
     assert!(matches!(result, Err(HubError::Stale)));
     assert!(matches!(
         fixture.provider.capture(),
@@ -269,22 +272,25 @@ fn locked_membership_admits_unlock_but_an_explicit_lock_retires_its_receipt() {
     ));
 }
 
-#[test]
-fn a_late_unlock_never_installs_keys_after_another_login_is_published() {
+#[tokio::test]
+async fn a_late_unlock_never_installs_keys_after_another_login_is_published() {
     let fixture = Fixture::new();
     fixture.slot.lock();
     let original = fixture.provider.membership().unwrap();
     let subject = original.subject().unwrap();
     let receipt = fixture.slot.receipt(&subject).unwrap();
+    let next = cache(&fixture.record, UnlockMethod::Passphrase);
+    let keys = fixture
+        .slot
+        .noticed_keys(open(&fixture.record, &fixture.unlock), &next);
+    let draft = fixture
+        .slot
+        .stage_cache(fixture.slot.cache_snapshot(), next)
+        .await
+        .unwrap();
     fixture.subjects.sign_in(hub(), ACCOUNT_ID, "device-1");
-    let result = original.with_current(|| {
-        fixture.slot.install_if(
-            &subject,
-            &receipt,
-            open(&fixture.record, &fixture.unlock),
-            cache(&fixture.record, UnlockMethod::Passphrase),
-        )
-    });
+    let result =
+        original.with_current(|| fixture.slot.commit_install(&subject, &receipt, keys, draft));
     assert!(matches!(result, Err(HubError::Stale)));
     assert!(fixture.slot.open().is_none());
     fixture.unlock();

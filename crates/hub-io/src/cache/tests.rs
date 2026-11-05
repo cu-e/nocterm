@@ -27,7 +27,7 @@ fn account() -> AccountCache {
         },
         &record(),
     );
-    cache.vault = Some(VaultCopy {
+    cache.vault = Some(Arc::new(VaultCopy {
         collection_id: "c1".into(),
         key_envelope: vec![7; 80],
         cursor: 2,
@@ -40,7 +40,7 @@ fn account() -> AccountCache {
                 deleted: false,
             },
         )]),
-    });
+    }));
     cache
 }
 

@@ -29,12 +29,26 @@ impl KeySnapshot {
     pub(crate) fn member(&self) -> &Arc<CapturedMembership> {
         &self.member
     }
-    pub(crate) fn confirm(&self) -> Result<(), HubError> {
-        self.member.with_current(|| {
-            self.member
-                .slot()?
-                .ack_recovery(&self.member.subject()?, &self.receipt)
-        })
+    pub(crate) async fn confirm(&self) -> Result<(), HubError> {
+        let slot = self.member.slot()?;
+        let _turn = slot.cache_turn().await;
+        loop {
+            self.check()?;
+            let original = slot.cache_snapshot();
+            let mut next = original.as_deref().cloned().ok_or(HubError::NotFound)?;
+            next.recovery_unconfirmed = false;
+            let draft = slot.stage_cache(original, next).await?;
+            let committed = self.member.with_current(|| {
+                slot.commit_member_cache(&self.member.subject()?, &self.receipt, draft, true)
+            })?;
+            if let Some((receipt, committed)) = committed {
+                slot.finish_cache(committed).await;
+                self.member
+                    .with_current(|| slot.check_receipt(&self.member.subject()?, &receipt))?;
+                slot.notice().raise();
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -117,6 +131,25 @@ impl KeyAdmission {
                 .cache_for(&self.member.subject()?, &receipt)
         })
     }
+    pub(crate) fn recovery_unconfirmed(&self) -> Result<bool, HubError> {
+        let receipt = self.receipt();
+        self.member.with_current(|| {
+            self.member
+                .slot()?
+                .pending_recovery_for(&self.member.subject()?, &receipt)
+        })
+    }
+
+    pub(crate) fn remember_pending_recovery(&self) -> Result<(), HubError> {
+        let receipt = self.receipt();
+        let next = self.member.with_current(|| {
+            self.member
+                .slot()?
+                .remember_pending_recovery(&self.member.subject()?, &receipt)
+        })?;
+        self.replaced(next);
+        Ok(())
+    }
     pub(crate) fn keys(&self) -> Result<Arc<OpenKeys>, HubError> {
         self.check()?;
         let receipt = self.receipt();
@@ -127,14 +160,32 @@ impl KeyAdmission {
             slot.open_for(&subject)
         })
     }
-    pub(crate) fn install(&self, keys: OpenKeys, cache: AccountCache) -> Result<(), HubError> {
+    pub(crate) async fn install(
+        &self,
+        keys: OpenKeys,
+        mut cache: AccountCache,
+    ) -> Result<(), HubError> {
+        let slot = self.member.slot()?;
+        let _turn = slot.cache_turn().await;
         let receipt = self.receipt();
-        let next = self.member.with_current(|| {
-            self.member
-                .slot()?
-                .install_if(&self.member.subject()?, &receipt, keys, cache)
-        })?;
-        self.replaced(next);
+        self.check()?;
+        let original = slot.cache_snapshot();
+        if let Some(earlier) = original
+            .as_deref()
+            .filter(|old| old.account_id == cache.account_id)
+        {
+            cache.inherit_pins(earlier);
+            cache.vault = earlier.vault.clone();
+        }
+        let keys = slot.noticed_keys(keys, &cache);
+        let draft = slot.stage_cache(original, cache).await?;
+        let committed = self
+            .member
+            .with_current(|| slot.commit_install(&self.member.subject()?, &receipt, keys, draft))?
+            .ok_or(HubError::Stale)?;
+        self.replaced(committed.0);
+        slot.finish_cache(committed.1).await;
+        slot.notice().raise();
         Ok(())
     }
     pub(crate) fn recovering(&self, recovery: Recovery) -> Result<(), HubError> {
@@ -155,26 +206,43 @@ impl KeyAdmission {
             slot.recovery().ok_or(HubError::NoRecoveryPending)
         })
     }
-    pub(crate) fn update_cache(
+    pub(crate) async fn update_cache(
         &self,
-        change: impl FnOnce(&mut AccountCache),
+        change: impl Fn(&mut AccountCache),
     ) -> Result<(), HubError> {
-        let receipt = self.receipt();
-        self.member.with_current(|| {
-            self.member
-                .slot()?
-                .change_cache_if(&self.member.subject()?, &receipt, change)
-        })
+        self.change_cache(change, false).await
     }
-    pub(crate) fn begin_recovery_issue(&self) -> Result<(), HubError> {
+
+    async fn change_cache(
+        &self,
+        change: impl Fn(&mut AccountCache),
+        rotate: bool,
+    ) -> Result<(), HubError> {
+        let slot = self.member.slot()?;
+        let _turn = slot.cache_turn().await;
         let receipt = self.receipt();
-        let next = self.member.with_current(|| {
-            self.member
-                .slot()?
-                .begin_recovery_issue(&self.member.subject()?, &receipt)
-        })?;
-        self.replaced(next);
-        Ok(())
+        loop {
+            self.check()?;
+            let original = slot.cache_snapshot();
+            let mut next = original.as_deref().cloned().ok_or(HubError::NotFound)?;
+            change(&mut next);
+            let draft = slot.stage_cache(original, next).await?;
+            let committed = self.member.with_current(|| {
+                slot.commit_member_cache(&self.member.subject()?, &receipt, draft, rotate)
+            })?;
+            if let Some((receipt, committed)) = committed {
+                self.replaced(receipt);
+                slot.finish_cache(committed).await;
+                if rotate {
+                    slot.notice().raise();
+                }
+                return Ok(());
+            }
+        }
+    }
+    pub(crate) async fn begin_recovery_issue(&self) -> Result<(), HubError> {
+        self.change_cache(|cache| cache.recovery_unconfirmed = true, true)
+            .await
     }
     pub(crate) async fn fresh(&self) -> Result<HubClient, HubError> {
         self.check()?;

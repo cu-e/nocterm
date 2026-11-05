@@ -54,6 +54,8 @@ fn host_error(error: HostAccessError) -> AgentAccessError {
             connection: String::new(),
         },
         HostAccessError::Changed => AgentAccessError::HostChanged,
+        HostAccessError::EditLocked { path } => AgentAccessError::HostEditLocked { path },
+        HostAccessError::Unsupported(cause) => AgentAccessError::HostEditUnsupported { cause },
         HostAccessError::TooLarge | HostAccessError::NotText => AgentAccessError::HostUnsupported,
         HostAccessError::Host(cause) => AgentAccessError::Host { cause },
     }

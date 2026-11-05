@@ -4,13 +4,18 @@
 //! the unlock key beyond opening it), the collection keys opened from it, and a copy of the
 //! encrypted cache file. Locking drops the keys, which wipes them. One notice is raised for
 //! every change so a vault can report its status without polling.
+//! Forget releases registry residency but preserves a weak Slot identity while
+//! a general factory still uses it. A new login promotes that cleared Slot;
+//! original captures remain bound to their retired membership and open keys.
 
 mod admin_keys;
+mod cache_publication;
 mod flow;
 pub(crate) mod key_admission;
 mod keyset_hub;
 mod lifecycle;
 mod recovery;
+mod refresh;
 mod slot;
 pub(crate) use slot::Slot;
 pub(crate) mod operations;
@@ -20,7 +25,7 @@ pub(crate) mod testing;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use nocterm_hub_client::Keyset;
 use nocterm_hubs_model::{HubError, HubId};
@@ -30,7 +35,7 @@ use nocterm_keys::{
 use tokio::sync::watch;
 
 use self::admin_keys::{AdminPins, Admins};
-use crate::cache::{CacheFile, UnlockMethod};
+use crate::cache::{CacheFile, CacheWork, UnlockMethod};
 use crate::classify::{credentials, remote};
 
 pub use admin_keys::{AdminKeyError, AdminKeys, PendingAdminKey};
@@ -45,7 +50,7 @@ impl Notice {
         Self(watch::channel(0).0)
     }
 
-    fn raise(&self) {
+    pub(crate) fn raise(&self) {
         self.0.send_modify(|count| *count += 1);
     }
 
@@ -196,16 +201,53 @@ pub(crate) struct Recovery {
 /// The slots of the hubs this device knows, and where their caches are kept.
 pub(crate) struct Accounts {
     root: PathBuf,
-    slots: Mutex<HashMap<HubId, Arc<Slot>>>,
+    slots: Mutex<HashMap<HubId, SlotRetention>>,
     notice: Arc<Notice>,
+    work: Arc<CacheWork>,
+    // Serialize first loads with eviction, outside the short map lookup lock.
+    loading: Mutex<()>,
+}
+
+enum SlotRetention {
+    Resident(Arc<Slot>),
+    Forgotten(Weak<Slot>),
+}
+impl SlotRetention {
+    fn upgrade(&self) -> Option<Arc<Slot>> {
+        match self {
+            Self::Resident(slot) => Some(slot.clone()),
+            Self::Forgotten(slot) => slot.upgrade(),
+        }
+    }
+    fn retain(&mut self) -> Option<Arc<Slot>> {
+        if let Self::Resident(slot) = self {
+            return Some(slot.clone());
+        }
+        let slot = self.upgrade()?;
+        *self = Self::Resident(slot.clone());
+        Some(slot)
+    }
+    fn alive(&self) -> bool {
+        match self {
+            Self::Resident(_) => true,
+            Self::Forgotten(slot) => slot.strong_count() != 0,
+        }
+    }
 }
 
 impl Accounts {
+    #[cfg(test)]
     pub(crate) fn new(root: PathBuf) -> Self {
+        Self::with_runtime(root, None)
+    }
+
+    pub(crate) fn with_runtime(root: PathBuf, runtime: Option<tokio::runtime::Handle>) -> Self {
         Self {
             root,
             slots: Mutex::default(),
             notice: Arc::new(Notice::new()),
+            work: CacheWork::new(runtime),
+            loading: Mutex::new(()),
         }
     }
 
@@ -213,15 +255,58 @@ impl Accounts {
         &self.notice
     }
 
+    /// Release residency without severing a live general account factory. A
+    /// failed settings removal can still sign in through that cleared Slot.
+    /// Captured authority remains retired by the preceding erase transition.
+    pub(crate) fn evict_if(&self, hub: &HubId, original: &Arc<Slot>) {
+        let _loading = self.loading.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        slots.retain(|_, slot| slot.alive());
+        if slots
+            .get(hub)
+            .and_then(SlotRetention::upgrade)
+            .is_some_and(|slot| Arc::ptr_eq(&slot, original))
+        {
+            slots.insert(
+                hub.clone(),
+                SlotRetention::Forgotten(Arc::downgrade(original)),
+            );
+        }
+    }
+
+    pub(crate) fn loaded_slot(&self, hub: &HubId) -> Option<Arc<Slot>> {
+        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        let slot = slots.get(hub).and_then(SlotRetention::upgrade);
+        if slot.is_none() {
+            slots.remove(hub);
+        }
+        slot
+    }
+
+    fn resident_slot(&self, hub: &HubId) -> Option<Arc<Slot>> {
+        self.slots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(hub)
+            .and_then(SlotRetention::retain)
+    }
+
     /// The slot of a hub; its cache is read the first time.
     pub(crate) fn slot(&self, hub: &HubId) -> Result<Arc<Slot>, HubError> {
-        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(slot) = slots.get(hub) {
-            return Ok(Arc::clone(slot));
+        if let Some(slot) = self.resident_slot(hub) {
+            return Ok(slot);
         }
-        let file = CacheFile::new(&self.root, hub.address()).map_err(credentials)?;
+        let _loading = self.loading.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(slot) = self.resident_slot(hub) {
+            return Ok(slot);
+        }
+        let file = CacheFile::new(&self.root, hub.address())
+            .map_err(credentials)?
+            .with_work(self.work.clone());
         let slot = Arc::new(Slot::new(hub.clone(), file, Arc::clone(&self.notice)));
-        slots.insert(hub.clone(), Arc::clone(&slot));
+        let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+        slots.retain(|_, slot| slot.alive());
+        slots.insert(hub.clone(), SlotRetention::Resident(slot.clone()));
         Ok(slot)
     }
 }

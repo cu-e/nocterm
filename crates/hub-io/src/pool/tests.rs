@@ -8,6 +8,42 @@ use crate::{
 use nocterm_hub_client::Session;
 use nocterm_vault::VaultStatus;
 
+#[test]
+fn forgetting_a_hub_releases_its_original_slot_and_fences_old_absent_observations() {
+    let login = Login::new();
+    let original = Arc::downgrade(&login.slot);
+    login.pool.forget_hub(&hub()).unwrap();
+    assert!(matches!(login.observed.check(), Err(HubError::Stale)));
+    assert_eq!(login.slot.status(), VaultStatus::Missing);
+    let accounts = login.accounts.clone();
+    drop(login);
+    assert!(original.upgrade().is_none());
+    assert_eq!(
+        accounts.slot(&hub()).unwrap().status(),
+        VaultStatus::Missing
+    );
+}
+
+#[test]
+fn a_retained_account_factory_can_sign_in_after_forget_without_reviving_its_old_capture() {
+    use crate::account::{source::LocalSourceProvider, testing::ScriptedSubjects};
+    let login = Login::new();
+    let subjects = Arc::new(ScriptedSubjects::for_slot(&login.slot));
+    subjects.sign_in(hub(), ACCOUNT_ID, "device");
+    sign_in(&login.accounts);
+    let factory = LocalSourceProvider::new(login.slot.clone(), subjects.clone());
+    let original = factory.capture().unwrap();
+    login.pool.forget_hub(&hub()).unwrap();
+    subjects.evict(&hub());
+    assert!(factory.capture().is_err());
+    // Settings publication failed: the same configured factory remains installed.
+    subjects.sign_in(hub(), ACCOUNT_ID, "device");
+    sign_in(&login.accounts);
+    let replacement = factory.capture().unwrap();
+    assert!(replacement.check_current().is_ok());
+    assert!(original.check_current().is_err());
+}
+
 struct Login {
     directory: tempfile::TempDir,
     accounts: Arc<Accounts>,

@@ -43,6 +43,7 @@ pub(super) struct Follow {
     vault: Arc<dyn VaultAccess>,
     replication: Entity<ProfileReplication>,
     attached: bool,
+    retired: bool,
     _hubs: Subscription,
     _refusals: Subscription,
     agent_source: Arc<super::agent::AgentSourceAvailability>,
@@ -83,6 +84,7 @@ impl Follow {
             vault,
             replication,
             attached: false,
+            retired: false,
             _hubs: observed,
             _refusals: refusals,
             agent_source,
@@ -92,7 +94,24 @@ impl Follow {
         follow
     }
 
+    pub(super) fn retire(&mut self, cx: &mut Context<Self>) {
+        self.retired = true;
+        let lock_original = self.agent_source.native_current();
+        if self.agent_source.refresh(false) {
+            self.runtime.refresh_environment_sources(cx);
+        }
+        if lock_original {
+            self.vault.lock();
+        }
+        if self.attached {
+            self.detach_mirror(cx);
+        }
+    }
+
     fn follow(&mut self, cx: &mut Context<Self>) {
+        if self.retired {
+            return;
+        }
         let status = self.hubs.read(cx).status(&self.hub);
         let allowed = !matches!(
             status,

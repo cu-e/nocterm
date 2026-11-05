@@ -22,6 +22,7 @@ use super::codec::{self, Decoded, KIND};
 use super::groups::{Groups, Held, Owner};
 use crate::account::{OpenKeys, Slot, source::CapturedAccount};
 mod access;
+use super::snapshot_budget::{SnapshotBudget, merge_vault};
 use crate::cache::{ObjectCopy, VaultCopy};
 use crate::classify::unreachable;
 use crate::store::{Located, OpError, Store, StoreOps, VAULT_KIND};
@@ -51,10 +52,11 @@ pub(super) fn vault_error(error: OpError) -> VaultError {
 impl Ledger {
     #[cfg(test)]
     pub(crate) fn new(slot: Arc<Slot>, ops: Arc<dyn StoreOps>) -> Self {
+        let groups = Groups::new(slot.cache_work().clone());
         Self {
             access: LedgerAccess::live(slot),
             ops,
-            groups: Groups::default(),
+            groups,
         }
     }
 
@@ -63,10 +65,11 @@ impl Ledger {
         ops: Arc<dyn StoreOps>,
         capture: Arc<CapturedAccount>,
     ) -> Self {
+        let groups = Groups::new(slot.cache_work().clone());
         Self {
             access: LedgerAccess::captured(slot, capture),
             ops,
-            groups: Groups::default(),
+            groups,
         }
     }
 
@@ -139,49 +142,68 @@ impl Ledger {
     /// Brings the cache up to date when the hub is reachable. Only a reachable hub's failure
     /// is an error.
     async fn sync(&self, keys: &Arc<OpenKeys>) -> Result<(), VaultError> {
+        let turn = self.access.slot().refresh_turn(keys).await;
+        self.keys()?;
+        if !turn.needed() {
+            return Ok(());
+        }
         let store = Store::new(Arc::clone(&self.ops), Arc::clone(keys));
-        match store.find(VAULT_KIND).await {
+        let result = match store.find(VAULT_KIND).await {
             Ok(Some(at)) => self.pull(&store, &at).await,
             Ok(None) => Ok(()),
             Err(OpError::Hub(error)) if unreachable(&error) => Ok(()),
             Err(error) => Err(vault_error(error)),
+        };
+        if result.is_ok() {
+            turn.complete();
         }
+        result
     }
 
     /// Reads the changes after the cached position and writes the cache through.
     async fn pull(&self, store: &Store, at: &Located) -> Result<(), VaultError> {
-        let mut copy = self.access.read(|cache| {
+        let copy = self.access.read(|cache| {
             cache
                 .and_then(|cache| cache.vault.clone())
                 .filter(|vault| vault.collection_id == at.id())
         })?;
-        let mut vault = copy.take().unwrap_or_else(|| VaultCopy {
-            collection_id: at.id().to_owned(),
-            key_envelope: at.envelope().to_vec(),
-            cursor: 0,
-            objects: BTreeMap::new(),
+        let mut vault = copy.unwrap_or_else(|| {
+            Arc::new(VaultCopy {
+                collection_id: at.id().to_owned(),
+                key_envelope: at.envelope().to_vec(),
+                cursor: 0,
+                objects: BTreeMap::new(),
+            })
         });
-        vault.key_envelope = at.envelope().to_vec();
+        let mut changed = false;
+        let mut budget: Option<SnapshotBudget> = None;
         loop {
             let batch = store.changes(at, vault.cursor).await.map_err(vault_error)?;
-            for object in batch.changes {
-                vault.cursor = vault.cursor.max(object.stream_version);
-                vault.objects.insert(
-                    object.object_id,
-                    ObjectCopy {
-                        version: object.version,
-                        kind: object.kind,
-                        ciphertext: object.ciphertext,
-                        deleted: object.deleted,
-                    },
-                );
+            if !changed
+                && batch.changes.is_empty()
+                && !batch.more
+                && batch.head <= vault.cursor
+                && vault.key_envelope == at.envelope()
+            {
+                return Ok(());
             }
-            if !batch.more {
-                vault.cursor = vault.cursor.max(batch.head);
+            changed = true;
+            let envelope = at.envelope().to_vec();
+            let merged = self
+                .access
+                .slot()
+                .cache_work()
+                .run(move || Ok(merge_vault(vault, budget, envelope, batch)))
+                .await
+                .map_err(|error| VaultError::Io(std::io::Error::other(error)))?
+                .map_err(vault_error)?;
+            vault = merged.0;
+            budget = Some(merged.1);
+            if !merged.2 {
                 break;
             }
         }
-        self.access.publish_vault(vault)?;
+        self.access.publish_vault(vault).await?;
         Ok(())
     }
 
@@ -203,12 +225,13 @@ impl Ledger {
         codec::open_sealed(&key, collection, object_id, object)
     }
 
-    fn cached(&self) -> Result<Option<VaultCopy>, VaultError> {
+    fn cached(&self) -> Result<Option<Arc<VaultCopy>>, VaultError> {
         self.access
             .read(|cache| cache.and_then(|cache| cache.vault.clone()))
     }
 
     pub(super) async fn list(&self) -> Result<Vec<CredentialInfo>, VaultError> {
+        let _operation = self.access.operation().await?;
         let keys = self.keys()?;
         self.sync(&keys).await?;
         let Some(vault) = self.cached()? else {
@@ -249,6 +272,7 @@ impl Ledger {
         id: CredentialId,
         binding: CredentialBinding,
     ) -> Result<Secret, VaultError> {
+        let _operation = self.access.operation().await?;
         let keys = self.keys()?;
         self.sync(&keys).await?;
         let object_id = id.to_string();
@@ -282,6 +306,7 @@ impl Ledger {
         binding: CredentialBinding,
         secret: Secret,
     ) -> Result<CredentialId, VaultError> {
+        let _operation = self.access.operation().await?;
         let keys = self.keys()?;
         let store = self.store(&keys);
         let given = id.is_some();
@@ -325,6 +350,7 @@ impl Ledger {
     }
 
     pub(super) async fn delete(&self, id: CredentialId) -> Result<(), VaultError> {
+        let _operation = self.access.operation().await?;
         let keys = self.keys()?;
         let store = self.store(&keys);
         let object_id = id.to_string();

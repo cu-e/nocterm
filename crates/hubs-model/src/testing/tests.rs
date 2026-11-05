@@ -253,11 +253,9 @@ fn a_first_sign_in_creates_the_keys_and_hands_out_the_recovery_key_once() {
         sign_in(&hub, "secret").keys,
         KeyStatus::RecoveryKeyUnconfirmed(_)
     ));
-    assert!(matches!(first.confirm(), Err(HubError::Stale)));
-    block_on(hub.reissue_recovery_key(&hub_id()))
-        .unwrap()
-        .confirm()
-        .unwrap();
+    assert!(matches!(block_on(first.confirm()), Err(HubError::Stale)));
+    let current = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
+    block_on(current.confirm()).unwrap();
     assert!(!hub.recovery_key_unconfirmed(&hub_id()));
     assert_eq!(sign_in(&hub, "secret").keys, KeyStatus::Open);
 }
@@ -268,12 +266,12 @@ fn reissuing_replaces_the_recovery_key_until_it_is_confirmed() {
     let KeyStatus::Created(first) = sign_in(&hub, "secret").keys else {
         panic!("created");
     };
-    first.confirm().unwrap();
+    block_on(first.confirm()).unwrap();
 
     let key = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
     assert_eq!(key.key(), &Secret::new("recovery-ada+"));
     assert!(hub.recovery_key_unconfirmed(&hub_id()));
-    key.confirm().unwrap();
+    block_on(key.confirm()).unwrap();
 
     let again = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
     assert_ne!(again, key);
@@ -323,7 +321,7 @@ fn a_browser_sign_in_needs_the_vault_passphrase_to_open_or_make_the_keys() {
         panic!("created");
     };
     assert_eq!(key.key(), &Secret::new("recovery-ada"));
-    key.confirm().unwrap();
+    block_on(key.confirm()).unwrap();
     let again = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("a long passphrase")));
     assert_eq!(again.unwrap(), KeyStatus::Open);
     let other = block_on(hub.set_vault_passphrase(&hub_id(), Secret::new("another passphrase")));
@@ -348,9 +346,7 @@ fn a_confirmed_admin_key_leaves_the_pending_list_and_raises_the_keys_notice() {
     let seen = hub.keys_revision();
     assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
 
-    keys.pending_admin_keys(&hub_id())[0]
-        .confirm("AAAA-BBBB")
-        .unwrap();
+    block_on(keys.pending_admin_keys(&hub_id())[0].confirm("AAAA-BBBB")).unwrap();
 
     assert!(keys.pending_admin_keys(&hub_id()).is_empty());
     assert_ne!(hub.keys_revision(), seen);
@@ -363,13 +359,16 @@ fn an_admin_key_is_refused_for_another_fingerprint_or_when_nothing_is_pending() 
     let keys = FakeAdminKeys::alongside(&hub);
     keys.offer(&hub_id(), acme_key("aaaa"));
 
-    assert_eq!(
-        keys.pending_admin_keys(&hub_id())[0].confirm("cccc"),
+    assert!(matches!(
+        block_on(keys.pending_admin_keys(&hub_id())[0].confirm("cccc")),
         Err(AdminKeyError::Mismatch)
-    );
+    ));
     let old = keys.pending_admin_keys(&hub_id())[0].clone();
-    old.confirm("aaaa").unwrap();
-    assert_eq!(old.confirm("aaaa"), Err(AdminKeyError::NotPending));
+    block_on(old.confirm("aaaa")).unwrap();
+    assert!(matches!(
+        block_on(old.confirm("aaaa")),
+        Err(AdminKeyError::NotPending)
+    ));
     keys.offer(&hub_id(), acme_key("aaaa"));
     assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
 }
@@ -382,7 +381,10 @@ fn closed_keys_list_and_confirm_no_admin_key() {
     let shown = keys.pending_admin_keys(&hub_id())[0].clone();
     hub.lock_keys(&hub_id());
     assert!(keys.pending_admin_keys(&hub_id()).is_empty());
-    assert_eq!(shown.confirm("aaaa"), Err(AdminKeyError::Stale));
+    assert!(matches!(
+        block_on(shown.confirm("aaaa")),
+        Err(AdminKeyError::Stale)
+    ));
 }
 
 #[test]
@@ -392,9 +394,9 @@ fn an_old_recovery_acknowledgement_cannot_confirm_a_new_reissue() {
         panic!("created");
     };
     let second = block_on(hub.reissue_recovery_key(&hub_id())).unwrap();
-    assert!(matches!(first.confirm(), Err(HubError::Stale)));
+    assert!(matches!(block_on(first.confirm()), Err(HubError::Stale)));
     assert!(hub.recovery_key_unconfirmed(&hub_id()));
-    second.confirm().unwrap();
+    block_on(second.confirm()).unwrap();
     assert!(!hub.recovery_key_unconfirmed(&hub_id()));
 }
 
@@ -409,9 +411,12 @@ fn an_administrator_offer_keeps_its_recipient_when_the_same_grantor_is_offered_a
     keys.offer(&hub_id(), acme_key("aaaa"));
     let current = keys.pending_admin_keys(&hub_id()).pop().unwrap();
     assert_eq!(old.key(), current.key());
-    assert_eq!(old.confirm("aaaa"), Err(AdminKeyError::Stale));
+    assert!(matches!(
+        block_on(old.confirm("aaaa")),
+        Err(AdminKeyError::Stale)
+    ));
     assert!(keys.confirmed().is_empty());
-    current.confirm("aaaa").unwrap();
+    block_on(current.confirm("aaaa")).unwrap();
     assert_eq!(keys.confirmed().len(), 1);
 }
 

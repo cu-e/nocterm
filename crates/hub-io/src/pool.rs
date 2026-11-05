@@ -204,6 +204,9 @@ impl Pool {
             .file(hub.address())?
             .erase()
             .map_err(crate::classify::credentials);
+        if cache.is_ok() {
+            self.accounts.evict_if(hub, &slot);
+        }
         cache.and(file)
     }
 
@@ -423,7 +426,7 @@ impl AccountSubjects for Pool {
         // A changed or cleared SDK subject cannot later revive this membership.
         let original = Arc::clone(subject);
         clients.remove(hub);
-        if let Ok(slot) = self.accounts.slot(hub) {
+        if let Some(slot) = self.accounts.loaded_slot(hub) {
             let _ = slot.close_for(&original);
         }
         None

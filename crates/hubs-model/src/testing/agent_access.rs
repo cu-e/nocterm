@@ -34,6 +34,7 @@ struct State {
     grants: Vec<AgentAccessGrant>,
     revoked: Vec<String>,
     failure: Option<AgentAccessError>,
+    next_allow_error: Option<AgentAccessError>,
     reissued: usize,
     hosts: Vec<HostChoice>,
 }
@@ -100,6 +101,11 @@ impl FakeAgentAccess {
         lock(&self.state).failure = Some(error);
     }
 
+    /// Refuse one host edit while leaving the account registry and CA readable.
+    pub fn fail_next_allow(&self, error: AgentAccessError) {
+        lock(&self.state).next_allow_error = Some(error);
+    }
+
     /// Calls work again.
     pub fn recover(&self) {
         lock(&self.state).failure = None;
@@ -157,6 +163,9 @@ impl AgentHostTrust for FakeAgentAccess {
         async move {
             let mut state = lock(&state);
             failed(&state)?;
+            if let Some(error) = state.next_allow_error.take() {
+                return Err(error);
+            }
             if state.unreachable.contains(&connection) {
                 return Err(AgentAccessError::NotConnected { connection });
             }

@@ -12,8 +12,9 @@ impl RecoveryKeyConfirmation for Acknowledgement {
     fn check_current(&self) -> Result<(), HubError> {
         self.0.check()
     }
-    fn confirm(&self) -> Result<(), HubError> {
-        self.0.confirm()
+    fn confirm(&self) -> HubFuture<()> {
+        let snapshot = self.0.clone();
+        Box::pin(async move { snapshot.confirm().await })
     }
 }
 pub(super) fn offer(secret: Secret, snapshot: KeySnapshot) -> RecoveryKeyOffer {

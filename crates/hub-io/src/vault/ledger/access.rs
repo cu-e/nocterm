@@ -13,6 +13,17 @@ pub(super) struct LedgerAccess {
 }
 
 impl LedgerAccess {
+    pub(super) async fn operation(&self) -> Result<tokio::sync::OwnedSemaphorePermit, VaultError> {
+        self.slot
+            .cache_work()
+            .operation()
+            .await
+            .map_err(|error| VaultError::Io(std::io::Error::other(error)))
+    }
+
+    pub(super) fn slot(&self) -> &Arc<Slot> {
+        &self.slot
+    }
     #[cfg(test)]
     pub(super) fn live(slot: Arc<Slot>) -> Self {
         Self {
@@ -50,23 +61,53 @@ impl LedgerAccess {
         }
     }
 
-    pub(super) fn publish_vault(&self, vault: VaultCopy) -> Result<(), VaultError> {
-        match &self.capture {
-            Some(capture) => {
-                let keys = self.keys()?;
-                self.slot
-                    .update_cache_if_changed(&keys, |cache| cache.accept_vault(vault))?;
-                capture.check_current().map_err(|_| VaultError::Stale)
+    pub(super) async fn publish_vault(&self, vault: Arc<VaultCopy>) -> Result<(), VaultError> {
+        let _turn = self.slot.cache_turn().await;
+        let keys = self.keys()?;
+        loop {
+            let original = self.slot.cache_snapshot();
+            let Some(mut next) = original.as_deref().cloned() else {
+                return Err(VaultError::Stale);
+            };
+            if !next.accept_shared_vault(vault.clone()) {
+                return Ok(());
             }
-            None => {
-                if let Err(error) = self
-                    .slot
-                    .update_cache_changed(|cache| cache.accept_vault(vault))
-                {
-                    tracing::warn!(%error, "the vault cache cannot be written");
+            let next = Arc::new(next);
+            let draft = self
+                .slot
+                .stage_cache(original.clone(), next.as_ref().clone())
+                .await;
+            let result = draft.and_then(|draft| match &self.capture {
+                Some(capture) => capture.with_current(|_| self.slot.commit_cache_if(&keys, draft)),
+                None => self.slot.commit_cache_if(&keys, draft),
+            });
+            match result {
+                Ok(Some(committed)) => {
+                    self.slot.finish_cache(committed).await;
+                    return Ok(());
                 }
-                Ok(())
+                Ok(None) => {}
+                Err(error) if cache_write_failed(&error) => {
+                    let accepted = match &self.capture {
+                        Some(capture) => capture.with_current(|_| {
+                            self.slot.accept_memory_cache_if(&keys, &original, next)
+                        }),
+                        None => self.slot.accept_memory_cache_if(&keys, &original, next),
+                    }
+                    .map_err(super::super::native_failure)?;
+                    if accepted {
+                        tracing::warn!(error = %nocterm_core::error::chain(&error), "the vault is current in memory; its offline cache could not be written");
+                        return Ok(());
+                    }
+                }
+                Err(error) => return Err(super::super::native_failure(error)),
             }
         }
     }
+}
+
+fn cache_write_failed(error: &nocterm_hubs_model::HubError) -> bool {
+    matches!(error, nocterm_hubs_model::HubError::Credentials { cause }
+        if matches!(cause.downcast_ref::<crate::cache::CacheError>(),
+            Some(crate::cache::CacheError::Write(_) | crate::cache::CacheError::Prepare(_))))
 }

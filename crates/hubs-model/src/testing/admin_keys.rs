@@ -96,6 +96,7 @@ impl HubAdminKeys for FakeAdminKeys {
             .collect()
     }
 }
+#[derive(Clone)]
 struct Confirmation {
     recipient: super::recovery::Recipient,
     state: std::sync::Weak<Mutex<State>>,
@@ -103,7 +104,14 @@ struct Confirmation {
     key: PendingAdminKey,
 }
 impl AdminKeyConfirmation for Confirmation {
-    fn confirm(&self, fingerprint: &str) -> Result<(), AdminKeyError> {
+    fn confirm(&self, fingerprint: &str) -> crate::AdminKeyFuture<()> {
+        let original = self.clone();
+        let fingerprint = fingerprint.to_owned();
+        Box::pin(async move { original.confirm_current(&fingerprint) })
+    }
+}
+impl Confirmation {
+    fn confirm_current(&self, fingerprint: &str) -> Result<(), AdminKeyError> {
         let mut result = Err(AdminKeyError::Stale);
         self.recipient
             .with_current(|account| {

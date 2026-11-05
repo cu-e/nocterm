@@ -72,7 +72,7 @@ fn trusting_replica(device: &Device, hub: &Hub) -> Arc<dyn ProfileReplica> {
     let admins = account.admin_keys();
     for pending in admins.pending() {
         assert!(pending.key().replaces.is_none(), "{pending:?}");
-        pending.confirm(&pending.key().fingerprint).unwrap();
+        block_on(pending.confirm(&pending.key().fingerprint)).unwrap();
     }
     block_on(replica.changes(None)).unwrap();
     replica

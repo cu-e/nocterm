@@ -48,6 +48,7 @@ pub enum FakeOp {
     SetVaultPassphrase,
     Recover,
     ReissueRecoveryKey,
+    ConfirmRecoveryKey,
     SignOut,
     Forget,
 }
@@ -62,6 +63,7 @@ pub enum FakeCall {
     SetVaultPassphrase(HubId),
     Recover(HubId),
     ReissueRecoveryKey(HubId),
+    ConfirmRecoveryKey(HubId),
     SignOut(HubId),
     Forget(HubId),
 }
@@ -310,6 +312,7 @@ impl FakeCall {
             Self::SetVaultPassphrase(_) => FakeOp::SetVaultPassphrase,
             Self::Recover(_) => FakeOp::Recover,
             Self::ReissueRecoveryKey(_) => FakeOp::ReissueRecoveryKey,
+            Self::ConfirmRecoveryKey(_) => FakeOp::ConfirmRecoveryKey,
             Self::SignOut(_) => FakeOp::SignOut,
             Self::Forget(_) => FakeOp::Forget,
         }

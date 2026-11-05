@@ -479,7 +479,18 @@ impl SignInSession {
         let SignInStep::RecoveryKey { key } = &self.step else {
             return;
         };
-        if let Err(error) = key.confirm() {
+        let confirming = key.confirm();
+        self.move_to(SignInStep::Saving, cx);
+        self.work = Some(cx.spawn(async move |this, cx| {
+            let result = confirming.await;
+            this.update(cx, |session, cx| session.recovery_acknowledged(result, cx))
+                .ok();
+        }));
+    }
+
+    fn recovery_acknowledged(&mut self, result: Result<(), HubError>, cx: &mut Context<Self>) {
+        self.work = None;
+        if let Err(error) = result {
             return self.move_to(SignInStep::Failed(error.into()), cx);
         }
         let hub = self.hub();

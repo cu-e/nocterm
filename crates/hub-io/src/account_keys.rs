@@ -3,6 +3,9 @@
 //!
 //! It acts on the same account slot as the vault, so unlocking here opens the vault and
 //! locking closes it. It does not own the vault's idle timer: only vault use restarts that.
+//! Status/lock/unlock admission use only an already loaded native Slot. An
+//! unloaded Slot has no current native membership or open keys; unlock captures
+//! that original membership before its existing background worker starts I/O.
 
 use std::sync::Arc;
 
@@ -10,7 +13,7 @@ use futures::FutureExt as _;
 use nocterm_core::error::SharedCause;
 use nocterm_hubs_model::{AccountKeyError, AccountKeyFuture, AccountKeyLock, HubError, HubId};
 use nocterm_session::Secret;
-use nocterm_vault::{VaultAccess as _, VaultError, VaultStatus};
+use nocterm_vault::{VaultAccess as _, VaultError};
 
 use crate::links::HubLinks;
 
@@ -27,23 +30,21 @@ impl AccountKeys {
 
 impl AccountKeyLock for AccountKeys {
     fn is_open(&self, hub: &HubId) -> bool {
-        self.links
-            .open_account(hub)
-            .is_ok_and(|account| account.vault().status() == VaultStatus::Unlocked)
+        self.links.account_keys_open(hub)
     }
 
     fn unlock(&self, hub: &HubId, password: Secret) -> AccountKeyFuture<()> {
-        match self.links.open_account(hub) {
-            Ok(account) => {
+        match self.links.loaded_account(hub) {
+            Some(account) => {
                 let unlocking = account.vault().unlock(password);
                 async move { unlocking.await.map_err(failure) }.boxed()
             }
-            Err(error) => async move { Err(sign_in_failure(error)) }.boxed(),
+            None => async move { Err(sign_in_failure(HubError::NotSignedIn)) }.boxed(),
         }
     }
 
     fn lock(&self, hub: &HubId) {
-        if let Ok(account) = self.links.open_account(hub) {
+        if let Some(account) = self.links.loaded_account(hub) {
             account.vault().lock();
         }
     }

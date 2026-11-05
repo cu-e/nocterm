@@ -72,6 +72,7 @@ impl Ledger {
         ids: &[CredentialId],
         leave: Leave,
     ) -> Result<Vec<(CredentialId, CredentialId)>, VaultError> {
+        let _operation = self.access.operation().await?;
         let keys = self.keys()?;
         let store = self.store(&keys);
         self.sync(&keys).await?;

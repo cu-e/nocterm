@@ -40,6 +40,10 @@ pub(crate) const VAULT_KIND: &str = "vault";
 /// The kind of the collection that holds the saved profiles.
 pub(crate) const PROFILES_KIND: &str = "profiles";
 
+#[derive(Debug, thiserror::Error)]
+#[error("the account collection layout exceeds its group limit")]
+struct LayoutLimit;
+
 /// Why a store call failed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OpError {
@@ -252,14 +256,26 @@ impl Store {
     /// whose key is missing, or does not open, is left out: one group cannot take the
     /// account's own data away.
     pub(crate) async fn layout(&self, kind: &str) -> Result<Layout, OpError> {
+        self.layout_bounded(kind, usize::MAX).await
+    }
+
+    pub(crate) async fn layout_bounded(
+        &self,
+        kind: &str,
+        maximum: usize,
+    ) -> Result<Layout, OpError> {
         let listed = self.ops.collections(kind).await?;
+        let memberships = self.ops.memberships().await?;
+        if listed.len() > maximum.saturating_mul(16) || memberships.len() > maximum {
+            return Err(OpError::Hub(remote(LayoutLimit)));
+        }
         let personal = match oldest(&listed, kind, |c| c.personal && c.org_id.is_empty()) {
             Some(chosen) => Some(self.open(chosen).await?),
             None => None,
         };
         let mut groups = Vec::new();
         let mut pending = Vec::new();
-        for membership in self.ops.memberships().await? {
+        for membership in memberships {
             let Some(org) = membership.org else { continue };
             let Some(chosen) = oldest(&listed, kind, |c| !c.personal && c.org_id == org.org_id)
             else {

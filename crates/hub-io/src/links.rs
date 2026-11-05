@@ -66,7 +66,10 @@ impl HubLinks {
             .enable_all()
             .build()
             .map_err(HubStartError)?;
-        let accounts = Arc::new(Accounts::new(config.credentials_dir.clone()));
+        let accounts = Arc::new(Accounts::with_runtime(
+            config.credentials_dir.clone(),
+            Some(runtime.handle().clone()),
+        ));
         let pool = Arc::new(Pool::new(
             config.credentials_dir,
             &config.device_name,
@@ -97,6 +100,20 @@ impl HubLinks {
             Arc::clone(&self.pool),
             slot,
         ))
+    }
+
+    pub(crate) fn account_keys_open(&self, hub: &HubId) -> bool {
+        self.accounts
+            .loaded_slot(hub)
+            .is_some_and(|slot| slot.open().is_some())
+    }
+
+    /// Native membership publication always creates its Slot first. An absent
+    /// loaded Slot therefore cannot be unlocked for a current native recipient.
+    pub(crate) fn loaded_account(&self, hub: &HubId) -> Option<HubAccount> {
+        self.accounts
+            .loaded_slot(hub)
+            .map(|slot| HubAccount::new(self.handle.clone(), self.pool.clone(), slot))
     }
 
     /// What a relay needs of the links: their threads and the hubs they are signed in to.

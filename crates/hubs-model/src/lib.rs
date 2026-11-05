@@ -59,7 +59,8 @@ pub mod testing;
 pub use account_keys::{AccountKeyError, AccountKeyFuture, AccountKeyLock};
 pub use address::{DEFAULT_PORT, HubAddress, HubId};
 pub use admin_keys::{
-    AdminKeyConfirmation, AdminKeyError, AdminKeyOffer, HubAdminKeys, PendingAdminKey,
+    AdminKeyConfirmation, AdminKeyError, AdminKeyFuture, AdminKeyOffer, HubAdminKeys,
+    PendingAdminKey,
 };
 pub use agent_access::{
     AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentGrants, AgentHostTrust,

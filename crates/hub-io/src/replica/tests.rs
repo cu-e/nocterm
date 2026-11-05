@@ -462,6 +462,7 @@ async fn confirming_an_administrator_ticks_the_watch_and_opens_the_group() {
         .find(|offer| offer.key().account_id == admin.account_id())
         .unwrap()
         .confirm(&admin.fingerprint())
+        .await
         .unwrap();
 
     let tick = tokio::time::timeout(Duration::from_secs(5), ticks.next())

@@ -78,15 +78,22 @@ pub(crate) fn confirm_admin_key(
     let confirmed = hubs.update(cx, |hubs, cx| {
         hubs.confirm_admin_key(offer, fingerprint, cx)
     });
-    if let Err(error) = confirmed {
-        nocterm_ui::notice::error(
-            window,
-            cx,
-            "hub-admin-key",
-            "Could not confirm the key",
-            admin_key_problem(error),
-        );
-    }
+    window
+        .spawn(cx, async move |cx| {
+            if let Err(error) = confirmed.await {
+                cx.update(|window, cx| {
+                    nocterm_ui::notice::error(
+                        window,
+                        cx,
+                        "hub-admin-key",
+                        "Could not confirm the key",
+                        admin_key_problem(error),
+                    );
+                })
+                .ok();
+            }
+        })
+        .detach();
 }
 
 /// Asks before removing a server: it leaves this device's list and its credentials are

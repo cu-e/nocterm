@@ -28,7 +28,7 @@ impl CapturedClient {
     pub(crate) fn current(pool: Arc<Pool>, hub: HubId) -> Result<Self, HubError> {
         let subject = pool.current(&hub).ok_or(HubError::NotSignedIn)?;
         let client = pool.captured(&hub, &subject)?;
-        let owner = pool.accounts.slot(&hub).ok().and_then(|slot| {
+        let owner = pool.accounts.loaded_slot(&hub).and_then(|slot| {
             let keys = slot.open()?;
             (keys.keyset().account_id() == subject.account()).then(|| KeyOwner {
                 slot: Arc::downgrade(&slot),
