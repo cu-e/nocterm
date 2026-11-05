@@ -24,14 +24,6 @@ pub(crate) enum Event {
 /// Performs effects. Implemented over the hub, and by scripted fakes in tests.
 pub(crate) trait EffectRunner: Send + Sync {
     fn run(&self, effect: Effect) -> BoxStream<'static, Event>;
-    /// Publishes a command kept from an earlier run with exactly its bytes; `true` once the
-    /// hub confirmed it. A runner that keeps none confirms nothing.
-    fn republish(
-        &self,
-        _publication: super::outbox::StoredPublication,
-    ) -> futures::future::BoxFuture<'static, bool> {
-        Box::pin(async { false })
-    }
 }
 
 /// The signed Store client of the device.
@@ -214,9 +206,7 @@ impl HubEffects {
             },
             Effect::StartInstance {
                 agent_id, chat_id, ..
-            } => {
-                Self::start(rpc, agent_id, chat_id).await
-            }
+            } => Self::start(rpc, agent_id, chat_id).await,
             store => Self::store(rpc, store).await,
         }
     }
@@ -479,33 +469,6 @@ fn chat_bytes(hex: &str) -> Option<[u8; 16]> {
 }
 
 impl EffectRunner for HubEffects {
-    fn republish(
-        &self,
-        publication: super::outbox::StoredPublication,
-    ) -> futures::future::BoxFuture<'static, bool> {
-        let rpc = self.rpc.clone();
-        Box::pin(async move {
-            let Ok(mut signed) = rpc.signed().await else {
-                return false;
-            };
-            let wire = v1::CloudPublishOne {
-                header: Some(v1::CloudPublication {
-                    publication_id: publication.publication_id.to_vec(),
-                    binding: publication.binding,
-                    total_bytes: publication.total_bytes,
-                    ciphertext_sha256: publication.ciphertext_sha256.to_vec(),
-                    retry_until_ms: 0,
-                }),
-                data: publication.ciphertext,
-            };
-            signed.publish_one(wire).await.is_ok_and(|receipt| {
-                let receipt = receipt.into_inner();
-                receipt.publication_id == publication.publication_id
-                    && receipt.ciphertext_sha256 == publication.ciphertext_sha256
-                    && receipt.cursor != 0
-            })
-        })
-    }
     fn run(&self, effect: Effect) -> BoxStream<'static, Event> {
         let rpc = self.rpc.clone();
         match effect {

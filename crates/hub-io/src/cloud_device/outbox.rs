@@ -1,94 +1,25 @@
-//! The exact publications of commands on their way, kept so that a command sealed before the
-//! application quit is published again, with the same bytes, after it starts.
+//! The commands of a chat on their way, kept so that a command signed before the application
+//! quit is resumed after it starts.
 //!
 //! A `Deliver` flow seals a command once and publishes exactly those bytes; the hub delivers a
-//! publication id at most once. Each publication is written here (ciphertext sealed to the
-//! runner, never plaintext) before it is first sent and removed once its command settled.
-//! When a chat is read again, what is left of it is published again until the hub confirms it
-//! or its lifetime ends.
-//!
-//! TODO(contract): the core offers no way to resume a `Deliver` flow from its sealed command,
-//! so a resumed publication gets no receipt probe and is not shown as pending (see the P6
-//! report); the runner's accepted event still shows the prompt.
+//! publication id at most once. When a delivery first asks to publish, the core hands out the
+//! command as a `StoredCommand` (sealed with a key of the account and chat, so a file holds no
+//! prompt text), which is written here under the chat and the command id and removed once the
+//! delivery is done or failed. When the chat is read again, `OpenChat::resume` tracks each
+//! stored command's pending row again and resumes its delivery with the same bytes and a
+//! receipt probe; a command that does not open, or has nothing left to deliver, is forgotten.
 use super::checkpoints::AccountPlace;
-use nocterm_cloud_device::command::Publication;
+use nocterm_cloud_device::command::StoredCommand;
+use nocterm_cloud_device::command::stored::MAX_STORED_COMMAND_PLAINTEXT_BYTES;
+use nocterm_cloud_device::context::ChatRef;
 use nocterm_core::fs::{read_regular_bounded, write_private_atomic};
-use nocterm_hub_model::cloud::MAX_COMMAND_LIFETIME_MS;
-use nocterm_hub_model::cloud::relay::RelayBinding;
 use std::io;
 use std::path::PathBuf;
 
-const VERSION: u8 = 1;
-const MAX_FILE_BYTES: usize = 64 * 1024;
+/// The sealed form adds a nonce and a tag to the plaintext.
+const MAX_FILE_BYTES: usize = MAX_STORED_COMMAND_PLAINTEXT_BYTES + 64;
 const LAYOUT: &str = "device-v1";
-
-/// One publication as it is published again.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StoredPublication {
-    pub(crate) publication_id: [u8; 16],
-    pub(crate) binding: Vec<u8>,
-    pub(crate) total_bytes: u32,
-    pub(crate) ciphertext_sha256: [u8; 32],
-    pub(crate) ciphertext: Vec<u8>,
-    /// After this time the runner refuses the command; it is not published any more.
-    pub(crate) horizon_ms: i64,
-}
-impl StoredPublication {
-    pub(crate) fn of(publication: &Publication, now_ms: i64) -> Option<Self> {
-        Some(Self {
-            publication_id: publication.publication_id(),
-            binding: publication.binding().ok()?,
-            total_bytes: publication.total_bytes(),
-            ciphertext_sha256: publication.ciphertext_sha256(),
-            ciphertext: publication.ciphertext().to_vec(),
-            horizon_ms: now_ms.saturating_add(MAX_COMMAND_LIFETIME_MS),
-        })
-    }
-    fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(70 + self.binding.len() + self.ciphertext.len());
-        bytes.push(VERSION);
-        bytes.extend_from_slice(&self.horizon_ms.to_be_bytes());
-        bytes.extend_from_slice(&self.publication_id);
-        bytes.extend_from_slice(&self.total_bytes.to_be_bytes());
-        bytes.extend_from_slice(&self.ciphertext_sha256);
-        bytes.extend_from_slice(
-            &u32::try_from(self.binding.len())
-                .unwrap_or(u32::MAX)
-                .to_be_bytes(),
-        );
-        bytes.extend_from_slice(&self.binding);
-        bytes.extend_from_slice(&self.ciphertext);
-        bytes
-    }
-    fn decode(bytes: &[u8]) -> Option<Self> {
-        let (&version, rest) = bytes.split_first()?;
-        let (horizon, rest) = rest.split_first_chunk::<8>()?;
-        let (publication_id, rest) = rest.split_first_chunk::<16>()?;
-        let (total, rest) = rest.split_first_chunk::<4>()?;
-        let (digest, rest) = rest.split_first_chunk::<32>()?;
-        let (length, rest) = rest.split_first_chunk::<4>()?;
-        let length = usize::try_from(u32::from_be_bytes(*length)).ok()?;
-        if version != VERSION || rest.len() < length {
-            return None;
-        }
-        let (binding, ciphertext) = rest.split_at(length);
-        let total_bytes = u32::from_be_bytes(*total);
-        (usize::try_from(total_bytes).ok()? == ciphertext.len()).then(|| Self {
-            publication_id: *publication_id,
-            binding: binding.to_vec(),
-            total_bytes,
-            ciphertext_sha256: *digest,
-            ciphertext: ciphertext.to_vec(),
-            horizon_ms: i64::from_be_bytes(*horizon),
-        })
-    }
-    /// The chat the publication is a command of.
-    pub(crate) fn chat_id(&self) -> Option<[u8; 16]> {
-        RelayBinding::from_canonical_bytes(&self.binding)
-            .ok()
-            .map(|binding| binding.chat_id())
-    }
-}
+const EXTENSION: &str = "command";
 
 /// The outbox files of an installation.
 pub(crate) struct Outbox {
@@ -100,96 +31,124 @@ impl Outbox {
             root: root.join(LAYOUT),
         }
     }
-    fn directory(&self, account: &AccountPlace) -> PathBuf {
-        self.root.join(account.as_str()).join("outbox")
+    fn directory(&self, account: &AccountPlace, chat: &ChatRef) -> PathBuf {
+        self.root
+            .join(account.as_str())
+            .join("outbox")
+            .join(chat.to_string())
     }
-    fn file(&self, account: &AccountPlace, publication_id: &[u8; 16]) -> PathBuf {
-        let hex: String = publication_id
+    fn file(&self, account: &AccountPlace, chat: &ChatRef, command_id: &[u8; 16]) -> PathBuf {
+        let hex: String = command_id
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        self.directory(account).join(format!("{hex}.publication"))
+        self.directory(account, chat)
+            .join(format!("{hex}.{EXTENSION}"))
     }
-    /// Keeps `publication` before it is first sent.
-    pub(crate) fn stage(
+    /// Keeps the signed command `command_id` of `chat` before it is first published.
+    pub(crate) fn keep(
         &self,
         account: &AccountPlace,
-        publication: &StoredPublication,
+        chat: &ChatRef,
+        command_id: &[u8; 16],
+        command: &StoredCommand,
     ) -> io::Result<()> {
-        let directory = self.directory(account);
         nocterm_core::paths::ensure_private_dir(&self.root)?;
-        nocterm_core::paths::ensure_private_dir(&directory)?;
-        write_private_atomic(
-            &self.file(account, &publication.publication_id),
-            &publication.encode(),
-        )
-        .map_err(nocterm_core::fs::FileError::into_io_error)
+        nocterm_core::paths::ensure_private_dir(&self.directory(account, chat))?;
+        write_private_atomic(&self.file(account, chat, command_id), command.as_bytes())
+            .map_err(nocterm_core::fs::FileError::into_io_error)
     }
-    /// Forgets a publication whose command settled.
-    pub(crate) fn settled(&self, account: &AccountPlace, publication_id: &[u8; 16]) {
-        let file = self.file(account, publication_id);
+    /// Forgets a command whose delivery ended.
+    pub(crate) fn settled(&self, account: &AccountPlace, chat: &ChatRef, command_id: &[u8; 16]) {
+        let file = self.file(account, chat, command_id);
         if let Err(error) = std::fs::remove_file(file)
             && error.kind() != io::ErrorKind::NotFound
         {
             tracing::warn!(%error, "a settled Cloud command could not be forgotten");
         }
     }
-    /// The publications of `chat_id` left from an earlier run. Unreadable files are skipped.
-    pub(crate) fn pending(
+    /// The commands of `chat` left from an earlier run, by command id. Unreadable files and
+    /// other names are skipped.
+    pub(crate) fn left(
         &self,
         account: &AccountPlace,
-        chat_id: &[u8; 16],
-    ) -> Vec<StoredPublication> {
-        let Ok(entries) = std::fs::read_dir(self.directory(account)) else {
+        chat: &ChatRef,
+    ) -> Vec<([u8; 16], StoredCommand)> {
+        let Ok(entries) = std::fs::read_dir(self.directory(account, chat)) else {
             return Vec::new();
         };
         entries
             .flatten()
             .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-            .filter_map(|entry| read_regular_bounded(&entry.path(), MAX_FILE_BYTES).ok())
-            .filter_map(|bytes| StoredPublication::decode(&bytes))
-            .filter(|publication| publication.chat_id().as_ref() == Some(chat_id))
+            .filter_map(|entry| {
+                let path = entry.path();
+                let command_id = command_id(path.file_name()?.to_str()?)?;
+                let bytes = read_regular_bounded(&path, MAX_FILE_BYTES).ok()?;
+                Some((command_id, StoredCommand::from_bytes(bytes)))
+            })
             .collect()
     }
+}
+
+/// The command id of an outbox file name (`<32 hex>.command`).
+fn command_id(name: &str) -> Option<[u8; 16]> {
+    let hex = name.strip_suffix(EXTENSION)?.strip_suffix('.')?;
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut bytes = [0u8; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
+    }
+    Some(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn stored(id: u8) -> StoredPublication {
-        StoredPublication {
-            publication_id: [id; 16],
-            binding: vec![1, 2, 3],
-            total_bytes: 4,
-            ciphertext_sha256: [9; 32],
-            ciphertext: vec![5; 4],
-            horizon_ms: 77,
-        }
+    fn chat(id: u8) -> ChatRef {
+        format!("{}-{}-1", "ab".repeat(16), format!("{id:02x}").repeat(16))
+            .parse()
+            .unwrap()
     }
 
     #[test]
-    fn a_publication_reads_back_with_exactly_its_bytes() {
-        let publication = stored(1);
-        assert_eq!(
-            StoredPublication::decode(&publication.encode()),
-            Some(publication.clone())
-        );
-        let mut damaged = publication.encode();
-        damaged.pop();
-        assert_eq!(StoredPublication::decode(&damaged), None);
-    }
-
-    #[test]
-    fn a_settled_publication_is_forgotten() {
+    fn a_kept_command_reads_back_under_its_chat_with_exactly_its_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let outbox = Outbox::new(dir.path().to_path_buf());
         let account = AccountPlace::of_hex("ab");
-        outbox.stage(&account, &stored(2)).unwrap();
-        let file = outbox.file(&account, &[2; 16]);
-        assert!(file.exists());
-        outbox.settled(&account, &[2; 16]);
-        assert!(!file.exists());
-        outbox.settled(&account, &[2; 16]);
+        let command = StoredCommand::from_bytes(vec![1, 2, 3]);
+        outbox.keep(&account, &chat(1), &[7; 16], &command).unwrap();
+        let left = outbox.left(&account, &chat(1));
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].0, [7; 16]);
+        assert_eq!(left[0].1.as_bytes(), [1, 2, 3]);
+        assert!(outbox.left(&account, &chat(2)).is_empty());
+    }
+
+    #[test]
+    fn a_settled_command_is_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let outbox = Outbox::new(dir.path().to_path_buf());
+        let account = AccountPlace::of_hex("ab");
+        let command = StoredCommand::from_bytes(vec![4]);
+        outbox.keep(&account, &chat(1), &[2; 16], &command).unwrap();
+        outbox.settled(&account, &chat(1), &[2; 16]);
+        assert!(outbox.left(&account, &chat(1)).is_empty());
+        outbox.settled(&account, &chat(1), &[2; 16]);
+    }
+
+    #[test]
+    fn only_command_files_name_a_command() {
+        assert_eq!(
+            command_id(&format!("{}.command", "0a".repeat(16))),
+            Some([10; 16])
+        );
+        assert_eq!(
+            command_id(&format!("{}.publication", "0a".repeat(16))),
+            None
+        );
+        assert_eq!(command_id("0a.command"), None);
     }
 }

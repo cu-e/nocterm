@@ -6,12 +6,14 @@
 //! when nothing subscribes and no delivery is left, or when the account ends. Reading resumes
 //! from the checkpoint, so a reopened chat shows its verified prefix at once and replays only
 //! what is new. Nothing here polls: the flow probes on open, on watch reconnects, after a
-//! receipt of this device's own command and on refresh.
+//! receipt of this device's own command and on refresh. A command signed before the application
+//! quit is kept in the [`Outbox`] and resumed when its chat is read again: its pending row shows
+//! again and the same bytes are published, with a receipt probe.
 use super::account::DeviceAccount;
 use super::checkpoints::{AccountPlace, Checkpoints, chat_file};
 use super::driver::{self, Effects, now_ms};
 use super::mapping;
-use super::outbox::{Outbox, StoredPublication};
+use super::outbox::Outbox;
 use futures::FutureExt as _;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
@@ -20,7 +22,7 @@ use nocterm_cloud_conversation_model::{
     CloudConversation, CloudConversationError, CommandKey, ConversationAction, ConversationFuture,
     ConversationKey, ConversationUpdate, ConversationUpdates,
 };
-use nocterm_cloud_device::command::{Deliver, DeliveryUpdate};
+use nocterm_cloud_device::command::{Deliver, DeliveryUpdate, StoredCommand};
 use nocterm_cloud_device::context::ChatRef;
 use nocterm_cloud_device::flow::{Effect, Flow, Input, Step};
 use nocterm_cloud_device::open::{ChatAction, ChatUpdate, ModelChoice, OpenChat};
@@ -214,7 +216,6 @@ impl Task {
             .and_then(Result::ok)
             .flatten()
             .map(VerifiedChat::from_bytes);
-        self.republish_left(&place);
         let opened = self
             .account
             .device()
@@ -239,36 +240,16 @@ impl Task {
                 task: self,
                 place,
                 file,
-                publications: Vec::new(),
+                kept: Vec::new(),
             },
             Err(error) => {
                 self.refuse_all(requests, &mapping::error(error));
                 return;
             }
         };
+        let mut reading = reading;
+        reading.resume_left();
         reading.run(requests).await;
-    }
-    /// Publishes again what an earlier run of this chat sealed and did not see delivered, with
-    /// exactly its bytes, until the hub confirms it or its lifetime ends.
-    fn republish_left(&self, place: &AccountPlace) {
-        for publication in self.outbox.pending(place, &self.setup.chat.chat_id) {
-            let (effects, outbox, place) = (
-                self.account.effects().clone(),
-                self.outbox.clone(),
-                place.clone(),
-            );
-            tokio::spawn(async move {
-                let mut delay = driver::RETRY_FIRST;
-                while now_ms() < publication.horizon_ms {
-                    if effects.republish(publication.clone()).await {
-                        break;
-                    }
-                    tokio::time::sleep(delay).await;
-                    delay = (delay * 2).min(driver::RETRY_LONGEST);
-                }
-                outbox.settled(&place, &publication.publication_id);
-            });
-        }
     }
     /// Answers every waiting request with `error` and lets the next request start afresh.
     fn refuse_all(
@@ -297,13 +278,38 @@ struct Reading {
     task: Task,
     place: AccountPlace,
     file: String,
-    /// The publication each delivery slot keeps in the outbox.
-    publications: Vec<(u32, [u8; 16])>,
+    /// The command each delivery slot keeps in the outbox.
+    kept: Vec<(u32, [u8; 16])>,
 }
 /// The tag of the chat flow's own effects; deliveries take the slots from 1 on.
 const CHAT_SLOT: u32 = 0;
 
 impl Reading {
+    /// Resumes the commands an earlier run of this chat kept; one with nothing left to deliver,
+    /// or that does not open for this chat, is forgotten.
+    fn resume_left(&mut self) {
+        let chat = self.task.setup.chat;
+        for (command_id, stored) in self.task.outbox.left(&self.place, &chat) {
+            let wake = self.task.setup.wake.clone();
+            match self.chat.resume(&stored, wake, now_ms()) {
+                Ok(Some(deliver)) => {
+                    let slot = self.slot();
+                    self.deliveries.push((slot, deliver));
+                    self.kept.push((slot, command_id));
+                }
+                Ok(None) => self.task.outbox.settled(&self.place, &chat, &command_id),
+                Err(error) => {
+                    tracing::debug!(error = %nocterm_core::error::chain(&error), "a kept Cloud command was not resumed");
+                    self.task.outbox.settled(&self.place, &chat, &command_id);
+                }
+            }
+        }
+    }
+    fn slot(&mut self) -> u32 {
+        let slot = self.next_slot;
+        self.next_slot = self.next_slot.wrapping_add(1).max(1);
+        slot
+    }
     async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
         let ended = self.task.account.clone().ended();
         let mut ended = std::pin::pin!(ended);
@@ -439,8 +445,7 @@ impl Reading {
             .deliver(&action, self.task.setup.wake.clone(), now_ms())
             .map_err(mapping::error)?;
         let command = CommandKey::from_bytes(deliver.command_id());
-        let slot = self.next_slot;
-        self.next_slot = self.next_slot.wrapping_add(1).max(1);
+        let slot = self.slot();
         self.deliveries.push((slot, deliver));
         Ok(command)
     }
@@ -475,17 +480,21 @@ impl Reading {
             let slot = *slot;
             match deliver.next(now_ms()) {
                 Step::Effect(id, effect) => {
-                    if let Effect::Publish(publication) = &effect {
-                        self.keep(slot, publication);
+                    // Kept once signed, before it is first published; retries publish the
+                    // same bytes and need nothing new.
+                    let keep = matches!(effect, Effect::Publish(_))
+                        && !self.kept.iter().any(|(known, _)| *known == slot);
+                    let stored = keep.then(|| (deliver.command_id(), self.chat.stored(deliver)));
+                    if let Some((command_id, stored)) = stored {
+                        self.keep(slot, command_id, stored);
                     }
                     self.effects.start(slot, id, effect);
                     progressed = true;
                 }
                 Step::Output(update) => {
-                    // A delivery reports one settled state: the hub holds the command or it
-                    // ended, so its outbox copy is no longer needed.
+                    // A resumed delivery may still probe for its receipt after it reported
+                    // `Delivered`: its outbox copy goes once the flow is done.
                     self.chat.delivery(&update);
-                    self.forget(slot);
                     progressed = true;
                 }
                 Step::Idle { until_ms } => {
@@ -513,28 +522,37 @@ impl Reading {
         }
         (progressed, until)
     }
-    /// Keeps the publication of `slot` before it is first sent; once kept, retries publish the
-    /// same bytes and need nothing new.
-    fn keep(&mut self, slot: u32, publication: &nocterm_cloud_device::command::Publication) {
-        if self.publications.iter().any(|(known, _)| *known == slot) {
-            return;
+    fn keep(
+        &mut self,
+        slot: u32,
+        command_id: [u8; 16],
+        stored: Result<Option<StoredCommand>, CloudDeviceError>,
+    ) {
+        match stored {
+            Ok(Some(stored)) => {
+                let chat = &self.task.setup.chat;
+                if let Err(error) = self
+                    .task
+                    .outbox
+                    .keep(&self.place, chat, &command_id, &stored)
+                {
+                    tracing::warn!(%error, "a Cloud command was sent without its outbox copy");
+                }
+            }
+            // Not signed yet: kept at its next publication.
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(error = %nocterm_core::error::chain(&error), "a Cloud command was sent without its outbox copy");
+            }
         }
-        let Some(stored) = StoredPublication::of(publication, now_ms()) else {
-            return;
-        };
-        if let Err(error) = self.task.outbox.stage(&self.place, &stored) {
-            tracing::warn!(%error, "a Cloud command was sent without its outbox copy");
-        }
-        self.publications.push((slot, stored.publication_id));
+        self.kept.push((slot, command_id));
     }
     fn forget(&mut self, slot: u32) {
-        if let Some(index) = self
-            .publications
-            .iter()
-            .position(|(known, _)| *known == slot)
-        {
-            let (_, publication) = self.publications.remove(index);
-            self.task.outbox.settled(&self.place, &publication);
+        if let Some(index) = self.kept.iter().position(|(known, _)| *known == slot) {
+            let (_, command_id) = self.kept.remove(index);
+            self.task
+                .outbox
+                .settled(&self.place, &self.task.setup.chat, &command_id);
         }
     }
     fn chat_update(&mut self, update: ChatUpdate) {

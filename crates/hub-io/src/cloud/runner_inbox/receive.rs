@@ -591,9 +591,9 @@ fn wire_error(
         return backend(changed);
     }
     let fault = match &error {
-        CloudError::Protocol
-        | CloudError::Relay(_)
-        | CloudError::Command(_) => RunnerInboxFault::Authentication,
+        CloudError::Protocol | CloudError::Relay(_) | CloudError::Command(_) => {
+            RunnerInboxFault::Authentication
+        }
         CloudError::SourceChanged | CloudError::NotSignedIn => RunnerInboxFault::NeedsRunnerAccess,
         _ => RunnerInboxFault::DeliveryUnconfirmed,
     };

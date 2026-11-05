@@ -7,10 +7,6 @@ use nocterm_cloud_device::flow::{Effect, EffectId, Flow, Frame, Step};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The first and the longest wait between two attempts of what the client retries itself.
-pub(crate) const RETRY_FIRST: Duration = Duration::from_secs(1);
-pub(crate) const RETRY_LONGEST: Duration = Duration::from_secs(15);
-
 /// The wall clock the flows are given.
 pub(crate) fn now_ms() -> i64 {
     nocterm_hub_client::now_ms()
