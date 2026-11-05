@@ -2,14 +2,18 @@
 //! and the egress addresses its connections come from.
 //!
 //! Reach is selected, never constructed: a bound server is admitted only when it is one
-//! of the administrator's configured SSH targets (same host, port and user, and the
-//! configured host key equals the binding's) or one of a managed boot's targets (same
-//! host, port and user; the binding's host key is then pinned). Egress comes from
-//! `[ssh] egress` of an own runner or `ssh_egress` of boot v3; without it every binding
-//! is refused with `NoSourceAddress`.
+//! of the administrator's configured SSH targets or one of a managed boot v3's targets
+//! with a host key, with the same host, port and user and a host key equal to the
+//! binding's (`BootSshTarget::admits`, ADR 0139). A boot target without a host key is
+//! listed but never admitted. Egress comes from `[ssh] egress` of an own runner or
+//! `ssh_egress` of boot v3; without it every binding is refused with `NoSourceAddress`.
 use super::config::SessionTargetConfiguration;
 use crate::RunnerError;
-use nocterm_cloud_model::ssh_access::{SshEndpoint, SshReach};
+use nocterm_cloud_model::{
+    identity::Fingerprint,
+    ssh_access::{SshEndpoint, SshReach},
+};
+use nocterm_hub_io::runner_control::boot_ssh::{BootSshTarget, is_source_address};
 use serde::Deserialize;
 
 /// At most this many egress addresses, as a certificate request carries them.
@@ -30,43 +34,81 @@ impl SshConfiguration {
     }
 }
 
-/// Whether `egress` can be stated in a certificate request: 1 to 8 IP addresses or CIDRs.
+/// Whether `egress` can be stated in a certificate request: 1 to 8 IP addresses or CIDRs
+/// (the contract's source address rule).
 pub(crate) fn valid_egress(egress: &[String]) -> bool {
-    (1..=MAX_EGRESS).contains(&egress.len())
-        && egress.iter().all(|entry| {
-            let (address, prefix) = entry.split_once('/').unwrap_or((entry, ""));
-            let prefix_ok = |maximum: u8| {
-                prefix.is_empty() || prefix.parse::<u8>().is_ok_and(|bits| bits <= maximum)
-            };
-            entry.len() <= 64
-                && match address.parse::<std::net::IpAddr>() {
-                    Ok(std::net::IpAddr::V4(_)) => prefix_ok(32),
-                    Ok(std::net::IpAddr::V6(_)) => prefix_ok(128),
-                    Err(_) => false,
-                }
-        })
+    (1..=MAX_EGRESS).contains(&egress.len()) && egress.iter().all(|entry| is_source_address(entry))
 }
 
 /// A managed boot's SSH targets and egress, which replace runner.toml's for that runner.
 pub(crate) struct BootSsh {
-    targets: Vec<SshEndpoint>,
+    targets: Vec<BootSshTarget>,
     egress: Vec<String>,
 }
 impl BootSsh {
-    pub(crate) fn new<'a>(
-        targets: impl Iterator<Item = (&'a str, u16, &'a str)>,
-        egress: &[String],
-    ) -> Self {
+    pub(crate) fn new(targets: &[BootSshTarget], egress: &[String]) -> Self {
         Self {
-            targets: targets
-                .map(|(host, port, user)| SshEndpoint {
-                    host: host.to_owned(),
-                    port,
-                    user: user.to_owned(),
-                })
-                .collect(),
+            targets: targets.to_vec(),
             egress: egress.to_vec(),
         }
+    }
+    /// The boot targets a binding can select: those with a host key.
+    pub(crate) fn keyed_targets(&self) -> impl Iterator<Item = (&BootSshTarget, Fingerprint)> {
+        self.targets
+            .iter()
+            .filter_map(|target| Some((target, Fingerprint::from_bytes(target.host_key_sha256()?))))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl BootSsh {
+    /// Session connectors for the keyed boot targets, from each target's host key and
+    /// session settings (the login shell in an `xterm-256color` 80 × 24 terminal when
+    /// absent).
+    pub(crate) fn connectors(
+        &self,
+        ssh: &std::sync::Arc<nocterm_ssh::SshTransport>,
+    ) -> Result<Vec<super::targets::BootConnector>, RunnerError> {
+        self.keyed_targets()
+            .map(|(target, _)| {
+                let host = target
+                    .host_public_key
+                    .as_deref()
+                    .and_then(|key| nocterm_ssh_keys::PublicKeyText::parse(key).ok())
+                    .ok_or(RunnerError::Value("boot.ssh_targets.host_public_key"))?;
+                let session = target.session_or_default();
+                let request = super::config::ssh_request(
+                    nocterm_session::Target {
+                        host: target.host.clone(),
+                        port: target.port,
+                        user: target.user.clone(),
+                    },
+                    nocterm_session::ShellLaunch {
+                        program: session.program,
+                        args: session.args,
+                        cwd: session.cwd,
+                        env: Default::default(),
+                        integration: true,
+                    },
+                    session.terminal,
+                    super::config::size(session.columns, session.rows),
+                    std::time::Duration::from_millis(session.connect_timeout_ms),
+                );
+                Ok(super::targets::BootConnector::new(
+                    ssh.clone(),
+                    request,
+                    host,
+                )?)
+            })
+            .collect()
+    }
+}
+
+fn endpoint_of(target: &BootSshTarget) -> SshEndpoint {
+    SshEndpoint {
+        host: target.host.clone(),
+        port: target.port,
+        user: target.user.clone(),
     }
 }
 
@@ -74,17 +116,16 @@ impl BootSsh {
 pub(crate) fn reach(
     targets: &SessionTargetConfiguration,
     egress: Vec<String>,
-    boot: Option<BootSsh>,
+    boot: Option<&BootSsh>,
 ) -> Result<SshReach, RunnerError> {
-    let mut endpoints: Vec<_> = targets
-        .ssh_endpoints()?
-        .into_iter()
-        .map(|(endpoint, host_key)| (endpoint, Some(host_key)))
-        .collect();
+    let mut endpoints = targets.ssh_endpoints()?;
     let egress = match boot {
         Some(boot) => {
-            endpoints.extend(boot.targets.into_iter().map(|endpoint| (endpoint, None)));
-            boot.egress
+            endpoints.extend(
+                boot.keyed_targets()
+                    .map(|(target, host_key)| (endpoint_of(target), host_key)),
+            );
+            boot.egress.clone()
         }
         None => egress,
     };
@@ -94,10 +135,7 @@ pub(crate) fn reach(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nocterm_cloud_model::{
-        identity::Fingerprint,
-        ssh_access::{BoundTarget, SshServerKey, SshServerReach},
-    };
+    use nocterm_cloud_model::ssh_access::{BoundTarget, SshServerKey, SshServerReach};
 
     fn targets() -> SessionTargetConfiguration {
         let host = nocterm_ssh_keys::KeyMaterial::ed25519_from_seed(&[1; 32], "h")
@@ -126,18 +164,36 @@ mod tests {
             },
             host_key: key,
             principal: "nocterm-agent-x".into(),
+            access: None,
+        }
+    }
+
+    fn boot_target(host: &str, key: Option<&nocterm_ssh_keys::PublicKeyText>) -> BootSshTarget {
+        BootSshTarget {
+            host: host.into(),
+            user: "deploy".into(),
+            port: 22,
+            host_public_key: key.map(|key| key.as_str().to_owned()),
+            session: None,
         }
     }
 
     #[test]
-    fn configured_targets_need_their_host_key_and_boot_targets_pin_the_bindings() {
+    fn configured_and_boot_targets_are_admitted_only_with_the_bindings_host_key() {
         let configured = targets();
         let (_, key) = configured.ssh_endpoints().unwrap().remove(0);
+        let boot_key = nocterm_ssh_keys::KeyMaterial::ed25519_from_seed(&[2; 32], "b")
+            .unwrap()
+            .public_key();
+        let boot_fingerprint = Fingerprint::from_bytes(boot_key.fingerprint_bytes().unwrap());
         let boot = BootSsh::new(
-            [("boot.example", 22, "deploy")].into_iter(),
+            &[
+                boot_target("boot.example", Some(&boot_key)),
+                boot_target("keyless.example", None),
+            ],
             &["203.0.113.7".into()],
         );
-        let reach = reach(&configured, vec!["10.9.9.9".into()], Some(boot)).unwrap();
+        let reach = reach(&configured, vec!["10.9.9.9".into()], Some(&boot)).unwrap();
         assert_eq!(
             reach.admits(&bound("db.example", 2222, key)),
             SshServerReach::Admitted
@@ -152,14 +208,23 @@ mod tests {
             SshServerReach::Unreachable
         );
         assert_eq!(
-            reach.admits(&bound("boot.example", 22, other)),
+            reach.admits(&bound("boot.example", 22, boot_fingerprint)),
             SshServerReach::Admitted
+        );
+        assert_eq!(
+            reach.admits(&bound("boot.example", 22, other)),
+            SshServerReach::Unreachable
+        );
+        // Listed without a host key: never admitted, whatever key the binding pins.
+        assert_eq!(
+            reach.admits(&bound("keyless.example", 22, other)),
+            SshServerReach::Unreachable
         );
         assert_eq!(reach.egress(), ["203.0.113.7"]);
         let own = super::reach(&configured, vec!["10.9.9.9".into()], None).unwrap();
         assert_eq!(own.egress(), ["10.9.9.9"]);
         assert_eq!(
-            own.admits(&bound("boot.example", 22, other)),
+            own.admits(&bound("boot.example", 22, boot_fingerprint)),
             SshServerReach::Unreachable
         );
     }

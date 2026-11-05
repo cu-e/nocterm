@@ -172,8 +172,14 @@ pub(super) async fn compose(
     let local = configuration.prepare_containment(state.directory()).await?;
     let ssh = ssh_transport(state)?;
     let destination = targets.default_destination()?;
-    let ssh_access = ssh_access(state, reach(&targets, ssh_egress, boot_ssh)?);
-    let targets = targets.build(binding.clone(), &local, ssh, ssh_access.clone())?;
+    let ssh_access = ssh_access(state, reach(&targets, ssh_egress, boot_ssh.as_ref())?);
+    let targets = targets.build(
+        binding.clone(),
+        &local,
+        ssh,
+        ssh_access.clone(),
+        boot_ssh.as_ref(),
+    )?;
     let approval = approval_policy(brokered.as_ref(), &targets);
 
     let (attachments, inbox) = ingress(state, &timer, &budgets, destination)?;

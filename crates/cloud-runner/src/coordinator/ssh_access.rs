@@ -6,7 +6,7 @@
 //! row and in memory for sessions, and is dropped when no binding needs it.
 use super::{chat::Chat, frame::Frame, services::CoordinatorServices};
 use nocterm_cloud_model::{
-    authority::StreamBinding,
+    authority::{AuthenticationBinding, StreamBinding, TargetBinding},
     coordinator::*,
     identity::{Fingerprint, Timestamp},
     journal::*,
@@ -284,6 +284,30 @@ impl ChatSshCredentials for CoordinatorSsh {
             certificate: credential.certificate.clone(),
             principal: credential.principal.to_owned(),
             valid_before: credential.valid_before,
+        })
+    }
+    fn bound(
+        &self,
+        stream: &StreamBinding,
+        target: &TargetBinding,
+        authentication: &AuthenticationBinding,
+        now: Timestamp,
+    ) -> Option<BoundLogin> {
+        let held = self.held.lock();
+        let held = held.get(stream)?;
+        let selected = held.access.select(target, authentication, now)?;
+        let credential = selected.credential.and_then(|credential| {
+            Some(SshLoginCredential {
+                seed: held.seed.clone()?,
+                certificate: credential.certificate.clone(),
+                principal: credential.principal.to_owned(),
+                valid_before: credential.valid_before,
+            })
+        });
+        Some(BoundLogin {
+            endpoint: selected.target.endpoint.clone(),
+            host_key: selected.target.host_key,
+            credential,
         })
     }
 }

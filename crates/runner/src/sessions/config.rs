@@ -119,6 +119,7 @@ impl SessionTargetConfiguration {
         local: &ContainedLocal,
         ssh: Arc<SshTransport>,
         credentials: Arc<dyn nocterm_cloud_model::ssh_access::ChatSshCredentials>,
+        boot: Option<&super::reach::BootSsh>,
     ) -> Result<Arc<ConfiguredSessionTargets>, RunnerError> {
         self.default_destination()?;
         let entries = self
@@ -126,8 +127,11 @@ impl SessionTargetConfiguration {
             .iter()
             .map(|entry| entry.build(local, ssh.clone()))
             .collect::<Result<Vec<_>, _>>()?;
+        let boot = boot.map_or(Ok(Vec::new()), |boot| boot.connectors(&ssh))?;
         Ok(Arc::new(
-            ConfiguredSessionTargets::new(binding, entries)?.with_credentials(credentials),
+            ConfiguredSessionTargets::new(binding, entries)?
+                .with_credentials(credentials)
+                .with_boot_targets(boot),
         ))
     }
 }
@@ -248,21 +252,17 @@ impl TargetDocument {
             } => {
                 let host_key = PublicKeyText::parse(host_public_key)
                     .map_err(|_| RunnerError::Value("session_targets.host_public_key"))?;
-                let request = ConnectRequest {
-                    proxy: ProxyConfig::Direct,
-                    launch: launch.clone(),
-                    target: Target {
+                let request = ssh_request(
+                    Target {
                         host: host.clone(),
                         port: *port,
                         user: self.principal.clone(),
                     },
-                    auth: Auth::Auto,
-                    jumps: Vec::new(),
-                    term: terminal.clone(),
-                    size: size(*columns, *rows),
-                    connect_timeout: Duration::from_millis(*timeout_ms),
-                    keepalive_interval: Some(Duration::from_secs(30)),
-                };
+                    launch.clone(),
+                    terminal.clone(),
+                    size(*columns, *rows),
+                    Duration::from_millis(*timeout_ms),
+                );
                 Ok(ConfiguredSessionTarget::ssh(
                     target,
                     authentication,
@@ -274,8 +274,29 @@ impl TargetDocument {
         }
     }
 }
+/// A direct SSH connection that signs in only by the session's own login path.
 #[cfg(target_os = "linux")]
-fn size(cols: u16, rows: u16) -> PtySize {
+pub(super) fn ssh_request(
+    target: Target,
+    launch: ShellLaunch,
+    term: String,
+    size: PtySize,
+    connect_timeout: Duration,
+) -> ConnectRequest {
+    ConnectRequest {
+        proxy: ProxyConfig::Direct,
+        launch,
+        target,
+        auth: Auth::Auto,
+        jumps: Vec::new(),
+        term,
+        size,
+        connect_timeout,
+        keepalive_interval: Some(Duration::from_secs(30)),
+    }
+}
+#[cfg(target_os = "linux")]
+pub(super) fn size(cols: u16, rows: u16) -> PtySize {
     PtySize {
         cols,
         rows,

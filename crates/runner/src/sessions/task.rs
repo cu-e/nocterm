@@ -98,7 +98,7 @@ impl SessionTask {
         let close = session.clone();
         let options = self
             .targets
-            .terminal_options(self.attempt.request.value())?;
+            .terminal_options(self.attempt.request.value(), self.setup.timer().now())?;
         let registry = Arc::new(Mutex::new(
             self.retained.view(binding.run().clone()).map_err(backend)?,
         ));

@@ -51,6 +51,8 @@ pub enum RunnerError {
     Task(#[source] tokio::task::JoinError),
     #[error("the managed boot document could not be read")]
     Boot(#[source] SharedCause),
+    #[error("the managed boot document's SSH section is invalid")]
+    BootSsh(#[from] nocterm_hub_io::runner_control::boot_ssh::BootSshError),
     #[error("the managed control channel failed and its tokens were revoked")]
     ControlChannel(#[source] nocterm_hub_io::runner_control::ChatAccessFrameError),
     #[error("the runner could not write its report")]

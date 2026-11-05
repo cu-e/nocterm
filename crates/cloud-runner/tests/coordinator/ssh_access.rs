@@ -1,11 +1,12 @@
 //! A chat's SSH binding, certificates and revocation through the coordinator (ADR 0137).
 use super::*;
 use nocterm_cloud_model::{
+    authority::{AuthenticationBinding, TargetBinding},
     payload::OpaqueBytes,
     ssh_access::{
-        BoundTarget, CertificateFacts, ChatSshCredentials, ChatSshKeys, SshAccessError,
-        SshAccessEvent, SshAccessPhase, SshBindingOffer, SshCertificateOffer, SshCertificateReader,
-        SshCertificateRequest, SshEndpoint, SshReach, SshServerKey,
+        BoundAccess, BoundTarget, CertificateFacts, ChatSshCredentials, ChatSshKeys,
+        SshAccessError, SshAccessEvent, SshAccessPhase, SshBindingOffer, SshCertificateOffer,
+        SshCertificateReader, SshCertificateRequest, SshEndpoint, SshReach, SshServerKey,
     },
 };
 use std::sync::Mutex;
@@ -71,6 +72,18 @@ fn endpoint() -> SshEndpoint {
         user: "deploy".into(),
     }
 }
+/// The session access a device names for the bound server.
+fn access() -> BoundAccess {
+    BoundAccess {
+        target: TargetBinding::new(
+            fp(73),
+            fp(76),
+            NamespaceId::new("deploy".to_owned()).unwrap(),
+            fp(77),
+        ),
+        authentication: AuthenticationBinding::new(fp(71), fp(78)),
+    }
+}
 fn grant(epoch: u64) -> GrantReference {
     GrantReference::new(
         GrantClass::SshBinding,
@@ -89,6 +102,7 @@ fn binding(id: u8, control: ChatControlRevision) -> ReceivedCommand {
             endpoint: endpoint(),
             host_key: fp(73),
             principal: "nocterm-agent-test".into(),
+            access: Some(access()),
         }],
         OpaqueBytes::new(vec![74; 32]).unwrap(),
     )
@@ -130,7 +144,7 @@ fn last_phase(fixture: &Fixture) -> SshAccessPhase {
 async fn certified() -> (Fixture, Arc<ScriptedCertificates>) {
     let certificates = Arc::new(ScriptedCertificates::default());
     let fixture = Fixture::with_ssh(
-        SshReach::new(vec![(endpoint(), Some(fp(73)))], vec!["203.0.113.7".into()]).unwrap(),
+        SshReach::new(vec![(endpoint(), fp(73))], vec!["203.0.113.7".into()]).unwrap(),
         certificates.clone(),
     );
     fixture
@@ -190,6 +204,43 @@ async fn a_bound_chat_asks_for_a_certificate_and_lends_it_to_sessions_once_answe
 }
 
 #[tokio::test]
+async fn a_run_selects_the_bound_server_by_its_session_access_and_waits_without_a_certificate() {
+    let (fixture, _) = certified().await;
+    let ssh = fixture.ssh.clone().unwrap();
+    let access = access();
+    let selected = ssh
+        .bound(
+            &stream(),
+            &access.target,
+            &access.authentication,
+            Timestamp::from_millis(2000),
+        )
+        .unwrap();
+    assert_eq!(selected.endpoint, endpoint());
+    assert_eq!(selected.host_key, fp(73));
+    assert_eq!(selected.credential.unwrap().principal, "nocterm-agent-test");
+    let lapsed = ssh
+        .bound(
+            &stream(),
+            &access.target,
+            &access.authentication,
+            Timestamp::from_millis(1000 + 8 * HOUR),
+        )
+        .unwrap();
+    assert!(lapsed.credential.is_none());
+    let other = AuthenticationBinding::new(fp(71), fp(79));
+    assert!(
+        ssh.bound(
+            &stream(),
+            &access.target,
+            &other,
+            Timestamp::from_millis(2000)
+        )
+        .is_none()
+    );
+}
+
+#[tokio::test]
 async fn the_next_certificate_is_requested_at_eighty_percent_with_the_same_key() {
     let (fixture, _) = certified().await;
     let first = last_request(&fixture);
@@ -235,7 +286,7 @@ async fn unbinding_revokes_access_and_forgets_the_key() {
 async fn a_certificate_for_another_request_is_refused_and_the_binding_stays_pending() {
     let certificates = Arc::new(ScriptedCertificates::default());
     let fixture = Fixture::with_ssh(
-        SshReach::new(vec![(endpoint(), None)], vec!["203.0.113.7".into()]).unwrap(),
+        SshReach::new(vec![(endpoint(), fp(73))], vec!["203.0.113.7".into()]).unwrap(),
         certificates.clone(),
     );
     fixture
@@ -268,7 +319,7 @@ async fn a_certificate_for_another_request_is_refused_and_the_binding_stays_pend
 #[tokio::test]
 async fn a_runner_without_egress_refuses_the_binding_and_keeps_no_key() {
     let fixture = Fixture::with_ssh(
-        SshReach::new(vec![(endpoint(), None)], Vec::new()).unwrap(),
+        SshReach::new(vec![(endpoint(), fp(73))], Vec::new()).unwrap(),
         Arc::new(ScriptedCertificates::default()),
     );
     fixture

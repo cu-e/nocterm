@@ -12,3 +12,13 @@ pub mod limits {
         MAX_AGENT_OUTPUT_TOKENS, MAX_AGENT_TURNS, MAX_TOOL_NAME_BYTES, MAX_TOOL_POLICY_ENTRIES,
     };
 }
+
+/// The SSH section of a managed boot document: version, targets with their optional host
+/// keys and session settings, and egress (contract ADR 0011, desktop ADR 0139).
+pub mod boot_ssh {
+    pub use nocterm_hub_model::agents::boot_ssh::{
+        BOOT_VERSION_SSH, BOOT_VERSION_WITHOUT_SSH_EGRESS, BootSshError, BootSshField,
+        BootSshSession, BootSshTarget, check_boot_ssh,
+    };
+    pub use nocterm_hub_model::cloud::ssh::is_source_address;
+}

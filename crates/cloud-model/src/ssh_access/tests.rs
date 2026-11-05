@@ -28,7 +28,27 @@ fn target(server: u8, host: &str) -> BoundTarget {
         endpoint: endpoint(host),
         host_key: Fingerprint::from_bytes([server; 32]),
         principal: format!("nocterm-agent-ca-{server}"),
+        access: Some(access_of(server)),
     }
+}
+/// The session access the adapter derives for server `server` of the binding.
+fn access_of(server: u8) -> BoundAccess {
+    BoundAccess {
+        target: TargetBinding::new(
+            Fingerprint::from_bytes([server; 32]),
+            Fingerprint::from_bytes([server ^ 0x40; 32]),
+            crate::identity::NamespaceId::new("deploy".to_owned()).unwrap(),
+            Fingerprint::from_bytes([server ^ 0x80; 32]),
+        ),
+        authentication: AuthenticationBinding::new(
+            Fingerprint::from_bytes([9; 32]),
+            Fingerprint::from_bytes([server ^ 0xc0; 32]),
+        ),
+    }
+}
+/// Hosts `a`, `b`, … are servers 1, 2, … with host keys `[1; 32]`, `[2; 32]`, ….
+fn host_key(host: &str) -> Fingerprint {
+    Fingerprint::from_bytes([host.as_bytes()[0] - b'a' + 1; 32])
 }
 fn offer(epoch: u64, targets: Vec<BoundTarget>) -> SshBindingOffer {
     SshBindingOffer::new(
@@ -43,7 +63,10 @@ fn offer(epoch: u64, targets: Vec<BoundTarget>) -> SshBindingOffer {
 }
 fn reach(hosts: &[&str], egress: &[&str]) -> SshReach {
     SshReach::new(
-        hosts.iter().map(|host| (endpoint(host), None)).collect(),
+        hosts
+            .iter()
+            .map(|host| (endpoint(host), host_key(host)))
+            .collect(),
         egress.iter().map(|address| (*address).to_owned()).collect(),
     )
     .unwrap()
@@ -168,7 +191,7 @@ fn a_runner_without_egress_or_reachable_servers_refuses_the_binding_and_needs_no
 #[test]
 fn a_configured_target_with_another_host_key_is_unreachable() {
     let configured = SshReach::new(
-        vec![(endpoint("a"), Some(Fingerprint::from_bytes([8; 32])))],
+        vec![(endpoint("a"), Fingerprint::from_bytes([8; 32]))],
         vec!["10.0.0.1".into()],
     )
     .unwrap();
@@ -318,6 +341,40 @@ fn an_active_certificate_signs_in_to_its_bound_servers_only() {
     assert!(
         access
             .credential(&endpoint("a"), &key, at(T0 + 1 + 8 * HOUR))
+            .is_none()
+    );
+}
+
+#[test]
+fn a_run_selects_an_admitted_bound_server_only_by_its_exact_session_access() {
+    let (access, _) = active();
+    let one = access_of(1);
+    let selected = access
+        .select(&one.target, &one.authentication, at(T0 + 3))
+        .unwrap();
+    assert_eq!(selected.target.endpoint, endpoint("a"));
+    assert_eq!(selected.credential.unwrap().principal, "nocterm-agent-ca-1");
+    // Server 2 is bound but this runner cannot reach it.
+    let two = access_of(2);
+    assert!(
+        access
+            .select(&two.target, &two.authentication, at(T0 + 3))
+            .is_none()
+    );
+    // Another credential revision (an older or newer binding epoch) selects nothing.
+    let stale = AuthenticationBinding::new(
+        Fingerprint::from_bytes([9; 32]),
+        Fingerprint::from_bytes([0xee; 32]),
+    );
+    assert!(access.select(&one.target, &stale, at(T0 + 3)).is_none());
+    // After the certificate lapsed the server is still selected and waits for a device.
+    let lapsed = access
+        .select(&one.target, &one.authentication, at(T0 + 1 + 8 * HOUR))
+        .unwrap();
+    assert!(lapsed.credential.is_none());
+    assert!(
+        access
+            .select(&one.target, &one.authentication, at(T0 + 7 * 24 * HOUR))
             .is_none()
     );
 }

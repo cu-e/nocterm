@@ -11,13 +11,15 @@ mod ports;
 #[cfg(test)]
 mod tests;
 
-pub use access::{ChatSshAccess, KeyChange, SshAccessChange, SshCredential};
+pub use access::{BoundSelection, ChatSshAccess, KeyChange, SshAccessChange, SshCredential};
 pub use parts::{BindingParts, IssuedCertificate, OpenRequest, SshAccessParts};
 pub use ports::{
-    ChatSshCredentials, ChatSshKeys, SshLoginCredential, SshSubjectSeed, StoredSshAccess,
+    BoundLogin, ChatSshCredentials, ChatSshKeys, SshLoginCredential, SshSubjectSeed,
+    StoredSshAccess,
 };
 
 use crate::{
+    authority::{AuthenticationBinding, TargetBinding},
     coordinator::{GrantClass, GrantReference},
     identity::{Fingerprint, Timestamp},
     payload::OpaqueBytes,
@@ -88,14 +90,26 @@ impl SshEndpoint {
     }
 }
 
+/// The session access a device names to run a prompt on one bound server (contract ADR
+/// 0011): fingerprints the adapter derives from the CA-signed binding, so a run selects the
+/// server by equality and never constructs one from a prompt (ADR 0139).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundAccess {
+    pub target: TargetBinding,
+    pub authentication: AuthenticationBinding,
+}
+
 /// One server of a binding with its pinned host key and its per-server principal
-/// (`nocterm-agent-<ca>-<server>`), which the adapter derives from the CA key.
+/// (`nocterm-agent-<ca>-<server>`), which the adapter derives from the CA key. `access` is
+/// `None` for a binding recorded before bound servers became session targets, or whose login
+/// user is no valid principal: such a server can be certified but never selected by a run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundTarget {
     pub server: SshServerKey,
     pub endpoint: SshEndpoint,
     pub host_key: Fingerprint,
     pub principal: String,
+    pub access: Option<BoundAccess>,
 }
 
 /// A CA-signed binding admitted by the adapter for this exact chat. `signed` is the
@@ -224,16 +238,16 @@ pub trait SshCertificateReader: Send + Sync {
 }
 
 /// The servers this runner can reach and the addresses servers see it connect from.
-/// Configured targets carry their host key, which must equal the binding's; a target
-/// without one (a managed boot target) pins the binding's host key.
+/// Every target carries its host key, which must equal the binding's: a managed boot
+/// target without one is not listed (ADR 0139).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SshReach {
-    endpoints: Vec<(SshEndpoint, Option<Fingerprint>)>,
+    endpoints: Vec<(SshEndpoint, Fingerprint)>,
     egress: Vec<String>,
 }
 impl SshReach {
     pub fn new(
-        endpoints: Vec<(SshEndpoint, Option<Fingerprint>)>,
+        endpoints: Vec<(SshEndpoint, Fingerprint)>,
         egress: Vec<String>,
     ) -> Result<Self, SshAccessError> {
         if endpoints.iter().any(|(endpoint, _)| !endpoint.valid())
@@ -256,9 +270,10 @@ impl SshReach {
     }
     /// Whether this runner may connect to `target` ("select, never construct").
     pub fn admits(&self, target: &BoundTarget) -> SshServerReach {
-        let known = self.endpoints.iter().any(|(endpoint, key)| {
-            endpoint == &target.endpoint && key.as_ref().is_none_or(|key| key == &target.host_key)
-        });
+        let known = self
+            .endpoints
+            .iter()
+            .any(|(endpoint, key)| endpoint == &target.endpoint && key == &target.host_key);
         if known {
             SshServerReach::Admitted
         } else {

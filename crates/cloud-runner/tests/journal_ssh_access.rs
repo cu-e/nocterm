@@ -3,6 +3,7 @@
 mod support;
 use futures::executor::block_on;
 use nocterm_cloud_model::{
+    authority::{AuthenticationBinding, TargetBinding},
     coordinator::{GrantClass, GrantReference},
     identity::*,
     journal::*,
@@ -46,12 +47,21 @@ fn bound() -> StoredSshAccess {
             },
             host_key: fp(4),
             principal: "nocterm-agent-0000000000000000-0303030303030303".into(),
+            access: Some(BoundAccess {
+                target: TargetBinding::new(
+                    fp(4),
+                    fp(7),
+                    NamespaceId::new("deploy".to_owned()).unwrap(),
+                    fp(8),
+                ),
+                authentication: AuthenticationBinding::new(Fingerprint::from_bytes([2; 32]), fp(9)),
+            }),
         }],
         bytes(&[5; 40]),
     )
     .unwrap();
     let reach = SshReach::new(
-        vec![(offer.targets()[0].endpoint.clone(), None)],
+        vec![(offer.targets()[0].endpoint.clone(), fp(4))],
         vec!["203.0.113.7".into()],
     )
     .unwrap();

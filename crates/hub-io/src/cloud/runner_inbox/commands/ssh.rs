@@ -2,10 +2,11 @@
 //!
 //! The contract decoder verified the binding's CA signature and that it names the routed
 //! namespace, runner and chat; this adds the chat key epoch and derives each target's
-//! per-server principal, so the runner never needs the contract to compare certificates.
+//! per-server principal and session access (contract ADR 0011, ADR 0139), so the runner
+//! never needs the contract to compare certificates or to recognise a prompt's target.
 use super::*;
 use nocterm_cloud_model::ssh_access::{
-    BoundTarget, SshBindingOffer, SshCertificateOffer, SshEndpoint, SshServerKey,
+    BoundAccess, BoundTarget, SshBindingOffer, SshCertificateOffer, SshEndpoint, SshServerKey,
 };
 use nocterm_hub_model::cloud::ssh::SignedSshBinding;
 use nocterm_keys::agents::ssh_ca::principal_for;
@@ -52,6 +53,13 @@ pub(in super::super) fn binding(
             },
             host_key: Fingerprint::from_bytes(target.host_key_sha256),
             principal: principal_for(&binding.ca_key, &target.server),
+            // A login user that is no valid principal cannot be named by a run.
+            access: binding.target_access(&target.server).and_then(|access| {
+                Some(BoundAccess {
+                    target: super::target(&access.target).ok()?,
+                    authentication: authentication(access.authentication),
+                })
+            }),
         })
         .collect();
     let offer = SshBindingOffer::new(

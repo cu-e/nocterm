@@ -1,12 +1,13 @@
 //! The transitions of one chat's SSH access.
 use super::{
-    BindingParts, CertificateFacts, DEFAULT_CERTIFICATE_VALIDITY_MS, IssuedCertificate,
-    MAX_BOUND_SERVERS, MAX_CERTIFICATE_VALIDITY_MS, OpenRequest, RENEW_AT_PERCENT, SshAccessError,
-    SshAccessEvent, SshAccessParts, SshAccessPhase, SshAccessReport, SshBindingOffer,
-    SshBindingRefusal, SshCertificateOffer, SshCertificateRequest, SshEndpoint, SshReach,
-    SshServerKey, SshServerReach,
+    BindingParts, BoundTarget, CertificateFacts, DEFAULT_CERTIFICATE_VALIDITY_MS,
+    IssuedCertificate, MAX_BOUND_SERVERS, MAX_CERTIFICATE_VALIDITY_MS, OpenRequest,
+    RENEW_AT_PERCENT, SshAccessError, SshAccessEvent, SshAccessParts, SshAccessPhase,
+    SshAccessReport, SshBindingOffer, SshBindingRefusal, SshCertificateOffer,
+    SshCertificateRequest, SshEndpoint, SshReach, SshServerKey, SshServerReach,
 };
 use crate::{
+    authority::{AuthenticationBinding, TargetBinding},
     coordinator::GrantReference,
     identity::{Fingerprint, Timestamp},
     payload::OpaqueBytes,
@@ -53,6 +54,14 @@ pub struct SshCredential<'a> {
     pub principal: &'a str,
     pub certificate: &'a OpaqueBytes,
     pub valid_before: Timestamp,
+}
+
+/// The bound server a run's session access selected, with its active credential.
+#[derive(Clone, Copy, Debug)]
+pub struct BoundSelection<'a> {
+    pub target: &'a BoundTarget,
+    /// `None` while no active certificate covers the server.
+    pub credential: Option<SshCredential<'a>>,
 }
 
 /// One chat's binding, its open certificate request and its active certificate.
@@ -319,6 +328,34 @@ impl ChatSshAccess {
             principal: &target.principal,
             certificate: &certificate.blob,
             valid_before: certificate.valid_before,
+        })
+    }
+    /// The admitted server whose session access is `target` and `authentication`, inside
+    /// the binding window of a binding that was not refused, with its credential while a
+    /// certificate covering it is active (ADR 0139).
+    pub fn select(
+        &self,
+        target: &TargetBinding,
+        authentication: &AuthenticationBinding,
+        now: Timestamp,
+    ) -> Option<BoundSelection<'_>> {
+        let binding = self.parts.binding.as_ref()?;
+        if binding.refused.is_some() || now >= binding.offer.expires() {
+            return None;
+        }
+        let bound = binding.offer.targets().iter().find(|bound| {
+            bound.access.as_ref().is_some_and(|access| {
+                &access.target == target && &access.authentication == authentication
+            }) && binding
+                .reach
+                .contains(&(bound.server, SshServerReach::Admitted))
+        })?;
+        let credential = self
+            .credential(&bound.endpoint, &bound.host_key, now)
+            .filter(|credential| credential.server == bound.server);
+        Some(BoundSelection {
+            target: bound,
+            credential,
         })
     }
     /// Where the current binding stands, as its state event says.

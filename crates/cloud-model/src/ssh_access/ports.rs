@@ -1,7 +1,7 @@
 //! Custody of a chat's SSH subject key and what a session receives from it.
 use super::{SshAccessParts, SshEndpoint};
 use crate::{
-    authority::StreamBinding,
+    authority::{AuthenticationBinding, StreamBinding, TargetBinding},
     identity::{Fingerprint, Timestamp},
     journal::JournalFuture,
     payload::OpaqueBytes,
@@ -57,6 +57,16 @@ pub struct SshLoginCredential {
     pub valid_before: Timestamp,
 }
 
+/// A bound server a run selected by its session access (ADR 0139): where to connect, the
+/// host key to pin and, while a certificate is active for it, the login.
+#[derive(Clone, Debug)]
+pub struct BoundLogin {
+    pub endpoint: SshEndpoint,
+    pub host_key: Fingerprint,
+    /// `None` while no certificate is active: the session waits for a device.
+    pub credential: Option<SshLoginCredential>,
+}
+
 /// The session broker's view of the chats' active certificates.
 pub trait ChatSshCredentials: Send + Sync {
     fn credential(
@@ -66,4 +76,13 @@ pub trait ChatSshCredentials: Send + Sync {
         host_key: &Fingerprint,
         now: Timestamp,
     ) -> Option<SshLoginCredential>;
+    /// The admitted server of the chat's current binding whose session access is exactly
+    /// `target` and `authentication`, inside the binding's window; `None` selects nothing.
+    fn bound(
+        &self,
+        stream: &StreamBinding,
+        target: &TargetBinding,
+        authentication: &AuthenticationBinding,
+        now: Timestamp,
+    ) -> Option<BoundLogin>;
 }

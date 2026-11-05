@@ -295,6 +295,36 @@ mod ssh_grants {
     }
 
     #[test]
+    fn a_bound_server_carries_the_session_access_a_prompt_names_for_it() {
+        let account = AccountKeyPair::generate().unwrap();
+        let (stream, _) = stream_and_destination(&account);
+        let body = ssh::binding(&signed(5), &stream, Some(ChatKeyEpoch::new(5).unwrap())).unwrap();
+        let CommandBody::SshBinding(offer) = body else {
+            panic!("not a binding");
+        };
+        let server = SshServerId::of_profile("profile-1");
+        let prompt = signed(5).binding().target_access(&server).unwrap();
+        let access = offer.targets()[0].access.clone().unwrap();
+        // A prompt's target maps through the same functions as `submit` does.
+        assert_eq!(access.target, super::target(&prompt.target).unwrap());
+        assert_eq!(
+            access.authentication,
+            super::authentication(prompt.authentication)
+        );
+        assert_eq!(access.target.host().as_bytes(), &[31; 32]);
+        assert_eq!(access.target.principal().as_str(), "deploy");
+        // A newer epoch of the same grant names another credential revision.
+        let mut newer = signed(5).binding().clone();
+        newer.grant.epoch += 1;
+        let newer = UserCa::from_seed(CA_SEED).sign_binding(newer).unwrap();
+        let moved = newer.binding().target_access(&server).unwrap();
+        assert_ne!(
+            access.authentication,
+            super::authentication(moved.authentication)
+        );
+    }
+
+    #[test]
     fn a_binding_for_another_chat_key_epoch_is_refused() {
         let account = AccountKeyPair::generate().unwrap();
         let (stream, _) = stream_and_destination(&account);
