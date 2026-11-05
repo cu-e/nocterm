@@ -44,7 +44,7 @@ impl Transport for LocalLaunchTransport {
         request: ConnectRequest,
         options: nocterm_session::ConnectionOpenOptions,
     ) -> Session {
-        (self.factory)(request.launch.clone()).open_with(request, options)
+        (self.factory)(request.launch.clone(), None).open_with(request, options)
     }
 }
 struct ContainerTransport {
