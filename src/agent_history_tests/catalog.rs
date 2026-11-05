@@ -136,7 +136,8 @@ fn forged_cache_cannot_change_authoritative_scope_or_displayed_metadata() {
     .unwrap();
     save(dir.path(), &chat).unwrap();
     let path = document(dir.path(), chat.header.scope, &chat.header.id, "meta");
-    let mut cache: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut cache =
+        serde_json::to_value(nocterm_ai::history::ChatSummary::from_chat(&chat)).unwrap();
     cache["scope"] = serde_json::json!({"kind": "general"});
     cache["title"] = serde_json::json!("forged title");
     cache["name"] = serde_json::json!("forged name");
