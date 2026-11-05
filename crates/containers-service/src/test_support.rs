@@ -1,6 +1,10 @@
 //! A host with a scripted Docker, for tests of everything that watches containers.
 
-use std::sync::{Arc, Mutex};
+use futures::future::BoxFuture;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 use futures::FutureExt as _;
 use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec};
@@ -23,6 +27,7 @@ pub struct FakeDockerHost {
     images: Mutex<String>,
     ran: Mutex<Vec<String>>,
     events: Mutex<Vec<ExecSink>>,
+    listings: Mutex<VecDeque<BoxFuture<'static, ()>>>,
 }
 
 impl FakeDockerHost {
@@ -33,7 +38,13 @@ impl FakeDockerHost {
             images: Mutex::new(String::new()),
             ran: Mutex::default(),
             events: Mutex::default(),
+            listings: Mutex::default(),
         })
+    }
+
+    /// Suspends the next container listing after capturing its reply.
+    pub fn suspend_listing(&self, gate: BoxFuture<'static, ()>) {
+        lock(&self.listings).push_back(gate);
     }
 
     /// Every command line run so far.
@@ -109,12 +120,21 @@ impl HostExec for FakeDockerHost {
             _ if line.starts_with("docker") => (String::new(), 0),
             _ => (String::new(), 127),
         };
-        assert_eq!(sink.send(stdout.into_bytes()).now_or_never(), Some(true));
-        sink.finish(ExecExit {
-            status: Some(status),
-            stderr: String::new(),
-        });
-        Box::pin(async { Ok(output) })
+        let gate = line
+            .starts_with("docker ps")
+            .then(|| lock(&self.listings).pop_front())
+            .flatten();
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                gate.await;
+            }
+            assert!(sink.send(stdout.into_bytes()).await);
+            sink.finish(ExecExit {
+                status: Some(status),
+                stderr: String::new(),
+            });
+            Ok(output)
+        })
     }
 }
 

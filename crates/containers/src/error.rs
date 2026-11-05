@@ -46,6 +46,8 @@ pub enum ContainersError {
     Disconnected,
     #[error("This host cannot run programs.")]
     Unsupported,
+    #[error("The container engine did not finish the operation in time.")]
+    TimedOut,
     #[error("{0}")]
     Parse(#[from] ListingError),
     #[error("{0}")]
