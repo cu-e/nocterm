@@ -335,7 +335,7 @@ impl AgentPanel {
             .as_ref()
             .map(|thread| attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx));
         let queue = match (&local, &labels) {
-            (Some(thread), Some(labels)) => self.render_queue(thread, labels, window, cx),
+            (Some(thread), Some(labels)) => self.render_queue(thread, labels, cx),
             _ => None,
         };
         let commands = self.render_commands(window, cx);

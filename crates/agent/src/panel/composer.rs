@@ -237,29 +237,19 @@ impl AgentPanel {
         &mut self,
         thread: &Entity<AgentThread>,
         labels: &attachments::AttachmentLabels,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if thread.read(cx).composer().queue().is_empty() {
             return None;
         }
-        let height = queue::QueueRenderer::visible_height(&self.composer, thread, window, cx);
-        let prompts = if self.composer.queue_open() || height > gpui_kit::px(0.) {
+        let prompts = if self.composer.queue_open() {
             thread.read(cx).composer().queue().to_vec()
         } else {
             Vec::new()
         };
         let previews =
             preview_operation::PreviewOperation::queued_previews(&mut self.messages, &prompts, cx);
-        queue::QueueRenderer::render_queue(
-            &self.composer,
-            prompts,
-            previews,
-            thread,
-            labels,
-            height,
-            cx,
-        )
+        queue::QueueRenderer::render_queue(&self.composer, prompts, previews, thread, labels, cx)
     }
     pub(super) fn prepare_images(
         &mut self,
@@ -657,16 +647,6 @@ impl AgentPanel {
         self.composer.set_text(draft, window, cx);
     }
 
-    pub(super) fn on_queue_height_observed(
-        &mut self,
-        chat: EntityId,
-        height: gpui_kit::Pixels,
-        cx: &mut Context<Self>,
-    ) {
-        if self.composer.observe_queue_height(chat, height) {
-            cx.notify();
-        }
-    }
     pub(super) fn sync_composer_draft(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.current() else {
             return;
@@ -688,7 +668,7 @@ impl AgentPanel {
             return;
         }
         self.composer.toggle_queue();
-        cx.notify();
+        self.layout.parts().notify(parts::PartKind::Footer, cx);
     }
     pub(super) fn on_attachment_selected(
         &mut self,

@@ -86,7 +86,6 @@ impl AgentPanel {
         {
             self.leave_composer_with(true, cx);
         }
-        self.composer.removed_chats(&removed);
         self.chats.remove(&removed);
         if active.is_some_and(|id| removed.contains(&id)) {
             self.reset_chat_view(cx);
@@ -398,7 +397,6 @@ impl AgentPanel {
             self.leave_composer_with(true, cx);
         }
         let retained = self.chats.clear_all(cx);
-        self.composer.removed_chats(retained.removed());
         if let Some(error) = retained.into_error() {
             self.notices.set_error(Some(error.to_string()));
         }
