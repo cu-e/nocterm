@@ -40,7 +40,7 @@ pub use ids::{CommandKey, ConversationKey, IntentKey, RunKey};
 pub use port::{CloudConversation, ConversationFuture, ConversationUpdate, ConversationUpdates};
 pub use transcript::{
     Approval, CloudTranscript, CommandKind, CommandState, ModelName, PendingCommand, Row, RowRole,
-    Run, RunStatus, SessionEnd, SessionRow, SessionState, ToolRow, ToolState, Usage,
+    Run, RunStatus, SessionEnd, SessionRow, SessionState, ToolOutcome, ToolRow, ToolState, Usage,
 };
 
 #[cfg(any(test, feature = "test-support"))]

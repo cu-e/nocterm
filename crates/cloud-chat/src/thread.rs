@@ -11,8 +11,8 @@ use nocterm_ai::{
     tool_display::{ToolDisplay, ToolOutcome},
 };
 use nocterm_cloud_conversation_model::{
-    CloudTranscript, Row, RowRole, RunStatus, SessionEnd, SessionRow, SessionState, ToolRow,
-    ToolState,
+    CloudTranscript, Row, RowRole, RunStatus, SessionEnd, SessionRow, SessionState,
+    ToolOutcome as CloudOutcome, ToolRow, ToolState,
 };
 use serde_json::Value;
 
@@ -100,10 +100,12 @@ fn tool_record(index: u64, tool: &ToolRow) -> ToolRecord {
         | ToolState::Background => ToolStatus::Running,
     };
     let outcome = match (&tool.outcome, tool.state) {
-        (Some(text), ToolState::Failed | ToolState::Denied) => ToolOutcome::Err(text.clone()),
-        (Some(text), _) => ToolOutcome::Ok(json(text)),
-        (None, ToolState::Denied) => ToolOutcome::Err("Denied".to_owned()),
-        (None, _) => ToolOutcome::Pending,
+        (Some(CloudOutcome::Ok(text)), _) => ToolOutcome::Ok(json(text)),
+        (Some(CloudOutcome::Err(text)), _) => ToolOutcome::Err(text.clone()),
+        (Some(CloudOutcome::Pending) | None, ToolState::Denied) => {
+            ToolOutcome::Err("Denied".to_owned())
+        }
+        (Some(CloudOutcome::Pending) | None, _) => ToolOutcome::Pending,
     };
     let display = ToolDisplay {
         version: 2,
@@ -113,7 +115,8 @@ fn tool_record(index: u64, tool: &ToolRow) -> ToolRecord {
         redacted: tool.redacted,
         outcome: Some(outcome),
     };
-    let mut record = ToolRecord::new(format!("{index}-{}", tool.intent), display.title())
+    // The row's title is the core's, never rebuilt from the tool name here.
+    let mut record = ToolRecord::new(format!("{index}-{}", tool.intent), tool.title.clone())
         .name(tool.tool.clone())
         .status(status);
     record.raw_output = tool.output_json.as_deref().map(json);
@@ -189,7 +192,10 @@ pub(crate) fn resident_bytes(transcript: &CloudTranscript) -> usize {
                 + row.tool.as_ref().map_or(0, |tool| {
                     tool.arguments_json.len()
                         + tool.output_json.as_ref().map_or(0, String::len)
-                        + tool.outcome.as_ref().map_or(0, String::len)
+                        + tool
+                            .outcome
+                            .as_ref()
+                            .map_or(0, |outcome| outcome.text().len())
                         + 1024
                 })
         })

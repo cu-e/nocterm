@@ -33,10 +33,31 @@ pub enum ToolState {
     Background,
 }
 
-/// One tool call.
+/// The display outcome the runner attached to a tool call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolOutcome {
+    /// Requested; no result yet.
+    Pending,
+    /// The bounded result as JSON text.
+    Ok(String),
+    /// The redacted failure text.
+    Err(String),
+}
+impl ToolOutcome {
+    /// The text it carries.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Pending => "",
+            Self::Ok(text) | Self::Err(text) => text,
+        }
+    }
+}
+
+/// One tool call, with the title every client shows for it (`"<destination> · <label>"`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolRow {
     pub intent: IntentKey,
+    pub title: String,
     pub tool: String,
     pub arguments_json: String,
     pub destination: Option<String>,
@@ -44,8 +65,8 @@ pub struct ToolRow {
     pub redacted: bool,
     pub state: ToolState,
     pub output_json: Option<String>,
-    /// The outcome text the runner attached.
-    pub outcome: Option<String>,
+    /// The outcome the runner attached.
+    pub outcome: Option<ToolOutcome>,
 }
 
 /// Why a session ended.

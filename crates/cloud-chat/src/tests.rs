@@ -4,9 +4,10 @@ use nocterm_agent_chat::conversation::{ConversationActions, ConversationError};
 use nocterm_agent_runtime::history_admission::testing::HistoryProbe;
 use nocterm_ai::conversation::{ConversationAction, ConversationFreshness, ConversationPhase};
 use nocterm_ai::thread::Entry;
-use nocterm_cloud_conversation_model::testing::{FakeConversation, row, session_row};
+use nocterm_cloud_conversation_model::testing::{FakeConversation, row, session_row, tool_row};
 use nocterm_cloud_conversation_model::{
-    CloudConversationError, Freshness, RowRole, RunKey, SessionState,
+    CloudConversationError, Freshness, IntentKey, RowRole, RunKey, SessionState, ToolOutcome,
+    ToolState,
 };
 use std::{rc::Rc, sync::Arc};
 
@@ -77,6 +78,50 @@ fn a_chat_shows_its_verified_rows_including_the_sessions_its_runner_opened(
         let thread = chat.read(cx).thread();
         assert_eq!(thread.entries.len(), 3);
         assert!(matches!(&thread.entries[2], Entry::Agent(text) if text == "done"));
+    });
+}
+
+#[gpui::test]
+fn a_tool_row_shows_the_title_and_the_typed_outcome_the_core_gave_it(cx: &mut TestAppContext) {
+    use nocterm_ai::tool_display::{ToolDisplay, ToolOutcome as Shown};
+    let (fake, chat) = opened(cx);
+    let run = RunKey::from_bytes([1; 16]);
+    let mut failed = tool_row(
+        run,
+        IntentKey::from_bytes([2; 16]),
+        "run_command",
+        ToolState::Failed,
+    );
+    if let Some(tool) = failed.tool.as_mut() {
+        tool.title = "web-1 · Run command".to_owned();
+        tool.outcome = Some(ToolOutcome::Err("exit 2".to_owned()));
+    }
+    let mut done = tool_row(
+        run,
+        IntentKey::from_bytes([3; 16]),
+        "read_command",
+        ToolState::Succeeded,
+    );
+    if let Some(tool) = done.tool.as_mut() {
+        tool.outcome = Some(ToolOutcome::Ok("{\"lines\":3}".to_owned()));
+    }
+    fake.push_rows(vec![failed, done]);
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let thread = chat.read(cx).thread();
+        let [Entry::Tool(failed), Entry::Tool(done)] = thread.entries.as_slice() else {
+            panic!("two tool rows");
+        };
+        assert_eq!(failed.title, "web-1 · Run command");
+        assert!(matches!(
+            ToolDisplay::from_call(failed).and_then(|display| display.outcome),
+            Some(Shown::Err(text)) if text == "exit 2"
+        ));
+        assert_eq!(done.title, "server · read_command");
+        assert!(matches!(
+            ToolDisplay::from_call(done).and_then(|display| display.outcome),
+            Some(Shown::Ok(value)) if value["lines"] == 3
+        ));
     });
 }
 

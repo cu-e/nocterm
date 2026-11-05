@@ -30,6 +30,7 @@ pub fn tool_row(run: RunKey, intent: IntentKey, tool: &str, state: ToolState) ->
     Row {
         tool: Some(ToolRow {
             intent,
+            title: format!("server · {tool}"),
             tool: tool.to_owned(),
             arguments_json: "{}".to_owned(),
             destination: Some("server".to_owned()),

@@ -2,7 +2,7 @@
 use nocterm_cloud_conversation_model::{
     Approval, CloudConversationError, CommandKey, CommandKind, CommandState, ConversationDelta,
     Freshness, IntentKey, ModelName, PendingCommand, Row, RowRole, Run, RunKey, RunStatus,
-    SessionEnd, SessionRow, SessionState, ToolRow, ToolState, Usage,
+    SessionEnd, SessionRow, SessionState, ToolOutcome, ToolRow, ToolState, Usage,
 };
 use nocterm_cloud_device::{
     CloudDeviceError,
@@ -77,22 +77,7 @@ fn row(row: &transcript::TranscriptRow) -> Row {
         run: row.run.as_ref().map(run_key),
         text: row.text.clone(),
         images: row.images,
-        tool: row.tool.as_ref().map(|call| ToolRow {
-            intent: IntentKey::from_bytes(call.intent),
-            tool: call.tool.clone(),
-            arguments_json: call.arguments_json.clone(),
-            destination: call.destination.clone(),
-            mutates: call.mutates,
-            redacted: call.redacted,
-            state: tool_state(call.status),
-            output_json: call.output_json.clone(),
-            outcome: match &call.outcome {
-                Some(transcript::ToolOutcome::Ok(text) | transcript::ToolOutcome::Err(text)) => {
-                    Some(text.clone())
-                }
-                Some(transcript::ToolOutcome::Pending) | None => None,
-            },
-        }),
+        tool: row.tool.as_ref().map(tool),
         session: row.session.as_ref().map(|call| SessionRow {
             attempt: call.attempt,
             principal: call.principal.clone(),
@@ -103,6 +88,30 @@ fn row(row: &transcript::TranscriptRow) -> Row {
         }),
         at_ms: row.at_ms,
         updated_at_ms: row.updated_at_ms,
+    }
+}
+
+/// A tool call with the title the core gives it and its typed outcome.
+fn tool(call: &transcript::ToolCall) -> ToolRow {
+    ToolRow {
+        intent: IntentKey::from_bytes(call.intent),
+        title: call.title(),
+        tool: call.tool.clone(),
+        arguments_json: call.arguments_json.clone(),
+        destination: call.destination.clone(),
+        mutates: call.mutates,
+        redacted: call.redacted,
+        state: tool_state(call.status),
+        output_json: call.output_json.clone(),
+        outcome: call.outcome.as_ref().map(tool_outcome),
+    }
+}
+
+fn tool_outcome(outcome: &transcript::ToolOutcome) -> ToolOutcome {
+    match outcome {
+        transcript::ToolOutcome::Pending => ToolOutcome::Pending,
+        transcript::ToolOutcome::Ok(text) => ToolOutcome::Ok(text.clone()),
+        transcript::ToolOutcome::Err(text) => ToolOutcome::Err(text.clone()),
     }
 }
 
@@ -269,6 +278,25 @@ mod tests {
                 last_witnessed_at_ms: Some(2)
             }
         );
+    }
+
+    #[test]
+    fn a_tool_call_keeps_the_cores_title_and_its_typed_outcome() {
+        let call = transcript::ToolCall {
+            intent: [1; 16],
+            tool: "run_command".into(),
+            arguments_json: "{}".into(),
+            destination: Some("web-1".into()),
+            mutates: true,
+            redacted: false,
+            status: transcript::ToolStatus::Failed,
+            output_json: None,
+            outcome: Some(transcript::ToolOutcome::Err("exit 2".into())),
+        };
+        let row = tool(&call);
+        assert_eq!(row.title, "web-1 · Run command");
+        assert_eq!(row.outcome, Some(ToolOutcome::Err("exit 2".into())));
+        assert_eq!(row.state, ToolState::Failed);
     }
 
     #[test]
