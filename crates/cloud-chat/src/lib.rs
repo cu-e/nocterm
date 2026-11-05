@@ -543,14 +543,10 @@ impl CloudChat {
         cx: &mut Context<Self>,
     ) -> Result<(), CloudChatError> {
         self.source.check_current()?;
-        if !self
-            .projection
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &page.original))
-        {
+        let Some((next, accepted)) = page.into_transition(self.projection.as_ref()) else {
             return Ok(());
-        }
-        let prompt = self.publish(page.next, &page.accepted)?;
+        };
+        let prompt = self.publish(next, &accepted)?;
         self.residency.published(payload);
         if prompt {
             self.allow_accepted_prompt(cx);

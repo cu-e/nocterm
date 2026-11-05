@@ -7,7 +7,6 @@ use super::{
 };
 use gpui_kit::{Context, Task};
 use nocterm_ai::model::content::Content;
-use std::sync::Arc;
 pub(super) struct PreviewOperation {
     binding: ActiveListBinding,
     ticket: PreviewTicket,
@@ -53,15 +52,7 @@ impl PreviewOperation {
             let preview = images.thumbnailer().thumbnail(bytes, bounds)?;
             // Supplied previews retain the same pure size/format contract.
             let preview = nocterm_ai::images::EncodedPreview::new(preview.bytes().clone(), bounds)?;
-            let (width, height) = preview.dimensions();
-            let resident_bytes = preview.bytes().len() + width as usize * height as usize * 8;
-            Ok::<_, PreviewError>(CompletedPreview {
-                image: Arc::new(gpui_kit::Image::from_bytes(
-                    gpui_kit::ImageFormat::Png,
-                    preview.bytes().to_vec(),
-                )),
-                resident_bytes,
-            })
+            Ok::<_, PreviewError>(CompletedPreview::from_encoded(preview))
         });
         cx.spawn(async move |panel, cx| {
             let result = future.await;

@@ -5,6 +5,12 @@ fn pipeline() -> ImagePipeline {
     let codec = Arc::new(ScriptedImageCodec::default());
     ImagePipeline::new(ImageDeps::new(codec.clone(), codec))
 }
+fn completed_preview() -> CompletedPreview {
+    let bytes = include_bytes!("../tests/fixtures/prompt.png").to_vec();
+    let bounds = nocterm_ai::images::PreviewBounds::new(640, 640).unwrap();
+    let preview = nocterm_ai::images::EncodedPreview::new(bytes.into(), bounds).unwrap();
+    CompletedPreview::from_encoded(preview)
+}
 #[test]
 fn cleared_generation_cannot_install_old_success_or_failure_over_a_reused_key() {
     let mut pipeline = pipeline();
@@ -13,10 +19,7 @@ fn cleared_generation_cannot_install_old_success_or_failure_over_a_reused_key() 
     let old = pipeline.request(source.clone()).unwrap();
     pipeline.clear();
     let current = pipeline.request(source.clone()).unwrap();
-    let image = CompletedPreview {
-        image: Arc::new(Image::from_bytes(gpui_kit::ImageFormat::Png, vec![1])),
-        resident_bytes: 1,
-    };
+    let image = completed_preview();
     assert!(!pipeline.complete(old, Some(image.clone())));
     assert!(!pipeline.complete(old, None));
     assert!(matches!(pipeline.state(&key), Some(PreviewState::Loading)));
@@ -74,10 +77,7 @@ fn small_completed_previews_release_their_decode_reservation() {
     for value in 0..16u8 {
         let source = PreviewSource::Original(vec![value; 1024].into());
         let ticket = pipeline.request(source.clone()).unwrap();
-        let image = CompletedPreview {
-            image: Arc::new(Image::from_bytes(gpui_kit::ImageFormat::Png, vec![1])),
-            resident_bytes: 1024,
-        };
+        let image = completed_preview();
         assert!(pipeline.complete(ticket, Some(image)));
         sources.push(source);
     }

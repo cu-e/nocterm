@@ -55,8 +55,25 @@ pub(super) struct PreviewTicket {
 }
 #[derive(Clone)]
 pub(super) struct CompletedPreview {
-    pub(super) image: Arc<Image>,
-    pub(super) resident_bytes: usize,
+    image: Arc<Image>,
+    resident_bytes: usize,
+}
+impl CompletedPreview {
+    pub(super) fn from_encoded(preview: nocterm_ai::images::EncodedPreview) -> Self {
+        let (width, height) = preview.dimensions();
+        let resident_bytes = preview.bytes().len() + width as usize * height as usize * 8;
+        Self {
+            image: Arc::new(Image::from_bytes(
+                gpui_kit::ImageFormat::Png,
+                preview.bytes().to_vec(),
+            )),
+            resident_bytes,
+        }
+    }
+
+    fn into_ready(self) -> (PreviewState, usize) {
+        (PreviewState::Ready(self.image), self.resident_bytes)
+    }
 }
 pub(super) enum PreviewState {
     Loading,
@@ -196,13 +213,9 @@ impl ImagePipeline {
         if !matches!(entry.state, PreviewState::Loading) {
             return false;
         }
-        entry.charge = entry
-            .source
-            .retained_bytes()
-            .saturating_add(image.as_ref().map_or(0, |image| image.resident_bytes));
-        entry.state = image.map_or(PreviewState::Failed, |image| {
-            PreviewState::Ready(image.image)
-        });
+        let (state, bytes) = image.map_or((PreviewState::Failed, 0), CompletedPreview::into_ready);
+        entry.charge = entry.source.retained_bytes().saturating_add(bytes);
+        entry.state = state;
         entry.task = None;
         true
     }

@@ -17,9 +17,18 @@ pub(crate) struct PreparedPage {
     allocation: AllocationLease,
 }
 pub(crate) struct ReducedPage {
-    pub(super) original: Arc<Allocated<ConversationProjection>>,
-    pub(super) next: Arc<Allocated<ConversationProjection>>,
-    pub(super) accepted: Vec<CommandId>,
+    original: Arc<Allocated<ConversationProjection>>,
+    next: Arc<Allocated<ConversationProjection>>,
+    accepted: Vec<CommandId>,
+}
+impl ReducedPage {
+    pub(super) fn into_transition(
+        self,
+        current: Option<&Arc<Allocated<ConversationProjection>>>,
+    ) -> Option<(Arc<Allocated<ConversationProjection>>, Vec<CommandId>)> {
+        current.filter(|current| Arc::ptr_eq(current, &self.original))?;
+        Some((self.next, self.accepted))
+    }
 }
 impl PreparedPage {
     pub(super) fn new(
