@@ -7,6 +7,10 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
 };
+const MAX_VARIANTS: usize = 2_048;
+const MAX_PACKS: usize = 256;
+const MAX_PROBLEMS: usize = 128;
+const MAX_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct ThemeDirs {
@@ -60,6 +64,7 @@ pub struct CatalogBuilder {
     packs: Vec<ExtensionInfo>,
     problems: Vec<ThemeProblem>,
     names: BTreeSet<String>,
+    content_bytes: usize,
 }
 impl CatalogBuilder {
     pub fn new() -> Self {
@@ -68,12 +73,32 @@ impl CatalogBuilder {
             entries: Vec::new(),
             packs: Vec::new(),
             problems: Vec::new(),
+            content_bytes: 0,
         }
     }
     pub fn manifest(&mut self, path: &Path, id: &str, bytes: &[u8]) -> Option<ThemeSource> {
+        if self.packs.len() >= MAX_PACKS {
+            self.problem(
+                path,
+                ThemeOperationError::DiscoveryLimit {
+                    resource: "packs",
+                    max: MAX_PACKS,
+                },
+            );
+            return None;
+        }
         let result = self.parse_manifest(id, bytes);
         match result {
             Ok(pack) => {
+                let bytes = pack.id.len()
+                    + pack.version.len()
+                    + pack.name.len()
+                    + pack.authors.iter().map(String::len).sum::<usize>()
+                    + pack.description.as_ref().map_or(0, String::len)
+                    + pack.repository.as_ref().map_or(0, String::len);
+                if !self.admit_content(path, bytes) {
+                    return None;
+                }
                 let source = ThemeSource::Installed {
                     id: pack.id.clone(),
                     version: pack.version.clone(),
@@ -104,6 +129,27 @@ impl CatalogBuilder {
         match parse_family(bytes) {
             Ok(family) => {
                 for theme in family.themes {
+                    if self.entries.len() >= MAX_VARIANTS {
+                        self.problem(
+                            path,
+                            ThemeOperationError::DiscoveryLimit {
+                                resource: "variants",
+                                max: MAX_VARIANTS,
+                            },
+                        );
+                        break;
+                    }
+                    let bytes = family.name.len()
+                        + family.author.len()
+                        + theme.name.len() * 3
+                        + theme.colors.keys().map(String::len).sum::<usize>()
+                        + match &source {
+                            ThemeSource::User(path) => path.as_os_str().len(),
+                            ThemeSource::Installed { id, version } => id.len() + version.len(),
+                        };
+                    if !self.admit_content(path, bytes) {
+                        break;
+                    }
                     if !self.names.insert(theme.name.clone()) {
                         self.problem(path, ThemeError::Duplicate(theme.name).into());
                         continue;
@@ -121,7 +167,32 @@ impl CatalogBuilder {
             Err(error) => self.problem(path, error.into()),
         }
     }
+    fn admit_content(&mut self, path: &Path, bytes: usize) -> bool {
+        if bytes > MAX_CONTENT_BYTES.saturating_sub(self.content_bytes) {
+            self.problem(
+                path,
+                ThemeOperationError::DiscoveryLimit {
+                    resource: "retained content bytes",
+                    max: MAX_CONTENT_BYTES,
+                },
+            );
+            return false;
+        }
+        self.content_bytes += bytes;
+        true
+    }
     pub fn problem(&mut self, path: &Path, error: ThemeOperationError) {
+        if self.problems.len() > MAX_PROBLEMS {
+            return;
+        }
+        let error = if self.problems.len() == MAX_PROBLEMS {
+            ThemeOperationError::DiscoveryLimit {
+                resource: "diagnostics",
+                max: MAX_PROBLEMS,
+            }
+        } else {
+            error
+        };
         self.problems.push(ThemeProblem {
             file: path.into(),
             error: ThemeDiagnostic::new(error),

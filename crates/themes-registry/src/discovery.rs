@@ -7,10 +7,17 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
 };
+const MAX_ENTRIES: usize = 4_096;
+const MAX_SCAN_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) fn scan(dirs: &ThemeDirs) -> ThemeCatalog {
     let mut discovery = Discovery {
         catalog: CatalogBuilder::new(),
+        entries: 0,
+        bytes: 0,
     };
+    if let Err(error) = crate::publication::recover(&dirs.installed) {
+        discovery.catalog.problem(&dirs.installed, error);
+    }
     for path in discovery.paths(&dirs.user) {
         discovery.document(&path, ThemeSource::User(path.clone()));
     }
@@ -33,7 +40,7 @@ pub(crate) fn scan(dirs: &ThemeDirs) -> ThemeCatalog {
             }
         }
         let manifest_path = directory.join("extension.toml");
-        match read_bounded(&manifest_path) {
+        match discovery.read(&manifest_path) {
             Ok(bytes) => {
                 if let Some(source) = discovery.catalog.manifest(&manifest_path, id, &bytes) {
                     for path in discovery.paths(&directory.join("themes")) {
@@ -48,6 +55,8 @@ pub(crate) fn scan(dirs: &ThemeDirs) -> ThemeCatalog {
 }
 struct Discovery {
     catalog: CatalogBuilder,
+    entries: usize,
+    bytes: usize,
 }
 impl Discovery {
     fn paths(&mut self, directory: &Path) -> Vec<PathBuf> {
@@ -56,7 +65,20 @@ impl Discovery {
                 let mut paths = Vec::new();
                 for entry in entries {
                     match entry {
-                        Ok(e) => paths.push(e.path()),
+                        Ok(e) => {
+                            if self.entries == MAX_ENTRIES {
+                                self.catalog.problem(
+                                    directory,
+                                    ThemeOperationError::DiscoveryLimit {
+                                        resource: "directory entries",
+                                        max: MAX_ENTRIES,
+                                    },
+                                );
+                                break;
+                            }
+                            self.entries += 1;
+                            paths.push(e.path());
+                        }
                         Err(e) => self
                             .catalog
                             .problem(directory, fs_error(directory, "enumerate", e)),
@@ -86,14 +108,27 @@ impl Discovery {
                 return;
             }
         }
-        match read_bounded(path) {
+        match self.read(path) {
             Ok(bytes) => self.catalog.document(path, source, &bytes),
             Err(error) => self.catalog.problem(path, error),
         }
     }
+    fn read(&mut self, path: &Path) -> Result<Vec<u8>, ThemeOperationError> {
+        let remaining = MAX_SCAN_BYTES.saturating_sub(self.bytes);
+        if remaining == 0 {
+            return Err(ThemeOperationError::DiscoveryLimit {
+                resource: "total bytes",
+                max: MAX_SCAN_BYTES,
+            });
+        }
+        let limit = FILE_LIMIT.min(remaining);
+        let result = read_bounded(path, limit);
+        self.bytes += result.as_ref().map_or(limit, Vec::len);
+        result
+    }
 }
-fn read_bounded(path: &Path) -> Result<Vec<u8>, ThemeOperationError> {
-    read_regular_bounded(path, FILE_LIMIT).map_err(|error| match error {
+fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, ThemeOperationError> {
+    read_regular_bounded(path, limit).map_err(|error| match error {
         BoundedReadError::NotRegular { .. } => ThemeOperationError::NotPlain(path.into()),
         BoundedReadError::TooLarge { .. } => ThemeOperationError::FileLimit,
         BoundedReadError::Io { source, .. } => fs_error(path, "read", source),

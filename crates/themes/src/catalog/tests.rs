@@ -1,4 +1,27 @@
 use super::*;
+
+#[test]
+fn repeated_family_metadata_cannot_multiply_past_the_retained_content_budget() {
+    let variants: Vec<_> = (0..2_000)
+        .map(|index| format!(r#"{{"name":"Theme {index}","appearance":"dark","style":{{}}}}"#))
+        .collect();
+    let bytes = format!(
+        r#"{{"author":"{}","themes":[{}]}}"#,
+        "a".repeat(32 * 1024),
+        variants.join(",")
+    );
+    let path = PathBuf::from("many.json");
+    let mut builder = CatalogBuilder::new();
+    builder.document(&path, ThemeSource::User(path.clone()), bytes.as_bytes());
+    let catalog = builder.finish();
+    assert!(catalog.entries().len() < 1_024);
+    assert!(
+        catalog
+            .problems()
+            .iter()
+            .any(|problem| problem.error.to_string().contains("retained content bytes"))
+    );
+}
 #[test]
 fn supplied_documents_reserve_names_and_keep_first_precedence() {
     let mut builder = CatalogBuilder::new();
