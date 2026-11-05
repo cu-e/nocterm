@@ -3,9 +3,8 @@
 use super::*;
 use nocterm_ssh::{CertificateLogin, CertificateLoginError};
 use nocterm_ssh_keys::{
-    PublicKeyText,
-    ca::{CertificateSpec, UserCa},
-    ed25519_public_key,
+    PublicKeyText, ed25519_public_key,
+    testing::ca::{CertificateSpec, UserCa},
 };
 
 const SEED: [u8; 32] = [11; 32];

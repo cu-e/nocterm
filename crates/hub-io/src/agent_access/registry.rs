@@ -3,11 +3,11 @@
 
 use std::collections::BTreeMap;
 
+use nocterm_hub_model::cloud::ssh::SshServerId;
 use nocterm_hubs_model::AgentAccessError;
 use nocterm_keys::agents::SshTrustRecord;
-use sha2::{Digest, Sha256};
+use nocterm_keys::agents::ssh_ca::{CA_OBJECT, CaDocument};
 
-use super::document::{CA_OBJECT, CaDocument};
 use crate::store::{Located, OpError, Store};
 
 /// The kind of the personal collection that holds the CA and the registry.
@@ -41,12 +41,7 @@ pub(super) fn store_error(error: OpError) -> AgentAccessError {
 
 /// The object id of the server reached through `connection`.
 pub(super) fn server_object(connection: &str) -> String {
-    let digest = Sha256::digest(connection.as_bytes());
-    let mut id = String::from("srv-");
-    for byte in &digest[..16] {
-        id.push_str(&format!("{byte:02x}"));
-    }
-    id
+    SshServerId::of_profile(connection).object_id()
 }
 
 impl Registry {

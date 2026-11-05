@@ -1,4 +1,5 @@
-//! The personal user CA that vouches for the ephemeral keys of agents.
+//! A user CA for SSH tests: it signs OpenSSH user certificates the way the contract's
+//! account CA (`nocterm_keys::agents::ssh_ca`) does, for tests that cannot use the contract.
 //!
 //! A [`UserCa`] is an Ed25519 key. It certifies a runner's ephemeral public key as an OpenSSH
 //! user certificate that is narrower than any login the user has: only the agent principal,

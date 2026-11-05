@@ -13,6 +13,7 @@ fn trusted(connection: &str, state: ServerTrust) -> TrustedServer {
         user: "root".into(),
         host: format!("{connection}.example"),
         state,
+        needs_ca_update: false,
         added_at_ms: 1_700_000_000_000,
         added_by_device: "Laptop".into(),
         last_verified_at_ms: None,
@@ -191,15 +192,33 @@ fn reissuing_the_ca_asks_first(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_ca_line_is_copied_to_the_clipboard(cx: &mut TestAppContext) {
+fn a_servers_own_ca_line_is_copied_to_the_clipboard(cx: &mut TestAppContext) {
     let page = page_with_access(cx);
     open_tab(&page, AGENTS, cx);
 
-    page.click("agent-copy-line", cx);
+    page.click(item("agent-copy-line", "db"), cx);
     cx.run_until_parked();
 
     let copied = cx.read_from_clipboard().and_then(|item| item.text());
-    assert_eq!(copied.as_deref(), Some("cert-authority SHA256:abc"));
+    assert_eq!(copied.as_deref(), Some("cert-authority SHA256:abc db"));
+}
+
+#[gpui_kit::test]
+fn a_server_with_the_shared_principal_needs_an_update_until_it_connects(cx: &mut TestAppContext) {
+    let page = page_with_access(cx);
+    let mut old = trusted("web", ServerTrust::Trusted);
+    old.needs_ca_update = true;
+    page.agent_access.set_servers(vec![old]);
+    open_tab(&page, AGENTS, cx);
+    assert!(page.shows(item("agent-server-update", "web"), cx));
+    assert!(!page.shows(item("agent-server-trusted", "web"), cx));
+
+    let hubs = page.installed.hubs().clone();
+    cx.update(|cx| hubs.update(cx, |hubs, cx| hubs.reconcile_agent_host("web", cx)));
+    cx.run_until_parked();
+    open_tab(&page, OVERVIEW, cx);
+    open_tab(&page, AGENTS, cx);
+    assert!(page.shows(item("agent-server-trusted", "web"), cx));
 }
 
 #[gpui_kit::test]

@@ -1,4 +1,5 @@
-//! An in-memory [`VaultSshKeys`] for consumer tests: no vault, no files, no entropy.
+//! An in-memory [`VaultSshKeys`] for consumer tests: no vault, no files, no entropy, and a
+//! user CA ([`ca`]) that issues OpenSSH certificates for SSH tests.
 use crate::{KeyImportError, KeyMaterial, KeySource, StoredKey, VaultSshKeys, VaultSshKeysError};
 use futures::future::BoxFuture;
 use nocterm_core::error::SharedCause;
@@ -139,6 +140,7 @@ impl VaultSshKeys for MemoryVaultSshKeys {
     }
 }
 
+pub mod ca;
 mod login;
 pub use login::LoginProofFixture;
 
@@ -147,6 +149,7 @@ pub use login::LoginProofFixture;
 #[derive(Clone, Default)]
 pub struct FakeAuthorizedKeys {
     text: Arc<Mutex<String>>,
+    read_only: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FakeAuthorizedKeys {
@@ -154,7 +157,22 @@ impl FakeAuthorizedKeys {
     pub fn with_text(text: &str) -> Self {
         Self {
             text: Arc::new(Mutex::new(text.to_owned())),
+            read_only: Arc::default(),
         }
+    }
+
+    /// Replaces the file's text, as an edit on the server would.
+    pub fn set_text(&self, text: &str) {
+        *self
+            .text
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = text.to_owned();
+    }
+
+    /// Every later replacement fails as if the server refused the write.
+    pub fn fail_writes(&self) {
+        self.read_only
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The file as it is now.
@@ -180,7 +198,9 @@ impl crate::authorized_keys::AuthorizedKeysFile for FakeAuthorizedKeys {
             .text
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result = if *text == previous {
+        let result = if self.read_only.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(crate::authorized_keys::HostAccessError::NotText)
+        } else if *text == previous {
             *text = updated;
             Ok(())
         } else {

@@ -1,15 +1,15 @@
 //! The personal SSH CA for cloud agents and the servers that trust it.
 //!
-//! Owns: the CA document and the `agent_ssh_trust` registry in the account's own encrypted
-//! collection (a hub sees ciphertext only), the rules that move a server between trusted,
-//! pending removal, removed and drifted, and the adapter of the `AgentHostTrust` and
-//! `AgentGrants` ports. `authorized_keys` is reached only through `AgentHosts`.
-//! Contract types stay here (ADR 0096); `nocterm-ssh-keys` has the neutral CA, certificates
-//! and file ports.
+//! Owns: the `agent_ssh_trust` registry in the account's own encrypted collection (a hub sees
+//! ciphertext only), the rules that move a server between trusted, pending removal, removed
+//! and drifted, the per-server `authorized_keys` line each trusted server is given (and the
+//! rewrite of a shared-principal line on its next connection), and the adapter of the
+//! `AgentHostTrust` and `AgentGrants` ports. `authorized_keys` is reached only through
+//! `AgentHosts`. The CA, its document, principals, lines and trust records are the
+//! contract's (`nocterm_keys::agents`, contract ADR 0009, ADR 0139); contract types stay here
+//! (ADR 0096).
 
-mod document;
 mod grants;
-mod issue;
 mod registry;
 #[cfg(test)]
 mod tests;
@@ -26,8 +26,6 @@ use nocterm_hubs_model::{
 };
 use nocterm_ssh_keys::authorized_keys::AgentHosts;
 use tokio::runtime::Handle;
-
-pub use issue::{IssueError, certify};
 
 use crate::account::operations::OpenedWork;
 use crate::links::HubLinks;
@@ -138,9 +136,9 @@ impl AgentHostTrust for AgentAccess {
         self.run(async move { trust.reissue(&hub).await })
     }
 
-    fn ca_line(&self, hub: &HubId) -> AgentAccessFuture<String> {
-        let (trust, hub) = (self.trust.clone(), hub.clone());
-        self.run(async move { trust.ca_line(&hub).await })
+    fn ca_line(&self, hub: &HubId, connection: &str) -> AgentAccessFuture<String> {
+        let (trust, hub, connection) = (self.trust.clone(), hub.clone(), connection.to_owned());
+        self.run(async move { trust.ca_line(&hub, &connection).await })
     }
 }
 

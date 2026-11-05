@@ -174,6 +174,7 @@ impl AgentHostTrust for FakeAgentAccess {
                     host: connection.clone(),
                     connection,
                     state: ServerTrust::Trusted,
+                    needs_ca_update: false,
                     added_at_ms: 1,
                     added_by_device: "this device".into(),
                     last_verified_at_ms: Some(1),
@@ -216,6 +217,10 @@ impl AgentHostTrust for FakeAgentAccess {
                 _ if lost => ServerTrust::Drifted,
                 _ => ServerTrust::Trusted,
             };
+            // A connection gives a trusted server its own line.
+            if known.state == ServerTrust::Trusted {
+                known.needs_ca_update = false;
+            }
             Ok(known.state)
         }
         .boxed()
@@ -237,15 +242,15 @@ impl AgentHostTrust for FakeAgentAccess {
         .boxed()
     }
 
-    fn ca_line(&self, _hub: &HubId) -> AgentAccessFuture<String> {
-        let state = self.state.clone();
+    fn ca_line(&self, _hub: &HubId, connection: &str) -> AgentAccessFuture<String> {
+        let (state, connection) = (self.state.clone(), connection.to_owned());
         async move {
             let state = lock(&state);
             failed(&state)?;
             state
                 .ca
                 .as_ref()
-                .map(|ca| format!("cert-authority {}", ca.fingerprint))
+                .map(|ca| format!("cert-authority {} {connection}", ca.fingerprint))
                 .ok_or_else(|| AgentAccessError::Unknown {
                     connection: String::new(),
                 })

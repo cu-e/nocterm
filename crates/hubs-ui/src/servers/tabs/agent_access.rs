@@ -254,11 +254,11 @@ impl AgentAccess {
         );
     }
 
-    fn copy_line(&mut self, cx: &mut Context<Self>) {
+    fn copy_line(&mut self, connection: &str, cx: &mut Context<Self>) {
         let Some(hub) = self.hub.clone() else {
             return;
         };
-        let line = self.hubs.read(cx).agent_ca_line(&hub);
+        let line = self.hubs.read(cx).agent_ca_line(&hub, connection);
         self.working = Some(cx.spawn(async move |this, cx| {
             let result = line.await;
             this.update(cx, |tab, cx| {
@@ -382,8 +382,7 @@ impl AgentAccess {
         overview: &AgentTrustOverview,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
-        let view = cx.entity();
-        let (copy, reissue) = (view.clone(), view);
+        let reissue = cx.entity();
         let theme = cx.theme();
         let summary = match &overview.ca {
             Some(ca) => format!("{} · created {}", ca.fingerprint, utc(ca.created_at_ms)),
@@ -407,15 +406,6 @@ impl AgentAccess {
                             .text_color(theme.muted_foreground)
                             .child(summary),
                     ),
-            )
-            .child(
-                Button::new("agent-copy-line")
-                    .small()
-                    .label("Copy CA line")
-                    .disabled(!has_ca)
-                    .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                        copy.update(cx, |tab, cx| tab.copy_line(cx));
-                    }),
             )
             .child(
                 Button::new("agent-reissue")
@@ -568,7 +558,13 @@ impl AgentAccess {
     fn server_row(&self, server: &TrustedServer, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let (view, connection) = (cx.entity(), server.connection.clone());
+        let (copy, copied) = (view.clone(), connection.clone());
         let (slug, state, colour) = match server.state {
+            ServerTrust::Trusted if server.needs_ca_update => (
+                "update",
+                "Needs a CA update: connect to give it its own line",
+                theme.warning,
+            ),
             ServerTrust::Trusted => ("trusted", "Trusted", theme.success),
             ServerTrust::RemovalPending => (
                 "pending",
@@ -631,6 +627,14 @@ impl AgentAccess {
                                 server.added_by_device
                             )),
                     ),
+            )
+            .child(
+                Button::new(item("agent-copy-line", &server.connection))
+                    .small()
+                    .label("Copy line")
+                    .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        copy.update(cx, |tab, cx| tab.copy_line(&copied, cx));
+                    }),
             )
             .child(
                 Button::new(item("agent-deny", &server.connection))

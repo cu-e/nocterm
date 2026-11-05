@@ -41,6 +41,9 @@ pub struct TrustedServer {
     pub host: String,
     /// Where the server stands.
     pub state: ServerTrust,
+    /// The server trusts the CA with the shared principal of an earlier client: a chat
+    /// certificate opens it only after its next connection gives it its own line.
+    pub needs_ca_update: bool,
     /// When the line was added, in milliseconds since the Unix epoch.
     pub added_at_ms: i64,
     /// The device that added it.
@@ -148,8 +151,9 @@ pub trait AgentHostTrust: Send + Sync {
     /// Replaces the CA with a new one and moves the servers that can be reached to it.
     fn reissue_ca(&self, hub: &HubId) -> AgentAccessFuture<AgentCa>;
 
-    /// The `cert-authority` line for the user to paste into a server by hand.
-    fn ca_line(&self, hub: &HubId) -> AgentAccessFuture<String>;
+    /// The `cert-authority` line of the server reached through `connection`, for the user
+    /// to paste into it by hand; it admits only that server's principal.
+    fn ca_line(&self, hub: &HubId, connection: &str) -> AgentAccessFuture<String>;
 }
 
 /// The chat accesses agents hold, as the user lists and revokes them.
