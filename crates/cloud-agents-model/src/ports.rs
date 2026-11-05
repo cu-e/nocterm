@@ -112,6 +112,19 @@ pub trait OwnRunnerLauncher: Send + Sync {
     fn renew(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<std::time::Duration>;
 }
 
+/// Answers the SSH certificate requests of a hub's bound Cloud chats while this device holds
+/// the account's keys (ADR 0139). The certifier reads every chat whose runner lists bound
+/// servers; the device core answers a request only inside the binding the person signed, never
+/// past it, and no hub can mint a certificate in its place.
+pub trait ChatSshCertifier: Send + Sync {
+    /// Reads every bound chat of `hub` that is not read yet and stops reading the chats that are
+    /// no longer bound; resolves with how many chats are read now.
+    fn sweep(&self, hub: &HubId) -> CloudFuture<usize>;
+
+    /// Stops reading the chats of `hub`.
+    fn forget(&self, hub: &HubId);
+}
+
 /// Reads what the signed-in person's own agents consumed.
 pub trait AgentUsage: Send + Sync {
     /// The person's own usage of the last `days` UTC days including today, summed per model.

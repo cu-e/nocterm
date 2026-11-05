@@ -53,9 +53,18 @@ impl PreparedApp {
             &ssh_config(&paths),
         ));
         let transport = ssh_transport(&paths, hub_links.as_deref())?;
-        // One chat link serves both ports: it owns the leases of the keys it hands to the own
-        // runner, which the agents service renews.
-        let chats_link = cloud_chats_link(hub_links.as_ref(), &paths);
+        // One agent access service: the hub's Agent access tab and the servers Cloud chats are
+        // bound to read the same registry (ADR 0139).
+        let agent_access = hub_links.as_ref().map(|links| {
+            Arc::new(nocterm_hub_io::agent_access::AgentAccess::new(
+                links.clone(),
+                agent_hosts.clone(),
+            ))
+        });
+        // One chat link serves the chat, own-runner and certificate ports: it owns the leases of
+        // the keys it hands to the own runner, which the agents service renews, and reads the
+        // bound chats the agents service sweeps.
+        let chats_link = cloud_chats_link(hub_links.as_ref(), agent_access.clone(), &paths);
         let cloud_agents = cloud_agents_dependencies(hub_links.clone(), chats_link.clone(), &paths);
         let cloud_chats =
             chats_link.map(|link| link as Arc<dyn nocterm_cloud_agents_model::CloudChatLauncher>);
@@ -102,7 +111,7 @@ impl PreparedApp {
                 ),
                 cloud_agents,
                 cloud_chats,
-                hubs: hub_dependencies(hub_links.clone(), agent_hosts.clone()),
+                hubs: hub_dependencies(hub_links.clone(), agent_access),
                 agent_hosts: hub_links.is_some().then_some(agent_hosts as _),
                 hub_accounts: hub_links
                     .map(|links| links as Arc<dyn crate::hub_sources::HubAccounts>),
@@ -238,14 +247,11 @@ fn hub_links(paths: &Paths) -> Option<Arc<nocterm_hub_io::HubLinks>> {
 /// The hub access ports of the links, if there are any.
 fn hub_dependencies(
     links: Option<Arc<nocterm_hub_io::HubLinks>>,
-    hosts: Arc<nocterm_ssh::authorized_keys::HostDirectory>,
+    agent_access: Option<Arc<nocterm_hub_io::agent_access::AgentAccess>>,
 ) -> Option<nocterm_hubs::Deps> {
-    links.map(|links| {
-        let agent_access = Arc::new(nocterm_hub_io::agent_access::AgentAccess::new(
-            links.clone(),
-            hosts,
-        ));
-        nocterm_hubs::Deps {
+    links
+        .zip(agent_access)
+        .map(|(links, agent_access)| nocterm_hubs::Deps {
             trust: links.clone(),
             sign_in: links.clone(),
             admin_keys: links.clone(),
@@ -253,8 +259,7 @@ fn hub_dependencies(
             agent_trust: agent_access.clone(),
             agent_grants: agent_access,
             account_keys: Arc::new(nocterm_hub_io::AccountKeys::new(links)),
-        }
-    })
+        })
 }
 
 /// The Cloud agents ports of the links, if there are any. The pool keys the person trusted are
@@ -272,7 +277,8 @@ fn cloud_agents_dependencies(
     Some(nocterm_cloud_agents::Deps {
         catalog: link.clone(),
         launcher: link.clone(),
-        own_runner,
+        own_runner: own_runner.clone(),
+        certifier: own_runner,
         seats: link.clone(),
         usage: link.clone(),
         personal: link.clone(),
@@ -284,11 +290,16 @@ fn cloud_agents_dependencies(
 /// state directory.
 fn cloud_chats_link(
     links: Option<&Arc<nocterm_hub_io::HubLinks>>,
+    agent_access: Option<Arc<nocterm_hub_io::agent_access::AgentAccess>>,
     paths: &Paths,
 ) -> Option<Arc<nocterm_hub_io::CloudChatsLink>> {
     let links = links?;
     let root = paths.state_dir().join("cloud-chats");
     let link = nocterm_hub_io::ChatServices::native(links, root)
+        .map(|services| match agent_access {
+            Some(access) => services.with_trusted_servers(access),
+            None => services,
+        })
         .and_then(|services| nocterm_hub_io::CloudChatsLink::new(links.clone(), services));
     match link {
         Ok(link) => Some(Arc::new(link)),

@@ -55,9 +55,9 @@ pub use personal::{
 };
 pub use placement::Placement;
 pub use ports::{
-    AgentHints, AgentSeats, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture,
-    OwnRunnerLauncher, OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore,
-    SaveOutcome, StartOutcome, StepSink, web_panel_url,
+    AgentHints, AgentSeats, AgentUsage, ChatSshCertifier, CloudAgentCatalog, CloudAgentLauncher,
+    CloudFuture, OwnRunnerLauncher, OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice,
+    PoolPinStore, SaveOutcome, StartOutcome, StepSink, web_panel_url,
 };
 pub use scope::AgentScope;
 pub use sections::{HubAgents, Section, SectionTitle, arrange};

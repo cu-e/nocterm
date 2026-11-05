@@ -6,8 +6,11 @@
 //! a chat of it is open. Listing runs `ListChats` over the runners' directories and catalogs;
 //! creating runs `CreateChat` (ADR 0122); a chat opens as a [`DeviceConversation`] over
 //! `OpenChat`, which wakes a managed seat before each command (ADR 0133). An own-agent chat's
-//! provider key is leased by `ProviderLease` while the chat is open (ADR 0126).
+//! provider key is leased by `ProviderLease` while the chat is open (ADR 0126). A chat bound to
+//! servers is kept read while the account is unlocked, so its runner's certificate requests are
+//! answered inside the binding (`answering`, ADR 0139).
 
+mod answering;
 mod create;
 mod directory;
 mod error;
@@ -21,8 +24,9 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use nocterm_cloud_agents_model::{
-    AgentId, ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, CloudChatError, CloudChatLauncher,
-    CloudFuture, OpenedChat, OwnRunnerLauncher, OwnRunnerSeat, StepSink,
+    AgentId, ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, ChatSshCertifier, CloudAgentError,
+    CloudChatError, CloudChatLauncher, CloudFuture, OpenedChat, OwnRunnerLauncher, OwnRunnerSeat,
+    StepSink,
 };
 use nocterm_hubs_model::HubId;
 use tokio::runtime::Handle;
@@ -98,6 +102,7 @@ struct Shared {
     accounts: Mutex<HashMap<HubId, Weak<DeviceAccount>>>,
     leases: leases::Leases,
     servers: Option<Arc<AgentAccess>>,
+    answering: answering::Answering,
 }
 
 impl Shared {
@@ -205,6 +210,7 @@ impl CloudChatsLink {
             accounts: Mutex::new(HashMap::new()),
             leases: leases::Leases::default(),
             servers: services.servers,
+            answering: answering::Answering::default(),
         });
         Ok(Self { shared })
     }
@@ -257,6 +263,27 @@ impl CloudChatLauncher for CloudChatsLink {
         self.call(hub, move |shared, captured, account| async move {
             directory::list(&shared, captured, &account, hub_id).await
         })
+    }
+}
+
+impl ChatSshCertifier for CloudChatsLink {
+    fn sweep(&self, hub: &HubId) -> CloudFuture<usize> {
+        let history = self.history(hub);
+        let (shared, hub) = (self.shared.clone(), hub.clone());
+        Box::pin(async move {
+            let swept = async {
+                let entries = history.await?;
+                shared.answering.sweep(&hub, entries, &shared.handle).await
+            };
+            swept.await.map_err(|error| match error {
+                CloudChatError::Unsupported => CloudAgentError::Unsupported,
+                other => leases::agent_error(other),
+            })
+        })
+    }
+
+    fn forget(&self, hub: &HubId) {
+        self.shared.answering.forget(hub);
     }
 }
 

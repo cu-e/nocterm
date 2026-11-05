@@ -58,7 +58,8 @@ fn install_with(fake: &FakeCloudAgents, cx: &mut TestAppContext) -> crate::Insta
                 seats: Arc::new(fake.clone()),
                 usage: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
-                pins: Arc::new(fake),
+                pins: Arc::new(fake.clone()),
+                certifier: Arc::new(fake),
             },
             cx,
         )
@@ -526,4 +527,68 @@ async fn a_late_removal_does_not_forget_a_start_begun_after_it(cx: &mut TestAppC
     installed
         .agents()
         .read_with(cx, |agents, _| assert!(agents.start_view(second).is_some()));
+}
+
+#[gpui::test]
+async fn a_tracked_hubs_bound_chats_are_swept_every_minute_until_it_is_untracked(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    let installed = install_with(&fake, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    assert_eq!(fake.sweeps(&hub()), 1, "a tracked hub is swept at once");
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(fake.sweeps(&hub()), 2);
+
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.untrack(&hub(), cx));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(120));
+    cx.run_until_parked();
+    assert_eq!(fake.sweeps(&hub()), 2, "an untracked hub is not swept");
+    assert_eq!(fake.forgotten(), [hub()]);
+}
+
+#[gpui::test]
+async fn a_failed_sweep_is_tried_again_and_a_hub_without_cloud_chats_stops(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    fake.fail(&hub(), FakeFailure::Stale);
+    let installed = install_with(&fake, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    fake.heal(&hub());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(
+        fake.sweeps(&hub()),
+        1,
+        "the account unlocked again is swept"
+    );
+
+    fake.fail(&hub(), FakeFailure::Unsupported);
+    for _ in 0..3 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(61));
+        cx.run_until_parked();
+    }
+    fake.heal(&hub());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(
+        fake.sweeps(&hub()),
+        1,
+        "an unsupported hub is not swept again"
+    );
 }
