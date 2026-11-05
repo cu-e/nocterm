@@ -38,7 +38,7 @@ impl ProjectFixture {
                 nocterm_terminal::Deps::new(
                     transport.clone(),
                     nocterm_terminal::LocalSessions::new(
-                        Arc::new(move |_| local.clone()),
+                        Arc::new(move |_, _| local.clone()),
                         "/bin/sh".into(),
                     ),
                 )

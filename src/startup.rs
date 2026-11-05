@@ -35,7 +35,8 @@ impl PreparedApp {
         let executable = std::env::current_exe().context("locating the nocterm executable")?;
         let paths = Paths::discover()?;
         let tokens = load_tokens(&paths);
-        let settings = load_settings(&paths, &user_plugins);
+        let mut settings = load_settings(&paths, &user_plugins);
+        settings.register::<nocterm_hubs_model::HubsSettings>();
         let dirs = nocterm_themes::ThemeDirs {
             user: paths.user_themes_dir(),
             installed: paths.installed_themes_dir(),
@@ -48,7 +49,7 @@ impl PreparedApp {
             nocterm_themes_registry::LocalThemeLibrary::new(dirs, Some(registry.clone())),
         );
         let catalog = library.scan();
-        let hub_links = hub_links(&paths);
+        let hub_links = hub_links(&paths, settings.document().get());
         let agent_hosts = Arc::new(nocterm_ssh::authorized_keys::HostDirectory::new(
             &ssh_config(&paths),
         ));
@@ -63,9 +64,9 @@ impl PreparedApp {
             nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
         );
         let local = local_sessions();
-        let local_host = local
-            .is_available()
-            .then(|| Arc::new(nocterm_local::LocalExec) as Arc<dyn nocterm_session::HostExec>);
+        let local_host = local.is_available().then(|| {
+            Arc::new(nocterm_local::LocalExec::default()) as Arc<dyn nocterm_session::HostExec>
+        });
         let activation = Arc::new(nocterm_project_environment::NativeWorkspaceSessions);
         let environment = Arc::new(
             nocterm_project_environment::NativeWorkspaceEnvironment::new(Arc::new(
@@ -188,7 +189,7 @@ impl PreparedApp {
             tracing::error!(%error, "could not open the window");
             cx.quit();
         }
-        crate::report_settings_errors(booted.settings_deps().settings(), cx);
+        crate::report_settings_errors(&booted.settings_deps(), cx);
         cx.activate(true);
     }
 }
@@ -221,18 +222,29 @@ fn files_dependencies(
 }
 
 /// The adapter that reaches hubs, or none when it cannot start: local work does not suffer.
-fn hub_links(paths: &Paths) -> Option<Arc<nocterm_hub_io::HubLinks>> {
+fn hub_links(
+    paths: &Paths,
+    hubs: &nocterm_hubs_model::HubsSettings,
+) -> Option<Arc<nocterm_hub_io::HubLinks>> {
     let config = nocterm_hub_io::HubLinksConfig {
         credentials_dir: paths.state_dir().join("hubs"),
         device_name: device_name(),
     };
-    match nocterm_hub_io::HubLinks::start(config) {
-        Ok(links) => Some(links),
+    let links = match nocterm_hub_io::HubLinks::start(config) {
+        Ok(links) => links,
         Err(error) => {
             tracing::error!(?error, "hubs are unavailable");
-            None
+            return None;
+        }
+    };
+    // PreparedApp::load runs before the GPUI application starts. Known hubs'
+    // first cache reads belong here; composing their windows only reuses Slots.
+    for hub in &hubs.servers {
+        if let Err(error) = links.open_account(&hub.id()) {
+            tracing::warn!(%error, "the known hub account cache could not be prepared");
         }
     }
+    Some(links)
 }
 
 /// The hub access ports of the links, if there are any.
@@ -327,11 +339,11 @@ fn local_sessions() -> nocterm_terminal::LocalSessions {
     let program = nocterm_local::default_shell();
     let supplied = program.clone();
     nocterm_terminal::LocalSessions::new(
-        Arc::new(move |mut launch| {
+        Arc::new(move |mut launch, preparation| {
             if launch.program.is_none() {
                 launch.program = Some(supplied.clone());
             }
-            Arc::new(nocterm_local::LocalTransport(launch))
+            nocterm_local::LocalTransport::prepared(launch, preparation)
         }),
         program,
     )

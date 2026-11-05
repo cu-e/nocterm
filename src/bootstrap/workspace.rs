@@ -20,6 +20,8 @@ pub(crate) fn build_workspace(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let retained = sources.clone();
+    cx.on_release(move |_, _| drop(retained)).detach();
     let vault = sources.vault().map(Rc::as_ref);
     if let (Some(vault), Environment::Hub(_)) = (vault, sources.environment()) {
         // The vault of a hub answers `UnlockVault` in this window only.

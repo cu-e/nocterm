@@ -552,3 +552,38 @@ fn replacement_logins_attach_new_replica_facades_without_reusing_the_old_capture
         ]
     );
 }
+
+#[gpui_kit::test]
+fn removing_and_readding_a_hub_builds_a_fresh_mirror_and_keeps_the_old_window_retired(
+    cx: &mut TestAppContext,
+) {
+    let account = Account::new();
+    account
+        .replica
+        .write_remote(ReplicaScope::Personal, profile("remote"));
+    let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
+    let (_window, _workspace) = world.open(&home(), cx);
+    let old = world.store_of(&home(), cx);
+    let old_id = old.entity_id();
+    let removed = cx.update(|cx| {
+        world
+            .booted
+            .hub_registry(cx)
+            .unwrap()
+            .update(cx, |hubs, cx| hubs.remove(&hub_id(ADDRESS), cx))
+    });
+    removed.detach();
+    cx.run_until_parked();
+    assert!(old.read_with(cx, |store, cx| store.profiles(cx).is_empty()));
+    world.hub.sign_in_as(&hub_id(ADDRESS), "alice");
+    let settings = world.booted.settings_deps();
+    cx.update(|cx| {
+        settings
+            .update::<HubsSettings>(cx, |settings| settings.servers.push(record(ADDRESS)))
+            .detach()
+    });
+    cx.run_until_parked();
+    let new = world.store_of(&home(), cx);
+    assert_ne!(new.entity_id(), old_id);
+    assert!(old.read_with(cx, |store, cx| store.profiles(cx).is_empty()));
+}

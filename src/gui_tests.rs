@@ -196,7 +196,7 @@ fn fixture_with_settings(
                 if with_local {
                     let local = transport.clone();
                     nocterm_terminal::LocalSessions::new(
-                        Arc::new(move |_| local.clone()),
+                        Arc::new(move |_, _| local.clone()),
                         "/bin/bash".into(),
                     )
                 } else {
@@ -233,7 +233,7 @@ fn fixture_with_settings(
             workspace,
             terminal,
             booted.keymap(),
-            booted.settings_deps().settings().clone(),
+            booted.settings_deps(),
         )
     });
     emit(cx, &transport, 0, Event::Connected);
