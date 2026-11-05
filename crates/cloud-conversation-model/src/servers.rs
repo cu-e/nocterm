@@ -1,4 +1,4 @@
-//! The servers a Cloud chat is bound to and the ones it can be bound to (ADR 0139). Plain
+//! The servers a Cloud chat is bound to and the ones it can be bound to (ADR 0147). Plain
 //! display data: binding goes through the port, and a server here grants nothing.
 use core::fmt;
 

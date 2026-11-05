@@ -93,13 +93,22 @@ impl RecoveryKeyConfirmation for Recipient {
     fn check_current(&self) -> Result<(), HubError> {
         self.with_current(|_| Ok(()))
     }
-    fn confirm(&self) -> Result<(), HubError> {
-        self.with_current(|state| {
-            state.unconfirmed.remove(&self.hub);
-            state.receipts.rotate(&self.hub);
-            state.keys_changed();
-            Ok(())
-        })
+    fn confirm(&self) -> HubFuture<()> {
+        let Some(shared) = self.shared.upgrade() else {
+            return Box::pin(async { Err(HubError::Stale) });
+        };
+        let original = self.clone();
+        FakeHub { state: shared }.call(
+            FakeOp::ConfirmRecoveryKey,
+            FakeCall::ConfirmRecoveryKey(self.hub.clone()),
+            move |state| {
+                original.check(state)?;
+                state.unconfirmed.remove(&original.hub);
+                state.receipts.rotate(&original.hub);
+                state.keys_changed();
+                Ok(())
+            },
+        )
     }
 }
 impl RecoveryKeyIssuer for Recipient {

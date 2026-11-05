@@ -30,7 +30,7 @@ pub enum ConversationError {
     OutcomeUnknown,
     #[error(transparent)]
     History(#[from] nocterm_ai::history::HistoryCodecError),
-    /// Binding servers, or naming one for prompts, was refused (ADR 0139).
+    /// Binding servers, or naming one for prompts, was refused (ADR 0147).
     #[error(transparent)]
     Servers(#[from] ServerProblem),
 }
@@ -110,7 +110,7 @@ pub trait ConversationSource {
     fn set_shown(&self, shown: bool, cx: &mut App) -> Result<(), ConversationError>;
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError>;
     /// The servers the conversation's agent may sign in to, when its source binds any
-    /// (a Cloud chat, ADR 0139). A Local chat has none.
+    /// (a Cloud chat, ADR 0147). A Local chat has none.
     fn servers(&self, _cx: &App) -> Option<Rc<dyn ConversationServers>> {
         None
     }

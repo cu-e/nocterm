@@ -391,13 +391,16 @@ impl Symbols {
             let expanded: Vec<_> = alias.iter().chain(&path[1..]).cloned().collect();
             return self.resolve_segments(module, &expanded, imports, depth + 1, visited);
         }
-        let rust_module = self
-            .module_scopes
-            .iter()
-            .filter(|scope| module == scope.as_str() || module.starts_with(&format!("{scope}::")))
-            .max_by_key(|scope| scope.len())
-            .map(String::as_str)
-            .unwrap_or(module);
+        let mut rust_module = module;
+        while !self.module_scopes.contains(rust_module) {
+            match rust_module.rsplit_once("::") {
+                Some((parent, _)) => rust_module = parent,
+                None => {
+                    rust_module = module;
+                    break;
+                }
+            }
+        }
         let context = if matches!(first.as_str(), "self" | "super" | "crate") {
             rust_module
         } else {

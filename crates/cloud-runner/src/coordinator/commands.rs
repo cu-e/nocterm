@@ -251,7 +251,7 @@ impl CommandHandler {
         reference: GrantReference,
         now: Timestamp,
     ) -> Result<CommandReceipt, CoordinatorError> {
-        // A chat's SSH binding is revoked for the whole chat (ADR 0137).
+        // A chat's SSH binding is revoked for the whole chat (ADR 0145).
         if reference.class() == GrantClass::SshBinding {
             return self.ssh(chat, command, now).await;
         }
@@ -339,7 +339,7 @@ impl CommandHandler {
         }
         Ok(receipt)
     }
-    /// A chat SSH binding, certificate or unbind (ADR 0137): the row is stored first, then
+    /// A chat SSH binding, certificate or unbind (ADR 0145): the row is stored first, then
     /// the command and its events are journaled together.
     async fn ssh(
         &self,

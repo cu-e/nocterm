@@ -109,10 +109,12 @@ fn local_container_factory_receives_the_container_launch_before_opening_native_t
     base.queue(Some(Arc::new(InMemoryFs::default())), None);
     let launches = Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = launches.clone();
-    let factory = Arc::new(move |launch: ShellLaunch| {
-        recorded.lock().unwrap().push(launch);
-        Arc::new(base.clone()) as Arc<dyn nocterm_session::Transport>
-    });
+    let factory = Arc::new(
+        move |launch: ShellLaunch, _: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>| {
+            recorded.lock().unwrap().push(launch);
+            Arc::new(base.clone()) as Arc<dyn nocterm_session::Transport>
+        },
+    );
     let location = ContainerLocation::new(
         HostLocator::Local,
         Engine::Docker,

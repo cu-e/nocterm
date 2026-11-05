@@ -1,8 +1,8 @@
-# 0137. Per-server CA principals and runner certificate sessions; journal v8, boot v3
+# 0145. Per-server CA principals and runner certificate sessions; journal v8, boot v3
 
 Status: accepted. Supersedes the single-principal rule of
 [0119](0119-agent-ssh-ca.md) (`nocterm-agent-<ca>` for every server) for chat certificates,
-and the journal version rule of [0135](0135-the-runner-publishes-chat-summaries-journal-v7.md).
+and the journal version rule of [0143](0143-the-runner-publishes-chat-summaries-journal-v7.md).
 Extends [0123](0123-runner-control-channel.md) with boot v3. Implements the runner side of
 contract ADR 0009 (per-chat SSH binding and certificates).
 

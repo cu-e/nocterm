@@ -7,7 +7,7 @@
 //! presentation (ADR 0134) and the chat's share of the Local installation's history admission.
 //! Provides the agent-chat `ConversationSource` of a chat, the same one composer as Local chats
 //! use (ADR 0134), with its `ConversationServers` (the binding, binding and unbinding, and the
-//! server the next prompts run on, ADR 0139).
+//! server the next prompts run on, ADR 0147).
 //! Does not own: login/unlock, the device protocol, verification, the reduction of runner
 //! events, checkpoints, command delivery and its retries (`nocterm-hub-io` runs the contract
 //! device core behind the port), runner execution, views or Local SessionLease lifecycle.
@@ -64,7 +64,7 @@ pub struct CloudChat {
     error: Option<CloudChatError>,
     /// The last read round went unanswered; the next change clears it.
     reconnecting: bool,
-    /// The bound server the person picked for the next prompts (ADR 0139).
+    /// The bound server the person picked for the next prompts (ADR 0147).
     target: Option<nocterm_cloud_conversation_model::ServerKey>,
 }
 impl CloudChat {

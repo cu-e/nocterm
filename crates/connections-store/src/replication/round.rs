@@ -255,25 +255,23 @@ impl Round {
     }
 
     async fn fetch(&self, cx: &mut AsyncApp) -> Result<(Vec<RemoteProfile>, ReplicaCursor), Stop> {
-        let mut after = self
+        let after = self
             .state
             .read_with(cx, |state, _| state.visible().cursor().cloned());
-        let mut changes = Vec::new();
-        loop {
-            let page = self
-                .replica
-                .changes(after.clone())
-                .await
-                .map_err(remote_stop)?;
-            changes.extend(page.changes);
-            let stalled = after.as_ref() == Some(&page.cursor);
-            after = Some(page.cursor);
-            if !page.more || stalled {
-                break;
+        let replica = self.replica.clone();
+        let executor = cx.background_executor().clone();
+        let acquisition = executor.spawn(async move { super::feed::fetch(replica, after).await });
+        let deadline = executor.timer(std::time::Duration::from_secs(120));
+        futures::pin_mut!(acquisition, deadline);
+        match futures::future::select(acquisition, deadline).await {
+            futures::future::Either::Left((result, _)) => result.map_err(|error| match error {
+                super::feed::FetchError::Remote(error) => remote_stop(error),
+                super::feed::FetchError::Invalid(error) => halt(error.into()),
+            }),
+            futures::future::Either::Right(_) => {
+                Err(halt(super::ReplicationFeedError::TimedOut.into()))
             }
         }
-        let cursor = after.unwrap_or_else(|| ReplicaCursor::new(""));
-        Ok((changes, cursor))
     }
 
     fn plan(

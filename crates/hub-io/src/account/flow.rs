@@ -71,7 +71,10 @@ impl KeyFlow {
     }
 
     pub(crate) fn capture(&self, hub: &HubId) -> Result<Arc<KeyAdmission>, HubError> {
-        let slot = self.accounts.slot(hub)?;
+        let slot = self
+            .accounts
+            .loaded_slot(hub)
+            .ok_or(HubError::NotSignedIn)?;
         let member = LocalSourceProvider::new(slot, self.pool.clone()).membership()?;
         KeyAdmission::native(
             member,
@@ -84,7 +87,10 @@ impl KeyFlow {
         hub: &HubId,
         subject: &Arc<AccountSubject>,
     ) -> Result<Arc<KeyAdmission>, HubError> {
-        let slot = self.accounts.slot(hub)?;
+        let slot = self
+            .accounts
+            .loaded_slot(hub)
+            .ok_or(HubError::NotSignedIn)?;
         let subjects: Arc<dyn AccountSubjects> = self.pool.clone();
         let member = CapturedMembership::published(&slot, &subjects, subject)?;
         KeyAdmission::native(
@@ -148,11 +154,7 @@ impl KeyFlow {
     }
 
     fn unconfirmed(&self, owner: &KeyAdmission) -> Result<bool, HubError> {
-        match owner.cache() {
-            Ok(cache) => Ok(cache.recovery_unconfirmed),
-            Err(HubError::NotFound) => Ok(false),
-            Err(error) => Err(error),
-        }
+        owner.recovery_unconfirmed()
     }
 
     fn opened(&self, owner: &KeyAdmission) -> Result<KeyStatus, HubError> {
@@ -212,7 +214,7 @@ impl KeyFlow {
 
     /// Whether the recovery key made on this device was never confirmed as saved.
     pub(crate) fn recovery_key_unconfirmed(&self, hub: &HubId) -> bool {
-        let Ok(slot) = self.accounts.slot(hub) else {
+        let Some(slot) = self.accounts.loaded_slot(hub) else {
             return false;
         };
         slot.open()
@@ -255,20 +257,18 @@ impl KeyFlow {
         let hub = owner.member().hub();
         let before = owner.cache()?.recovery_unconfirmed;
         owner.keys()?;
-        owner.begin_recovery_issue()?;
+        owner.begin_recovery_issue().await?;
         let recovery = RecoveryKey::generate().map_err(remote)?;
         let written = self.reseal(owner, client, keyset, &recovery).await;
         match written {
             Ok(record) => {
-                if let Err(error) = owner.update_cache(|cache| {
-                    cache.keyset = KeysetCopy::of(&record);
-                }) {
-                    tracing::warn!(%error, hub = %hub, "the account cache cannot be written");
-                }
+                keep_recovery_record(owner, &record).await;
                 Ok(Secret::new(recovery.display().as_str()))
             }
             Err(error) => {
-                if let Err(error) = owner.update_cache(|cache| cache.recovery_unconfirmed = before)
+                if let Err(error) = owner
+                    .update_cache(|cache| cache.recovery_unconfirmed = before)
+                    .await
                 {
                     tracing::warn!(%error, hub = %hub, "the account cache cannot be written");
                 }
@@ -479,8 +479,13 @@ impl KeyFlow {
             Creation::Created(new) => {
                 // Marked before the key is shown: if it is never confirmed, the next time the
                 // keys open another is offered.
-                self.keep(owner, client, new.keyset, method.clone(), true)
-                    .await?;
+                if let Err(error) = self
+                    .keep(owner, client, new.keyset, method.clone(), true)
+                    .await
+                {
+                    owner.remember_pending_recovery()?;
+                    return Err(error);
+                }
                 Ok(Some(KeyStatus::Created(self.offer(
                     owner,
                     Secret::new(new.recovery.display().as_str()),
@@ -517,7 +522,7 @@ impl KeyFlow {
             Err(error) => return Err(error),
         }
         let keys = OpenKeys::pinning(keyset, cache.pinned());
-        owner.install(keys, cache)
+        owner.install(keys, cache).await
     }
 
     async fn record(
@@ -536,6 +541,18 @@ impl KeyFlow {
             KeysetError::Hub(error) => owner.failure(error),
             other => keyset_error(other),
         }
+    }
+}
+
+/// Keep the hub's accepted recovery envelope in the offline copy. The pending
+/// recovery fact was persisted before resealing; a cache failure cannot undo
+/// the successful remote replacement or suppress the new recovery key.
+async fn keep_recovery_record(owner: &KeyAdmission, record: &v1::AccountKeyset) {
+    if let Err(error) = owner
+        .update_cache(|cache| cache.keyset = KeysetCopy::of(record))
+        .await
+    {
+        tracing::warn!(%error, hub = %owner.member().hub(), "the account cache cannot be written");
     }
 }
 

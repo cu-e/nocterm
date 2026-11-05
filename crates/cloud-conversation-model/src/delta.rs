@@ -15,7 +15,7 @@ pub struct ConversationDelta {
     pub runs: Option<Vec<Run>>,
     pub approvals: Option<Vec<Approval>>,
     pub pending: Option<Vec<PendingCommand>>,
-    /// The chat's current binding (ADR 0139).
+    /// The chat's current binding (ADR 0147).
     pub servers: Option<ServerBinding>,
     pub control_revision: u64,
     pub deleted: bool,

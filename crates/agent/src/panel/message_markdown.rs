@@ -9,6 +9,7 @@ use std::collections::HashMap;
 struct RowMarkdown {
     state: Entity<TextViewState>,
     text: String,
+    source_len: Option<usize>,
     _parsed: Subscription,
 }
 
@@ -19,16 +20,43 @@ pub(super) struct MessageMarkdown {
 impl MessageMarkdown {
     /// The Markdown a row draws now: an agent message as revealed so far, or expanded
     /// reasoning. Other rows draw no kept Markdown.
-    pub(super) fn text(entry: &Entry, row: usize, messages: &MessageList) -> Option<String> {
-        match entry {
-            Entry::Agent(text) => Some(safe_markdown(&messages.revealed_text(row, text))),
-            Entry::Thought(text) if messages.expanded(row) => Some(safe_markdown(text)),
-            _ => None,
+    pub(super) fn text(
+        entry: &Entry,
+        row: usize,
+        messages: &MessageList,
+    ) -> Option<(String, usize)> {
+        let source = match entry {
+            Entry::Agent(text) => messages.revealed_slice(row, text),
+            Entry::Thought(text) if messages.expanded(row) => text,
+            _ => return None,
+        };
+        if messages.markdown_current(row, source.len()) {
+            return None;
+        }
+        Some((safe_markdown(source), source.len()))
+    }
+    pub(super) fn current(&self, row: usize, source_len: usize) -> bool {
+        self.rows
+            .get(&row)
+            .is_some_and(|kept| kept.source_len == Some(source_len))
+    }
+    pub(super) fn invalidate(&mut self, dirty: &[usize]) {
+        for row in dirty {
+            if let Some(kept) = self.rows.get_mut(row) {
+                kept.source_len = None;
+            }
         }
     }
     /// Shows `text` in the row's state, appending when it extends what the row showed.
-    pub(super) fn prepare(&mut self, row: usize, text: String, cx: &mut Context<AgentPanel>) {
+    pub(super) fn prepare(
+        &mut self,
+        row: usize,
+        text: String,
+        source_len: usize,
+        cx: &mut Context<AgentPanel>,
+    ) {
         if let Some(kept) = self.rows.get_mut(&row) {
+            kept.source_len = Some(source_len);
             if kept.text == text {
                 return;
             }
@@ -51,6 +79,7 @@ impl MessageMarkdown {
             RowMarkdown {
                 state,
                 text,
+                source_len: Some(source_len),
                 _parsed: parsed,
             },
         );

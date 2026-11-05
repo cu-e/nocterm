@@ -13,6 +13,7 @@
 mod activation;
 mod environment;
 mod languages;
+mod managed;
 
 pub use activation::NativeWorkspaceSessions;
 pub use environment::NativeWorkspaceEnvironment;

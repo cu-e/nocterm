@@ -1,4 +1,4 @@
-//! A chat's SSH binding, certificate requests and per-chat key custody (ADR 0137).
+//! A chat's SSH binding, certificate requests and per-chat key custody (ADR 0145).
 //!
 //! Each transition runs on a copy of the chat's access, stores the new journal v8 row,
 //! then journals and publishes its events; if publishing fails the previous row is put
@@ -267,7 +267,7 @@ impl CoordinatorSsh {
     pub fn report(&self, stream: &StreamBinding) -> Option<SshAccessReport> {
         self.held.lock().get(stream)?.access.report()
     }
-    /// The chat's current binding and access as its summary lists them (ADR 0139); `None`
+    /// The chat's current binding and access as its summary lists them (ADR 0147); `None`
     /// while the chat is not bound or its row was not loaded yet.
     pub fn summary(&self, stream: &StreamBinding) -> Option<SummarySsh> {
         let held = self.held.lock();

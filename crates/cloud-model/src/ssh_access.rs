@@ -1,5 +1,5 @@
 //! Per-chat SSH access: a person's CA-signed binding of a chat to servers and the
-//! short-lived user certificates devices issue for the runner's per-chat key (ADR 0137).
+//! short-lived user certificates devices issue for the runner's per-chat key (ADR 0145).
 //!
 //! The adapter verifies the binding's CA signature, its chat coordinate and each
 //! certificate's CA signature before these values exist; this module decides what the
@@ -92,7 +92,7 @@ impl SshEndpoint {
 
 /// The session access a device names to run a prompt on one bound server (contract ADR
 /// 0011): fingerprints the adapter derives from the CA-signed binding, so a run selects the
-/// server by equality and never constructs one from a prompt (ADR 0139).
+/// server by equality and never constructs one from a prompt (ADR 0147).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundAccess {
     pub target: TargetBinding,
@@ -239,7 +239,7 @@ pub trait SshCertificateReader: Send + Sync {
 
 /// The servers this runner can reach and the addresses servers see it connect from.
 /// Every target carries its host key, which must equal the binding's: a managed boot
-/// target without one is not listed (ADR 0139).
+/// target without one is not listed (ADR 0147).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SshReach {
     endpoints: Vec<(SshEndpoint, Fingerprint)>,

@@ -1,6 +1,6 @@
 //! Journal SSH rows (v8, sealed under their own class since v9): per chat its SSH binding,
 //! open certificate request, active certificate and the seed of its Ed25519 subject key
-//! (ADR 0137, 0139).
+//! (ADR 0145, 0147).
 //!
 //! The whole row is sealed with the chat's journal cipher under
 //! [`JournalStorageClass::SshAccess`], so the seed is never stored in the clear; its key

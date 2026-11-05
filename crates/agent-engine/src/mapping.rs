@@ -96,14 +96,7 @@ pub(crate) fn history(
                     content.push(AssistantContent::text(assistant.text()));
                 }
                 for call in assistant.calls() {
-                    let id = format!(
-                        "nocterm_{}",
-                        call.intent()
-                            .as_bytes()
-                            .iter()
-                            .map(|byte| format!("{byte:02x}"))
-                            .collect::<String>()
-                    );
+                    let id = format!("nocterm_{}", hex::encode(call.intent().as_bytes()));
                     let name = ToolName::new(call.call().name())
                         .map_err(|_| EngineError::InvalidStream)?;
                     let wire = ToolCall::from_wire(

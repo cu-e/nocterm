@@ -20,7 +20,7 @@ pub struct Deps {
     pub seats: Arc<dyn AgentSeats>,
     pub usage: Arc<dyn AgentUsage>,
     pub pins: Arc<dyn PoolPinStore>,
-    /// Answers the certificate requests of bound Cloud chats (ADR 0139).
+    /// Answers the certificate requests of bound Cloud chats (ADR 0147).
     pub certifier: Arc<dyn ChatSshCertifier>,
 }
 

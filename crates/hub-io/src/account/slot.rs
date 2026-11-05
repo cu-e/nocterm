@@ -1,11 +1,16 @@
 //! One native account Slot owns key lifecycle, original membership and private cache publication.
+//! Immutable cache generations separate content contention from lifecycle receipts.
+//! A serialized async writer stages on shared bounded workers; admission retains
+//! only the final generation check, namespace replacement and memory transition.
+use super::cache_publication::CacheDraft;
 use super::{
     Notice, OpenKeys, Recovery, SlotReceipt, lifecycle::SlotAuthority, source::AccountSubject,
 };
 use crate::{
-    cache::{AccountCache, CacheError, CacheFile},
+    cache::{AccountCache, CacheFile},
     classify::credentials,
 };
+use nocterm_core::fs::CommittedPublication;
 use nocterm_hubs_model::{HubError, HubId};
 use nocterm_vault::VaultStatus;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -28,8 +33,9 @@ enum KeyState {
 
 struct SlotState {
     keys: KeyState,
-    cache: Option<AccountCache>,
+    cache: Option<Arc<AccountCache>>,
     authority: SlotAuthority,
+    pending_recovery: Option<SlotReceipt>,
 }
 
 /// Everything this device knows of one hub's account keys.
@@ -38,9 +44,185 @@ pub(crate) struct Slot {
     file: CacheFile,
     notice: Arc<Notice>,
     state: Mutex<SlotState>,
+    cache_write: tokio::sync::Mutex<()>,
+    refresh: super::refresh::Refresh,
 }
 
 impl Slot {
+    pub(crate) fn pending_recovery_for(
+        &self,
+        owner: &Arc<AccountSubject>,
+        receipt: &SlotReceipt,
+    ) -> Result<bool, HubError> {
+        let state = self.state();
+        state.authority.check(owner, receipt)?;
+        Ok(state
+            .cache
+            .as_ref()
+            .is_some_and(|cache| cache.account_id == owner.account() && cache.recovery_unconfirmed)
+            || state
+                .pending_recovery
+                .as_ref()
+                .is_some_and(|pending| state.authority.check_observed(pending).is_ok()))
+    }
+
+    /// A remote keyset was created, but its first durable local installation
+    /// failed. Keep only this bounded fact for the original current generation.
+    pub(crate) fn remember_pending_recovery(
+        &self,
+        owner: &Arc<AccountSubject>,
+        receipt: &SlotReceipt,
+    ) -> Result<SlotReceipt, HubError> {
+        let next = {
+            let mut state = self.state();
+            state.authority.check(owner, receipt)?;
+            let next = state.authority.rotate();
+            state.pending_recovery = Some(next.clone());
+            next
+        };
+        self.notice.raise();
+        Ok(next)
+    }
+    pub(crate) async fn refresh_turn(
+        &self,
+        keys: &Arc<OpenKeys>,
+    ) -> super::refresh::RefreshTurn<'_> {
+        self.refresh.enter(keys).await
+    }
+
+    pub(crate) fn cache_work(&self) -> &Arc<crate::cache::CacheWork> {
+        self.file.work()
+    }
+    pub(crate) async fn cache_turn(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.cache_write.lock().await
+    }
+
+    pub(crate) fn cache_snapshot(&self) -> Option<Arc<AccountCache>> {
+        self.state().cache.clone()
+    }
+
+    pub(crate) async fn stage_cache(
+        &self,
+        original: Option<Arc<AccountCache>>,
+        next: AccountCache,
+    ) -> Result<CacheDraft, HubError> {
+        let file = self.file.clone();
+        self.file
+            .work()
+            .run(move || {
+                let publication = file.stage(&next)?;
+                Ok(CacheDraft::new(original, next, publication))
+            })
+            .await
+            .map_err(credentials)
+    }
+
+    pub(crate) async fn finish_cache(&self, committed: CommittedPublication) {
+        if let Err(error) = self
+            .file
+            .work()
+            .run(move || {
+                committed.sync_parent();
+                Ok(())
+            })
+            .await
+        {
+            tracing::warn!(%error, "the committed account cache parent cannot be synced");
+        }
+    }
+
+    pub(crate) fn commit_cache_if(
+        &self,
+        expected: &Arc<OpenKeys>,
+        draft: CacheDraft,
+    ) -> Result<Option<CommittedPublication>, HubError> {
+        let mut state = self.state();
+        if !matches!(&state.keys, KeyState::Open(keys) if Arc::ptr_eq(keys, expected))
+            || draft.account() != expected.keyset().account_id()
+        {
+            return Err(HubError::Stale);
+        }
+        if !draft.matches(&state.cache) {
+            return Ok(None);
+        }
+        let (next, committed) = draft.commit().map_err(credentials)?;
+        state.cache = Some(next);
+        Ok(Some(committed))
+    }
+
+    /// Ordinary encrypted refresh remains usable when its offline copy cannot
+    /// be written. Security facts use the durable commit methods exclusively.
+    pub(crate) fn accept_memory_cache_if(
+        &self,
+        expected: &Arc<OpenKeys>,
+        original: &Option<Arc<AccountCache>>,
+        next: Arc<AccountCache>,
+    ) -> Result<bool, HubError> {
+        let mut state = self.state();
+        if !matches!(&state.keys, KeyState::Open(keys) if Arc::ptr_eq(keys, expected))
+            || next.account_id != expected.keyset().account_id()
+        {
+            return Err(HubError::Stale);
+        }
+        if !super::cache_publication::same_generation(original, &state.cache) {
+            return Ok(false);
+        }
+        state.cache = Some(next);
+        Ok(true)
+    }
+
+    pub(crate) fn commit_member_cache(
+        &self,
+        owner: &Arc<AccountSubject>,
+        receipt: &SlotReceipt,
+        draft: CacheDraft,
+        rotate: bool,
+    ) -> Result<Option<(SlotReceipt, CommittedPublication)>, HubError> {
+        let mut state = self.state();
+        state.authority.check(owner, receipt)?;
+        if draft.account() != owner.account() {
+            return Err(HubError::Stale);
+        }
+        if !draft.matches(&state.cache) {
+            return Ok(None);
+        }
+        let (next, committed) = draft.commit().map_err(credentials)?;
+        state.cache = Some(next);
+        state.pending_recovery = None;
+        let receipt = if rotate {
+            state.authority.rotate()
+        } else {
+            receipt.clone()
+        };
+        Ok(Some((receipt, committed)))
+    }
+
+    pub(crate) fn commit_install(
+        &self,
+        owner: &Arc<AccountSubject>,
+        receipt: &SlotReceipt,
+        keys: Arc<OpenKeys>,
+        draft: CacheDraft,
+    ) -> Result<Option<(SlotReceipt, CommittedPublication)>, HubError> {
+        let mut state = self.state();
+        state.authority.check(owner, receipt)?;
+        if draft.account() != owner.account() || keys.keyset().account_id() != owner.account() {
+            return Err(HubError::Stale);
+        }
+        if !draft.matches(&state.cache) {
+            return Ok(None);
+        }
+        let (next, committed) = draft.commit().map_err(credentials)?;
+        state.cache = Some(next);
+        state.keys = KeyState::Open(keys);
+        state.pending_recovery = None;
+        Ok(Some((state.authority.rotate(), committed)))
+    }
+
+    pub(crate) fn noticed_keys(&self, mut keys: OpenKeys, cache: &AccountCache) -> Arc<OpenKeys> {
+        keys.admins = Mutex::new(super::admin_keys::AdminPins::new(cache.pinned()));
+        Arc::new(keys.noticed_by(&self.notice))
+    }
     pub(super) fn new(hub: HubId, file: CacheFile, notice: Arc<Notice>) -> Self {
         let cache = match file.load() {
             Ok(cache) => cache,
@@ -55,9 +237,12 @@ impl Slot {
             notice,
             state: Mutex::new(SlotState {
                 keys: KeyState::Locked,
-                cache,
+                cache: cache.map(Arc::new),
                 authority: SlotAuthority::new(),
+                pending_recovery: None,
             }),
+            cache_write: tokio::sync::Mutex::new(()),
+            refresh: super::refresh::Refresh::default(),
         }
     }
 
@@ -79,6 +264,7 @@ impl Slot {
             let mut state = self.state();
             state.keys = KeyState::Locked;
             state.authority.begin(owner);
+            state.pending_recovery = None;
             if state
                 .cache
                 .as_ref()
@@ -161,31 +347,6 @@ impl Slot {
         }
     }
 
-    pub(crate) fn install_if(
-        &self,
-        owner: &Arc<AccountSubject>,
-        receipt: &SlotReceipt,
-        keys: OpenKeys,
-        cache: AccountCache,
-    ) -> Result<SlotReceipt, HubError> {
-        let installed = {
-            let mut state = self.state();
-            state.authority.check(owner, receipt)?;
-            if cache.account_id != owner.account() || keys.keyset().account_id() != owner.account()
-            {
-                return Err(HubError::Stale);
-            }
-            if let Err(error) = self.file.save(&cache) {
-                tracing::warn!(%error, "the original account cache cannot be written");
-            }
-            state.cache = Some(cache);
-            state.keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
-            state.authority.rotate()
-        };
-        self.notice.raise();
-        Ok(installed)
-    }
-
     pub(crate) fn cache_for(
         &self,
         owner: &Arc<AccountSubject>,
@@ -193,54 +354,7 @@ impl Slot {
     ) -> Result<AccountCache, HubError> {
         let state = self.state();
         state.authority.check(owner, receipt)?;
-        state.cache.clone().ok_or(HubError::NotFound)
-    }
-
-    pub(crate) fn change_cache_if(
-        &self,
-        owner: &Arc<AccountSubject>,
-        receipt: &SlotReceipt,
-        change: impl FnOnce(&mut AccountCache),
-    ) -> Result<(), HubError> {
-        let mut state = self.state();
-        state.authority.check(owner, receipt)?;
-        let cache = state.cache.as_mut().ok_or(HubError::NotFound)?;
-        change(cache);
-        self.file.save(cache).map_err(credentials)
-    }
-
-    pub(crate) fn begin_recovery_issue(
-        &self,
-        owner: &Arc<AccountSubject>,
-        receipt: &SlotReceipt,
-    ) -> Result<SlotReceipt, HubError> {
-        let next = {
-            let mut state = self.state();
-            state.authority.check(owner, receipt)?;
-            let cache = state.cache.as_mut().ok_or(HubError::NotFound)?;
-            cache.recovery_unconfirmed = true;
-            self.file.save(cache).map_err(credentials)?;
-            state.authority.rotate()
-        };
-        self.notice.raise();
-        Ok(next)
-    }
-
-    pub(crate) fn ack_recovery(
-        &self,
-        owner: &Arc<AccountSubject>,
-        receipt: &SlotReceipt,
-    ) -> Result<(), HubError> {
-        {
-            let mut state = self.state();
-            state.authority.check(owner, receipt)?;
-            let cache = state.cache.as_mut().ok_or(HubError::NotFound)?;
-            cache.recovery_unconfirmed = false;
-            self.file.save(cache).map_err(credentials)?;
-            state.authority.rotate();
-        }
-        self.notice.raise();
-        Ok(())
+        state.cache.as_deref().cloned().ok_or(HubError::NotFound)
     }
 
     pub(super) fn recovering_if(
@@ -319,7 +433,8 @@ impl Slot {
 
     /// Reads the cached account, if the hub has one on this device.
     pub(crate) fn read_cache<R>(&self, read: impl FnOnce(Option<&AccountCache>) -> R) -> R {
-        read(self.state().cache.as_ref())
+        let snapshot = self.state().cache.clone();
+        read(snapshot.as_deref())
     }
 
     /// Uses only the original open account, under the same mutex as cache access.
@@ -335,28 +450,9 @@ impl Slot {
             .as_ref()
             .filter(|cache| current && cache.account_id == expected.keyset().account_id())
             .ok_or(nocterm_vault::VaultError::Stale)?;
-        Ok(read(cache))
-    }
-
-    /// The identity check and publication share the Slot mutex; a replacement
-    /// account cannot receive a late cache produced by the original worker.
-    pub(crate) fn update_cache_if(
-        &self,
-        expected: &Arc<OpenKeys>,
-        change: impl FnOnce(&mut AccountCache),
-    ) -> Result<(), nocterm_vault::VaultError> {
-        let mut state = self.state();
-        let current = matches!(&state.keys, KeyState::Open(keys) if Arc::ptr_eq(keys, expected));
-        let cache = state
-            .cache
-            .as_mut()
-            .filter(|cache| current && cache.account_id == expected.keyset().account_id())
-            .ok_or(nocterm_vault::VaultError::Stale)?;
-        change(cache);
-        if let Err(error) = self.file.save(cache) {
-            tracing::warn!(%error, "the captured vault cache cannot be written");
-        }
-        Ok(())
+        let cache = cache.clone();
+        drop(state);
+        Ok(read(&cache))
     }
 
     /// Whether the recovery key of `account_id` was shown on this device and never confirmed.
@@ -365,19 +461,6 @@ impl Slot {
         self.read_cache(|cache| {
             cache.is_some_and(|cache| cache.account_id == account_id && cache.recovery_unconfirmed)
         })
-    }
-
-    /// Changes the cached account and writes it through. Nothing happens without a cache.
-    pub(crate) fn update_cache(
-        &self,
-        change: impl FnOnce(&mut AccountCache),
-    ) -> Result<(), CacheError> {
-        let mut state = self.state();
-        let Some(cache) = state.cache.as_mut() else {
-            return Ok(());
-        };
-        change(cache);
-        self.file.save(cache)
     }
 
     /// Opens the vault with `keys`, remembering `cache` on disk. A cache that cannot be
@@ -389,7 +472,7 @@ impl Slot {
             if let Err(error) = self.file.save(&cache) {
                 tracing::warn!(%error, hub = %self.hub, "the account cache cannot be written");
             }
-            state.cache = Some(cache);
+            state.cache = Some(Arc::new(cache));
             state.keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
             state.authority.rotate();
         }

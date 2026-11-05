@@ -8,12 +8,13 @@ use nocterm_cloud_model::{
     authority::*, coordinator::*, engine::*, grant::*, identity::*, inference::*, journal::*,
     payload::OpaqueBytes,
 };
+use nocterm_core::bounded_io::{BoundedBuffer, CountingWriter};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 pub(super) fn encoded_len<T: Serialize>(value: &T) -> Result<usize, CoordinatorError> {
-    let mut counter = CountedJson { bytes: 0 };
+    let mut counter = CountingWriter::new(nocterm_cloud_model::payload::MAX_LOGICAL_PAYLOAD_BYTES);
     serde_json::to_writer(&mut counter, &(1u8, value)).map_err(|_| JournalError::Capacity)?;
-    Ok(counter.bytes)
+    Ok(counter.count())
 }
 pub(super) fn encode<T: Serialize>(value: &T) -> Result<OpaqueBytes, CoordinatorError> {
     encode_counted(value, encoded_len(value)?)
@@ -22,47 +23,13 @@ pub(super) fn encode_counted<T: Serialize>(
     value: &T,
     bytes: usize,
 ) -> Result<OpaqueBytes, CoordinatorError> {
-    let mut output = JsonOutput {
-        bytes: Vec::with_capacity(bytes),
-        maximum: bytes,
-    };
+    let mut output = BoundedBuffer::with_capacity(bytes, bytes);
     serde_json::to_writer(&mut output, &(1u8, value)).map_err(|_| JournalError::Capacity)?;
-    if output.bytes.len() != bytes {
+    let output = output.into_inner();
+    if output.len() != bytes {
         return Err(JournalError::Corrupt.into());
     }
-    OpaqueBytes::new(output.bytes).map_err(CoordinatorError::from)
-}
-struct CountedJson {
-    bytes: usize,
-}
-impl std::io::Write for CountedJson {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.bytes = self
-            .bytes
-            .checked_add(bytes.len())
-            .filter(|bytes| *bytes <= nocterm_cloud_model::payload::MAX_LOGICAL_PAYLOAD_BYTES)
-            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-struct JsonOutput {
-    bytes: Vec<u8>,
-    maximum: usize,
-}
-impl std::io::Write for JsonOutput {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > self.maximum.saturating_sub(self.bytes.len()) {
-            return Err(std::io::Error::from(std::io::ErrorKind::OutOfMemory));
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+    OpaqueBytes::new(output).map_err(CoordinatorError::from)
 }
 pub(super) fn decode<T: DeserializeOwned>(bytes: &OpaqueBytes) -> Result<T, CoordinatorError> {
     nocterm_ai::history::structural_bytes(bytes.as_bytes()).map_err(|_| JournalError::Corrupt)?;

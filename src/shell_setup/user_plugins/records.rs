@@ -15,25 +15,14 @@ const MAX_FILE_BYTES: usize = 1024 * 1024;
 const PENDING_REPLACEMENTS: usize = 8;
 
 /// The records document of the installation.
+#[derive(Clone)]
 pub(crate) struct RecordsFile {
     state: Entity<Persisted<RecordsDoc>>,
 }
 
 impl RecordsFile {
-    /// Reads the file once. A missing or broken file starts empty; the next change replaces it.
-    pub(crate) fn open(file: PathBuf, cx: &mut App) -> Self {
-        let initial = match read_regular_bounded(&file, MAX_FILE_BYTES) {
-            Ok(bytes) => RecordsDoc::decode(&bytes).unwrap_or_else(|error| {
-                tracing::warn!(%error, file = %file.display(), "plugin records are unreadable");
-                RecordsDoc::default()
-            }),
-            Err(error) => {
-                if !is_missing(&error) {
-                    tracing::warn!(%error, "plugin records are unreadable");
-                }
-                RecordsDoc::default()
-            }
-        };
+    pub(crate) fn new(file: PathBuf, cx: &mut App) -> Self {
+        let initial = RecordsDoc::default();
         let state = cx.new(|_| {
             Persisted::new(
                 initial,
@@ -45,11 +34,34 @@ impl RecordsFile {
         Self { state }
     }
 
+    pub(super) fn initialize(&self, initial: RecordsDoc, cx: &mut App) -> Result<(), StoreError> {
+        self.state
+            .update(cx, |state, cx| state.initialize(initial, cx))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open(file: PathBuf, cx: &mut App) -> Self {
+        let initial = read(&file).unwrap_or_default();
+        let records = Self::new(file, cx);
+        records.initialize(initial, cx).unwrap();
+        records
+    }
+
     pub(crate) fn register_shutdown(
         &self,
         shutdown: &ShutdownCoordinator,
     ) -> Result<(), StoreError> {
         shutdown.register(&self.state)
+    }
+}
+
+pub(super) fn read(file: &std::path::Path) -> Result<RecordsDoc, RecordsError> {
+    match read_regular_bounded(file, MAX_FILE_BYTES) {
+        Ok(bytes) => {
+            RecordsDoc::decode(&bytes).map_err(|error| RecordsError::Write(Cause::new(error)))
+        }
+        Err(error) if is_missing(&error) => Ok(RecordsDoc::default()),
+        Err(error) => Err(RecordsError::Write(Cause::new(error))),
     }
 }
 

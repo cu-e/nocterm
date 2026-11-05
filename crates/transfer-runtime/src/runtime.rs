@@ -62,9 +62,12 @@ struct Admission {
 }
 pub(crate) struct RuntimeState {
     batches: Mutex<BTreeMap<TransferId, Arc<Batch>>>,
+    revision: Arc<crate::changes::Changes>,
     local: Option<Arc<dyn LocalFs>>,
     limits: TransferLimits,
     blocking: BlockingDispatcher,
+    file_slots: Arc<tokio::sync::Semaphore>,
+    backlog_slots: Arc<tokio::sync::Semaphore>,
     completion: Completion,
 }
 struct Completion {
@@ -84,6 +87,12 @@ impl RuntimeState {
     }
     pub(crate) fn blocking(&self) -> &BlockingDispatcher {
         &self.blocking
+    }
+    pub(crate) fn file_slots(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.file_slots
+    }
+    pub(crate) fn backlog_slots(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.backlog_slots
     }
     pub(crate) fn completed(&self) {
         self.completion.done.store(true, Ordering::Release);
@@ -113,6 +122,7 @@ impl RuntimeState {
         let excess = finished.len().saturating_sub(self.limits.queue().history());
         for (id, _) in finished.into_iter().take(excess) {
             batches.remove(&id);
+            self.revision.advance();
         }
     }
 }
@@ -132,9 +142,12 @@ impl TransferRuntime {
         let (sender, receiver) = mpsc::channel(deps.limits.queue().queued());
         let state = Arc::new(RuntimeState {
             batches: Mutex::new(BTreeMap::new()),
+            revision: Arc::default(),
             local: deps.local,
             limits: deps.limits,
             blocking: BlockingDispatcher::new(deps.limits.queue().parallel()),
+            file_slots: Arc::new(tokio::sync::Semaphore::new(deps.limits.queue().parallel())),
+            backlog_slots: Arc::new(tokio::sync::Semaphore::new(deps.limits.queue().backlog())),
             completion: Completion {
                 done: AtomicBool::new(false),
                 changed: Notify::new(),
@@ -173,6 +186,7 @@ impl TransferRuntime {
             id,
             request,
             self.state.limits.stream(),
+            self.state.revision.clone(),
         ));
         let mut batches = self.state.batches.lock();
         if batches.contains_key(&id) {
@@ -189,6 +203,7 @@ impl TransferRuntime {
             })?;
         admission.sequence = sequence;
         batches.insert(id, batch);
+        self.state.revision.advance();
         self.state.trim(&mut batches);
         Ok(id)
     }
@@ -224,6 +239,13 @@ impl TransferService for TransferRuntime {
             .into_iter()
             .map(|(_, progress)| progress)
             .collect()
+    }
+    fn revision(&self) -> Option<u64> {
+        Some(self.state.revision.revision())
+    }
+    fn changed_since(&self, revision: u64) -> Option<BoxFuture<'static, ()>> {
+        let changes = self.state.revision.clone();
+        Some(Box::pin(async move { changes.since(revision).await }))
     }
     fn cancel(&self, id: TransferId) -> Result<(), TransferError> {
         self.cancel_batch(id)

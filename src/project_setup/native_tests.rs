@@ -1,4 +1,5 @@
 //! Optional native exercise of the same preparation adapter installed by the app.
+mod activation;
 mod environment;
 mod filesystem;
 mod monitor;
@@ -97,7 +98,7 @@ fn prepare_native(
             nocterm_project_runtime::NativeEnvironmentCommands,
         )),
     ));
-    let exec = Arc::new(nocterm_local::LocalExec);
+    let exec = Arc::new(nocterm_local::LocalExec::default());
     let input = ProjectSetupRequest {
         project,
         host: HostLocator::Local,
@@ -245,7 +246,7 @@ test -x "$JAVA_HOME/bin/java"
 fn a_real_docker_registry_search_returns_repository_metadata() {
     use nocterm_project_providers::{ImageSearch as _, ImageSearchQuery};
     let images = block_on(nocterm_project_runtime::NativeImageSearch.search(
-        Arc::new(nocterm_local::LocalExec),
+        Arc::new(nocterm_local::LocalExec::default()),
         Engine::Docker,
         ImageSearchQuery::parse("debian").unwrap(),
         CancelFlag::default(),
@@ -262,7 +263,7 @@ fn a_real_docker_registry_search_returns_repository_metadata() {
 #[test]
 #[ignore = "requires Docker and a cached Ubuntu image; creates by immutable local image ID"]
 fn a_real_cached_image_id_creates_without_a_registry_pull() {
-    let exec = nocterm_local::LocalExec;
+    let exec = nocterm_local::LocalExec::default();
     let inspected = block_on(async {
         exec.exec(ExecRequest::new("docker").args([
             "image",

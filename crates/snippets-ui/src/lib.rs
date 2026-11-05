@@ -10,6 +10,8 @@
 //! Settings section: reads terminal through supplied SettingsHandle. Globals: none.
 //! Invariants: failed persistence never publishes a change; malformed libraries
 //! remain read-only; final accepted work uses the shared shutdown coordinator.
+//! Sidebar positions are prepared on library/query/context changes; virtual rows share one
+//! immutable saved record between callbacks, preserving exact expected edit/delete content.
 //! Snippet submission keeps target and terminal refusals typed until notice presentation.
 //! Read-only diagnostics share their original non-Clone load error through core SharedError.
 

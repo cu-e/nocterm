@@ -102,7 +102,13 @@ impl Hubs {
     }
 
     pub fn summary(&self, hub: &HubId) -> Option<HubSummary> {
-        self.list().into_iter().find(|summary| summary.id == *hub)
+        self.entry(hub).map(|entry| HubSummary {
+            id: entry.record.id(),
+            label: entry.record.display_label(),
+            address: entry.record.address.clone(),
+            color: entry.record.color,
+            status: entry.status.clone(),
+        })
     }
 
     pub fn status(&self, hub: &HubId) -> Option<HubStatus> {
@@ -126,7 +132,14 @@ impl Hubs {
     /// Brings the entries in line with the published settings: new servers start
     /// connecting, removed ones disappear, a changed trust connects again.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let records = self.settings.setting::<HubsSettings>(cx).servers.clone();
+        let records = &self.settings.setting::<HubsSettings>(cx).servers;
+        if records
+            .iter()
+            .eq(self.entries.iter().map(|entry| &entry.record))
+        {
+            return;
+        }
+        let records = records.clone();
         let mut previous = std::mem::take(&mut self.entries);
         let mut reconnect = Vec::new();
         for record in records {
@@ -290,13 +303,16 @@ impl Hubs {
         offer: &AdminKeyOffer,
         fingerprint: &str,
         cx: &mut Context<Self>,
-    ) -> Result<(), AdminKeyError> {
+    ) -> gpui::Task<Result<(), AdminKeyError>> {
         if self.entry(offer.hub()).is_none() {
-            return Err(AdminKeyError::Stale);
+            return gpui::Task::ready(Err(AdminKeyError::Stale));
         }
-        let confirmed = offer.confirm(fingerprint);
-        cx.notify();
-        confirmed
+        let confirming = offer.confirm(fingerprint);
+        cx.spawn(async move |this, cx| {
+            let confirmed = confirming.await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+            confirmed
+        })
     }
 
     /// Captures the original recipient of a displayed recovery action.

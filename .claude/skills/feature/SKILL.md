@@ -14,6 +14,8 @@ branch/base, plan/evidence location, scope and relevant prior findings.
 1. Record a compact goal, approach, affected crates/layers, risks and check scope.
    Use [plan-bus.md](plan-bus.md) for optional structured handoffs. Honor an
    existing authorized plan; resolve only material unanswered choices.
+   For changed ownership, name the invariant, transitions and lifetime; for
+   consequential alternatives, compare correctness, reuse, cost and maintenance.
 2. Select relevant procedures rather than launching every workflow:
 
    | Need | Procedure/workflow |
@@ -23,6 +25,7 @@ branch/base, plan/evidence location, scope and relevant prior findings.
    | Restructure within a crate | `refactor` |
    | Move ownership across crates | `crate-split` |
    | Shrink a debt inventory entry | `debt-paydown` |
+   | Rendering, caches or other hot paths | `performance` |
 
    A cohesive change may combine them on one branch; an early warning alone
    does not require a refactor workflow. Split independently reviewable work

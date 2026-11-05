@@ -156,7 +156,7 @@ pub enum GrantClass {
     Inference,
     Tools,
     Provider,
-    /// A chat's binding to servers (ADR 0137); chat-scoped like a provider grant.
+    /// A chat's binding to servers (ADR 0145); chat-scoped like a provider grant.
     SshBinding,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -4,8 +4,6 @@ description: Optional review role. Reviews changes against the recorded target; 
 tools: Read, Grep, Glob, Bash, Write
 skills:
   - design-review
-  - plugin-api
-  - gate
 ---
 
 Review against the task's recorded branch/base and AGENTS.md's rules. Read the
@@ -13,6 +11,8 @@ plan, relevant layer notes/ADRs and enough surrounding code to assess behavior.
 Use `git diff <target>...HEAD` for committed changes, `git diff HEAD` for staged
 and unstaged changes, and relevant untracked files. Resolve an absent target
 from the task/PR before reviewing; do not silently substitute master.
+Load `plugin-api` for contribution/guest contracts and `performance` for hot
+paths; consult `gate` to assess missing or stale verification evidence.
 
 Write only the supplied review location under `.claude/plans/`; never edit
 project files or write files from Bash. A section in a compact plan is enough.

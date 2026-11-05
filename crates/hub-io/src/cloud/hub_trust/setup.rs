@@ -73,20 +73,19 @@ pub(super) fn decode(bytes: &[u8], label: String) -> Result<CloudRunnerSetup, Cl
     )
 }
 fn hex<const N: usize>(text: &str) -> Result<[u8; N], CloudTrustError> {
-    if text.len() != N * 2 {
+    // This exported setup format is canonical lowercase; config and seed readers
+    // independently retain their existing case-insensitive input policy.
+    if !text
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
         return Err(CloudTrustError::Format);
     }
     let mut decoded = [0; N];
-    for (slot, pair) in decoded.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
-        let digit = |byte: u8| match byte {
-            b'0'..=b'9' => Ok(byte - b'0'),
-            b'a'..=b'f' => Ok(byte - b'a' + 10),
-            _ => Err(CloudTrustError::Format),
-        };
-        *slot = digit(pair[0])? * 16 + digit(pair[1])?;
-    }
+    hex::decode_to_slice(text, &mut decoded).map_err(|_| CloudTrustError::Format)?;
     Ok(decoded)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +103,24 @@ mod tests {
             "04".repeat(32),
             "05".repeat(32)
         )
+    }
+
+    #[test]
+    fn public_setup_keeps_lowercase_hex_as_a_closed_input_format() {
+        let original = fixture();
+        assert!(decode(original.as_bytes(), "Runner".into()).is_ok());
+        for replacement in [
+            "0F".repeat(32),
+            "+f".repeat(32),
+            "0f".repeat(31),
+            "é".repeat(32),
+        ] {
+            let changed = original.replace(&"0f".repeat(32), &replacement);
+            assert!(matches!(
+                decode(changed.as_bytes(), "Runner".into()),
+                Err(CloudTrustError::Format)
+            ));
+        }
     }
     #[test]
     fn public_setup_import_keeps_full_assignment_and_refuses_private_or_moved_fields() {

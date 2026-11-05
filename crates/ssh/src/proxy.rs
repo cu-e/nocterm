@@ -173,62 +173,22 @@ async fn http(stream: &mut TcpStream, target: &Target) -> io::Result<()> {
     Ok(())
 }
 async fn socks(stream: &mut TcpStream, target: &Target, remote_dns: bool) -> io::Result<()> {
-    stream.write_all(&[5, 1, 0]).await?;
-    let mut greeting = [0; 2];
-    stream.read_exact(&mut greeting).await?;
-    if greeting != [5, 0] {
-        return Err(failure(
-            "SOCKS5 proxy did not accept authentication-free access",
-        ));
-    }
-    let mut request = vec![5, 1, 0];
+    use tokio_socks::{TargetAddr, tcp::Socks5Stream};
+    // Resolve here only for local DNS; the library receives an explicit address policy.
     let address = match target.host.parse::<IpAddr>() {
-        Ok(ip) => Some(ip),
-        Err(_) if !remote_dns => Some(
+        Ok(ip) => TargetAddr::Ip((ip, target.port).into()),
+        Err(_) if !remote_dns => TargetAddr::Ip(
             tokio::net::lookup_host((target.host.as_str(), target.port))
                 .await?
                 .next()
-                .ok_or_else(|| failure("target DNS returned no addresses"))?
-                .ip(),
+                .ok_or_else(|| failure("target DNS returned no addresses"))?,
         ),
-        Err(_) => None,
+        Err(_) => TargetAddr::Domain(target.host.as_str().into(), target.port),
     };
-    match address {
-        Some(IpAddr::V4(ip)) => {
-            request.push(1);
-            request.extend_from_slice(&ip.octets());
-        }
-        Some(IpAddr::V6(ip)) => {
-            request.push(4);
-            request.extend_from_slice(&ip.octets());
-        }
-        None => {
-            request.extend_from_slice(&[3, target.host.len() as u8]);
-            request.extend_from_slice(target.host.as_bytes());
-        }
-    }
-    request.extend_from_slice(&target.port.to_be_bytes());
-    stream.write_all(&request).await?;
-    let mut reply = [0; 4];
-    stream.read_exact(&mut reply).await?;
-    if reply[0] != 5 || reply[2] != 0 {
-        return Err(failure("invalid SOCKS5 CONNECT reply"));
-    }
-    if reply[1] != 0 {
-        return Err(failure(&format!(
-            "SOCKS5 proxy rejected CONNECT (status {})",
-            reply[1]
-        )));
-    }
-    let count = match reply[3] {
-        1 => 4,
-        4 => 16,
-        3 => stream.read_u8().await? as usize,
-        _ => return Err(failure("invalid SOCKS5 address type")),
-    };
-    let mut address = vec![0; count + 2];
-    stream.read_exact(&mut address).await?;
-    Ok(())
+    Socks5Stream::connect_with_socket(stream, address)
+        .await
+        .map(|_| ())
+        .map_err(io::Error::other)
 }
 
 #[cfg(test)]
@@ -363,6 +323,87 @@ mod tests {
         assert_eq!(b, b"SSH");
         job.await.unwrap();
     }
+    #[tokio::test]
+    async fn socks_local_dns_uses_ip_and_preserves_fragmented_reply_banner() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let job = tokio::spawn(async move {
+            let (mut stream, _) = server.accept().await.unwrap();
+            let mut greeting = [0; 3];
+            stream.read_exact(&mut greeting).await.unwrap();
+            assert_eq!(greeting, [5, 1, 0]);
+            stream.write_all(&[5, 0]).await.unwrap();
+            let mut header = [0; 4];
+            stream.read_exact(&mut header).await.unwrap();
+            assert_eq!(&header[..3], &[5, 1, 0]);
+            let size = match header[3] {
+                1 => 6,
+                4 => 18,
+                _ => panic!("local DNS must send an IP"),
+            };
+            let mut address = vec![0; size];
+            stream.read_exact(&mut address).await.unwrap();
+            for bytes in [&[5, 0, 0][..], &[1, 127, 0], &[0, 1, 0, 22], b"SSH"] {
+                stream.write_all(bytes).await.unwrap();
+                tokio::task::yield_now().await;
+            }
+        });
+        let mut socket = connect(
+            &target("localhost"),
+            &ProxyConfig::Socks5 {
+                host: "127.0.0.1".into(),
+                port,
+                remote_dns: false,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let mut banner = Vec::new();
+        socket.read_to_end(&mut banner).await.unwrap();
+        assert_eq!(banner, b"SSH");
+        job.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn socks_refuses_authentication_and_malformed_or_rejected_replies() {
+        for (greeting, reply) in [
+            ([5, 2], vec![]),
+            ([4, 0], vec![]),
+            ([5, 0], vec![5, 5, 0, 1]),
+            ([5, 0], vec![5, 0, 1, 1]),
+            ([5, 0], vec![5, 0, 0, 9]),
+        ] {
+            let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = server.local_addr().unwrap().port();
+            let job = tokio::spawn(async move {
+                let (mut stream, _) = server.accept().await.unwrap();
+                let mut hello = [0; 3];
+                stream.read_exact(&mut hello).await.unwrap();
+                stream.write_all(&greeting).await.unwrap();
+                if !reply.is_empty() {
+                    let mut request = [0; 10];
+                    stream.read_exact(&mut request).await.unwrap();
+                    stream.write_all(&reply).await.unwrap();
+                }
+            });
+            assert!(
+                connect(
+                    &target("127.0.0.1"),
+                    &ProxyConfig::Socks5 {
+                        host: "127.0.0.1".into(),
+                        port,
+                        remote_dns: true,
+                    },
+                    None
+                )
+                .await
+                .is_err()
+            );
+            job.await.unwrap();
+        }
+    }
+
     #[test]
     fn host_validation_prevents_http_header_injection() {
         for h in ["host\r\nX:evil", "user@host", "host/path", "host:22", ""] {

@@ -93,12 +93,13 @@ pub(super) mod race {
             let provider = LocalSourceProvider::new(self.slot(), self.subjects.clone());
             KeyAdmission::scripted(provider.membership().unwrap())
         }
-        pub(super) fn confirm(&self) {
+        pub(super) async fn confirm(&self) {
             let owner = self.owner();
             self.flow
                 .offer(&owner, Secret::new("displayed fixture key"))
                 .unwrap()
                 .confirm()
+                .await
                 .unwrap();
         }
 
@@ -125,11 +126,110 @@ pub(super) mod race {
         Arc::new(Pool::new(dir.to_path_buf(), "test", Arc::clone(accounts)))
     }
 
+    #[tokio::test]
+    async fn remote_first_creation_with_failed_local_installation_requires_recovery_reissue_after_repair()
+     {
+        let device = Device::new();
+        let hub_keys = MemoryKeysets::default();
+        let owner = device.owner();
+        let path = device.dir.path().join(format!(
+            "{}.cache",
+            crate::credentials::file_stem(hub().address())
+        ));
+        std::fs::create_dir(&path).unwrap();
+        let secrets = LoginSecrets::derive(PASSWORD, HUB_UID, "ada").unwrap();
+        assert!(matches!(
+            device
+                .flow
+                .after_password(&owner, &hub_keys, ACCOUNT_ID, "ada", secrets)
+                .await,
+            Err(HubError::Credentials { .. })
+        ));
+        assert!(
+            hub_keys.stored().is_some(),
+            "remote creation already succeeded"
+        );
+        assert!(
+            device.slot().open().is_none(),
+            "failed durable installation cannot open keys"
+        );
+        std::fs::remove_dir(path).unwrap();
+        let secrets = LoginSecrets::derive(PASSWORD, HUB_UID, "ada").unwrap();
+        assert!(matches!(
+            device
+                .flow
+                .after_password(&owner, &hub_keys, ACCOUNT_ID, "ada", secrets)
+                .await
+                .unwrap(),
+            KeyStatus::RecoveryKeyUnconfirmed(_)
+        ));
+        let keys = owner.keys().unwrap();
+        let shown = device
+            .flow
+            .reissue_with(&owner, &hub_keys, keys.keyset())
+            .await
+            .unwrap();
+        device
+            .flow
+            .offer(&owner, shown)
+            .unwrap()
+            .confirm()
+            .await
+            .unwrap();
+        assert!(!device.flow.recovery_key_unconfirmed(&hub()));
+    }
+
     /// Both devices read "no keyset" before either creates one.
     fn racing_hub() -> MemoryKeysets {
         let hub_keys = MemoryKeysets::default();
         hub_keys.meet_before_creating(2);
         hub_keys
+    }
+
+    #[tokio::test]
+    async fn recovery_acknowledgement_rechecks_its_postcommit_generation_after_parent_sync() {
+        use crate::account::testing::blocked_cache_job;
+        use futures::poll;
+        let device = Device::new();
+        let hub_keys = MemoryKeysets::default();
+        let KeyStatus::Created(shown) = device.sign_in(&hub_keys, PASSWORD).await else {
+            panic!("created")
+        };
+        let slot = device.slot();
+        let (job, entered, first_release) = blocked_cache_job(&slot);
+        let first = tokio::spawn(job);
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.wait())
+            .await
+            .unwrap();
+        let (job, entered, second_release) = blocked_cache_job(&slot);
+        let second = tokio::spawn(job);
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.wait())
+            .await
+            .unwrap();
+        let mut confirmation = shown.confirm();
+        assert!(poll!(&mut confirmation).is_pending());
+        let (mut job, entered, final_release) = blocked_cache_job(&slot);
+        assert!(poll!(&mut job).is_pending());
+        let confirming = tokio::spawn(confirmation);
+        let final_job = tokio::spawn(job);
+        first_release.release();
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.wait())
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while slot.recovery_unconfirmed(ACCOUNT_ID) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        slot.lock();
+        second_release.release();
+        final_release.release();
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+        final_job.await.unwrap().unwrap();
+        assert!(matches!(confirming.await.unwrap(), Err(HubError::Stale)));
     }
 
     fn count(statuses: [&KeyStatus; 2], wanted: impl Fn(&KeyStatus) -> bool) -> usize {
@@ -332,7 +432,7 @@ mod reissue {
         let (device, ..) = created().await;
         assert!(device.flow.recovery_key_unconfirmed(&hub()));
 
-        device.confirm();
+        device.confirm().await;
 
         assert!(!device.flow.recovery_key_unconfirmed(&hub()));
     }
@@ -350,7 +450,7 @@ mod reissue {
         assert!(matches!(status, KeyStatus::RecoveryKeyUnconfirmed(_)));
         assert!(device.flow.recovery_key_unconfirmed(&hub()));
 
-        device.confirm();
+        device.confirm().await;
         let device = device.restarted();
         assert_eq!(device.sign_in(&hub_keys, PASSWORD).await, KeyStatus::Open);
     }
@@ -367,7 +467,7 @@ mod reissue {
     #[tokio::test]
     async fn reissuing_replaces_the_recovery_key_the_hub_can_open_and_keeps_the_password() {
         let (device, hub_keys, old) = created().await;
-        device.confirm();
+        device.confirm().await;
         let version = hub_keys.stored().unwrap().version;
 
         let new = reissue(&device, &hub_keys).await.unwrap();
@@ -389,7 +489,7 @@ mod reissue {
     #[tokio::test]
     async fn a_reissued_key_is_unconfirmed_until_confirmed_and_survives_a_restart() {
         let (device, hub_keys, _) = created().await;
-        device.confirm();
+        device.confirm().await;
 
         reissue(&device, &hub_keys).await.unwrap();
         assert!(device.flow.recovery_key_unconfirmed(&hub()));
@@ -420,7 +520,7 @@ mod reissue {
     #[tokio::test]
     async fn a_keyset_that_keeps_changing_leaves_the_old_key_valid_and_the_marker_as_it_was() {
         let (device, hub_keys, old) = created().await;
-        device.confirm();
+        device.confirm().await;
         hub_keys.contend_recovery_writes(100);
 
         let result = reissue(&device, &hub_keys).await;

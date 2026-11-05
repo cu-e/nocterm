@@ -105,15 +105,17 @@ in effect at that instant ([ADR 0088](../adr/0088-wall-clock-contract-and-the-cl
 `nocterm-plugin-packages` implements the `PluginPackages` port of `nocterm-plugin-api`. It reads a
 package file (a TOML file of at most 256 KiB, or a code package below) without following links through
 `nocterm_core::fs::read_regular_bounded`, hashes the exact bytes it then parses, validates the
-manifest, publishes a package privately and atomically as one file per validated `user-`
-plugin id (`<root>/<id>.toml`), re-hashes it at load and removes it. Its I/O is limited to those `nocterm_core::fs`
+manifest and publishes immutable private files per validated `user-` plugin id and hash
+(`<root>/<id>.<hash>.toml`). Records select one exact version; old versions remain until
+the matching records receipt succeeds. Loads also accept legacy id-only files and recheck
+the requested hash. Its I/O is limited to those `nocterm_core::fs`
 calls and metadata and removal under the package root ([ADR 0089](../adr/0089-user-plugin-contract.md)).
 A code package is one `.wasm` module, at most 2 MiB, that carries the manifest in its custom
-section `nocterm.manifest`; the store keeps `<id>.wasm` or `<id>.toml` per plugin and the hash
+section `nocterm.manifest`; the store keeps `<id>.<hash>.wasm` or `<id>.<hash>.toml` and the hash
 covers the whole file ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
 `SessionStore` is the store of a developer session: it reads a file with the same bounded read but
 publishes, loads (re-checking the hash) and removes packages in memory, so no package directory is
-ever created.
+ever created. See [ADR0141](../adr/0141-versioned-plugin-publication.md).
 
 `nocterm-plugin-wasm` implements the `PluginRuntime` port on wasmi for code packages. It reads no
 file: the bytes come from the package port. It validates and compiles a module when a plugin is
@@ -229,6 +231,12 @@ chunks with at most eight acknowledged upload chunks per batch, and owns entropy
 cancellable reservations and cleanup. Local operations run through bounded blocking
 slots; the adapter imports no concrete filesystem adapter or GPUI.
 
+Downloads and relays walk remote sources through one bounded DFS. Its destination
+retains either a held `LocalDirectory` or the admitted remote filesystem and parent
+path, with separate native-download and remote-publication name policies. Their
+shared double-buffer pipeline joins both pending operations before returning a
+failure, so a local writer regains its stage before cleanup.
+
 A relay request walks its source tree on the source `RemoteFs`, prepares directories on
 the destination and streams each file from a `RemoteDownload` into a staged
 `RemoteUpload` with double buffering: the next read batch is in flight while the previous
@@ -334,23 +342,20 @@ New Local transcripts use held `scoped-v3/<environment-key>/general` or
 `scoped-v3/<environment-key>/projects/<project-id>` descendants. The authoritative
 bounded header and body must match the requested environment and context before
 payload reads or mutation. Older namespaces are readable only by ThisComputer;
-sidecars cannot select membership. See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
+obsolete sidecars are ignored and cannot select membership. See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
 
 `nocterm-agent-storage` implements the AI domain's `ChatRepository` and
 `AgentStateRepository`. It owns bounded transcript reads, private atomic JSON/TOML
-publication, catalog scanning and rebuildable metadata sidecars. The transcript
-is authoritative: a sidecar failure cannot revoke a successful publication.
-Version-two documents and their rebuildable sidecars live under
+publication and catalog scanning. The transcript is authoritative; obsolete `.meta` files
+are neither read nor written. Version-two documents remain under
 `scoped-v2/general/<chat-id>` or `scoped-v2/projects/<project-id>/<chat-id>`;
 legacy flat discovery cannot enter Project history. The captured scope and UUID
 select one bucket, so identical chat IDs in different scopes are independent.
-Discovery verifies the transcript's bounded authoritative v2 header before using
-any sidecar metadata, then applies the 200-row limit within that scope. Ordinary
-v2 catalog reads and overwrite checks read at most the 16 KiB prefix rather than
-the full transcript. Arbitrarily ordered valid General v1 files keep their
-bounded full scan, including late metadata and first-user fallback titles; no
-sidecar is trusted to avoid that compatibility cost and no migration rewrites
-v1 bytes. A scoped General document takes precedence over a legacy duplicate,
+Discovery reads bounded authoritative headers, then applies the 200-row limit within that
+scope. Ordinary v2 catalog reads and overwrite checks read at most the 16 KiB prefix rather
+than the full transcript. Arbitrarily ordered valid General v1 files keep their bounded full
+scan, including late metadata and first-user fallback titles; no migration rewrites v1 bytes.
+A scoped General document takes precedence over a legacy duplicate,
 including when damaged; deletion validates both and removes legacy first so a
 failed removal cannot resurrect its stale fallback.
 
@@ -403,7 +408,8 @@ process shutdown port retains its existing stringified AgentError diagnostic.
 ## Connection files and native values
 
 `nocterm-connections-io` implements the connection repository with the shared
-foundation codecs. Profiles use `save_preserving` so configuration symlinks,
+foundation codecs. Profiles use `RevisionedFile::save_preserving` with observed-revision
+conflict detection and a persistent sibling publication lock, so configuration symlinks,
 comments and retained top-level tables keep their existing semantics; recents
 and facts use rebuildable snapshot files. A malformed profile load retains a
 typed read-only diagnostic; informational documents fall back to empty values.
@@ -411,6 +417,10 @@ The adapter supplies user/home defaults, UUID entropy and Unix timestamps.
 Application startup preloads documents and defaults on its background executor;
 bootstrap installs only prepared documents and writer ports. The existing
 memory-only composition constructs no native repository or HTTP clients.
+One lazy HTTP client per observation bundle shares connection pooling for country and flag
+requests. Native DNS has four physical workers and four queued requests, with an eight-second
+caller deadline. Expired queued work is skipped. An uncancellable system lookup retains its
+worker until actual return, isolating optional country acquisition from other fact jobs.
 ## Image codec
 
 `nocterm-image-codec::NativeImageCodec` implements AI's image inspector and
@@ -493,6 +503,12 @@ before the file lock. Captured revocation compares the original local file login
 an old response cannot erase replacement credentials in the publication window.
 Already admitted remote A operations retain their existing cancellation limits.
 
+Personal-vault refresh snapshots publish monotonically within a collection: an older
+cursor cannot replace a newer cached deletion. Identical refreshes leave the cache file
+untouched, and reading one credential copies only its encrypted object and envelope.
+Account-cache encoding and acquisition share a 32 MiB file limit; a refused oversized
+publication preserves the previous readable file.
+
 `HubAccount::local_source` captures the configured hub, actual pooled account and
 the opened account public key's fingerprint for device-local history. Older hubs
 use `LegacyConfiguredAccount`; an address or leaf certificate does not establish
@@ -558,8 +574,8 @@ Ed25519 subject seed in one journal row sealed by the chat's journal cipher unde
 class (journal v9; the v8 to v9 upgrade deletes rows sealed as effects), stores a
 transition's row before it journals the command and events, restores the previous row when
 journaling fails, and lends the session broker the in-memory key and certificate
-(`ChatSshCredentials`, [ADR 0137](../adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md),
-[ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+(`ChatSshCredentials`, [ADR 0145](../adr/0145-per-server-ca-principals-and-runner-certificate-sessions.md),
+[ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 The runner's session broker opens a run's bound-server destination (the session access
 hub-io derived from the signed binding) with a configured SSH target or a keyed managed boot
 v3 target of the same endpoint and host key, signing in only with the chat's certificate.
@@ -600,7 +616,7 @@ journal gate (the first call derives the whole journal, backfilling older chats)
 publishes due revisions from the runner's delivery sweep. `RunnerChatDirectory` in
 `nocterm-hub-io` signs and seals them with the chat's current head and publishes them to the
 runner's directory stream while the hub negotiated bit 256
-([ADR 0135](../adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)).
+([ADR 0143](../adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)).
 
 A runner's command source also reports `CommandInput::ChatOpened { stream }` after it
 durably admits (or finds already installed) a chat key grant. It is not a command: it has no
@@ -634,12 +650,12 @@ implements the `CloudConversation` port with one task per open chat over `OpenCh
 its own receipts and on Refresh), keeps the core's sealed `VerifiedChat` checkpoints and its
 commands' sealed `StoredCommand`s in private files under the chats root, and resumes a command
 left from an earlier run with `OpenChat::resume` (its pending row again, the same bytes and a
-receipt probe) ([ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)). `cloud_chats` implements
+receipt probe) ([ADR 0146](../adr/0146-device-transport-and-resumable-commands.md)). `cloud_chats` implements
 `CloudChatLauncher` with `ListChats` (runner directories confirmed by catalogs, kept as sealed
 `VerifiedDirectory` checkpoints), `CreateChat` and, for an own-agent chat, `ProviderLease`.
 Runner enrolment keeps writing the account's hub-trust and registry objects through the
 contract's record layouts
-([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)). A read chat binds
+([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)). A read chat binds
 and unbinds its servers with the core's `BindServers` and unbind (`server_flows`), maps the
 core's `ChatSsh` to the neutral `ServerBinding` (`servers`) and answers each certificate request
 with `SshAnswer` while the account is unlocked; the servers it offers are the account's trusted
@@ -647,8 +663,16 @@ servers with the port this device last reached them on. `cloud_chats::answering`
 `ChatSshCertifier`: each sweep keeps every chat whose summary lists bound servers read.
 `agent_access` uses the contract's CA, CA document and per-server lines; reconcile rewrites a
 trusted server's shared-principal line to its own
-([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ### Native account admission
 
 `nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache, replica-space and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Native administrator and recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+
+
+Automatic agent-CA host edits use the SFTP adapter's fixed no-clobber owner lock, with no
+expiry or automatic orphan recovery. Different Nocterm sessions/devices coordinate through
+that lock. Existing empty files use Replace; absence uses Create. Final comparison and checked
+lock cleanup remain best effort against arbitrary external editors. Busy and unsupported
+protocol failures retain typed causes and expose the existing manual Copy CA path.
+See [ADR0139](../adr/0139-cooperative-authorized-keys-edits.md).

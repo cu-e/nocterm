@@ -59,19 +59,25 @@ fn independent_policy_cannot_redirect_an_existing_watch_and_closed_model_is_rele
     let weak = monitor.downgrade();
     cx.update_window(window, |_, window, _| window.remove_window())
         .unwrap();
-    drop(workspace);
-    drop(monitor);
+    // Flush entity release before admitting a new consumer. Merely parking
+    // the executor does not run GPUI's deferred release callbacks.
+    cx.update(|_| {
+        drop(workspace);
+        drop(monitor);
+    });
     cx.run_until_parked();
     assert!(weak.upgrade().is_none());
+    assert!(
+        !host.reading(1),
+        "the last subscriber releases its native watch"
+    );
     let (_, new_workspace, new_monitor) = cx.update(|cx| {
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    Workspace::new(
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx)),
-                        window,
-                        cx,
-                    )
+                    let deps =
+                        nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx);
+                    Workspace::new(deps, window, cx)
                 })
             })
             .unwrap();
@@ -86,8 +92,11 @@ fn independent_policy_cannot_redirect_an_existing_watch_and_closed_model_is_rele
         (window, workspace, monitor)
     });
     cx.run_until_parked();
-    assert!(host.reading(2));
-    assert_ne!(status(cx, &new_monitor), Status::Off);
+    assert_eq!(status(cx, &new_monitor), Status::Starting);
+    assert!(
+        host.reading(2),
+        "a new subscriber gets a fresh native watch"
+    );
     drop(new_workspace);
 }
 

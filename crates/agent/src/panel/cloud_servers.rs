@@ -1,4 +1,4 @@
-//! The Servers control of a Cloud chat (ADR 0139): the servers the chat is bound to and where
+//! The Servers control of a Cloud chat (ADR 0147): the servers the chat is bound to and where
 //! each stands, the server the next prompts run on, and binding the chat to CA-trusted servers
 //! for a window of one to thirty days (seven unless the person picks another).
 use gpui_kit::{

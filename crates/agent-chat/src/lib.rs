@@ -23,7 +23,8 @@
 //! Opaque submissions retry their original command; Local Stop retains its actual session/turn ticket.
 //! Sources declare their composer capabilities and pending prompts; Local has none pending.
 //! A remote source may offer `ConversationServers` (the servers its agent may sign in to,
-//! ADR 0139); Local offers none.
+//! ADR 0147); Local offers none.
+//! The private Transcript admits live byte/row growth before mutation; capacity failure preserves accepted rows and queued prompts.
 //! Does not own: views, the workspace shell, ACP transport, connection admission,
 //! filesystem storage, native command execution or image decoding.
 //! Ports used: AgentConnector and ToolBridge through the runtime, terminal ports from

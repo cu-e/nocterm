@@ -322,10 +322,12 @@ The selected inner workspace session takes precedence; missing or unsupported
 workspace authority never falls back to the unrelated outer session or local runner.
 Ordinary local contexts retain the injected local policy. Cache identity includes
 the original surface and checked resource; watch generations reject stale detection
-and readings across switches or reconnects. It keeps bounded samplers and runs
-exactly one script: the status
-bar's metrics at the slow interval while the details are closed, and the union
-with the details' metrics at the fast interval while they are open. It declares a
+and readings across switches or reconnects. It keeps bounded surface-specific samplers
+and subscribes to `nocterm-monitor-service`: status-bar metrics at the slow interval while
+details are closed, with details metrics at the fast interval while open. Consumers of the
+same captured executor share one raw script using their metric union and fastest cadence.
+The last subscriber cancels collection. See
+[ADR0138](../adr/0138-shared-captured-monitor-collection.md). It declares a
 status widget for the left zone of the bar in its system plugin and supplies its Settings page as a
 `SettingsPageSpec`, nested under Plugins. The page keeps whether monitoring runs, the refresh
 intervals and the details metrics; the metrics the status bar shows are a field of the plugin's
@@ -618,19 +620,22 @@ HistoryColumn owns `CloudHistory`, the Cloud chats of the window's hub; the hist
 local and Cloud rows through one neutral row model in one order by last activity, a Cloud row
 shows its runner's title, time and state, and offers only opening
 ([ADR 0133](../adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md),
-[ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)).
+[ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)).
 A refused or unanswered submission (`ConversationSubmission::refused`) releases the composer,
 so sending the same text again is a new prompt. A Cloud chat whose runner did not confirm its
 history (`ConversationView::freshness`) says so in its status line, and a sleeping seat offers
 Wake (`ConversationActions::wake`); while the chat is still opening nothing is said
-([ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)). A source that binds
+([ADR 0146](../adr/0146-device-transport-and-resumable-commands.md)). A source that binds
 servers (`ConversationSource::servers`) gets a Servers bar above the composer
 (`CloudServersControl`, owned by the conversation surface): the bound servers and where each
 stands, the server the next prompts run on, a form to bind CA-trusted servers for one to thirty
 days (seven by default) and Unbind. A Cloud history row names the servers its chat is bound to
-([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 MessageList reuses one ImagePipeline for
-preview cache generations and remeasures rows only for accepted delivery. It keeps
+preview cache generations and remeasures rows only for accepted delivery. Its 32-entry,
+64 MiB preview budget retains full immutable source identities and charges image/source
+allocations; one installation shares four physical image jobs across attachments and previews.
+Counts and remaining bytes are admitted before file acquisition or base64/decoder allocation. It keeps
 each agent message's and expanded reasoning's parsed Markdown per row, so a row
 scrolled back into view keeps its parse and streamed text parses only what was
 appended. PanelLayout keeps the panel's regions as cached views: the transcript, the
@@ -641,7 +646,12 @@ chat redraws the transcript only when its rows or what they show changed, typing
 redraws the footer, and the coalesced redraw of other chats redraws the history only
 when a listed row changed. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
-validated candidate collection atomically. The feature never decodes image data.
+validated candidate collection atomically. The feature never decodes image data. Live ACP transcript admission checks its 20,000-row
+and 64 MiB resident budgets before mutation, including mixed text/tool/control updates.
+Cloud candidate reduction runs in the background and updates raw per-row retained accounting
+only for changed/appended rows; encoded image clones share immutable bytes with unchanged wire
+format. Existing projection cursor and source checks still gate foreground delivery.
+See [ADR0142](../adr/0142-live-transcript-and-image-admission.md).
 Panel coordination retains fourteen private fields.
 ChatList binds selection and per-chat observation to the original entity; removal
 commits only after existing document admission. SignInCards retains original-token

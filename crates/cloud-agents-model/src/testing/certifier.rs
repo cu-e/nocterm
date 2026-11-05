@@ -1,4 +1,4 @@
-//! An in-memory [`ChatSshCertifier`] that counts sweeps per hub (ADR 0139).
+//! An in-memory [`ChatSshCertifier`] that counts sweeps per hub (ADR 0147).
 use crate::{ChatSshCertifier, CloudAgentError, CloudFuture};
 use futures::FutureExt as _;
 use nocterm_hubs_model::HubId;

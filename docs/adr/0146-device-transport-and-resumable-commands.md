@@ -1,6 +1,6 @@
-# 0138. Cloud effects go through the hub client; commands resume after a restart
+# 0146. Cloud effects go through the hub client; commands resume after a restart
 
-Status: accepted. Supersedes, in [0136](0136-the-device-side-runs-on-the-contract-device-core.md),
+Status: accepted. Supersedes, in [0144](0144-the-device-side-runs-on-the-contract-device-core.md),
 the temporary request signer (decision 9), the outbox of exact publications (the outbox half of
 decision 5), the rule that the first freshness of a subscription is not shown (decision 3) and
 the consequences that a pending command's row is gone after a restart and that hub-io
@@ -9,7 +9,7 @@ transport and resumable commands).
 
 ## Context
 
-ADR 0136 moved the device side of Cloud chats onto the contract's device core, but the pinned
+ADR 0144 moved the device side of Cloud chats onto the contract's device core, but the pinned
 contract had no device transport, no way to resume a command and no freshness for a chat
 before its first round. hub-io therefore signed request proofs itself with the device key read
 from its credential file, kept raw publications and published them again after a restart

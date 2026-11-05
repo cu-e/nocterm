@@ -1,19 +1,13 @@
 //! Bounded native secret persistence; never a public token or wire codec.
 use super::runner_peer::{RunnerHubError as Error, remote};
+use crate::cloud::private_snapshot::{PrivateSnapshot, SnapshotError};
 use nocterm_cloud_model::journal::JournalCatalogBinding;
-use nocterm_core::{
-    SharedCause,
-    fs::{AtomicPublication, create_private, open_private_regular, require_private_regular},
-};
+use nocterm_core::SharedCause;
 use nocterm_hub_client::cloud::RunnerSession;
 use nocterm_hub_model::cloud::runner_auth::RunnerProofSubject;
 use nocterm_hub_proto::v1::CloudRunnerTokens;
 use sha2::{Digest, Sha256};
-use std::{
-    fs::File,
-    io::{self, Read},
-    path::{Path, PathBuf},
-};
+use std::{io::Read, path::Path};
 use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 8] = b"NCRSE001";
@@ -84,10 +78,7 @@ impl SessionRecord {
 }
 
 pub(super) struct RunnerSessionFile {
-    path: PathBuf,
-    parent: File,
-    _lock: File,
-    published: bool,
+    file: PrivateSnapshot,
     source: [u8; 32],
 }
 impl RunnerSessionFile {
@@ -96,19 +87,8 @@ impl RunnerSessionFile {
         binding: &JournalCatalogBinding,
         subject: &RunnerProofSubject,
     ) -> Result<Self, Error> {
-        nocterm_core::paths::ensure_private_dir(root).map_err(storage)?;
-        let parent = File::open(root).map_err(storage)?;
-        let lock_path = root.join("runner-session.lock");
-        let lock = match create_private(&lock_path) {
-            Ok(lock) => lock,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                open_private_regular(&lock_path).map_err(storage)?
-            }
-            Err(error) => return Err(storage(error)),
-        };
-        require_private_regular(&lock).map_err(storage)?;
-        lock.try_lock()
-            .map_err(|error| storage(io::Error::other(error)))?;
+        let file = PrivateSnapshot::acquire(root, "runner-session.lock", "runner-session.v1")
+            .map_err(snapshot)?;
         let mut hash = Sha256::new();
         hash.update(b"nocterm-native-runner-session-source-v1");
         let epoch = binding.epoch().get().to_be_bytes();
@@ -126,22 +106,19 @@ impl RunnerSessionFile {
             hash.update(field);
         }
         Ok(Self {
-            path: root.join("runner-session.v1"),
-            parent,
-            _lock: lock,
-            published: false,
+            file,
             source: hash.finalize().into(),
         })
     }
     pub(super) fn require_absent(&self) -> Result<(), Error> {
-        match open_private_regular(&self.path) {
+        match self.file.open() {
             Ok(_) => Err(Error::Existing),
-            Err(error) if error.io_kind() == Some(io::ErrorKind::NotFound) => Ok(()),
+            Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => Ok(()),
             Err(error) => Err(storage(error)),
         }
     }
     pub(super) fn read(&mut self, subject: &RunnerProofSubject) -> Result<RunnerSession, Error> {
-        let mut file = open_private_regular(&self.path).map_err(storage)?;
+        let mut file = self.file.open().map_err(storage)?;
         let mut bytes = Zeroizing::new([0u8; BYTES + 1]);
         let mut used = 0;
         loop {
@@ -160,31 +137,11 @@ impl RunnerSessionFile {
         let mut record = SessionRecord(Zeroizing::new([0; BYTES]));
         record.0.copy_from_slice(&bytes[..BYTES]);
         let session = record.session(subject)?;
-        self.confirm(&file)?;
-        self.published = true;
+        self.file.accept_read(&file).map_err(snapshot)?;
         Ok(session)
     }
     pub(super) fn save(&mut self, record: &SessionRecord) -> Result<(), Error> {
-        let staged =
-            AtomicPublication::stage_private(&self.path, record.0.as_ref()).map_err(storage)?;
-        let file = if self.published {
-            // Refuse an unsafe existing file before replacing the private session.
-            let existing = open_private_regular(&self.path).map_err(storage)?;
-            require_private_regular(&existing).map_err(storage)?;
-            staged.publish().map_err(storage)?;
-            self.published = true;
-            open_private_regular(&self.path).map_err(stored)?
-        } else {
-            let file = staged.publish_new().map_err(storage)?;
-            self.published = true;
-            file
-        };
-        self.confirm(&file)
-    }
-    fn confirm(&self, file: &File) -> Result<(), Error> {
-        require_private_regular(file).map_err(stored)?;
-        file.sync_all().map_err(stored)?;
-        self.parent.sync_all().map_err(stored)
+        self.file.save(record.0.as_ref()).map_err(snapshot)
     }
     fn digest(&self, bytes: &[u8]) -> [u8; 32] {
         let mut hash = Sha256::new();
@@ -198,8 +155,11 @@ impl RunnerSessionFile {
 fn storage(error: impl std::error::Error + Send + Sync + 'static) -> Error {
     Error::Storage(SharedCause::new(error))
 }
-fn stored(error: impl std::error::Error + Send + Sync + 'static) -> Error {
-    Error::StoredButUnavailable(SharedCause::new(error))
+fn snapshot(error: SnapshotError) -> Error {
+    match error {
+        SnapshotError::Stored(cause) => Error::StoredButUnavailable(cause),
+        error => storage(error),
+    }
 }
 
 #[cfg(test)]

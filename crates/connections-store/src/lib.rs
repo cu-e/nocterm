@@ -30,7 +30,8 @@ pub use nocterm_connections_model::profile_authority::{
 };
 pub use publication::projection::ProfilePublications;
 pub use replication::{
-    ProfileReplication, ReplicationEvent, ReplicationFailure, ReplicationStatus,
+    ProfileReplication, ReplicationEvent, ReplicationFailure, ReplicationFeedError,
+    ReplicationStatus,
 };
 
 mod facts;
@@ -41,3 +42,6 @@ pub use facts::{
     ProbeSourceAuthority, ProbeSourceIdentity, ProbeSourceLease,
 };
 pub use observation::ObservationDeps;
+
+#[cfg(feature = "test-support")]
+pub mod test_support;

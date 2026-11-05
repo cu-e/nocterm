@@ -122,7 +122,7 @@ async fn rejected_directory_page_closes_its_remote_handle() {
             atomic_replace: false,
         };
         assert!(
-            timeout(Duration::from_secs(3), read_dir(&sftp, "/root"))
+            timeout(Duration::from_secs(3), listing(&sftp, "/root"))
                 .await
                 .unwrap()
                 .is_err()
@@ -176,7 +176,7 @@ async fn listing_pipelines_eight_link_stats_and_preserves_server_order() {
         raw,
         atomic_replace: false,
     };
-    let entries = timeout(Duration::from_secs(3), read_dir(&sftp, "/root"))
+    let entries = timeout(Duration::from_secs(3), listing(&sftp, "/root"))
         .await
         .unwrap()
         .unwrap();
@@ -686,4 +686,40 @@ async fn read_batch_refuses_oversized_windows_without_touching_the_connection() 
             Err(FsError::Other(_))
         ));
     }
+}
+
+async fn listing(sftp: &Sftp, path: &str) -> Result<Vec<DirEntry>, FsError> {
+    let (mut reply, _result) = oneshot::channel();
+    read_dir(sftp, path, &mut reply).await
+}
+
+#[tokio::test]
+async fn cancelling_a_listing_closes_its_handle_without_waiting_for_a_page() {
+    let (client, mut peer) = tokio::io::duplex(8192);
+    let raw = RawSftpSession::new(client);
+    let (reading, started) = tokio::sync::oneshot::channel();
+    let fake = tokio::spawn(async move {
+        directory_open(&mut peer).await;
+        let read = packet(&mut peer).await;
+        assert_eq!(read[0], 12);
+        reading.send(()).unwrap();
+        let close = packet(&mut peer).await;
+        assert_eq!(close[0], 4);
+        status(&mut peer, request_id(&close), StatusCode::Ok).await;
+    });
+    raw.init().await.unwrap();
+    let sftp = Sftp {
+        raw,
+        atomic_replace: false,
+    };
+    let (mut reply, result) = oneshot::channel();
+    let (listing, ()) = tokio::join!(read_dir(&sftp, "/root", &mut reply), async {
+        started.await.unwrap();
+        drop(result);
+    });
+    assert!(listing.is_err());
+    timeout(Duration::from_secs(3), fake)
+        .await
+        .unwrap()
+        .unwrap();
 }

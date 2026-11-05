@@ -8,8 +8,8 @@ use futures::{
     future::{Either, select},
     pin_mut,
 };
-use gpui::{AsyncApp, WeakEntity};
-use nocterm_containers::{Changes, ContainersError, Engine, EventReader, detect};
+use gpui::{AsyncApp, BackgroundExecutor, WeakEntity};
+use nocterm_containers::{Changes, ContainersError, Engine, EventReader};
 use nocterm_session::{ExecOutput, HostExec};
 
 use crate::host::{HostContainers, Listed};
@@ -31,7 +31,7 @@ pub(crate) async fn watch(
     cx: &mut AsyncApp,
 ) {
     loop {
-        let outcome = follow(&this, exec.as_ref(), &mut engine, &mut asked, cx).await;
+        let outcome = follow(&this, exec.clone(), &mut engine, &mut asked, cx).await;
         let retry = this.update(cx, |this, cx| this.ended(outcome, cx));
         if !matches!(retry, Ok(true)) {
             return;
@@ -56,20 +56,22 @@ enum Heard {
 /// change something, until the event stream ends.
 async fn follow(
     this: &WeakEntity<HostContainers>,
-    exec: &dyn HostExec,
+    exec: Arc<dyn HostExec>,
     engine: &mut Option<Engine>,
     asked: &mut mpsc::UnboundedReceiver<Changes>,
     cx: &mut AsyncApp,
 ) -> Result<(), ContainersError> {
-    let (found, snapshot) = match *engine {
-        Some(known) => (known, known.snapshot(exec).await?),
-        None => detect(exec).await?,
-    };
-    *engine = Some(found);
-    // Requests made before this listing are answered by it.
+    // Only requests preceding this acquisition are covered by its snapshot.
     while asked.try_recv().is_ok() {}
+    let executor = cx.background_executor().clone();
+    let known = *engine;
+    let opening_exec = exec.clone();
+    let (found, snapshot, mut events) = bounded(&executor, async move {
+        open(opening_exec.as_ref(), known).await
+    })
+    .await?;
+    *engine = Some(found);
     publish(this, found, Listed::Both(snapshot), cx)?;
-    let mut events = found.events(exec).await?;
     let mut reader = EventReader::default();
     loop {
         let mut changes = match next(&mut events, asked).await {
@@ -87,7 +89,53 @@ async fn follow(
         while let Ok(more) = asked.try_recv() {
             changes |= more;
         }
-        publish(this, found, relist(found, exec, changes).await?, cx)?;
+        let exec = exec.clone();
+        let listed = bounded(&executor, async move {
+            relist(found, exec.as_ref(), changes).await
+        })
+        .await?;
+        publish(this, found, listed, cx)?;
+    }
+}
+
+/// Subscribe before acquisition; changes arriving while listing stay in the stream.
+async fn open(
+    exec: &dyn HostExec,
+    known: Option<Engine>,
+) -> Result<(Engine, nocterm_containers::Snapshot, ExecOutput), ContainersError> {
+    let mut failure = ContainersError::NotInstalled;
+    for engine in Engine::ALL
+        .into_iter()
+        .filter(|engine| known.is_none_or(|known| known == *engine))
+    {
+        let events = match engine.events(exec).await {
+            Ok(events) => events,
+            Err(ContainersError::NotInstalled) => continue,
+            Err(error) => return Err(error),
+        };
+        match engine.snapshot(exec).await {
+            Ok(snapshot) => return Ok((engine, snapshot, events)),
+            Err(error @ (ContainersError::Disconnected | ContainersError::Unsupported)) => {
+                return Err(error);
+            }
+            Err(ContainersError::NotInstalled) => {}
+            Err(error) => failure = error,
+        }
+    }
+    Err(failure)
+}
+
+/// Decode and collection never occupy the foreground executor; deadline owns cancellation.
+async fn bounded<T: Send + 'static>(
+    executor: &BackgroundExecutor,
+    operation: impl std::future::Future<Output = Result<T, ContainersError>> + Send + 'static,
+) -> Result<T, ContainersError> {
+    let task = executor.spawn(operation);
+    let timer = executor.timer(Duration::from_secs(30));
+    pin_mut!(task, timer);
+    match select(task, timer).await {
+        Either::Left((result, _)) => result,
+        Either::Right(_) => Err(ContainersError::TimedOut),
     }
 }
 

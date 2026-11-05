@@ -1,5 +1,5 @@
 //! Signs, seals and publishes the runner's chat summaries to its directory stream
-//! (ADR 0135, contract ADR 0008).
+//! (ADR 0143, contract ADR 0008).
 //!
 //! The coordinator hands over neutral drafts through [`ChatSummaryDirectory`]. This adapter
 //! reads the chat's current head (the same facts a head witness reports), maps the draft to
@@ -66,7 +66,7 @@ impl RunnerChatHost {
         })
     }
     /// This runner takes chat SSH bindings (it states egress): its summaries say so and
-    /// list a bound chat's servers (contract ADR 0011, ADR 0139).
+    /// list a bound chat's servers (contract ADR 0011, ADR 0147).
     pub fn with_ssh_bindings(mut self) -> Self {
         self.features |= SUMMARY_FEATURE_SSH_BINDING;
         self

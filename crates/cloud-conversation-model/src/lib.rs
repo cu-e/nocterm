@@ -4,7 +4,7 @@
 //! [`Approval`]s and [`PendingCommand`]s) and the rule by which a [`ConversationDelta`] changes
 //! it; how far the shown history is confirmed ([`Freshness`]); what the person asks of a chat
 //! ([`ConversationAction`]); the servers a chat is bound to and can be bound to
-//! ([`ServerBinding`], [`ServerChoice`], ADR 0139); the port [`CloudConversation`] with its
+//! ([`ServerBinding`], [`ServerChoice`], ADR 0147); the port [`CloudConversation`] with its
 //! updates ([`ConversationUpdate`]) and typed [`CloudConversationError`].
 //!
 //! Does not own: the device protocol, verification, reduction of runner events, cryptography or

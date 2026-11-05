@@ -40,6 +40,15 @@ fn write(directory: &Path, name: &str, text: &str) -> String {
     path.to_str().unwrap().to_owned()
 }
 
+fn stored_path(directory: &Path, package: &nocterm_plugin_api::Package) -> std::path::PathBuf {
+    directory.join("plugins").join(format!(
+        "{}.{}.{}",
+        package.manifest().plugin().id(),
+        package.hash(),
+        nocterm_plugin_api::kind(package.bytes()).extension()
+    ))
+}
+
 fn id() -> PluginId {
     PluginId::user("acme", "clock").unwrap()
 }
@@ -203,13 +212,9 @@ fn published_files_are_private() {
     use std::os::unix::fs::PermissionsExt as _;
     let directory = TempDir::new().unwrap();
     let store = store(directory.path());
-    store
-        .publish(
-            &parse_package(PACKAGE.as_bytes().to_vec(), &[]).unwrap(),
-            false,
-        )
-        .unwrap();
-    let path = directory.path().join("plugins/user-acme-clock.toml");
+    let package = parse_package(PACKAGE.as_bytes().to_vec(), &[]).unwrap();
+    store.publish(&package, false).unwrap();
+    let path = stored_path(directory.path(), &package);
     assert_eq!(
         fs::metadata(path).unwrap().permissions().mode() & 0o777,
         0o600
@@ -222,7 +227,7 @@ fn tampering_after_install_is_detected_at_load() {
     let store = store(directory.path());
     let package = parse_package(PACKAGE.as_bytes().to_vec(), &[]).unwrap();
     store.publish(&package, false).unwrap();
-    let path = directory.path().join("plugins/user-acme-clock.toml");
+    let path = stored_path(directory.path(), &package);
     fs::write(&path, PACKAGE.replace("hh-mm", "percent")).unwrap();
     assert_eq!(
         store.load(&id(), package.hash()).unwrap_err(),
@@ -237,7 +242,7 @@ fn a_stored_file_swapped_for_a_link_is_not_followed() {
     let store = store(directory.path());
     let package = parse_package(PACKAGE.as_bytes().to_vec(), &[]).unwrap();
     store.publish(&package, false).unwrap();
-    let path = directory.path().join("plugins/user-acme-clock.toml");
+    let path = stored_path(directory.path(), &package);
     let elsewhere = directory.path().join("elsewhere.toml");
     fs::write(&elsewhere, PACKAGE).unwrap();
     fs::remove_file(&path).unwrap();
@@ -261,6 +266,8 @@ fn a_second_install_is_a_duplicate_unless_it_is_an_update() {
     let second = parse_package(format!("{PACKAGE}\n").into_bytes(), &[]).unwrap();
     store.publish(&second, true).unwrap();
     assert!(store.load(&id(), second.hash()).is_ok());
+    assert_eq!(store.load(&id(), first.hash()).unwrap(), first);
+    store.retain(&id(), second.hash()).unwrap();
     assert_eq!(
         store.load(&id(), first.hash()).unwrap_err(),
         PackageError::HashChanged
@@ -281,6 +288,65 @@ fn a_package_whose_bytes_do_not_match_its_hash_is_not_published() {
         store.publish(&forged, false).unwrap_err(),
         PackageError::HashChanged
     );
+}
+
+#[test]
+fn reopening_after_package_publication_keeps_the_original_consented_version() {
+    let directory = TempDir::new().unwrap();
+    let first = parse_package(PACKAGE.as_bytes().to_vec(), &[]).unwrap();
+    let second = parse_package(format!("{PACKAGE}\n").into_bytes(), &[]).unwrap();
+    {
+        let store = store(directory.path());
+        store.publish(&first, false).unwrap();
+        store.publish(&second, true).unwrap();
+        // No retain: the new consent document never became durable.
+    }
+    let reopened = store(directory.path());
+    assert_eq!(reopened.load(&id(), first.hash()).unwrap(), first);
+    assert_eq!(reopened.load(&id(), second.hash()).unwrap(), second);
+    reopened.retain(&id(), second.hash()).unwrap();
+    assert_eq!(
+        reopened.load(&id(), first.hash()).unwrap_err(),
+        PackageError::HashChanged
+    );
+    assert_eq!(reopened.load(&id(), second.hash()).unwrap(), second);
+}
+
+#[test]
+fn retaining_a_legacy_package_migrates_it_before_removing_the_original_name() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("plugins");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("user-acme-clock.toml"), PACKAGE).unwrap();
+    let package = parse_package(PACKAGE.as_bytes().to_vec(), &[]).unwrap();
+    let store = store(directory.path());
+    store.retain(&id(), package.hash()).unwrap();
+    assert_eq!(store.load(&id(), package.hash()).unwrap(), package);
+    assert!(!root.join("user-acme-clock.toml").exists());
+    assert!(stored_path(directory.path(), &package).exists());
+}
+
+#[test]
+fn unsuccessful_publications_cannot_accumulate_unbounded_package_versions() {
+    let directory = TempDir::new().unwrap();
+    let store = store(directory.path());
+    let versions: Vec<_> = (0..=8)
+        .map(|index| {
+            parse_package(format!("{PACKAGE}\n# version {index}\n").into_bytes(), &[]).unwrap()
+        })
+        .collect();
+    store.publish(&versions[0], false).unwrap();
+    for package in &versions[1..8] {
+        store.publish(package, true).unwrap();
+    }
+    assert_eq!(
+        store.publish(&versions[8], true),
+        Err(PackageError::PendingVersions { max: 8 })
+    );
+    store.publish(&versions[7], true).unwrap();
+    store.retain(&id(), versions[7].hash()).unwrap();
+    store.publish(&versions[8], true).unwrap();
+    assert_eq!(store.load(&id(), versions[7].hash()).unwrap(), versions[7]);
 }
 
 #[test]

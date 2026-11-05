@@ -1,4 +1,4 @@
-//! Keeps a tracked hub's bound Cloud chats answered (ADR 0139): the runner of a chat bound to
+//! Keeps a tracked hub's bound Cloud chats answered (ADR 0147): the runner of a chat bound to
 //! the person's servers asks for a short certificate at 80 % of the current one's life, and an
 //! unlocked device of the account answers it inside the binding. While a hub is tracked, its
 //! certifier is swept at once and then every [`SWEEP_INTERVAL`]; a sweep that fails (the account

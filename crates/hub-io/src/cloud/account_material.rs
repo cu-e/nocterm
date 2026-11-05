@@ -1,6 +1,6 @@
 //! The account's captured Cloud access under its pinned hub authority, as runner enrolment
 //! and the trusted runner registry use it. Chat material and grants are the contract device
-//! core's (`CreateChat`, `OpenChat`, ADR 0136). The handle retains weak native key ownership
+//! core's (`CreateChat`, `OpenChat`, ADR 0144). The handle retains weak native key ownership
 //! and cannot revive after lock or replacement sign-in.
 mod capture;
 mod failure;

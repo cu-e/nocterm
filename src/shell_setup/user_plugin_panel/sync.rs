@@ -18,7 +18,8 @@ use nocterm_workspace::{PanelRegistration, ShellCapabilities, WidgetRegistration
 
 use super::{
     Badges,
-    content::Content,
+    content::{Content, FrameSpec},
+    driver::RefreshDriver,
     views::{UserPluginPanel, UserPluginWidget},
 };
 
@@ -33,6 +34,7 @@ struct Registered {
 #[derive(Clone)]
 struct Parts {
     host: gpui_kit::Entity<PluginHost>,
+    driver: gpui_kit::Entity<RefreshDriver>,
     providers: PluginProviders,
     badges: Badges,
     dev: bool,
@@ -42,14 +44,21 @@ struct Parts {
 }
 
 impl Parts {
-    fn content<T: 'static>(&self, kind: FrameKind, cx: &mut Context<T>) -> Content {
+    fn content<T: 'static>(
+        &self,
+        kind: FrameKind,
+        cx: &mut Context<T>,
+    ) -> gpui_kit::Entity<Content> {
         Content::new(
             self.host.clone(),
+            self.driver.clone(),
             self.call.clone(),
-            &self.plugin,
-            kind,
+            FrameSpec {
+                name: &self.plugin,
+                kind,
+                dev: self.dev,
+            },
             self.providers.clone(),
-            self.dev,
             cx,
         )
     }
@@ -58,6 +67,7 @@ impl Parts {
 /// The user contributions registered in one window.
 pub(in crate::shell_setup) struct WindowSync {
     host: gpui_kit::Entity<PluginHost>,
+    driver: gpui_kit::Entity<RefreshDriver>,
     source: PluginSetHandle,
     providers: PluginProviders,
     badges: Badges,
@@ -70,6 +80,7 @@ pub(in crate::shell_setup) struct WindowSync {
 impl WindowSync {
     pub(in crate::shell_setup) fn new(
         host: gpui_kit::Entity<PluginHost>,
+        driver: gpui_kit::Entity<RefreshDriver>,
         source: PluginSetHandle,
         providers: PluginProviders,
         badges: Badges,
@@ -78,6 +89,7 @@ impl WindowSync {
     ) -> Self {
         Self {
             host,
+            driver,
             source,
             providers,
             badges,
@@ -148,6 +160,7 @@ impl WindowSync {
         let contribution = &made.contribution;
         let parts = Parts {
             host: self.host.clone(),
+            driver: self.driver.clone(),
             providers: self.providers.clone(),
             badges: self.badges.clone(),
             dev: self.dev,
@@ -162,7 +175,10 @@ impl WindowSync {
                 cx,
             ),
             ContributionKind::Widget => workspace.register_widget(
-                WidgetRegistration::user(contribution.id(), move |_, _, cx| widget_of(&parts, cx)),
+                WidgetRegistration::user(contribution.id(), move |_, _, cx| widget_of(&parts, cx))
+                    .with_visibility::<UserPluginWidget>(|widget, visible, cx| {
+                    widget.set_visible(visible, cx)
+                }),
                 window,
                 cx,
             ),
@@ -192,7 +208,7 @@ fn widget_of(parts: &Parts, cx: &mut Context<Workspace>) -> gpui_kit::Entity<Use
     cx.new(|cx| {
         let content = parts.content(FrameKind::Bar, cx);
         let label = widget_label(&parts.plugin, parts.contribution.title(), parts.dev);
-        UserPluginWidget::new(content, label.into(), cx)
+        UserPluginWidget::new(content, label.into())
     })
 }
 

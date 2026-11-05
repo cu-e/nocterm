@@ -12,19 +12,14 @@
 mod failure;
 mod pump;
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use futures::FutureExt as _;
-use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_hub_client::RelayTarget;
 use nocterm_hubs_model::{HubAddress, HubId};
 use nocterm_session::{RelayDialer, RelayError, RelayStream, Target};
 use tokio::runtime::Handle;
-use tokio::task::AbortHandle;
 
 use crate::account::source::LocalSourceProvider;
 use crate::links::HubLinks;
@@ -254,45 +249,10 @@ impl RelayDialer for CapturedRelay {
         // Recreate only an immutable exact-route view; no account lookup occurs.
         drop(captured);
         let opening = Self::new(self.handle.clone(), self.client.clone(), hub, node, target);
-        let (sender, result) = oneshot::channel();
-        let task = self
-            .handle
-            .spawn(async move {
-                let _ = sender.send(opening.open().await);
-            })
-            .abort_handle();
-        Dial {
-            result,
-            task: Some(task),
-        }
-        .boxed()
-    }
-}
-
-/// The answer of a dial running on the adapter's runtime; abandons the dial when dropped.
-///
-/// A stream already handed out is not part of the dial: its pump runs on its own.
-struct Dial {
-    result: oneshot::Receiver<Result<RelayStream, RelayError>>,
-    task: Option<AbortHandle>,
-}
-
-impl Future for Dial {
-    type Output = Result<RelayStream, RelayError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // A task that vanished without answering was stopped with the runtime.
-        self.result
-            .poll_unpin(cx)
-            .map(|received| received.unwrap_or(Err(RelayError::Closed)))
-    }
-}
-
-impl Drop for Dial {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
+        // Dropping the dial aborts only opening; an issued stream owns its pump.
+        crate::task::spawn(&self.handle, async move { opening.open().await })
+            .map(|result| result.unwrap_or(Err(RelayError::Closed)))
+            .boxed()
     }
 }
 

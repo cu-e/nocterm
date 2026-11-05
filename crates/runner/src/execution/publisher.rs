@@ -1,5 +1,5 @@
 //! Periodic FIFO delivery of the durable outbox and of chat summaries, and the chats'
-//! SSH certificate renewal (ADR 0137). The coordinator
+//! SSH certificate renewal (ADR 0145). The coordinator
 //! only queues sealed publications and keeps summary rows; without this owner no event
 //! or summary would reach the hub.
 use nocterm_cloud_model::{

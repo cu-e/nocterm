@@ -147,20 +147,25 @@ fn a_foreign_header_in_an_account_namespace_cannot_be_loaded_overwritten_or_dele
     );
 }
 #[test]
-fn sidecars_cannot_redirect_account_membership_and_are_rebuilt_from_v3_headers() {
+fn obsolete_sidecars_cannot_redirect_account_membership_or_override_v3_headers() {
     let directory = tempfile::tempdir().unwrap();
     let a = scope(1, "alice");
     let b = scope(1, "bob");
     save(directory.path(), &chat(a.clone(), "A")).unwrap();
     save(directory.path(), &chat(b.clone(), "B")).unwrap();
-    fs::copy(
-        path(directory.path(), &b, "meta"),
-        path(directory.path(), &a, "meta"),
-    )
+    let obsolete = serde_json::to_vec(&nocterm_ai::history::ChatSummary::from_chat(&chat(
+        b.clone(),
+        "B",
+    )))
     .unwrap();
+    fs::write(path(directory.path(), &a, "meta"), &obsolete).unwrap();
     let rows = block_on(repository(directory.path()).catalog_in(a.clone())).unwrap();
     assert_eq!(rows[0].title(), "A");
-    assert_eq!(rows[0].chat_scope(), a);
+    assert_eq!(rows[0].chat_scope(), a.clone());
+    assert_eq!(
+        fs::read(path(directory.path(), &a, "meta")).unwrap(),
+        obsolete
+    );
 }
 #[test]
 fn corrupt_v3_does_not_reveal_shadowed_device_v2_history() {

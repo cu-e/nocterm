@@ -10,6 +10,8 @@ pub enum StoreError {
     Full,
     #[error("latest-desired admission requires optimistic publication")]
     OptimisticRequired,
+    #[error("a baseline can only be initialized before any persistence edit")]
+    BaselineLocked,
     #[error("persistence completion was dropped")]
     CompletionDropped,
     #[error("the shared shutdown deadline expired")]

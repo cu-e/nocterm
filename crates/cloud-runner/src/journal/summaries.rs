@@ -1,6 +1,6 @@
-//! Journal summary rows (v7; v9 raised the sealed bound for bound servers, ADR 0139): per chat the newest staged summary revision, the newest one the
+//! Journal summary rows (v7; v9 raised the sealed bound for bound servers, ADR 0147): per chat the newest staged summary revision, the newest one the
 //! hub confirmed, the creation and last-activity times and, while unconfirmed, the sealed
-//! bytes of the staged revision (ADR 0135).
+//! bytes of the staged revision (ADR 0143).
 //!
 //! The sealed bytes are already sealed to the account; the times are scheduling metadata
 //! the hub sees anyway. Nothing here needs the chat key, so a deletion summary can be

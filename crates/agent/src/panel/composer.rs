@@ -271,7 +271,7 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return;
         };
-        if self.preparing_queue_edit()
+        if self.preparing_images()
             || !thread
                 .read(cx)
                 .agent_info()
@@ -279,11 +279,18 @@ impl AgentPanel {
         {
             return;
         }
+        let Some(permit) = self.messages.admit_image_work() else {
+            self.notices
+                .set_error(Some(ImageAttachError::Busy.to_string()));
+            cx.notify();
+            return;
+        };
         let binding = self.composer.prepare_images(thread.entity_id());
         cx.notify();
         let ticket = thread.read(cx).session_ticket();
         let owner = thread.downgrade();
-        image_preparation::ImagePreparation::new(binding, owner, ticket, Box::pin(work)).launch(cx);
+        image_preparation::ImagePreparation::new(binding, owner, ticket, Box::pin(work), permit)
+            .launch(cx);
     }
     pub(super) fn on_composer_images_prepared(
         &mut self,
@@ -323,16 +330,32 @@ impl AgentPanel {
         cx.notify();
     }
     pub(super) fn add_image_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(
+            thread.read(cx).composer().images(),
+        );
         let inspector = self.messages.inspector();
         self.prepare_images(
-            async move { Ok(vec![PromptImage::validate(bytes, inspector.as_ref())?]) },
+            async move {
+                let mut budget = budget?;
+                budget.admit(bytes.len())?;
+                Ok(vec![PromptImage::validate(bytes, inspector.as_ref())?])
+            },
             cx,
         );
     }
     pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(
+            thread.read(cx).composer().images(),
+        );
         let inspector = self.messages.inspector();
         self.prepare_images(
-            async move { images::read_images(paths, inspector.as_ref()) },
+            async move { images::read_images(paths, inspector.as_ref(), budget?) },
             cx,
         );
     }
@@ -434,6 +457,7 @@ impl AgentPanel {
     pub(super) fn preparing_images(&self) -> bool {
         self.composer.preparing()
     }
+    #[cfg(test)]
     pub(super) fn preparing_queue_edit(&self) -> bool {
         self.composer.preparing_edit()
     }
@@ -585,7 +609,7 @@ impl AgentPanel {
             thread.read(cx).session_ticket(),
             id,
             saved,
-            self.messages.inspector(),
+            self.messages.image_deps(),
         )
         .launch(cx);
         self.composer.install_edit_preparation(&binding, id, task);

@@ -10,6 +10,7 @@ publish = false
 layer = "app"
 
 [dependencies]
+hex.workspace = true
 nocterm-agent-engine.workspace = true
 nocterm-ai.workspace = true
 nocterm-agent-tools.workspace = true

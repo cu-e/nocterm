@@ -20,6 +20,13 @@ pub enum LaunchValidationError {
     InvalidEnvironmentName,
 }
 
+/// Native launch preparation invoked by the transport's startup worker, never by a view.
+/// The captured preparation may inspect native state; the transport rechecks the original
+/// connection source and validates the resulting literal launch before starting a child.
+pub trait ShellLaunchPreparation: Send + Sync + 'static {
+    fn prepare(&self, launch: ShellLaunch) -> Result<ShellLaunch, LaunchValidationError>;
+}
+
 /// An executable and its arguments. Empty remote options preserve SSH's shell request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]

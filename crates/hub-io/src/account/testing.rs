@@ -29,6 +29,43 @@ pub(crate) const ACCOUNT_ID: &str = "account-1";
 pub(crate) const HUB_UID: &str = "hub-uid";
 pub(crate) const PASSWORD: &str = "correct horse battery";
 
+/// Occupies the existing physical cache worker until the shared gate is released.
+/// Polling its returned future controls FIFO admission without an I/O injection hook.
+pub(crate) struct CacheJobRelease(nocterm_session::testing::Gate);
+impl CacheJobRelease {
+    pub(crate) fn release(&self) {
+        self.0.release();
+    }
+}
+impl Drop for CacheJobRelease {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+pub(crate) fn blocked_cache_job(
+    slot: &Slot,
+) -> (
+    futures::future::BoxFuture<'static, Result<(), crate::cache::CacheError>>,
+    nocterm_session::testing::Gate,
+    CacheJobRelease,
+) {
+    let entered = nocterm_session::testing::Gate::pending();
+    let release = nocterm_session::testing::Gate::pending();
+    let worker_entered = entered.clone();
+    let worker_release = release.clone();
+    let work = slot.cache_work().clone();
+    let job = Box::pin(async move {
+        work.run(move || {
+            worker_entered.release();
+            futures::executor::block_on(worker_release.wait());
+            Ok(())
+        })
+        .await
+    });
+    (job, entered, CacheJobRelease(release))
+}
+
 pub(crate) fn kdf() -> UnlockKdf {
     UnlockKdf::new(KdfParams::MINIMUM, vec![7; 16]).expect("a valid derivation")
 }

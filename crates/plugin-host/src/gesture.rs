@@ -99,6 +99,10 @@ impl Gestures {
     pub(crate) fn forget(&mut self, plugin: &PluginId) {
         self.live.retain(|token| token.plugin != *plugin);
     }
+
+    pub(crate) fn release_window(&mut self, window: WindowId) {
+        self.live.retain(|token| token.window != window);
+    }
 }
 
 #[cfg(test)]

@@ -34,11 +34,17 @@
 //! Slot lifecycle receipts fence key installation, and native admission makes cache, spaces
 //! and idle-timer publication conditional. Administrator and recovery offers retain the
 //! original recipient and exact displayed action ([ADR 0114](../../../docs/adr/0114-native-captured-account-operations.md)).
+//! Native cache writers stage encoding, writes and file sync on two shared
+//! blocking slots. Final publication rechecks original authority and immutable
+//! content generation under admission; parent sync follows outside that lock.
+//! Confirmation futures acknowledge durable publication before returning.
+//! Personal refreshes coalesce waiting readers; four shared vault operations
+//! bound staging, and sealed snapshots reject excess bytes, rows and pages.
 //! The personal SSH CA for cloud agents lives in `agent_access`: its seed and the registry of
 //! trusting servers are objects of the account's own `agent_ssh_trust` collection, kept with the
 //! contract's CA, CA document and per-server lines, and the `AgentHostTrust` and `AgentGrants`
 //! ports are implemented there ([ADR 0119](../../../docs/adr/0119-agent-ssh-ca.md),
-//! [ADR 0139](../../../docs/adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+//! [ADR 0147](../../../docs/adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 //! A Cloud chat binds its servers and answers its runner's certificate requests with the device
 //! core while it is read; `CloudChatsLink` implements `ChatSshCertifier`, keeping every bound
 //! chat read. `runner_control::boot_ssh` re-exports the contract's boot SSH section for the
@@ -56,11 +62,11 @@
 //! runner enrolment writes in the contract's record layouts; explicit setup verifies the
 //! candidate capability before creating trust.
 //! The device side of Cloud chats runs the contract's sans-I/O device core (`cloud_device`,
-//! [ADR 0136](../../../docs/adr/0136-the-device-side-runs-on-the-contract-device-core.md)):
+//! [ADR 0144](../../../docs/adr/0144-the-device-side-runs-on-the-contract-device-core.md)):
 //! this crate performs the effects a flow asks for (the hub client's Cloud device calls, Store
 //! and agent calls, signatures through `HubClient::sign_cloud`, sleeps, Watch), keeps the core's
 //! sealed checkpoints and the sealed commands on their way in private files, resuming them after
-//! a restart ([ADR 0138](../../../docs/adr/0138-device-transport-and-resumable-commands.md)),
+//! a restart ([ADR 0146](../../../docs/adr/0146-device-transport-and-resumable-commands.md)),
 //! and maps the core's display
 //! values to `nocterm-cloud-conversation-model`, whose `CloudConversation` port it implements.
 //! A flow holds a copy of the unlocked account keys and is dropped when the account's keys
@@ -112,15 +118,15 @@
 //! summary draft and the chat's current head to the contract summary, signs it with the
 //! runner signing key, seals it to the pinned account key and publishes it to the runner's
 //! directory stream only while the hub negotiated the chat directory (bit 256)
-//! ([ADR 0135](../../../docs/adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)).
+//! ([ADR 0143](../../../docs/adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)).
 //! The runner inbox maps chat SSH bindings and certificates (contract ADR 0009) to native
 //! commands for this chat's key epoch with each server's principal, the event encoder maps
 //! SSH access events to tags 14 and 15, and `RunnerSshCertificates` reads a certificate
 //! under the binding's CA key; each bound server also carries the session access a prompt
 //! names it by. The journal's SSH row is sealed under the contract's SSH access class, and a
 //! summary's servers come from `summary::bound_servers`
-//! ([ADR 0137](../../../docs/adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md),
-//! [ADR 0139](../../../docs/adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+//! ([ADR 0145](../../../docs/adr/0145-per-server-ca-principals-and-runner-certificate-sessions.md),
+//! [ADR 0147](../../../docs/adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 //!
 //! The managed-agent ports of `nocterm-cloud-agents-model` (`agents`) read the failure code,
 //! the web panel address and the provider kinds through the contract's own vocabulary
@@ -139,6 +145,7 @@ mod account_keys;
 pub mod agent_access;
 mod agents;
 mod cache;
+mod checked;
 mod classify;
 pub mod cloud;
 mod cloud_chats;

@@ -47,3 +47,36 @@ fn a_published_set_reaches_every_observer_once(cx: &mut TestAppContext) {
     });
     assert_eq!(seen.get(), 1, "the repeated revision was not published");
 }
+
+#[gpui_kit::test]
+fn completed_loading_publishes_availability_without_changing_users_or_revision(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_plugin_model::UserAvailability;
+    let seen = Rc::new(Cell::new(0));
+    let (handle, before, _subscription) = cx.update(|cx| {
+        let handle = PluginSetHandle::new(system().with_availability(UserAvailability::Held), cx);
+        let count = seen.clone();
+        let subscription = handle.observe(Box::new(move |_| count.set(count.get() + 1)), cx);
+        let before = handle.current(cx);
+        (handle, before, subscription)
+    });
+
+    cx.update(|cx| {
+        let completed = before
+            .as_ref()
+            .clone()
+            .with_availability(UserAvailability::Installed);
+        handle.replace(completed.clone(), cx);
+        handle.replace(completed, cx);
+    });
+
+    cx.update(|cx| {
+        let current = handle.current(cx);
+        assert_eq!(current.availability(), UserAvailability::Installed);
+        assert_eq!(current.revision(), before.revision());
+        assert_eq!(current.users(), before.users());
+        assert!(!Arc::ptr_eq(&before, &current));
+    });
+    assert_eq!(seen.get(), 1, "equal completed states stay quiet");
+}

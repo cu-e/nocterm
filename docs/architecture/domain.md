@@ -86,6 +86,13 @@ commands, events, prompts and the `RemoteFs` contract. Launch and session-overri
 validation returns typed field/constraint errors without filesystem access or
 value expansion; native transports reject invalid launches before starting I/O.
 `TextEncodingError` carries the configured `Charset` without retaining input text.
+`ExecOutput::collect_bounded` reports typed output overflow separately from an
+unknown command exit; the existing `collect` retains its bounded-prefix behavior.
+`fs::read_bounded` collects a small document from an already admitted
+`RemoteDownload`, validating requested chunk sizes and total bytes. Callers retain
+the stream and their own close-error policy. Neither helper opens a transport or
+adds native I/O to the domain.
+
 Incremental text conversion belongs to `nocterm-vt`; the session domain only
 names the charset and typed conversion refusal.
 `Event::Restore` is the screen a host holds when a session is attached again: the owner
@@ -309,6 +316,13 @@ adapter create/open acknowledgement, not a new-file or new-directory count. Its 
 survives later failure or cancellation without advancing file or byte counters.
 
 ## Agent profiles
+
+`nocterm-ai::tools::output` owns the shared terminal, command and live-observation
+report DTOs. Desktop and headless tools normalize their terminal snapshots into
+that format; command reports share explicit redaction policy and retain the actual
+exit, byte count and truncation. The panel decodes the same DTOs while retaining
+its labels, unknown-field display and historical provider-envelope fallbacks.
+These reports are observations, never execution or cancellation capabilities.
 
 `nocterm-ai::agents` describes how a known agent deviates from plain ACP as an
 `AgentProfile`: its pinned launch, the home directories it writes, how it reports
@@ -544,9 +558,9 @@ can be bound to with typed `ServerRefusal`s, and the
 does no I/O; `nocterm-hub-io` implements the port over the contract's device core and
 `nocterm-cloud-chat` presents it. Its `test-support` `FakeConversation` scripts deltas,
 freshness and command outcomes for consumers' tests
-([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md),
-[ADR 0138](../adr/0138-device-transport-and-resumable-commands.md),
-[ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md),
+[ADR 0146](../adr/0146-device-transport-and-resumable-commands.md),
+[ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ## Cloud run contracts
 
@@ -636,16 +650,16 @@ deletion) to a `ChatActivity`; `ChatSummaryTracker` adds the revision ledger and
 cadence (one attempt per chat per 5 s, longer after failures, a deletion at once and last).
 `ChatSummaryJournal` and `ChatSummaryDirectory` are the ports for its durable row and its
 signed publication; the contract format stays in the adapter
-([ADR 0135](../adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)). The facts also
+([ADR 0143](../adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)). The facts also
 take a bound chat's `SummarySsh` (the binding's signed bytes and the runner's latest access
 report), from which the adapter derives the summary's servers.
 
-`ssh_access` holds the runner's rules for a chat's SSH binding (ADR 0137). Reach is selected:
+`ssh_access` holds the runner's rules for a chat's SSH binding (ADR 0145). Reach is selected:
 `SshReach` lists the endpoints this runner may reach, each with its host key, which must equal
 the binding's. Each `BoundTarget` carries the session access the adapter derived from the
 signed binding, and `ChatSshAccess::select` names the admitted server a run's destination
 selects by exact equality, with its credential while a certificate is active
-([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ### Displayed account confirmations
 

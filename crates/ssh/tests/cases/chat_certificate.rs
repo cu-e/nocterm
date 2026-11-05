@@ -1,5 +1,5 @@
 //! A runner signs in with a chat's in-memory key and the certificate a device issued for
-//! one bound server's own principal (ADR 0137).
+//! one bound server's own principal (ADR 0145).
 use super::*;
 use nocterm_ssh::{CertificateLogin, CertificateLoginError};
 use nocterm_ssh_keys::{

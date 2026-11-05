@@ -94,7 +94,8 @@ fn external_folder_drop_pins_context_internal_drag_queues_and_queue_cancel_works
     let replacement = transfer_remote(true);
     let (deps, _, recording) = transfer_fixture_deps_at(directory.path());
     let service = deps.transfers.clone();
-    let (handle, workspace, item, panel) = panel_fixture_with(cx, original.clone(), deps);
+    let (handle, workspace, item, panel, installed) =
+        panel_fixture_with_installation(cx, original.clone(), deps);
     show_local(cx, handle, &workspace, &panel, directory.path());
     cx.update_window(handle, |_, window, cx| {
         drop_external_on_remote(window, &file, cx);
@@ -130,8 +131,14 @@ fn external_folder_drop_pins_context_internal_drag_queues_and_queue_cancel_works
         "second-host"
     );
     cx.update_window(handle, |_, window, cx| {
-        let queue =
-            cx.new(|cx| transfers::TransfersView::new(service.clone(), workspace.downgrade(), cx));
+        let queue = cx.new(|cx| {
+            transfers::TransfersView::new(
+                service.clone(),
+                installed.projection().clone(),
+                workspace.downgrade(),
+                cx,
+            )
+        });
         workspace.update(cx, |workspace, cx| workspace.add_item(queue, window, cx));
         window.render_frame(cx);
         window.click(SharedString::from(format!("cancel-upload-{current}")), cx);

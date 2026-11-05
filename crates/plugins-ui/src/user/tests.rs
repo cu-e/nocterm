@@ -67,53 +67,53 @@ impl UserPlugins for Rc<FakeUserPlugins> {
     fn dev_location(&self, _: &App) -> Option<String> {
         self.dev.borrow().clone()
     }
-    fn inspect(&self, _: &str, _: &App) -> Result<Candidate, UserPluginError> {
-        self.candidate.borrow().clone()
+    fn inspect(&self, _: &str, _: &mut App) -> Task<Result<Candidate, UserPluginError>> {
+        Task::ready(self.candidate.borrow().clone())
     }
-    fn install(&self, request: InstallRequest, _: &mut App) -> Result<(), UserPluginError> {
+    fn install(&self, request: InstallRequest, _: &mut App) -> Task<Result<(), UserPluginError>> {
         self.calls.borrow_mut().push(Call::Install(request));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn set_enabled(
         &self,
         plugin: &PluginId,
         enabled: bool,
         _: &mut App,
-    ) -> Result<(), UserPluginError> {
+    ) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::Enabled(plugin.clone(), enabled));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn set_placeable(
         &self,
         plugin: &PluginId,
         placeable: bool,
         _: &mut App,
-    ) -> Result<(), UserPluginError> {
+    ) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::Placeable(plugin.clone(), placeable));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn remove(
         &self,
         plugin: &PluginId,
         with_data: bool,
         _: &mut App,
-    ) -> Result<(), UserPluginError> {
+    ) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::Remove(plugin.clone(), with_data));
-        Err(UserPluginError::Manage(SharedCause::new(
+        Task::ready(Err(UserPluginError::Manage(SharedCause::new(
             std::io::Error::other("disk full"),
-        )))
+        ))))
     }
-    fn remove_data(&self, plugin: &PluginId, _: &mut App) -> Result<(), UserPluginError> {
+    fn remove_data(&self, plugin: &PluginId, _: &mut App) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::RemoveData(plugin.clone()));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn observe(&self, cx: &mut App, mut on_change: Box<dyn FnMut(&mut App)>) -> Subscription {
         cx.observe(&self.changed, move |_, cx| on_change(cx))
@@ -298,11 +298,14 @@ fn frame(
     cx: &mut TestAppContext,
     check: impl FnOnce(&mut gpui_kit::Window, &mut App),
 ) {
+    // Ready port tasks still cross an executor boundary before their UI result arrives.
+    cx.run_until_parked();
     cx.update_window(fixture.window, |_, window, cx| {
         window.render_frame(cx);
         check(window, cx);
     })
     .unwrap();
+    cx.run_until_parked();
 }
 
 fn begin(fixture: &Fixture, cx: &mut TestAppContext) {
@@ -312,6 +315,7 @@ fn begin(fixture: &Fixture, cx: &mut TestAppContext) {
         });
     })
     .unwrap();
+    cx.run_until_parked();
 }
 
 #[gpui_kit::test]

@@ -220,8 +220,14 @@ pub trait ProjectPreparation: Send + Sync + 'static {
     ) -> SetupFuture<PreparedProject>;
     fn discard_owned(&self, exec: Arc<dyn HostExec>, receipt: OwnedContainer) -> SetupFuture<()>;
 }
-pub type LocalTransportFactory =
-    Arc<dyn Fn(nocterm_session::ShellLaunch) -> Arc<dyn Transport> + Send + Sync>;
+pub type LocalTransportFactory = Arc<
+    dyn Fn(
+            nocterm_session::ShellLaunch,
+            Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
+        ) -> Arc<dyn Transport>
+        + Send
+        + Sync,
+>;
 pub trait ContainerSessionFactory: Send + Sync + 'static {
     fn wrap(&self, base: Arc<dyn Transport>, location: ContainerLocation) -> Arc<dyn Transport>;
     fn wrap_local(

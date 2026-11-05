@@ -1,8 +1,7 @@
 //! App-owned checked settings catalogs and native action routing.
 use nocterm_plugin_model::PluginCatalog;
-use nocterm_settings_ui::{
-    Installed, SettingsCatalog, SettingsCatalogError, SettingsPageRegistration,
-};
+use nocterm_settings_ui::{SettingsCatalog, SettingsCatalogError, SettingsPageRegistration};
+use nocterm_store::SettingsHandle;
 use nocterm_ui::{EmbeddedPageSpec, SettingsPageSpec, ThemeUi};
 use nocterm_workspace::{
     ChangeColorScheme, ChangeTheme, DefaultSessionSettings, OpenAiSettings, OpenKeymap,
@@ -48,7 +47,7 @@ impl GuestPages {
 
 #[derive(Clone)]
 pub(crate) struct SettingsPages {
-    installed: Installed,
+    installed: SettingsHandle,
     ordinary: SettingsCatalog,
     startup: Option<SettingsCatalog>,
     plugins: Arc<PluginCatalog>,
@@ -65,7 +64,7 @@ impl SettingsPages {
         vault: Option<&nocterm_vault_ui::Installed>,
     ) -> Result<Self, SettingsCatalogError> {
         Self::compose(
-            Installed::new(settings.clone()),
+            settings.clone(),
             themes,
             nocterm_terminal::settings_pages(terminal),
             nocterm_agent_settings_ui::settings_page(
@@ -79,7 +78,7 @@ impl SettingsPages {
     }
 
     pub(crate) fn compose(
-        installed: Installed,
+        installed: SettingsHandle,
         themes: ThemeUi,
         terminal: [SettingsPageSpec; 3],
         ai: SettingsPageSpec,
@@ -97,7 +96,7 @@ impl SettingsPages {
         Self::new(installed, builtins, guests, vault)
     }
     pub(crate) fn new(
-        installed: Installed,
+        installed: SettingsHandle,
         builtins: [SettingsPageSpec; 5],
         guests: GuestPages,
         startup_vault: Option<SettingsPageSpec>,
@@ -144,7 +143,7 @@ impl SettingsPages {
             plugins: self.plugins.clone(),
         })
     }
-    pub(crate) fn installed(&self) -> Installed {
+    pub(crate) fn installed(&self) -> SettingsHandle {
         self.installed.clone()
     }
     #[cfg(test)]
@@ -155,7 +154,7 @@ impl SettingsPages {
         self.startup.as_ref()
     }
     pub(crate) fn register(&self, workspace: &mut Workspace, themes: ThemeUi) {
-        register_appearance_commands(workspace, themes, self.installed.settings().clone());
+        register_appearance_commands(workspace, themes, self.installed.clone());
         nocterm_settings_ui::register(workspace, self.ordinary.clone(), self.installed.clone());
         open_on::<DefaultSessionSettings>(workspace, "ssh", &self.ordinary, self.installed.clone());
         open_on_anchor::<OpenLayoutSettings>(
@@ -298,7 +297,7 @@ fn open_on<A: gpui_kit::Action>(
     workspace: &mut Workspace,
     id: &'static str,
     pages: &SettingsCatalog,
-    installed: Installed,
+    installed: SettingsHandle,
 ) {
     open_on_anchor::<A>(workspace, id, |_| None, pages, installed);
 }
@@ -308,7 +307,7 @@ fn open_on_anchor<A: gpui_kit::Action>(
     id: &'static str,
     anchor: fn(&A) -> Option<gpui_kit::SharedString>,
     pages: &SettingsCatalog,
-    installed: Installed,
+    installed: SettingsHandle,
 ) {
     let pages = pages.clone();
     workspace.register_action(move |_, action: &A, window, cx| {
@@ -321,7 +320,7 @@ fn defer_open(
     id: &'static str,
     anchor: Option<&str>,
     pages: &SettingsCatalog,
-    installed: &Installed,
+    installed: &SettingsHandle,
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<Workspace>,
 ) {

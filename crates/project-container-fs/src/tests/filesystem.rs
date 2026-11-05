@@ -322,3 +322,19 @@ fn container_sessions_preserve_the_original_native_connection_source() {
     revoker.revoke();
     assert!(!session.input("replacement account"));
 }
+
+#[test]
+fn an_upload_batch_uses_one_acknowledged_container_command() {
+    let exec = FakeExec::default();
+    let fs = open(&exec, Engine::Docker);
+    upload_ready(&exec);
+    let mut upload = block_on(fs.upload("/parent/file", UploadMode::Create)).unwrap();
+    let chunks = vec![vec![7; 32768]; 8];
+    response(&exec, Engine::Docker, b"262144".to_vec(), 0);
+    block_on(upload.write_batch(chunks)).unwrap();
+    let requests = exec.requests();
+    assert_eq!(requests.len(), 4, "probe, parent, stage, one batch");
+    assert_eq!(requests[3].stdin.as_ref().unwrap().len(), 262144);
+    response(&exec, Engine::Docker, vec![], 0);
+    block_on(upload.cancel()).unwrap();
+}

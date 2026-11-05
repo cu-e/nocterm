@@ -14,7 +14,7 @@ use futures::{
 };
 use nocterm_session::CredentialId;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Mutex,
 };
 
@@ -83,6 +83,8 @@ struct Inner {
 pub struct MemoryReplica {
     inner: Mutex<Inner>,
     watchers: Mutex<Vec<mpsc::UnboundedSender<()>>>,
+    scripted_pages: Mutex<VecDeque<ReplicaPage>>,
+    held_read: Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl Inner {
@@ -295,6 +297,25 @@ impl MemoryReplica {
         self.with(|inner| inner.page_size = Some(size));
     }
 
+    /// Supplies protocol pages without changing the coherent remote object store.
+    /// Malformed cursors are allowed for consumer validation tests; response counts stay bounded.
+    pub fn script_pages(&self, pages: Vec<ReplicaPage>) {
+        assert!(pages.len() <= 512 && pages.iter().all(|page| page.changes.len() <= 20_000));
+        *self
+            .scripted_pages
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = pages.into();
+    }
+    /// Suspends the next changes response; dropping its consumer closes the receipt.
+    pub fn hold_next_read(&self) -> oneshot::Sender<()> {
+        let (send, receive) = oneshot::channel();
+        *self
+            .held_read
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(receive);
+        send
+    }
+
     pub fn calls(&self) -> Vec<ReplicaCall> {
         self.with(|inner| inner.calls.clone())
     }
@@ -445,10 +466,26 @@ impl ProfileReplica for MemoryReplica {
             ));
             match inner.unserved() {
                 Some(error) => Err(error),
-                None => Ok(inner.page(after.as_ref())),
+                None => Ok(self
+                    .scripted_pages
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .pop_front()
+                    .unwrap_or_else(|| inner.page(after.as_ref()))),
             }
         });
-        futures::future::ready(result).boxed()
+        let held = self
+            .held_read
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        async move {
+            if let Some(held) = held {
+                let _ = held.await;
+            }
+            result
+        }
+        .boxed()
     }
 
     fn put(

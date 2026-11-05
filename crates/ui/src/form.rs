@@ -9,6 +9,10 @@ use gpui_kit::{
 };
 
 use crate::ActiveDesign as _;
+mod controls;
+mod fields;
+pub use controls::choices;
+pub use fields::{short_field, text_field};
 
 /// The width a settings form keeps to on wide windows.
 pub fn page_width(cx: &App) -> gpui_kit::Rems {

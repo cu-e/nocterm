@@ -6,7 +6,7 @@ use std::{fmt, sync::Arc};
 /// Native authority for acknowledging exactly one displayed recovery key.
 pub trait RecoveryKeyConfirmation: Send + Sync {
     fn check_current(&self) -> Result<(), HubError>;
-    fn confirm(&self) -> Result<(), HubError>;
+    fn confirm(&self) -> HubFuture<()>;
 }
 
 #[derive(Clone)]
@@ -30,7 +30,7 @@ impl RecoveryKeyOffer {
     pub fn key(&self) -> &Secret {
         &self.key
     }
-    pub fn confirm(&self) -> Result<(), HubError> {
+    pub fn confirm(&self) -> HubFuture<()> {
         self.confirmation.confirm()
     }
     pub fn check_current(&self) -> Result<(), HubError> {

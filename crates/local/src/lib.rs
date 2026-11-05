@@ -53,6 +53,43 @@ pub use recording::LocalOutputLogFactory;
 #[derive(Clone, Debug)]
 pub struct LocalTransport(pub ShellLaunch);
 
+impl LocalTransport {
+    /// Carries native launch preparation to the existing startup worker.
+    pub fn prepared(
+        launch: ShellLaunch,
+        preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
+    ) -> Arc<dyn Transport> {
+        Arc::new(PreparedLocalTransport {
+            launch,
+            preparation,
+        })
+    }
+}
+struct PreparedLocalTransport {
+    launch: ShellLaunch,
+    preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
+}
+impl Transport for PreparedLocalTransport {
+    fn open(&self, request: ConnectRequest) -> Session {
+        self.open_with(request, Default::default())
+    }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        open_prepared(
+            self.launch.clone(),
+            false,
+            request.term,
+            request.size,
+            options.source().clone(),
+            None,
+            self.preparation.clone(),
+        )
+    }
+}
+
 impl Transport for LocalTransport {
     fn open(&self, request: ConnectRequest) -> Session {
         open(self.0.clone(), false, request.term, request.size)
@@ -117,6 +154,18 @@ fn open_scoped_retained(
     source: nocterm_session::ConnectionSource,
     retention: Option<Arc<dyn Send + Sync>>,
 ) -> Session {
+    open_prepared(launch, isolated, term, pty, source, retention, None)
+}
+
+fn open_prepared(
+    launch: ShellLaunch,
+    isolated: bool,
+    term: String,
+    pty: PtySize,
+    source: nocterm_session::ConnectionSource,
+    retention: Option<Arc<dyn Send + Sync>>,
+    preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
+) -> Session {
     if let Err(error) = source.check() {
         return Session::failed(error.into());
     }
@@ -126,6 +175,31 @@ fn open_scoped_retained(
     let (session, driver) = nocterm_session::channel_with_source(None, source.clone());
     let session = session.with_exec(Arc::new(exec::ScopedLocalExec::new(source)));
     thread::spawn(move || {
+        if driver.closed().now_or_never().is_some() {
+            block_on(driver.emit(Event::Closed(CloseReason::ClosedByUser)));
+            return;
+        }
+        let prepared = driver
+            .source()
+            .check()
+            .map_err(SessionError::from)
+            .and_then(|()| {
+                let launch = match preparation {
+                    Some(preparation) => preparation
+                        .prepare(launch)
+                        .map_err(SessionError::InvalidLaunch)?,
+                    None => launch,
+                };
+                launch.validate().map_err(SessionError::InvalidLaunch)?;
+                Ok(launch)
+            });
+        let launch = match prepared {
+            Ok(launch) => launch,
+            Err(error) => {
+                block_on(driver.emit(Event::Closed(CloseReason::Failed(error))));
+                return;
+            }
+        };
         if let Err(error) = start(launch, isolated, term, pty, driver.clone()) {
             let error = match error {
                 LaunchError::Source(error) => SessionError::Source(error),
@@ -204,6 +278,10 @@ fn start(
         .take_writer()
         .map_err(|e| LaunchError::Pty(e.to_string()))?;
     driver.source().check()?;
+    if driver.closed().now_or_never().is_some() {
+        block_on(driver.emit(Event::Closed(CloseReason::ClosedByUser)));
+        return Ok(());
+    }
     let mut child = pair
         .slave
         .spawn_command(command)

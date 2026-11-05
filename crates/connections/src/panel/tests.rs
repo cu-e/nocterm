@@ -20,6 +20,7 @@ fn add_servers(
 
 mod account_state;
 mod drag;
+mod list;
 mod rename;
 mod reorder;
 mod spaces;

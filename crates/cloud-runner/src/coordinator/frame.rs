@@ -312,7 +312,7 @@ pub(super) enum Frame {
         original: Intent,
         declared: [u8; 32],
     },
-    /// A chat SSH access event; its content is the published event (ADR 0137).
+    /// A chat SSH access event; its content is the published event (ADR 0145).
     SshAccess,
 }
 impl Frame {

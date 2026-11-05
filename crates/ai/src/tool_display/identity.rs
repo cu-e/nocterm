@@ -73,7 +73,8 @@ fn explicit_identity(call: &ToolRecord) -> Option<Option<Identity<'_>>> {
 /// Only exact names or a consistent explicit MCP envelope establish the request
 /// format. Neither establishes an execution destination.
 pub fn envelope(call: &ToolRecord, server: &str) -> Option<TerminalCall> {
-    envelope_of(call, registration(server)?, parse)
+    let (tool, arguments) = raw_envelope(call, server)?;
+    parse(&tool, arguments)
 }
 
 /// Exact provider identity and original arguments, including rejected requests.
@@ -100,37 +101,6 @@ pub fn raw_envelope(call: &ToolRecord, server: &str) -> Option<(String, serde_js
         return Some((tool.into(), input.get("arguments")?.clone()));
     }
     Some((named?.tool.into(), input.clone()))
-}
-
-/// `read` turns the tool's arguments into a request: strictly when matching
-/// requests the bridge executed, by shape alone when only showing one.
-fn envelope_of(
-    call: &ToolRecord,
-    registration: &str,
-    read: fn(&str, serde_json::Value) -> Option<TerminalCall>,
-) -> Option<TerminalCall> {
-    let named = explicit_identity(call)?;
-    if named.is_some_and(|named| named.registration != registration) {
-        return None;
-    }
-    let Some(input) = call.raw_input.as_ref().filter(|input| !input.is_null()) else {
-        // Hermes omits the input of a call without arguments.
-        return read(named?.tool, json!({}));
-    };
-    if ["server", "tool", "arguments"]
-        .iter()
-        .any(|key| input.get(key).is_some())
-    {
-        let envelope_server = input.get("server")?.as_str()?;
-        let tool = input.get("tool")?.as_str()?;
-        if self::registration(envelope_server) != Some(registration)
-            || named.is_some_and(|named| named.tool != tool)
-        {
-            return None;
-        }
-        return read(tool, input.get("arguments")?.clone());
-    }
-    read(named?.tool, input.clone())
 }
 
 /// Presentation identity remains useful even when its arguments are malformed.

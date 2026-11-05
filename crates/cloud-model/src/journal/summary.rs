@@ -1,5 +1,5 @@
 //! Chat summaries a runner derives from its own journal and publishes to its directory
-//! stream (ADR 0135).
+//! stream (ADR 0143).
 //!
 //! [`ChatSummaryFacts`] reduces the observations the runner journals for one chat: the
 //! first accepted prompt, the latest model, run statuses, open approvals and deletion.
@@ -74,7 +74,7 @@ pub enum SummaryObservation<'a> {
     Activity,
 }
 
-/// A chat's current SSH binding as its summary lists it (ADR 0139): the binding's signed
+/// A chat's current SSH binding as its summary lists it (ADR 0147): the binding's signed
 /// bytes and the access the runner last reported. The adapter derives the bound servers
 /// and their states from both with the contract.
 #[derive(Clone, Debug, PartialEq, Eq)]

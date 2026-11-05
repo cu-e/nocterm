@@ -8,7 +8,7 @@
 //! `OpenChat`, which wakes a managed seat before each command (ADR 0133). An own-agent chat's
 //! provider key is leased by `ProviderLease` while the chat is open (ADR 0126). A chat bound to
 //! servers is kept read while the account is unlocked, so its runner's certificate requests are
-//! answered inside the binding (`answering`, ADR 0139).
+//! answered inside the binding (`answering`, ADR 0147).
 
 mod answering;
 mod create;
@@ -59,7 +59,7 @@ impl ChatServices {
         })
     }
 
-    /// Lets chats be bound to the servers of the account's agent CA registry (ADR 0139).
+    /// Lets chats be bound to the servers of the account's agent CA registry (ADR 0147).
     #[must_use]
     pub fn with_trusted_servers(mut self, access: Arc<AgentAccess>) -> Self {
         self.servers = Some(access);

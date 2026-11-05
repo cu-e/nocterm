@@ -1,4 +1,4 @@
-//! The Servers control of a Cloud chat (ADR 0139): where each bound server stands, the server
+//! The Servers control of a Cloud chat (ADR 0147): where each bound server stands, the server
 //! the next prompts run on, binding for a chosen window and unbinding.
 use super::cloud_delivery::{captured_panel, press, send, shown};
 use super::*;

@@ -112,22 +112,21 @@ impl Upload {
             ));
         }
         self.failed = true;
-        for chunk in chunks {
-            let end = self
-                .offset
-                .checked_add(chunk.len() as u64)
-                .ok_or_else(|| FsError::Other("upload size overflow".into()))?;
-            let mut args = self.args();
-            args.extend([self.offset.to_string(), end.to_string()]);
-            let script = format!("{}\n{}", scripts::UPLOAD_CHECK, scripts::UPLOAD_WRITE);
-            let ack = commands.run(&script, &args, Some(chunk), 128).await?;
-            if codec::text(&ack)? != end.to_string() {
-                return Err(FsError::Other(
-                    "upload append acknowledgement malformed".into(),
-                ));
-            }
-            self.offset = end;
+        let bytes: Vec<u8> = chunks.into_iter().flatten().collect();
+        let end = self
+            .offset
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(|| FsError::Other("upload size overflow".into()))?;
+        let mut args = self.args();
+        args.extend([self.offset.to_string(), end.to_string()]);
+        let script = format!("{}\n{}", scripts::UPLOAD_CHECK, scripts::UPLOAD_WRITE);
+        let ack = commands.run(&script, &args, Some(bytes), 128).await?;
+        if codec::text(&ack)? != end.to_string() {
+            return Err(FsError::Other(
+                "upload append acknowledgement malformed".into(),
+            ));
         }
+        self.offset = end;
         self.failed = false;
         Ok(())
     }

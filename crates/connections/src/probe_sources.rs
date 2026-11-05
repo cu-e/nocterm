@@ -17,7 +17,7 @@ use std::{
 };
 /// Told once for every session of a saved connection that comes up, with its file system.
 pub trait HostObserver {
-    fn connected(&self, host: ConnectedHost, cx: &mut App);
+    fn connected(&self, host: ConnectedHost, source: ProbeSourceLease, cx: &mut App);
 }
 struct OriginalSource {
     original: Rc<dyn ConnectionFactSession>,
@@ -156,7 +156,7 @@ impl ProbeSource {
     fn reproject(
         &mut self,
         connections: &Entity<Connections>,
-        arrived: &mut Vec<ConnectedHost>,
+        arrived: &mut Vec<(ConnectedHost, ProbeSourceLease)>,
         cx: &App,
     ) -> Vec<ProbeRequest> {
         let Some(workspace) = self.workspace.upgrade() else {
@@ -189,8 +189,9 @@ impl ProbeSource {
                     {
                         old.lease.revoke();
                     }
-                    arrived.push(projection.announcement());
-                    self.leases.insert(id, projection.fresh_slot());
+                    let slot = projection.fresh_slot();
+                    arrived.push((projection.announcement(), slot.lease.clone()));
+                    self.leases.insert(id, slot);
                 }
                 self.leases
                     .get(&id)
@@ -239,8 +240,8 @@ impl ProbeSources {
             let mut arrived = Vec::new();
             let requests = source.reproject(connections, &mut arrived, cx);
             if let Some(observer) = observer.as_ref() {
-                for host in arrived {
-                    observer.connected(host, cx);
+                for (host, source) in arrived {
+                    observer.connected(host, source, cx);
                 }
             }
             let length = requests.len();

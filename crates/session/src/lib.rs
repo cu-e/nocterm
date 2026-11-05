@@ -26,6 +26,8 @@
 //! `ProgramOpener`, `local_fs::{LocalFs, LocalMutations, LocalDirectory, LocalSource, LocalStage}`.
 //! Settings sections: SSH and local shell options (adapter-ownership migration debt).
 //! Globals: none. Invariants: bounded channels carry ordered output and explicit closure.
+//! Short-output collection distinguishes a complete response from overflow; remote
+//! document collection bounds chunks and bytes while callers retain close policy.
 //! Local filesystem diagnostics use foundation SharedError for immutable typed causes;
 //! native adapters construct partial outcomes through domain methods without core access.
 
@@ -65,7 +67,7 @@ mod text;
 pub use credentials::{CredentialFuture, CredentialStore, CredentialStoreError};
 pub use exec::{
     Collected, ErrorTail, ExecError, ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink,
-    HostExec,
+    HostExec, OutputLimitExceeded,
 };
 pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
 pub use jump::{HostAddress, JumpHost, MAX_JUMP_HOSTS, PromptHop, ResolvedJump};
@@ -84,7 +86,9 @@ pub use target::{
 };
 pub use text::TextEncodingError;
 
-pub use launch::{LaunchValidationError, ShellLaunch, quote_posix, quote_powershell};
+pub use launch::{
+    LaunchValidationError, ShellLaunch, ShellLaunchPreparation, quote_posix, quote_powershell,
+};
 pub use program::{ProgramTransport, TerminalRequest};
 pub use program_opener::{ProgramOpenError, ProgramOpenFuture, ProgramOpenRequest, ProgramOpener};
 

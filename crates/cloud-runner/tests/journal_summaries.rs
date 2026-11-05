@@ -1,4 +1,4 @@
-//! Journal v7 summary rows and the migration that adds them (ADR 0135).
+//! Journal v7 summary rows and the migration that adds them (ADR 0143).
 mod support;
 use futures::executor::block_on;
 use nocterm_cloud_model::{authority::StreamBinding, identity::*, journal::*};

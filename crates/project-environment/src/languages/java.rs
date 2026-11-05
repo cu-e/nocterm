@@ -18,7 +18,7 @@ checksum=$(awk 'NR == 1 {print $1}' "$work/checksum")
 test "${#checksum}" -eq 64
 case "$checksum" in *[!a-fA-F0-9]*) exit 1;; esac
 printf '%s  %s\n' "$checksum" "$work/jdk.tar.gz" | sha256sum -c -
-staged_target=$(mktemp -d "$base/java/releases/install.XXXXXX")
+staged_target=$(allocate_release "$base/java/releases")
 tar -xzf "$work/jdk.tar.gz" -C "$staged_target" --strip-components=1
 actual=$("$staged_target/bin/javac" -version 2>&1)
 case "$actual" in "javac $version"|"javac $version."*) :;; *) exit 78;; esac

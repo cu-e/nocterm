@@ -120,6 +120,28 @@ impl RenderOnce for StatusBarRow {
             workspace,
         } = self;
         let inputs = inputs.overflow().clone().collapse(inputs, frame);
+        let visible: std::collections::HashSet<_> = inputs
+            .entries()
+            .chain(
+                inputs
+                    .hidden()
+                    .iter()
+                    .filter(|_| inputs.overflow().is_open()),
+            )
+            .filter_map(|entry| match entry {
+                BarEntry::Widget(id, _) | BarEntry::UserWidget(id, _) => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        let observed = workspace.clone();
+        cx.defer(move |cx| {
+            let _ = observed.update(cx, |workspace, cx| {
+                workspace
+                    .chrome
+                    .status_bar_mut()
+                    .publish_visibility(&visible, cx);
+            });
+        });
         Self::new(inputs, on_click, workspace).paint(frame, cx)
     }
 }

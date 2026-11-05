@@ -66,13 +66,19 @@ pub(super) fn view(
             )
         })
         .children(dev_banner(section, cx))
-        .children(section.notice().map(|notice| {
-            div()
-                .id("user-notice")
-                .aria_label(notice.clone())
-                .test_support()
-                .child(form::error_text(notice.clone(), cx))
-        }))
+        .children(
+            section
+                .notice()
+                .cloned()
+                .or_else(|| section.manager_error(cx))
+                .map(|notice| {
+                    div()
+                        .id("user-notice")
+                        .aria_label(notice.clone())
+                        .test_support()
+                        .child(form::error_text(notice.clone(), cx))
+                }),
+        )
         .children(loaded.then(|| match section.consent() {
             Some(consent) => consent_dialog(section, consent, cx),
             None => listing(section, cx),

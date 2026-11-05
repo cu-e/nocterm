@@ -61,13 +61,17 @@ class HookCase(unittest.TestCase):
 
 class FileGuard(HookCase):
     def edit(self, path, old, new, agent=None):
+        output = self.edit_result(path, old, new, agent)
+        return output and output.get("permissionDecision")
+
+    def edit_result(self, path, old, new, agent=None):
         payload = {
             "hook_event_name": "PreToolUse", "tool_name": "Edit",
             "tool_input": {"file_path": str(self.checkout.root / path), "old_string": old, "new_string": new},
         }
         if agent:
             payload["agent_type"] = agent
-        return self.decision("guard_files.py", payload)
+        return self.checkout.run("guard_files.py", payload)
 
     def test_release_files_are_never_edited(self):
         for path in ["CHANGELOG.md", "version.txt", ".release-please-manifest.json"]:
@@ -83,7 +87,34 @@ class FileGuard(HookCase):
 
     def test_plain_data_exemptions_ask_for_design_review(self):
         policy = "xtask/architecture-policy.toml"
-        self.assertEqual(self.edit(policy, '[dto]\n', '[dto]\n"a::Cell" = "cell"\n'), "ask")
+        output = self.edit_result(policy, '[dto]\n', '[dto]\n"a::Cell" = "cell"\n')
+        self.assertEqual(output["permissionDecision"], "ask")
+        self.assertIn("plain-data exemptions", output["permissionDecisionReason"])
+        self.assertEqual(self.edit(policy, '"plain row"', '"new reason"'), "ask")
+        self.assertIsNone(self.edit(policy, '"a::Row" = "plain row"\n', ""))
+
+    def test_isolation_policy_changes_are_reviewed_as_policy_not_dto_exemptions(self):
+        policy = "xtask/architecture-policy.toml"
+        for before, after in (
+            ('[isolation.providers]\nallowed = ["a"]\n', '[isolation.providers]\nallowed = ["a", "b"]\n'),
+            ('[isolation.providers]\nallowed = ["a"]\n', '[isolation.providers]\nallowed = []\n'),
+            ('[isolation]\napp = "a"\n', '[isolation]\napp = "b"\n'),
+            ('[isolation]\napp = "a"\n', ''),
+            ('', '[isolation.gpui_allowed]\nupdate = "reason"\n'),
+            ('[isolation.identifiers.a]\nforbidden = ["settings"]\n', '[isolation.identifiers.a]\nforbidden = []\n'),
+        ):
+            original = '[dto]\n"a::Row" = "plain row"\n' + before
+            replacement = '[dto]\n"a::Row" = "plain row"\n' + after
+            self.checkout.write(policy, original)
+            output = self.edit_result(policy, original, replacement)
+            self.assertEqual(output["permissionDecision"], "ask", (before, after))
+            self.assertIn("isolation permissions and restrictions", output["permissionDecisionReason"])
+            self.assertNotIn("plain-data exemption", output["permissionDecisionReason"])
+
+    def test_policy_formatting_and_comment_changes_do_not_need_review(self):
+        policy = "xtask/architecture-policy.toml"
+        self.checkout.write(policy, '[isolation.providers]\nallowed = ["a"]\n')
+        self.assertIsNone(self.edit(policy, '["a"]', '[ "a" ] # same permissions'))
 
     def test_inventories_in_worktrees_are_guarded_too(self):
         self.checkout.write(".claude/worktrees/w/.git", "gitdir: elsewhere\n")
@@ -101,14 +132,25 @@ class FileGuard(HookCase):
             self.assertEqual(self.edit("src/lib.rs", "a", "b", agent), "deny", agent)
             self.assertIsNone(self.edit(".claude/plans/x/30-design.md", "draft", "plan", agent), agent)
 
-    def test_tester_stage_asks_before_touching_production_code(self):
+    def test_tester_hands_production_files_back_to_implementer(self):
         self.checkout.write("crates/a/src/lib.rs", "fn a() {}\n")
         self.checkout.write("crates/a/src/panel/run_tests.rs", "fn t() {}\n")
         self.checkout.write("crates/a/src/testing/fs.rs", "fn f() {}\n")
-        self.assertEqual(self.edit("crates/a/src/lib.rs", "a", "b", "tester"), "ask")
+        output = self.edit_result("crates/a/src/lib.rs", "a", "b", "tester")
+        self.assertEqual(output["permissionDecision"], "deny")
+        self.assertIn("Send the proposed change to the implementer", output["permissionDecisionReason"])
         self.assertIsNone(self.edit("crates/a/src/panel/run_tests.rs", "t", "u", "tester"))
         self.assertIsNone(self.edit("crates/a/src/testing/fs.rs", "f", "g", "tester"))
         self.assertIsNone(self.edit("crates/a/src/lib.rs", "a", "b", "implementer"))
+
+    def test_tester_inline_tests_use_the_same_handoff_without_user_approval(self):
+        path = "crates/a/src/state.rs"
+        self.checkout.write(path, 'pub fn value() -> u8 { 1 }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn value_is_one() { assert_eq!(super::value(), 1); }\n}\n')
+        output = self.edit_result(path, 'value_is_one', 'returns_one', 'tester')
+        self.assertEqual(output["permissionDecision"], "deny")
+        self.assertIn("inline test module", output["permissionDecisionReason"])
+        self.assertIn("not a request for user approval", output["permissionDecisionReason"])
+        self.assertIsNone(self.edit(path, 'value_is_one', 'returns_one', 'implementer'))
 
 
 class ShellGuard(HookCase):
@@ -423,11 +465,70 @@ class EditSignals(HookCase):
         })
         return output["additionalContext"] if output else ""
 
+    def edited(self, path, text, edits):
+        for edit in edits:
+            text = text.replace(edit["old_string"], edit["new_string"], -1 if edit.get("replace_all") else 1)
+        file = self.checkout.write(path, text)
+        tool = "Edit" if len(edits) == 1 else "MultiEdit"
+        data = edits[0] if tool == "Edit" else {"edits": edits}
+        output = self.checkout.run("post_edit.py", {
+            "hook_event_name": "PostToolUse", "tool_name": tool,
+            "tool_input": {"file_path": str(file), **data},
+            "tool_response": {"type": "update", "filePath": str(file)},
+        })
+        return output["additionalContext"] if output else ""
+
     def test_files_near_the_limit_receive_an_advisory(self):
         warning = self.written("crates/a/src/big.rs", "fn a() {}\n" * 640)
         self.assertIn("responsibility-map", warning)
         self.assertIn("advisory", warning)
         self.assertEqual(self.written("crates/a/src/small.rs", "fn a() {}\n" * 639), "")
+
+    def test_known_edits_warn_when_crossing_size_bands(self):
+        for before_lines, added, expected in (
+            (638, 1, False), (639, 1, True), (650, 1, False),
+            (679, 1, True), (650, 40, True),
+        ):
+            text = "// unchanged\n" * (before_lines - 1) + "fn original() {}\n"
+            warning = self.edited("crates/a/src/state.rs", text, [{
+                "old_string": "fn original() {}\n",
+                "new_string": "// added\n" * added + "fn changed() {}\n",
+            }])
+            self.assertEqual("size warning" in warning, expected, (before_lines, added))
+
+    def test_known_unchanged_or_shrinking_files_do_not_repeat_size_advisories(self):
+        path = "crates/a/src/state.rs"
+        text = "// unchanged\n" * 699 + "fn original() {}\n"
+        for old, new in (
+            ("original", "changed"),
+            ("// unchanged\nfn original() {}\n", "fn changed() {}\n"),
+            ("// unchanged\n", ""),  # Deletion has no unique inverse edit site.
+            ("// unchanged", "// unchanged"),  # Repeated replacement text.
+        ):
+            self.assertEqual(self.edited(path, text, [{"old_string": old, "new_string": new}]), "")
+
+    def test_multiple_edits_use_their_combined_size_change(self):
+        text = "// unchanged\n" * 638 + "fn first() {}\nfn second() {}\n"
+        edits = [
+            {"old_string": "fn first() {}", "new_string": "fn renamed() {}"},
+            {"old_string": "fn second() {}", "new_string": "fn another() {}"},
+        ]
+        self.assertEqual(self.edited("crates/a/src/state.rs", text, edits), "")
+        edits[1]["new_string"] = "// added\n" * 40 + "fn another() {}"
+        self.assertIn("size warning", self.edited("crates/a/src/state.rs", text, edits))
+
+    def test_over_limit_files_keep_warning_even_while_shrinking(self):
+        text = "// unchanged\n" * 802 + "fn original() {}\n"
+        warning = self.edited("crates/a/src/state.rs", text, [{
+            "old_string": "// unchanged\nfn original() {}\n", "new_string": "fn changed() {}\n",
+        }])
+        self.assertIn("Hard limit exceeded", warning)
+
+    def test_unknown_replace_all_history_keeps_size_warning(self):
+        warning = self.edited("crates/a/src/state.rs", "// before\n" * 640, [{
+            "old_string": "before", "new_string": "after", "replace_all": True,
+        }])
+        self.assertIn("size warning", warning)
 
     def test_new_files_with_only_foreign_impls_are_file_slicing(self):
         sliced = "use super::Thread;\nimpl Thread {\n    fn open(&self) {}\n}\n"
@@ -440,13 +541,33 @@ class EditSignals(HookCase):
         self.assertIn("crate-new", self.written("crates/b/Cargo.toml", "[package]\n", "create"))
 
     def test_plugin_declarations_and_the_catalog_follow_the_plugin_api_skill(self):
-        for path in (
-            "crates/files/src/plugin.rs",
-            "crates/plugin-model/src/catalog.rs",
-            "src/shell_setup.rs",
-            "src/shell_setup/reference.rs",
+        for path, code in (
+            ("crates/files/src/plugin.rs", "pub static PLUGIN: SystemPlugin = value();\n"),
+            ("crates/plugin-model/src/catalog.rs", "pub struct Catalog { id: u64 }\n"),
+            ("crates/plugin-api/src/lib.rs", "pub struct Capability { id: u64 }\n"),
+            ("src/shell_setup.rs", "let plugins = &[&feature::PLUGIN];\n"),
+            ("src/shell_setup/user_plugin_panel/sync.rs", "workspace.register_panel(panel, cx);\n"),
         ):
-            self.assertIn("plugin-api", self.written(path, "pub fn a() {}\n"), path)
+            self.assertIn("plugin-api", self.written(path, code), path)
+
+    def test_existing_plugin_declarations_and_registrations_are_checked_when_changed(self):
+        for path, old, new in (
+            ("crates/files/src/plugin.rs", "pub static PLUGIN: SystemPlugin = a();", "pub static PLUGIN: SystemPlugin = b();"),
+            ("src/shell_setup.rs", "&first::PLUGIN,", "&second::PLUGIN,"),
+            ("crates/plugin-model/src/catalog.rs", "pub value: u32,", "pub value: u64,"),
+        ):
+            warning = self.edited(path, old + "\n", [{"old_string": old, "new_string": new}])
+            self.assertIn("plugin-api", warning, path)
+
+    def test_shell_edits_without_contract_changes_do_not_repeat_plugin_routing(self):
+        text = "use nocterm_plugin_model::PluginCatalog;\nfn render(catalog: &PluginCatalog) {\n    let title = \"Old\";\n}\n"
+        self.assertEqual(self.edited("src/shell_setup/reference.rs", text, [{
+            "old_string": '"Old"', "new_string": '"New"',
+        }]), "")
+        self.assertEqual(self.written("src/shell_setup/settings.rs", "fn settings() {}\n", "create"), "")
+        self.assertEqual(self.edited("crates/files/src/plugin.rs", "// PLUGIN description\n", [{
+            "old_string": "// PLUGIN description", "new_string": "// PLUGIN clarification",
+        }]), "")
 
     def test_files_that_only_mention_plugins_are_left_alone(self):
         self.assertEqual(self.written("crates/a/src/lib.rs", "// A plugin host.\npub fn plugin() {}\n"), "")

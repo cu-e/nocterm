@@ -1,8 +1,7 @@
 use super::AgentSettingsPage;
 use gpui_kit::{
-    AnyElement, App, Context, SharedString, TestSupportExt as _,
+    AnyElement, App, Context, SharedString,
     component::{Disableable as _, switch::Switch},
-    prelude::*,
 };
 use nocterm_settings::SettingsSection;
 use nocterm_ui::form;
@@ -16,7 +15,7 @@ pub(crate) fn toggle<S: SettingsSection>(
     Switch::new(id)
         .checked(checked)
         .disabled(disabled)
-        .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+        .on_change(cx.listener(move |this, checked: &bool, _, cx| {
             let checked = *checked;
             this.save(move |settings| set(settings, checked), cx);
         }))
@@ -29,16 +28,5 @@ pub(crate) fn text_row(
     description: impl Into<SharedString>,
     cx: &App,
 ) -> AnyElement {
-    let field = view.field(key);
-    gpui_kit::div()
-        .id(SharedString::from(format!("settings-field-{key}")))
-        .test_support()
-        .child(form::stacked_row(
-            label,
-            description,
-            field.input(),
-            field.error(cx),
-            cx,
-        ))
-        .into_any_element()
+    form::text_field(view.field(key), key, label, description, cx)
 }

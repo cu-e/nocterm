@@ -3,8 +3,8 @@
 //! the pricing ceilings the runner applies to every model (ADR 0123). Version 3 adds
 //! `ssh_egress`, the addresses the host's SSH connections come from, which chat
 //! certificate requests state, and per target an optional host key and session settings;
-//! version 2 means no egress (ADR 0137). The SSH section is the contract's
-//! (`boot_ssh`, contract ADR 0011, ADR 0139) and checked by it.
+//! version 2 means no egress (ADR 0145). The SSH section is the contract's
+//! (`boot_ssh`, contract ADR 0011, ADR 0147) and checked by it.
 use super::{
     MAX_BOOT_BYTES, Shape, check_shape,
     policy::{ManagedPolicy, PolicyDocument},

@@ -95,11 +95,17 @@ pub(crate) struct PendingHubs {
 fn observe_agent_hosts(
     pending: Option<&PendingHubs>,
     connections: Option<&nocterm_connections::Installed>,
+    cx: &App,
 ) {
     if let (Some(pending), Some(connections)) = (pending, connections)
         && let Some(sessions) = pending.agent_hosts.clone()
     {
-        crate::agent_hosts::observe(sessions, pending.hubs.hubs().clone(), connections);
+        crate::agent_hosts::observe(
+            sessions,
+            pending.hubs.hubs().clone(),
+            connections,
+            cx.background_executor().clone(),
+        );
     }
 }
 
@@ -108,7 +114,6 @@ fn start_hubs(
     inputs: nocterm_connections::ConnectionInputs,
     terminal: &nocterm_terminal::Installed,
     ready: &nocterm_ui::UiReady,
-    shutdown: &nocterm_store::ShutdownCoordinator,
     cx: &mut App,
 ) -> Option<HubWindows> {
     let PendingHubs {
@@ -119,9 +124,9 @@ fn start_hubs(
     } = pending?;
     let sources = accounts.map(|accounts| {
         let (hubs, terminal) = (hubs.hubs().clone(), terminal.clone());
-        let (ready, shutdown) = (ready.clone(), shutdown.clone());
-        cx.new(|_| {
-            crate::hub_sources::HubSources::new(accounts, hubs, inputs, terminal, ready, shutdown)
+        let ready = ready.clone();
+        cx.new(|cx| {
+            crate::hub_sources::HubSources::new(accounts, hubs, inputs, terminal, ready, cx)
         })
     });
     let ui = nocterm_hubs_ui::install(hubs);
@@ -247,7 +252,7 @@ impl Booted {
             Some(source.vault().clone()),
             settings,
         )
-        .with_agent_source(source.agent_source()))
+        .with_hub_source(source))
     }
 
     /// The saved workspaces as a window of `sources` opens them: with the terminals and the
@@ -304,7 +309,7 @@ impl Booted {
     pub(crate) fn agent_installation(&self) -> &nocterm_agent::Installed {
         &self.agent
     }
-    pub(crate) fn settings_deps(&self) -> nocterm_settings_ui::Installed {
+    pub(crate) fn settings_deps(&self) -> nocterm_store::SettingsHandle {
         self.settings_ui.installed()
     }
     #[cfg(test)]
@@ -358,9 +363,9 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let connections = offer_keys(connections, vault.as_ref(), cx);
     let connection_inputs = connections.inputs();
     let connections = install_connections(connections, &ui, &shutdown, cx);
-    observe_agent_hosts(hubs.as_ref(), connections.as_ref());
+    observe_agent_hosts(hubs.as_ref(), connections.as_ref(), cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
-    let hubs = start_hubs(hubs, connection_inputs, &terminal, &ui, &shutdown, cx);
+    let hubs = start_hubs(hubs, connection_inputs, &terminal, &ui, cx);
     let projects = install_projects(
         projects,
         &terminal,
@@ -374,7 +379,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
     let agent = agent.with_cloud_agents(cloud_agents);
     let files = install_files(files, &ui, &shutdown, cx);
-    let keymap = install_keymap(stored, cx);
+    let keymap = install_keymap(stored, &shutdown, cx);
     let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);
     let plugins = Plugins::install(&paths, &shutdown, clock.clone(), mode, ui.settings(), cx)?;
     let monitor = nocterm_monitor_ui::install(local_host.clone(), &ui, cx);
@@ -566,9 +571,15 @@ fn install_hubs(
 }
 
 /// The shared keymap: the defaults and the user's overrides, when the application keeps files.
-fn install_keymap(stored: Option<&Paths>, cx: &mut App) -> nocterm_keymap::KeymapHandle {
+fn install_keymap(
+    stored: Option<&Paths>,
+    shutdown: &nocterm_store::ShutdownCoordinator,
+    cx: &mut App,
+) -> nocterm_keymap::KeymapHandle {
     let user_keymap = stored.map(|paths| paths.config_dir().join("keymap.toml"));
-    crate::keymap::load(user_keymap, cx)
+    let keymap = crate::keymap::load(user_keymap, cx);
+    report_store_registration("keymap", keymap.register_shutdown(shutdown, cx));
+    keymap
 }
 
 /// Retain only installations registered with the common shutdown coordinator.

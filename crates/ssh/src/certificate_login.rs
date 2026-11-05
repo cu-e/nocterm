@@ -1,5 +1,5 @@
 //! Purpose-bound certificate login: a chat's in-memory Ed25519 key with the OpenSSH user
-//! certificate a person's CA issued for it (ADR 0137).
+//! certificate a person's CA issued for it (ADR 0145).
 //!
 //! Like proof login it connects directly, pins the host key and never falls back to the
 //! agent, key files, a vault prompt or a password. The key lives only in this value; it

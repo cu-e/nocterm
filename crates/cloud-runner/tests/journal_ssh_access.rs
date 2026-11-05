@@ -1,5 +1,5 @@
-//! Journal SSH rows, the v8 migration that adds them (ADR 0137) and the v9 migration that
-//! drops rows sealed under the effect class (ADR 0139).
+//! Journal SSH rows, the v8 migration that adds them (ADR 0145) and the v9 migration that
+//! drops rows sealed under the effect class (ADR 0147).
 mod support;
 use futures::executor::block_on;
 use nocterm_cloud_model::{

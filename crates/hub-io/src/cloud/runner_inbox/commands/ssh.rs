@@ -1,8 +1,8 @@
-//! Chat SSH bindings and certificates (ADR 0137) as native command bodies.
+//! Chat SSH bindings and certificates (ADR 0145) as native command bodies.
 //!
 //! The contract decoder verified the binding's CA signature and that it names the routed
 //! namespace, runner and chat; this adds the chat key epoch and derives each target's
-//! per-server principal and session access (contract ADR 0011, ADR 0139), so the runner
+//! per-server principal and session access (contract ADR 0011, ADR 0147), so the runner
 //! never needs the contract to compare certificates or to recognise a prompt's target.
 use super::*;
 use nocterm_cloud_model::ssh_access::{

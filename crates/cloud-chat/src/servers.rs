@@ -1,4 +1,4 @@
-//! A chat's servers (ADR 0139) as the agent-chat window sees them: the binding the verified
+//! A chat's servers (ADR 0147) as the agent-chat window sees them: the binding the verified
 //! history states, the server prompts run on, and binding and unbinding through the chat's own
 //! conversation.
 use crate::{CloudChat, CloudChatError};

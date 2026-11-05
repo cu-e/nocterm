@@ -1,4 +1,4 @@
-//! A chat's servers (ADR 0139): the binding it shows, the server its prompts run on, and binding
+//! A chat's servers (ADR 0147): the binding it shows, the server its prompts run on, and binding
 //! and unbinding through its conversation.
 use super::{actions, opened};
 use crate::CloudChat;

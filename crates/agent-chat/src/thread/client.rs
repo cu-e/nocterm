@@ -285,18 +285,27 @@ impl AgentThread {
         cx.notify();
     }
 
-    pub fn apply_presented_update(&mut self, mut update: SessionUpdate) -> ThreadChange {
+    pub fn apply_presented_update(
+        &mut self,
+        mut update: SessionUpdate,
+    ) -> Result<ThreadChange, nocterm_ai::history::HistoryCodecError> {
         self.tools
             .prepare_displays(self.session.turn(), self.state.entries().len());
         tool_display::strip_provider_meta(&mut update);
+        let tools_changed = matches!(
+            &update,
+            SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_)
+        );
         let change = if self.config.report_control(&update) {
             ThreadChange::Controls
         } else {
-            self.state.apply_transcript(update, self.deps.timestamp())
+            self.state.apply_transcript(update, self.deps.timestamp())?
         };
-        let patches = self.tools.normalize_displays(self.state.entries());
-        self.state.patch_tool_rows(patches, self.deps.timestamp());
-        change
+        if tools_changed {
+            let patches = self.tools.normalize_displays(self.state.entries());
+            self.state.patch_tool_rows(patches, self.deps.timestamp());
+        }
+        Ok(change)
     }
 
     pub(super) fn on_prompt_completion(
@@ -391,7 +400,14 @@ impl AgentThread {
             notification.update,
             SessionUpdate::ConfigOptionUpdate(_) | SessionUpdate::CurrentModeUpdate(_)
         );
-        match self.apply_presented_update(notification.update.clone()) {
+        let change = match self.apply_presented_update(notification.update.clone()) {
+            Ok(change) => change,
+            Err(error) => {
+                self.fail(&error.to_string(), cx);
+                return;
+            }
+        };
+        match change {
             ThreadChange::Transcript => {
                 if let Some(index) = index {
                     self.mark_dirty(index);

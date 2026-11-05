@@ -21,19 +21,19 @@ async fn an_old_displayed_recovery_key_cannot_confirm_a_reissued_key() {
         .await
         .unwrap();
     let second = device.flow.offer(&owner, key).unwrap();
-    assert!(matches!(first.confirm(), Err(HubError::Stale)));
+    assert!(matches!(first.confirm().await, Err(HubError::Stale)));
     assert!(
         device
             .flow
             .recovery_key_unconfirmed(&crate::account::testing::hub())
     );
-    second.confirm().unwrap();
+    second.confirm().await.unwrap();
     assert!(
         !device
             .flow
             .recovery_key_unconfirmed(&crate::account::testing::hub())
     );
-    assert!(matches!(second.confirm(), Err(HubError::Stale)));
+    assert!(matches!(second.confirm().await, Err(HubError::Stale)));
 }
 
 #[tokio::test]
@@ -44,7 +44,7 @@ async fn same_account_sign_in_never_revives_an_earlier_recovery_card() {
         panic!("created")
     };
     device.sign_in(&records, PASSWORD).await;
-    assert!(matches!(first.confirm(), Err(HubError::Stale)));
+    assert!(matches!(first.confirm().await, Err(HubError::Stale)));
     assert!(
         device
             .flow

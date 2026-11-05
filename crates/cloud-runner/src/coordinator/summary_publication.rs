@@ -1,4 +1,4 @@
-//! Publishes each chat's summary to the runner's directory stream (ADR 0135).
+//! Publishes each chat's summary to the runner's directory stream (ADR 0143).
 //!
 //! The runner's delivery sweep calls [`publish`] for every catalog chat. The first call for
 //! a chat derives its facts from the whole journal, which also backfills chats that existed

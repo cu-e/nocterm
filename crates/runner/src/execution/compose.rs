@@ -267,9 +267,9 @@ fn execution(
 }
 
 /// Chat SSH bindings: rows in the same journal, certificates read under the binding's CA
-/// and the runner's reach (ADR 0137).
+/// and the runner's reach (ADR 0145).
 /// The chats' SSH access and the session targets that sign in with it: the configured ones
-/// and, for a managed runner, its keyed boot targets (ADR 0137, 0139).
+/// and, for a managed runner, its keyed boot targets (ADR 0145, 0147).
 fn session_targets(
     state: &State,
     targets: &SessionTargetConfiguration,
@@ -305,7 +305,7 @@ fn retirement(state: &State, peer: &RunnerHubPeer) -> Arc<RunnerChatRetirement> 
 }
 
 /// Chat summaries go to this runner's directory on the same hub peer, naming the managed
-/// agent when a pool host started the runner (ADR 0135).
+/// agent when a pool host started the runner (ADR 0143).
 fn summaries(
     state: &State,
     journal: &DurableRunJournal,

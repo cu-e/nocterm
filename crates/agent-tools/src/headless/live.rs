@@ -67,10 +67,10 @@ impl LiveObservation {
                 None
             };
             if let Some(reason) = reason {
-                let mut output = presentation::text(terminal.read(2000, Some(self.since)));
-                output["completion"] = serde_json::json!(reason);
-                output["completed"] = serde_json::json!(reason == "prompt_returned");
-                output["exit_status"] = serde_json::Value::Null;
+                let output = serde_json::json!(
+                    presentation::terminal(terminal.read(2000, Some(self.since)))
+                        .observed(reason.into())
+                );
                 let effect = if reason == "prompt_returned" {
                     ToolEffectStatus::Observed
                 } else {

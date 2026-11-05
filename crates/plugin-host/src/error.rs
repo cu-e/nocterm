@@ -70,6 +70,8 @@ pub enum BrokenPackage {
     Hash(#[from] HashError),
     #[error(transparent)]
     Package(#[from] PackageError),
+    #[error("the stored package cannot start")]
+    Runtime(#[from] RuntimeError),
     #[error("the stored package belongs to another plugin")]
     OtherPlugin { found: PluginId },
     #[error(transparent)]
@@ -87,6 +89,10 @@ pub enum ManageError {
     OtherPlugin(PluginId),
     #[error("at most {max} user plugins can be enabled")]
     TooManyEnabled { max: usize },
+    #[error("at most {max} user plugins can be installed")]
+    TooManyInstalled { max: usize },
+    #[error("the installed package changed while the operation was being prepared")]
+    Changed,
     #[error("the package could not be stored")]
     Package(#[from] PackageError),
     #[error("the consent does not fit the package")]

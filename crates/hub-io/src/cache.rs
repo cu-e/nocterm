@@ -7,12 +7,20 @@
 //! administrators this device pinned, which are kept in the clear. Nothing secret in it opens
 //! without the vault password, so it may sit on disk, and it lets the vault unlock while the hub
 //! is unreachable.
+//! Read and write share a 32 MiB byte limit. Personal-vault refresh publication
+//! keeps the newest collection cursor and skips identical snapshots. Vault data
+//! is shared immutably across readers; staging and parent sync use two physical
+//! installation-owned workers, independent of the Slot's short authority lock.
 
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use nocterm_core::fs::{BoundedReadError, FileError, read_regular_bounded, write_private_atomic};
+use nocterm_core::{
+    bounded_io::BoundedBuffer,
+    fs::{AtomicPublication, BoundedReadError, FileError, read_regular_bounded},
+};
 use nocterm_hub_proto::v1;
 use nocterm_hubs_model::HubAddress;
 use nocterm_keys::{PinnedKeys, PublicKey};
@@ -38,8 +46,14 @@ pub(crate) enum CacheError {
     Format(#[source] serde_json::Error),
     #[error("the account cache was written by a newer version")]
     Newer,
+    #[error("the account cache exceeds its 32 MiB limit")]
+    Limit,
     #[error("the hub address is too long for a file name")]
     NameTooLong,
+    #[error("the account cache worker is unavailable")]
+    Worker,
+    #[error("the account cache worker failed")]
+    Join(#[from] tokio::task::JoinError),
 }
 
 /// How the unlock key of the account's keyset is derived from what the user types.
@@ -150,8 +164,12 @@ pub(crate) struct AccountCache {
     pub account_id: String,
     pub method: UnlockMethod,
     pub keyset: KeysetCopy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vault: Option<VaultCopy>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "shared_vault"
+    )]
+    pub vault: Option<Arc<VaultCopy>>,
     /// The keys were created on this device and the person has not yet confirmed saving the
     /// recovery key shown then. A fact about the device, not a secret: the next time the keys
     /// open, a new recovery key is offered.
@@ -165,6 +183,18 @@ pub(crate) struct AccountCache {
 }
 
 impl AccountCache {
+    /// A delayed refresh never replaces a more recent personal-vault snapshot.
+    /// Equal snapshots need neither another memory publication nor a disk write.
+    pub(crate) fn accept_shared_vault(&mut self, next: Arc<VaultCopy>) -> bool {
+        if self.vault.as_ref().is_some_and(|held| {
+            held == &next || (held.collection_id == next.collection_id && held.cursor > next.cursor)
+        }) {
+            return false;
+        }
+        self.vault = Some(next);
+        true
+    }
+
     pub(crate) fn new(
         hub_uid: String,
         account_id: String,
@@ -212,10 +242,80 @@ impl AccountCache {
     }
 }
 
+/// Sharing is an in-memory ownership detail; the existing file representation stays plain.
+mod shared_vault {
+    use super::{Arc, VaultCopy};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &Option<Arc<VaultCopy>>,
+        out: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.as_deref().serialize(out)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        input: D,
+    ) -> Result<Option<Arc<VaultCopy>>, D::Error> {
+        Option::<VaultCopy>::deserialize(input).map(|value| value.map(Arc::new))
+    }
+}
+
 /// The cache file of one hub. It keeps no state: callers decide when to read and write.
 #[derive(Clone, Debug)]
 pub(crate) struct CacheFile {
     path: PathBuf,
+    work: Arc<CacheWork>,
+}
+
+/// One installation shares two physical filesystem jobs. A cancelled waiter
+/// releases admission; a running job retains its permit until the I/O finishes.
+#[derive(Debug)]
+pub(crate) struct CacheWork {
+    runtime: Option<tokio::runtime::Handle>,
+    slots: Arc<tokio::sync::Semaphore>,
+    operations: Arc<tokio::sync::Semaphore>,
+}
+
+impl CacheWork {
+    pub(crate) fn new(runtime: Option<tokio::runtime::Handle>) -> Arc<Self> {
+        Arc::new(Self {
+            runtime,
+            slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            operations: Arc::new(tokio::sync::Semaphore::new(4)),
+        })
+    }
+
+    pub(crate) async fn operation(&self) -> Result<tokio::sync::OwnedSemaphorePermit, CacheError> {
+        self.operations
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| CacheError::Worker)
+    }
+
+    pub(crate) async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> Result<T, CacheError> + Send + 'static,
+    ) -> Result<T, CacheError> {
+        let permit = self
+            .slots
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| CacheError::Worker)?;
+        let runtime = self
+            .runtime
+            .clone()
+            .or_else(|| tokio::runtime::Handle::try_current().ok())
+            .ok_or(CacheError::Worker)?;
+        runtime
+            .spawn_blocking(move || {
+                let _permit = permit;
+                work()
+            })
+            .await?
+    }
 }
 
 impl CacheFile {
@@ -226,7 +326,17 @@ impl CacheFile {
         }
         Ok(Self {
             path: root.join(format!("{stem}.cache")),
+            work: CacheWork::new(None),
         })
+    }
+
+    pub(crate) fn with_work(mut self, work: Arc<CacheWork>) -> Self {
+        self.work = work;
+        self
+    }
+
+    pub(crate) fn work(&self) -> &Arc<CacheWork> {
+        &self.work
     }
 
     /// The cached account; `None` when nothing was kept for the hub.
@@ -249,13 +359,28 @@ impl CacheFile {
     }
 
     /// Replaces the file atomically; it is created readable by the user only.
+    #[cfg(test)]
     pub(crate) fn save(&self, cache: &AccountCache) -> Result<(), CacheError> {
+        self.stage(cache)?.publish()?;
+        Ok(())
+    }
+
+    pub(crate) fn stage(&self, cache: &AccountCache) -> Result<AtomicPublication, CacheError> {
         if let Some(parent) = self.path.parent() {
             prepare_private_directory(parent).map_err(CacheError::Prepare)?;
         }
-        let text = serde_json::to_vec(cache).map_err(CacheError::Format)?;
-        write_private_atomic(&self.path, &text)?;
-        Ok(())
+        let mut bytes = BoundedBuffer::new(MAX_FILE_BYTES);
+        if let Err(error) = serde_json::to_writer(&mut bytes, cache) {
+            return Err(if bytes.exceeded() {
+                CacheError::Limit
+            } else {
+                CacheError::Format(error)
+            });
+        }
+        Ok(AtomicPublication::stage_private(
+            &self.path,
+            &bytes.into_inner(),
+        )?)
     }
 
     /// Removes the cache; no file is not an error.

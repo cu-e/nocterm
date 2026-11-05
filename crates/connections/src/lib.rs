@@ -23,6 +23,9 @@
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
 //! Connections aliases the actual service entity; windows/actions use supplied installation.
+//! Sidebar projections retain positions/section metadata until profile, replication or filter
+//! changes; only visible rows own short presentation and drag captures. OS/flag images
+//! have installation-scoped bounded caches keyed by rendering inputs and retained raw source.
 //! Raw facts/jobs belong to the supplied actual service entity. Original Item
 //! capability receipts retain session authority independently of window projection.
 //! Workspace recovery compares original profile, destination and ordered resolved

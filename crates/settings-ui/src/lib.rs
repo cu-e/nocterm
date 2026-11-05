@@ -6,13 +6,12 @@
 //! out of the list, keep their parent highlighted and link back to it), opening a page at an
 //! anchor the page reveals, shared diagnostics and eager/lazy lifetimes.
 //! Does not own: page controls, schema policy, native probing or settings persistence.
-//! Ports used: Installed supplies SettingsHandle; SettingsCatalog supplies owner factories.
+//! Ports used: SettingsHandle is supplied explicitly; SettingsCatalog supplies owner factories.
 //! Ports provided: workspace settings Item. Settings section: none. Globals: none.
 //! Invariants: catalogs validate before factories run (a nested page needs a top-level parent and
 //! cannot be the default); eager construction/flush preserve order; lazy pages are reused.
 
-mod installation;
-pub use installation::Installed;
+use nocterm_store::SettingsHandle;
 
 use gpui_kit::{
     App, Context, EventEmitter, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription,
@@ -87,7 +86,7 @@ impl PageBook {
     }
 }
 /// Installs the settings Item with factories supplied by the actual feature owners.
-pub fn register(workspace: &mut Workspace, pages: SettingsCatalog, installed: Installed) {
+pub fn register(workspace: &mut Workspace, pages: SettingsCatalog, installed: SettingsHandle) {
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
@@ -105,7 +104,7 @@ pub fn open_page(
     workspace: &mut Workspace,
     id: &str,
     pages: &SettingsCatalog,
-    installed: Installed,
+    installed: SettingsHandle,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -118,7 +117,7 @@ pub fn open_page_at(
     id: &str,
     anchor: Option<&str>,
     pages: &SettingsCatalog,
-    installed: Installed,
+    installed: SettingsHandle,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -140,7 +139,7 @@ pub fn open_page_at(
     workspace.activate_item_by_id(item.entity_id(), window, cx);
 }
 pub struct SettingsView {
-    installed: Installed,
+    installed: SettingsHandle,
     selected_page: usize,
     pages: PageBook,
     nav: PageNav,
@@ -151,12 +150,12 @@ pub struct SettingsView {
 impl SettingsView {
     pub fn with_pages(
         pages: SettingsCatalog,
-        installed: Installed,
+        installed: SettingsHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let feedback = SettingsPageFeedback::new(cx);
-        let context = SettingsPageContext::new(installed.settings().clone(), feedback.clone());
+        let context = SettingsPageContext::new(installed.clone(), feedback.clone());
         let weak = cx.weak_entity();
         let original_window = window.window_handle();
         let changed = feedback.observe(cx, move |cx| {
@@ -166,7 +165,7 @@ impl SettingsView {
         });
         let weak = cx.weak_entity();
         let original_window = window.window_handle();
-        let settings = installed.settings().observe(cx, move |cx| {
+        let settings = installed.observe(cx, move |cx| {
             let _ = original_window.update(cx, |_, _, cx| {
                 let _ = weak.update(cx, |_, cx| cx.notify());
             });
@@ -201,8 +200,7 @@ impl SettingsView {
             page.deactivate(window, cx);
         }
         self.selected_page = index;
-        let context =
-            SettingsPageContext::new(self.installed.settings().clone(), self.feedback.clone());
+        let context = SettingsPageContext::new(self.installed.clone(), self.feedback.clone());
         self.pages.activate(index, context, window, cx);
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
@@ -261,7 +259,7 @@ impl Render for SettingsView {
             .selected(self.selected_page)
             .map(|page| page.view().into_any_element())
             .unwrap_or_else(|| div().into_any_element());
-        let section_errors: Vec<_> = self.installed.settings().section_errors(cx)
+        let section_errors: Vec<_> = self.installed.section_errors(cx)
             .iter()
             .map(|error| {
                 format!(
@@ -298,9 +296,7 @@ impl Render for SettingsView {
             .min_h_0()
             .bg(nocterm_ui::hsla(
                 nocterm_ui::TerminalStyle::with_settings(
-                    self.installed
-                        .settings()
-                        .setting::<nocterm_ui::TerminalSettings>(cx),
+                    self.installed.setting::<nocterm_ui::TerminalSettings>(cx),
                     cx,
                 )
                 .background,

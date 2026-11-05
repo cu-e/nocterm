@@ -13,16 +13,16 @@ use super::{
     runtime::{TracingGuestLog, runtimes},
 };
 
-/// The ports of an installation: the records file, one data file per plugin and one package
-/// file per plugin under `root`, each written through the shared persistence service.
+/// The installation's records and keyed data owners are registered before asynchronous
+/// native acquisition; immutable package versions retain their last durable consent.
 pub(super) fn installed(
     root: &Path,
     catalog: &PluginCatalog,
     shutdown: &ShutdownCoordinator,
     cx: &mut App,
-) -> HostPorts {
-    let records = RecordsFile::open(root.join("records.json"), cx);
-    let data = PluginDataFiles::new(root.join("data"), cx);
+) -> (HostPorts, Rc<RecordsFile>, Rc<PluginDataFiles>) {
+    let records = Rc::new(RecordsFile::new(root.join("records.json"), cx));
+    let data = Rc::new(PluginDataFiles::new(root.join("data"), cx));
     for (owner, registered) in [
         ("plugin records", records.register_shutdown(shutdown)),
         ("plugin data", data.register_shutdown(shutdown)),
@@ -31,15 +31,16 @@ pub(super) fn installed(
             tracing::error!(owner, %error, "shutdown registration failed");
         }
     }
-    HostPorts {
-        records: Rc::new(records),
-        data: Rc::new(data),
+    let ports = HostPorts {
+        records: records.clone(),
+        data: data.clone(),
         packages: Arc::new(PackageStore::new(
             root.join("packages"),
             reserved_names(catalog),
         )),
         runtime: runtimes(Arc::new(TracingGuestLog::installed())),
-    }
+    };
+    (ports, records, data)
 }
 
 /// The ports of a developer session: everything lives in memory and nothing is registered for

@@ -11,6 +11,7 @@ pub(crate) mod credentials;
 mod groups;
 mod idle;
 mod ledger;
+mod snapshot_budget;
 mod unlock;
 pub(crate) use idle::Idle;
 

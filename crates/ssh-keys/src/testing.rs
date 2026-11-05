@@ -30,7 +30,7 @@ pub struct MemoryVaultSshKeys {
     state: Arc<Mutex<State>>,
 }
 
-fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
+fn lock<T>(state: &Mutex<T>) -> MutexGuard<'_, T> {
     state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -141,7 +141,9 @@ impl VaultSshKeys for MemoryVaultSshKeys {
 }
 
 pub mod ca;
+mod connected_hosts;
 mod login;
+pub use connected_hosts::ScriptedConnectedHosts;
 pub use login::LoginProofFixture;
 
 /// An `authorized_keys` file kept in memory, with the same compare-before-swap rule as the

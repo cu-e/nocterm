@@ -300,8 +300,10 @@ impl Workspace {
         let set = self.shell.set().clone();
         self.registrations.admit_widget(&set, registration.id())?;
         let id = registration.id().clone();
-        let (factory, zone_hook) = registration.into_parts();
-        self.chrome.status_bar_mut().add(id, factory, zone_hook);
+        let (factory, zone_hook, visibility_hook) = registration.into_parts();
+        self.chrome
+            .status_bar_mut()
+            .add(id, factory, zone_hook, visibility_hook);
         self.sync_status_widgets(window, cx);
         cx.notify();
         Ok(())
@@ -315,7 +317,7 @@ impl Workspace {
         }
         self.chrome
             .status_bar_mut()
-            .release_unplaced(self.shell.current());
+            .release_unplaced(self.shell.current(), cx);
         self.chrome
             .status_bar_mut()
             .follow_zones(self.shell.current(), cx);

@@ -21,6 +21,8 @@ pub enum ThemeError {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum ThemeOperationError {
+    #[error("theme discovery reached its {resource} limit ({max})")]
+    DiscoveryLimit { resource: &'static str, max: usize },
     #[error("theme installation is unavailable")]
     Unsupported,
     #[error("theme operation completion is unavailable")]

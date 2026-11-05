@@ -1,10 +1,10 @@
-//! What this runner states for chat SSH bindings (ADR 0137): the servers it may reach
+//! What this runner states for chat SSH bindings (ADR 0145): the servers it may reach
 //! and the egress addresses its connections come from.
 //!
 //! Reach is selected, never constructed: a bound server is admitted only when it is one
 //! of the administrator's configured SSH targets or one of a managed boot v3's targets
 //! with a host key, with the same host, port and user and a host key equal to the
-//! binding's (`BootSshTarget::admits`, ADR 0139). A boot target without a host key is
+//! binding's (`BootSshTarget::admits`, ADR 0147). A boot target without a host key is
 //! listed but never admitted. Egress comes from `[ssh] egress` of an own runner or
 //! `ssh_egress` of boot v3; without it every binding is refused with `NoSourceAddress`.
 use super::config::SessionTargetConfiguration;

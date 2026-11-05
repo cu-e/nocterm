@@ -100,7 +100,7 @@ fn shell_on(
         let local = if local_host {
             let local = transport.clone();
             nocterm_terminal::LocalSessions::new(
-                Arc::new(move |_| local.clone()),
+                Arc::new(move |_, _| local.clone()),
                 "/bin/bash".into(),
             )
         } else {

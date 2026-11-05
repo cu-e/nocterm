@@ -103,7 +103,7 @@ fn drain(first: Pending, mut next: impl FnMut() -> Option<Event>) -> (Vec<Event>
     (batch, current)
 }
 
-async fn yield_once() {
+pub(super) async fn yield_once() {
     let mut yielded = false;
     poll_fn(|cx| {
         if std::mem::replace(&mut yielded, true) {

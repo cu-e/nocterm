@@ -371,7 +371,7 @@ async fn a_pending_admin_key_is_listed_for_a_known_hub_and_confirming_it_redraws
         hubs.confirm_admin_key(&listed[0], "AAAA-BBBB", cx)
     });
     cx.run_until_parked();
-    assert_eq!(confirmed, Ok(()));
+    assert!(confirmed.await.is_ok());
     assert!(redraws.get() > before);
     let listed = fx
         .hubs
@@ -388,7 +388,7 @@ async fn a_key_that_is_not_the_one_shown_is_not_confirmed(cx: &mut TestAppContex
         hubs.confirm_admin_key(&hubs.pending_admin_keys(&id())[0], "ffff", cx)
     });
 
-    assert_eq!(refused, Err(AdminKeyError::Mismatch));
+    assert!(matches!(refused.await, Err(AdminKeyError::Mismatch)));
     assert!(fx.admin_keys.confirmed().is_empty());
 }
 
@@ -402,4 +402,26 @@ async fn a_hub_that_is_not_listed_has_no_pending_admin_keys(cx: &mut TestAppCont
         .read_with(cx, |hubs, _| hubs.pending_admin_keys(&id()));
 
     assert!(listed.is_empty());
+}
+
+#[gpui::test]
+async fn an_unrelated_settings_edit_does_not_publish_a_hub_change(cx: &mut TestAppContext) {
+    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
+    cx.update(|cx| fx.settings.register::<nocterm_session::SshSettings>(cx));
+    cx.run_until_parked();
+    let redraws = std::rc::Rc::new(std::cell::Cell::new(0));
+    let changed = redraws.clone();
+    let _subscription =
+        cx.update(|cx| cx.observe(&fx.hubs, move |_, _| changed.set(changed.get() + 1)));
+    let update = cx.update(|cx| {
+        fx.settings
+            .update::<nocterm_session::SshSettings>(cx, |settings| {
+                settings.keepalive_interval_secs = 43
+            })
+    });
+    update.await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(redraws.get(), 0);
+    assert_eq!(fx.hub.count(FakeOp::Connect), 1);
+    assert_eq!(fx.status(cx), Some(HubStatus::Online));
 }

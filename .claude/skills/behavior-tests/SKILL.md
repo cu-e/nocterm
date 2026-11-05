@@ -13,8 +13,9 @@ and so do files named after review rounds.
 
 - **characterize** (before a refactor): cover every behaviour that passes
   through the code about to move, run the tests on the **unchanged** code and
-  see them pass. Record the test names in `40-steps.md`; they must stay
-  unedited through the refactor.
+  see them pass. Record relevant tests in the compact plan. Preserve scenarios
+  and assertions through the refactor; mechanical import, location and fixture
+  adaptations are allowed. Explain any change to expected behavior separately.
 - **cover** (new or changed behaviour): one test per rule or outcome, including
   refusals and errors (`typed-errors` variants), written red-green where
   practical.
@@ -41,6 +42,8 @@ and so do files named after review rounds.
   `gpui_kit` instead of adding another copy.
 - Assert outcomes the user or caller sees, not call sequences: the rendered
   state, the event, the persisted document, the returned error variant.
+  When reducing external work is itself the requirement, counters on shared
+  ports may assert requests/bytes avoided; use `performance` for cost evidence.
 
 ## Run
 

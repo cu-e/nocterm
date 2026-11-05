@@ -1,4 +1,4 @@
-//! The servers a remote conversation's agent may sign in to (ADR 0139): what a window shows of
+//! The servers a remote conversation's agent may sign in to (ADR 0147): what a window shows of
 //! a chat's binding, and the captured port through which the person binds, unbinds and picks
 //! the server prompts run on. Neutral display values; the source decides what is allowed.
 use super::ConversationError;

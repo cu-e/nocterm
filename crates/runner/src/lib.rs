@@ -4,13 +4,13 @@
 //! native collaborators, bounded fresh-head service, explicit execution
 //! composition (command inbox, coordinator, providers, session broker, outbox
 //! and chat summary delivery) when configured, and graceful task drain. Chat summaries
-//! name the managed agent from the boot document, or the own runner (ADR 0135).
+//! name the managed agent from the boot document, or the own runner (ADR 0143).
 //! Managed mode (`managed --config <path>`) is started by a pool host. Boot v1 on stdin
 //! (ADR 0121) validates and stays control-plane only. With `--control stdin` (ADR 0123)
 //! stdin is a framed channel: a boot v2 document, then contract chat access frames that
 //! give each chat a memory-only broker token; closing it ends the lease. Boot v3 adds the
 //! host's `ssh_egress` and, per target, an optional host key and session settings; the SSH
-//! section is read with the contract's `boot_ssh` (ADR 0139). Chat SSH bindings (ADR 0137)
+//! section is read with the contract's `boot_ssh` (ADR 0147). Chat SSH bindings (ADR 0145)
 //! are admitted for the configured SSH targets and a managed boot's targets with a host key
 //! equal to the binding's, with the egress of `[ssh]` or boot v3; a configured SSH target
 //! without device consent signs in with the chat's in-memory key and certificate, a run whose

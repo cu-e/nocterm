@@ -6,7 +6,7 @@
 //! writes of a person's own agents through the same entity, stopping or removing the person's
 //! seat of an agent, and the web panel address the hub states for each tracked hub. While a hub
 //! is tracked, its bound Cloud chats are swept every minute so their runners' SSH certificate
-//! requests are answered inside each chat's binding (`ssh_renewal`, ADR 0139).
+//! requests are answered inside each chat's binding (`ssh_renewal`, ADR 0147).
 //!
 //! Does not own: the hub protocol, sealing, signatures or pins (the injected ports are
 //! implemented by `nocterm-hub-io`), the rules that group agents (`nocterm-cloud-agents-model`),

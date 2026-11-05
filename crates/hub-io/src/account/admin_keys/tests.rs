@@ -57,13 +57,13 @@ fn pinned(slot: &Slot) -> Vec<String> {
     })
 }
 
-fn confirm(keys: &AdminKeys, account: &str, fingerprint: &str) -> Result<(), AdminKeyError> {
+async fn confirm(keys: &AdminKeys, account: &str, fingerprint: &str) -> Result<(), AdminKeyError> {
     let shown = keys
         .pending()
         .into_iter()
         .find(|offer| offer.key().account_id == account)
         .ok_or(AdminKeyError::NotPending)?;
-    shown.confirm(fingerprint)
+    shown.confirm(fingerprint).await
 }
 
 /// The user compares the fingerprint shown for "acme" with the administrator's and confirms.
@@ -74,6 +74,7 @@ async fn confirm_acme(setup: &Setup, keys: &AdminKeys) {
         Admin::acme().account_id(),
         &Admin::acme().fingerprint(),
     )
+    .await
     .unwrap();
     assert_eq!(opened_groups(setup).await, 1);
 }
@@ -111,6 +112,7 @@ async fn confirming_the_shown_fingerprint_opens_the_group_and_remembers_the_admi
         Admin::acme().account_id(),
         &Admin::acme().fingerprint(),
     )
+    .await
     .unwrap();
 
     assert_eq!(opened_groups(&setup).await, 1);
@@ -126,6 +128,31 @@ async fn confirming_the_shown_fingerprint_opens_the_group_and_remembers_the_admi
 }
 
 #[tokio::test]
+async fn a_failed_pin_publication_keeps_the_offer_pending_and_the_key_untrusted() {
+    let setup = setup();
+    let keys = AdminKeys::new(setup.operations.clone());
+    assert_eq!(opened_groups(&setup).await, 0);
+    let shown = keys.pending().pop().unwrap();
+    let path = std::fs::read_dir(setup._dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "cache")
+        })
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(matches!(
+        shown.confirm(&Admin::acme().fingerprint()).await,
+        Err(AdminKeyError::Persistence { .. })
+    ));
+    assert!(pinned(&setup.slot).is_empty());
+    assert_eq!(keys.pending().len(), 1);
+    assert_eq!(opened_groups(&setup).await, 0);
+}
+
+#[tokio::test]
 async fn a_fingerprint_retyped_with_other_grouping_and_case_confirms() {
     let setup = setup();
     let keys = AdminKeys::new(setup.operations.clone());
@@ -138,7 +165,9 @@ async fn a_fingerprint_retyped_with_other_grouping_and_case_confirms() {
         .map(|c| c.to_ascii_uppercase())
         .collect::<String>();
 
-    assert_eq!(confirm(&keys, Admin::acme().account_id(), &retyped), Ok(()));
+    confirm(&keys, Admin::acme().account_id(), &retyped)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -148,10 +177,10 @@ async fn another_fingerprint_does_not_confirm_and_nothing_is_pinned() {
     assert_eq!(opened_groups(&setup).await, 0);
     let other = Admin::new("someone-else");
 
-    assert_eq!(
-        confirm(&keys, Admin::acme().account_id(), &other.fingerprint()),
+    assert!(matches!(
+        confirm(&keys, Admin::acme().account_id(), &other.fingerprint()).await,
         Err(AdminKeyError::Mismatch)
-    );
+    ));
 
     assert_eq!(opened_groups(&setup).await, 0);
     assert!(pinned(&setup.slot).is_empty());
@@ -163,10 +192,10 @@ async fn an_administrator_nobody_waits_for_cannot_be_confirmed() {
     let setup = setup();
     let keys = AdminKeys::new(setup.operations.clone());
 
-    assert_eq!(
-        confirm(&keys, "stranger", &Admin::acme().fingerprint()),
+    assert!(matches!(
+        confirm(&keys, "stranger", &Admin::acme().fingerprint()).await,
         Err(AdminKeyError::NotPending)
-    );
+    ));
 }
 
 #[tokio::test]
@@ -198,7 +227,9 @@ async fn a_changed_key_replaces_the_pin_only_when_confirmed() {
         .name_granter(GROUP, Admin::acme().account_id(), &next);
     assert_eq!(opened_groups(&setup).await, 0);
 
-    confirm(&keys, next.account_id(), &next.fingerprint()).unwrap();
+    confirm(&keys, next.account_id(), &next.fingerprint())
+        .await
+        .unwrap();
 
     assert_eq!(
         pinned(&setup.slot),
@@ -227,10 +258,10 @@ async fn nothing_is_pending_or_confirmable_while_the_keys_are_closed() {
     let shown = keys.pending().pop().unwrap();
     setup.slot.lock();
     assert!(keys.pending().is_empty());
-    assert_eq!(
-        shown.confirm(&Admin::acme().fingerprint()),
+    assert!(matches!(
+        shown.confirm(&Admin::acme().fingerprint()).await,
         Err(AdminKeyError::Stale)
-    );
+    ));
 }
 
 #[tokio::test]
@@ -252,6 +283,7 @@ async fn a_new_pending_administrator_and_a_confirmation_raise_the_keys_notice_on
         Admin::acme().account_id(),
         &Admin::acme().fingerprint(),
     )
+    .await
     .unwrap();
     assert_eq!(setup.slot.notice().count(), found + 1);
 }
@@ -286,18 +318,18 @@ async fn an_administrator_card_cannot_confirm_the_same_grantor_for_a_replacement
         current.key(),
         "identical grantor/fingerprint is not recipient authority"
     );
-    assert_eq!(
-        old.confirm(&Admin::acme().fingerprint()),
+    assert!(matches!(
+        old.confirm(&Admin::acme().fingerprint()).await,
         Err(AdminKeyError::Stale)
-    );
+    ));
     assert_eq!(keys.pending().len(), 1);
-    current.confirm(&Admin::acme().fingerprint()).unwrap();
+    current.confirm(&Admin::acme().fingerprint()).await.unwrap();
     assert!(keys.pending().is_empty());
     fixture.login(0);
     fixture.vault().list().await.unwrap();
-    assert_eq!(
-        old.confirm(&Admin::acme().fingerprint()),
+    assert!(matches!(
+        old.confirm(&Admin::acme().fingerprint()).await,
         Err(AdminKeyError::Stale)
-    );
+    ));
     assert_eq!(keys.pending().len(), 1);
 }

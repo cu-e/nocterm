@@ -15,7 +15,7 @@ if test "$arch" = x64; then platform="$platform-baseline"; fi
 if test "$version" = latest; then release=latest/download; else release="download/bun-v$version"; fi
 fetch "https://github.com/oven-sh/bun/releases/$release/$platform.zip" "$work/bun.zip"
 unzip -q "$work/bun.zip" -d "$work/unpacked"
-staged_target=$(mktemp -d "$base/bun/releases/install.XXXXXX")
+staged_target=$(allocate_release "$base/bun/releases")
 mkdir -m 700 "$staged_target/bin"
 cp "$work/unpacked/$platform/bun" "$staged_target/bin/bun"
 chmod 700 "$staged_target/bin/bun"

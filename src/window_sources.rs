@@ -15,6 +15,7 @@ use crate::settings_pages::SettingsPages;
 #[derive(Clone)]
 pub(crate) struct WindowSources {
     environment: Environment,
+    _hub_source: Option<crate::hub_sources::HubSource>,
     connections: Option<nocterm_connections::Installed>,
     terminal: nocterm_terminal::Installed,
     vault: Option<Rc<nocterm_vault_ui::Installed>>,
@@ -48,14 +49,13 @@ impl WindowSources {
             vault,
             settings,
             agent_source: None,
+            _hub_source: None,
         }
     }
 
-    pub(crate) fn with_agent_source(
-        mut self,
-        source: Arc<dyn nocterm_hubs_model::source_identity::LocalAccountSourceFactory>,
-    ) -> Self {
-        self.agent_source = Some(source);
+    pub(crate) fn with_hub_source(mut self, source: crate::hub_sources::HubSource) -> Self {
+        self.agent_source = Some(source.agent_source());
+        self._hub_source = Some(source);
         self
     }
     pub(crate) fn agent_installation(

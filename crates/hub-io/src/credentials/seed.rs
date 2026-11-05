@@ -1,34 +1,17 @@
 //! The device key seed as hexadecimal text.
 
-use std::fmt::Write as _;
-
 /// The seed is not 64 hexadecimal digits.
 #[derive(Debug, thiserror::Error)]
 #[error("the key seed is not 64 hexadecimal digits")]
 pub(crate) struct SeedError;
 
 pub(crate) fn encode(seed: &[u8; 32]) -> String {
-    seed.iter()
-        .fold(String::with_capacity(64), |mut text, byte| {
-            let _ = write!(text, "{byte:02x}");
-            text
-        })
+    hex::encode(seed)
 }
 
 pub(crate) fn decode(text: &str) -> Result<[u8; 32], SeedError> {
-    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
-    if pairs.len() != 32 || !rest.is_empty() {
-        return Err(SeedError);
-    }
     let mut seed = [0_u8; 32];
-    for (byte, pair) in seed.iter_mut().zip(pairs) {
-        // `from_str_radix` also takes a leading sign, which is no digit.
-        if !pair.iter().all(u8::is_ascii_hexdigit) {
-            return Err(SeedError);
-        }
-        let pair = std::str::from_utf8(pair).map_err(|_| SeedError)?;
-        *byte = u8::from_str_radix(pair, 16).map_err(|_| SeedError)?;
-    }
+    hex::decode_to_slice(text, &mut seed).map_err(|_| SeedError)?;
     Ok(seed)
 }
 
@@ -52,5 +35,12 @@ mod tests {
         assert!(decode(&"g".repeat(64)).is_err());
         assert!(decode(&"é".repeat(32)).is_err());
         assert!(decode(&"+f".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn mixed_case_seeds_keep_the_same_bytes_and_encode_canonically() {
+        let seed = decode(&"aF".repeat(32)).unwrap();
+        assert_eq!(seed, [175; 32]);
+        assert_eq!(encode(&seed), "af".repeat(32));
     }
 }

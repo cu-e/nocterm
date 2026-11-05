@@ -100,6 +100,11 @@ impl Broker {
         self.rates.forget(plugin);
     }
 
+    pub(crate) fn release_window(&mut self, window: WindowId) {
+        self.queue.retain(|item| item.window != window);
+        self.gestures.release_window(window);
+    }
+
     /// Applies every queued effect, checking each again first.
     pub(crate) fn drain(
         &mut self,

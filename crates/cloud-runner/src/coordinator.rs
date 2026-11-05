@@ -312,12 +312,12 @@ impl RunCoordinator {
             .map(|_| ())
     }
     /// Publishes the chat's summary to the runner directory when it changed and is due
-    /// (ADR 0135). Without configured summaries it does nothing.
+    /// (ADR 0143). Without configured summaries it does nothing.
     pub async fn publish_summary(&self, stream: StreamBinding) -> Result<(), CoordinatorError> {
         summary_publication::publish(self.services.clone(), stream).await
     }
     /// Renews, lapses or ends the SSH access of every chat whose deadline passed
-    /// (ADR 0137). Without configured SSH access it does nothing.
+    /// (ADR 0145). Without configured SSH access it does nothing.
     pub async fn renew_ssh(&self) -> Result<(), CoordinatorError> {
         let Some(ssh) = self.services.ssh().cloned() else {
             return Ok(());

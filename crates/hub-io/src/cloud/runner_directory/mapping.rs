@@ -137,7 +137,7 @@ impl SummarySealer {
 }
 
 /// The bound servers of the chat's current binding with the state its last report gives
-/// them (contract ADR 0011, ADR 0139).
+/// them (contract ADR 0011, ADR 0147).
 fn servers(ssh: &SummarySsh, now_ms: i64) -> Result<Vec<BoundServer>, JournalError> {
     let signed =
         SignedSshBinding::from_canonical_bytes(ssh.binding.as_bytes()).map_err(storage_error)?;

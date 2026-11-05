@@ -11,6 +11,7 @@ pub use connection_source::ScriptedConnectionSource;
 mod exec;
 mod fs;
 mod gate;
+mod launch;
 pub mod recording;
 mod relay;
 mod transport;
@@ -22,6 +23,7 @@ pub use fs::{
     FsActivity, FsOperation, InMemoryFs, ListingReplyError, LocalRequestObserver, PendingListing,
 };
 pub use gate::Gate;
+pub use launch::ScriptedLaunchPreparation;
 pub use recording::{ScriptedOutputLog, ScriptedOutputLogFactory};
 pub use relay::{RelayReply, RelayRequest, ScriptedRelay, capture_relay};
 pub use transport::ScriptedTransport;

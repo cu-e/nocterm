@@ -43,10 +43,23 @@ impl Unlocker {
                 _ => VaultError::Format,
             })?;
         cached.keyset = KeysetCopy::of(&record);
-        let keys = OpenKeys::pinning(keyset, cached.pinned());
-        member
-            .with_current(|| slot.install_if(&subject, self.work.receipt(), keys, cached))
-            .map_err(failure)
+        let _turn = slot.cache_turn().await;
+        self.work.check().map_err(failure)?;
+        let original = slot.cache_snapshot();
+        if let Some(latest) = original.as_deref() {
+            cached.inherit_pins(latest);
+            cached.vault = latest.vault.clone();
+            cached.recovery_unconfirmed = latest.recovery_unconfirmed;
+        }
+        let keys = slot.noticed_keys(OpenKeys::pinning(keyset, cached.pinned()), &cached);
+        let draft = slot.stage_cache(original, cached).await.map_err(failure)?;
+        let (receipt, committed) = member
+            .with_current(|| slot.commit_install(&subject, self.work.receipt(), keys, draft))
+            .map_err(failure)?
+            .ok_or(VaultError::Stale)?;
+        slot.finish_cache(committed).await;
+        slot.notice().raise();
+        Ok(receipt)
     }
 
     /// The keyset record to open: the hub's when it answers, else the cached copy.

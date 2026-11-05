@@ -39,7 +39,7 @@ impl TranscriptView {
                 .pending_prompts
                 .iter()
                 .any(|prompt| prompt.state.on_its_way());
-        // A Cloud chat whose runner did not confirm what it shows says so (ADR 0136).
+        // A Cloud chat whose runner did not confirm what it shows says so (ADR 0144).
         let notice = match view.freshness {
             ConversationFreshness::Live => None,
             ConversationFreshness::Unconfirmed { can_wake: true } => {

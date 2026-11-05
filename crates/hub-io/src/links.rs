@@ -2,9 +2,7 @@
 
 use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use futures::FutureExt as _;
 use futures::channel::oneshot;
@@ -17,7 +15,6 @@ use nocterm_hubs_model::{
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
-use tokio::task::AbortHandle;
 
 use crate::account::{Accounts, KeyFlow};
 use crate::classify::{probe_failed, remote};
@@ -61,30 +58,6 @@ pub struct HubLinks {
 #[error("the hub connection threads have stopped")]
 struct Stopped;
 
-/// The result of a task on the adapter's runtime; abandons the task when dropped.
-struct Call<T> {
-    result: oneshot::Receiver<Result<T, HubError>>,
-    task: Option<AbortHandle>,
-}
-
-impl<T> Future for Call<T> {
-    type Output = Result<T, HubError>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.result
-            .poll_unpin(cx)
-            .map(|received| received.unwrap_or_else(|_| Err(remote(Stopped))))
-    }
-}
-
-impl<T> Drop for Call<T> {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-    }
-}
-
 impl HubLinks {
     pub fn start(config: HubLinksConfig) -> Result<Arc<Self>, HubStartError> {
         let runtime = Builder::new_multi_thread()
@@ -93,7 +66,10 @@ impl HubLinks {
             .enable_all()
             .build()
             .map_err(HubStartError)?;
-        let accounts = Arc::new(Accounts::new(config.credentials_dir.clone()));
+        let accounts = Arc::new(Accounts::with_runtime(
+            config.credentials_dir.clone(),
+            Some(runtime.handle().clone()),
+        ));
         let pool = Arc::new(Pool::new(
             config.credentials_dir,
             &config.device_name,
@@ -126,6 +102,20 @@ impl HubLinks {
         ))
     }
 
+    pub(crate) fn account_keys_open(&self, hub: &HubId) -> bool {
+        self.accounts
+            .loaded_slot(hub)
+            .is_some_and(|slot| slot.open().is_some())
+    }
+
+    /// Native membership publication always creates its Slot first. An absent
+    /// loaded Slot therefore cannot be unlocked for a current native recipient.
+    pub(crate) fn loaded_account(&self, hub: &HubId) -> Option<HubAccount> {
+        self.accounts
+            .loaded_slot(hub)
+            .map(|slot| HubAccount::new(self.handle.clone(), self.pool.clone(), slot))
+    }
+
     /// What a relay needs of the links: their threads and the hubs they are signed in to.
     pub(crate) fn relay_parts(&self) -> (Handle, Arc<Pool>) {
         (self.handle.clone(), Arc::clone(&self.pool))
@@ -136,29 +126,13 @@ impl HubLinks {
         (self.handle.clone(), Arc::clone(&self.pool))
     }
 
-    /// Runs `work` on the adapter's threads.
-    fn run<T: Send + 'static>(
-        &self,
-        work: impl Future<Output = Result<T, HubError>> + Send + 'static,
-    ) -> Call<T> {
-        let (sender, result) = oneshot::channel();
-        let task = self
-            .handle
-            .spawn(async move {
-                let _ = sender.send(work.await);
-            })
-            .abort_handle();
-        Call {
-            result,
-            task: Some(task),
-        }
-    }
-
     fn run_boxed<T: Send + 'static>(
         &self,
         work: impl Future<Output = Result<T, HubError>> + Send + 'static,
     ) -> HubFuture<T> {
-        Box::pin(self.run(work))
+        crate::task::spawn(&self.handle, work)
+            .map(|result| result.unwrap_or_else(|| Err(remote(Stopped))))
+            .boxed()
     }
 }
 

@@ -49,7 +49,7 @@ pub trait CloudConversation: Send + Sync {
     /// Wakes the managed seat of the chat, then refreshes.
     fn wake(&self) -> ConversationFuture<()>;
 
-    /// The servers of the account's CA registry the chat can be bound to (ADR 0139).
+    /// The servers of the account's CA registry the chat can be bound to (ADR 0147).
     fn servers(&self) -> ConversationFuture<Vec<ServerChoice>>;
 
     /// Binds the chat to `servers` for `window` (at most thirty days), replacing its current

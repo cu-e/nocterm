@@ -7,7 +7,7 @@
 //! A trusted server's line admits only that server's principal (`principal_for(ca, server)`,
 //! line version 2). A server that still holds the shared principal of line version 1 needs a
 //! CA update: its next connection rewrites the line and records the per-server form (trust
-//! record schema 2, ADR 0139).
+//! record schema 2, ADR 0147).
 
 use std::future::Future;
 use std::sync::Arc;
@@ -49,6 +49,8 @@ fn host_error(error: HostAccessError) -> AgentAccessError {
             connection: String::new(),
         },
         HostAccessError::Changed => AgentAccessError::HostChanged,
+        HostAccessError::EditLocked { path } => AgentAccessError::HostEditLocked { path },
+        HostAccessError::Unsupported(cause) => AgentAccessError::HostEditUnsupported { cause },
         HostAccessError::TooLarge | HostAccessError::NotText => AgentAccessError::HostUnsupported,
         HostAccessError::Host(cause) => AgentAccessError::Host { cause },
     }

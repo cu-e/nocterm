@@ -99,7 +99,7 @@ and the footer, without changing remembered docked widths.
 outside workspace updates, because opening a connection updates the workspace.
 
 Saved history starts as a catalogue of at most 200 metadata rows, with transcript
-files as the source of truth and rebuildable metadata sidecars. Opening or
+files as the source of truth. Obsolete metadata sidecars are ignored. Opening or
 editing a row loads its document in the background. A shared loading permit
 bounds hydration and archive search, including payloads awaiting GUI delivery;
 inactive, clean documents can be evicted under a conservative 64 MiB resident
@@ -223,6 +223,9 @@ of `nocterm-connections-model::replica` and applies the result: remote changes t
 `Persisted<ReplicaState>` supplied and registered for shutdown by the application. A remote
 change never echoes back, an unreachable replica is a status, concurrent changes repeat the
 pass at most three times and an unreadable remote object never alters the local profile.
+Feed acquisition runs off the foreground before planning, capped at 256 pages, 16,384 changes,
+16 MiB of encoded payload plus metadata and a two-minute deadline. Non-progress, repeated or
+oversized cursors fail without advancing the agreed cursor or applying a partial plan.
 See [ADR 0101](../adr/0101-profiles-synchronize-through-a-replica-beside-the-local-document.md).
 
 ## Raw connection facts
@@ -316,6 +319,11 @@ The original infallible edits and their consumers retain their behavior. Dev-onl
 store test-support supplies the shared first-write gate and snapshot recording used
 by service and UI persistence fixtures.
 
+Transient flag acquisition failures retry at most three times with shared cooldown scheduling
+(five seconds, then thirty seconds). Missing/invalid responses stay negative; repeated view
+requests do not start another attempt before the cooldown. Ready bytes retain source identity
+for bounded presentation caches.
+
 ## Snippet library publication
 
 `nocterm-snippets-store` owns the viewless library and exposes `SnippetsHandle`.
@@ -334,7 +342,11 @@ writer and registers the same participant once. See
 immutable record of one window's providers that only the application's composition builds.
 `nocterm-plugin-host` owns the `PluginHost` entity: grants, the sampling cadence, the effect
 queue with gesture tokens, rate limits and the apply-time re-check, fault counting, the caps on
-enabled plugins and renders, and the `PluginRecords` and `PluginData` ports with their documents.
+installed/enabled plugins and renders, and the `PluginRecords` and `PluginData` ports with
+their documents. Production receives prepared native packages/runtime instances; accepted
+management results await actual persistence receipts. Destructive data changes hold affected
+host mutations through physical completion. See
+[ADR0141](../adr/0141-versioned-plugin-publication.md).
 Neither does I/O; the application implements the two storage ports over the shared persistence
 service. For a developer session (`nocterm plugin dev`) the host also offers `SessionRecords` and
 `SessionData`, in-memory implementations of the same two ports: composing them leaves the host no
@@ -398,7 +410,7 @@ providers recheck their retained source immediately before capability effects.
 
 ### Original recipients of account confirmations
 
-`nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. The existing acknowledgement flow remains unchanged. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+`nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. Registry and sign-in actions await the native publication receipt before reporting success, and retain the original source checks across that wait. See [ADR 0114](../adr/0114-native-captured-account-operations.md) and [ADR 0140](../adr/0140-offer-confirmation-publication.md).
 
 ## Cloud chats
 
@@ -411,8 +423,17 @@ prompts (ADR 0134): a prompt shows at once, follows its command's state, and a r
 unanswered one stays until it is sent again as a new prompt or dismissed. Actions captured for
 one run never act on a run that replaced it. `CloudChatInstallation` keeps the bounded registry
 of chats and window observers, sharing the Local installation's history admission
-([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)). A chat's source
+([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)). A chat's source
 offers `ConversationServers`: the binding the verified history states, binding and unbinding
 through the port, and the server the next prompts run on, which is only ever a selectable bound
 server and is dropped once the server is no longer selectable
-([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+
+## Shared monitor collection
+
+`nocterm-monitor-service` owns raw collection by actual captured executor and host/container
+scope. Consumer subscriptions contribute metrics and cadence; the union and fastest cadence
+select one generation-bound watch. One latest raw reading is shared, while feature models
+retain their own histories and samplers. The last subscriber cancels native work and the
+installation registry retains weak references. Descriptive host names cannot merge authority.
+See [ADR0138](../adr/0138-shared-captured-monitor-collection.md).

@@ -1,4 +1,5 @@
 //! The active connection's snippets precede the collapsible remaining library.
+mod listing;
 mod run;
 use crate::{Installed, editor};
 use gpui_kit::{
@@ -12,12 +13,14 @@ use gpui_kit::{
         input::{Input, InputEvent, InputState},
         v_flex,
     },
-    div,
+    div, list,
     prelude::*,
 };
+use listing::{Row, SnippetListing};
 use nocterm_snippets::Snippet;
 use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, Workspace, WorkspaceEvent};
+use std::rc::Rc;
 
 pub struct SnippetsPanel {
     installed: Installed,
@@ -27,7 +30,7 @@ pub struct SnippetsPanel {
     profile: Option<String>,
     group: Option<String>,
     context: SharedString,
-    folded: bool,
+    listing: SnippetListing,
     copied: Option<String>,
     run_enabled: bool,
     _subscriptions: Vec<Subscription>,
@@ -43,11 +46,15 @@ impl SnippetsPanel {
         let observed_panel = cx.weak_entity();
         let subscriptions = vec![
             installed.observe(cx, move |cx| {
-                let _ = observed_panel.update(cx, |_, cx| cx.notify());
+                let _ = observed_panel.update(cx, |this, cx| {
+                    this.listing.invalidate();
+                    cx.notify();
+                });
             }),
             // Only an edit refilters; the cursor blink and moves change no match.
-            cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+            cx.subscribe(&search, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.listing.invalidate();
                     cx.notify();
                 }
             }),
@@ -78,7 +85,7 @@ impl SnippetsPanel {
             profile: None,
             group: None,
             context: "No active terminal".into(),
-            folded: false,
+            listing: SnippetListing::default(),
             copied: None,
             run_enabled: false,
             _subscriptions: subscriptions,
@@ -99,7 +106,7 @@ impl SnippetsPanel {
         let workspace = workspace.read(cx);
         let target = self.target(cx).ok().map(run::RunTarget::into_info);
         self.run_enabled = target.as_ref().is_some_and(Self::ready);
-        self.profile = target
+        let profile = target
             .as_ref()
             .and_then(|info| info.profile.as_ref().map(ToString::to_string));
         let title = target.map_or_else(|| "No active terminal".into(), |info| info.title);
@@ -107,11 +114,16 @@ impl SnippetsPanel {
             directory
                 .connections(cx)
                 .into_iter()
-                .find(|connection| Some(connection.id.as_ref()) == self.profile.as_deref())
+                .find(|connection| Some(connection.id.as_ref()) == profile.as_deref())
         });
-        self.group = saved
+        let group = saved
             .as_ref()
             .and_then(|connection| connection.group.as_ref().map(ToString::to_string));
+        if self.profile != profile || self.group != group {
+            self.profile = profile;
+            self.group = group;
+            self.listing.invalidate();
+        }
         self.context = saved.map_or(title, |connection| connection.name);
     }
     fn confirm_delete(&self, snippet: Snippet, window: &mut Window, cx: &mut Context<Self>) {
@@ -146,7 +158,7 @@ impl SnippetsPanel {
         });
     }
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    fn row(&self, snippet: &Snippet, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn row(&self, snippet: Rc<Snippet>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let edit = snippet.clone();
         let delete = snippet.clone();
         let copy = snippet.clone();
@@ -222,7 +234,7 @@ impl SnippetsPanel {
                                 cx.stop_propagation();
                                 editor::open(
                                     this.installed.clone(),
-                                    Some(edit.clone()),
+                                    Some((*edit).clone()),
                                     this.workspace.clone(),
                                     window,
                                     cx,
@@ -237,7 +249,7 @@ impl SnippetsPanel {
                             .tooltip("Delete snippet")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
-                                this.confirm_delete(delete.clone(), window, cx)
+                                this.confirm_delete((*delete).clone(), window, cx)
                             })),
                     ),
             )
@@ -269,24 +281,40 @@ impl Render for SnippetsPanel {
         let error = model.error(cx).map(|error| error.to_string());
         let writable = model.writable(cx);
         let query = self.search.read(cx).value();
-        let (current, other) =
-            model
-                .library(cx)
-                .partition(self.profile.as_deref(), self.group.as_deref(), &query);
-        let current: Vec<_> = current.into_iter().cloned().collect();
-        let other: Vec<_> = other.into_iter().cloned().collect();
-        let empty = current.is_empty() && other.is_empty();
-        let searching = !query.trim().is_empty();
+        self.listing.prepare(
+            model.library(cx),
+            self.profile.as_deref(),
+            self.group.as_deref(),
+            &query,
+        );
+        let rows = self.listing.rows();
+        let scroll = self.listing.scroll();
         let theme = cx.theme().clone();
         v_flex().track_focus(&self.focus).size_full().gap_1()
             .child(h_flex().px_3().gap_1().text_xs().text_color(theme.muted_foreground).child(Icon::new(IconName::Server).xsmall()).child(div().id("snippet-context").test_support().aria_label(self.context.clone()).flex_1().min_w_0().truncate().child(self.context.clone()))
                 .child(Button::new("snippet-new").ghost().xsmall().icon(IconName::Plus).tooltip("New snippet").disabled(!writable).on_click(cx.listener(|this, _, window, cx| { editor::open(this.installed.clone(), None, this.workspace.clone(), window, cx); }))))
             .child(div().id("snippet-library-search").test_support().px_3().py_1().child(Input::new(&self.search).small()))
             .when_some(error, |panel, error| panel.child(div().px_3().py_2().text_xs().text_color(theme.danger).child(format!("Could not save or load snippets: {error}"))))
-            .child(v_flex().id("snippets-list").flex_1().min_h_0().overflow_y_scroll()
-                .when(!current.is_empty(), |list| list.child(div().px_3().pt_2().pb_1().text_xs().font_medium().text_color(theme.muted_foreground).child("For this server")).children(current.iter().map(|snippet| self.row(snippet, cx))))
-                .when(empty, |list| list.child(div().px_3().py_4().text_sm().text_color(theme.muted_foreground).child(if searching { "No matching snippets." } else { "Save reusable commands and code with +. Assign them to servers or groups to see them here." })))
-                .when(!other.is_empty(), |list| list.child(Button::new("snippets-other").ghost().small().w_full().justify_start().icon(if self.folded { IconName::ChevronRight } else { IconName::ChevronDown }).label(format!("All other snippets ({})", other.len())).on_click(cx.listener(|this, _, _, cx| { this.folded = !this.folded; cx.notify(); }))).when(!self.folded, |list| list.children(other.iter().map(|snippet| self.row(snippet, cx))))))
+            .child(div().id("snippets-list").test_support().flex_1().min_h_0().child(
+                list(scroll, cx.processor(move |this, index: usize, _, cx| {
+                    match rows[index] {
+                        Row::Current => div().px_3().pt_2().pb_1().text_xs().font_medium().text_color(cx.theme().muted_foreground).child("For this server").into_any_element(),
+                        Row::Snippet(index, id) => {
+                            // One immutable saved snapshot shared by the visible row's callbacks.
+                            let Some(snippet) = this.installed.library(cx).snippets.get(index).filter(|snippet| snippet.id.as_bytes() == &id) else { return div().into_any_element(); };
+                            let snippet = Rc::new(snippet.clone());
+                            this.row(snippet, cx).into_any_element()
+                        }
+                        Row::Other(count) => Button::new("snippets-other").ghost().small().w_full().justify_start()
+                            .icon(if this.listing.folded() { IconName::ChevronRight } else { IconName::ChevronDown })
+                            .label(format!("All other snippets ({count})"))
+                            .on_click(cx.listener(|this, _, _, cx| { this.listing.toggle(); cx.notify(); }))
+                            .into_any_element(),
+                        Row::Empty => div().px_3().py_4().text_sm().text_color(cx.theme().muted_foreground)
+                            .child(if this.search.read(cx).value().trim().is_empty() { "Save reusable commands and code with +. Assign them to servers or groups to see them here." } else { "No matching snippets." }).into_any_element(),
+                    }
+                })).size_full()
+            ))
     }
 }
 #[cfg(test)]

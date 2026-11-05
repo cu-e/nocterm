@@ -63,7 +63,7 @@ impl EntryRenderer {
         cx: &Context<AgentPanel>,
     ) -> (
         gpui_kit::AnyElement,
-        Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
+        Vec<super::image_pipeline::PreviewSource>,
     ) {
         let row = v_flex()
             .id(("agent-entry", frame.index))
@@ -98,11 +98,12 @@ impl EntryRenderer {
     fn pending_image(
         image: &nocterm_ai::model::content::Image,
         messages: &super::message_list::MessageList,
-        pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
+        pending: &mut Vec<super::image_pipeline::PreviewSource>,
     ) -> super::image_pipeline::ImageKey {
-        let key = (image.data.as_ptr() as usize, image.data.len(), true);
+        let source = super::image_pipeline::PreviewSource::Encoded(image.data.clone());
+        let key = source.key();
         if !messages.has_preview(&key) {
-            pending.push((key, image.data.as_bytes().to_vec()));
+            pending.push(source);
         }
         key
     }
@@ -111,7 +112,7 @@ impl EntryRenderer {
         frame: &RowPresentation,
         parts: &[Content],
         messages: &super::message_list::MessageList,
-        pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
+        pending: &mut Vec<super::image_pipeline::PreviewSource>,
         text: String,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {

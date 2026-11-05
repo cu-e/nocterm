@@ -254,7 +254,7 @@ fn journal_coordinate(
         JournalStorageClass::BackgroundCommand => JournalClass::BackgroundCommand,
         JournalStorageClass::Effect => JournalClass::Effect,
         JournalStorageClass::RunHead => JournalClass::RunHead,
-        // Journal class set 2 (contract ADR 0011, journal v9, ADR 0139).
+        // Journal class set 2 (contract ADR 0011, journal v9, ADR 0147).
         JournalStorageClass::SshAccess => JournalClass::SshAccess,
     };
     JournalCoordinate::new(

@@ -91,20 +91,30 @@ fn empty_matching_chunks_identical_tool_patches_and_view_updates_are_clean() {
         .status(ToolStatus::Pending)
         .raw_output(json!({"out":"same"}));
     let mut document = imported(vec![Entry::Tool(call), Entry::Agent("answer".into())]);
-    document.apply_transcript(
-        update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":""}})),
-        80,
-    );
-    document.apply_transcript(update(json!({"sessionUpdate":"tool_call_update","toolCallId":"call","status":"pending","title":"Tool","rawOutput":{"out":"same"}})),80);
-    document.apply_transcript(update(json!({"sessionUpdate":"plan","entries":[]})), 80);
-    document.apply_transcript(
-        update(json!({"sessionUpdate":"usage_update","used":1,"size":10})),
-        80,
-    );
-    document.apply_transcript(
-        update(json!({"sessionUpdate":"session_info_update","title":"Recorded title"})),
-        80,
-    );
+    document
+        .apply_transcript(
+            update(
+                json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":""}}),
+            ),
+            80,
+        )
+        .unwrap();
+    document.apply_transcript(update(json!({"sessionUpdate":"tool_call_update","toolCallId":"call","status":"pending","title":"Tool","rawOutput":{"out":"same"}})),80).unwrap();
+    document
+        .apply_transcript(update(json!({"sessionUpdate":"plan","entries":[]})), 80)
+        .unwrap();
+    document
+        .apply_transcript(
+            update(json!({"sessionUpdate":"usage_update","used":1,"size":10})),
+            80,
+        )
+        .unwrap();
+    document
+        .apply_transcript(
+            update(json!({"sessionUpdate":"session_info_update","title":"Recorded title"})),
+            80,
+        )
+        .unwrap();
     document.tokens(None);
     assert_eq!(document.desired_revision(), 0);
     assert_eq!(document.updated(), 40);
@@ -115,12 +125,16 @@ fn a_new_empty_row_is_durable_but_a_patch_outside_the_saved_window_is_not() {
     let mut entries = vec![Entry::Tool(ToolRecord::new("old", "Old"))];
     entries.extend((0..2000).map(|_| Entry::Agent("saved".into())));
     let mut document = imported(entries);
-    document.apply_transcript(update(json!({"sessionUpdate":"tool_call_update","toolCallId":"old","title":"Changed old row"})),80);
+    document.apply_transcript(update(json!({"sessionUpdate":"tool_call_update","toolCallId":"old","title":"Changed old row"})),80).unwrap();
     assert_eq!(document.desired_revision(), 0);
-    document.apply_transcript(
-        update(json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":""}})),
-        81,
-    );
+    document
+        .apply_transcript(
+            update(
+                json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":""}}),
+            ),
+            81,
+        )
+        .unwrap();
     assert_eq!(document.desired_revision(), 1);
     assert_eq!(document.updated(), 81);
 }
@@ -129,10 +143,14 @@ fn a_new_empty_row_is_durable_but_a_patch_outside_the_saved_window_is_not() {
 fn genuine_saved_row_transitions_remain_dirty_even_when_the_text_returns_to_its_old_value() {
     let mut document = imported(vec![Entry::Tool(ToolRecord::new("call", "A"))]);
     for (title, time) in [("B", 81), ("A", 82)] {
-        document.apply_transcript(
-            update(json!({"sessionUpdate":"tool_call_update","toolCallId":"call","title":title})),
-            time,
-        );
+        document
+            .apply_transcript(
+                update(
+                    json!({"sessionUpdate":"tool_call_update","toolCallId":"call","title":title}),
+                ),
+                time,
+            )
+            .unwrap();
     }
     assert_eq!(document.desired_revision(), 2);
     assert_eq!(document.updated(), 82);

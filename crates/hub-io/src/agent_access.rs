@@ -6,7 +6,7 @@
 //! rewrite of a shared-principal line on its next connection), and the adapter of the
 //! `AgentHostTrust` and `AgentGrants` ports. `authorized_keys` is reached only through
 //! `AgentHosts`. The CA, its document, principals, lines and trust records are the
-//! contract's (`nocterm_keys::agents`, contract ADR 0009, ADR 0139); contract types stay here
+//! contract's (`nocterm_keys::agents`, contract ADR 0009, ADR 0147); contract types stay here
 //! (ADR 0096).
 
 mod grants;
@@ -108,7 +108,7 @@ impl AgentAccess {
 
 impl AgentAccess {
     /// The servers of `hub`'s registry that are trusted now, as a chat binds them: each named
-    /// by `SHA-256(connection)[..16]`, with the port this device last reached it on (ADR 0139).
+    /// by `SHA-256(connection)[..16]`, with the port this device last reached it on (ADR 0147).
     pub(crate) fn server_choices(
         &self,
         hub: &HubId,

@@ -4,19 +4,18 @@
 //! observe only their original inner session; unavailable resources never fall
 //! back to an outer or local executor. History is bounded per surface/resource.
 
+use nocterm_monitor_service::{MonitorWatch, MonitorWatches, WatchPlan, WatchStatus};
 use std::{sync::Arc, time::Duration};
 
 use crate::MonitorSettings;
 #[cfg(test)]
 pub(crate) use crate::source::watched_host;
 use crate::source::{MonitorKey, WatchHost, watched_source};
-use gpui_kit::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
-use nocterm_monitor::{MetricSet, Platform, Sampler, Watch, detect, local_platform};
-use nocterm_session::{ExecError, HostExec};
+use gpui_kit::{App, Context, Entity, EventEmitter, Subscription};
+use nocterm_monitor::{MetricSet, Platform, Sampler, local_platform};
+use nocterm_session::HostExec;
 use nocterm_workspace::{HostKey, MonitorSource, Workspace, WorkspaceEvent};
 
-/// How long a failed or ended watch waits before it is tried again.
-const RETRY: Duration = Duration::from_secs(10);
 /// Hosts whose platform and history are remembered for switching back.
 const REMEMBERED_HOSTS: usize = 8;
 
@@ -65,11 +64,12 @@ pub(crate) enum Status {
 /// A remembered host: what it is and what it looked like.
 struct Record {
     key: MonitorKey,
-    platform: Option<Platform>,
     sampler: Sampler,
+    platform: Option<(std::sync::Weak<dyn HostExec>, Platform)>,
 }
 
 pub(crate) struct HostMonitor {
+    consumer: gpui_kit::EntityId,
     settings: nocterm_store::SettingsHandle,
     local: Option<Arc<dyn HostExec>>,
     source: MonitorSource,
@@ -80,9 +80,17 @@ pub(crate) struct HostMonitor {
     records: Vec<Record>,
     /// The host and plan the task was started for.
     wanted: Option<(WatchHost, Plan)>,
-    task: Option<Task<()>>,
+    collectors: MonitorWatches,
+    watch: Option<CollectedWatch>,
     generation: u64,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: Vec<Subscription>,
+}
+
+/// The model's retained subscription and last applied raw reading.
+struct CollectedWatch {
+    collection: Entity<MonitorWatch>,
+    sequence: u64,
+    _observation: Subscription,
 }
 
 /// Fired whenever new readings or a new status are available.
@@ -120,6 +128,7 @@ impl HostMonitor {
             let _ = weak.update(cx, |this, cx| this.refresh(cx));
         });
         let mut this = Self {
+            consumer: cx.entity_id(),
             local: installed.local(),
             settings: installed.settings().clone(),
             source,
@@ -128,9 +137,14 @@ impl HostMonitor {
             status: Status::Off,
             records: Vec::new(),
             wanted: None,
-            task: None,
+            collectors: installed.collectors().clone(),
+            watch: None,
             generation: 0,
-            _subscriptions: [follow, observation],
+            _subscriptions: vec![
+                follow,
+                observation,
+                cx.on_release(|this, cx| this.stop_watch(cx)),
+            ],
         };
         this.refresh(cx);
         this
@@ -200,11 +214,11 @@ impl HostMonitor {
         if unchanged {
             return;
         }
-        self.task = None;
         self.generation = self.generation.saturating_add(1);
         self.wanted = wanted;
         self.host = host;
         let Some((host, plan)) = self.wanted.clone() else {
+            self.stop_watch(cx);
             self.set_status(
                 if settings.enabled
                     && plan.is_some()
@@ -220,29 +234,119 @@ impl HostMonitor {
         };
         self.remember(host.key(), history);
         if !host.host().connected {
+            self.stop_watch(cx);
             self.set_status(Status::Offline, cx);
             return;
         }
-        let platform = match host.host().key {
-            HostKey::Local => Some(local_platform()),
-            HostKey::Remote { .. } => self.records[0].platform.clone(),
-        };
-        self.set_status(
-            if platform.is_some() {
-                Status::Starting
-            } else {
-                Status::Detecting
-            },
-            cx,
-        );
         if self.generation == u64::MAX {
+            self.stop_watch(cx);
             self.set_status(Status::Failed("Monitor generation exhausted".into()), cx);
             return;
         }
+        self.attach(host, plan, cx);
+    }
+
+    fn attach(&mut self, host: WatchHost, plan: Plan, cx: &mut Context<Self>) {
+        let platform = if matches!(host.host().key, HostKey::Local) {
+            Some(local_platform())
+        } else {
+            self.records[0]
+                .platform
+                .as_ref()
+                .filter(|(exec, _)| {
+                    std::ptr::addr_eq(exec.as_ptr(), Arc::as_ptr(&host.host().exec))
+                })
+                .map(|(_, platform)| platform.clone())
+        };
+        let collection =
+            self.collectors
+                .watch(host.host().exec.clone(), host.container(), platform, cx);
+        let old = self.watch.take();
+        let sequence = old
+            .as_ref()
+            .filter(|old| old.collection == collection)
+            .map_or(0, |old| old.sequence);
+        if let Some(old) = old
+            && old.collection != collection
+        {
+            old.collection
+                .update(cx, |watch, cx| watch.unsubscribe(self.consumer, cx));
+        }
         let generation = self.generation;
-        self.task = Some(cx.spawn(async move |this, cx| {
-            watch(this, host, platform, plan, generation, cx).await;
-        }));
+        let observation = cx.observe(&collection, move |this, collection, cx| {
+            this.apply_collection(&collection, generation, cx)
+        });
+        let consumer = cx.entity_id();
+        collection.update(cx, |watch, cx| {
+            watch.subscribe(
+                consumer,
+                WatchPlan {
+                    metrics: plan.metrics,
+                    interval: plan.interval,
+                },
+                cx,
+            )
+        });
+        self.watch = Some(CollectedWatch {
+            collection: collection.clone(),
+            sequence,
+            _observation: observation,
+        });
+        self.apply_collection(&collection, generation, cx);
+    }
+
+    fn stop_watch(&mut self, cx: &mut App) {
+        if let Some(watch) = self.watch.take() {
+            let consumer = self.consumer;
+            watch
+                .collection
+                .update(cx, |watch, cx| watch.unsubscribe(consumer, cx));
+        }
+    }
+
+    fn apply_collection(
+        &mut self,
+        collection: &Entity<MonitorWatch>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self.generation != generation {
+            return;
+        }
+        let Some(watch) = self
+            .watch
+            .as_mut()
+            .filter(|watch| watch.collection == *collection)
+        else {
+            return;
+        };
+        let collected = collection.read(cx);
+        if let Some(platform) = collected.platform()
+            && let (Some(host), Some(record)) = (&self.host, self.records.first_mut())
+        {
+            record.platform = Some((Arc::downgrade(&host.host().exec), platform.clone()));
+        }
+        let status = match collected.status() {
+            WatchStatus::Off => Status::Off,
+            WatchStatus::Detecting => Status::Detecting,
+            WatchStatus::Starting => Status::Starting,
+            WatchStatus::Running => Status::Running,
+            WatchStatus::Unsupported(name) => Status::Unsupported(name.clone()),
+            WatchStatus::Failed(error) => Status::Failed(error.to_string()),
+        };
+        let reading = collected
+            .reading()
+            .filter(|(sequence, _)| *sequence != watch.sequence)
+            .map(|(sequence, reading)| (sequence, reading.clone()));
+        if let Some((sequence, reading)) = reading {
+            watch.sequence = sequence;
+            if let Some(record) = self.records.first_mut() {
+                record.sampler.apply(reading);
+                cx.emit(Changed);
+                cx.notify();
+            }
+        }
+        self.set_status(status, cx);
     }
 
     /// Moves the record of `key` to the front, creating it if need be.
@@ -251,20 +355,12 @@ impl HostMonitor {
             Some(index) => self.records.remove(index),
             None => Record {
                 key: key.clone(),
-                platform: None,
                 sampler: Sampler::new(history),
+                platform: None,
             },
         };
         self.records.insert(0, record);
         self.records.truncate(REMEMBERED_HOSTS);
-    }
-
-    /// The record of the watched host, if it is still `key`.
-    fn current(&mut self, key: &MonitorKey, generation: u64) -> Option<&mut Record> {
-        if self.generation != generation {
-            return None;
-        }
-        self.records.first_mut().filter(|record| record.key == *key)
     }
 
     fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
@@ -274,124 +370,4 @@ impl HostMonitor {
             cx.notify();
         }
     }
-}
-
-/// Detects the host if need be, then runs its script, again after failures.
-async fn watch(
-    this: WeakEntity<HostMonitor>,
-    host: WatchHost,
-    mut platform: Option<Platform>,
-    plan: Plan,
-    generation: u64,
-    cx: &mut AsyncApp,
-) {
-    let key = host.key().clone();
-    loop {
-        let outcome = run(&this, &host, &mut platform, plan, generation, cx).await;
-        let retry = this.update(cx, |this, cx| {
-            if this.current(&key, generation).is_none() {
-                return false;
-            }
-            let status = match outcome {
-                Err(ExecError::Unsupported) => {
-                    let name = match &platform {
-                        Some(Platform::Unsupported(name)) => name.clone(),
-                        Some(Platform::LinuxContainer) => "container cgroup accounting".into(),
-                        _ => "unknown".into(),
-                    };
-                    this.set_status(Status::Unsupported(name), cx);
-                    return false;
-                }
-                Err(ExecError::Source(error)) => {
-                    this.set_status(Status::Failed(error.to_string()), cx);
-                    return false;
-                }
-                Err(ExecError::Disconnected) => "The connection closed.".into(),
-                Err(ExecError::Failed(error)) => error,
-                Err(error @ ExecError::NotFound(_)) => error.to_string(),
-                Ok(()) => "The monitor script stopped.".into(),
-            };
-            if this.current(&key, generation).is_some() {
-                this.set_status(Status::Failed(status), cx);
-            }
-            true
-        });
-        if !matches!(retry, Ok(true)) {
-            return;
-        }
-        cx.background_executor().timer(RETRY).await;
-    }
-}
-
-/// One attempt: detection, then readings until the script ends.
-async fn run(
-    this: &WeakEntity<HostMonitor>,
-    host: &WatchHost,
-    platform: &mut Option<Platform>,
-    plan: Plan,
-    generation: u64,
-    cx: &mut AsyncApp,
-) -> Result<(), ExecError> {
-    let detected = match platform.clone() {
-        Some(platform) => platform,
-        None => {
-            let detected = detect(host.host().exec.as_ref()).await?;
-            let detected = if host.container() && detected == Platform::Linux {
-                Platform::LinuxContainer
-            } else if host.container() {
-                Platform::Unsupported("container accounting requires Linux".into())
-            } else {
-                detected
-            };
-            *platform = Some(detected.clone());
-            let key = host.key().clone();
-            let remembered = detected.clone();
-            let accepted = this
-                .update(cx, |this, cx| {
-                    if let Some(record) = this.current(&key, generation) {
-                        record.platform = Some(remembered);
-                        this.set_status(Status::Starting, cx);
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .map_err(|_| ExecError::Disconnected)?;
-            if !accepted {
-                return Err(ExecError::Disconnected);
-            }
-            detected
-        }
-    };
-    let mut watch = Watch::start(
-        host.host().exec.as_ref(),
-        detected,
-        plan.metrics,
-        plan.interval,
-    )
-    .await?;
-    while let Some(reading) = watch.next().await {
-        if host.container()
-            && reading.container.as_ref().is_none_or(|counters| {
-                counters.cpu_nanoseconds.is_none() && counters.memory_current.is_none()
-            })
-        {
-            return Err(ExecError::Unsupported);
-        }
-        let key = host.key().clone();
-        let applied = this.update(cx, |this, cx| {
-            let Some(record) = this.current(&key, generation) else {
-                return false;
-            };
-            record.sampler.apply(reading);
-            this.status = Status::Running;
-            cx.emit(Changed);
-            cx.notify();
-            true
-        });
-        if !matches!(applied, Ok(true)) {
-            return Ok(());
-        }
-    }
-    Ok(())
 }

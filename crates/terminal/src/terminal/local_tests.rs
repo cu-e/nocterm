@@ -138,7 +138,7 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
             cx,
         );
         let local = crate::LocalSessions::new(
-            Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
+            Arc::new(move |_, _| Arc::new(FakeTransport(captured.clone()))),
             "/bin/bash".into(),
         );
         let installed = crate::install(
@@ -227,7 +227,7 @@ fn directory_terminal(
             cx,
         );
         let local = crate::LocalSessions::new(
-            Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
+            Arc::new(move |_, _| Arc::new(FakeTransport(captured.clone()))),
             "/bin/bash".into(),
         );
         let installed = crate::install(

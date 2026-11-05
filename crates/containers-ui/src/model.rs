@@ -215,10 +215,18 @@ impl ContainersModel {
             if !matches!(accepted, Ok(true)) {
                 return Err(ContainersError::Disconnected);
             }
-            let done = intent
-                .engine
-                .perform(intent.host.exec.as_ref(), intent.action, &intent.ids)
-                .await;
+            let deadline = cx
+                .background_executor()
+                .timer(std::time::Duration::from_secs(75));
+            let action =
+                intent
+                    .engine
+                    .perform(intent.host.exec.as_ref(), intent.action, &intent.ids);
+            futures::pin_mut!(deadline, action);
+            let done = match futures::future::select(action, deadline).await {
+                futures::future::Either::Left((result, _)) => result,
+                futures::future::Either::Right(_) => Err(ContainersError::TimedOut),
+            };
             // Its events say so too, but not every engine reports them. Finishing on A
             // must not relist B.
             let _ = this.update(cx, |this, cx| {

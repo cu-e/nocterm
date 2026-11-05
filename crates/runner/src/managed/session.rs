@@ -76,7 +76,7 @@ impl Session {
     pub(crate) fn providers(&self) -> &Arc<BrokeredProviders> {
         &self.providers
     }
-    /// The boot's SSH targets and egress for chat SSH bindings (ADR 0137).
+    /// The boot's SSH targets and egress for chat SSH bindings (ADR 0145).
     pub(crate) fn ssh(&self) -> crate::sessions::reach::BootSsh {
         crate::sessions::reach::BootSsh::new(self.boot.ssh_targets(), self.boot.ssh_egress())
     }

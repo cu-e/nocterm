@@ -1,3 +1,4 @@
+use futures::FutureExt as _;
 use std::sync::Arc;
 
 use gpui::{Entity, TestAppContext};
@@ -182,4 +183,50 @@ fn a_host_without_an_engine_is_asked_again_only_on_request(cx: &mut TestAppConte
         bare.ran().len() > asked,
         "showing it again looks for an engine anew"
     );
+}
+
+#[gpui::test]
+fn a_refresh_during_initial_listing_is_not_lost(cx: &mut TestAppContext) {
+    let hosts = ContainerHosts::new();
+    let local = FakeDockerHost::new(true);
+    let gate = nocterm_session::testing::Gate::pending();
+    let waiting = gate.clone();
+    local.suspend_listing(async move { waiting.wait().await }.boxed());
+    let watched = watch(cx, &hosts, &local);
+    assert_eq!(
+        local.count("docker events"),
+        1,
+        "subscribed before snapshot"
+    );
+    local.set_containers(EXITED);
+    watched.update(cx, |host, cx| host.relist(Changes::CONTAINERS, cx));
+    gate.release();
+    cx.run_until_parked();
+    settle(cx);
+    watched.read_with(cx, |host, _| {
+        assert_eq!(host.snapshot().containers[0].state, State::Exited)
+    });
+    assert_eq!(listings(&local), (2, 1));
+}
+
+#[gpui::test]
+fn a_stalled_listing_times_out_and_can_be_retried(cx: &mut TestAppContext) {
+    let hosts = ContainerHosts::new();
+    let local = FakeDockerHost::new(true);
+    local.suspend_listing(futures::future::pending().boxed());
+    let watched = watch(cx, &hosts, &local);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(31));
+    cx.run_until_parked();
+    watched.read_with(cx, |host, _| {
+        assert!(matches!(
+            host.status(),
+            ListingStatus::Failed(ContainersError::TimedOut)
+        ))
+    });
+    watched.update(cx, |host, cx| host.relist(Changes::ALL, cx));
+    cx.run_until_parked();
+    watched.read_with(cx, |host, _| {
+        assert!(matches!(host.status(), ListingStatus::Ready))
+    });
 }

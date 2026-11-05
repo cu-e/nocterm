@@ -57,3 +57,33 @@ fn pty_launch_resource_survives_original_owner_until_child_exit() {
         "worker must release its launch resource after actual exit"
     );
 }
+
+#[test]
+fn closing_a_session_during_native_preparation_never_launches_the_child() {
+    use nocterm_session::testing::ScriptedLaunchPreparation;
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("launched");
+    let launch = ShellLaunch {
+        program: Some("/bin/sh".into()),
+        args: vec![
+            "-c".into(),
+            "printf launched > \"$1\"".into(),
+            "test".into(),
+            marker.to_string_lossy().into_owned(),
+        ],
+        integration: false,
+        ..Default::default()
+    };
+    let preparation = Arc::new(ScriptedLaunchPreparation::default());
+    let transport = LocalTransport::prepared(launch.clone(), Some(preparation.clone()));
+    let session = transport.open(request(launch));
+    let rx = events(&session);
+    block_on(preparation.started());
+    session.close();
+    preparation.release();
+    assert!(matches!(
+        next(&rx),
+        Event::Closed(CloseReason::ClosedByUser)
+    ));
+    assert!(!marker.exists());
+}

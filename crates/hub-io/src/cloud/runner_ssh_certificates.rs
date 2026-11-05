@@ -1,4 +1,4 @@
-//! Reads a device's OpenSSH user certificate for a chat's SSH binding (ADR 0137).
+//! Reads a device's OpenSSH user certificate for a chat's SSH binding (ADR 0145).
 use nocterm_cloud_model::{
     identity::Timestamp,
     ssh_access::{CertificateFacts, SshAccessError, SshCertificateReader},

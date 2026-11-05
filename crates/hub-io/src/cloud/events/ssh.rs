@@ -1,4 +1,4 @@
-//! A chat's SSH access events (ADR 0137) as the contract's events 14 and 15.
+//! A chat's SSH access events (ADR 0145) as the contract's events 14 and 15.
 use super::encoding_error;
 use nocterm_cloud_model::{
     journal::JournalError,

@@ -25,7 +25,7 @@ pub struct PendingAdminKey {
 }
 
 /// Why a pending key could not be confirmed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum AdminKeyError {
     /// The original recipient or displayed action is no longer current.
     #[error("the displayed administrator key belongs to an earlier account")]
@@ -40,11 +40,20 @@ pub enum AdminKeyError {
     /// the one that was shown.
     #[error("the fingerprint is not the one of the key the hub now offers")]
     Mismatch,
+    /// The confirmation could not be published durably.
+    #[error("the administrator key confirmation cannot be kept")]
+    Persistence {
+        #[source]
+        cause: nocterm_core::error::SharedCause,
+    },
 }
+
+/// Completion of an administrator-key operation, including durable publication.
+pub type AdminKeyFuture<T> = futures::future::BoxFuture<'static, Result<T, AdminKeyError>>;
 
 /// Authority supplied by the native adapter for one original recipient and offer.
 pub trait AdminKeyConfirmation: Send + Sync {
-    fn confirm(&self, fingerprint: &str) -> Result<(), AdminKeyError>;
+    fn confirm(&self, fingerprint: &str) -> AdminKeyFuture<()>;
 }
 
 /// A displayed key and its original recipient capability.
@@ -72,7 +81,7 @@ impl AdminKeyOffer {
     pub fn key(&self) -> &PendingAdminKey {
         &self.key
     }
-    pub fn confirm(&self, fingerprint: &str) -> Result<(), AdminKeyError> {
+    pub fn confirm(&self, fingerprint: &str) -> AdminKeyFuture<()> {
         self.confirmation.confirm(fingerprint)
     }
 }

@@ -95,7 +95,7 @@ impl ChatSummaryTracker {
         }
     }
     /// Takes the SSH binding and access the runner holds for the chat now; a change makes a
-    /// new revision due (ADR 0139).
+    /// new revision due (ADR 0147).
     pub fn observe_ssh(&mut self, ssh: Option<super::SummarySsh>) {
         if !self.finished() && self.facts.observe_ssh(ssh) {
             self.changed = true;

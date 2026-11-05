@@ -1,4 +1,4 @@
-//! A chat's SSH binding as the neutral servers of the desktop (ADR 0139): the core's verified
+//! A chat's SSH binding as the neutral servers of the desktop (ADR 0147): the core's verified
 //! `ChatSsh` mapped to a [`ServerBinding`], and its SSH refusals to [`ServerRefusal`]s.
 use futures::future::BoxFuture;
 use nocterm_cloud_conversation_model::{

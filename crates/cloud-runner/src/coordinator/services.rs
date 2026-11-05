@@ -156,7 +156,7 @@ impl CoordinatorExecution {
             ssh: None,
         }
     }
-    /// Admits chat SSH bindings and keeps each chat's key and certificate (ADR 0137).
+    /// Admits chat SSH bindings and keeps each chat's key and certificate (ADR 0145).
     /// Without it a binding is refused as unsupported.
     pub fn with_ssh(mut self, ssh: Arc<super::ssh_access::CoordinatorSsh>) -> Self {
         self.ssh = Some(ssh);

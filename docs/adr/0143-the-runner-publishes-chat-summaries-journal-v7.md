@@ -1,4 +1,4 @@
-# 0135. The runner publishes chat summaries; journal v7
+# 0143. The runner publishes chat summaries; journal v7
 
 Status: accepted. Supersedes the journal version rule of
 [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) ("any other

@@ -113,7 +113,7 @@ pub trait OwnRunnerLauncher: Send + Sync {
 }
 
 /// Answers the SSH certificate requests of a hub's bound Cloud chats while this device holds
-/// the account's keys (ADR 0139). The certifier reads every chat whose runner lists bound
+/// the account's keys (ADR 0147). The certifier reads every chat whose runner lists bound
 /// servers; the device core answers a request only inside the binding the person signed, never
 /// past it, and no hub can mint a certificate in its place.
 pub trait ChatSshCertifier: Send + Sync {

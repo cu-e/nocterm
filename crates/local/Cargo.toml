@@ -22,7 +22,7 @@ thiserror.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["signal", "fs", "event"] }
+nix = { version = "0.28", features = ["signal", "fs", "event", "poll"] }
 
 [target.'cfg(windows)'.dependencies]
 process-wrap = { version = "9.1.0", default-features = false, features = ["std", "job-object", "creation-flags"] }

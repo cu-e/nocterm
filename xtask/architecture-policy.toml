@@ -2,6 +2,7 @@
 [dto]
 "nocterm_agent_chat::conversation::servers::BoundServerView" = "One bound server a remote conversation shows, copied by value to the window."
 "nocterm_agent_chat::conversation::servers::ServerOption" = "One server a remote conversation can be bound to, copied by value to the window."
+"nocterm_monitor_service::WatchPlan" = "Immutable metric set and cadence supplied by each monitor consumer."
 "nocterm_agent::AgentServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::RuntimeServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
@@ -57,6 +58,8 @@ guest_only = ["nocterm-plugin-sdk"]
 
 # Named lists of external crates (package names) that a row may reach transitively.
 [isolation.external]
+# Pure Unicode 16 category lookup; no_std, no allocation or transitive dependencies.
+unicode_categories = ["unicode-general-category"]
 base = [
     "proc-macro2",
     "quote",
@@ -68,7 +71,8 @@ base = [
     "thiserror-impl",
     "unicode-ident",
 ]
-# The closure of nocterm-core as `cargo metadata` resolves it for every target (59 crates).
+# Platform/persistence closure of nocterm-core for every target; its SHA-256
+# dependency uses the already reviewed sha2 group below.
 core = [
     "bitflags",
     "bumpalo",
@@ -180,50 +184,50 @@ windows-sys = "Reached through nocterm-core on Windows; not a direct dependency.
 [isolation.crates.nocterm-plugin-model]
 kind = "no-std"
 closure = []
-direct = ["serde", "thiserror"]
-external = ["base"]
+direct = ["serde", "thiserror", "unicode-general-category"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-api]
 kind = "no-std"
 closure = ["nocterm-plugin-model"]
 direct = ["serde", "thiserror"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-abi]
 kind = "no-std"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["postcard", "serde", "thiserror"]
-external = ["base", "postcard"]
+external = ["base", "postcard", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-wasm]
 kind = "std"
 closure = ["nocterm-plugin-abi", "nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["wasmi"]
-external = ["base", "postcard", "wasmi"]
+external = ["base", "postcard", "wasmi", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-packages]
 kind = "std"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model", "nocterm-core"]
 direct = ["sha2", "thiserror", "toml"]
-external = ["base", "core", "sha2"]
+external = ["base", "core", "sha2", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-ports]
 kind = "gpui"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["gpui-pre"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-view]
 kind = "gpui"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["gpui-pre"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-host]
 kind = "gpui"
 closure = ["nocterm-plugin-ports", "nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["gpui-pre", "serde", "serde_json", "thiserror", "tracing"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 # Modules (or whole packages) that may reach file-system, process, environment or dependency
 # I/O paths (I2b), each with a reason. Keys are module paths (`nocterm_plugin_packages::store`)

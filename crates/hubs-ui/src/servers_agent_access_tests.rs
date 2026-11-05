@@ -222,6 +222,32 @@ fn a_server_with_the_shared_principal_needs_an_update_until_it_connects(cx: &mut
 }
 
 #[gpui_kit::test]
+fn a_busy_host_edit_keeps_manual_ca_copy_available(cx: &mut TestAppContext) {
+    let page = page_with_access(cx);
+    page.agent_access.set_connected_hosts(vec![HostChoice {
+        connection: "new".into(),
+        user: "deploy".into(),
+        host: "new.example".into(),
+    }]);
+    open_tab(&page, AGENTS, cx);
+    page.agent_access
+        .fail_next_allow(AgentAccessError::HostEditLocked {
+            path: "/home/deploy/.ssh/.nocterm-authorized_keys.lock".into(),
+        });
+    page.click("agent-allow", cx);
+    page.click(item("agent-pick", "new"), cx);
+    page.click("agent-allow-confirm", cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(page.shows("agent-access-error", cx));
+    assert!(page.shows("agent-copy-line", cx));
+    page.click("agent-copy-line", cx);
+    cx.run_until_parked();
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    assert_eq!(copied.as_deref(), Some("cert-authority SHA256:abc"));
+}
+
+#[gpui_kit::test]
 fn records_that_cannot_be_read_are_reported_and_read_again_on_request(cx: &mut TestAppContext) {
     let page = page_with_access(cx);
     page.agent_access.fail_with(AgentAccessError::HostChanged);

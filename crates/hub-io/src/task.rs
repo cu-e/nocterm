@@ -44,3 +44,54 @@ impl<T> Drop for Spawned<T> {
         self.task.abort();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Release(Option<oneshot::Sender<()>>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+
+    #[test]
+    fn a_result_can_be_awaited_by_an_executor_without_a_tokio_context() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        assert_eq!(
+            futures::executor::block_on(spawn(runtime.handle(), async { 7 })),
+            Some(7)
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_an_unpolled_answer_releases_the_task_resources() {
+        let (sender, released) = oneshot::channel();
+        let resource = Release(Some(sender));
+        let answer = spawn(&Handle::current(), async move {
+            let _resource = resource;
+            std::future::pending::<()>().await;
+        });
+        drop(answer);
+        tokio::time::timeout(std::time::Duration::from_secs(1), released)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn runtime_shutdown_ends_an_unanswered_task() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let answer = spawn(runtime.handle(), std::future::pending::<()>());
+        runtime.shutdown_background();
+        assert_eq!(futures::executor::block_on(answer), None);
+    }
+}

@@ -19,6 +19,7 @@ use std::{path::PathBuf, sync::Arc};
 pub struct ContainedLocal {
     policy: Arc<ChildPolicy>,
     source: ConnectionSource,
+    executor: crate::LocalExec,
 }
 impl ContainedLocal {
     /// Invoke during bounded native startup, before admitting tool work. Dropping
@@ -32,7 +33,8 @@ impl ContainedLocal {
         Box::pin(async move {
             let policy = Arc::new(ChildPolicy::new(workspace, supervisor_state, limits)?);
             let request = policy.probe()?;
-            let output = crate::LocalExec
+            let executor = crate::LocalExec::default();
+            let output = executor
                 .exec(request)
                 .await
                 .map_err(ContainmentError::Probe)?;
@@ -42,6 +44,7 @@ impl ContainedLocal {
             Ok(Self {
                 policy,
                 source: ConnectionSource::default(),
+                executor,
             })
         })
     }
@@ -49,6 +52,7 @@ impl ContainedLocal {
         Self {
             policy: self.policy.clone(),
             source,
+            executor: self.executor.clone(),
         }
     }
     /// Opens the configured contained shell under the original captured source.
@@ -96,7 +100,9 @@ impl HostExec for ContainedLocal {
             return Box::pin(async move { Err(error.into()) });
         }
         match self.policy.wrap(request) {
-            Ok(request) => crate::exec::ScopedLocalExec::new(self.source.clone()).exec(request),
+            Ok(request) => {
+                crate::exec::execute_scoped(request, self.source.clone(), &self.executor)
+            }
             Err(_) => Box::pin(async { Err(ExecError::Unsupported) }),
         }
     }

@@ -9,14 +9,14 @@
 //! upgrade and are not yet acknowledged get the same horizon computed once from the time
 //! of the upgrade; acknowledged entries get `0` because nothing will be published again.
 //!
-//! Version 6 to 7 adds the empty `chat_summaries` table (ADR 0135). Existing chats get no
+//! Version 6 to 7 adds the empty `chat_summaries` table (ADR 0143). Existing chats get no
 //! row here: deriving a summary needs the chat keys and the coordinator's record codec, so
 //! the runner backfills each chat from its journal at its first summary sweep.
 //!
-//! Version 7 to 8 adds the empty `chat_ssh_keys` table (ADR 0137): no chat had an SSH
+//! Version 7 to 8 adds the empty `chat_ssh_keys` table (ADR 0145): no chat had an SSH
 //! binding before it.
 //!
-//! Version 8 to 9 deletes every `chat_ssh_keys` row (ADR 0139). Version 8 sealed the row as an
+//! Version 8 to 9 deletes every `chat_ssh_keys` row (ADR 0147). Version 8 sealed the row as an
 //! effect slot; version 9 seals it under its own journal class (contract journal class set 2),
 //! and a row never opens under another class. Re-sealing would need each chat's key, which an
 //! upgrade does not hold, and no v8 row has left a development machine: a chat bound on v8

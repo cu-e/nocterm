@@ -1,20 +1,21 @@
 ---
 name: owner-extract
-description: Extract one responsibility of a type into an owner type with private state and transition methods, behind characterization tests. Use for a candidate from responsibility-map, when a type nears 15 fields, or when a file nears 800 lines — never cut a file or move methods of the same type instead.
+description: Extract a confirmed state responsibility into a private owner with transition methods and behavior coverage. Use when ownership requires a split; approaching a size limit prompts inspection, not mechanical extraction.
 user-invocable: false
 ---
 
 # Owner extraction
 
-Input: one candidate from `20-map.md`. Output: source changes and an updated
-`40-steps.md` (`.claude/skills/feature/plan-bus.md`).
+Input: a confirmed candidate in the compact plan. Record the change and evidence
+there (`.claude/skills/feature/plan-bus.md`); separate stage files are optional.
 
 This is the transformation AGENTS.md design rules 1, 2 and 7 ask for. Moving
 methods of the parent into another file is not an extraction and fails review.
 
 ## Preconditions
 
-- `20-map.md` names the owner, its fields, its methods and what it returns.
+- The plan names the owner, state, invariant, transitions, lifetime and results.
+  Joint field access or a lower field count alone does not justify the owner.
 - Characterization tests exist for the behaviour that goes through those
   methods (`behavior-tests` in characterize mode). If they do not, write them
   first and see them pass on the unchanged code.
@@ -35,8 +36,8 @@ methods of the parent into another file is not an extraction and fails review.
    short coordinator call that applies the returned effect.
 4. **Delete the moved fields** from the parent. Do not leave mirrors or
    `pub(crate)` getters that expose the owner's internals.
-5. **Test the owner directly** with unit tests for its invariants; keep the
-   characterization tests unchanged and green.
+5. **Test the owner directly** through its methods for invariants; preserve the
+   characterization scenarios and assertions. Mechanical imports/fixtures may move.
 6. Use `gate` scoped mode for the owner/characterization behavior after the
    coherent extraction when needed. Reuse unchanged results; no command bundle
    after each moved method and no full gate for each extracted owner.
@@ -47,7 +48,8 @@ methods of the parent into another file is not an extraction and fails review.
 - The parent's impl-file count did not grow (`cargo xtask survey <package> --type <Parent>`).
 - The owner has no `pub`/`pub(crate)` fields and does not take the parent.
 - The owner's module name is a noun for what it owns.
-- Characterization tests pass without edits; the owner has its own tests.
+- Characterization behavior/expectations remain intact and pass; owner invariants
+  have coverage. Explain any fixture/API adaptation without weakening assertions.
 - `xtask/baseline.toml` entries went down or stayed equal; lower any that went
   down (the check fails until you do).
 

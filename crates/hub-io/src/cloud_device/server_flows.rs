@@ -1,4 +1,4 @@
-//! The SSH flows of one open chat (ADR 0139): binding the chat to servers, and answering the
+//! The SSH flows of one open chat (ADR 0147): binding the chat to servers, and answering the
 //! runner's certificate requests while the account is unlocked.
 //!
 //! The core decides what may be signed: `SshAnswer` certifies only a request the verified

@@ -182,16 +182,21 @@ fn failed_ack_is_typed_and_retry_keeps_target_destination_and_new_remote_port() 
 #[test]
 fn bounded_queue_reports_backpressure_and_queued_cancellation_opens_nothing() {
     let fixture = Fixture::new();
-    let active = native("input/active");
-    fixture
-        .local
-        .seed_native_file(&active, b"active".to_vec())
-        .unwrap();
-    fixture
-        .remote
-        .suspend_next(FsOperation::Write, "/dest/active", Gate::pending());
-    let active_id = fixture.upload(vec![active], CollisionPolicy::Skip);
-    wait(|| fixture.remote.activity().live_uploads == 1);
+    let mut active = Vec::new();
+    for index in 0..2 {
+        let source = native(&format!("input/active-{index}"));
+        fixture
+            .local
+            .seed_native_file(&source, b"active".to_vec())
+            .unwrap();
+        fixture.remote.suspend_next(
+            FsOperation::Write,
+            format!("/dest/active-{index}"),
+            Gate::pending(),
+        );
+        active.push(fixture.upload(vec![source], CollisionPolicy::Skip));
+    }
+    wait(|| fixture.remote.activity().live_uploads == 2);
     let mut queued = Vec::new();
     for index in 0..8 {
         let source = native(&format!("input/queued-{index}"));
@@ -215,7 +220,10 @@ fn bounded_queue_reports_backpressure_and_queued_cancellation_opens_nothing() {
     });
     assert!(matches!(result, Err(TransferError::Full)));
     fixture.runtime.cancel(queued[0]).unwrap();
-    fixture.runtime.cancel(active_id).unwrap();
+    for id in active {
+        fixture.runtime.cancel(id).unwrap();
+        assert_eq!(fixture.finished(id).state, TransferState::Cancelled);
+    }
     assert_eq!(fixture.finished(queued[0]).state, TransferState::Cancelled);
     for id in queued.into_iter().skip(1) {
         fixture.finished(id);

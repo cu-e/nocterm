@@ -15,6 +15,11 @@ pub(crate) enum FileJob {
     Download(DownloadJob),
     Relay(RelayJob),
 }
+/// A global backlog permit follows each queued file, including waits for a worker.
+pub(crate) struct QueuedJob {
+    job: FileJob,
+    pending: tokio::sync::OwnedSemaphorePermit,
+}
 pub(crate) struct RelayJob {
     source_fs: Arc<dyn RemoteFs>,
     source: String,
@@ -132,6 +137,14 @@ impl Work {
         self.check()?;
         tokio::select! { result=future=>result.map_err(Into::into), ()=self.cancelled()=>Err(TransferCause::Cancelled) }
     }
+    pub(crate) async fn queued(&self, job: FileJob) -> Result<QueuedJob, TransferCause> {
+        let pending = tokio::select! {
+            result = self.state.backlog_slots().clone().acquire_owned() => result.map_err(TransferCause::runtime)?,
+            () = self.cancelled() => return Err(TransferCause::Cancelled),
+        };
+        self.check()?;
+        Ok(QueuedJob { job, pending })
+    }
     pub(crate) async fn cancelled(&self) {
         while !self.batch.cancelled() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -152,16 +165,30 @@ impl Work {
     }
 }
 pub(crate) async fn run(state: Arc<RuntimeState>, mut receiver: mpsc::Receiver<Arc<Batch>>) {
-    while let Some(batch) = receiver.recv().await {
-        if !batch.cancelled() {
-            run_batch(Work::new(state.clone(), batch.clone())).await;
+    let mut active = FuturesUnordered::new();
+    let mut closed = false;
+    while !closed || !active.is_empty() {
+        tokio::select! {
+            batch = receiver.recv(), if !closed && active.len() < 2 => {
+                match batch {
+                    Some(batch) => active.push(finish(state.clone(), batch)),
+                    None => closed = true,
+                }
+            }
+            _ = active.next(), if !active.is_empty() => {},
         }
-        batch.event(TransferEvent::DiscoveryComplete);
-        batch.event(TransferEvent::WorkersDrained);
-        state.finish_batch();
     }
     state.completed();
 }
+async fn finish(state: Arc<RuntimeState>, batch: Arc<Batch>) {
+    if !batch.cancelled() {
+        run_batch(Work::new(state.clone(), batch.clone())).await;
+    }
+    batch.event(TransferEvent::DiscoveryComplete);
+    batch.event(TransferEvent::WorkersDrained);
+    state.finish_batch();
+}
+
 async fn run_batch(work: Work) {
     work.batch.event(TransferEvent::DiscoveryStarted);
     let (sender, mut receiver) = mpsc::channel(work.state.limits().queue().backlog());
@@ -194,7 +221,14 @@ async fn run_batch(work: Work) {
         );
     }
 }
-async fn run_file(work: Work, job: FileJob) -> Result<FileOutcome, TransferIssue> {
+async fn run_file(work: Work, queued: QueuedJob) -> Result<FileOutcome, TransferIssue> {
+    let permit = tokio::select! {
+        result = work.state.file_slots().clone().acquire_owned() => result.map_err(|error| TransferIssue::new(None, TransferOperation::Runtime, TransferCause::runtime(error)))?,
+        () = work.cancelled() => return Err(TransferIssue::new(None, TransferOperation::Runtime, TransferCause::Cancelled)),
+    };
+    let _permit = permit;
+    let QueuedJob { job, pending } = queued;
+    drop(pending);
     work.batch.event(TransferEvent::FileStarted);
     match job {
         FileJob::Upload(job) => upload::run(work, job).await,

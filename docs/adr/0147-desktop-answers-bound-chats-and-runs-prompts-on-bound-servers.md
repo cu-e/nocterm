@@ -1,6 +1,6 @@
-# 0139. The desktop binds chats to servers and answers their certificate requests; prompts run on bound servers; journal v9
+# 0147. The desktop binds chats to servers and answers their certificate requests; prompts run on bound servers; journal v9
 
-Status: accepted. Supersedes, in [0137](0137-per-server-ca-principals-and-runner-certificate-sessions.md),
+Status: accepted. Supersedes, in [0145](0145-per-server-ca-principals-and-runner-certificate-sessions.md),
 the SSH row sealed as an effect slot (decision 4 and its consequence), the rule that a managed
 boot target pins the binding's host key (decision 2), the journal version rule of decision 4,
 and the consequences that devices cannot name a bound server, that managed boot targets cannot
@@ -13,7 +13,7 @@ summary servers).
 
 ## Context
 
-With ADR 0137 the runner admits a person's CA-signed binding of a chat to servers, asks for
+With ADR 0145 the runner admits a person's CA-signed binding of a chat to servers, asks for
 short certificates and signs in with them, but no desktop device signed bindings or answered
 requests, the runner sealed its SSH row as an effect, a device could not ask for a prompt to run
 on a bound server, a managed runner could not sign in to its boot targets and summaries listed

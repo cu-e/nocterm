@@ -332,7 +332,7 @@ impl ChatSshAccess {
     }
     /// The admitted server whose session access is `target` and `authentication`, inside
     /// the binding window of a binding that was not refused, with its credential while a
-    /// certificate covering it is active (ADR 0139).
+    /// certificate covering it is active (ADR 0147).
     pub fn select(
         &self,
         target: &TargetBinding,

@@ -3,13 +3,13 @@ use gpui_kit::{Entity, TestAppContext, WindowOptions, test::TestWindowExt as _};
 use nocterm_ai::AiSettings;
 use nocterm_session::LocalShellSettings;
 use nocterm_settings::SettingsDocument;
-use nocterm_settings_ui::{Installed, SettingsCatalog, SettingsView, open_page, register};
-use nocterm_store::SettingsConfig;
+use nocterm_settings_ui::{SettingsCatalog, SettingsView, open_page, register};
+use nocterm_store::{SettingsConfig, SettingsHandle};
 use nocterm_ui::TerminalSettings;
 use nocterm_workspace::{OpenSettings, Workspace};
 
 struct SettingsFixture {
-    installed: Installed,
+    settings: SettingsHandle,
     pages: SettingsCatalog,
     themes: nocterm_ui::ThemeUi,
 }
@@ -36,7 +36,7 @@ fn init_with_probe(
         cx,
     );
     SettingsFixture {
-        installed: booted.settings_deps(),
+        settings: booted.settings_deps(),
         pages: booted.settings_pages(),
         themes: booted.themes().clone(),
     }
@@ -55,7 +55,7 @@ fn init_with_settings(settings: SettingsConfig, cx: &mut App) -> SettingsFixture
         cx,
     );
     SettingsFixture {
-        installed: booted.settings_deps(),
+        settings: booted.settings_deps(),
         pages: booted.settings_pages(),
         themes: booted.themes().clone(),
     }
@@ -82,14 +82,14 @@ pub(super) fn open(
             cx.new(|cx| {
                 SettingsView::with_pages(
                     fixture.pages.clone(),
-                    fixture.installed.clone(),
+                    fixture.settings.clone(),
                     window,
                     cx,
                 )
             })
         })
         .unwrap();
-        (handle, view, fixture.installed.settings().clone())
+        (handle, view, fixture.settings.clone())
     })
 }
 
@@ -376,14 +376,14 @@ async fn a_failed_save_is_reported_and_keeps_the_active_settings(cx: &mut TestAp
             cx.new(|cx| {
                 SettingsView::with_pages(
                     fixture.pages.clone(),
-                    fixture.installed.clone(),
+                    fixture.settings.clone(),
                     window,
                     cx,
                 )
             })
         })
         .unwrap();
-        (handle, view, fixture.installed.settings().clone())
+        (handle, view, fixture.settings.clone())
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -466,7 +466,7 @@ fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppCon
                             workspace,
                             "appearance",
                             &fixture.pages,
-                            fixture.installed.clone(),
+                            fixture.settings.clone(),
                             window,
                             cx,
                         );
@@ -474,7 +474,7 @@ fn sandbox_controls_use_the_injected_probe_on_every_platform(cx: &mut TestAppCon
                     workspace
                 })
                 .unwrap();
-            (handle, workspace, fixture.installed.settings().clone())
+            (handle, workspace, fixture.settings.clone())
         });
         assert_eq!(
             probe.calls(),

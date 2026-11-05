@@ -608,7 +608,9 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     );
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.apply_presented_update(SessionUpdate::ToolCall(Box::new(call)));
+            thread
+                .apply_presented_update(SessionUpdate::ToolCall(Box::new(call)))
+                .unwrap();
             let (respond, _) = oneshot::channel();
             let mut request = BridgeCall {
                 arguments: Some(json!({"terminal_id":"t1","command":"echo snapshot"})),
@@ -625,12 +627,14 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     *access.target.borrow_mut() = nocterm_session::Target::new("reconnected", "new.example", 22);
     cx.update(|cx| {
         thread.update(cx, |thread, _| {
-            thread.apply_presented_update(SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
-                "snapshot",
-                ToolChanges::default()
-                    .title("Renamed")
-                    .status(ToolStatus::Succeeded),
-            ))));
+            thread
+                .apply_presented_update(SessionUpdate::ToolCallUpdate(Box::new(ToolPatch::new(
+                    "snapshot",
+                    ToolChanges::default()
+                        .title("Renamed")
+                        .status(ToolStatus::Succeeded),
+                ))))
+                .unwrap();
             let Entry::Tool(call) = &thread.transcript().entries[0] else {
                 unreachable!()
             };
@@ -654,7 +658,9 @@ fn verified_destination_uses_the_connected_host_and_survives_rename_detach_and_r
     );
     cx.update(|cx| {
         thread.update(cx, |thread, cx| {
-            thread.apply_presented_update(SessionUpdate::ToolCall(Box::new(call)));
+            thread
+                .apply_presented_update(SessionUpdate::ToolCall(Box::new(call)))
+                .unwrap();
             let (respond, _) = oneshot::channel();
             let mut request = BridgeCall {
                 arguments: Some(json!({"terminal_id":"t1","command":"echo ipv6"})),

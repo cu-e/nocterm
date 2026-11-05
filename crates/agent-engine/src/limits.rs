@@ -1,39 +1,17 @@
 //! Bounded serialization and conservative per-run model accounting.
 use nocterm_cloud_model::engine::{EngineError, ModelBudget};
+use nocterm_core::bounded_io::BoundedBuffer;
 use rig_core::completion::Usage;
 use serde::{Deserialize, Serialize};
-use std::io::{self, Write};
 
-struct JsonBuffer {
-    bytes: Vec<u8>,
-    limit: usize,
-    exceeded: bool,
-}
-impl Write for JsonBuffer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
-            self.exceeded = true;
-            return Err(io::Error::other("bounded JSON capacity"));
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, EngineError> {
-    let mut buffer = JsonBuffer {
-        bytes: Vec::new(),
-        limit,
-        exceeded: false,
-    };
+    let mut buffer = BoundedBuffer::new(limit);
     let result = serde_json::to_writer(&mut buffer, value);
-    if buffer.exceeded {
+    if buffer.exceeded() {
         return Err(EngineError::BudgetExceeded);
     }
     result.map_err(|_| EngineError::UnsupportedFormat)?;
-    Ok(buffer.bytes)
+    Ok(buffer.into_inner())
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

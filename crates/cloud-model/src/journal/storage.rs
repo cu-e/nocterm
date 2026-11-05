@@ -20,7 +20,7 @@ pub enum JournalStorageClass {
     BackgroundCommand,
     Effect,
     RunHead,
-    /// A chat's SSH row: subject key seed and access (journal v8, ADR 0137).
+    /// A chat's SSH row: subject key seed and access (journal v8, ADR 0145).
     SshAccess,
 }
 

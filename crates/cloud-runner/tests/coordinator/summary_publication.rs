@@ -1,4 +1,4 @@
-//! Chat summaries reach the runner directory from the delivery sweep (ADR 0135).
+//! Chat summaries reach the runner directory from the delivery sweep (ADR 0143).
 use super::*;
 
 const DATABASE: &str = "cloud-runs.sqlite3";

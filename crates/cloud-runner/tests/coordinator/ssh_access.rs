@@ -1,4 +1,4 @@
-//! A chat's SSH binding, certificates and revocation through the coordinator (ADR 0137).
+//! A chat's SSH binding, certificates and revocation through the coordinator (ADR 0145).
 use super::*;
 use nocterm_cloud_model::{
     authority::{AuthenticationBinding, TargetBinding},

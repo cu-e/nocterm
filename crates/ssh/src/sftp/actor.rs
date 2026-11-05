@@ -7,7 +7,7 @@ pub(crate) async fn serve(
     mut requests: FsRequests,
     mut shutdown: tokio::sync::oneshot::Receiver<()>,
 ) {
-    let mut opened: Option<Result<Arc<Sftp>, FsError>> = None;
+    let mut connection = SftpConnection::default();
     let uploads: Uploads = Arc::default();
     let downloads: Downloads = Arc::default();
     let mut workers = JoinSet::new();
@@ -17,7 +17,7 @@ pub(crate) async fn serve(
             _ = &mut shutdown => break,
             Some(_) = workers.join_next(), if !workers.is_empty() => {},
             Some(cleanup) = requests.cleanup.recv(), if workers.len() < CONCURRENT_REQUESTS => {
-                if let Some(Ok(sftp)) = &opened {
+                if let Some(sftp) = &connection.opened {
                     let uploads = uploads.clone(); let downloads = downloads.clone(); let sftp = sftp.clone();
                     workers.spawn(async move { match cleanup {
                         Cleanup::Upload(id) => { let _ = cancel(&sftp, &uploads, id).await; }
@@ -27,9 +27,9 @@ pub(crate) async fn serve(
             },
             request = requests.requests.recv(), if workers.len() < CONCURRENT_REQUESTS => {
                 let Some(request) = request else { break; };
-                let sftp = match &opened {
-                    Some(result) => result.clone(),
-                    None => opened.insert(requests.sender.source.guard(open(&handle)).await.map(Arc::new)).clone(),
+                let sftp = tokio::select! {
+                    _ = &mut shutdown => break,
+                    result = requests.sender.source.guard(connection.get(&handle)) => result,
                 };
                 let uploads = uploads.clone();
                 let downloads = downloads.clone();
@@ -45,16 +45,57 @@ pub(crate) async fn serve(
     }
     workers.abort_all();
     while workers.join_next().await.is_some() {}
-    if let Some(Ok(sftp)) = opened {
-        let ids: Vec<_> = uploads.lock().await.keys().copied().collect();
-        for id in ids {
-            let _ = cancel(&sftp, &uploads, id).await;
+    if let Some(sftp) = connection.opened {
+        close_transfers(&sftp, &uploads, &downloads).await;
+    }
+}
+async fn close_transfers(sftp: &Sftp, uploads: &Uploads, downloads: &Downloads) {
+    let ids: Vec<_> = uploads.lock().await.keys().copied().collect();
+    for id in ids {
+        let _ = cancel(sftp, uploads, id).await;
+    }
+    let ids: Vec<_> = downloads.lock().await.keys().copied().collect();
+    for id in ids {
+        let _ = close_download(sftp, downloads, id).await;
+    }
+    let _ = sftp.raw.close_session();
+}
+/// A successful subsystem is reused. Failed initialization has a short cooldown,
+/// never an installation-lifetime negative cache.
+#[derive(Default)]
+struct SftpConnection {
+    opened: Option<Arc<Sftp>>,
+    failure: Option<(tokio::time::Instant, FsError)>,
+}
+impl SftpConnection {
+    async fn get(&mut self, handle: &Handle<Client>) -> Result<Arc<Sftp>, FsError> {
+        if let Some(sftp) = &self.opened {
+            return Ok(sftp.clone());
         }
-        let ids: Vec<_> = downloads.lock().await.keys().copied().collect();
-        for id in ids {
-            let _ = close_download(&sftp, &downloads, id).await;
+        if let Some((retry_at, error)) = &self.failure
+            && *retry_at > tokio::time::Instant::now()
+        {
+            return Err(error.clone());
         }
-        let _ = sftp.raw.close_session();
+        match tokio::time::timeout(std::time::Duration::from_secs(15), open(handle)).await {
+            Ok(Ok(sftp)) => {
+                let sftp = Arc::new(sftp);
+                self.opened = Some(sftp.clone());
+                self.failure = None;
+                Ok(sftp)
+            }
+            result => {
+                let error = match result {
+                    Ok(Err(error)) => error,
+                    _ => FsError::Other("SFTP initialization timed out".into()),
+                };
+                self.failure = Some((
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+                    error.clone(),
+                ));
+                Err(error)
+            }
+        }
     }
 }
 #[expect(
@@ -76,11 +117,15 @@ pub(super) async fn dispatch(
                 Err(e) => Err(e),
             });
         }
-        FsRequest::ReadDir(path, reply) => {
-            let _ = reply.send(match result {
-                Ok(s) => read_dir(&s, &path).await,
+        FsRequest::ReadDir(path, mut reply) => {
+            if reply.is_canceled() {
+                return;
+            }
+            let result = match result {
+                Ok(s) => read_dir(&s, &path, &mut reply).await,
                 Err(e) => Err(e),
-            });
+            };
+            let _ = reply.send(result);
         }
         FsRequest::Stat(path, reply) => {
             let _ = reply.send(match result {

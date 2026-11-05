@@ -4,11 +4,11 @@
 - Release files are owned by release automation and are never edited.
 - Debt inventories (`xtask/baseline.toml`, `xtask/oversized-files.toml`) may
   only shrink: new entries and raised counts are denied.
-- DTO exemptions in `xtask/architecture-policy.toml` need design review, so
-  adding one asks the user.
+- DTO additions and other architecture policy changes need their own design
+  review; isolation changes include arrays and removed restrictions.
 - Delegated agents keep to their explicit role (AGENTS.md, Workflow): `architect` and
   `reviewer` write only their plan files; `tester` edits tests, and editing
-  anything else asks the user.
+  anything else is handed back to the implementer.
 """
 import sys
 import tomllib
@@ -40,7 +40,12 @@ def check_role(agent, path):
     if agent in PLAN_ONLY and not (path or "").startswith(PLANS):
         hooklib.deny(EVENT, f"The {agent} stage does not write code; write its output under {PLANS}<slug>/ (AGENTS.md, Workflow; .claude/agents/).")
     if agent == "tester" and path and not path.startswith(PLANS) and not is_test_file(path):
-        hooklib.ask(EVENT, f"The tester stage changes tests only; {path} looks like production code (AGENTS.md, Workflow; .claude/agents/).")
+        hooklib.deny(
+            EVENT,
+            f"The tester stage does not edit production files: {path}. Send the proposed change "
+            "to the implementer, including changes confined to an inline test module. "
+            "This is a role handoff, not a request for user approval (.claude/agents/tester.md).",
+        )
 
 
 def flatten(document, prefix=""):
@@ -65,6 +70,33 @@ def growth(before, after):
         elif isinstance(value, (int, float)) and isinstance(previous, (int, float)) and value > previous:
             grown.append(f"{name}: {previous} -> {value}")
     return grown
+
+
+def policy_review(before, after):
+    """DTO removals shrink exemptions; all other policy changes need review.
+
+    Isolation lists may be allowlists or denylists, so removals cannot safely
+    be treated as reductions of authority. Compare parsed values, not TOML text.
+    """
+    reasons = []
+    old_dto, new_dto = before.get("dto", {}), after.get("dto", {})
+    if old_dto != new_dto:
+        if not isinstance(old_dto, dict) or not isinstance(new_dto, dict):
+            reasons.append("Changing the plain-data exemption structure needs design review")
+        else:
+            changed = [key for key, value in new_dto.items() if old_dto.get(key) != value]
+            if changed:
+                reasons.append("Adding or changing plain-data exemptions needs design review: " + ", ".join(sorted(changed)))
+    sections = sorted(
+        key for key in before.keys() | after.keys()
+        if key != "dto" and before.get(key) != after.get(key)
+    )
+    if sections:
+        reasons.append(
+            "Changing architecture policy sections needs design review, including isolation "
+            "permissions and restrictions: " + ", ".join(sections)
+        )
+    return reasons
 
 
 def parse(text):
@@ -97,11 +129,14 @@ def main():
         hooklib.deny(EVENT, f"{path} would no longer be valid TOML.")
     if before is None:
         return
+    if path == POLICY:
+        reasons = policy_review(before, after)
+        if reasons:
+            hooklib.ask(EVENT, "; ".join(reasons) + " (docs/architecture/guardrails.md).")
+        return
     grown = growth(before, after)
     if not grown:
         return
-    if path == POLICY:
-        hooklib.ask(EVENT, "Adding a plain-data exemption needs design review (docs/architecture/guardrails.md): " + "; ".join(grown))
     hooklib.deny(
         EVENT,
         f"{path} is an inventory that may only shrink (ADR 0012, AGENTS.md design rule 6). "

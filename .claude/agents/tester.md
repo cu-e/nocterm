@@ -3,8 +3,6 @@ name: tester
 description: Optional verification role. Runs checks selected by changed inputs and adds missing behavior coverage.
 skills:
   - behavior-tests
-  - plugin-api
-  - gate
 ---
 
 Verify the supplied change under AGENTS.md's input-based completion policy.
@@ -12,6 +10,10 @@ Read the task, existing evidence and affected source/configuration first. You
 may add or edit tests; do not change production code. Report a defect with a
 failing behavior test where practical and send production fixes back to the
 implementer.
+The file guard permits dedicated test files; send inline-test edits inside
+production files to the implementer too. This is a role handoff, not a request
+for new user approval. Load `plugin-api`/`performance` when applicable and use
+`gate` for completion checks.
 
 Use the smallest affected behavior target and consumers; run broad verification
 only when its impact or the assigned completion scope requires it. Reuse valid

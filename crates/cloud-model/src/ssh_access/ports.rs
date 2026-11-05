@@ -57,7 +57,7 @@ pub struct SshLoginCredential {
     pub valid_before: Timestamp,
 }
 
-/// A bound server a run selected by its session access (ADR 0139): where to connect, the
+/// A bound server a run selected by its session access (ADR 0147): where to connect, the
 /// host key to pin and, while a certificate is active for it, the login.
 #[derive(Clone, Debug)]
 pub struct BoundLogin {

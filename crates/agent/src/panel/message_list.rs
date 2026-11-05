@@ -1,23 +1,22 @@
 //! Transcript presentation binds reveal, navigation and previews to one visible chat.
 use super::{
     AgentPanel,
-    image_pipeline::{ImageKey, ImagePipeline, PreviewState, PreviewTicket},
+    image_pipeline::{
+        CompletedPreview, ImageKey, ImagePipeline, PreviewSource, PreviewState, PreviewTicket,
+    },
     message_markdown::MessageMarkdown,
     navigation::MessageNavigation,
     stream::StreamReveal,
 };
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, EntityId, Image, Task,
+    App, AppContext as _, Context, Entity, EntityId, Task,
     component::{
         message_scroller::{MessageScroller, MessageScrollerState},
         text::TextViewState,
     },
 };
 use nocterm_agent_chat::conversation::ConversationSource;
-use nocterm_ai::{
-    images::{ImageInspector, ImageThumbnailer},
-    thread::Entry,
-};
+use nocterm_ai::{images::ImageInspector, thread::Entry};
 use std::{collections::HashSet, rc::Rc, sync::Arc, time::Duration};
 
 #[derive(Clone)]
@@ -127,6 +126,7 @@ impl MessageList {
         live: bool,
         reduced: bool,
     ) -> MessageRows {
+        self.markdown.invalidate(dirty);
         let previous = self.row_count;
         self.row_count = entries.len() + pending;
         self.navigation.observe(chat, entries, dirty);
@@ -225,6 +225,12 @@ impl MessageList {
     pub(super) fn revealed_text(&self, row: usize, text: &str) -> String {
         self.reveal.text(row, text)
     }
+    pub(super) fn revealed_slice<'a>(&self, row: usize, text: &'a str) -> &'a str {
+        self.reveal.slice(row, text)
+    }
+    pub(super) fn markdown_current(&self, row: usize, source_len: usize) -> bool {
+        self.markdown.current(row, source_len)
+    }
     pub(super) fn revealing(&self) -> bool {
         self.reveal.pending()
     }
@@ -233,9 +239,10 @@ impl MessageList {
         &mut self,
         row: usize,
         text: String,
+        source_len: usize,
         cx: &mut Context<AgentPanel>,
     ) {
-        self.markdown.prepare(row, text, cx);
+        self.markdown.prepare(row, text, source_len, cx);
     }
     pub(super) fn markdown(&self, row: usize) -> Option<&Entity<TextViewState>> {
         self.markdown.state(row)
@@ -246,8 +253,8 @@ impl MessageList {
     pub(super) fn has_preview(&self, key: &ImageKey) -> bool {
         self.pipeline.contains_key(key)
     }
-    pub(super) fn request_preview(&mut self, key: ImageKey) -> Option<PreviewTicket> {
-        self.pipeline.request(key)
+    pub(super) fn request_preview(&mut self, source: PreviewSource) -> Option<PreviewTicket> {
+        self.pipeline.request(source)
     }
     pub(super) fn install_preview_task(&mut self, ticket: PreviewTicket, task: Task<()>) {
         self.pipeline.install_task(ticket, task);
@@ -257,7 +264,7 @@ impl MessageList {
         binding: &ActiveListBinding,
         ticket: PreviewTicket,
         row: Option<usize>,
-        image: Option<Arc<Image>>,
+        image: Option<CompletedPreview>,
         cx: &mut Context<AgentPanel>,
     ) -> bool {
         if !self.current(binding) || !self.pipeline.complete(ticket, image) {
@@ -271,8 +278,11 @@ impl MessageList {
     pub(super) fn inspector(&self) -> Arc<dyn ImageInspector> {
         self.pipeline.inspector()
     }
-    pub(super) fn thumbnailer(&self) -> Arc<dyn ImageThumbnailer> {
-        self.pipeline.thumbnailer()
+    pub(super) fn image_deps(&self) -> crate::ImageDeps {
+        self.pipeline.image_deps()
+    }
+    pub(super) fn admit_image_work(&self) -> Option<crate::image_deps::ImageWorkPermit> {
+        self.pipeline.admit_work()
     }
     pub(super) fn scroller(&self, cx: &mut Context<AgentPanel>) -> MessageScroller {
         MessageScroller::new(

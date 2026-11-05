@@ -27,13 +27,15 @@ use policy::Policy;
 /// Cargo feature that builds the user-plugin track; the real build, not `--all-features`.
 const FEATURE: &str = "nocterm/user-plugins";
 
-pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
+pub(crate) fn check(
+    root: &Path,
+    modules: &[ratchet::Module],
+    symbols: &ratchet::Symbols,
+) -> anyhow::Result<()> {
     let policy = Policy::read(&root.join("xtask/architecture-policy.toml"))?;
     let featured = Graph::read(root, &["--features", FEATURE])?;
     let default = Graph::read(root, &[])?;
-    let modules = ratchet::load_modules(root)?;
-    let symbols = ratchet::Symbols::new(&modules);
-    let gpui = if source::needs_gpui(&policy, &modules) {
+    let gpui = if source::needs_gpui(&policy, modules) {
         gpui::receiver_methods(&featured.package_directory(&policy.gpui)?.join("src"))?
     } else {
         BTreeSet::new()
@@ -59,7 +61,7 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
             &normal::workspace_tree(root)?,
         ));
     }
-    problems.extend(source::problems(&policy, &modules, &symbols, &gpui)?);
+    problems.extend(source::problems(&policy, modules, symbols, &gpui)?);
     if !problems.is_empty() {
         bail!(
             "plugin isolation violations:\n  {}",

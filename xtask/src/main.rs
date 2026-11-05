@@ -87,8 +87,8 @@ fn main() -> anyhow::Result<()> {
             architecture(root)?;
             lint_policy::check(root)?;
             settings_reference::check(root)?;
-            ratchet::check(root)?;
-            isolation::check(root)?;
+            let (modules, symbols) = ratchet::check(root)?;
+            isolation::check(root, &modules, &symbols)?;
             file_size::check(root)?;
             crate_cards::check(root)?;
             report_early_warnings(root)
@@ -403,15 +403,30 @@ pub(crate) fn reference_header(title: &str) -> String {
 }
 
 pub(crate) fn source_files(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+    collect_source_files(directory, files)?;
+    files.sort();
+    Ok(())
+}
+
+fn collect_source_files(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
     for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            source_files(&path, files)?;
+        let entry = entry?;
+        let path = entry.path();
+        let kind = entry.file_type()?;
+        if kind.is_symlink() && path.is_dir() {
+            bail!(
+                "source directories must not be symlinks: {}",
+                path.display()
+            );
+        }
+        if kind.is_dir() {
+            if !matches!(entry.file_name().to_str(), Some("target" | ".git")) {
+                collect_source_files(&path, files)?;
+            }
         } else if path.extension().is_some_and(|extension| extension == "rs") {
             files.push(path);
         }
     }
-    files.sort();
     Ok(())
 }
 

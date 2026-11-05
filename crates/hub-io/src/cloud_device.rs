@@ -1,5 +1,5 @@
 //! The device side of Cloud chats, run on the contract's sans-I/O device core
-//! (`nocterm-cloud-device`, ADR 0136).
+//! (`nocterm-cloud-device`, ADR 0144).
 //!
 //! The core decides everything a device does: hub trust, verification, the transcript, the
 //! commands and the order of the steps. This module only performs the effects a flow asks for

@@ -16,7 +16,7 @@ pub(super) struct ConversationSurface {
     pending: Option<PendingInput>,
     /// The key the history column lists this conversation under, when it lists it.
     origin: Option<String>,
-    /// The Servers control of a source that binds servers (a Cloud chat, ADR 0139).
+    /// The Servers control of a source that binds servers (a Cloud chat, ADR 0147).
     servers: Option<gpui_kit::Entity<super::cloud_servers::CloudServersControl>>,
 }
 struct PendingInput {

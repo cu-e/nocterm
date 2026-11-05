@@ -1,4 +1,4 @@
-# 0136. The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter
+# 0144. The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter
 
 Status: accepted. Supersedes the parts of earlier decisions that place device-side Cloud chat
 logic in this workspace: the `nocterm-cloud-model::projection` placement and its replay,

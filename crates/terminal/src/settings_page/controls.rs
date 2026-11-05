@@ -1,15 +1,7 @@
 use super::PageState;
 use gpui_kit::{
-    AnyElement, App, Context, SharedString, TestSupportExt as _,
-    component::{
-        Disableable as _, Selectable as _, Sizable as _,
-        button::{Button, ButtonVariants as _},
-        h_flex,
-        switch::Switch,
-        v_flex,
-    },
-    prelude::*,
-    rems,
+    AnyElement, App, Context, SharedString,
+    component::{Disableable as _, switch::Switch},
 };
 use nocterm_settings::SettingsSection;
 use nocterm_ui::form;
@@ -23,7 +15,7 @@ pub(crate) fn toggle<S: SettingsSection, P: PageState>(
     Switch::new(id)
         .checked(checked)
         .disabled(disabled)
-        .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+        .on_change(cx.listener(move |this, checked: &bool, _, cx| {
             let checked = *checked;
             this.save(move |settings| set(settings, checked), cx);
         }))
@@ -35,20 +27,9 @@ pub(crate) fn choices<S: SettingsSection, T: Copy + PartialEq + 'static, P: Page
     set: fn(&mut S, T),
     cx: &mut Context<P>,
 ) -> AnyElement {
-    h_flex()
-        .gap_1()
-        .children(options.iter().enumerate().map(|(index, (label, value))| {
-            let value = *value;
-            Button::new((id, index))
-                .small()
-                .ghost()
-                .label(*label)
-                .selected(current == value)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.save(move |settings| set(settings, value), cx)
-                }))
-        }))
-        .into_any_element()
+    form::choices(id, current, options, |value| {
+        cx.listener(move |this, _, _, cx| this.save(move |settings| set(settings, value), cx))
+    })
 }
 pub(crate) fn text_row<P: PageState>(
     view: &P,
@@ -57,18 +38,7 @@ pub(crate) fn text_row<P: PageState>(
     description: impl Into<SharedString>,
     cx: &App,
 ) -> AnyElement {
-    let field = view.field(key);
-    gpui_kit::div()
-        .id(SharedString::from(format!("settings-field-{key}")))
-        .test_support()
-        .child(form::stacked_row(
-            label,
-            description,
-            field.input(),
-            field.error(cx),
-            cx,
-        ))
-        .into_any_element()
+    form::text_field(view.field(key), key, label, description, cx)
 }
 pub(crate) fn short_row<P: PageState>(
     view: &P,
@@ -77,21 +47,5 @@ pub(crate) fn short_row<P: PageState>(
     description: impl Into<SharedString>,
     cx: &App,
 ) -> AnyElement {
-    let field = view.field(key);
-    let row = form::row(
-        label,
-        description,
-        gpui_kit::div().w(rems(10.)).child(field.input()),
-        cx,
-    );
-    match field.error(cx) {
-        Some(error) => v_flex()
-            .id(SharedString::from(format!("settings-error-{key}")))
-            .aria_label(error.clone())
-            .test_support()
-            .child(row)
-            .child(form::error_text(error, cx))
-            .into_any_element(),
-        None => row,
-    }
+    form::short_field(view.field(key), key, label, description, cx)
 }

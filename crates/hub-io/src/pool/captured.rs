@@ -28,7 +28,7 @@ impl CapturedClient {
     pub(crate) fn current(pool: Arc<Pool>, hub: HubId) -> Result<Self, HubError> {
         let subject = pool.current(&hub).ok_or(HubError::NotSignedIn)?;
         let client = pool.captured(&hub, &subject)?;
-        let owner = pool.accounts.slot(&hub).ok().and_then(|slot| {
+        let owner = pool.accounts.loaded_slot(&hub).and_then(|slot| {
             let keys = slot.open()?;
             (keys.keyset().account_id() == subject.account()).then(|| KeyOwner {
                 slot: Arc::downgrade(&slot),
@@ -105,19 +105,7 @@ impl CapturedClient {
         &self,
         future: impl std::future::Future<Output = T>,
     ) -> Result<T, HubError> {
-        let mut future = std::pin::pin!(future);
-        std::future::poll_fn(|cx| {
-            if let Err(error) = self.check() {
-                return std::task::Poll::Ready(Err(error));
-            }
-            match future.as_mut().poll(cx) {
-                std::task::Poll::Pending => std::task::Poll::Pending,
-                std::task::Poll::Ready(value) => {
-                    std::task::Poll::Ready(self.check().map(|()| value))
-                }
-            }
-        })
-        .await
+        crate::checked::during(|| self.check(), future).await
     }
     /// No implicit network refresh. Ordinary native authentication owns refresh
     /// of these shared credentials; this access cannot retarget another login.
@@ -135,19 +123,7 @@ impl CapturedClient {
         &self,
         future: impl std::future::Future<Output = T>,
     ) -> Result<T, HubError> {
-        let mut future = std::pin::pin!(future);
-        std::future::poll_fn(|cx| {
-            if let Err(error) = self.check_cloud() {
-                return std::task::Poll::Ready(Err(error));
-            }
-            match future.as_mut().poll(cx) {
-                std::task::Poll::Pending => std::task::Poll::Pending,
-                std::task::Poll::Ready(value) => {
-                    std::task::Poll::Ready(self.check_cloud().map(|()| value))
-                }
-            }
-        })
-        .await
+        crate::checked::during(|| self.check_cloud(), future).await
     }
     pub(crate) async fn fresh(&self) -> Result<HubClient, HubError> {
         self.check()?;

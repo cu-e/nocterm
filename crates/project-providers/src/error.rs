@@ -110,6 +110,10 @@ pub enum EnvironmentError {
         "distribution package installation requires root; choose a managed numeric version instead"
     )]
     PrivilegeRequired,
+    #[error(
+        "Eight managed releases are retained for this tool. Remove unused install.* directories under ~/.local/share/nocterm/toolchains/<tool>/releases before retrying; running shells may still need older releases."
+    )]
+    RetainedReleasesFull,
     #[error("the user's managed tool directory is not writable or has unsafe links")]
     ReadOnlyHome,
     #[error("environment operation was canceled")]

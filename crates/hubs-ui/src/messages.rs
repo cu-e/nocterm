@@ -38,6 +38,7 @@ pub(crate) fn hubs_problem(error: &HubsError) -> String {
 pub(crate) fn admin_key_problem(error: AdminKeyError) -> String {
     match error {
         AdminKeyError::Stale => "The account changed. Compare the key shown for the current account again.".to_owned(),
+        AdminKeyError::Persistence { .. } => "The confirmation could not be saved. Try again.".to_owned(),
         AdminKeyError::Locked => {
             "The account keys are closed on this device. Unlock the vault first.".to_owned()
         }
@@ -132,6 +133,13 @@ pub(crate) fn agent_problem(error: &nocterm_hubs_model::AgentAccessError) -> Str
             "The server's authorized_keys changed while it was edited. Nothing was written; try again."
                 .to_owned()
         }
+        Error::HostEditLocked { path } => format!(
+            "Another Nocterm edit may be running. Retry when it finishes. If an edit was interrupted, stop all Nocterm edits before removing the lock file {path}. You can also use Copy CA line to edit authorized_keys by hand."
+        ),
+        Error::HostEditUnsupported { .. } => {
+            "The server cannot safely publish this edit automatically. Use Copy CA line to add it by hand."
+                .to_owned()
+        }
         Error::HostUnsupported => {
             "The server's authorized_keys cannot be edited here. Add or remove the line by hand."
                 .to_owned()
@@ -161,5 +169,17 @@ mod tests {
             hub_problem(&HubError::InvalidCredentials),
             "The user name or password was not accepted."
         );
+    }
+
+    #[test]
+    fn only_a_confirmed_edit_lock_shows_the_exact_manual_recovery_path() {
+        use nocterm_hubs_model::AgentAccessError;
+        let path = "/home/deploy/.ssh/.nocterm-authorized_keys.lock";
+        let message = agent_problem(&AgentAccessError::HostEditLocked { path: path.into() });
+        assert!(message.contains(path));
+        assert!(message.contains("stop all Nocterm edits"));
+        assert!(message.contains("Copy CA line"));
+        assert!(!agent_problem(&AgentAccessError::HostChanged).contains("lock file"));
+        assert!(!agent_problem(&AgentAccessError::HostUnsupported).contains("lock file"));
     }
 }

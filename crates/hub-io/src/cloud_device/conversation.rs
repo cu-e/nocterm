@@ -10,7 +10,7 @@
 //! quit is kept in the [`Outbox`] and resumed when its chat is read again: its pending row shows
 //! again and the same bytes are published, with a receipt probe.
 //!
-//! A chat bound to servers (ADR 0139) answers its runner's certificate requests while it is
+//! A chat bound to servers (ADR 0147) answers its runner's certificate requests while it is
 //! read and the account is unlocked; the core certifies only inside the binding.
 use super::account::DeviceAccount;
 use super::checkpoints::{AccountPlace, Checkpoints, chat_file};
@@ -49,7 +49,7 @@ pub(crate) struct ChatSetup {
     pub(crate) model: Option<ModelChoice>,
     /// The managed agent whose seat serves the chat; its seat is woken before each command.
     pub(crate) wake: Option<String>,
-    /// The servers of the account's CA registry, for binding the chat (ADR 0139).
+    /// The servers of the account's CA registry, for binding the chat (ADR 0147).
     pub(crate) servers: Option<Arc<dyn ServerDirectory>>,
 }
 impl std::fmt::Debug for dyn ServerDirectory {
@@ -312,7 +312,7 @@ struct Reading {
     chat: OpenChat,
     device: DeviceIdentity,
     deliveries: Vec<(u32, Deliver)>,
-    /// Binding and certificate flows (ADR 0139).
+    /// Binding and certificate flows (ADR 0147).
     servers: ServerFlows,
     next_slot: u32,
     effects: Effects<u32>,

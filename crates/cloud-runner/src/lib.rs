@@ -34,13 +34,13 @@
 //! bytes while unconfirmed; no chat key needed). Journal v8 keeps one SSH row per chat
 //! (ChatSshKeys): binding, open certificate request, certificate and the per-chat Ed25519
 //! subject seed, sealed by the chat's journal cipher under its own class since v9 (the
-//! v8 to v9 upgrade drops rows sealed as effects, ADR 0139); versions 5 to 8 are upgraded
+//! v8 to v9 upgrade drops rows sealed as effects, ADR 0147); versions 5 to 8 are upgraded
 //! in order. CoordinatorSsh admits bindings, certificates and revocations, renews at 80 %,
 //! ends access at expiry, journals SshCertificateRequested/SshAccessState events and lends
-//! sessions the in-memory key and certificate (ChatSshCredentials, ADR 0137).
+//! sessions the in-memory key and certificate (ChatSshCredentials, ADR 0145).
 //! CoordinatorSummaries derives each chat's summary from its committed records (the
 //! first sweep backfills from the whole journal) and publishes due revisions through an
-//! injected ChatSummaryDirectory from the delivery sweep (ADR 0135).
+//! injected ChatSummaryDirectory from the delivery sweep (ADR 0143).
 //! Initial sessions use an injected native broker. Durable Established precedes
 //! actual physical publication, current-source/writer activation and original-run
 //! wake. Native recovery restores descriptions as Lost; no receipt restores live

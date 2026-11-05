@@ -3,7 +3,8 @@
 //! A hub window shows the account of one hub: its own and its organizations' connections, kept
 //! in an in-memory mirror that replicates with the hub, and the account's vault. Everything of
 //! one hub is built once and shared by all of its windows ([`HubSource`]); closing a window
-//! never takes it away. This module is the only place that names the encrypted account data
+//! never takes it away. Removing a hub evicts its retained installation; existing windows
+//! retain a retired, empty source until their workspace is released. This module is the only place that names the encrypted account data
 //! ([`HubAccounts`]); the windows get plain installations.
 mod agent;
 mod follow;
@@ -19,7 +20,7 @@ use nocterm_connections_store::ProfileReplication;
 use nocterm_core::error::SharedCause;
 use nocterm_hubs::Hubs;
 use nocterm_hubs_model::{HubError, HubId, source_identity::LocalAccountSourceFactory as _};
-use nocterm_store::{ShutdownCoordinator, SnapshotWriter};
+use nocterm_store::SnapshotWriter;
 use nocterm_vault::VaultAccess;
 
 use follow::Follow;
@@ -141,7 +142,7 @@ pub(crate) struct HubSources {
     /// The terminal capability of this device, which a hub's credentials are added to.
     terminal: nocterm_terminal::Installed,
     ready: nocterm_ui::UiReady,
-    shutdown: ShutdownCoordinator,
+    _membership: gpui_kit::Subscription,
     sources: HashMap<HubId, HubSource>,
 }
 
@@ -152,15 +153,24 @@ impl HubSources {
         inputs: nocterm_connections::ConnectionInputs,
         terminal: nocterm_terminal::Installed,
         ready: nocterm_ui::UiReady,
-        shutdown: ShutdownCoordinator,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let membership = cx.observe(&hubs, |this, hubs, cx| {
+            this.sources.retain(|hub, source| {
+                if hubs.read(cx).summary(hub).is_some() {
+                    return true;
+                }
+                source._follow.update(cx, |follow, cx| follow.retire(cx));
+                false
+            });
+        });
         Self {
             accounts,
             hubs,
             inputs,
             terminal,
             ready,
-            shutdown,
+            _membership: membership,
             sources: HashMap::new(),
         }
     }
@@ -181,6 +191,9 @@ impl HubSources {
         runtime: nocterm_agent_runtime::RuntimeHandle,
         cx: &mut Context<Self>,
     ) -> Result<HubSource, HubError> {
+        if self.hubs.read(cx).summary(hub).is_none() {
+            return Err(HubError::NotSignedIn);
+        }
         if let Some(source) = self.sources.get(hub) {
             return Ok(source.clone());
         }
@@ -283,9 +296,6 @@ impl HubSources {
         let writer: SnapshotWriter<ReplicaState> = Arc::new(|_| Box::pin(async { Ok(()) }));
         let document =
             cx.new(|_| ProfileReplication::state_document(ReplicaState::default(), writer));
-        if let Err(error) = self.shutdown.register(&document) {
-            tracing::error!(%error, "shutdown registration failed");
-        }
         let store = connections.connections().clone();
         cx.new(|cx| ProfileReplication::new(store, document, cx))
     }

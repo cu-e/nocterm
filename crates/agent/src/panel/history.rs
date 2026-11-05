@@ -475,7 +475,7 @@ impl HistoryProjection {
             when.push_str(" · ");
             when.push_str(state);
         }
-        // The servers the chat is bound to, as its summary lists them (ADR 0139).
+        // The servers the chat is bound to, as its summary lists them (ADR 0147).
         if !summary.servers.is_empty() {
             when.push_str(" · on ");
             when.push_str(&summary.servers.join(", "));

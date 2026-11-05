@@ -172,6 +172,10 @@ impl TerminalView {
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
                 this.focus_changed(false, cx);
             }),
+            cx.observe_window_activation(window, |this, window, cx| {
+                this.cursor.set_active(window.is_window_active());
+                this.sync_cursor_clock(cx);
+            }),
         ];
 
         Self {
@@ -179,7 +183,7 @@ impl TerminalView {
             input: Default::default(),
             focus_handle,
             cache: Default::default(),
-            cursor: cursor::CursorClock::new(cx),
+            cursor: cursor::CursorClock::new(window.is_window_active(), cx),
             pointer: Default::default(),
             secret: None,
             find: None,
@@ -354,6 +358,7 @@ impl TerminalView {
                 .update(cx, |terminal, cx| terminal.retrieve_credential(cx));
         }
         self.wake_cursor(cx);
+        self.sync_cursor_clock(cx);
     }
 
     pub(crate) fn cursor_visible(&self) -> bool {
@@ -378,6 +383,15 @@ impl TerminalView {
         if self.cursor.wake(cx.background_executor().now()) {
             cx.notify();
         }
+    }
+    pub(crate) fn sync_cursor_clock(&mut self, cx: &mut Context<Self>) {
+        let blinking = self
+            .cache
+            .frame()
+            .cursor
+            .is_some_and(|cursor| cursor.blinking);
+        let running = self.input.focused() && blinking && self.terminal.read(cx).is_connected();
+        self.cursor.set_running(running, cx);
     }
 
     fn pointer_host(&self) -> pointer::PointerHost {

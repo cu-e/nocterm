@@ -10,6 +10,7 @@ use nocterm_store::test_support::{WriteLog, gated_writer};
 use std::sync::Mutex;
 
 mod conflicts;
+mod feed;
 mod lifecycle;
 mod spaces;
 

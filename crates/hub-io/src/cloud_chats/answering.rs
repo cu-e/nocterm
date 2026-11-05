@@ -1,4 +1,4 @@
-//! Keeps the bound Cloud chats of each hub read while the account is unlocked (ADR 0139).
+//! Keeps the bound Cloud chats of each hub read while the account is unlocked (ADR 0147).
 //!
 //! A chat whose runner lists bound servers in its summary is opened and subscribed to; its
 //! reading task then answers each certificate request the runner publishes, with the device

@@ -47,7 +47,7 @@ fn actual_root_catalog_builder_propagates_typed_registration_errors_without_fact
 ) {
     cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        let installed = Installed::new(settings);
+        let installed = settings;
         let called = Rc::new(Cell::new(0));
         let duplicate = SettingsPages::new(
             installed.clone(),
@@ -77,7 +77,7 @@ fn ordinary_and_startup_catalogs_keep_their_distinct_guests_and_per_item_instanc
         gpui_kit::init(cx);
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
         nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
-        let installed = Installed::new(settings);
+        let installed = settings;
         let pages = SettingsPages::new(
             installed.clone(),
             builtins(called.clone()),
@@ -131,7 +131,7 @@ fn only_the_ordinary_appearance_hosts_the_sections_the_application_supplies(
         gpui_kit::init(cx);
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
         nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
-        let installed = Installed::new(settings);
+        let installed = settings;
         let section =
             nocterm_ui::EmbeddedPageSpec::new("layout", "Status bar and panels", |_, cx| {
                 cx.new(|cx| Page {
@@ -177,7 +177,7 @@ fn catalog_keeps_the_real_keymap_page_alive_without_a_booted_fixture_handle(
         gpui_kit::init(cx);
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
         nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
-        let installed = Installed::new(settings);
+        let installed = settings;
         let pages = {
             let keymap = crate::keymap::load(None, cx);
             SettingsPages::new(
@@ -220,14 +220,14 @@ fn another_vault_page_replaces_the_vault_page_and_keeps_every_other_page(cx: &mu
                 .collect::<Vec<_>>()
         };
         let with_vault = SettingsPages::new(
-            Installed::new(settings.clone()),
+            settings.clone(),
             builtins(called.clone()),
             guests(vec![spec("keymap", called.clone())]),
             Some(spec("vault", called.clone())),
         )
         .unwrap();
         let without_vault = SettingsPages::new(
-            Installed::new(settings),
+            settings,
             builtins(called.clone()),
             guests(vec![spec("keymap", called.clone())]),
             None,

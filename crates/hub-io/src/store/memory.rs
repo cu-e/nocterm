@@ -1,7 +1,7 @@
 //! An in-memory hub store for tests: versions, conflicts, tombstones and change streams as the
 //! hub keeps them, and an offline switch.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -28,6 +28,8 @@ struct Held {
     keyset: Option<v1::AccountKeyset>,
     memberships: Vec<v1::Membership>,
     read_only: HashSet<String>,
+    scripted_changes: VecDeque<v1::ChangeBatch>,
+    change_calls: usize,
 }
 
 /// One account's collections on a pretend hub.
@@ -53,6 +55,13 @@ pub(crate) enum StoreBoundary {
 }
 
 impl MemoryHub {
+    pub(crate) fn script_changes(&self, pages: Vec<v1::ChangeBatch>) {
+        self.held().scripted_changes = pages.into();
+    }
+
+    pub(crate) fn change_calls(&self) -> usize {
+        self.held().change_calls
+    }
     /// Returns (entered, release). The next matching operation pauses once.
     pub(crate) fn pause_next(&self, at: StoreBoundary) -> (Gate, Gate) {
         self.pause_outcome(at, None)
@@ -471,7 +480,12 @@ impl StoreOps for MemoryHub {
         let id = collection_id.to_owned();
         Box::pin(async move {
             self.reach()?;
-            let batch = {
+            let scripted = {
+                let mut held = self.held();
+                held.change_calls += 1;
+                held.scripted_changes.pop_front()
+            };
+            let batch = scripted.unwrap_or_else(|| {
                 let held = self.held();
                 let mut changes: Vec<_> = held
                     .objects
@@ -490,7 +504,7 @@ impl StoreOps for MemoryHub {
                     head: held.heads.get(&id).copied().unwrap_or(0),
                     more: false,
                 }
-            };
+            });
             self.boundary(StoreBoundary::ChangesReady).await?;
             Ok(batch)
         })

@@ -22,15 +22,15 @@
 //! ChatSummaryFacts/ChatSummaryTracker reduce journaled observations of one chat to its
 //! neutral summary, revision ledger and publication cadence; ChatSummaryJournal and
 //! ChatSummaryDirectory are the runner journal's summary rows and its signed directory
-//! (ADR 0135). A summary admits, grants or proves nothing.
+//! (ADR 0143). A summary admits, grants or proves nothing.
 //! ChatSshAccess admits a chat's CA-signed SSH binding to the servers this runner may
 //! reach, asks devices for per-chat user certificates, accepts one only for its open
-//! request, key and servers, and ends access on revocation or expiry (ADR 0137). A run's
+//! request, key and servers, and ends access on revocation or expiry (ADR 0145). A run's
 //! destination selects an admitted bound server only by the exact session access the adapter
-//! derived from the signed binding (ADR 0139). It holds public values; the subject key's
+//! derived from the signed binding (ADR 0147). It holds public values; the subject key's
 //! custody belongs to the runner journal.
 //! This crate is the runner's domain only: what a device shows of a chat is the contract
-//! device core's transcript, mapped to `nocterm-cloud-conversation-model` (ADR 0136).
+//! device core's transcript, mapped to `nocterm-cloud-conversation-model` (ADR 0144).
 //! Ports used: neutral AI content,
 //! tool calls and tool presentation;
 //! hubs-model captured descriptive hub/account identities.

@@ -1,6 +1,6 @@
 //! The runner's side of its provider boot: the sticky clock its announcements are checked
 //! against and the bound of one announcement. Devices verify a boot and seal a lease to it
-//! with the contract device core (`ProviderLease`, ADR 0136).
+//! with the contract device core (`ProviderLease`, ADR 0144).
 use nocterm_cloud_model::identity::Timestamp;
 use nocterm_core::allocation::AllocationLease;
 use nocterm_hub_model::cloud::provider::{SignedBootDescriptor, VerifiedBootDescriptor};

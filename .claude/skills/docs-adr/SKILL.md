@@ -47,6 +47,8 @@ Status: accepted
 
 Add a row to `docs/adr/README.md` (`| [NNNN](NNNN-slug.md) | <sentence> |`).
 Accepted records are never edited; a later record supersedes them and says so.
+For supersession, link both directions in the mutable index and name which
+parts changed, so readers can find the current rule without reading all history.
 No session status, dates of work, or "implemented by" notes.
 
 ## 3. Cards and notes

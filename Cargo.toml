@@ -172,6 +172,8 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+nocterm-plugin-ports = { workspace = true, features = ["test-support"] }
+nocterm-connections-store = { workspace = true, features = ["test-support"] }
 async-io.workspace = true
 nocterm-monitor.workspace = true
 nocterm-window-layout.workspace = true
@@ -276,6 +278,7 @@ nocterm-layout-ui = { path = "crates/layout-ui" }
 nocterm-local = { path = "crates/local" }
 nocterm-localfs = { path = "crates/localfs" }
 nocterm-monitor = { path = "crates/monitor" }
+nocterm-monitor-service = { path = "crates/monitor-service" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
 nocterm-plugin-abi = { path = "crates/plugin-abi" }
 nocterm-plugin-wasm = { path = "crates/plugin-wasm" }
@@ -316,6 +319,7 @@ nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "edd7d0
 agent-client-protocol = "=2.2.0"
 agent-client-protocol-schema = { version = "=1.9.1", features = ["unstable_session_fork", "unstable_end_turn_token_usage"] }
 base64 = "0.22"
+hex = "0.4.3"
 async-io = "2"
 async-process = "2"
 

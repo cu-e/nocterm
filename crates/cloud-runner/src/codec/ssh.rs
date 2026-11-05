@@ -1,6 +1,6 @@
 //! Native form of a chat's SSH binding offer, shared by its command record and its
-//! journal SSH row (ADR 0137). The signed contract bytes are kept as they arrived. Each
-//! target's session access (ADR 0139) is absent in records written before it existed.
+//! journal SSH row (ADR 0145). The signed contract bytes are kept as they arrived. Each
+//! target's session access (ADR 0147) is absent in records written before it existed.
 use nocterm_cloud_model::{
     authority::{AuthenticationBinding, TargetBinding},
     coordinator::{GrantClass, GrantReference},

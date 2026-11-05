@@ -2,10 +2,10 @@
 //!
 //! An SSH target signs in with a device's one-use consent proof or, without one, with
 //! the chat's in-memory key and the certificate a device issued for that bound server
-//! (ADR 0137). Without an active certificate such a request waits for a device.
+//! (ADR 0145). Without an active certificate such a request waits for a device.
 //!
 //! A run may also name a bound server by the session access its binding defines (ADR
-//! 0139). It selects the admitted server of the chat's binding with exactly that access,
+//! 0147). It selects the admitted server of the chat's binding with exactly that access,
 //! then a connector with that server's host, port, user and host key: a configured SSH
 //! target or a managed boot v3 target with a host key. It signs in only with the chat's
 //! certificate.
@@ -166,12 +166,12 @@ impl ConfiguredSessionTargets {
             credentials: None,
         })
     }
-    /// Lets bound servers that are managed boot targets be signed in to (ADR 0139).
+    /// Lets bound servers that are managed boot targets be signed in to (ADR 0147).
     pub(crate) fn with_boot_targets(mut self, boot: Vec<BootConnector>) -> Self {
         self.boot = boot;
         self
     }
-    /// Lets SSH targets sign in with the chats' certificates (ADR 0137).
+    /// Lets SSH targets sign in with the chats' certificates (ADR 0145).
     pub(crate) fn with_credentials(mut self, credentials: Arc<dyn ChatSshCredentials>) -> Self {
         self.credentials = Some(credentials);
         self

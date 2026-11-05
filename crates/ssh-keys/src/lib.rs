@@ -4,7 +4,7 @@
 //! Owns: bounded initial host proof and exact Ed25519 userauth action validation;
 //! a purpose-specific device login key can sign only a checked SSH login action.
 //! Owns: the `authorized_keys` access ports ([`authorized_keys`]). The account's agent CA and
-//! its certificates are the contract's (`nocterm_keys::agents::ssh_ca`, ADR 0139); the
+//! its certificates are the contract's (`nocterm_keys::agents::ssh_ca`, ADR 0147); the
 //! `testing::ca` signer only lets SSH tests issue certificates without the contract.
 //! Does not own: consent, entropy, files, the vault, SSH connections or any view.
 //! Ports provided: VaultSshKeys (implemented by the application over the vault);

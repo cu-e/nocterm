@@ -6,12 +6,14 @@ use std::{
 };
 
 use gpui::WindowId;
+use nocterm_plugin_api::LocalId;
 use nocterm_plugin_api::{HostError, Observed};
 use nocterm_plugin_model::PluginId;
 
 use crate::caps::{MAX_RENDERS_PER_SECOND, OBSERVE_EVERY, OBSERVE_EVERY_FOCUSED};
 
 type Sample = Result<Observed, HostError>;
+const MAX_SAMPLES: usize = 4_096;
 
 /// What was last read for a plugin in a window, and when.
 #[derive(Default)]
@@ -24,9 +26,47 @@ struct Samples {
 pub(crate) struct Cadence {
     samples: Samples,
     renders: VecDeque<Instant>,
+    waiting: VecDeque<((WindowId, PluginId, LocalId), Instant)>,
 }
 
 impl Cadence {
+    /// Retrying contributions take turns across windows; a hidden/dropped caller cannot hold
+    /// the queue after two seconds without a retry. The global render cap remains unchanged.
+    pub(crate) fn admit_contribution(
+        &mut self,
+        call: &crate::Call,
+        now: Instant,
+    ) -> Result<(), u32> {
+        self.waiting
+            .retain(|(_, seen)| now.saturating_duration_since(*seen) < Duration::from_secs(2));
+        let key = (call.window, call.plugin.clone(), call.local.clone());
+        if let Some((_, seen)) = self.waiting.iter_mut().find(|(waiting, _)| *waiting == key) {
+            *seen = now;
+        }
+        if self.waiting.front().is_some_and(|(first, _)| *first != key) {
+            self.wait_for(key, now);
+            return Err(100);
+        }
+        match self.admit_render(now) {
+            Ok(()) => {
+                if self.waiting.front().is_some_and(|(first, _)| *first == key) {
+                    self.waiting.pop_front();
+                }
+                Ok(())
+            }
+            Err(wait) => {
+                self.wait_for(key, now);
+                Err(wait)
+            }
+        }
+    }
+    fn wait_for(&mut self, key: (WindowId, PluginId, LocalId), now: Instant) {
+        if !self.waiting.iter().any(|(waiting, _)| *waiting == key)
+            && self.waiting.len() < MAX_SAMPLES
+        {
+            self.waiting.push_back((key, now));
+        }
+    }
     /// The last sample if it is younger than the cadence, else a fresh one from `read`.
     ///
     /// A plugin cannot ask faster than the cadence: the answer between two samples is the
@@ -50,6 +90,17 @@ impl Cadence {
             return sample.clone();
         }
         let sample = read();
+        if !self.samples.cache.contains_key(&key) && self.samples.cache.len() >= MAX_SAMPLES {
+            let oldest = self
+                .samples
+                .cache
+                .iter()
+                .min_by_key(|(_, (at, _))| at)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                self.samples.cache.remove(&oldest);
+            }
+        }
         self.samples.cache.insert(key, (now, sample.clone()));
         sample
     }
@@ -75,9 +126,17 @@ impl Cadence {
     }
 
     pub(crate) fn forget(&mut self, plugin: &PluginId) {
+        self.waiting.retain(|((_, owner, _), _)| owner != plugin);
         self.samples
             .cache
             .retain(|(_, owner, _), _| owner != plugin);
+    }
+
+    pub(crate) fn release_window(&mut self, window: WindowId) {
+        self.waiting.retain(|((owner, _, _), _)| *owner != window);
+        self.samples
+            .cache
+            .retain(|(owner, _, _), _| *owner != window);
     }
 }
 

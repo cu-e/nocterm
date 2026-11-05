@@ -22,6 +22,8 @@ pub(super) struct ThemeBrowser {
     busy: bool,
     error: Option<SharedString>,
     search: Option<Task<()>>,
+    request: Option<Task<()>>,
+    pending: Option<(String, u64)>,
     generation: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -46,6 +48,8 @@ impl ThemeBrowser {
             busy: false,
             error: None,
             search: None,
+            request: None,
+            pending: None,
             generation: 0,
             _subscriptions: subscriptions,
         }
@@ -54,12 +58,12 @@ impl ThemeBrowser {
         self.generation += 1;
         let generation = self.generation;
         self.search = None;
-        let Some(registry) = self.themes.themes().registry(cx) else {
+        if self.themes.themes().registry(cx).is_none() {
             self.error =
                 Some("Theme registry is unavailable. Add JSON files to the themes folder.".into());
             cx.notify();
             return;
-        };
+        }
         let query = if browse {
             String::new()
         } else {
@@ -68,34 +72,56 @@ impl ThemeBrowser {
         self.error = None;
         self.busy = true;
         self.searched = true;
+        if !debounce {
+            self.queue(query, generation, cx);
+            cx.notify();
+            return;
+        }
         self.search = Some(cx.spawn(async move |this, cx| {
-            if debounce {
-                cx.background_executor()
-                    .timer(Duration::from_millis(350))
-                    .await;
-            }
-            let result = cx
-                .background_executor()
-                .spawn(async move { registry.search(&query) })
+            cx.background_executor()
+                .timer(Duration::from_millis(350))
                 .await;
+            let _ = this.update(cx, |this, cx| this.queue(query, generation, cx));
+        }));
+        cx.notify();
+    }
+    fn queue(&mut self, query: String, generation: u64, cx: &mut Context<Self>) {
+        if self.generation != generation {
+            return;
+        }
+        if self.request.is_some() {
+            self.pending = Some((query, generation));
+            return;
+        }
+        let Some(registry) = self.themes.themes().registry(cx) else {
+            return;
+        };
+        let work = cx
+            .background_executor()
+            .spawn(async move { registry.search(&query) });
+        self.request = Some(cx.spawn(async move |this, cx| {
+            let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                if this.generation != generation {
-                    return;
+                this.request = None;
+                if this.generation == generation {
+                    this.busy = false;
+                    match result {
+                        Ok(results) => {
+                            this.results = results.into_iter().take(50).collect();
+                            this.error = None;
+                        }
+                        Err(error) => {
+                            this.error =
+                                Some(format!("Could not search Zed: {error}. Try again.").into())
+                        }
+                    }
                 }
-                this.busy = false;
-                match result {
-                    Ok(results) => {
-                        this.results = results.into_iter().take(50).collect();
-                        this.error = None;
-                    }
-                    Err(e) => {
-                        this.error = Some(format!("Could not search Zed: {e}. Try again.").into());
-                    }
+                if let Some((query, generation)) = this.pending.take() {
+                    this.queue(query, generation, cx);
                 }
                 cx.notify();
             });
         }));
-        cx.notify();
     }
     pub(super) fn install(&mut self, extension: ExtensionInfo, cx: &mut Context<Self>) {
         self.themes.themes().install_pack(extension, cx).detach();
