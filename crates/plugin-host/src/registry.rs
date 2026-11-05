@@ -8,9 +8,77 @@ use nocterm_plugin_api::{
 use nocterm_plugin_model::{PluginId, SettingValues, resolve};
 
 use crate::{
-    BrokenPackage, PluginDataDoc, PluginDataError, PluginRecord, RecordsDoc,
+    BrokenPackage, ManageError, PluginDataDoc, PluginDataError, PluginRecord, RecordsDoc,
     records::{AuditAction, AuditEntry, push_audit},
 };
+
+/// Original records and background-acquired package/data results, delivered together.
+pub struct RestoredPlugin {
+    record: PluginRecord,
+    package: Result<crate::PreparedPlugin, BrokenPackage>,
+    data: Result<PluginDataDoc, PluginDataError>,
+}
+impl RestoredPlugin {
+    pub fn new(
+        record: PluginRecord,
+        package: Result<crate::PreparedPlugin, BrokenPackage>,
+        data: Result<PluginDataDoc, PluginDataError>,
+    ) -> Self {
+        Self {
+            record,
+            package,
+            data,
+        }
+    }
+    pub(crate) fn restrict_enabled(&mut self) -> Option<PluginId> {
+        if !self.record.enabled {
+            return None;
+        }
+        self.record.enabled = false;
+        Some(self.record.id.clone())
+    }
+    pub(crate) fn into_installed(self) -> Installed {
+        let status = self.package.and_then(|prepared| {
+            let (package, instance) = prepared.into_parts();
+            if package.hash().to_string() != self.record.hash
+                || package.manifest().plugin().id() != &self.record.id
+            {
+                return Err(nocterm_plugin_api::PackageError::HashChanged.into());
+            }
+            let accepted: Vec<_> = self
+                .record
+                .granted_optional
+                .iter()
+                .map(String::as_str)
+                .collect();
+            let grant = Grant::consent(&package, &accepted)?;
+            let data = match self
+                .data
+                .and_then(|doc| doc.check().map(|()| doc).map_err(PluginDataError::from))
+            {
+                Ok(doc) => DataState::Loaded(doc),
+                Err(error) => DataState::Broken {
+                    error,
+                    defaults: PluginDataDoc::default(),
+                },
+            };
+            Ok(
+                Ready::new(package, grant, data).with_instance(if self.record.enabled {
+                    instance
+                } else {
+                    None
+                }),
+            )
+        });
+        Installed::new(
+            self.record,
+            match status {
+                Ok(ready) => Status::Ready(Box::new(ready)),
+                Err(error) => Status::Broken(error),
+            },
+        )
+    }
+}
 
 /// What a plugin's data file turned out to be when it was read.
 pub(crate) enum DataState {
@@ -67,6 +135,15 @@ impl Ready {
 
     pub(crate) fn stop(&mut self) {
         self.instance = None;
+    }
+
+    pub(crate) fn with_instance(mut self, instance: Option<Box<dyn PluginInstance>>) -> Self {
+        self.instance = instance;
+        self
+    }
+
+    pub(crate) fn start_prepared(&mut self, instance: Box<dyn PluginInstance>) {
+        self.instance = Some(instance);
     }
 
     pub(crate) fn faulted(&self) -> bool {
@@ -128,11 +205,16 @@ pub(crate) enum Status {
 pub(crate) struct Installed {
     record: PluginRecord,
     status: Status,
+    data_held: bool,
 }
 
 impl Installed {
     pub(crate) fn new(record: PluginRecord, status: Status) -> Self {
-        Self { record, status }
+        Self {
+            record,
+            status,
+            data_held: false,
+        }
     }
 
     pub(crate) fn record(&self) -> &PluginRecord {
@@ -239,6 +321,10 @@ impl Registry {
             .count()
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub(crate) fn audit(&mut self, plugin: &PluginId, action: AuditAction) {
         push_audit(&mut self.audit, plugin, action);
     }
@@ -258,6 +344,31 @@ impl Registry {
         self.entries.values().map(summary).collect()
     }
 
+    pub(crate) fn hold_data(&mut self, plugin: &PluginId, held: bool) -> Result<(), ManageError> {
+        self.entries
+            .get_mut(plugin)
+            .ok_or_else(|| ManageError::Unknown(plugin.clone()))?
+            .data_held = held;
+        self.touch();
+        Ok(())
+    }
+    pub(crate) fn data_held(&self, plugin: &PluginId) -> bool {
+        self.entries
+            .get(plugin)
+            .is_some_and(|installed| installed.data_held)
+    }
+    pub(crate) fn clear_data(&mut self, plugin: &PluginId) -> Result<(), ManageError> {
+        let installed = self
+            .entries
+            .get_mut(plugin)
+            .ok_or_else(|| ManageError::Unknown(plugin.clone()))?;
+        if let Some(ready) = installed.ready_mut() {
+            ready.set_data(PluginDataDoc::default());
+        }
+        self.audit(plugin, AuditAction::DataRemoved);
+        Ok(())
+    }
+
     /// The plugin if it is on and its package is the one in `hash`.
     pub(crate) fn running(
         &mut self,
@@ -265,7 +376,7 @@ impl Registry {
         hash: Option<&ContentHash>,
     ) -> Option<&mut Ready> {
         let installed = self.entries.get_mut(plugin)?;
-        if !installed.record().enabled {
+        if !installed.record().enabled || installed.data_held {
             return None;
         }
         installed.ready_mut().filter(|ready| {

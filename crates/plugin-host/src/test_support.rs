@@ -26,6 +26,7 @@ use crate::{
 pub struct MemoryRecords {
     inner: SessionRecords,
     saves: Cell<usize>,
+    refusing: Cell<bool>,
 }
 
 impl MemoryRecords {
@@ -38,6 +39,7 @@ impl MemoryRecords {
         Rc::new(Self {
             inner: SessionRecords::seeded(doc),
             saves: Cell::new(0),
+            refusing: Cell::new(false),
         })
     }
 
@@ -50,6 +52,9 @@ impl MemoryRecords {
     pub fn saves(&self) -> usize {
         self.saves.get()
     }
+    pub fn refuse_writes(&self) {
+        self.refusing.set(true);
+    }
 }
 
 impl PluginRecords for MemoryRecords {
@@ -59,6 +64,9 @@ impl PluginRecords for MemoryRecords {
 
     fn replace(&self, doc: RecordsDoc, cx: &mut App) -> Task<Result<(), RecordsError>> {
         self.saves.set(self.saves.get() + 1);
+        if self.refusing.get() {
+            return Task::ready(Err(RecordsError::Write(Cause::new(Refused))));
+        }
         self.inner.replace(doc, cx)
     }
 }
@@ -142,7 +150,7 @@ impl PluginData for MemoryData {
 /// A package store in memory. A package loads only under the hash it was published with.
 #[derive(Default)]
 pub struct MemoryPackages {
-    stored: Mutex<BTreeMap<PluginId, Package>>,
+    stored: Mutex<BTreeMap<(PluginId, ContentHash), Package>>,
     offered: Mutex<BTreeMap<String, Package>>,
 }
 
@@ -151,7 +159,7 @@ impl MemoryPackages {
         Arc::new(Self::default())
     }
 
-    fn stored(&self) -> MutexGuard<'_, BTreeMap<PluginId, Package>> {
+    fn stored(&self) -> MutexGuard<'_, BTreeMap<(PluginId, ContentHash), Package>> {
         self.stored
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -160,7 +168,9 @@ impl MemoryPackages {
     /// Puts a package in the store, as if an earlier run had published it.
     pub fn put(&self, package: &Package) {
         let id = package.manifest().plugin().id().clone();
-        self.stored().insert(id, package.clone());
+        let mut stored = self.stored();
+        stored.retain(|(plugin, _), _| *plugin != id);
+        stored.insert((id, *package.hash()), package.clone());
     }
 
     /// Makes `read` find `package` at `location`.
@@ -173,7 +183,7 @@ impl MemoryPackages {
 
     /// Whether a package of the plugin is stored.
     pub fn holds(&self, plugin: &PluginId) -> bool {
-        self.stored().contains_key(plugin)
+        self.stored().keys().any(|(id, _)| id == plugin)
     }
 }
 
@@ -190,15 +200,17 @@ impl PluginPackages for MemoryPackages {
     fn publish(&self, package: &Package, replace: bool) -> Result<(), PackageError> {
         let id = package.manifest().plugin().id().clone();
         let mut stored = self.stored();
-        if stored.contains_key(&id) && !replace {
+        if stored.keys().any(|(plugin, _)| *plugin == id) && !replace {
             return Err(PackageError::Duplicate(id));
         }
-        stored.insert(id, package.clone());
+        stored.insert((id, *package.hash()), package.clone());
         Ok(())
     }
 
     fn load(&self, plugin: &PluginId, expected: &ContentHash) -> Result<Package, PackageError> {
-        match self.stored().get(plugin) {
+        let stored = self.stored();
+        match stored.get(&(plugin.clone(), *expected)) {
+            None if stored.keys().any(|(id, _)| id == plugin) => Err(PackageError::HashChanged),
             None => Err(PackageError::NotFound),
             Some(package) if package.hash() == expected => Ok(package.clone()),
             Some(_) => Err(PackageError::HashChanged),
@@ -206,7 +218,14 @@ impl PluginPackages for MemoryPackages {
     }
 
     fn remove(&self, plugin: &PluginId) -> Result<(), PackageError> {
-        self.stored().remove(plugin);
+        self.stored().retain(|(id, _), _| id != plugin);
+        Ok(())
+    }
+
+    fn retain(&self, plugin: &PluginId, expected: &ContentHash) -> Result<(), PackageError> {
+        self.load(plugin, expected)?;
+        self.stored()
+            .retain(|(id, hash), _| id != plugin || hash == expected);
         Ok(())
     }
 }

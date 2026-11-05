@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use gpui::App;
+use gpui::{App, Task};
 use nocterm_plugin_api::capability::storage::{MAX_TOTAL, Remove, Set};
 use nocterm_plugin_model::{PluginId, SettingValue, SettingValues};
 use serde::{Deserialize, Serialize};
@@ -150,4 +150,10 @@ pub trait PluginData {
         change: PluginDataChange,
         cx: &mut App,
     ) -> Result<(), PluginDataError>;
+
+    /// Resolves after previously accepted changes of this plugin are durable. Memory-only
+    /// ports are already settled; native ports override this with their keyed writer receipt.
+    fn flush(&self, _plugin: &PluginId, _cx: &mut App) -> Task<Result<(), PluginDataError>> {
+        Task::ready(Ok(()))
+    }
 }

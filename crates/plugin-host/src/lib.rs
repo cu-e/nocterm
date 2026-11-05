@@ -13,6 +13,8 @@
 //! handling of the storage effects, and the session-only in-memory implementations of both
 //! ports (`SessionRecords`, `SessionData`), which a developer session composes so nothing is
 //! written.
+//! Owns: checked publication receipts and prepared package/runtime admission, bounded
+//! per-window samples and fair retry admission; closing a window releases its retained samples.
 //! Does not own: any provider or the `Observe`/`Apply` traits (`nocterm-plugin-ports`), the
 //! packages on disk (`PluginPackages`), a runtime, views, consent dialogs, settings forms or any
 //! settings section.
@@ -55,11 +57,11 @@ pub use error::{
     RecordsError,
 };
 pub use gesture::Input;
-pub use host::{Call, HostPorts, PluginHost};
+pub use host::{Call, HostPorts, PluginHost, PreparedPlugin};
 pub use records::{
     AuditAction, AuditEntry, MAX_AUDIT, MAX_RECORDS, PluginRecord, PluginRecords, RecordsDoc,
 };
-pub use registry::{PluginStatus, PluginSummary};
+pub use registry::{PluginStatus, PluginSummary, RestoredPlugin};
 pub use session::{SessionData, SessionRecords};
 
 #[cfg(test)]

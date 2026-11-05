@@ -132,6 +132,57 @@ fn a_new_window_has_its_own_samples(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn releasing_a_window_discards_its_samples_without_discarding_other_windows(
+    cx: &mut TestAppContext,
+) {
+    let rig = Rig::new(cx);
+    rig.installed(cx);
+    rig.render("face", cx).unwrap();
+    let mut other = rig.call("face");
+    other.window = super::rig::windows(cx)[1];
+    rig.host
+        .update(cx, |host, cx| host.render(&other, &rig.providers, cx))
+        .unwrap();
+    rig.host
+        .update(cx, |host, _| host.release_window(rig.window));
+    rig.host
+        .update(cx, |host, cx| host.render(&other, &rig.providers, cx))
+        .unwrap();
+    assert_eq!(rig.clock.reads(), 2);
+    rig.render("face", cx).unwrap();
+    assert_eq!(rig.clock.reads(), 3);
+}
+
+#[gpui::test]
+fn waiting_contributions_get_a_turn_before_a_busy_window_renders_again(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    rig.installed(cx);
+    for _ in 0..MAX_RENDERS_PER_SECOND {
+        rig.render("face", cx).unwrap();
+    }
+    let mut other = rig.call("face");
+    other.window = super::rig::windows(cx)[1];
+    assert!(matches!(
+        rig.host
+            .update(cx, |host, cx| host.render(&other, &rig.providers, cx)),
+        Err(CallError::Throttled { .. })
+    ));
+    assert!(matches!(
+        rig.render("face", cx),
+        Err(CallError::Throttled { .. })
+    ));
+    cx.executor().advance_clock(Duration::from_secs(1));
+    assert!(matches!(
+        rig.render("face", cx),
+        Err(CallError::Throttled { .. })
+    ));
+    rig.host
+        .update(cx, |host, cx| host.render(&other, &rig.providers, cx))
+        .unwrap();
+    rig.render("face", cx).unwrap();
+}
+
+#[gpui::test]
 fn renders_are_capped_across_plugins_and_come_back_each_second(cx: &mut TestAppContext) {
     let rig = Rig::new(cx);
     rig.installed(cx);
