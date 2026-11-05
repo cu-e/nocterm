@@ -1,4 +1,5 @@
-//! Journal v8 SSH rows and the migration that adds them (ADR 0137).
+//! Journal SSH rows, the v8 migration that adds them (ADR 0137) and the v9 migration that
+//! drops rows sealed under the effect class (ADR 0139).
 mod support;
 use futures::executor::block_on;
 use nocterm_cloud_model::{
@@ -83,11 +84,34 @@ fn a_version_7_journal_gains_an_empty_ssh_table_and_keeps_its_chats() {
     let version: i64 = database(root.path())
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     assert!(block_on(store.ssh_access(stream())).unwrap().is_none());
     assert!(block_on(store.ssh_streams()).unwrap().is_empty());
     let page = block_on(store.read(stream(), JournalSequence::default(), limits())).unwrap();
     assert_eq!(page.records().len(), 1);
+}
+
+#[test]
+fn a_version_8_journal_drops_its_ssh_rows_and_keeps_its_chats_and_records() {
+    let root = private_root();
+    let cipher = Arc::new(TestCipher::default());
+    let store = with_one_chat(root.path(), &cipher);
+    block_on(store.store_ssh_access(stream(), bound())).unwrap();
+    drop(store);
+    database(root.path())
+        .execute_batch("PRAGMA user_version=8")
+        .unwrap();
+    let store = journal(root.path(), cipher);
+    let version: i64 = database(root.path())
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 9);
+    assert!(block_on(store.ssh_access(stream())).unwrap().is_none());
+    assert!(block_on(store.ssh_streams()).unwrap().is_empty());
+    let page = block_on(store.read(stream(), JournalSequence::default(), limits())).unwrap();
+    assert_eq!(page.records().len(), 1);
+    block_on(store.store_ssh_access(stream(), bound())).unwrap();
+    assert!(block_on(store.ssh_access(stream())).unwrap().is_some());
 }
 
 #[test]

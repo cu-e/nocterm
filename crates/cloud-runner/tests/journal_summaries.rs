@@ -64,7 +64,7 @@ fn a_version_6_journal_gains_an_empty_summary_table_and_keeps_its_chats() {
         "DROP TABLE chat_summaries; DROP TABLE chat_ssh_keys; PRAGMA user_version=6",
     );
     let store = journal(root.path(), cipher);
-    assert_eq!(version(root.path()), 8);
+    assert_eq!(version(root.path()), 9);
     assert_eq!(summary_table(root.path()), created);
     assert_eq!(block_on(store.summary(stream())).unwrap(), None);
     let page = block_on(store.read(stream(), JournalSequence::default(), limits())).unwrap();
@@ -73,7 +73,7 @@ fn a_version_6_journal_gains_an_empty_summary_table_and_keeps_its_chats() {
 
 #[test]
 fn journals_of_other_versions_are_refused() {
-    for other in [4, 9] {
+    for other in [4, 10] {
         let root = private_root();
         let cipher = Arc::new(TestCipher::default());
         drop(with_one_chat(root.path(), &cipher));

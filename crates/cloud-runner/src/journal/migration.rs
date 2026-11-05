@@ -1,6 +1,6 @@
 //! Explicit schema upgrades of an existing journal database.
 //!
-//! Versions 5, 6 and 7 are upgraded in order, each step in its own transaction; every other
+//! Versions 5 to 8 are upgraded in order, each step in its own transaction; every other
 //! version stays `UnsupportedFormat` and needs explicit recovery.
 //!
 //! Version 5 to 6 adds `outbox.retry_until`, the promised retry horizon of a publication
@@ -15,6 +15,12 @@
 //!
 //! Version 7 to 8 adds the empty `chat_ssh_keys` table (ADR 0137): no chat had an SSH
 //! binding before it.
+//!
+//! Version 8 to 9 deletes every `chat_ssh_keys` row (ADR 0139). Version 8 sealed the row as an
+//! effect slot; version 9 seals it under its own journal class (contract journal class set 2),
+//! and a row never opens under another class. Re-sealing would need each chat's key, which an
+//! upgrade does not hold, and no v8 row has left a development machine: a chat bound on v8
+//! is bound again by its device. Every chat keeps its records.
 use crate::storage::storage;
 use nocterm_cloud_model::journal::{JournalError, OUTBOX_RETRY_WINDOW_MS};
 use rusqlite::Connection;
@@ -52,7 +58,10 @@ pub(super) fn upgrade(db: &Connection, version: i64) -> Result<(), JournalError>
     if version <= 6 {
         to_v7(db)?;
     }
-    to_v8(db)
+    if version <= 7 {
+        to_v8(db)?;
+    }
+    to_v9(db)
 }
 
 fn to_v6(db: &Connection, now_ms: i64) -> Result<(), JournalError> {
@@ -82,5 +91,13 @@ fn to_v8(db: &Connection) -> Result<(), JournalError> {
     tx.execute_batch(super::ssh_access::TABLE)
         .map_err(storage)?;
     tx.pragma_update(None, "user_version", 8).map_err(storage)?;
+    tx.commit().map_err(storage)
+}
+
+fn to_v9(db: &Connection) -> Result<(), JournalError> {
+    let tx = db.unchecked_transaction().map_err(storage)?;
+    tx.execute("DELETE FROM chat_ssh_keys", [])
+        .map_err(storage)?;
+    tx.pragma_update(None, "user_version", 9).map_err(storage)?;
     tx.commit().map_err(storage)
 }

@@ -1,8 +1,10 @@
-//! Journal v8 SSH rows: per chat its SSH binding, open certificate request, active
-//! certificate and the seed of its Ed25519 subject key (ADR 0137).
+//! Journal SSH rows (v8, sealed under their own class since v9): per chat its SSH binding,
+//! open certificate request, active certificate and the seed of its Ed25519 subject key
+//! (ADR 0137, 0139).
 //!
-//! The whole row is sealed with the chat's journal cipher, so the seed is never stored in
-//! the clear; its key epoch is kept beside it. A row sealed under an older chat key epoch
+//! The whole row is sealed with the chat's journal cipher under
+//! [`JournalStorageClass::SshAccess`], so the seed is never stored in the clear; its key
+//! epoch is kept beside it. A row sealed under an older chat key epoch
 //! no longer opens and reads as no row: the binding named the old coordinate anyway.
 use super::{DurableRunJournal, codec, head, integer, storage, unsigned};
 use crate::codec::ssh::OfferRow;
@@ -21,8 +23,7 @@ pub(super) const TABLE: &str = "CREATE TABLE chat_ssh_keys (
   body BLOB NOT NULL CHECK(length(body) BETWEEN 1 AND 131072)
 ) WITHOUT ROWID;";
 
-/// The cipher slot of the row: the contract has no SSH class, so the row is sealed as an
-/// effect slot under this id, which no random intent id takes.
+/// The cipher slot id of the row: the contract's `SSH_ACCESS_SLOT`, the one id of its class.
 const SLOT: [u8; 16] = *b"nocterm-ssh-row1";
 
 impl ChatSshKeys for DurableRunJournal {

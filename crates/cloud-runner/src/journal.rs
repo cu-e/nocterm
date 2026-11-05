@@ -91,7 +91,7 @@ impl Default for JournalLimits {
     }
 }
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 struct Driver {
     connection: Connection,

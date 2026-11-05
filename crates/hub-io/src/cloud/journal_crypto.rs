@@ -254,9 +254,8 @@ fn journal_coordinate(
         JournalStorageClass::BackgroundCommand => JournalClass::BackgroundCommand,
         JournalStorageClass::Effect => JournalClass::Effect,
         JournalStorageClass::RunHead => JournalClass::RunHead,
-        // The contract has no SSH row class yet: the runner journal seals it as an effect
-        // slot under one reserved slot id that no intent id can take (ADR 0137).
-        JournalStorageClass::SshAccess => JournalClass::Effect,
+        // Journal class set 2 (contract ADR 0011, journal v9, ADR 0139).
+        JournalStorageClass::SshAccess => JournalClass::SshAccess,
     };
     JournalCoordinate::new(
         chat,

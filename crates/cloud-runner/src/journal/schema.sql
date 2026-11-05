@@ -142,5 +142,5 @@ CREATE TABLE chat_ssh_keys (
   key_epoch INTEGER NOT NULL CHECK(key_epoch>0),
   body BLOB NOT NULL CHECK(length(body) BETWEEN 1 AND 131072)
 ) WITHOUT ROWID;
-PRAGMA user_version=8;
+PRAGMA user_version=9;
 COMMIT;
