@@ -4,18 +4,33 @@ use super::*;
 pub(super) struct CursorClock {
     lit: bool,
     deadline: Instant,
-    _task: Task<()>,
+    task: Option<Task<()>>,
+    active: bool,
 }
 impl CursorClock {
-    pub(super) fn new(cx: &mut Context<TerminalView>) -> Self {
+    pub(super) fn new(active: bool, cx: &mut Context<TerminalView>) -> Self {
         Self {
             lit: true,
             deadline: cx.background_executor().now() + CURSOR_BLINK_INTERVAL,
-            _task: spawn(cx),
+            task: None,
+            active,
         }
     }
     pub(super) fn lit(&self) -> bool {
         self.lit
+    }
+    pub(super) fn set_running(&mut self, running: bool, cx: &mut Context<TerminalView>) {
+        if running && self.active {
+            if self.task.is_none() {
+                self.deadline = cx.background_executor().now() + CURSOR_BLINK_INTERVAL;
+                self.task = Some(spawn(cx));
+            }
+        } else {
+            self.task = None;
+        }
+    }
+    pub(super) fn set_active(&mut self, active: bool) {
+        self.active = active;
     }
     pub(super) fn wake(&mut self, now: Instant) -> bool {
         self.deadline = now + CURSOR_BLINK_INTERVAL;
