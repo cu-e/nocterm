@@ -94,6 +94,12 @@ impl ConversationSource for CloudConversationView {
             .update(cx, |chat, cx| chat.set_shown(shown, cx))
             .map_err(CloudChatError::into_conversation)
     }
+    fn servers(
+        &self,
+        _cx: &App,
+    ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationServers>> {
+        Some(Rc::new(crate::servers::CloudServers(self.0.clone())))
+    }
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError> {
         self.chat()?
             .read(cx)
@@ -127,9 +133,10 @@ impl CloudActions {
             return Err(ConversationError::Stale);
         }
         match action {
-            ConversationAction::Prompt(text) if chat.can_prompt() => {
-                Ok(CloudAction::Prompt { text })
-            }
+            ConversationAction::Prompt(text) if chat.can_prompt() => Ok(CloudAction::Prompt {
+                text,
+                server: chat.prompt_target(),
+            }),
             ConversationAction::Stop => Ok(CloudAction::Stop {
                 run: Some(chat.stoppable_run().ok_or(ConversationError::Unavailable)?),
             }),

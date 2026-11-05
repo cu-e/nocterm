@@ -268,3 +268,46 @@ async fn a_shared_principal_that_cannot_be_rewritten_still_needs_an_update() {
     let overview = fx.access.overview(&fx.id).await.unwrap();
     assert!(overview.servers[0].needs_ca_update);
 }
+
+#[tokio::test]
+async fn a_chat_binds_only_trusted_servers_with_the_port_this_device_reached_them_on() {
+    let fx = fixture();
+    server(&fx, "web", OTHER);
+    server(&fx, "db", OTHER);
+    fx.access.allow(&fx.id, "web").await.unwrap();
+    fx.access.allow(&fx.id, "db").await.unwrap();
+    fx.hosts.set_port("web", 2222);
+    fx.access.deny(&fx.id, "db").await.unwrap();
+
+    let choices = fx.access.server_choices(&fx.id).await.unwrap();
+    assert_eq!(choices.len(), 1);
+    let web = &choices[0];
+    assert_eq!(
+        web.server.as_bytes(),
+        SshServerId::of_profile("web").as_bytes()
+    );
+    assert_eq!((web.port, web.user.as_str()), (Some(2222), "deploy"));
+    assert!(!web.needs_ca_update);
+
+    let keys = [web.server];
+    let chosen = crate::cloud_device::chosen_servers(&keys, &choices).unwrap();
+    assert_eq!(chosen[0].port, 2222);
+    let mut portless = choices.clone();
+    portless[0].port = None;
+    assert!(matches!(
+        crate::cloud_device::chosen_servers(&keys, &portless),
+        Err(
+            nocterm_cloud_conversation_model::CloudConversationError::Servers(
+                nocterm_cloud_conversation_model::ServerRefusal::UnknownPort
+            )
+        )
+    ));
+    assert!(matches!(
+        crate::cloud_device::chosen_servers(&keys, &[]),
+        Err(
+            nocterm_cloud_conversation_model::CloudConversationError::Servers(
+                nocterm_cloud_conversation_model::ServerRefusal::Untrusted
+            )
+        )
+    ));
+}

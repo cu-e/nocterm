@@ -3,8 +3,9 @@
 //! Owns: the neutral transcript of a Cloud chat ([`CloudTranscript`] with its [`Row`]s, [`Run`]s,
 //! [`Approval`]s and [`PendingCommand`]s) and the rule by which a [`ConversationDelta`] changes
 //! it; how far the shown history is confirmed ([`Freshness`]); what the person asks of a chat
-//! ([`ConversationAction`]); the port [`CloudConversation`] with its updates
-//! ([`ConversationUpdate`]) and typed [`CloudConversationError`].
+//! ([`ConversationAction`]); the servers a chat is bound to and can be bound to
+//! ([`ServerBinding`], [`ServerChoice`], ADR 0139); the port [`CloudConversation`] with its
+//! updates ([`ConversationUpdate`]) and typed [`CloudConversationError`].
 //!
 //! Does not own: the device protocol, verification, reduction of runner events, cryptography or
 //! storage (the contract device core inside `nocterm-hub-io` produces the deltas), the GPUI
@@ -30,6 +31,7 @@ mod error;
 mod freshness;
 mod ids;
 mod port;
+mod servers;
 mod transcript;
 
 pub use action::ConversationAction;
@@ -38,6 +40,10 @@ pub use error::CloudConversationError;
 pub use freshness::Freshness;
 pub use ids::{CommandKey, ConversationKey, IntentKey, RunKey};
 pub use port::{CloudConversation, ConversationFuture, ConversationUpdate, ConversationUpdates};
+pub use servers::{
+    BoundServer, DEFAULT_BINDING_WINDOW, MAX_BINDING_WINDOW, ServerAccess, ServerBinding,
+    ServerChoice, ServerKey, ServerRefusal,
+};
 pub use transcript::{
     Approval, CloudTranscript, CommandKind, CommandState, ModelName, PendingCommand, Row, RowRole,
     Run, RunStatus, SessionEnd, SessionRow, SessionState, ToolOutcome, ToolRow, ToolState, Usage,

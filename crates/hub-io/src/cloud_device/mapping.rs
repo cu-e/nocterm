@@ -38,7 +38,8 @@ pub(crate) fn freshness(value: reader::Freshness) -> Freshness {
     }
 }
 
-pub(crate) fn delta(delta: TranscriptDelta) -> ConversationDelta {
+/// `delta` as the desktop's change; a bound server's state is read at `now_ms`.
+pub(crate) fn delta(delta: TranscriptDelta, now_ms: i64) -> ConversationDelta {
     ConversationDelta {
         reset: delta.reset,
         first_index: delta.first_index,
@@ -58,6 +59,10 @@ pub(crate) fn delta(delta: TranscriptDelta) -> ConversationDelta {
         pending: delta
             .pending
             .map(|pending| pending.iter().map(pending_command).collect()),
+        servers: delta
+            .ssh
+            .as_ref()
+            .map(|ssh| super::servers::binding(ssh, now_ms)),
         control_revision: delta.control_revision,
         deleted: delta.deleted,
         omitted_earlier: delta.omitted_earlier,
@@ -234,6 +239,12 @@ pub(crate) fn error(error: CloudDeviceError) -> CloudConversationError {
         CloudDeviceError::Effect(EffectFailure::Unavailable | EffectFailure::Unknown) => {
             CloudConversationError::Unavailable
         }
+        CloudDeviceError::Ssh(refusal) => match super::servers::refusal(refusal) {
+            Some(refusal) => CloudConversationError::Servers(refusal),
+            None => {
+                CloudConversationError::Refused(SharedCause::new(CloudDeviceError::Ssh(refusal)))
+            }
+        },
         other => CloudConversationError::Refused(SharedCause::new(other)),
     }
 }
@@ -301,7 +312,7 @@ mod tests {
 
     #[test]
     fn an_empty_delta_maps_to_an_empty_change() {
-        let mapped = delta(TranscriptDelta::default());
+        let mapped = delta(TranscriptDelta::default(), 0);
         assert_eq!(mapped, ConversationDelta::default());
     }
 }

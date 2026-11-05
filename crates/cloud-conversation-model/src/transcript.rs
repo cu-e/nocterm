@@ -1,6 +1,6 @@
 //! The neutral transcript of one Cloud chat. Plain display data: no row grants or admits
 //! anything.
-use crate::{CommandKey, ConversationDelta, IntentKey, RunKey};
+use crate::{CommandKey, ConversationDelta, IntentKey, RunKey, ServerBinding};
 
 /// Who a row is from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,6 +235,7 @@ pub struct CloudTranscript {
     runs: Vec<Run>,
     approvals: Vec<Approval>,
     pending: Vec<PendingCommand>,
+    servers: ServerBinding,
     control_revision: u64,
     deleted: bool,
     omitted_earlier: bool,
@@ -266,6 +267,9 @@ impl CloudTranscript {
         }
         if let Some(pending) = delta.pending {
             self.pending = pending;
+        }
+        if let Some(servers) = delta.servers {
+            self.servers = servers;
         }
         self.control_revision = delta.control_revision;
         self.deleted = delta.deleted;
@@ -309,6 +313,10 @@ impl CloudTranscript {
             .rev()
             .filter_map(|row| row.tool.as_ref())
             .find(|tool| tool.intent == intent)
+    }
+    /// The chat's current binding to servers.
+    pub fn servers(&self) -> &ServerBinding {
+        &self.servers
     }
     pub fn control_revision(&self) -> u64 {
         self.control_revision

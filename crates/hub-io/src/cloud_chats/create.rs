@@ -86,10 +86,12 @@ pub(super) async fn create(
     }
     let conversation = shared.conversation(
         opened.clone(),
+        hub,
         ChatSetup {
             chat: created.chat,
             model: plan.model,
             wake: plan.wake,
+            servers: None,
         },
     );
     if let Some(agent) = plan.lease {

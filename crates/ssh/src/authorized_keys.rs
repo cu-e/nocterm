@@ -127,6 +127,7 @@ impl AuthorizedKeysFile for SftpAuthorizedKeys {
 
 struct Live {
     identity: HostIdentity,
+    port: u16,
     fs: Weak<dyn RemoteFs>,
 }
 
@@ -171,6 +172,7 @@ impl ConnectedHosts for HostDirectory {
                 host.connection,
                 Live {
                     identity: host.identity,
+                    port: host.port,
                     fs: Arc::downgrade(&host.fs),
                 },
             );
@@ -178,6 +180,14 @@ impl ConnectedHosts for HostDirectory {
 }
 
 impl AgentHosts for HostDirectory {
+    /// Kept after the session ends, until the application quits.
+    fn port(&self, connection: &str) -> Option<u16> {
+        self.hosts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(connection)
+            .map(|live| live.port)
+    }
     fn sessions(&self) -> Vec<HostSession> {
         let hosts = self.hosts.lock().unwrap_or_else(PoisonError::into_inner);
         let mut sessions: Vec<_> = hosts

@@ -16,8 +16,13 @@ pub(crate) mod driver;
 mod effects;
 mod mapping;
 mod outbox;
+mod server_flows;
+mod servers;
 
 pub(crate) use account::{DeviceAccount, DeviceAccountError};
 pub(crate) use checkpoints::{AccountPlace, Checkpoints, directory_file, remove_earlier_pages};
 pub(crate) use conversation::{ChatSetup, DeviceConversation};
 pub(crate) use outbox::Outbox;
+pub(crate) use servers::ServerDirectory;
+#[cfg(test)]
+pub(crate) use servers::chosen as chosen_servers;

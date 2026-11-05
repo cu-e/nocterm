@@ -13,6 +13,7 @@ use std::{rc::Rc, sync::Arc};
 
 mod commands;
 mod pending_prompts;
+mod servers;
 
 pub(super) fn opened(cx: &mut TestAppContext) -> (FakeConversation, Entity<CloudChat>) {
     let fake = FakeConversation::new("runner-chat-1");

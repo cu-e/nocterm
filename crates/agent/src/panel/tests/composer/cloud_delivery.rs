@@ -65,7 +65,10 @@ const RUN: RunKey = RunKey::from_bytes([3; 16]);
 const FIRST: CommandKey = CommandKey::from_bytes([1; 16]);
 
 fn prompts(text: &str) -> CloudAction {
-    CloudAction::Prompt { text: text.into() }
+    CloudAction::Prompt {
+        text: text.into(),
+        server: None,
+    }
 }
 
 #[gpui_kit::test]

@@ -225,6 +225,7 @@ impl Entry {
                 chat: chat.chat,
                 model,
                 wake,
+                servers: None,
             },
             summary,
         })
@@ -245,6 +246,7 @@ impl ChatHistoryEntry for Entry {
         let setup = self.setup.clone();
         let title = self.summary.title.clone();
         let chat = self.chat;
+        let hub = self.context.hub.clone();
         self.context.shared.call(
             &self.context.hub,
             move |shared, captured, account| async move {
@@ -257,7 +259,7 @@ impl ChatHistoryEntry for Entry {
                     .session()
                     .runner(&chat.runner)
                     .map_err(error::device)?;
-                let conversation = shared.conversation(opened, setup);
+                let conversation = shared.conversation(opened, &hub, setup);
                 let key = conversation.key().to_string();
                 Ok(OpenedChat {
                     conversation,

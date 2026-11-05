@@ -7,6 +7,10 @@ mod approval;
 pub use approval::{ConversationToolApproval, ToolApprovalChoice, ToolApprovalView};
 mod local;
 pub use local::LocalConversation;
+mod servers;
+pub use servers::{
+    BoundServerState, BoundServerView, ConversationServers, ServerOption, ServerProblem,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConversationError {
@@ -26,6 +30,9 @@ pub enum ConversationError {
     OutcomeUnknown,
     #[error(transparent)]
     History(#[from] nocterm_ai::history::HistoryCodecError),
+    /// Binding servers, or naming one for prompts, was refused (ADR 0139).
+    #[error(transparent)]
+    Servers(#[from] ServerProblem),
 }
 
 /// One admitted action, whose retries preserve its original identity and body.
@@ -102,4 +109,9 @@ pub trait ConversationSource {
     ) -> Result<Subscription, ConversationError>;
     fn set_shown(&self, shown: bool, cx: &mut App) -> Result<(), ConversationError>;
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError>;
+    /// The servers the conversation's agent may sign in to, when its source binds any
+    /// (a Cloud chat, ADR 0139). A Local chat has none.
+    fn servers(&self, _cx: &App) -> Option<Rc<dyn ConversationServers>> {
+        None
+    }
 }

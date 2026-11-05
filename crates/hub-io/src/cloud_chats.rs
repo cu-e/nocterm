@@ -27,16 +27,21 @@ use nocterm_cloud_agents_model::{
 use nocterm_hubs_model::HubId;
 use tokio::runtime::Handle;
 
-use crate::cloud_device::{ChatSetup, Checkpoints, DeviceAccount, DeviceConversation, Outbox};
+use crate::agent_access::AgentAccess;
+use crate::cloud_device::{
+    ChatSetup, Checkpoints, DeviceAccount, DeviceConversation, Outbox, ServerDirectory,
+};
 use crate::devices::Captured;
 use crate::hub_account::HubAccount;
 use crate::links::HubLinks;
 use crate::pool::Pool;
 use crate::task::spawn;
+use nocterm_cloud_conversation_model::CloudConversationError;
 
 /// Where the installation keeps its Cloud chat files, injected by the application.
 pub struct ChatServices {
     root: PathBuf,
+    servers: Option<Arc<AgentAccess>>,
 }
 
 impl ChatServices {
@@ -44,7 +49,41 @@ impl ChatServices {
     /// verified-page caches of the earlier layout there are removed.
     pub fn native(_links: &HubLinks, root: PathBuf) -> Result<Self, CloudChatError> {
         crate::cloud_device::remove_earlier_pages(&root);
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            servers: None,
+        })
+    }
+
+    /// Lets chats be bound to the servers of the account's agent CA registry (ADR 0139).
+    #[must_use]
+    pub fn with_trusted_servers(mut self, access: Arc<AgentAccess>) -> Self {
+        self.servers = Some(access);
+        self
+    }
+}
+
+/// The CA-trusted servers of one hub's account, as a chat lists them for binding.
+struct HubServers {
+    access: Arc<AgentAccess>,
+    hub: HubId,
+}
+impl ServerDirectory for HubServers {
+    fn choices(
+        &self,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<Vec<nocterm_cloud_conversation_model::ServerChoice>, CloudConversationError>,
+    > {
+        let listed = self.access.server_choices(&self.hub);
+        Box::pin(async move {
+            listed.await.map_err(|error| match error {
+                nocterm_hubs_model::AgentAccessError::Hub(_) => CloudConversationError::Unavailable,
+                other => {
+                    CloudConversationError::Refused(nocterm_core::error::SharedCause::new(other))
+                }
+            })
+        })
     }
 }
 
@@ -58,6 +97,7 @@ struct Shared {
     /// The open Cloud sessions per hub, while a chat of them holds one.
     accounts: Mutex<HashMap<HubId, Weak<DeviceAccount>>>,
     leases: leases::Leases,
+    servers: Option<Arc<AgentAccess>>,
 }
 
 impl Shared {
@@ -125,12 +165,19 @@ impl Shared {
         Ok(opened)
     }
 
-    /// A chat of `account` as a conversation a window presents.
+    /// A chat of `account` on `hub` as a conversation a window presents.
     fn conversation(
         &self,
         account: Arc<DeviceAccount>,
-        setup: ChatSetup,
+        hub: &HubId,
+        mut setup: ChatSetup,
     ) -> Arc<DeviceConversation> {
+        setup.servers = self.servers.clone().map(|access| {
+            Arc::new(HubServers {
+                access,
+                hub: hub.clone(),
+            }) as Arc<dyn ServerDirectory>
+        });
         Arc::new(DeviceConversation::new(
             account,
             setup,
@@ -157,6 +204,7 @@ impl CloudChatsLink {
             outbox: Arc::new(Outbox::new(services.root)),
             accounts: Mutex::new(HashMap::new()),
             leases: leases::Leases::default(),
+            servers: services.servers,
         });
         Ok(Self { shared })
     }

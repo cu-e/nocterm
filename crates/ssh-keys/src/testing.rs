@@ -214,6 +214,7 @@ impl crate::authorized_keys::AuthorizedKeysFile for FakeAuthorizedKeys {
 #[derive(Clone, Default)]
 pub struct FakeAgentHosts {
     hosts: Arc<Mutex<HashMap<String, crate::authorized_keys::HostAccess>>>,
+    ports: Arc<Mutex<HashMap<String, u16>>>,
 }
 
 impl FakeAgentHosts {
@@ -233,6 +234,14 @@ impl FakeAgentHosts {
             .insert(connection.to_owned(), access);
     }
 
+    /// Remembers that `connection` was reached on `port`.
+    pub fn set_port(&self, connection: &str, port: u16) {
+        self.ports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(connection.to_owned(), port);
+    }
+
     /// Makes `connection` unreachable, as a server that went away.
     pub fn disconnect(&self, connection: &str) {
         self.hosts
@@ -243,6 +252,13 @@ impl FakeAgentHosts {
 }
 
 impl crate::authorized_keys::AgentHosts for FakeAgentHosts {
+    fn port(&self, connection: &str) -> Option<u16> {
+        self.ports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(connection)
+            .copied()
+    }
     fn sessions(&self) -> Vec<crate::authorized_keys::HostSession> {
         let hosts = self
             .hosts

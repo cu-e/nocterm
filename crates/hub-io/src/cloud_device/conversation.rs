@@ -9,18 +9,24 @@
 //! receipt of this device's own command and on refresh. A command signed before the application
 //! quit is kept in the [`Outbox`] and resumed when its chat is read again: its pending row shows
 //! again and the same bytes are published, with a receipt probe.
+//!
+//! A chat bound to servers (ADR 0139) answers its runner's certificate requests while it is
+//! read and the account is unlocked; the core certifies only inside the binding.
 use super::account::DeviceAccount;
 use super::checkpoints::{AccountPlace, Checkpoints, chat_file};
 use super::driver::{self, Control, Effects, now_ms};
 use super::mapping;
 use super::outbox::Outbox;
+use super::server_flows::{BindReply, ServerFlows};
+use super::servers::{self, ServerDirectory};
 use futures::FutureExt as _;
 use futures::StreamExt as _;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{BoxFuture, Shared};
 use nocterm_cloud_conversation_model::{
     CloudConversation, CloudConversationError, CommandKey, ConversationAction, ConversationFuture,
-    ConversationKey, ConversationUpdate, ConversationUpdates,
+    ConversationKey, ConversationUpdate, ConversationUpdates, MAX_BINDING_WINDOW, ServerChoice,
+    ServerKey, ServerRefusal,
 };
 use nocterm_cloud_device::command::{Deliver, DeliveryUpdate, StoredCommand};
 use nocterm_cloud_device::context::ChatRef;
@@ -28,6 +34,7 @@ use nocterm_cloud_device::flow::{Effect, Flow, Step};
 use nocterm_cloud_device::open::{ChatAction, ChatUpdate, ModelChoice, OpenChat};
 use nocterm_cloud_device::reader::VerifiedChat;
 use nocterm_cloud_device::seat::WakeSeat;
+use nocterm_cloud_device::ssh::SshServerChoice;
 use nocterm_cloud_device::transcript::CommandState;
 use nocterm_cloud_device::{CloudDeviceError, DeviceIdentity};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,6 +49,13 @@ pub(crate) struct ChatSetup {
     pub(crate) model: Option<ModelChoice>,
     /// The managed agent whose seat serves the chat; its seat is woken before each command.
     pub(crate) wake: Option<String>,
+    /// The servers of the account's CA registry, for binding the chat (ADR 0139).
+    pub(crate) servers: Option<Arc<dyn ServerDirectory>>,
+}
+impl std::fmt::Debug for dyn ServerDirectory {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ServerDirectory")
+    }
 }
 
 enum Request {
@@ -51,6 +65,8 @@ enum Request {
         oneshot::Sender<Result<CommandKey, CloudConversationError>>,
     ),
     Refresh,
+    Bind(Vec<SshServerChoice>, i64, BindReply),
+    Unbind(oneshot::Sender<Result<(), CloudConversationError>>),
 }
 
 type Mailbox = Arc<Mutex<Option<mpsc::UnboundedSender<Request>>>>;
@@ -58,13 +74,8 @@ type Mailbox = Arc<Mutex<Option<mpsc::UnboundedSender<Request>>>>;
 /// One chat of an account, opened for windows.
 pub(crate) struct DeviceConversation {
     key: ConversationKey,
-    account: Arc<DeviceAccount>,
-    setup: Arc<ChatSetup>,
-    checkpoints: Arc<Checkpoints>,
-    outbox: Arc<Outbox>,
+    task: Task,
     handle: Handle,
-    mailbox: Mailbox,
-    generation: Arc<AtomicU64>,
     ended: Shared<BoxFuture<'static, ()>>,
 }
 impl DeviceConversation {
@@ -77,43 +88,43 @@ impl DeviceConversation {
         let ended = account.clone().ended().boxed().shared();
         Self {
             key: ConversationKey::new(setup.chat.to_string()),
-            account,
-            setup: Arc::new(setup),
-            checkpoints,
-            outbox,
+            task: Task {
+                account,
+                setup: Arc::new(setup),
+                checkpoints,
+                outbox,
+                mailbox: Arc::new(Mutex::new(None)),
+                generation: Arc::new(AtomicU64::new(1)),
+            },
             handle,
-            mailbox: Arc::new(Mutex::new(None)),
-            generation: Arc::new(AtomicU64::new(1)),
             ended,
         }
     }
-    /// Hands `request` to the running task, starting one when none runs.
     fn send(&self, request: Request) -> Result<(), CloudConversationError> {
-        self.check_current()?;
-        let mut mailbox = self.mailbox.lock().unwrap_or_else(PoisonError::into_inner);
-        let request = match mailbox.as_ref() {
-            Some(sender) => match sender.unbounded_send(request) {
-                Ok(()) => return Ok(()),
-                Err(failed) => failed.into_inner(),
-            },
-            None => request,
-        };
-        let (sender, receiver) = mpsc::unbounded();
-        sender
-            .unbounded_send(request)
-            .map_err(|_| CloudConversationError::Ended)?;
-        *mailbox = Some(sender);
-        let task = Task {
-            account: self.account.clone(),
-            setup: self.setup.clone(),
-            checkpoints: self.checkpoints.clone(),
-            outbox: self.outbox.clone(),
-            mailbox: self.mailbox.clone(),
-            generation: self.generation.clone(),
-        };
-        self.handle.spawn(task.run(receiver));
-        Ok(())
+        send(&self.task, &self.handle, request)
     }
+}
+
+/// Hands `request` to the running task of `task`'s chat, starting one when none runs.
+fn send(task: &Task, handle: &Handle, request: Request) -> Result<(), CloudConversationError> {
+    task.account
+        .check()
+        .map_err(|_| CloudConversationError::Stale)?;
+    let mut mailbox = task.mailbox.lock().unwrap_or_else(PoisonError::into_inner);
+    let request = match mailbox.as_ref() {
+        Some(sender) => match sender.unbounded_send(request) {
+            Ok(()) => return Ok(()),
+            Err(failed) => failed.into_inner(),
+        },
+        None => request,
+    };
+    let (sender, receiver) = mpsc::unbounded();
+    sender
+        .unbounded_send(request)
+        .map_err(|_| CloudConversationError::Ended)?;
+    *mailbox = Some(sender);
+    handle.spawn(task.clone().run(receiver));
+    Ok(())
 }
 
 impl CloudConversation for DeviceConversation {
@@ -121,10 +132,10 @@ impl CloudConversation for DeviceConversation {
         &self.key
     }
     fn can_prompt(&self) -> bool {
-        self.setup.model.is_some()
+        self.task.setup.model.is_some()
     }
     fn can_wake(&self) -> bool {
-        self.setup.wake.is_some()
+        self.task.setup.wake.is_some()
     }
     fn subscribe(&self) -> Result<ConversationUpdates, CloudConversationError> {
         let (sender, receiver) = mpsc::unbounded();
@@ -145,11 +156,11 @@ impl CloudConversation for DeviceConversation {
     /// Wakes the managed seat of the chat with the core's `WakeSeat` (its enrolled seat,
     /// through its own pool); an agent without one is refused, never provisioned.
     fn wake(&self) -> ConversationFuture<()> {
-        let Some(agent_id) = self.setup.wake.clone() else {
+        let Some(agent_id) = self.task.setup.wake.clone() else {
             return Box::pin(async { Err(CloudConversationError::Unsupported) });
         };
-        let mut flow = WakeSeat::new(agent_id, Some(self.setup.chat.chat_id));
-        let effects = self.account.effects().clone();
+        let mut flow = WakeSeat::new(agent_id, Some(self.task.setup.chat.chat_id));
+        let effects = self.task.account.effects().clone();
         let started = self.handle.spawn(async move {
             let mut woken = false;
             driver::run(&mut flow, effects, |_, _| {
@@ -159,7 +170,7 @@ impl CloudConversation for DeviceConversation {
             .await
             .map(|()| woken)
         });
-        let refresh = self.mailbox.clone();
+        let refresh = self.task.mailbox.clone();
         Box::pin(async move {
             match started.await.map_err(|_| CloudConversationError::Ended)? {
                 Ok(true) => {
@@ -177,8 +188,43 @@ impl CloudConversation for DeviceConversation {
             }
         })
     }
+    fn servers(&self) -> ConversationFuture<Vec<ServerChoice>> {
+        match &self.task.setup.servers {
+            Some(directory) => directory.choices(),
+            None => Box::pin(async { Err(CloudConversationError::Unsupported) }),
+        }
+    }
+    fn bind_servers(
+        &self,
+        keys: Vec<ServerKey>,
+        window: std::time::Duration,
+    ) -> ConversationFuture<()> {
+        let Some(directory) = self.task.setup.servers.clone() else {
+            return Box::pin(async { Err(CloudConversationError::Unsupported) });
+        };
+        if window.is_zero() || window > MAX_BINDING_WINDOW {
+            return Box::pin(async { Err(CloudConversationError::Servers(ServerRefusal::Window)) });
+        }
+        let window_ms = i64::try_from(window.as_millis()).unwrap_or(i64::MAX);
+        let (task, handle) = (self.task.clone(), self.handle.clone());
+        Box::pin(async move {
+            let chosen = servers::chosen(&keys, &directory.choices().await?)?;
+            let (reply, answer) = oneshot::channel();
+            send(&task, &handle, Request::Bind(chosen, window_ms, reply))?;
+            answer.await.unwrap_or(Err(CloudConversationError::Ended))
+        })
+    }
+    fn unbind_servers(&self) -> ConversationFuture<()> {
+        let (reply, answer) = oneshot::channel();
+        let sent = self.send(Request::Unbind(reply));
+        Box::pin(async move {
+            sent?;
+            answer.await.unwrap_or(Err(CloudConversationError::Ended))
+        })
+    }
     fn check_current(&self) -> Result<(), CloudConversationError> {
-        self.account
+        self.task
+            .account
             .check()
             .map_err(|_| CloudConversationError::Stale)
     }
@@ -188,6 +234,7 @@ impl CloudConversation for DeviceConversation {
 }
 
 /// What starts a reading task.
+#[derive(Clone)]
 struct Task {
     account: Arc<DeviceAccount>,
     setup: Arc<ChatSetup>,
@@ -226,6 +273,7 @@ impl Task {
                 chat,
                 device,
                 deliveries: Vec::new(),
+                servers: ServerFlows::default(),
                 next_slot: 1,
                 effects: Effects::new(self.account.effects().clone()),
                 subscribers: Vec::new(),
@@ -264,6 +312,8 @@ struct Reading {
     chat: OpenChat,
     device: DeviceIdentity,
     deliveries: Vec<(u32, Deliver)>,
+    /// Binding and certificate flows (ADR 0139).
+    servers: ServerFlows,
     next_slot: u32,
     effects: Effects<u32>,
     subscribers: Vec<mpsc::UnboundedSender<ConversationUpdate>>,
@@ -324,7 +374,8 @@ impl Reading {
                 (slot, id, event) = self.effects.next() => {
                     if slot == CHAT_SLOT {
                         driver::answer(&mut self.chat, id, event);
-                    } else if let Some((_, deliver)) =
+                    } else if let Some((slot, id, event)) = self.servers_resolve(slot, id, event)
+                        && let Some((_, deliver)) =
                         self.deliveries.iter_mut().find(|(known, _)| *known == slot)
                     {
                         driver::answer(deliver, id, event);
@@ -341,7 +392,7 @@ impl Reading {
     /// mailbox while deciding means no request is lost to a task that is about to end.
     fn finished(&mut self, requests: &mut mpsc::UnboundedReceiver<Request>) -> bool {
         self.subscribers.retain(|sender| !sender.is_closed());
-        if !self.subscribers.is_empty() || !self.deliveries.is_empty() {
+        if !self.subscribers.is_empty() || !self.deliveries.is_empty() || !self.servers.is_empty() {
             return false;
         }
         let held = self.task.mailbox.clone();
@@ -365,7 +416,7 @@ impl Reading {
     fn request(&mut self, request: Request) {
         match request {
             Request::Subscribe(sender) => {
-                let whole = mapping::delta(self.chat.transcript().full_delta());
+                let whole = mapping::delta(self.chat.transcript().full_delta(), now_ms());
                 let freshness = mapping::freshness(self.chat.freshness());
                 let sent = sender
                     .unbounded_send(ConversationUpdate::Transcript(whole))
@@ -384,6 +435,51 @@ impl Reading {
                 self.refresh_device();
                 self.chat.refresh();
             }
+            Request::Bind(choices, window_ms, reply) => {
+                let wake = self.task.setup.wake.clone();
+                match self
+                    .chat
+                    .bind_servers(&choices, Some(window_ms), wake, now_ms())
+                {
+                    Ok(flow) => {
+                        let slot = self.slot();
+                        self.servers.bind(slot, flow, reply);
+                    }
+                    Err(error) => {
+                        let _ = reply.send(Err(mapping::error(error)));
+                    }
+                }
+            }
+            Request::Unbind(reply) => {
+                let wake = self.task.setup.wake.clone();
+                let result = self
+                    .chat
+                    .unbind_servers(wake, now_ms())
+                    .map(|deliver| {
+                        let slot = self.slot();
+                        self.deliveries.push((slot, deliver));
+                    })
+                    .map_err(mapping::error);
+                let _ = reply.send(result);
+            }
+        }
+    }
+    /// Hands an effect's event to its SSH flow; returns it when no SSH flow has that slot.
+    fn servers_resolve(
+        &mut self,
+        slot: u32,
+        id: nocterm_cloud_device::flow::EffectId,
+        event: super::effects::Event,
+    ) -> Option<(
+        u32,
+        nocterm_cloud_device::flow::EffectId,
+        super::effects::Event,
+    )> {
+        if self.servers.owns(slot) {
+            self.servers.resolve(slot, id, event);
+            None
+        } else {
+            Some((slot, id, event))
         }
     }
     /// After a token refresh the flow names the device with its new token.
@@ -405,7 +501,7 @@ impl Reading {
             return Err(CloudConversationError::Deleted);
         }
         let action = match action {
-            ConversationAction::Prompt { text } => ChatAction::Prompt {
+            ConversationAction::Prompt { text, server } => ChatAction::Prompt {
                 text: text.clone(),
                 // Before the first run the chat's own model names the prompt; afterwards the
                 // latest run's model does.
@@ -420,7 +516,7 @@ impl Reading {
                 } else {
                     None
                 },
-                server: None,
+                server: server.as_ref().map(servers::server_id),
             },
             ConversationAction::Stop { run } => ChatAction::Stop {
                 run: run.map(|run| *run.as_bytes()),
@@ -448,8 +544,14 @@ impl Reading {
         loop {
             let chat_until = self.pump_chat()?;
             let (progressed, delivery_until) = self.pump_deliveries();
-            if !progressed {
-                return Ok([chat_until, delivery_until].into_iter().flatten().min());
+            let (moved, servers_until) =
+                self.servers
+                    .pump(&mut self.chat, &mut self.effects, now_ms());
+            if !progressed && !moved {
+                return Ok([chat_until, delivery_until, servers_until]
+                    .into_iter()
+                    .flatten()
+                    .min());
             }
         }
     }
@@ -551,7 +653,8 @@ impl Reading {
     fn chat_update(&mut self, update: ChatUpdate) {
         match update {
             ChatUpdate::Transcript(delta) => {
-                self.broadcast(ConversationUpdate::Transcript(mapping::delta(delta)));
+                let delta = mapping::delta(delta, now_ms());
+                self.broadcast(ConversationUpdate::Transcript(delta));
             }
             ChatUpdate::Freshness(freshness) => {
                 self.broadcast(ConversationUpdate::Freshness(mapping::freshness(freshness)));
@@ -567,9 +670,17 @@ impl Reading {
                     tracing::debug!(%error, "the run's model grant was not sent");
                 }
             }
-            // This desktop does not answer a runner's certificate requests yet; another
-            // unlocked device of the account may.
-            ChatUpdate::SshRequest { .. } => {}
+            // The account is unlocked while the chat is read: answer inside the binding the
+            // person signed (the core refuses anything else).
+            ChatUpdate::SshRequest { request } => match self.chat.answer_ssh(&request, now_ms()) {
+                Ok(flow) => {
+                    let slot = self.slot();
+                    self.servers.answer(slot, flow);
+                }
+                Err(error) => {
+                    tracing::debug!(error = %nocterm_core::error::chain(&error), "a Cloud chat's SSH certificate request was not answered");
+                }
+            },
             ChatUpdate::Refused(error) => {
                 tracing::debug!(error = %nocterm_core::error::chain(&error), "a Cloud chat round was refused");
                 self.broadcast(ConversationUpdate::Refused(mapping::error(error)));

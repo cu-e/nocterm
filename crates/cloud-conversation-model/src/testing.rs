@@ -3,7 +3,8 @@ use crate::{
     Approval, CloudConversation, CloudConversationError, CloudTranscript, CommandKey, CommandKind,
     CommandState, ConversationAction, ConversationDelta, ConversationFuture, ConversationKey,
     ConversationUpdate, ConversationUpdates, Freshness, IntentKey, ModelName, PendingCommand, Row,
-    RowRole, Run, RunKey, RunStatus, SessionRow, ToolRow, ToolState, Usage,
+    RowRole, Run, RunKey, RunStatus, ServerBinding, ServerChoice, ServerKey, SessionRow, ToolRow,
+    ToolState, Usage,
 };
 use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
@@ -90,6 +91,9 @@ struct State {
     next_command: u8,
     refreshes: usize,
     wakes: usize,
+    choices: Vec<ServerChoice>,
+    bindings: Vec<(Vec<ServerKey>, std::time::Duration)>,
+    unbinds: usize,
     stale: bool,
     ended: Option<oneshot::Sender<()>>,
 }
@@ -146,6 +150,7 @@ impl FakeConversation {
             runs: Some(transcript.runs().to_vec()),
             approvals: Some(transcript.approvals().to_vec()),
             pending: Some(transcript.pending().to_vec()),
+            servers: Some(transcript.servers().clone()),
             control_revision: transcript.control_revision(),
             deleted: transcript.deleted(),
             omitted_earlier: transcript.omitted_earlier(),
@@ -187,6 +192,22 @@ impl FakeConversation {
     }
     pub fn set_control_revision(&self, revision: u64) {
         self.change(|_, delta| delta.control_revision = revision);
+    }
+    /// The chat's binding as the verified history now states it.
+    pub fn set_servers(&self, servers: ServerBinding) {
+        self.change(|_, delta| delta.servers = Some(servers));
+    }
+    /// The servers [`CloudConversation::servers`] lists.
+    pub fn set_server_choices(&self, choices: Vec<ServerChoice>) {
+        self.state().choices = choices;
+    }
+    /// The bindings asked for, in order, with their windows.
+    pub fn bindings(&self) -> Vec<(Vec<ServerKey>, std::time::Duration)> {
+        self.state().bindings.clone()
+    }
+    /// How many times the chat was unbound.
+    pub fn unbinds(&self) -> usize {
+        self.state().unbinds
     }
     pub fn set_deleted(&self) {
         self.change(|_, delta| delta.deleted = true);
@@ -300,7 +321,9 @@ impl CloudConversation for FakeConversation {
             state.next_command = state.next_command.wrapping_add(1);
             let command = CommandKey::from_bytes([state.next_command; 16]);
             let (kind, text, run) = match &action {
-                ConversationAction::Prompt { text } => (CommandKind::Prompt, text.clone(), None),
+                ConversationAction::Prompt { text, .. } => {
+                    (CommandKind::Prompt, text.clone(), None)
+                }
                 ConversationAction::Stop { run } => (CommandKind::Stop, String::new(), *run),
                 ConversationAction::Allow { run } => {
                     (CommandKind::Allow, String::new(), Some(*run))
@@ -334,6 +357,35 @@ impl CloudConversation for FakeConversation {
     }
     fn wake(&self) -> ConversationFuture<()> {
         let result = self.check_current().map(|()| self.state().wakes += 1);
+        Box::pin(async move { result })
+    }
+    fn servers(&self) -> ConversationFuture<Vec<ServerChoice>> {
+        let result = self.check_current().map(|()| self.state().choices.clone());
+        Box::pin(async move { result })
+    }
+    fn bind_servers(
+        &self,
+        servers: Vec<ServerKey>,
+        window: std::time::Duration,
+    ) -> ConversationFuture<()> {
+        let result = self.check_current().and_then(|()| {
+            if servers.is_empty() {
+                return Err(CloudConversationError::Servers(
+                    crate::ServerRefusal::Servers,
+                ));
+            }
+            if window.is_zero() || window > crate::MAX_BINDING_WINDOW {
+                return Err(CloudConversationError::Servers(
+                    crate::ServerRefusal::Window,
+                ));
+            }
+            self.state().bindings.push((servers, window));
+            Ok(())
+        });
+        Box::pin(async move { result })
+    }
+    fn unbind_servers(&self) -> ConversationFuture<()> {
+        let result = self.check_current().map(|()| self.state().unbinds += 1);
         Box::pin(async move { result })
     }
     fn check_current(&self) -> Result<(), CloudConversationError> {

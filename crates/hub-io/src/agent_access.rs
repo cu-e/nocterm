@@ -106,6 +106,18 @@ impl AgentAccess {
     }
 }
 
+impl AgentAccess {
+    /// The servers of `hub`'s registry that are trusted now, as a chat binds them: each named
+    /// by `SHA-256(connection)[..16]`, with the port this device last reached it on (ADR 0139).
+    pub(crate) fn server_choices(
+        &self,
+        hub: &HubId,
+    ) -> AgentAccessFuture<Vec<nocterm_cloud_conversation_model::ServerChoice>> {
+        let (trust, hub) = (self.trust.clone(), hub.clone());
+        self.run(async move { trust.server_choices(&hub).await })
+    }
+}
+
 impl AgentHostTrust for AgentAccess {
     fn connected_hosts(&self) -> Vec<HostChoice> {
         self.trust.sessions()

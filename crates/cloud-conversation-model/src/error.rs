@@ -36,6 +36,9 @@ pub enum CloudConversationError {
     /// The device core refused the chat's records or a command.
     #[error("the Cloud chat was refused")]
     Refused(#[source] SharedCause),
+    /// Binding servers, or naming one in a prompt, was refused (ADR 0139).
+    #[error("the chat's servers were refused: {0}")]
+    Servers(crate::ServerRefusal),
     /// The device's private chat files failed.
     #[error("the Cloud chat files could not be used")]
     Storage(#[source] SharedCause),

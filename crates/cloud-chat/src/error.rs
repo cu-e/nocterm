@@ -32,6 +32,9 @@ impl CloudChatError {
             Self::Rejected | Self::Conversation(CloudConversationError::Refused(_)) => {
                 Target::Rejected
             }
+            Self::Conversation(CloudConversationError::Servers(refusal)) => {
+                Target::Servers(crate::servers::problem(refusal))
+            }
             Self::Conversation(_) => Target::Unavailable,
         }
     }

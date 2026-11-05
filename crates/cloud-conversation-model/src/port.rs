@@ -1,7 +1,7 @@
 //! The port through which the desktop's Cloud chat entity reads and steers one chat.
 use crate::{
     CloudConversationError, CommandKey, ConversationAction, ConversationDelta, ConversationKey,
-    Freshness,
+    Freshness, ServerChoice, ServerKey,
 };
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
@@ -48,6 +48,21 @@ pub trait CloudConversation: Send + Sync {
 
     /// Wakes the managed seat of the chat, then refreshes.
     fn wake(&self) -> ConversationFuture<()>;
+
+    /// The servers of the account's CA registry the chat can be bound to (ADR 0139).
+    fn servers(&self) -> ConversationFuture<Vec<ServerChoice>>;
+
+    /// Binds the chat to `servers` for `window` (at most thirty days), replacing its current
+    /// binding. Resolves once this device signed and sent the binding; where each server
+    /// stands arrives as a transcript change.
+    fn bind_servers(
+        &self,
+        servers: Vec<ServerKey>,
+        window: std::time::Duration,
+    ) -> ConversationFuture<()>;
+
+    /// Revokes the chat's binding; this device answers none of its requests from now on.
+    fn unbind_servers(&self) -> ConversationFuture<()>;
 
     /// Fails with [`CloudConversationError::Stale`] once the account this was opened for ended.
     fn check_current(&self) -> Result<(), CloudConversationError>;

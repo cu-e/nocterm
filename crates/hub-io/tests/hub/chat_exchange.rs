@@ -26,6 +26,7 @@ pub(crate) fn reply_to(
             conversation
                 .deliver(ConversationAction::Prompt {
                     text: prompt.to_owned(),
+                    server: None,
                 })
                 .await
                 .expect("the prompt is tracked");

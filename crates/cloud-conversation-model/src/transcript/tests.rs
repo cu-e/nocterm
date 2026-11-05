@@ -111,7 +111,10 @@ fn a_delivered_prompt_is_pending_until_the_runner_accepts_it() {
     futures::executor::block_on(async {
         let fake = FakeConversation::new("chat");
         let command = fake
-            .deliver(ConversationAction::Prompt { text: "hi".into() })
+            .deliver(ConversationAction::Prompt {
+                text: "hi".into(),
+                server: None,
+            })
             .await
             .unwrap();
         let pending = fake.transcript().pending_command(command).cloned().unwrap();
@@ -147,5 +150,68 @@ fn an_ended_fake_is_stale_and_refuses_new_requests() {
                 .await
                 .is_err()
         );
+    });
+}
+
+#[test]
+fn a_binding_replaces_the_held_one_only_when_present_and_lists_its_selectable_servers() {
+    use crate::{BoundServer, ServerAccess, ServerBinding, ServerKey};
+    let server = |byte: u8, selectable: bool| BoundServer {
+        server: ServerKey::from_bytes([byte; 16]),
+        host: format!("h{byte}"),
+        port: 22,
+        user: "deploy".into(),
+        access: if selectable {
+            ServerAccess::Active { until_ms: 9 }
+        } else {
+            ServerAccess::Unreachable
+        },
+        selectable,
+    };
+    let mut transcript = CloudTranscript::new();
+    assert!(!transcript.servers().is_bound());
+    transcript.apply(ConversationDelta {
+        servers: Some(ServerBinding {
+            servers: vec![server(1, true), server(2, false)],
+            expires_at_ms: Some(50),
+        }),
+        ..ConversationDelta::default()
+    });
+    transcript.apply(ConversationDelta::default());
+    let binding = transcript.servers();
+    assert!(binding.is_bound());
+    assert_eq!(
+        binding
+            .selectable()
+            .map(|known| known.host.as_str())
+            .collect::<Vec<_>>(),
+        ["h1"]
+    );
+    transcript.apply(ConversationDelta {
+        servers: Some(ServerBinding::default()),
+        ..ConversationDelta::default()
+    });
+    assert!(!transcript.servers().is_bound());
+}
+
+#[test]
+fn the_fake_records_bindings_and_refuses_an_empty_choice_or_a_long_window() {
+    use crate::{CloudConversationError, ServerKey, ServerRefusal};
+    futures::executor::block_on(async {
+        let fake = FakeConversation::new("chat");
+        let day = std::time::Duration::from_secs(86_400);
+        let key = ServerKey::from_bytes([3; 16]);
+        fake.bind_servers(vec![key], 7 * day).await.unwrap();
+        assert!(matches!(
+            fake.bind_servers(Vec::new(), day).await,
+            Err(CloudConversationError::Servers(ServerRefusal::Servers))
+        ));
+        assert!(matches!(
+            fake.bind_servers(vec![key], 31 * day).await,
+            Err(CloudConversationError::Servers(ServerRefusal::Window))
+        ));
+        fake.unbind_servers().await.unwrap();
+        assert_eq!(fake.bindings(), [(vec![key], 7 * day)]);
+        assert_eq!(fake.unbinds(), 1);
     });
 }

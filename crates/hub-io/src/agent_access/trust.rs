@@ -176,6 +176,28 @@ impl Trust {
         )
     }
 
+    pub(super) async fn server_choices(
+        &self,
+        hub: &HubId,
+    ) -> Result<Vec<nocterm_cloud_conversation_model::ServerChoice>, AgentAccessError> {
+        let overview = self.overview(hub).await?;
+        Ok(overview
+            .servers
+            .into_iter()
+            .filter(|server| server.state == ServerTrust::Trusted)
+            .map(|server| nocterm_cloud_conversation_model::ServerChoice {
+                server: nocterm_cloud_conversation_model::ServerKey::from_bytes(
+                    *SshServerId::of_profile(&server.connection).as_bytes(),
+                ),
+                port: self.hosts.port(&server.connection),
+                host: server.host,
+                user: server.user,
+                needs_ca_update: server.needs_ca_update,
+                connection: server.connection,
+            })
+            .collect())
+    }
+
     pub(super) async fn ca_line(
         &self,
         hub: &HubId,

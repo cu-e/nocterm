@@ -24,6 +24,7 @@ mod conversation;
 mod error;
 mod installation;
 mod pending;
+mod servers;
 mod thread;
 pub use conversation::CloudConversationView;
 pub use error::CloudChatError;
@@ -62,6 +63,8 @@ pub struct CloudChat {
     error: Option<CloudChatError>,
     /// The last read round went unanswered; the next change clears it.
     reconnecting: bool,
+    /// The bound server the person picked for the next prompts (ADR 0139).
+    target: Option<nocterm_cloud_conversation_model::ServerKey>,
 }
 impl CloudChat {
     /// Every partition receives the same handle from RuntimeHandle::history_admission.
@@ -84,6 +87,7 @@ impl CloudChat {
             membership: None,
             error: None,
             reconnecting: false,
+            target: None,
         });
         entity.update(cx, |chat, cx| {
             chat.residency.register(cx)?;
@@ -124,6 +128,38 @@ impl CloudChat {
         self.conversation
             .check_current()
             .map_err(CloudChatError::from)
+    }
+    pub(crate) fn port(&self) -> &Arc<dyn CloudConversation> {
+        &self.conversation
+    }
+    /// The server the next prompts run on: the one the person picked while a prompt may still
+    /// name it, else none (the runner's default destination).
+    pub(crate) fn prompt_target(&self) -> Option<nocterm_cloud_conversation_model::ServerKey> {
+        self.target.filter(|target| {
+            self.transcript
+                .servers()
+                .selectable()
+                .any(|server| &server.server == target)
+        })
+    }
+    /// Picks the server the next prompts run on; only a selectable bound server.
+    pub(crate) fn set_target(
+        &mut self,
+        target: Option<nocterm_cloud_conversation_model::ServerKey>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ConversationError> {
+        if let Some(target) = target
+            && !self
+                .transcript
+                .servers()
+                .selectable()
+                .any(|server| server.server == target)
+        {
+            return Err(nocterm_agent_chat::conversation::ServerProblem::NotSelectable.into());
+        }
+        self.target = target;
+        cx.notify();
+        Ok(())
     }
     pub(crate) fn same_conversation(&self, other: &Arc<dyn CloudConversation>) -> bool {
         self.conversation.key() == other.key()
@@ -309,7 +345,8 @@ impl CloudChat {
         }
         let text = known.text.clone();
         self.prompts.dismiss(command, &self.transcript);
-        self.send(ConversationAction::Prompt { text }, cx).1
+        let server = self.prompt_target();
+        self.send(ConversationAction::Prompt { text, server }, cx).1
     }
     pub(crate) fn dismiss_prompt(
         &mut self,
