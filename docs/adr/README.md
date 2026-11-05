@@ -131,5 +131,6 @@ acceptance; a later record supersedes an earlier one.
 | [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat (row titles and projection superseded by 0136) |
 | [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript (projection placement superseded by 0136) |
 | [0135](0135-the-runner-publishes-chat-summaries-journal-v7.md) | The runner publishes signed chat summaries to its directory; journal v7 (journal version rule superseded by 0137) |
-| [0136](0136-the-device-side-runs-on-the-contract-device-core.md) | The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter |
+| [0136](0136-the-device-side-runs-on-the-contract-device-core.md) | The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter (request signer, outbox and first-freshness rule superseded by 0138) |
 | [0137](0137-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 |
+| [0138](0138-device-transport-and-resumable-commands.md) | Cloud effects go through the hub client; commands resume after a restart |

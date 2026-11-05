@@ -616,15 +616,18 @@ The device side of Cloud chats is the contract's sans-I/O `nocterm-cloud-device`
 core, discovers the account's session with `Discover` (hub trust, the hub's capability proof,
 trusted runners) and drops it when the account's keys change. The `driver` runs a flow,
 starting every `Effect` it asks for through an `EffectRunner` and answering each with its
-input or its replay and Watch frames in arrival order; `effects` performs them over the
-hub's Store, Cloud and agent services and signs with the hub client's `sign_cloud`. Raw Cloud calls
-carry a request proof `rpc` signs with the device key of the adapter's credential file until
-the contract's client offers a transport for core-built requests. `DeviceConversation`
+input or its replay and Watch frames in arrival order; `effects` performs them with the hub
+client's device calls (`capabilities`, `probe_head`, `publish_one`, `replay`, `watch`,
+`runner_status`, under the client's own signer; the device key never leaves
+`nocterm-hub-client`), the hub's Store and agent services and `sign_cloud`. A seat is started
+exactly as the core names it (the enrolled seat's pool); an explicit Wake runs the core's
+`WakeSeat`. `DeviceConversation`
 implements the `CloudConversation` port with one task per open chat over `OpenChat` and the
 `Deliver` flows of its commands; it never polls (it probes on open, on Watch reconnect, after
 its own receipts and on Refresh), keeps the core's sealed `VerifiedChat` checkpoints and its
-commands' exact publications in private files under the chats root, and publishes a
-publication left from an earlier run again with the same bytes. `cloud_chats` implements
+commands' sealed `StoredCommand`s in private files under the chats root, and resumes a command
+left from an earlier run with `OpenChat::resume` (its pending row again, the same bytes and a
+receipt probe) ([ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)). `cloud_chats` implements
 `CloudChatLauncher` with `ListChats` (runner directories confirmed by catalogs, kept as sealed
 `VerifiedDirectory` checkpoints), `CreateChat` and, for an own-agent chat, `ProviderLease`.
 Runner enrolment keeps writing the account's hub-trust and registry objects through the

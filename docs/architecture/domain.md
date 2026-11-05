@@ -533,13 +533,16 @@ A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-e
 
 `nocterm-cloud-conversation-model` is what a desktop window shows of one Cloud chat: the
 neutral `CloudTranscript` (rows, runs, approvals, this device's pending commands) changed only
-by `ConversationDelta`s, the `Freshness` the device core reports (`Current`, `Unconfirmed` for a
-runner that did not answer, `Withheld`), the `ConversationAction`s a person sends, and the
+by `ConversationDelta`s (tool rows carry the core's title and typed `ToolOutcome`), the
+`Freshness` the device core reports (`Opening` before the first round, `Current`,
+`Unconfirmed` for a runner that did not answer, `Withheld`), the `ConversationAction`s a
+person sends, and the
 `CloudConversation` port with its typed `CloudConversationError`. It holds no protocol types and
 does no I/O; `nocterm-hub-io` implements the port over the contract's device core and
 `nocterm-cloud-chat` presents it. Its `test-support` `FakeConversation` scripts deltas,
 freshness and command outcomes for consumers' tests
-([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)).
+([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md),
+[ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)).
 
 ## Cloud run contracts
 

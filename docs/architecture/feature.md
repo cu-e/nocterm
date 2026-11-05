@@ -622,7 +622,8 @@ shows its runner's title, time and state, and offers only opening
 A refused or unanswered submission (`ConversationSubmission::refused`) releases the composer,
 so sending the same text again is a new prompt. A Cloud chat whose runner did not confirm its
 history (`ConversationView::freshness`) says so in its status line, and a sleeping seat offers
-Wake (`ConversationActions::wake`).
+Wake (`ConversationActions::wake`); while the chat is still opening nothing is said
+([ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)).
 MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. It keeps
 each agent message's and expanded reasoning's parsed Markdown per row, so a row

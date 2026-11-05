@@ -51,9 +51,11 @@
 //! candidate capability before creating trust.
 //! The device side of Cloud chats runs the contract's sans-I/O device core (`cloud_device`,
 //! [ADR 0136](../../../docs/adr/0136-the-device-side-runs-on-the-contract-device-core.md)):
-//! this crate performs the effects a flow asks for (Store, Cloud and agent calls, signatures
-//! through `HubClient::sign_cloud`, sleeps, Watch), keeps the core's sealed checkpoints and the
-//! exact publications of commands on their way in private files, and maps the core's display
+//! this crate performs the effects a flow asks for (the hub client's Cloud device calls, Store
+//! and agent calls, signatures through `HubClient::sign_cloud`, sleeps, Watch), keeps the core's
+//! sealed checkpoints and the sealed commands on their way in private files, resuming them after
+//! a restart ([ADR 0138](../../../docs/adr/0138-device-transport-and-resumable-commands.md)),
+//! and maps the core's display
 //! values to `nocterm-cloud-conversation-model`, whose `CloudConversation` port it implements.
 //! A flow holds a copy of the unlocked account keys and is dropped when the account's keys
 //! change.
