@@ -91,7 +91,15 @@ mirror and locks the vault. `Booted::window_sources(environment)` returns the `W
 (connections, terminal, vault, settings pages) that `build_workspace` registers; the local set
 has no replication. `src/windows.rs` composes a window and focuses its workspace so the scoped
 `UnlockVault` handler of a hub vault is reached. `HubAccounts` is the port to the encrypted
-account data that tests replace.
+account data that tests replace. Startup warms configured native account Slots before the
+GPUI application starts; interactive key-status and lock queries only inspect loaded Slots.
+A newly authenticated hub establishes its native Slot before publishing its settings.
+Removed hubs are evicted from `HubSources`; existing
+workspaces retain their source until release, with replication retired permanently. Readding
+the same address creates a fresh installation. Volatile replica documents register no disk
+shutdown participant. Native removal drops strong Slot residency; a still-retained generic
+account factory keeps a weak registry identity so a failed settings removal can sign in
+again. Previously captured account capabilities stay stale across that transition.
 
 ## Menus
 
@@ -229,9 +237,8 @@ Directory authority comes only from captured paths and settings. The existing na
 create/open background lifecycle and notices remain unchanged. See
 [ADR0051](../adr/0051-retained-keymap-installation.md).
 
-Bootstrap supplies the exact UI settings owner to settings-ui Installed.
-Booted retains that installation in its existing
-settings slot and supplies it to ordinary Settings, guest-page deep links and the
+Bootstrap supplies the actual `SettingsHandle` directly to settings page contexts.
+Booted retains that same owner in its existing settings slot and supplies it to ordinary Settings, guest-page deep links and the
 startup vault page. Opening another window does not install another document or
 rediscover a compatibility settings global for these builtin consumers.
 Explorer installation retains its prepared native ports together with the actual
@@ -243,8 +250,10 @@ startup Vault-only guest catalog remains independent. No additional settings
 document or compatibility lookup is created.
 
 Bootstrap also retains a Monitor installation over that settings owner and the
-supplied optional local HostExec. Per-workspace monitor models and lazy settings
-pages receive it; constructing the installation or a page factory starts no sampling.
+supplied optional local HostExec and one viewless collection registry. Per-workspace monitor
+models and lazy settings pages receive it; constructing the installation or a page factory
+starts no sampling. Equal captured executors share native collection while histories stay
+surface-specific.
 The ordinary page vector and deep links preserve their existing order and IDs.
 Vault installation retains the actual settings owner used to initialize its native
 auto-lock duration. Its published-policy observer and all page factories use that
@@ -265,3 +274,11 @@ across windows; UUID acquisition occurs only for an actual new editor draft.
 
 Booted retains its original theme and optional vault installations privately;
 composition reads named borrowed projections when registering windows and settings.
+
+
+User-plugin installation startup acquires records, packages, data and actual runtime instances
+on the background executor before initializing the pristine records owner. A retained manager
+serializes bounded management work across windows and awaits records/data receipts. Native data
+acquisition uses one consumed preload and retains only completion metadata. Each physical window
+owns one visibility-driven deadline scheduler; teardown releases host cadence state. See
+[ADR0141](../adr/0141-versioned-plugin-publication.md).

@@ -322,10 +322,12 @@ The selected inner workspace session takes precedence; missing or unsupported
 workspace authority never falls back to the unrelated outer session or local runner.
 Ordinary local contexts retain the injected local policy. Cache identity includes
 the original surface and checked resource; watch generations reject stale detection
-and readings across switches or reconnects. It keeps bounded samplers and runs
-exactly one script: the status
-bar's metrics at the slow interval while the details are closed, and the union
-with the details' metrics at the fast interval while they are open. It declares a
+and readings across switches or reconnects. It keeps bounded surface-specific samplers
+and subscribes to `nocterm-monitor-service`: status-bar metrics at the slow interval while
+details are closed, with details metrics at the fast interval while open. Consumers of the
+same captured executor share one raw script using their metric union and fastest cadence.
+The last subscriber cancels collection. See
+[ADR0138](../adr/0138-shared-captured-monitor-collection.md). It declares a
 status widget for the left zone of the bar in its system plugin and supplies its Settings page as a
 `SettingsPageSpec`, nested under Plugins. The page keeps whether monitoring runs, the refresh
 intervals and the details metrics; the metrics the status bar shows are a field of the plugin's
@@ -620,7 +622,10 @@ local and Cloud rows through one neutral row model, and a Cloud row offers only 
 A refused submission (`ConversationSubmission::refused`) releases the composer, so sending
 the same text again is a new prompt; an unanswered one is retried under its original ID.
 MessageList reuses one ImagePipeline for
-preview cache generations and remeasures rows only for accepted delivery. It keeps
+preview cache generations and remeasures rows only for accepted delivery. Its 32-entry,
+64 MiB preview budget retains full immutable source identities and charges image/source
+allocations; one installation shares four physical image jobs across attachments and previews.
+Counts and remaining bytes are admitted before file acquisition or base64/decoder allocation. It keeps
 each agent message's and expanded reasoning's parsed Markdown per row, so a row
 scrolled back into view keeps its parse and streamed text parses only what was
 appended. PanelLayout keeps the panel's regions as cached views: the transcript, the
@@ -631,7 +636,12 @@ chat redraws the transcript only when its rows or what they show changed, typing
 redraws the footer, and the coalesced redraw of other chats redraws the history only
 when a listed row changed. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
-validated candidate collection atomically. The feature never decodes image data.
+validated candidate collection atomically. The feature never decodes image data. Live ACP transcript admission checks its 20,000-row
+and 64 MiB resident budgets before mutation, including mixed text/tool/control updates.
+Cloud candidate reduction runs in the background and updates raw per-row retained accounting
+only for changed/appended rows; encoded image clones share immutable bytes with unchanged wire
+format. Existing projection cursor and source checks still gate foreground delivery.
+See [ADR0142](../adr/0142-live-transcript-and-image-admission.md).
 Panel coordination retains fourteen private fields.
 ChatList binds selection and per-chat observation to the original entity; removal
 commits only after existing document admission. SignInCards retains original-token

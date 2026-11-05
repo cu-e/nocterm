@@ -99,7 +99,7 @@ and the footer, without changing remembered docked widths.
 outside workspace updates, because opening a connection updates the workspace.
 
 Saved history starts as a catalogue of at most 200 metadata rows, with transcript
-files as the source of truth and rebuildable metadata sidecars. Opening or
+files as the source of truth. Obsolete metadata sidecars are ignored. Opening or
 editing a row loads its document in the background. A shared loading permit
 bounds hydration and archive search, including payloads awaiting GUI delivery;
 inactive, clean documents can be evicted under a conservative 64 MiB resident
@@ -342,7 +342,11 @@ writer and registers the same participant once. See
 immutable record of one window's providers that only the application's composition builds.
 `nocterm-plugin-host` owns the `PluginHost` entity: grants, the sampling cadence, the effect
 queue with gesture tokens, rate limits and the apply-time re-check, fault counting, the caps on
-enabled plugins and renders, and the `PluginRecords` and `PluginData` ports with their documents.
+installed/enabled plugins and renders, and the `PluginRecords` and `PluginData` ports with
+their documents. Production receives prepared native packages/runtime instances; accepted
+management results await actual persistence receipts. Destructive data changes hold affected
+host mutations through physical completion. See
+[ADR0141](../adr/0141-versioned-plugin-publication.md).
 Neither does I/O; the application implements the two storage ports over the shared persistence
 service. For a developer session (`nocterm plugin dev`) the host also offers `SessionRecords` and
 `SessionData`, in-memory implementations of the same two ports: composing them leaves the host no
@@ -406,4 +410,14 @@ providers recheck their retained source immediately before capability effects.
 
 ### Original recipients of account confirmations
 
-`nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. The existing acknowledgement flow remains unchanged. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+`nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. Registry and sign-in actions await the native publication receipt before reporting success, and retain the original source checks across that wait. See [ADR 0114](../adr/0114-native-captured-account-operations.md) and [ADR 0140](../adr/0140-offer-confirmation-publication.md).
+
+
+## Shared monitor collection
+
+`nocterm-monitor-service` owns raw collection by actual captured executor and host/container
+scope. Consumer subscriptions contribute metrics and cadence; the union and fastest cadence
+select one generation-bound watch. One latest raw reading is shared, while feature models
+retain their own histories and samplers. The last subscriber cancels native work and the
+installation registry retains weak references. Descriptive host names cannot merge authority.
+See [ADR0138](../adr/0138-shared-captured-monitor-collection.md).

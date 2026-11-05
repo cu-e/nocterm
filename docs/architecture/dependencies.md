@@ -41,13 +41,14 @@ Derived from Cargo manifests. Check boundaries with `cargo xtask architecture`.
 | `nocterm-hubs-model` | domain | `nocterm-core`, `nocterm-session`, `nocterm-settings` | Hub addresses and trust rules, the hubs settings section and the hub access ports. |
 | `nocterm-hubs-ui` | feature | `nocterm-cloud-agents`, `nocterm-cloud-agents-model`, `nocterm-cloud-model`, `nocterm-core`, `nocterm-hubs`, `nocterm-hubs-model`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The environment menu, the sign-in dialog and the Servers page of nocterm hubs. |
 | `nocterm-image-codec` | adapter | `nocterm-ai` | Bounded native image inspection and preview encoding. |
-| `nocterm-keymap` | ui | `nocterm-core` | Key bindings: the default keymap, the user's changes and their merge. |
+| `nocterm-keymap` | ui | `nocterm-core`, `nocterm-store` | Key bindings: the default keymap, the user's changes and their merge. |
 | `nocterm-keymap-ui` | feature | `nocterm-keymap`, `nocterm-settings`, `nocterm-store`, `nocterm-ui` | Keymap settings page: search, rebind and reset key bindings. |
 | `nocterm-layout-ui` | feature | `nocterm-plugin-enablement`, `nocterm-plugin-model`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-window-layout`, `nocterm-workspace` | The editor of the status bar and the panel groups, inside Appearance. |
 | `nocterm-local` | adapter | `nocterm-core`, `nocterm-session` | Portable local PTY session and program adapter. |
 | `nocterm-localfs` | adapter | `nocterm-session` | Held native filesystem capabilities for Explorer and streaming transfers. |
 | `nocterm-monitor` | domain | `nocterm-session`, `nocterm-settings` | Host resource monitoring: collection scripts, parsers, rates and history. |
-| `nocterm-monitor-ui` | feature | `nocterm-containers`, `nocterm-monitor`, `nocterm-plugin-api`, `nocterm-plugin-enablement`, `nocterm-plugin-model`, `nocterm-plugin-ports`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
+| `nocterm-monitor-service` | service | `nocterm-monitor`, `nocterm-session` | Shared resource monitoring over captured host execution. |
+| `nocterm-monitor-ui` | feature | `nocterm-containers`, `nocterm-monitor`, `nocterm-monitor-service`, `nocterm-plugin-api`, `nocterm-plugin-enablement`, `nocterm-plugin-model`, `nocterm-plugin-ports`, `nocterm-project-model`, `nocterm-project-providers`, `nocterm-session`, `nocterm-settings`, `nocterm-store`, `nocterm-ui`, `nocterm-workspace` | The active host's resources in the status bar, with details and graphs. |
 | `nocterm-plugin-abi` | domain | `nocterm-plugin-api`, `nocterm-plugin-model` | The guest ABI of code plugins: export names, call and reply wire types and their postcard encoding. |
 | `nocterm-plugin-api` | domain | `nocterm-plugin-model` | The user plugin contract: capability table, snapshot, view and effect data, manifests, grants and the declarative template interpreter. |
 | `nocterm-plugin-enablement` | domain | `nocterm-plugin-model`, `nocterm-settings` | Which system plugins the user switched off: the [plugins] settings section and the rule that keeps required plugins and unknown ids out of the effective set. |
@@ -340,6 +341,7 @@ graph TD
     nocterm_hubs_ui --> nocterm_workspace
     nocterm_image_codec --> nocterm_ai
     nocterm_keymap --> nocterm_core
+    nocterm_keymap --> nocterm_store
     nocterm_keymap_ui --> nocterm_keymap
     nocterm_keymap_ui --> nocterm_settings
     nocterm_keymap_ui --> nocterm_store
@@ -356,8 +358,11 @@ graph TD
     nocterm_localfs --> nocterm_session
     nocterm_monitor --> nocterm_session
     nocterm_monitor --> nocterm_settings
+    nocterm_monitor_service --> nocterm_monitor
+    nocterm_monitor_service --> nocterm_session
     nocterm_monitor_ui --> nocterm_containers
     nocterm_monitor_ui --> nocterm_monitor
+    nocterm_monitor_ui --> nocterm_monitor_service
     nocterm_monitor_ui --> nocterm_plugin_api
     nocterm_monitor_ui --> nocterm_plugin_enablement
     nocterm_monitor_ui --> nocterm_plugin_model

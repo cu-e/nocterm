@@ -133,3 +133,8 @@ acceptance; a later record supersedes an earlier one.
 | [0135](0135-responsibility-and-cost-guided-agent-work.md) | Agent procedures verify responsibility and runtime cost; gate owns the detailed check matrix |
 | [0136](0136-shared-bounded-streams-and-tool-result-formats.md) | Bounded byte collection and terminal-tool result formats have shared owners |
 | [0137](0137-observed-configuration-publication.md) | Settings and profiles reject publication against an externally changed owned document |
+| [0138](0138-shared-captured-monitor-collection.md) | Resource monitoring shares one raw collection per captured executor and scope |
+| [0139](0139-cooperative-authorized-keys-edits.md) | SFTP authorized-keys editors coordinate with a fixed no-clobber remote lock |
+| [0140](0140-offer-confirmation-publication.md) | Displayed key confirmations await bounded native publication |
+| [0141](0141-versioned-plugin-publication.md) | Plugin records select immutable package versions and await actual completion |
+| [0142](0142-live-transcript-and-image-admission.md) | Live transcript and image preparation admit aggregate growth before expensive work |
