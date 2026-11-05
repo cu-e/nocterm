@@ -475,6 +475,11 @@ impl HistoryProjection {
             when.push_str(" · ");
             when.push_str(state);
         }
+        // The servers the chat is bound to, as its summary lists them (ADR 0139).
+        if !summary.servers.is_empty() {
+            when.push_str(" · on ");
+            when.push_str(&summary.servers.join(", "));
+        }
         HistoryRow {
             selected: open == Some(summary.key.as_str()),
             target: RowTarget::Cloud(summary.key),
@@ -513,6 +518,24 @@ impl<'a> HistorySources<'a> {
 #[cfg(test)]
 mod tests {
     use super::order;
+
+    #[test]
+    fn a_cloud_row_names_the_servers_its_chat_is_bound_to() {
+        let mut summary = nocterm_cloud_agents_model::ChatSummary::plain(
+            "k".into(),
+            "Deploy".into(),
+            "Scribe".into(),
+            None,
+        );
+        summary.updated_at = Some(100);
+        summary.servers = vec!["deploy@db".into(), "root@web".into()];
+        let row = super::HistoryProjection::cloud_row(summary, None, 160);
+        assert!(
+            row.when.ends_with(" · on deploy@db, root@web"),
+            "{}",
+            row.when
+        );
+    }
 
     #[test]
     fn pinned_chats_come_first_then_the_most_recent() {

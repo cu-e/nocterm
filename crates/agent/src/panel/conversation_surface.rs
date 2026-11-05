@@ -16,6 +16,8 @@ pub(super) struct ConversationSurface {
     pending: Option<PendingInput>,
     /// The key the history column lists this conversation under, when it lists it.
     origin: Option<String>,
+    /// The Servers control of a source that binds servers (a Cloud chat, ADR 0139).
+    servers: Option<gpui_kit::Entity<super::cloud_servers::CloudServersControl>>,
 }
 struct PendingInput {
     ticket: InputTicket,
@@ -66,6 +68,9 @@ impl ConversationSurface {
                 selected.detach(cx);
             }
         });
+        let servers = source
+            .servers(cx)
+            .map(|servers| super::cloud_servers::control(servers, cx));
         Ok(Self {
             source,
             title,
@@ -74,6 +79,7 @@ impl ConversationSurface {
             previous_local,
             pending: None,
             origin: None,
+            servers,
         })
     }
     pub(super) fn set_origin(&mut self, origin: Option<String>) {
@@ -87,6 +93,12 @@ impl ConversationSurface {
     }
     pub(super) fn source(&self) -> Rc<dyn ConversationSource> {
         self.source.clone()
+    }
+    /// The Servers control, when the source binds servers.
+    pub(super) fn servers(
+        &self,
+    ) -> Option<gpui_kit::Entity<super::cloud_servers::CloudServersControl>> {
+        self.servers.clone()
     }
     pub(super) fn title(&self) -> SharedString {
         self.title.clone()

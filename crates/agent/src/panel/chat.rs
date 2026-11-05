@@ -327,6 +327,10 @@ impl AgentPanel {
         };
         let wake = (local.is_none() && frame.can_wake())
             .then(|| TranscriptView::wake_button(frame.origin(), cx));
+        let servers = self
+            .conversation
+            .as_ref()
+            .and_then(|selected| selected.servers());
         let labels = local
             .as_ref()
             .map(|thread| attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx));
@@ -342,6 +346,7 @@ impl AgentPanel {
             .children(approvals)
             .children(status)
             .children(wake)
+            .children(servers)
             .children(queue)
             .children(commands)
             .child(composer)

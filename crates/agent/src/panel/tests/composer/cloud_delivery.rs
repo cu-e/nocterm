@@ -30,7 +30,7 @@ pub(in crate::panel::tests) fn captured_panel(
     (source, selector)
 }
 
-fn send(f: &Fixture, text: &str, cx: &mut TestAppContext) {
+pub(super) fn send(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         let focus = f.panel.read(cx).composer_focus(cx);
@@ -42,7 +42,7 @@ fn send(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
-fn press(f: &Fixture, id: impl Into<gpui_kit::ElementId>, cx: &mut TestAppContext) {
+pub(super) fn press(f: &Fixture, id: impl Into<gpui_kit::ElementId>, cx: &mut TestAppContext) {
     let id = id.into();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -52,7 +52,11 @@ fn press(f: &Fixture, id: impl Into<gpui_kit::ElementId>, cx: &mut TestAppContex
     cx.run_until_parked();
 }
 
-fn shown(f: &Fixture, id: impl Into<gpui_kit::ElementId>, cx: &mut TestAppContext) -> bool {
+pub(super) fn shown(
+    f: &Fixture,
+    id: impl Into<gpui_kit::ElementId>,
+    cx: &mut TestAppContext,
+) -> bool {
     let id = id.into();
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);

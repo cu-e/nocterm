@@ -20,6 +20,7 @@ mod bindings;
 mod chat;
 mod cloud_history;
 mod cloud_menu;
+mod cloud_servers;
 pub(crate) mod commands;
 mod composer;
 mod composer_frame;

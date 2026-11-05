@@ -234,4 +234,11 @@ impl ConversationSource for ObservedConversation {
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError> {
         self.0.read(cx).delegate.capture_actions(cx)
     }
+
+    fn servers(
+        &self,
+        cx: &App,
+    ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationServers>> {
+        self.0.read(cx).delegate.servers(cx)
+    }
 }
