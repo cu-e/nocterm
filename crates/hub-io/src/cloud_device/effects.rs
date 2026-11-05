@@ -155,6 +155,7 @@ fn instance(wire: &v1::Instance) -> InstanceEntry {
     InstanceEntry {
         instance_id: wire.instance_id.clone(),
         agent_id: wire.agent_id.clone(),
+        pool_id: wire.pool_id.clone(),
         runner_id: wire.runner_id.as_slice().try_into().ok(),
         state,
     }
@@ -211,7 +212,9 @@ impl HubEffects {
                 Err(AgentError::Unsupported) => Event::Input(Input::Instances(Vec::new())),
                 Err(error) => failed(agent_failure(&error)),
             },
-            Effect::StartInstance { agent_id, chat_id } => {
+            Effect::StartInstance {
+                agent_id, chat_id, ..
+            } => {
                 Self::start(rpc, agent_id, chat_id).await
             }
             store => Self::store(rpc, store).await,

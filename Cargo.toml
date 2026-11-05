@@ -307,12 +307,12 @@ nocterm-vault = { path = "crates/vault" }
 nocterm-vault-store = { path = "crates/vault-store" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
 # The hub contract lives outside this workspace (ADR 0096); only nocterm-hub-io may use it.
-nocterm-hub-client = { git = "https://github.com/cu-e/nocterm-contract", rev = "92a3e6e3d96d2da780fe4ab4564be7b2ce28e26b" }
-nocterm-cloud-device = { git = "https://github.com/cu-e/nocterm-contract", rev = "92a3e6e3d96d2da780fe4ab4564be7b2ce28e26b" }
-nocterm-hub-grpc = { git = "https://github.com/cu-e/nocterm-contract", rev = "92a3e6e3d96d2da780fe4ab4564be7b2ce28e26b" }
-nocterm-hub-model = { git = "https://github.com/cu-e/nocterm-contract", rev = "92a3e6e3d96d2da780fe4ab4564be7b2ce28e26b" }
-nocterm-hub-proto = { git = "https://github.com/cu-e/nocterm-contract", rev = "92a3e6e3d96d2da780fe4ab4564be7b2ce28e26b" }
-nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "92a3e6e3d96d2da780fe4ab4564be7b2ce28e26b" }
+nocterm-hub-client = { git = "https://github.com/cu-e/nocterm-contract", rev = "58b6fe4c11cd70eb4cc3d49d92f4acf83434c6da" }
+nocterm-cloud-device = { git = "https://github.com/cu-e/nocterm-contract", rev = "58b6fe4c11cd70eb4cc3d49d92f4acf83434c6da" }
+nocterm-hub-grpc = { git = "https://github.com/cu-e/nocterm-contract", rev = "58b6fe4c11cd70eb4cc3d49d92f4acf83434c6da" }
+nocterm-hub-model = { git = "https://github.com/cu-e/nocterm-contract", rev = "58b6fe4c11cd70eb4cc3d49d92f4acf83434c6da" }
+nocterm-hub-proto = { git = "https://github.com/cu-e/nocterm-contract", rev = "58b6fe4c11cd70eb4cc3d49d92f4acf83434c6da" }
+nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "58b6fe4c11cd70eb4cc3d49d92f4acf83434c6da" }
 
 agent-client-protocol = "=2.2.0"
 agent-client-protocol-schema = { version = "=1.9.1", features = ["unstable_session_fork", "unstable_end_turn_token_usage"] }

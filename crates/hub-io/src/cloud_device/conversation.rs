@@ -154,7 +154,11 @@ impl CloudConversation for DeviceConversation {
         let effects = self.account.effects().clone();
         let started = self.handle.spawn(async move {
             effects
-                .run(Effect::StartInstance { agent_id, chat_id })
+                .run(Effect::StartInstance {
+                    agent_id,
+                    pool_id: String::new(),
+                    chat_id,
+                })
                 .next()
                 .await
         });

@@ -593,8 +593,7 @@ fn wire_error(
     let fault = match &error {
         CloudError::Protocol
         | CloudError::Relay(_)
-        | CloudError::Command(_)
-        | CloudError::Encryption(_) => RunnerInboxFault::Authentication,
+        | CloudError::Command(_) => RunnerInboxFault::Authentication,
         CloudError::SourceChanged | CloudError::NotSignedIn => RunnerInboxFault::NeedsRunnerAccess,
         _ => RunnerInboxFault::DeliveryUnconfirmed,
     };

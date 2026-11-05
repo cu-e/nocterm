@@ -23,6 +23,11 @@ fn run_key(run: &RunCoordinate) -> RunKey {
 
 pub(crate) fn freshness(value: reader::Freshness) -> Freshness {
     match value {
+        reader::Freshness::Opening {
+            last_witnessed_at_ms,
+        } => Freshness::Unconfirmed {
+            last_witnessed_at_ms,
+        },
         reader::Freshness::Current { witnessed_at_ms } => Freshness::Current { witnessed_at_ms },
         reader::Freshness::Unconfirmed {
             last_witnessed_at_ms,
@@ -81,7 +86,12 @@ fn row(row: &transcript::TranscriptRow) -> Row {
             redacted: call.redacted,
             state: tool_state(call.status),
             output_json: call.output_json.clone(),
-            outcome: call.outcome.clone(),
+            outcome: match &call.outcome {
+                Some(transcript::ToolOutcome::Ok(text) | transcript::ToolOutcome::Err(text)) => {
+                    Some(text.clone())
+                }
+                Some(transcript::ToolOutcome::Pending) | None => None,
+            },
         }),
         session: row.session.as_ref().map(|call| SessionRow {
             attempt: call.attempt,
