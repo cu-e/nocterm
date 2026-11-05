@@ -42,3 +42,6 @@ pub use facts::{
     ProbeSourceAuthority, ProbeSourceIdentity, ProbeSourceLease,
 };
 pub use observation::ObservationDeps;
+
+#[cfg(feature = "test-support")]
+pub mod test_support;
