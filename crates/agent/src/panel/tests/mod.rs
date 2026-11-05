@@ -490,6 +490,7 @@ mod flow;
 
 mod queue_edit;
 mod queue_layout;
+mod queue_timing;
 
 mod commands;
 

@@ -2,7 +2,8 @@
 //!
 //! Every region is cached: the panel's own redraws reuse them unless they are
 //! notified. Any notify of the panel invalidates all of them, so state the panel
-//! changes stays correct by default; only thread changes and typing target a region.
+//! changes stays correct by default; thread changes, typing and queue disclosure can
+//! target a single region.
 //! The footer (approvals, status, queue, commands and composer) is cached to its
 //! content: reused, it keeps the height its content last took.
 use super::AgentPanel;

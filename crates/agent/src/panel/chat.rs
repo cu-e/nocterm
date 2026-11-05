@@ -22,7 +22,7 @@ impl AgentPanel {
         let approvals = self.render_approvals(&thread, window, cx);
         let status = self.chat_status(&thread, cx);
         let labels = attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx);
-        let queue = self.render_queue(&thread, &labels, window, cx);
+        let queue = self.render_queue(&thread, &labels, cx);
         let commands = self.render_commands(window, cx);
         let composer = self.render_composer(&frame, &thread, &labels, cx);
         v_flex()
