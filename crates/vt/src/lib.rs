@@ -32,8 +32,9 @@ mod text;
 mod text_codec;
 
 pub use search::{
-    MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch, SearchDirection, SearchError,
-    SearchMatch, SearchOptions, SearchPoint, SearchProgress, SearchResult, SearchScan,
+    MAX_NAVIGATION_MATCHES, MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch,
+    SearchDirection, SearchError, SearchMatch, SearchOptions, SearchPoint, SearchProgress,
+    SearchResult, SearchScan,
 };
 
 pub use emulator::{
