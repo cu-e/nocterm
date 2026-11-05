@@ -32,6 +32,12 @@ pub enum HostAccessError {
     /// The file differs from what the change was computed from.
     #[error("the server's authorized_keys changed meanwhile")]
     Changed,
+    /// A cooperating edit owns the fixed remote lock; interrupted edits require manual recovery.
+    #[error("authorized_keys editing is locked at {path}")]
+    EditLocked { path: String },
+    /// The server cannot support the safe automatic editing protocol.
+    #[error("the server cannot safely edit authorized_keys automatically")]
+    Unsupported(#[source] SharedCause),
     /// The file is larger than this client edits.
     #[error("the server's authorized_keys is too large to edit")]
     TooLarge,
@@ -47,8 +53,10 @@ pub enum HostAccessError {
 pub trait AuthorizedKeysFile: Send + Sync {
     /// The whole file, or the empty text when there is none.
     fn read(&self) -> BoxFuture<'static, Result<String, HostAccessError>>;
-    /// Publishes `updated` atomically if the file still equals `previous`; every other line
-    /// survives byte for byte and the permissions stay private.
+    /// Compares with `previous` under an adapter's cooperative edit lock and reports
+    /// observed changes. Unrelated lines survive byte for byte. Interrupted edits may
+    /// require explicit lock recovery. SFTP cannot atomically compare and swap against
+    /// uncooperative external writers; callers must not claim that stronger guarantee.
     fn replace(
         &self,
         previous: String,
@@ -101,7 +109,13 @@ pub struct ConnectedHost {
 
 /// Told about every connected saved connection, so the registry can be reconciled.
 pub trait ConnectedHosts: Send + Sync {
-    /// A session of `host.connection` is up. May be called repeatedly for the same session.
+    /// Enriches immutable announcement metadata on a background executor. Does not
+    /// publish session state; composition must recheck the original session before
+    /// delivering the prepared announcement to `connected`.
+    fn prepare(&self, host: ConnectedHost) -> ConnectedHost {
+        host
+    }
+    /// Publishes a still-current prepared session without native I/O. May be repeated.
     fn connected(&self, host: ConnectedHost);
 }
 
