@@ -223,6 +223,9 @@ of `nocterm-connections-model::replica` and applies the result: remote changes t
 `Persisted<ReplicaState>` supplied and registered for shutdown by the application. A remote
 change never echoes back, an unreachable replica is a status, concurrent changes repeat the
 pass at most three times and an unreadable remote object never alters the local profile.
+Feed acquisition runs off the foreground before planning, capped at 256 pages, 16,384 changes,
+16 MiB of encoded payload plus metadata and a two-minute deadline. Non-progress, repeated or
+oversized cursors fail without advancing the agreed cursor or applying a partial plan.
 See [ADR 0101](../adr/0101-profiles-synchronize-through-a-replica-beside-the-local-document.md).
 
 ## Raw connection facts

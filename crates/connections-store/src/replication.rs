@@ -8,7 +8,9 @@
 //! checked writes, local ones through the replica port. What the two sides last
 //! agreed on is a [`ReplicaState`] document persisted through `nocterm_store`, so a
 //! restart continues where it stopped.
+mod feed;
 mod round;
+pub use feed::ReplicationFeedError;
 mod status;
 
 use crate::ConnectionStore;

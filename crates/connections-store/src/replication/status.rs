@@ -37,6 +37,8 @@ pub enum ReplicationFailure {
     #[error("Profiles kept changing during synchronization.")]
     Conflicts,
     #[error(transparent)]
+    Feed(#[from] super::ReplicationFeedError),
+    #[error(transparent)]
     Replica(#[from] ReplicaError),
     /// The local document refused one profile; the others were synchronized.
     #[error("Connection {id} could not be saved locally: {source}")]

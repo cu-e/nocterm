@@ -5520,6 +5520,7 @@ dependencies = [
  "nocterm-store",
  "schemars 1.2.2",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
