@@ -80,7 +80,7 @@ fn key(context: &Option<String>, keystrokes: &str) -> (Option<String>, String) {
 
 impl KeymapFile {
     /// The bindings for this platform, in file order.
-    fn here(&self) -> impl Iterator<Item = (&Option<String>, &String, &String)> {
+    pub(crate) fn here(&self) -> impl Iterator<Item = (&Option<String>, &String, &String)> {
         self.sections
             .iter()
             .filter(|section| section.applies_here())

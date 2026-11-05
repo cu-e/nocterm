@@ -22,7 +22,7 @@ fn bound(keymap: &KeymapHandle, cx: &App, keys: &str) -> Vec<String> {
 }
 
 #[gpui_kit::test]
-fn rebinding_saves_only_the_change_and_reset_restores_the_default(cx: &mut TestAppContext) {
+async fn rebinding_saves_only_the_change_and_reset_restores_the_default(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("keymap.toml");
     let keymap = cx.update(|cx| {
@@ -56,6 +56,7 @@ fn rebinding_saves_only_the_change_and_reset_restores_the_default(cx: &mut TestA
                 .any(|binding| binding.action().name() == "test::Library")
         );
     });
+    cx.update(|cx| keymap.flush(cx)).await.unwrap();
     let saved: KeymapFile = toml::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     let workspace = Some("Workspace".to_owned());
     assert_eq!(saved.action_for(&workspace, "ctrl-e"), Some(UNBOUND));
@@ -71,6 +72,9 @@ fn rebinding_saves_only_the_change_and_reset_restores_the_default(cx: &mut TestA
         keymap
             .unbind("test::Second", Some("Workspace".into()), "ctrl-j", cx)
             .unwrap();
+    });
+    cx.update(|cx| keymap.flush(cx)).await.unwrap();
+    cx.update(|cx| {
         let keymap = KeymapHandle::install(DEFAULTS, Some(file.clone()), cx);
         assert!(bound(&keymap, cx, "ctrl-j").is_empty());
     });
@@ -169,7 +173,9 @@ fn assert_native_failure(
 }
 
 #[gpui_kit::test]
-fn failed_save_keeps_the_desired_binding_installed_and_retry_persists_it(cx: &mut TestAppContext) {
+async fn failed_save_keeps_the_desired_binding_installed_and_retry_persists_it(
+    cx: &mut TestAppContext,
+) {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("keymap.toml");
     // A directory at the destination deterministically refuses atomic file publication.
@@ -179,7 +185,7 @@ fn failed_save_keeps_the_desired_binding_installed_and_retry_persists_it(cx: &mu
         KeymapHandle::install(DEFAULTS, Some(file.clone()), cx)
     });
     cx.update(|cx| {
-        let error = keymap
+        keymap
             .bind(
                 "test::First",
                 Some("Workspace".into()),
@@ -187,7 +193,10 @@ fn failed_save_keeps_the_desired_binding_installed_and_retry_persists_it(cx: &mu
                 "alt-e",
                 cx,
             )
-            .unwrap_err();
+            .unwrap();
+    });
+    let error = cx.update(|cx| keymap.flush(cx)).await.unwrap_err();
+    cx.update(|cx| {
         assert_native_failure(&keymap, &file, &error, cx);
         assert!(bound(&keymap, cx, "ctrl-e").is_empty());
         assert_eq!(bound(&keymap, cx, "alt-e"), ["test::First"]);
@@ -225,9 +234,10 @@ fn failed_save_keeps_the_desired_binding_installed_and_retry_persists_it(cx: &mu
                 cx,
             )
             .unwrap();
-        assert!(keymap.error(cx).is_none());
         assert_eq!(bound(&keymap, cx, "alt-e"), ["test::First"]);
     });
+    cx.update(|cx| keymap.flush(cx)).await.unwrap();
+    cx.update(|cx| assert!(keymap.error(cx).is_none()));
     let saved = nocterm_core::persist::load::<KeymapFile>(&file)
         .unwrap()
         .unwrap();

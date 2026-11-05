@@ -14,4 +14,6 @@ pub enum KeymapError {
     },
     #[error(transparent)]
     Persistence(#[from] nocterm_core::SharedError<PersistError>),
+    #[error(transparent)]
+    Store(#[from] nocterm_store::StoreError),
 }
