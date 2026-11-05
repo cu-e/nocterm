@@ -54,6 +54,13 @@ pub fn execution_authority(run: RunBinding) -> ExecutionAuthority {
     )
 }
 pub fn prompt_event(run: &RunBinding, text: &str, id: CommandId) -> CoordinatorEvent {
+    prompt_content_event(run, vec![Content::text(text)], id)
+}
+pub fn prompt_content_event(
+    run: &RunBinding,
+    content: Vec<Content>,
+    id: CommandId,
+) -> CoordinatorEvent {
     let command = CommandAcceptance::new(
         id,
         CommandKind::SubmitPrompt,
@@ -66,7 +73,7 @@ pub fn prompt_event(run: &RunBinding, text: &str, id: CommandId) -> CoordinatorE
         ChatControlRevision::default(),
     );
     let request = PromptRequest::new(
-        EnginePrompt::new(vec![Content::text(text)]).unwrap(),
+        EnginePrompt::new(content).unwrap(),
         ModelSelection::new(
             NamespaceId::new("provider").unwrap(),
             NamespaceId::new("model").unwrap(),

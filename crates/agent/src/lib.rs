@@ -20,6 +20,8 @@
 //! Owns: panel views and presentation state, the panel's ChatRoster, WorkspaceSeat (the
 //! ChatWorkspace over an original surface and exact ChatKey) and WorkspaceSignIn (the SignInTerminal over the
 //! host's TerminalAuthOpener).
+//! Image previews retain immutable source identity with a 64 MiB source/PNG/RGBA budget and at most 32 cached entries.
+//! Preparation and preview decoding share four physical work permits across windows, retained through actual background work.
 //! Does not own: chats, sessions and tools (nocterm-agent-chat), ACP transport, connection
 //! admission, filesystem storage or image decoding.
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,

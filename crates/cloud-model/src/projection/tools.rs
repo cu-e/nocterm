@@ -88,7 +88,7 @@ impl ProjectionTools {
         run: &RunBinding,
         observation: &ToolObservation,
         transcript: &mut ThreadState,
-    ) -> Result<(), ProjectionError> {
+    ) -> Result<usize, ProjectionError> {
         let row = self
             .0
             .get_mut(&(key(run), observation.intent()))
@@ -121,7 +121,7 @@ impl ProjectionTools {
         record.raw_output = Some(observation.output().value().clone());
         observation.display().attach(record);
         row.finished = true;
-        Ok(())
+        Ok(row.index)
     }
     pub(super) fn background(
         &mut self,

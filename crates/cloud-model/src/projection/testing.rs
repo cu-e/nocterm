@@ -19,7 +19,8 @@ use std::{
 
 mod fixture;
 pub use fixture::{
-    ProjectionFixture, approval_events, execution_authority, prompt_event, run_binding,
+    ProjectionFixture, approval_events, execution_authority, prompt_content_event, prompt_event,
+    run_binding,
 };
 
 #[derive(Clone, Default)]

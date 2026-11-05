@@ -10,7 +10,7 @@
 //! agent-runtime::history_admission. Ports provided: agent-chat::ConversationSource.
 //! Settings sections: none. Globals: none.
 //! Invariants: an accepted own prompt issues one inference grant for its run (ADR 0129);
-//! source is captured before enqueue and rechecked after every await;
+//! source is captured before enqueue and rechecked after every await; replay candidates reduce off-thread and publish only against their original projection;
 //! atomic publication is delegated to the original native membership. Accepted
 //! prompts enter only through verified PromptAccepted. A retry retains its ID and
 //! durable body. Captured tool-card choices preserve the exact intent/args/run,
@@ -512,23 +512,45 @@ impl CloudChat {
         let allocation = self.residency.work(required, cx)?;
         Ok((self.projection().cursor(), allocation))
     }
-    fn accept_page(
-        &mut self,
+    fn prepare_page(
+        &self,
         batch: Allocated<ProjectionBatch>,
         cx: &mut Context<Self>,
-    ) -> Result<(), CloudChatError> {
+    ) -> Result<
+        (
+            replay::PreparedPage,
+            nocterm_agent_runtime::history_admission::HistoryPayloadPermit,
+        ),
+        CloudChatError,
+    > {
         self.source.check_current()?;
-        let bytes = self
-            .projection()
+        let original = self.projection.clone().ok_or(ProjectionError::Stale)?;
+        let bytes = original
+            .value()
             .resident_bytes()
             .saturating_add(batch.value().projection_growth_bytes()?)
             .saturating_add(4096);
         let (allocation, payload) = self.residency.allocate(bytes, cx)?;
-        let (next, accepted) = self.projection().advanced(batch.value())?;
-        if next.resident_bytes() > allocation.bytes() {
-            return Err(ProjectionError::Capacity.into());
+        Ok((
+            replay::PreparedPage::new(original, batch, allocation),
+            payload,
+        ))
+    }
+    fn accept_page(
+        &mut self,
+        page: replay::ReducedPage,
+        payload: nocterm_agent_runtime::history_admission::HistoryPayloadPermit,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CloudChatError> {
+        self.source.check_current()?;
+        if !self
+            .projection
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &page.original))
+        {
+            return Ok(());
         }
-        let prompt = self.publish(Arc::new(Allocated::new(next, allocation)), &accepted)?;
+        let prompt = self.publish(page.next, &page.accepted)?;
         self.residency.published(payload);
         if prompt {
             self.allow_accepted_prompt(cx);

@@ -502,7 +502,7 @@ impl AgentPanel {
         binding: message_list::ActiveListBinding,
         ticket: image_pipeline::PreviewTicket,
         row: Option<usize>,
-        image: Option<std::sync::Arc<gpui_kit::Image>>,
+        image: Option<image_pipeline::CompletedPreview>,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -617,8 +617,8 @@ impl AgentPanel {
                 super::message_markdown::MessageMarkdown::text(entry, index, &self.messages)
             });
         });
-        if let Some(text) = markdown {
-            self.messages.prepare_markdown(index, text, cx);
+        if let Some((text, source_len)) = markdown {
+            self.messages.prepare_markdown(index, text, source_len, cx);
         }
         let mut rendered = None;
         let current = source.with_view(cx, &mut |view| {
@@ -657,12 +657,10 @@ impl AgentPanel {
         let Some((row, pending)) = current.ok().and(rendered) else {
             return div().into_any_element();
         };
-        for (key, data) in pending {
+        for source in pending {
             preview_operation::PreviewOperation::cached(
                 &mut self.messages,
-                key,
-                || data,
-                true,
+                source,
                 Some(index),
                 cx,
             );

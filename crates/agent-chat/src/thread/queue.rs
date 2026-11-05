@@ -12,10 +12,7 @@ use nocterm_ai::model::content::Content;
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
 
 use nocterm_workspace_ports::{ExpectedSession, TerminalEntry, TerminalStatus};
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use super::{AgentThread, Attachment};
 
@@ -25,7 +22,6 @@ pub(super) use submit_error::SubmitError;
 #[derive(Clone)]
 pub struct QueuedPrompt {
     saved: Arc<SavedPrompt>,
-    image_keys: Arc<Vec<Option<(usize, usize, bool)>>>,
     attachments: Vec<Attachment>,
     encoded_len: usize,
     memory_len: usize,
@@ -41,37 +37,18 @@ impl QueuedPrompt {
         attachments: Vec<Attachment>,
         encoded_len: Option<usize>,
     ) -> Self {
-        static NEXT_IMAGE: AtomicUsize = AtomicUsize::new(1);
         let encoded_len = encoded_len
             .unwrap_or_else(|| nocterm_ai::history::prompt_size(&saved).unwrap_or(usize::MAX));
-        let image_keys = saved
-            .images
-            .iter()
-            .map(|block| match block {
-                Content::Image(image) => Some((
-                    NEXT_IMAGE.fetch_add(1, Ordering::Relaxed),
-                    image.data.len(),
-                    true,
-                )),
-                _ => None,
-            })
-            .collect();
         let memory_len = nocterm_ai::history::prompt_memory(&saved).unwrap_or(usize::MAX);
         Self {
             memory_len,
             saved: Arc::new(saved),
             attachments,
-            image_keys: Arc::new(image_keys),
             encoded_len,
         }
     }
     pub fn saved(&self) -> &Arc<SavedPrompt> {
         &self.saved
-    }
-    /// One key per image block: its preview identity, encoded size and
-    /// whether it still awaits preparation; `None` for other blocks.
-    pub fn image_keys(&self) -> &[Option<(usize, usize, bool)>] {
-        &self.image_keys
     }
     /// What the prompt was written about, captured when it was queued.
     pub fn attachments(&self) -> &[Attachment] {
@@ -580,8 +557,15 @@ impl AgentThread {
         let resume =
             super::document::Resume::new(Some(session.to_string()), self.session_workdir().clone());
         let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
-        self.state
-            .append_user(prepared.visible().to_vec(), self.deps.timestamp(), &input);
+        if let Err(error) =
+            self.state
+                .append_user(prepared.visible().to_vec(), self.deps.timestamp(), &input)
+        {
+            self.fail(&error.to_string(), cx);
+            return;
+        }
+        // Consume only after live-transcript admission: a refusal preserves the queued body.
+        let _ = self.composer.take_next();
         self.mark_dirty(self.state.entries().len() - 1);
         self.persist(cx);
         self.notice.present("Thinking…".into());
@@ -720,7 +704,7 @@ impl AgentThread {
         if self.session.phase() != nocterm_ai::session::SessionPhase::Ready {
             return;
         }
-        let Some(prompt) = self.composer.take_next() else {
+        let Some(prompt) = self.composer.queue().first().cloned() else {
             return;
         };
         // Context is fixed for this turn, including terminal tool access.
@@ -745,7 +729,7 @@ pub(super) fn restore_attachments(values: &[SavedAttachment]) -> Vec<Attachment>
 mod tests {
     use super::*;
     #[test]
-    fn rendering_snapshot_shares_image_payload_and_precomputed_keys() {
+    fn rendering_snapshot_shares_immutable_image_payload() {
         let prompt = QueuedPrompt::new(
             SavedPrompt {
                 id: 1,
@@ -759,8 +743,14 @@ mod tests {
             Vec::new(),
         );
         let copy = prompt.clone();
-        assert!(Arc::ptr_eq(&prompt.saved, &copy.saved));
-        assert!(Arc::ptr_eq(&prompt.image_keys, &copy.image_keys));
-        assert_eq!(copy.image_keys[0].unwrap().1, 2 * 1024 * 1024);
+        assert!(Arc::ptr_eq(prompt.saved(), copy.saved()));
+        let Content::Image(original) = &prompt.saved().images[0] else {
+            panic!("image");
+        };
+        let Content::Image(cloned) = &copy.saved().images[0] else {
+            panic!("image");
+        };
+        assert_eq!(original.data.as_ptr(), cloned.data.as_ptr());
+        assert_eq!(cloned.data.len(), 2 * 1024 * 1024);
     }
 }

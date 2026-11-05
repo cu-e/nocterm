@@ -82,8 +82,11 @@ impl ProjectionBatch {
     /// transcript, tool/approval owners and per-event bookkeeping. The old
     /// projection and this decoded page remain separately admitted while cloning.
     pub fn projection_growth_bytes(&self) -> Result<usize, ProjectionError> {
-        self.events.iter().try_fold(1024usize, |total, envelope| {
-            Ok(total.saturating_add(super::sizing::projection_growth(&envelope.event)?))
-        })
+        self.events.iter().try_fold(
+            1024usize + super::MAX_PROJECTION_ENTRIES * size_of::<usize>() * 2,
+            |total, envelope| {
+                Ok(total.saturating_add(super::sizing::projection_growth(&envelope.event)?))
+            },
+        )
     }
 }

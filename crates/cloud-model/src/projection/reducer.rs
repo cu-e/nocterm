@@ -10,7 +10,7 @@ use crate::{
 };
 use nocterm_ai::{
     conversation::ConversationPhase,
-    history::{HistoryBudget, MAX_RESIDENT_BYTES},
+    history::{MAX_RESIDENT_BYTES, retained_value_bytes},
     model::{content::Content, session::SessionUpdate},
     thread::ThreadState,
 };
@@ -39,6 +39,7 @@ pub struct ConversationProjection {
     updated: u64,
     usage: super::usage::ProjectionUsage,
     approvals: super::approvals::ProjectionApprovals,
+    row_bytes: Vec<usize>,
 }
 impl ConversationProjection {
     pub fn new(binding: ProjectionBinding) -> Self {
@@ -56,6 +57,7 @@ impl ConversationProjection {
             updated: 0,
             usage: super::usage::ProjectionUsage::default(),
             approvals: super::approvals::ProjectionApprovals::default(),
+            row_bytes: Vec::new(),
         }
     }
     pub fn binding(&self) -> &ProjectionBinding {
@@ -121,6 +123,7 @@ impl ConversationProjection {
         Self::require_head(batch.known_head(), self.known_head)?;
         let mut next = self.clone();
         let mut accepted = Vec::new();
+        let mut dirty = Vec::new();
         for envelope in batch.events() {
             if envelope.binding != self.binding {
                 return Err(ProjectionError::WrongSource);
@@ -153,7 +156,7 @@ impl ConversationProjection {
                 return Err(ProjectionError::InvalidRecord(RecordKind::Event));
             }
             let now = envelope.time.as_millis() / 1000;
-            next.reduce(&envelope.event, now, &mut accepted)?;
+            next.reduce(&envelope.event, now, &mut accepted, &mut dirty)?;
             next.approvals.observe(&envelope.event, envelope.control)?;
             next.control = envelope.control;
             next.cursor = after;
@@ -167,7 +170,9 @@ impl ConversationProjection {
             }
         }
         Self::require_head(batch.known_head(), next.cursor)?;
-        next.measure()?;
+        dirty.sort_unstable();
+        dirty.dedup();
+        next.measure(&dirty)?;
         next.known_head = batch.known_head();
         Ok((next, accepted))
     }
@@ -183,16 +188,21 @@ impl ConversationProjection {
         }
         Ok(())
     }
-    fn measure(&mut self) -> Result<(), ProjectionError> {
+    fn measure(&mut self, dirty: &[usize]) -> Result<(), ProjectionError> {
         if self.transcript.entries.len() > MAX_PROJECTION_ENTRIES {
             return Err(ProjectionError::Capacity);
         }
-        let mut budget = HistoryBudget::default();
-        budget
-            .refresh(&self.transcript.entries, &[])
-            .map_err(|_| ProjectionError::Capacity)?;
+        let previous = self.row_bytes.len();
+        self.row_bytes.resize(self.transcript.entries.len(), 0);
+        for row in (previous..self.transcript.entries.len())
+            .chain(dirty.iter().copied().filter(|row| *row < previous))
+        {
+            self.row_bytes[row] = retained_value_bytes(&self.transcript.entries[row])
+                .map_err(|_| ProjectionError::Capacity)?;
+        }
         self.bytes = 1024usize
-            .saturating_add(budget.resident_bytes())
+            .saturating_add(self.row_bytes.iter().sum::<usize>())
+            .saturating_add(self.row_bytes.capacity().saturating_mul(size_of::<usize>()))
             .saturating_add(self.transcript.times.capacity().saturating_mul(8))
             .saturating_add(self.runs.bytes())
             .saturating_add(self.tools.bytes())
@@ -217,6 +227,7 @@ impl ConversationProjection {
         event: &CoordinatorEvent,
         now: u64,
         accepted: &mut Vec<CommandId>,
+        dirty: &mut Vec<usize>,
     ) -> Result<(), ProjectionError> {
         let previous_run = self.runs.selected().map(super::runs::key);
         match event {
@@ -248,7 +259,7 @@ impl ConversationProjection {
             }
             CoordinatorEvent::Progress { run, event } => {
                 self.require_current(run)?;
-                self.progress(event, now);
+                self.progress(event, now, dirty);
             }
             CoordinatorEvent::ToolIntent {
                 intent,
@@ -262,7 +273,7 @@ impl ConversationProjection {
             CoordinatorEvent::ToolResult { run, observation } => {
                 self.require_stream(run)?;
                 self.runs.require_known(run)?;
-                self.tools.finish(run, observation, &mut self.transcript)?;
+                dirty.push(self.tools.finish(run, observation, &mut self.transcript)?);
             }
             CoordinatorEvent::Approval { intent, .. } => {
                 let run = intent.authority().run();
@@ -292,9 +303,12 @@ impl ConversationProjection {
         }
         Ok(())
     }
-    fn progress(&mut self, event: &EngineEvent, now: u64) {
+    fn progress(&mut self, event: &EngineEvent, now: u64, dirty: &mut Vec<usize>) {
         match event {
             EngineEvent::Text(text) => {
+                if let Some(row) = self.transcript.entries.len().checked_sub(1) {
+                    dirty.push(row);
+                }
                 let content = Content::text(text.text());
                 self.transcript.apply(
                     match text.channel() {

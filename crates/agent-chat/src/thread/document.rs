@@ -210,18 +210,28 @@ impl ChatDocument {
     pub(super) fn edited_archived_draft(&mut self, now: u64) {
         self.changed(now, true);
     }
-    pub(super) fn apply_transcript(&mut self, update: SessionUpdate, now: u64) -> ThreadChange {
-        let (change, semantic) = self.transcript.apply(update, now);
+    pub(super) fn apply_transcript(
+        &mut self,
+        update: SessionUpdate,
+        now: u64,
+    ) -> Result<ThreadChange, HistoryCodecError> {
+        let (change, semantic) = self.transcript.apply(update, now)?;
         if semantic {
             self.changed(now, false);
         }
-        change
+        Ok(change)
     }
-    pub(super) fn append_user(&mut self, content: Vec<Content>, now: u64, input: &Inputs<'_>) {
-        self.transcript.append_user(content, now);
+    pub(super) fn append_user(
+        &mut self,
+        content: Vec<Content>,
+        now: u64,
+        input: &Inputs<'_>,
+    ) -> Result<(), HistoryCodecError> {
+        self.transcript.append_user(content, now)?;
         self.persistence.remember_inputs(input);
         self.mark_row(self.entries().len() - 1);
         self.changed(now, false);
+        Ok(())
     }
     pub(super) fn tokens(&mut self, usage: Option<TokenTotals>) {
         self.transcript.tokens(usage);
@@ -265,7 +275,9 @@ impl ChatDocument {
         self.budget.refresh(&self.transcript.state().entries)
     }
     pub fn resident_bytes(&self) -> usize {
-        self.budget.resident_bytes()
+        self.transcript
+            .resident_bytes()
+            .max(self.budget.resident_bytes())
     }
     pub(super) fn validate_candidate(
         &mut self,

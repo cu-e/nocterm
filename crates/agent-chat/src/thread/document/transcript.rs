@@ -6,9 +6,15 @@ use nocterm_ai::model::tools::{ToolChanges, ToolRecord, ToolStatus};
 use nocterm_ai::model::usage::TokenTotals;
 use nocterm_ai::thread::{Entry, ThreadChange, ThreadState};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct Transcript {
     state: ThreadState,
+    live_bytes: usize,
+}
+impl Default for Transcript {
+    fn default() -> Self {
+        Self::restored(Vec::new(), Vec::new(), None)
+    }
 }
 pub(crate) struct ToolMetadataPatch {
     row: usize,
@@ -24,21 +30,28 @@ impl ToolMetadataPatch {
 }
 impl Transcript {
     pub(super) fn restored(entries: Vec<Entry>, times: Vec<u64>, title: Option<String>) -> Self {
-        Self {
-            state: ThreadState {
-                entries,
-                times,
-                title,
-                ..Default::default()
-            },
-        }
+        let state = ThreadState {
+            entries,
+            times,
+            title,
+            ..Default::default()
+        };
+        let live_bytes = nocterm_ai::thread::live::resident_bytes(&state).unwrap_or(usize::MAX);
+        Self { state, live_bytes }
     }
     pub(super) fn state(&self) -> &ThreadState {
         &self.state
     }
-    pub(super) fn apply(&mut self, update: SessionUpdate, now: u64) -> (ThreadChange, bool) {
+    pub(super) fn apply(
+        &mut self,
+        update: SessionUpdate,
+        now: u64,
+    ) -> Result<(ThreadChange, bool), nocterm_ai::history::HistoryCodecError> {
+        let next = nocterm_ai::thread::live::admit_update(&self.state, self.live_bytes, &update)?;
         let semantic = self.changes_saved(&update);
-        (self.state.apply(update, now), semantic)
+        let change = self.state.apply(update, now);
+        self.live_bytes = next;
+        Ok((change, semantic))
     }
     fn changes_saved(&self, update: &SessionUpdate) -> bool {
         match update {
@@ -69,8 +82,18 @@ impl Transcript {
             _ => false,
         }
     }
-    pub(super) fn append_user(&mut self, content: Vec<Content>, now: u64) {
+    pub(super) fn append_user(
+        &mut self,
+        content: Vec<Content>,
+        now: u64,
+    ) -> Result<(), nocterm_ai::history::HistoryCodecError> {
+        self.live_bytes =
+            nocterm_ai::thread::live::admit_user(&self.state, self.live_bytes, &content)?;
         self.state.push_user(content, now);
+        Ok(())
+    }
+    pub(super) fn resident_bytes(&self) -> usize {
+        self.live_bytes
     }
     pub(super) fn tokens(&mut self, usage: Option<TokenTotals>) {
         self.state.tokens = usage;
@@ -83,6 +106,23 @@ impl Transcript {
         if call.meta.as_ref().and_then(|meta| meta.get(key)) == Some(&patch.value) {
             return false;
         }
+        let new_key = call.meta.as_ref().and_then(|meta| meta.get(key)).is_none();
+        let removed = call
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(key))
+            .map_or(Ok(0), nocterm_ai::history::retained_value_bytes)
+            .unwrap_or(0);
+        let added = nocterm_ai::history::retained_value_bytes(&patch.value).unwrap_or(usize::MAX);
+        let next = self
+            .live_bytes
+            .saturating_sub(removed)
+            .saturating_add(added)
+            .saturating_add(if new_key { 2048 } else { 0 });
+        if next > nocterm_ai::history::MAX_RESIDENT_BYTES {
+            return false;
+        }
+        self.live_bytes = next;
         call.meta
             .get_or_insert_with(Default::default)
             .insert(key.into(), patch.value);

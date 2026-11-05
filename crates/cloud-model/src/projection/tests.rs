@@ -731,3 +731,5 @@ fn an_invalid_record_names_the_kind_of_record_it_rejected() {
         "The verified projection contains an invalid record: tool call."
     );
 }
+
+mod memory;
