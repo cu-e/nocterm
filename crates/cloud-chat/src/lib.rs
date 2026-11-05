@@ -6,7 +6,8 @@
 //! port's deltas, the thread the renderer draws from it, the shown freshness, the pending-prompt
 //! presentation (ADR 0134) and the chat's share of the Local installation's history admission.
 //! Provides the agent-chat `ConversationSource` of a chat, the same one composer as Local chats
-//! use (ADR 0134).
+//! use (ADR 0134), with its `ConversationServers` (the binding, binding and unbinding, and the
+//! server the next prompts run on, ADR 0139).
 //! Does not own: login/unlock, the device protocol, verification, the reduction of runner
 //! events, checkpoints, command delivery and its retries (`nocterm-hub-io` runs the contract
 //! device core behind the port), runner execution, views or Local SessionLease lifecycle.

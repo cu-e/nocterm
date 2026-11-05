@@ -554,10 +554,15 @@ tombstones and unresolved target effects survive. Native archives retain the
 original ModelAction checkpoint binding, independently from public Snapshot S;
 a genuinely absent action has no invented checkpoint anchor.
 `CoordinatorSsh` keeps each chat's SSH binding, certificate request, certificate and
-Ed25519 subject seed in one journal v8 row sealed by the chat's journal cipher, stores a
+Ed25519 subject seed in one journal row sealed by the chat's journal cipher under the SSH access
+class (journal v9; the v8 to v9 upgrade deletes rows sealed as effects), stores a
 transition's row before it journals the command and events, restores the previous row when
 journaling fails, and lends the session broker the in-memory key and certificate
-(`ChatSshCredentials`, [ADR 0137](../adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md)).
+(`ChatSshCredentials`, [ADR 0137](../adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md),
+[ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+The runner's session broker opens a run's bound-server destination (the session access
+hub-io derived from the signed binding) with a configured SSH target or a keyed managed boot
+v3 target of the same endpoint and host key, signing in only with the chat's certificate.
 `CoordinatorPublicationBudgets` shares the exact command receive owner for normal
 and urgent publication lanes. Immutable accepted Stop/Revoke/Delete kinds select
 the urgent reserve; subsequent status uses that actual durable receipt. Observed
@@ -584,10 +589,12 @@ after restart still requires an external trusted head to detect. See
 [ADR 0109](../adr/0109-native-cloud-journal-and-effect-recovery.md) and
 [ADR 0113](../adr/0113-account-bound-journal-catalog.md).
 
-The journal (v7) also keeps one `chat_summaries` row per chat: the newest staged and
-published summary revisions, creation and last-activity times and, while the hub has not
-confirmed the newest revision, its sealed bytes and chat key epoch. The row needs no chat
-key. Versions 5 and 6 are upgraded in order on open; other versions are refused.
+The journal (v7, its sealed bound raised by v9) also keeps one `chat_summaries` row per chat:
+the newest staged and published summary revisions, creation and last-activity times and,
+while the hub has not confirmed the newest revision, its sealed bytes and chat key epoch. The
+row needs no chat key. Versions 5 to 8 are upgraded in order on open; other versions are
+refused. A bound chat's summary lists its servers (`summary::bound_servers`) and a runner that
+states egress sets the SSH binding feature bit.
 `CoordinatorSummaries` follows each chat's committed records through the coordinator's
 journal gate (the first call derives the whole journal, backfilling older chats) and
 publishes due revisions from the runner's delivery sweep. `RunnerChatDirectory` in
@@ -632,7 +639,15 @@ receipt probe) ([ADR 0138](../adr/0138-device-transport-and-resumable-commands.m
 `VerifiedDirectory` checkpoints), `CreateChat` and, for an own-agent chat, `ProviderLease`.
 Runner enrolment keeps writing the account's hub-trust and registry objects through the
 contract's record layouts
-([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)).
+([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)). A read chat binds
+and unbinds its servers with the core's `BindServers` and unbind (`server_flows`), maps the
+core's `ChatSsh` to the neutral `ServerBinding` (`servers`) and answers each certificate request
+with `SshAnswer` while the account is unlocked; the servers it offers are the account's trusted
+servers with the port this device last reached them on. `cloud_chats::answering` implements
+`ChatSshCertifier`: each sweep keeps every chat whose summary lists bound servers read.
+`agent_access` uses the contract's CA, CA document and per-server lines; reconcile rewrites a
+trusted server's shared-principal line to its own
+([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ### Native account admission
 

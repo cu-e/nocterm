@@ -623,7 +623,12 @@ A refused or unanswered submission (`ConversationSubmission::refused`) releases 
 so sending the same text again is a new prompt. A Cloud chat whose runner did not confirm its
 history (`ConversationView::freshness`) says so in its status line, and a sleeping seat offers
 Wake (`ConversationActions::wake`); while the chat is still opening nothing is said
-([ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)).
+([ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)). A source that binds
+servers (`ConversationSource::servers`) gets a Servers bar above the composer
+(`CloudServersControl`, owned by the conversation surface): the bound servers and where each
+stands, the server the next prompts run on, a form to bind CA-trusted servers for one to thirty
+days (seven by default) and Unbind. A Cloud history row names the servers its chat is bound to
+([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. It keeps
 each agent message's and expanded reasoning's parsed Markdown per row, so a row

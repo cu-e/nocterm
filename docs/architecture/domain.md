@@ -536,13 +536,17 @@ neutral `CloudTranscript` (rows, runs, approvals, this device's pending commands
 by `ConversationDelta`s (tool rows carry the core's title and typed `ToolOutcome`), the
 `Freshness` the device core reports (`Opening` before the first round, `Current`,
 `Unconfirmed` for a runner that did not answer, `Withheld`), the `ConversationAction`s a
-person sends, and the
-`CloudConversation` port with its typed `CloudConversationError`. It holds no protocol types and
+person sends (a prompt may name a bound server), the chat's `ServerBinding` (each
+`BoundServer` with its `ServerAccess` and whether a prompt may name it), the `ServerChoice`s it
+can be bound to with typed `ServerRefusal`s, and the
+`CloudConversation` port (with `servers`, `bind_servers` and `unbind_servers`) and its typed
+`CloudConversationError`. It holds no protocol types and
 does no I/O; `nocterm-hub-io` implements the port over the contract's device core and
 `nocterm-cloud-chat` presents it. Its `test-support` `FakeConversation` scripts deltas,
 freshness and command outcomes for consumers' tests
 ([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md),
-[ADR 0138](../adr/0138-device-transport-and-resumable-commands.md)).
+[ADR 0138](../adr/0138-device-transport-and-resumable-commands.md),
+[ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ## Cloud run contracts
 
@@ -632,7 +636,16 @@ deletion) to a `ChatActivity`; `ChatSummaryTracker` adds the revision ledger and
 cadence (one attempt per chat per 5 s, longer after failures, a deletion at once and last).
 `ChatSummaryJournal` and `ChatSummaryDirectory` are the ports for its durable row and its
 signed publication; the contract format stays in the adapter
-([ADR 0135](../adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)).
+([ADR 0135](../adr/0135-the-runner-publishes-chat-summaries-journal-v7.md)). The facts also
+take a bound chat's `SummarySsh` (the binding's signed bytes and the runner's latest access
+report), from which the adapter derives the summary's servers.
+
+`ssh_access` holds the runner's rules for a chat's SSH binding (ADR 0137). Reach is selected:
+`SshReach` lists the endpoints this runner may reach, each with its host key, which must equal
+the binding's. Each `BoundTarget` carries the session access the adapter derived from the
+signed binding, and `ChatSshAccess::select` names the admitted server a run's destination
+selects by exact equality, with its credential while a certificate is active
+([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ### Displayed account confirmations
 

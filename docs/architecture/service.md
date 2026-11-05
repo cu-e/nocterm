@@ -411,4 +411,8 @@ prompts (ADR 0134): a prompt shows at once, follows its command's state, and a r
 unanswered one stays until it is sent again as a new prompt or dismissed. Actions captured for
 one run never act on a run that replaced it. `CloudChatInstallation` keeps the bounded registry
 of chats and window observers, sharing the Local installation's history admission
-([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)).
+([ADR 0136](../adr/0136-the-device-side-runs-on-the-contract-device-core.md)). A chat's source
+offers `ConversationServers`: the binding the verified history states, binding and unbinding
+through the port, and the server the next prompts run on, which is only ever a selectable bound
+server and is dropped once the server is no longer selectable
+([ADR 0139](../adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).

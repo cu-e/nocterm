@@ -114,7 +114,7 @@ acceptance; a later record supersedes an earlier one.
 | [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix |
 | [0117](0117-contained-local-tool-processes.md) | Cloud local tools receive an explicit contained process capability |
 | [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account (device-flow freshness and work leases superseded by 0136) |
-| [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers (single principal superseded by 0137) |
+| [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers (single principal superseded by 0137; desktop CA signer and document by 0139) |
 | [0120](0120-cloud-agent-catalog-in-the-chat-menu.md) | The Cloud agent catalog lives in the new-chat menu |
 | [0121](0121-managed-pools-as-a-trusted-gateway.md) | Managed pools are a trusted gateway with per-lease broker tokens |
 | [0122](0122-cloud-chat-creation-protocol.md) | Cloud chats are created on the device and claimed by the runner on key admission |
@@ -132,5 +132,6 @@ acceptance; a later record supersedes an earlier one.
 | [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript (projection placement superseded by 0136) |
 | [0135](0135-the-runner-publishes-chat-summaries-journal-v7.md) | The runner publishes signed chat summaries to its directory; journal v7 (journal version rule superseded by 0137) |
 | [0136](0136-the-device-side-runs-on-the-contract-device-core.md) | The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter (request signer, outbox and first-freshness rule superseded by 0138) |
-| [0137](0137-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 |
+| [0137](0137-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 (SSH row class, boot host-key rule and journal version superseded by 0139) |
 | [0138](0138-device-transport-and-resumable-commands.md) | Cloud effects go through the hub client; commands resume after a restart |
+| [0139](0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md) | The desktop binds chats to servers and answers their certificate requests; prompts run on bound servers; journal v9 |

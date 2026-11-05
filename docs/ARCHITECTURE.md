@@ -51,7 +51,10 @@ commands). Cloud agents add `nocterm-cloud-agents-model` (domain), `nocterm-clou
 [ADR 0121](adr/0121-managed-pools-as-a-trusted-gateway.md)). Cloud chats run the contract's
 sans-I/O device core inside `nocterm-hub-io`; `nocterm-cloud-conversation-model` (domain) holds
 the neutral transcript and the `CloudConversation` port that `nocterm-cloud-chat` (service)
-presents in the one composer ([ADR 0136](adr/0136-the-device-side-runs-on-the-contract-device-core.md)). A hub can also be the first step of an SSH route: the
+presents in the one composer ([ADR 0136](adr/0136-the-device-side-runs-on-the-contract-device-core.md)). A chat can be bound to
+the person's CA-trusted servers; any unlocked desktop answers its runner's certificate requests
+inside the binding, and `nocterm-cloud-agents` keeps the bound chats of each tracked hub read
+through the `ChatSshCertifier` port ([ADR 0139](adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)). A hub can also be the first step of an SSH route: the
 transport asks the `RelayDialer` port that `nocterm-hub-io` implements for a stream
 ([ADR 0100](adr/0100-the-hub-is-a-route-step.md)). A window shows one environment, this computer or the account of one hub: the application
 builds one in-memory mirror of the account's connections, its vault and the terminal credentials

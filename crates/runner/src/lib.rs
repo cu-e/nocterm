@@ -9,10 +9,13 @@
 //! (ADR 0121) validates and stays control-plane only. With `--control stdin` (ADR 0123)
 //! stdin is a framed channel: a boot v2 document, then contract chat access frames that
 //! give each chat a memory-only broker token; closing it ends the lease. Boot v3 adds the
-//! host's `ssh_egress`. Chat SSH bindings (ADR 0137) are admitted for the configured SSH
-//! targets and a managed boot's targets with the egress of `[ssh]` or boot v3; a configured
-//! SSH target without device consent signs in with the chat's in-memory key and certificate,
-//! and the delivery sweep renews certificates.
+//! host's `ssh_egress` and, per target, an optional host key and session settings; the SSH
+//! section is read with the contract's `boot_ssh` (ADR 0139). Chat SSH bindings (ADR 0137)
+//! are admitted for the configured SSH targets and a managed boot's targets with a host key
+//! equal to the binding's, with the egress of `[ssh]` or boot v3; a configured SSH target
+//! without device consent signs in with the chat's in-memory key and certificate, a run whose
+//! destination is a bound server's session access signs in to that server's configured or
+//! boot target the same way, and the delivery sweep renews certificates.
 //! Does not own: GPUI, model/tool engines, device/account root keys, provider
 //! credentials, protocol codecs or server implementation. Execution stays disabled
 //! unless both `[execution]` and `[session_targets]` are configured.

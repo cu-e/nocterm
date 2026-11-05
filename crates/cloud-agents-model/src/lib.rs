@@ -14,7 +14,7 @@
 //! the catalog entity and the order of a start (`nocterm-cloud-agents`), views.
 //!
 //! Ports provided: `CloudAgentCatalog`, `CloudAgentLauncher`, `OwnRunnerLauncher`,
-//! `AgentSeats`, `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`. Ports used: `nocterm-hubs-model`
+//! `AgentSeats`, `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`, `ChatSshCertifier`. Ports used: `nocterm-hubs-model`
 //! (`HubId`, `HubColor`, `HubError`), the `Secret` of `nocterm-session` and the
 //! `CloudConversation` port of `nocterm-cloud-conversation-model`.
 //!

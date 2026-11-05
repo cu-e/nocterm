@@ -35,8 +35,14 @@
 //! and idle-timer publication conditional. Administrator and recovery offers retain the
 //! original recipient and exact displayed action ([ADR 0114](../../../docs/adr/0114-native-captured-account-operations.md)).
 //! The personal SSH CA for cloud agents lives in `agent_access`: its seed and the registry of
-//! trusting servers are objects of the account's own `agent_ssh_trust` collection, and the
-//! `AgentHostTrust` and `AgentGrants` ports are implemented there ([ADR 0119](../../../docs/adr/0119-agent-ssh-ca.md)).
+//! trusting servers are objects of the account's own `agent_ssh_trust` collection, kept with the
+//! contract's CA, CA document and per-server lines, and the `AgentHostTrust` and `AgentGrants`
+//! ports are implemented there ([ADR 0119](../../../docs/adr/0119-agent-ssh-ca.md),
+//! [ADR 0139](../../../docs/adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+//! A Cloud chat binds its servers and answers its runner's certificate requests with the device
+//! core while it is read; `CloudChatsLink` implements `ChatSshCertifier`, keeping every bound
+//! chat read. `runner_control::boot_ssh` re-exports the contract's boot SSH section for the
+//! runner.
 //! Native Cloud adapter owners also keep the runner's three purpose-specific keys,
 //! original enrolled source and durable rotated session, authenticated chat material,
 //! signed public coordinator observations and exact ciphertext publication metadata.
@@ -110,9 +116,11 @@
 //! The runner inbox maps chat SSH bindings and certificates (contract ADR 0009) to native
 //! commands for this chat's key epoch with each server's principal, the event encoder maps
 //! SSH access events to tags 14 and 15, and `RunnerSshCertificates` reads a certificate
-//! under the binding's CA key; the journal's SSH row is sealed as an effect slot because the
-//! contract has no class for it
-//! ([ADR 0137](../../../docs/adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md)).
+//! under the binding's CA key; each bound server also carries the session access a prompt
+//! names it by. The journal's SSH row is sealed under the contract's SSH access class, and a
+//! summary's servers come from `summary::bound_servers`
+//! ([ADR 0137](../../../docs/adr/0137-per-server-ca-principals-and-runner-certificate-sessions.md),
+//! [ADR 0139](../../../docs/adr/0139-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 //!
 //! The managed-agent ports of `nocterm-cloud-agents-model` (`agents`) read the failure code,
 //! the web panel address and the provider kinds through the contract's own vocabulary
