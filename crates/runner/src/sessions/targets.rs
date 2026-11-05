@@ -209,10 +209,7 @@ impl ConfiguredSessionTargets {
         }
         source.check().map_err(backend)?;
         let Some(target) = self.entry(request) else {
-            if request.ssh_consent().is_some() || authorizer.is_some() {
-                return Err(CoordinatorError::Conflict);
-            }
-            return self.open_bound(request, source, now);
+            return self.open_bound(request, source, authorizer.is_some(), now);
         };
         match &target.connector {
             Connector::Local {
@@ -323,10 +320,15 @@ impl ConfiguredSessionTargets {
         &self,
         request: &SessionRequest,
         source: ConnectionSource,
+        authorized: bool,
         now: Timestamp,
     ) -> Result<Session, CoordinatorError> {
         let bound = self.bound(request, now)?;
         let (transport, connect, host) = self.connector(&bound)?;
+        // A bound server signs in with the chat's certificate only, never with a consent.
+        if request.ssh_consent().is_some() || authorized {
+            return Err(CoordinatorError::Conflict);
+        }
         let credential = bound.credential.ok_or(CoordinatorError::NeedsUnlock)?;
         let login = CertificateLogin::new(
             connect.target.clone(),
