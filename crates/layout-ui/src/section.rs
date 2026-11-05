@@ -69,6 +69,7 @@ pub struct LayoutEditorSection {
     /// The width the bar preview was drawn with, which decides how much of it is shown.
     fit: Fit,
     _subscriptions: Vec<Subscription>,
+    observed: (Option<PresetId>, PluginEnablement),
 }
 
 impl LayoutEditorSection {
@@ -94,6 +95,10 @@ impl LayoutEditorSection {
             }),
             cx,
         );
+        let observed = (
+            settings.setting::<LayoutSettings>(cx).active.clone(),
+            settings.setting::<PluginEnablement>(cx).clone(),
+        );
         Self {
             settings,
             source,
@@ -108,6 +113,7 @@ impl LayoutEditorSection {
             focus: cx.focus_handle(),
             fit: Fit::default(),
             _subscriptions: vec![changed, plugins],
+            observed,
         }
     }
 
@@ -306,13 +312,22 @@ impl LayoutEditorSection {
     /// Forgets the history when the layouts changed by someone else, once no write of ours is
     /// on its way.
     fn stored_changed(&mut self, cx: &mut Context<Self>) {
+        let active = self.settings.setting::<LayoutSettings>(cx).active.clone();
+        let enablement = self.settings.setting::<PluginEnablement>(cx);
+        let mut changed = self.observed.0 != active || self.observed.1 != *enablement;
+        if changed {
+            self.observed = (active, enablement.clone());
+        }
         if self.pending == 0 {
-            let presets = self.settings.setting::<LayoutSettings>(cx).presets.clone();
-            if self.history.observe(&presets) {
+            let presets = &self.settings.setting::<LayoutSettings>(cx).presets;
+            if self.history.observe(presets) {
                 self.notice = None;
+                changed = true;
             }
         }
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
 
     pub(crate) fn dismiss_notice(&mut self, cx: &mut Context<Self>) {

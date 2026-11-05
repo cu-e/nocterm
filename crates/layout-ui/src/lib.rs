@@ -23,6 +23,7 @@
 //! the write, never a guess; editing the layout in use changes the footer at once; editing a
 //! built-in layout in use saves a custom copy that stays in use; history is dropped when
 //! anything else changes the layouts.
+//! Undo is bounded to 100 steps and 8 MiB of cloned snapshots per editor.
 
 mod commands;
 mod dnd;
