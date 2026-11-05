@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use gpui_kit::{App, Subscription};
+use gpui_kit::{App, Subscription, Task};
 use nocterm_core::error::SharedCause;
 use nocterm_plugin_model::PluginId;
 
@@ -154,6 +154,11 @@ pub(super) fn describe(error: &(dyn Error + 'static)) -> String {
 
 /// The user plugins of the installation.
 pub trait UserPlugins: 'static {
+    /// Retained startup/publication diagnostic, when the native owner could not initialize.
+    fn error(&self, _cx: &App) -> Option<UserPluginError> {
+        None
+    }
+
     /// The installed plugins, in a stable order.
     fn rows(&self, cx: &App) -> Vec<UserPluginRow>;
 
@@ -166,17 +171,17 @@ pub trait UserPlugins: 'static {
     }
 
     /// Reads and checks the package at `location`. Nothing is stored.
-    fn inspect(&self, location: &str, cx: &App) -> Result<Candidate, UserPluginError>;
+    fn inspect(&self, location: &str, cx: &mut App) -> Task<Result<Candidate, UserPluginError>>;
 
     /// Installs, or replaces an installed plugin of the same id, from what the user accepted.
-    fn install(&self, request: InstallRequest, cx: &mut App) -> Result<(), UserPluginError>;
+    fn install(&self, request: InstallRequest, cx: &mut App) -> Task<Result<(), UserPluginError>>;
 
     fn set_enabled(
         &self,
         plugin: &PluginId,
         enabled: bool,
         cx: &mut App,
-    ) -> Result<(), UserPluginError>;
+    ) -> Task<Result<(), UserPluginError>>;
 
     /// Allows or revokes the plugin's panels and widgets in the windows.
     fn set_placeable(
@@ -184,7 +189,7 @@ pub trait UserPlugins: 'static {
         plugin: &PluginId,
         placeable: bool,
         cx: &mut App,
-    ) -> Result<(), UserPluginError>;
+    ) -> Task<Result<(), UserPluginError>>;
 
     /// Removes the plugin; its data goes too when `with_data` is set.
     fn remove(
@@ -192,10 +197,10 @@ pub trait UserPlugins: 'static {
         plugin: &PluginId,
         with_data: bool,
         cx: &mut App,
-    ) -> Result<(), UserPluginError>;
+    ) -> Task<Result<(), UserPluginError>>;
 
     /// Removes the data of the plugin and leaves it installed.
-    fn remove_data(&self, plugin: &PluginId, cx: &mut App) -> Result<(), UserPluginError>;
+    fn remove_data(&self, plugin: &PluginId, cx: &mut App) -> Task<Result<(), UserPluginError>>;
 
     /// Calls `on_change` after anything the rows or the audit show changed.
     fn observe(&self, cx: &mut App, on_change: Box<dyn FnMut(&mut App)>) -> Subscription;

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, PathPromptOptions, Render, SharedString,
-    Subscription, Window,
+    Subscription, Task, Window,
 };
 use nocterm_plugin_model::PluginId;
 use nocterm_ui::{FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsForm};
@@ -36,6 +36,8 @@ pub struct UserPluginsSection {
     /// answer.
     deny_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    operation: Option<Task<()>>,
+    generation: u64,
 }
 
 impl UserPluginsSection {
@@ -74,6 +76,8 @@ impl UserPluginsSection {
             pending_removal: None,
             deny_focus: cx.focus_handle(),
             _subscriptions: subscriptions,
+            operation: None,
+            generation: 0,
         }
     }
 
@@ -145,6 +149,13 @@ impl UserPluginsSection {
         self.consent.as_mut()
     }
 
+    pub(super) fn manager_error(&self, cx: &App) -> Option<SharedString> {
+        self.session
+            .loaded()?
+            .error(cx)
+            .map(|error| describe(&error).into())
+    }
+
     pub(super) fn notice(&self) -> Option<&SharedString> {
         self.notice.as_ref()
     }
@@ -186,14 +197,32 @@ impl UserPluginsSection {
     /// Reads the package at `location` and, when it is acceptable, opens the consent. Nothing is
     /// stored until the user accepts.
     pub fn begin_install(&mut self, location: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.operation.is_some() {
+            return;
+        }
         self.notice = None;
         let Some(manager) = self.session.loaded() else {
             return;
         };
-        match manager.inspect(location, cx) {
-            Ok(candidate) => self.open_consent(candidate, window, cx),
-            Err(error) => self.notice = Some(describe(&error).into()),
-        }
+        let result = manager.inspect(location, cx);
+        self.generation = self.generation.wrapping_add(1);
+        let generation = self.generation;
+        self.notice = Some("Reading plugin…".into());
+        self.operation = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = result.await;
+            let _ = this.update_in(cx, |section, window, cx| {
+                if section.generation != generation {
+                    return;
+                }
+                section.operation = None;
+                section.notice = None;
+                match result {
+                    Ok(candidate) => section.open_consent(candidate, window, cx),
+                    Err(error) => section.notice = Some(describe(&error).into()),
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
@@ -214,6 +243,9 @@ impl UserPluginsSection {
 
     /// Installs what the consent shows, if its buttons are live.
     pub(super) fn accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.operation.is_some() {
+            return;
+        }
         let Some(consent) = self.consent.as_ref().filter(|consent| consent.can_accept()) else {
             return;
         };
@@ -221,22 +253,35 @@ impl UserPluginsSection {
         let Some(manager) = self.session.loaded().cloned() else {
             return;
         };
-        match manager.install(request, cx) {
-            Ok(()) => {
-                self.consent = None;
-                self.notice = None;
-                self.select(&id, window, cx);
-            }
-            Err(error) => {
-                self.consent = None;
-                self.notice = Some(describe(&error).into());
-            }
-        }
+        let result = manager.install(request, cx);
+        self.consent = None;
+        self.notice = Some("Installing plugin…".into());
+        self.generation = self.generation.wrapping_add(1);
+        let generation = self.generation;
+        self.operation = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = result.await;
+            let _ = this.update_in(cx, |section, window, cx| {
+                if section.generation != generation {
+                    return;
+                }
+                section.operation = None;
+                match result {
+                    Ok(()) => {
+                        section.notice = None;
+                        section.select(&id, window, cx);
+                    }
+                    Err(error) => section.notice = Some(describe(&error).into()),
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
     pub(super) fn deny(&mut self, cx: &mut Context<Self>) {
         self.consent = None;
+        self.generation = self.generation.wrapping_add(1);
+        self.operation = None;
         cx.notify();
     }
 
@@ -338,13 +383,24 @@ impl UserPluginsSection {
     fn act(
         &mut self,
         cx: &mut Context<Self>,
-        action: impl FnOnce(&dyn UserPlugins, &mut App) -> Result<(), UserPluginError>,
+        action: impl FnOnce(&dyn UserPlugins, &mut App) -> Task<Result<(), UserPluginError>>,
     ) {
+        if self.operation.is_some() {
+            return;
+        }
         let Some(manager) = self.session.loaded().cloned() else {
             return;
         };
         let outcome = action(manager.as_ref(), cx);
-        self.notice = outcome.err().map(|error| describe(&error).into());
+        self.notice = Some("Saving plugin changes…".into());
+        self.operation = Some(cx.spawn(async move |section, cx| {
+            let outcome = outcome.await;
+            let _ = section.update(cx, |section, cx| {
+                section.operation = None;
+                section.notice = outcome.err().map(|error| describe(&error).into());
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
