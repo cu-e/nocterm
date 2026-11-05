@@ -85,8 +85,9 @@ pub fn plan(
     state: &ReplicaState,
 ) -> Vec<ReplicaAction> {
     let latest = latest_changes(changes, state);
+    let local_by_id: HashMap<_, _> = local.iter().map(|profile| (profile.id, profile)).collect();
     let mut remembered: Vec<ProfileId> = state.entries().map(|(id, _)| id).collect();
-    remembered.sort_by_key(ToString::to_string);
+    remembered.sort_unstable();
     let mut seen = HashSet::new();
     let ids = local
         .iter()
@@ -101,7 +102,7 @@ pub fn plan(
         .filter(|id| !state.is_unrecognized(*id) || latest.contains_key(id))
         .flat_map(|id| {
             reconcile_placed(
-                local.get(id),
+                local_by_id.get(&id).copied(),
                 latest.get(&id).copied(),
                 state.entry(id),
                 state.placement(id),
@@ -113,7 +114,7 @@ pub fn plan(
         .map(|(id, _)| id)
         .filter(|id| !seen.contains(id))
         .collect();
-    stale.sort_by_key(ToString::to_string);
+    stale.sort_unstable();
     actions.extend(stale.into_iter().map(|id| ReplicaAction::Forget { id }));
     actions
 }
