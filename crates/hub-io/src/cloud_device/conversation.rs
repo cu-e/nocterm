@@ -420,6 +420,7 @@ impl Reading {
                 } else {
                     None
                 },
+                server: None,
             },
             ConversationAction::Stop { run } => ChatAction::Stop {
                 run: run.map(|run| *run.as_bytes()),
