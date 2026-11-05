@@ -24,6 +24,27 @@ pub(super) fn decode_saved_image(data: &str) -> Result<Vec<u8>, ImageAttachError
 
 pub(super) struct QueueRenderer;
 impl QueueRenderer {
+    /// Closed queues retain their header without mounting rows or preparing thumbnails.
+    pub(super) fn if_present(
+        composer: &super::composer_view::ComposerView,
+        messages: &mut super::message_list::MessageList,
+        thread: &Entity<AgentThread>,
+        labels: &super::attachments::AttachmentLabels,
+        cx: &mut Context<AgentPanel>,
+    ) -> Option<AnyElement> {
+        if thread.read(cx).composer().queue().is_empty() {
+            return None;
+        }
+        let prompts = if composer.queue_open() {
+            thread.read(cx).composer().queue().to_vec()
+        } else {
+            Vec::new()
+        };
+        let previews =
+            super::preview_operation::PreviewOperation::queued_previews(messages, &prompts, cx);
+        Self::render_queue(composer, prompts, previews, thread, labels, cx)
+    }
+
     pub(super) fn hood(
         header: AnyElement,
         cx: &gpui_kit::App,

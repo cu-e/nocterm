@@ -374,6 +374,10 @@ a later launch. Native filesystem/home/PATH resolution belongs to the ACP adapte
 
 ## Agent transcript and configuration rules
 
+`nocterm-ai::conversation` owns the neutral composer capabilities and descriptive
+model/provider choices. They carry no credentials or provider authority; captured
+composer transitions and asynchronous selection remain in the service layer.
+
 `nocterm-ai::thread::ThreadState` reduces conversation entries, timestamps, plan,
 usage, token counts and title. Per-chat options, modes, command revisions and
 reconciliation belong to the feature's private `ChatConfig`. Existing
@@ -550,10 +554,11 @@ neutral `CloudTranscript` (rows, runs, approvals, this device's pending commands
 by `ConversationDelta`s (tool rows carry the core's title and typed `ToolOutcome`), the
 `Freshness` the device core reports (`Opening` before the first round, `Current`,
 `Unconfirmed` for a runner that did not answer, `Withheld`), the `ConversationAction`s a
-person sends (a prompt may name a bound server), the chat's `ServerBinding` (each
+person sends (a prompt may name a bound server and model and carry neutral inline images), the chat's `ServerBinding` (each
 `BoundServer` with its `ServerAccess` and whether a prompt may name it), the `ServerChoice`s it
 can be bound to with typed `ServerRefusal`s, and the
-`CloudConversation` port (with `servers`, `bind_servers` and `unbind_servers`) and its typed
+`CloudConversation` port (with model choices, explicit own-provider options and selection,
+`servers`, `bind_servers` and `unbind_servers`) and its typed
 `CloudConversationError`. It holds no protocol types and
 does no I/O; `nocterm-hub-io` implements the port over the contract's device core and
 `nocterm-cloud-chat` presents it. Its `test-support` `FakeConversation` scripts deltas,

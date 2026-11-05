@@ -3,7 +3,7 @@ use super::*;
 use nocterm_ai::TerminalCall;
 use nocterm_cloud_model::payload::BoundedJson;
 
-fn listing_turn() -> ScriptedEngineTurn {
+pub(super) fn listing_turn() -> ScriptedEngineTurn {
     let step = StepId::from_bytes([0x71; 16]);
     let mut turn = complete();
     turn.action = EngineAction::Tools(

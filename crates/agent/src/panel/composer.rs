@@ -197,6 +197,14 @@ impl AgentPanel {
             composer_renderer::ComposerRenderer::render_image_strip(
                 thread.entity_id(),
                 previews,
+                Vec::new(),
+                cx,
+            )
+        });
+        let images = images.or_else(|| {
+            super::cloud_composer::CloudComposerRenderer::image_strip(
+                self.conversation.as_ref()?,
+                &mut self.messages,
                 cx,
             )
         });
@@ -207,6 +215,7 @@ impl AgentPanel {
             &self.composer,
             &self.menus,
             local,
+            self.conversation.as_ref(),
             stop,
             busy,
             cx,
@@ -232,25 +241,6 @@ impl AgentPanel {
             cx,
         )
     }
-    /// The Local chat's queued prompts above the composer; none while the queue is empty.
-    pub(super) fn render_queue(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        labels: &attachments::AttachmentLabels,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if thread.read(cx).composer().queue().is_empty() {
-            return None;
-        }
-        let prompts = if self.composer.queue_open() {
-            thread.read(cx).composer().queue().to_vec()
-        } else {
-            Vec::new()
-        };
-        let previews =
-            preview_operation::PreviewOperation::queued_previews(&mut self.messages, &prompts, cx);
-        queue::QueueRenderer::render_queue(&self.composer, prompts, previews, thread, labels, cx)
-    }
     pub(super) fn prepare_images(
         &mut self,
         work: impl std::future::Future<Output = Result<Vec<PromptImage>, ImageAttachError>>
@@ -258,74 +248,57 @@ impl AgentPanel {
         + 'static,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.current() else {
-            return;
-        };
-        if self.preparing_images()
-            || !thread
-                .read(cx)
-                .agent_info()
-                .is_some_and(|info| info.capabilities.image_prompts)
-        {
+        if self.preparing_images() {
             return;
         }
+        let Some(target) = image_preparation::ImageTarget::capture(
+            self.conversation.as_ref().map(|s| s.source()),
+            self.current(),
+            cx,
+        ) else {
+            return;
+        };
         let Some(permit) = self.messages.admit_image_work() else {
             self.notices
                 .set_error(Some(ImageAttachError::Busy.to_string()));
             cx.notify();
             return;
         };
-        let binding = self.composer.prepare_images(thread.entity_id());
+        let binding = self.composer.prepare_images(target.identity());
         cx.notify();
-        let ticket = thread.read(cx).session_ticket();
-        let owner = thread.downgrade();
-        image_preparation::ImagePreparation::new(binding, owner, ticket, Box::pin(work), permit)
+        image_preparation::ImagePreparation::new(binding, target, Box::pin(work), permit)
             .launch(cx);
     }
     pub(super) fn on_composer_images_prepared(
         &mut self,
         binding: composer_view::ComposerBinding,
-        owner: gpui_kit::WeakEntity<crate::thread::AgentThread>,
-        ticket: nocterm_ai::session::Ticket,
+        target: image_preparation::ImageTarget,
         result: Result<Vec<PromptImage>, ImageAttachError>,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = owner.upgrade() else {
-            return;
-        };
+        let identity = self
+            .conversation_identity()
+            .or_else(|| self.current().map(|t| t.entity_id()));
         if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled
-            || self
-                .current()
-                .is_none_or(|current| current.entity_id() != thread.entity_id())
+            || identity != Some(target.identity())
             || !self.composer.images_completed(&binding)
         {
             return;
         }
-        thread.update(cx, |thread, cx| {
-            if !thread.session_request_current(ticket) {
-                return;
-            }
-            match result {
-                Ok(images) => {
-                    let mut collection = thread.composer().images().to_vec();
-                    collection.extend(images);
-                    if let Err(error) = thread.accept_composer_images(collection, cx) {
-                        self.notices.set_error(Some(error.to_string()));
-                    }
-                }
-                Err(error) => self.notices.set_error(Some(error.to_string())),
-            }
-            cx.notify();
-        });
+        if let Err(error) = result.and_then(|images| target.accept(images, cx)) {
+            self.notices.set_error(Some(error.to_string()));
+        }
         cx.notify();
     }
     pub(super) fn add_image_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        let Some(thread) = self.current() else {
+        let Some(target) = image_preparation::ImageTarget::capture(
+            self.conversation.as_ref().map(|s| s.source()),
+            self.current(),
+            cx,
+        ) else {
             return;
         };
-        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(
-            thread.read(cx).composer().images(),
-        );
+        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(&target.images(cx));
         let inspector = self.messages.inspector();
         self.prepare_images(
             async move {
@@ -337,12 +310,14 @@ impl AgentPanel {
         );
     }
     pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let Some(thread) = self.current() else {
+        let Some(target) = image_preparation::ImageTarget::capture(
+            self.conversation.as_ref().map(|s| s.source()),
+            self.current(),
+            cx,
+        ) else {
             return;
         };
-        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(
-            thread.read(cx).composer().images(),
-        );
+        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(&target.images(cx));
         let inspector = self.messages.inspector();
         self.prepare_images(
             async move { images::read_images(paths, inspector.as_ref(), budget?) },
@@ -356,31 +331,38 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if operation.current(
-            self.current().map(|thread| thread.entity_id()),
+            self.conversation_identity()
+                .or_else(|| self.current().map(|thread| thread.entity_id())),
             self.composer.revision(),
+            &match self.composer.input_ticket(cx) {
+                Ok(input) => input,
+                Err(_) => return,
+            },
         ) {
             self.add_images(paths, cx);
         }
     }
-    /// Whether the composer takes images and files: the open source attaches them, and only
-    /// a Local thread holds a composer's attachments.
+    /// Image admission follows the captured source, including Cloud drafts.
     pub(super) fn composer_attaches(&self, cx: &App) -> bool {
-        use nocterm_agent_chat::conversation::ConversationSource as _;
-        let Some(thread) = self.current() else {
-            return false;
-        };
-        let mut attaches = false;
-        let _ = nocterm_agent_chat::conversation::LocalConversation::new(&thread)
-            .with_view(cx, &mut |view| attaches = view.composer.attach);
-        attaches
+        image_preparation::ImageTarget::capture(
+            self.conversation.as_ref().map(|s| s.source()),
+            self.current(),
+            cx,
+        )
+        .is_some()
     }
     pub(super) fn pick_images(&mut self, cx: &mut Context<Self>) {
         if !self.composer_attaches(cx) {
             return;
         }
         let operation = image_picker::ImagePickerOperation::new(
-            self.current().map(|thread| thread.entity_id()),
+            self.conversation_identity()
+                .or_else(|| self.current().map(|thread| thread.entity_id())),
             self.composer.revision(),
+            match self.composer.input_ticket(cx) {
+                Ok(input) => input,
+                Err(_) => return,
+            },
         );
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -686,6 +668,15 @@ impl AgentPanel {
         index: usize,
         cx: &mut Context<Self>,
     ) {
+        if let Some(selected) = self.conversation.as_ref().filter(|s| s.identity() == chat)
+            && let Some(composer) = selected.source().composer(cx)
+        {
+            if let Err(error) = composer.remove_image(index, cx) {
+                self.notices.set_error(Some(error.to_string()));
+            }
+            cx.notify();
+            return;
+        }
         if let Some(thread) = self.chats.find(chat).cloned() {
             thread.update(cx, |thread, cx| {
                 thread.remove_composer_image(index, cx);

@@ -18,8 +18,10 @@ mod attach;
 mod attachments;
 mod bindings;
 mod chat;
+mod cloud_composer;
 mod cloud_history;
 mod cloud_menu;
+mod cloud_provider;
 mod cloud_servers;
 pub(crate) mod commands;
 mod composer;
@@ -60,6 +62,7 @@ mod widgets;
 enum MenuKind {
     Agents,
     Context,
+    CloudModels,
     Config(String),
     Modes,
     /// The context usage card, over the chat rather than in a popover.
@@ -473,6 +476,15 @@ impl AgentPanel {
         }
     }
     fn toggle_model_picker(&mut self, cx: &mut Context<Self>) {
+        if self
+            .conversation
+            .as_ref()
+            .and_then(|s| s.source().composer(cx))
+            .is_some()
+        {
+            self.toggle_menu(MenuKind::CloudModels, cx);
+            return;
+        }
         if let Some(thread) = self.current()
             && let Some(option) = thread
                 .read(cx)
@@ -488,13 +500,26 @@ impl AgentPanel {
 impl AgentPanel {
     pub(super) fn render_menu(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let kind = self.menus.current().cloned();
-        let attachment = matches!(kind, Some(MenuKind::Context)).then(|| {
-            attach::AttachmentMenuRenderer::render_attach_menu(
-                self.current(),
-                self.host.workspace().clone(),
-                cx,
-            )
-        });
+        let attachment = if matches!(kind, Some(MenuKind::CloudModels)) {
+            self.conversation.as_ref().and_then(|selected| {
+                selected.source().composer(cx).map(|composer| {
+                    cloud_composer::CloudComposerRenderer::models(
+                        selected.identity(),
+                        composer,
+                        &self.menus.query(cx).to_lowercase(),
+                        cx,
+                    )
+                })
+            })
+        } else {
+            matches!(kind, Some(MenuKind::Context)).then(|| {
+                attach::AttachmentMenuRenderer::render_attach_menu(
+                    self.current(),
+                    self.host.workspace().clone(),
+                    cx,
+                )
+            })
+        };
         let frame = menu::MenuFrame::new(
             kind,
             self.current(),

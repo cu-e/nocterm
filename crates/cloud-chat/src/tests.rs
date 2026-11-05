@@ -11,8 +11,12 @@ use nocterm_cloud_conversation_model::{
 };
 use std::{rc::Rc, sync::Arc};
 
+mod admission;
 mod commands;
+mod composer;
 mod pending_prompts;
+mod providers;
+mod reading;
 mod servers;
 
 pub(super) fn opened(cx: &mut TestAppContext) -> (FakeConversation, Entity<CloudChat>) {

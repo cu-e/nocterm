@@ -11,6 +11,26 @@ use super::widgets::activity_text;
 
 pub(super) struct TranscriptView;
 impl TranscriptView {
+    pub(super) fn chat_status(
+        thread: &gpui_kit::Entity<crate::thread::AgentThread>,
+        cx: &gpui_kit::App,
+    ) -> Option<AnyElement> {
+        let state = thread.read(cx);
+        let visible = state.session_generating()
+            || state.session().is_none()
+            || state.session_sign_in_required()
+            || state.document().pending_history()
+            || state.has_status_error()
+            || !state.session_accepts_updates();
+        visible.then(|| {
+            TranscriptView::status(
+                thread.entity_id(),
+                state.status(),
+                state.session_generating() && state.session_accepts_updates(),
+                cx,
+            )
+        })
+    }
     /// The status line of a conversation, as a chat shows its own: hidden while nothing
     /// happens, and live (the thinking indicator and a shimmering label) while the person waits
     /// for the agent: a prompt is on its way, a run starts or runs, or the source reconnects.

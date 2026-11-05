@@ -3,7 +3,7 @@
 //! Owns: the neutral transcript of a Cloud chat ([`CloudTranscript`] with its [`Row`]s, [`Run`]s,
 //! [`Approval`]s and [`PendingCommand`]s) and the rule by which a [`ConversationDelta`] changes
 //! it; how far the shown history is confirmed ([`Freshness`]); what the person asks of a chat
-//! ([`ConversationAction`]); the servers a chat is bound to and can be bound to
+//! ([`ConversationAction`], with an explicit model and neutral inline image bytes); the servers a chat is bound to and can be bound to
 //! ([`ServerBinding`], [`ServerChoice`], ADR 0147); the port [`CloudConversation`] with its
 //! updates ([`ConversationUpdate`]) and typed [`CloudConversationError`].
 //!
@@ -30,6 +30,7 @@ mod delta;
 mod error;
 mod freshness;
 mod ids;
+mod image;
 mod port;
 mod servers;
 mod transcript;
@@ -39,7 +40,10 @@ pub use delta::ConversationDelta;
 pub use error::CloudConversationError;
 pub use freshness::Freshness;
 pub use ids::{CommandKey, ConversationKey, IntentKey, RunKey};
-pub use port::{CloudConversation, ConversationFuture, ConversationUpdate, ConversationUpdates};
+pub use image::{ImageMime, PromptImage};
+pub use port::{
+    CloudConversation, ConversationFuture, ConversationUpdate, ConversationUpdates, ProviderOption,
+};
 pub use servers::{
     BoundServer, DEFAULT_BINDING_WINDOW, MAX_BINDING_WINDOW, ServerAccess, ServerBinding,
     ServerChoice, ServerKey, ServerRefusal,

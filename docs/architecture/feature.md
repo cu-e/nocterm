@@ -457,6 +457,12 @@ only from the credential store and waits for the vault to unlock. See
 
 ## Agent
 
+Cloud composer controls consume the source-owned `ConversationComposer` port. The intrinsic
+image strip uses the existing bounded preview pipeline. `SourceProviderControl` owns only
+listing/selection presentation for an explicit personal-agent choice on a reopened own-runner
+chat; it never infers credential authority from a model name in the history. The source
+admits the selected key and complete model list before prompts become available (ADR 0149).
+
 AI is gated by `Settings.ai.enabled`; switching it off tears down prompts,
 permissions, tool registrations, processes and panel visibility across windows.
 Chats are saved one file each in a private state directory and reopened through
@@ -606,8 +612,10 @@ The weak `ConversationPanel` handle returned by `register_with_conversations`
 selects a caller-supplied captured source in its original window. Local and captured
 sources use the same transcript, footer, composer, send control and immutable approval
 cards; `ConversationView::composer` capabilities (attach, configure, usage) decide which
-controls show, and configuration, attachment and sign-in controls also require
-their actual Local thread. Prompts a source has not accepted (`pending_prompts`) follow the
+controls show. Local session configuration, terminals and sign-in retain their actual Local
+thread; a captured source can instead supply `ConversationComposer` for image attachments
+and model selection. Shared preparation and previews retain the original source and draft
+revision. Prompts a source has not accepted (`pending_prompts`) follow the
 transcript as user rows marked on their way or failed, with Retry and Dismiss, until the
 accepted row replaces them
 ([ADR 0134](../adr/0134-one-composer-for-every-conversation-and-pending-prompts.md)).
@@ -621,6 +629,11 @@ local and Cloud rows through one neutral row model in one order by last activity
 shows its runner's title, time and state, and offers only opening
 ([ADR 0133](../adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md),
 [ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)).
+A Cloud composer exposes **+** for server binding and an image button with paste support.
+Its model picker uses the source's offered models. Server onboarding lists saved connections,
+opens them through the captured directory and explicitly allows CA access through `Hubs`;
+no feature calls another feature. Successful installation refreshes binding choices
+([ADR 0149](../adr/0149-cloud-composers-own-captured-prompt-drafts.md)).
 A refused or unanswered submission (`ConversationSubmission::refused`) releases the composer,
 so sending the same text again is a new prompt. A Cloud chat whose runner did not confirm its
 history (`ConversationView::freshness`) says so in its status line, and a sleeping seat offers
@@ -789,6 +802,9 @@ window; the crate contributes no panel and no plugin.
   chooser, the status, and a read-only view of the trusted and, after a change, the presented
   fingerprint; "Sign out" and "Remove…" (confirmed) call the service. Nothing on the page accepts
   a certificate.
+  Agent access keeps failed Allow choices selected for retry and offers each connected
+  candidate's own CA line through the service, even before it has a trust record.
+  Changing the hub or account-key context cancels the operation and clears those choices.
 - The palette commands `ManageServers` (opens that page, handled by the application),
   `SignInToServer` and `SignOutOfServer` (a picker over the signed-in servers) are actions of this
   crate.

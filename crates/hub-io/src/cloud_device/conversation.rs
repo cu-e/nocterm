@@ -14,32 +14,34 @@
 //! read and the account is unlocked; the core certifies only inside the binding.
 use super::account::DeviceAccount;
 use super::checkpoints::{AccountPlace, Checkpoints, chat_file};
+use super::deliveries::Deliveries;
 use super::driver::{self, Control, Effects, now_ms};
 use super::mapping;
 use super::outbox::Outbox;
-use super::server_flows::{BindReply, ServerFlows};
+use super::prompt;
+use super::providers::{self, PromptModels, ProviderDirectory, ProviderSelection};
+use super::requests::{Mailbox, Request};
+use super::server_flows::ServerFlows;
 use super::servers::{self, ServerDirectory};
+use super::subscriptions::{self, Subscriptions, UpdateBudget};
 use futures::FutureExt as _;
-use futures::StreamExt as _;
-use futures::channel::{mpsc, oneshot};
+use futures::channel::oneshot;
 use futures::future::{BoxFuture, Shared};
 use nocterm_cloud_conversation_model::{
     CloudConversation, CloudConversationError, CommandKey, ConversationAction, ConversationFuture,
-    ConversationKey, ConversationUpdate, ConversationUpdates, MAX_BINDING_WINDOW, ServerChoice,
-    ServerKey, ServerRefusal,
+    ConversationKey, ConversationUpdate, ConversationUpdates, MAX_BINDING_WINDOW, ModelName,
+    ProviderOption, ServerChoice, ServerKey, ServerRefusal,
 };
-use nocterm_cloud_device::command::{Deliver, DeliveryUpdate, StoredCommand};
 use nocterm_cloud_device::context::ChatRef;
-use nocterm_cloud_device::flow::{Effect, Flow, Step};
+use nocterm_cloud_device::flow::{Flow, Step};
 use nocterm_cloud_device::open::{ChatAction, ChatUpdate, ModelChoice, OpenChat};
 use nocterm_cloud_device::reader::VerifiedChat;
 use nocterm_cloud_device::seat::WakeSeat;
-use nocterm_cloud_device::ssh::SshServerChoice;
-use nocterm_cloud_device::transcript::CommandState;
 use nocterm_cloud_device::{CloudDeviceError, DeviceIdentity};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use nocterm_hub_model::cloud::ssh::MAX_BINDING_TARGETS;
+use std::sync::Arc;
 use tokio::runtime::Handle;
+use tokio::sync::{Notify, mpsc};
 
 /// What a chat needs besides its account.
 #[derive(Clone, Debug)]
@@ -47,10 +49,12 @@ pub(crate) struct ChatSetup {
     pub(crate) chat: ChatRef,
     /// The model of a first prompt, before any run names one.
     pub(crate) model: Option<ModelChoice>,
+    pub(crate) models: Vec<ModelName>,
     /// The managed agent whose seat serves the chat; its seat is woken before each command.
     pub(crate) wake: Option<String>,
     /// The servers of the account's CA registry, for binding the chat (ADR 0147).
     pub(crate) servers: Option<Arc<dyn ServerDirectory>>,
+    pub(crate) providers: Option<Arc<dyn ProviderDirectory>>,
 }
 impl std::fmt::Debug for dyn ServerDirectory {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -58,73 +62,103 @@ impl std::fmt::Debug for dyn ServerDirectory {
     }
 }
 
-enum Request {
-    Subscribe(mpsc::UnboundedSender<ConversationUpdate>),
-    Deliver(
-        ConversationAction,
-        oneshot::Sender<Result<CommandKey, CloudConversationError>>,
-    ),
-    Refresh,
-    Bind(Vec<SshServerChoice>, i64, BindReply),
-    Unbind(oneshot::Sender<Result<(), CloudConversationError>>),
-}
-
-type Mailbox = Arc<Mutex<Option<mpsc::UnboundedSender<Request>>>>;
-
 /// One chat of an account, opened for windows.
 pub(crate) struct DeviceConversation {
     key: ConversationKey,
     task: Task,
     handle: Handle,
     ended: Shared<BoxFuture<'static, ()>>,
+    providers: Option<ProviderSelection>,
 }
 impl DeviceConversation {
     pub(crate) fn new(
         account: Arc<DeviceAccount>,
-        setup: ChatSetup,
+        mut setup: ChatSetup,
         (checkpoints, outbox): (Arc<Checkpoints>, Arc<Outbox>),
+        updates: Arc<UpdateBudget>,
         handle: Handle,
-    ) -> Self {
+    ) -> Arc<Self> {
         let ended = account.clone().ended().boxed().shared();
-        Self {
+        let prompt = Arc::new(PromptModels::new(
+            setup.model.take(),
+            std::mem::take(&mut setup.models),
+        ));
+        let provider_directory = setup.providers.take();
+        Arc::new_cyclic(|original| Self {
+            providers: provider_directory.map(|directory| {
+                ProviderSelection::new(
+                    account.clone(),
+                    directory,
+                    original.clone(),
+                    prompt.clone(),
+                    handle.clone(),
+                )
+            }),
             key: ConversationKey::new(setup.chat.to_string()),
             task: Task {
                 account,
                 setup: Arc::new(setup),
+                prompt,
                 checkpoints,
                 outbox,
-                mailbox: Arc::new(Mutex::new(None)),
-                generation: Arc::new(AtomicU64::new(1)),
+                mailbox: Arc::new(Mailbox::default()),
+                updates,
+                subscription_changes: Arc::new(Notify::new()),
             },
             handle,
             ended,
+        })
+    }
+    pub(crate) fn adopt_own_lease(
+        &self,
+        lease: &nocterm_cloud_device::provider::Lease,
+    ) -> Result<(), CloudConversationError> {
+        self.task
+            .account
+            .check()
+            .map_err(|_| CloudConversationError::Stale)?;
+        if self.task.prompt.adopt_lease(lease)? {
+            self.notify_composer_changed();
         }
+        Ok(())
+    }
+    pub(crate) fn refresh_own_lease(
+        &self,
+        lease: &nocterm_cloud_device::provider::Lease,
+    ) -> Result<(), CloudConversationError> {
+        self.task
+            .account
+            .check()
+            .map_err(|_| CloudConversationError::Stale)?;
+        if self.task.prompt.refresh_lease(lease)? {
+            self.notify_composer_changed();
+        }
+        Ok(())
+    }
+    pub(super) fn notify_composer_changed(&self) {
+        self.task.subscription_changes.notify_one();
+    }
+    pub(super) fn provider_revision(&self) -> ConversationFuture<u64> {
+        let (reply, answer) = oneshot::channel();
+        let sent = self.send(Request::ProviderRevision(reply));
+        Box::pin(async move {
+            sent?;
+            answer.await.unwrap_or(Err(CloudConversationError::Ended))
+        })
     }
     fn send(&self, request: Request) -> Result<(), CloudConversationError> {
         send(&self.task, &self.handle, request)
     }
 }
 
-/// Hands `request` to the running task of `task`'s chat, starting one when none runs.
+/// Admission keeps the captured account check outside the mailbox's channel ownership.
 fn send(task: &Task, handle: &Handle, request: Request) -> Result<(), CloudConversationError> {
     task.account
         .check()
         .map_err(|_| CloudConversationError::Stale)?;
-    let mut mailbox = task.mailbox.lock().unwrap_or_else(PoisonError::into_inner);
-    let request = match mailbox.as_ref() {
-        Some(sender) => match sender.unbounded_send(request) {
-            Ok(()) => return Ok(()),
-            Err(failed) => failed.into_inner(),
-        },
-        None => request,
-    };
-    let (sender, receiver) = mpsc::unbounded();
-    sender
-        .unbounded_send(request)
-        .map_err(|_| CloudConversationError::Ended)?;
-    *mailbox = Some(sender);
-    handle.spawn(task.clone().run(receiver));
-    Ok(())
+    task.mailbox.send(request, |receiver| {
+        handle.spawn(task.clone().run(receiver));
+    })
 }
 
 impl CloudConversation for DeviceConversation {
@@ -132,15 +166,47 @@ impl CloudConversation for DeviceConversation {
         &self.key
     }
     fn can_prompt(&self) -> bool {
-        self.task.setup.model.is_some()
+        self.task.prompt.can_prompt()
+    }
+    fn default_model(&self) -> Option<ModelName> {
+        self.task.prompt.default().map(|model| ModelName {
+            provider: model.provider.clone(),
+            model: model.model.clone(),
+        })
+    }
+    fn models(&self) -> Vec<ModelName> {
+        self.task.prompt.models()
+    }
+    fn can_choose_provider(&self) -> bool {
+        self.providers
+            .as_ref()
+            .is_some_and(ProviderSelection::can_choose)
+    }
+    fn provider_options(&self) -> ConversationFuture<Vec<ProviderOption>> {
+        self.providers.as_ref().map_or_else(
+            || {
+                Box::pin(async { Err(CloudConversationError::Unsupported) })
+                    as ConversationFuture<_>
+            },
+            ProviderSelection::options,
+        )
+    }
+    fn select_provider(&self, id: String) -> ConversationFuture<()> {
+        self.providers.as_ref().map_or_else(
+            || {
+                Box::pin(async { Err(CloudConversationError::Unsupported) })
+                    as ConversationFuture<_>
+            },
+            |selection| selection.select(id),
+        )
     }
     fn can_wake(&self) -> bool {
         self.task.setup.wake.is_some()
     }
     fn subscribe(&self) -> Result<ConversationUpdates, CloudConversationError> {
-        let (sender, receiver) = mpsc::unbounded();
-        self.send(Request::Subscribe(sender))?;
-        Ok(receiver.boxed())
+        let (subscriber, updates) = subscriptions::channel(self.task.subscription_changes.clone());
+        self.send(Request::Subscribe(subscriber))?;
+        Ok(updates)
     }
     fn deliver(&self, action: ConversationAction) -> ConversationFuture<CommandKey> {
         let (reply, answer) = oneshot::channel();
@@ -174,13 +240,7 @@ impl CloudConversation for DeviceConversation {
         Box::pin(async move {
             match started.await.map_err(|_| CloudConversationError::Ended)? {
                 Ok(true) => {
-                    if let Some(sender) = refresh
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .as_ref()
-                    {
-                        let _ = sender.unbounded_send(Request::Refresh);
-                    }
+                    let _ = refresh.send_existing(Request::Refresh);
                     Ok(())
                 }
                 Ok(false) => Err(CloudConversationError::Unavailable),
@@ -196,12 +256,18 @@ impl CloudConversation for DeviceConversation {
     }
     fn bind_servers(
         &self,
-        keys: Vec<ServerKey>,
+        mut keys: Vec<ServerKey>,
         window: std::time::Duration,
     ) -> ConversationFuture<()> {
         let Some(directory) = self.task.setup.servers.clone() else {
             return Box::pin(async { Err(CloudConversationError::Unsupported) });
         };
+        if keys.len() > MAX_BINDING_TARGETS {
+            return Box::pin(async { Err(CloudConversationError::Capacity) });
+        }
+        if keys.capacity() > MAX_BINDING_TARGETS {
+            keys = keys.into_boxed_slice().into_vec();
+        }
         if window.is_zero() || window > MAX_BINDING_WINDOW {
             return Box::pin(async { Err(CloudConversationError::Servers(ServerRefusal::Window)) });
         }
@@ -238,23 +304,27 @@ impl CloudConversation for DeviceConversation {
 struct Task {
     account: Arc<DeviceAccount>,
     setup: Arc<ChatSetup>,
+    prompt: Arc<PromptModels>,
     checkpoints: Arc<Checkpoints>,
     outbox: Arc<Outbox>,
-    mailbox: Mailbox,
-    generation: Arc<AtomicU64>,
+    mailbox: Arc<Mailbox>,
+    updates: Arc<UpdateBudget>,
+    subscription_changes: Arc<Notify>,
 }
 impl Task {
-    async fn run(self, requests: mpsc::UnboundedReceiver<Request>) {
+    async fn run(self, requests: mpsc::Receiver<Request>) {
         let place = AccountPlace::of(self.account.session().scope());
         let file = chat_file(&self.setup.chat);
-        let checkpoints = self.checkpoints.clone();
-        let (load_place, load_file) = (place.clone(), file.clone());
-        let stored = tokio::task::spawn_blocking(move || checkpoints.load(&load_place, &load_file))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .flatten()
-            .map(VerifiedChat::from_bytes);
+        let ended = self.account.clone().ended();
+        tokio::pin!(ended);
+        let stored = tokio::select! {
+            biased;
+            () = &mut ended => {
+                self.refuse_all(requests, &CloudConversationError::Stale);
+                return;
+            }
+            stored = self.checkpoints.load_async(&place, &file) => stored.ok().flatten().map(VerifiedChat::from_bytes),
+        };
         let opened = self
             .account
             .device()
@@ -272,15 +342,21 @@ impl Task {
             Ok((chat, device)) => Reading {
                 chat,
                 device,
-                deliveries: Vec::new(),
+                deliveries: Deliveries::new(
+                    self.account.clone(),
+                    self.outbox.clone(),
+                    place.clone(),
+                    self.setup.chat,
+                ),
                 servers: ServerFlows::default(),
                 next_slot: 1,
                 effects: Effects::new(self.account.effects().clone()),
-                subscribers: Vec::new(),
+                chat_effects: Effects::new(self.account.effects().clone()),
+                subscribers: Subscriptions::new(self.updates.clone()),
                 task: self,
                 place,
                 file,
-                kept: Vec::new(),
+                models_revision: 0,
             },
             Err(error) => {
                 self.refuse_all(requests, &mapping::error(error));
@@ -288,22 +364,20 @@ impl Task {
             }
         };
         let mut reading = reading;
-        reading.resume_left();
+        let resumed = tokio::select! {
+            biased;
+            () = &mut ended => Err(CloudConversationError::Stale),
+            result = reading.resume_left() => result,
+        };
+        if let Err(error) = resumed {
+            reading.task.refuse_all(requests, &error);
+            return;
+        }
         reading.run(requests).await;
     }
     /// Answers every waiting request with `error` and lets the next request start afresh.
-    fn refuse_all(
-        &self,
-        mut requests: mpsc::UnboundedReceiver<Request>,
-        error: &CloudConversationError,
-    ) {
-        let mut mailbox = self.mailbox.lock().unwrap_or_else(PoisonError::into_inner);
-        while let Ok(request) = requests.try_recv() {
-            if let Request::Deliver(_, reply) = request {
-                let _ = reply.send(Err(error.clone()));
-            }
-        }
-        *mailbox = None;
+    fn refuse_all(&self, requests: mpsc::Receiver<Request>, error: &CloudConversationError) {
+        self.mailbox.refuse_all(requests, error);
     }
 }
 
@@ -311,131 +385,123 @@ impl Task {
 struct Reading {
     chat: OpenChat,
     device: DeviceIdentity,
-    deliveries: Vec<(u32, Deliver)>,
+    deliveries: Deliveries,
     /// Binding and certificate flows (ADR 0147).
     servers: ServerFlows,
     next_slot: u32,
     effects: Effects<u32>,
-    subscribers: Vec<mpsc::UnboundedSender<ConversationUpdate>>,
+    chat_effects: Effects<()>,
+    subscribers: Subscriptions,
     task: Task,
     place: AccountPlace,
     file: String,
-    /// The command each delivery slot keeps in the outbox.
-    kept: Vec<(u32, [u8; 16])>,
+    models_revision: u64,
 }
-/// The tag of the chat flow's own effects; deliveries take the slots from 1 on.
-const CHAT_SLOT: u32 = 0;
+const MAX_CONTROL_FLOWS: usize = 32;
 
 impl Reading {
-    /// Resumes the commands an earlier run of this chat kept; one with nothing left to deliver,
-    /// or that does not open for this chat, is forgotten.
-    fn resume_left(&mut self) {
-        let chat = self.task.setup.chat;
-        for (command_id, stored) in self.task.outbox.left(&self.place, &chat) {
-            let wake = self.task.setup.wake.clone();
-            match self.chat.resume(&stored, wake, now_ms()) {
-                Ok(Some(deliver)) => {
-                    let slot = self.slot();
-                    self.deliveries.push((slot, deliver));
-                    self.kept.push((slot, command_id));
-                }
-                Ok(None) => self.task.outbox.settled(&self.place, &chat, &command_id),
-                Err(error) => {
-                    tracing::debug!(error = %nocterm_core::error::chain(&error), "a kept Cloud command was not resumed");
-                    self.task.outbox.settled(&self.place, &chat, &command_id);
-                }
-            }
+    async fn resume_left(&mut self) -> Result<(), CloudConversationError> {
+        let restored = self
+            .deliveries
+            .restore(&mut self.chat, self.task.setup.wake.clone())
+            .await?;
+        for flow in restored {
+            let slot = self.slot();
+            self.deliveries.insert(slot, flow, true);
         }
+        Ok(())
     }
     fn slot(&mut self) -> u32 {
         let slot = self.next_slot;
         self.next_slot = self.next_slot.wrapping_add(1).max(1);
         slot
     }
-    async fn run(mut self, mut requests: mpsc::UnboundedReceiver<Request>) {
+    async fn run(mut self, mut requests: mpsc::Receiver<Request>) {
         let ended = self.task.account.clone().ended();
-        let mut ended = std::pin::pin!(ended);
-        loop {
-            let until = match self.pump() {
+        tokio::pin!(ended);
+        let failed = loop {
+            let pumped = tokio::select! {
+                biased;
+                () = &mut ended => break CloudConversationError::Stale,
+                result = self.pump() => result,
+            };
+            let until = match pumped {
                 Ok(until) => until,
-                Err(error) => {
-                    self.broadcast(ConversationUpdate::Refused(mapping::error(error)));
-                    break;
-                }
+                Err(error) => break error,
             };
             if self.finished(&mut requests) {
                 return;
             }
-            tokio::select! {
-                request = requests.next() => match request {
-                    Some(request) => self.request(request),
-                    None => break,
-                },
-                (slot, id, event) = self.effects.next() => {
-                    if slot == CHAT_SLOT {
-                        driver::answer(&mut self.chat, id, event);
-                    } else if let Some((slot, id, event)) = self.servers_resolve(slot, id, event)
-                        && let Some((_, deliver)) =
-                        self.deliveries.iter_mut().find(|(known, _)| *known == slot)
-                    {
-                        driver::answer(deliver, id, event);
-                    }
-                },
-                () = driver::sleep_until(until) => {}
-                () = &mut ended => break,
+            match self.hear(&mut requests, until).await {
+                Ok(true) => {}
+                Ok(false) => break CloudConversationError::Ended,
+                Err(error) => break error,
             }
-        }
-        self.task
-            .refuse_all(requests, &CloudConversationError::Ended);
+        };
+        self.task.refuse_all(requests, &failed);
+        self.subscribers
+            .finish(failed, self.task.account.clone().ended().boxed().shared())
+            .await;
     }
-    /// Ends the task when nothing subscribes and no command is being delivered. Holding the
-    /// mailbox while deciding means no request is lost to a task that is about to end.
-    fn finished(&mut self, requests: &mut mpsc::UnboundedReceiver<Request>) -> bool {
-        self.subscribers.retain(|sender| !sender.is_closed());
+    async fn hear(
+        &mut self,
+        requests: &mut mpsc::Receiver<Request>,
+        until: Option<i64>,
+    ) -> Result<bool, CloudConversationError> {
+        tokio::select! {
+            () = self.task.account.clone().ended() => return Err(CloudConversationError::Stale),
+            result = self.subscribers.advance() => result?,
+            request = requests.recv() => {
+                let Some(request) = request else { return Ok(false); };
+                self.request(request);
+            },
+            (slot, id, event) = self.effects.next() => {
+                if let Some((slot, id, event)) = self.servers_resolve(slot, id, event) {
+                    self.deliveries.resolve(slot, id, event);
+                }
+            },
+            ((), id, event) = self.chat_effects.next(), if !self.subscribers.busy() => {
+                driver::answer(&mut self.chat, id, event);
+            },
+            () = self.task.subscription_changes.notified() => {},
+            () = driver::sleep_until(until) => {},
+        }
+        Ok(true)
+    }
+    /// Checks subscription close after its drop wake, while holding the mailbox
+    /// across the final stop decision so a concurrent request is never lost.
+    fn finished(&mut self, requests: &mut mpsc::Receiver<Request>) -> bool {
         if !self.subscribers.is_empty() || !self.deliveries.is_empty() || !self.servers.is_empty() {
             return false;
         }
-        let held = self.task.mailbox.clone();
-        let mut mailbox = held.lock().unwrap_or_else(PoisonError::into_inner);
-        match requests.try_recv() {
-            Ok(request) => {
-                drop(mailbox);
-                self.request(request);
-                false
-            }
-            _ => {
-                *mailbox = None;
-                true
-            }
-        }
+        let Some(request) = self.task.mailbox.finish(requests) else {
+            return true;
+        };
+        self.request(request);
+        false
     }
     fn broadcast(&mut self, update: ConversationUpdate) {
         self.subscribers
-            .retain(|sender| sender.unbounded_send(update.clone()).is_ok());
+            .begin_publish(update, self.task.account.clone().ended().boxed().shared());
     }
     fn request(&mut self, request: Request) {
         match request {
-            Request::Subscribe(sender) => {
-                let whole = mapping::delta(self.chat.transcript().full_delta(), now_ms());
-                let freshness = mapping::freshness(self.chat.freshness());
-                let sent = sender
-                    .unbounded_send(ConversationUpdate::Transcript(whole))
-                    .is_ok()
-                    && sender
-                        .unbounded_send(ConversationUpdate::Freshness(freshness))
-                        .is_ok();
-                if sent {
-                    self.subscribers.push(sender);
-                }
-            }
+            Request::Subscribe(subscriber) => self.subscribers.defer(subscriber),
             Request::Deliver(action, reply) => {
                 let _ = reply.send(self.deliver(&action));
+            }
+            Request::ProviderRevision(reply) => {
+                let _ = reply.send(providers::admission_revision(&self.chat));
             }
             Request::Refresh => {
                 self.refresh_device();
                 self.chat.refresh();
             }
             Request::Bind(choices, window_ms, reply) => {
+                if let Err(error) = self.admit() {
+                    let _ = reply.send(Err(error));
+                    return;
+                }
                 let wake = self.task.setup.wake.clone();
                 match self
                     .chat
@@ -451,17 +517,28 @@ impl Reading {
                 }
             }
             Request::Unbind(reply) => {
+                if let Err(error) = self.admit() {
+                    let _ = reply.send(Err(error));
+                    return;
+                }
                 let wake = self.task.setup.wake.clone();
                 let result = self
                     .chat
                     .unbind_servers(wake, now_ms())
                     .map(|deliver| {
                         let slot = self.slot();
-                        self.deliveries.push((slot, deliver));
+                        self.deliveries.insert(slot, deliver, false);
                     })
                     .map_err(mapping::error);
                 let _ = reply.send(result);
             }
+        }
+    }
+    fn admit(&self) -> Result<(), CloudConversationError> {
+        if self.deliveries.len() + self.servers.len() >= MAX_CONTROL_FLOWS {
+            Err(CloudConversationError::Capacity)
+        } else {
+            Ok(())
         }
     }
     /// Hands an effect's event to its SSH flow; returns it when no SSH flow has that slot.
@@ -495,29 +572,29 @@ impl Reading {
         &mut self,
         action: &ConversationAction,
     ) -> Result<CommandKey, CloudConversationError> {
+        self.admit()?;
         self.refresh_device();
         let transcript = self.chat.transcript();
         if transcript.deleted() {
             return Err(CloudConversationError::Deleted);
         }
         let action = match action {
-            ConversationAction::Prompt { text, server } => ChatAction::Prompt {
-                text: text.clone(),
-                // Before the first run the chat's own model names the prompt; afterwards the
-                // latest run's model does.
-                model: if transcript.runs().is_empty() {
-                    Some(
-                        self.task
-                            .setup
-                            .model
-                            .clone()
-                            .ok_or(CloudConversationError::NoModel)?,
-                    )
-                } else {
-                    None
-                },
-                server: server.as_ref().map(servers::server_id),
-            },
+            ConversationAction::Prompt { model, .. } => {
+                if !self.task.prompt.can_prompt()
+                    || model
+                        .as_ref()
+                        .is_some_and(|model| !self.task.prompt.allows(model))
+                {
+                    return Err(CloudConversationError::NoModel);
+                }
+                let latest_allowed = transcript.runs().last().is_some_and(|run| {
+                    self.task.prompt.allows(&ModelName {
+                        provider: run.model.provider.as_str().to_owned(),
+                        model: run.model.model.as_str().to_owned(),
+                    })
+                });
+                prompt::prompt(action, self.task.prompt.default().as_ref(), !latest_allowed)?
+            }
             ConversationAction::Stop { run } => ChatAction::Stop {
                 run: run.map(|run| *run.as_bytes()),
             },
@@ -535,15 +612,18 @@ impl Reading {
             .map_err(mapping::error)?;
         let command = CommandKey::from_bytes(deliver.command_id());
         let slot = self.slot();
-        self.deliveries.push((slot, deliver));
+        self.deliveries.insert(slot, deliver, false);
         Ok(command)
     }
     /// Runs every flow until each waits; returns when the earliest of them wants to be called
     /// again. Fails when the chat flow itself ended.
-    fn pump(&mut self) -> Result<Option<i64>, CloudDeviceError> {
+    async fn pump(&mut self) -> Result<Option<i64>, CloudConversationError> {
         loop {
             let chat_until = self.pump_chat()?;
-            let (progressed, delivery_until) = self.pump_deliveries();
+            let (progressed, delivery_until) = self
+                .deliveries
+                .pump(&mut self.chat, &mut self.effects)
+                .await?;
             let (moved, servers_until) =
                 self.servers
                     .pump(&mut self.chat, &mut self.effects, now_ms());
@@ -555,100 +635,40 @@ impl Reading {
             }
         }
     }
-    fn pump_chat(&mut self) -> Result<Option<i64>, CloudDeviceError> {
-        loop {
+    fn pump_chat(&mut self) -> Result<Option<i64>, CloudConversationError> {
+        if let Some(subscriber) = self.subscribers.waiting() {
+            let whole = mapping::delta(self.chat.transcript().full_delta(), now_ms());
+            let freshness = mapping::freshness(self.chat.freshness());
+            self.subscribers.begin_subscribe(
+                subscriber,
+                [
+                    ConversationUpdate::Transcript(whole),
+                    ConversationUpdate::Freshness(freshness),
+                ],
+                self.task.account.clone().ended().boxed().shared(),
+            );
+        }
+        while !self.subscribers.busy() {
+            let revision = self.task.prompt.revision();
+            if revision != self.models_revision {
+                self.models_revision = revision;
+                self.broadcast(ConversationUpdate::ComposerChanged);
+                continue;
+            }
             match self.chat.next(now_ms()) {
-                Step::Effect(id, effect) => self.effects.start(CHAT_SLOT, id, effect),
+                Step::Effect(id, effect) => self.chat_effects.start((), id, effect),
                 Step::Output(update) => self.chat_update(update),
-                Step::Idle { until_ms } => return Ok(until_ms),
-                Step::Done => return Err(CloudDeviceError::Ended),
-                Step::Failed(error) => return Err(error),
-            }
-        }
-    }
-    fn pump_deliveries(&mut self) -> (bool, Option<i64>) {
-        let mut progressed = false;
-        let mut until = None::<i64>;
-        let mut index = 0;
-        while index < self.deliveries.len() {
-            let (slot, deliver) = &mut self.deliveries[index];
-            let slot = *slot;
-            match deliver.next(now_ms()) {
-                Step::Effect(id, effect) => {
-                    // Kept once signed, before it is first published; retries publish the
-                    // same bytes and need nothing new.
-                    let keep = matches!(effect, Effect::Publish(_))
-                        && !self.kept.iter().any(|(known, _)| *known == slot);
-                    let stored = keep.then(|| (deliver.command_id(), self.chat.stored(deliver)));
-                    if let Some((command_id, stored)) = stored {
-                        self.keep(slot, command_id, stored);
-                    }
-                    self.effects.start(slot, id, effect);
-                    progressed = true;
-                }
-                Step::Output(update) => {
-                    // A resumed delivery may still probe for its receipt after it reported
-                    // `Delivered`: its outbox copy goes once the flow is done.
-                    self.chat.delivery(&update);
-                    progressed = true;
-                }
                 Step::Idle { until_ms } => {
-                    until = [until, until_ms].into_iter().flatten().min();
-                    index += 1;
+                    if let Some(error) = self.deliveries.take_failure() {
+                        self.broadcast(ConversationUpdate::Refused(error));
+                    }
+                    return Ok(until_ms);
                 }
-                Step::Done => {
-                    self.deliveries.remove(index);
-                    self.forget(slot);
-                    progressed = true;
-                }
-                Step::Failed(error) => {
-                    tracing::warn!(error = %nocterm_core::error::chain(&error), "a Cloud command failed");
-                    let command_id = deliver.command_id();
-                    self.chat.delivery(&DeliveryUpdate {
-                        command_id,
-                        state: CommandState::Refused,
-                        cursor: None,
-                    });
-                    self.deliveries.remove(index);
-                    self.forget(slot);
-                    progressed = true;
-                }
+                Step::Done => return Err(mapping::error(CloudDeviceError::Ended)),
+                Step::Failed(error) => return Err(mapping::error(error)),
             }
         }
-        (progressed, until)
-    }
-    fn keep(
-        &mut self,
-        slot: u32,
-        command_id: [u8; 16],
-        stored: Result<Option<StoredCommand>, CloudDeviceError>,
-    ) {
-        match stored {
-            Ok(Some(stored)) => {
-                let chat = &self.task.setup.chat;
-                if let Err(error) = self
-                    .task
-                    .outbox
-                    .keep(&self.place, chat, &command_id, &stored)
-                {
-                    tracing::warn!(%error, "a Cloud command was sent without its outbox copy");
-                }
-            }
-            // Not signed yet: kept at its next publication.
-            Ok(None) => return,
-            Err(error) => {
-                tracing::warn!(error = %nocterm_core::error::chain(&error), "a Cloud command was sent without its outbox copy");
-            }
-        }
-        self.kept.push((slot, command_id));
-    }
-    fn forget(&mut self, slot: u32) {
-        if let Some(index) = self.kept.iter().position(|(known, _)| *known == slot) {
-            let (_, command_id) = self.kept.remove(index);
-            self.task
-                .outbox
-                .settled(&self.place, &self.task.setup.chat, &command_id);
-        }
+        Ok(None)
     }
     fn chat_update(&mut self, update: ChatUpdate) {
         match update {
@@ -660,38 +680,41 @@ impl Reading {
                 self.broadcast(ConversationUpdate::Freshness(mapping::freshness(freshness)));
             }
             ChatUpdate::Checkpoint(checkpoint) => self.save(checkpoint),
-            // The person's own accepted prompt waits for its model grant: allow it once,
-            // within the chat's bounds (ADR 0129). A refusal leaves the explicit Allow.
-            ChatUpdate::AllowRun { run } => {
-                let allow = ConversationAction::Allow {
-                    run: nocterm_cloud_conversation_model::RunKey::from_bytes(run.id),
-                };
-                if let Err(error) = self.deliver(&allow) {
-                    tracing::debug!(%error, "the run's model grant was not sent");
-                }
-            }
-            // The account is unlocked while the chat is read: answer inside the binding the
-            // person signed (the core refuses anything else).
-            ChatUpdate::SshRequest { request } => {
-                let slot = self.slot();
-                self.servers
-                    .answer(&mut self.chat, slot, &request, now_ms());
-            }
+            ChatUpdate::AllowRun { run } => self.allow_run(run.id),
+            ChatUpdate::SshRequest { request } => self.answer_ssh(&request),
             ChatUpdate::Refused(error) => {
                 tracing::debug!(error = %nocterm_core::error::chain(&error), "a Cloud chat round was refused");
                 self.broadcast(ConversationUpdate::Refused(mapping::error(error)));
             }
         }
     }
+    /// The person's accepted prompt waits for its model grant (ADR 0129).
+    /// A refused automatic grant leaves the explicit Allow action available.
+    fn allow_run(&mut self, run: [u8; 16]) {
+        let allow = ConversationAction::Allow {
+            run: nocterm_cloud_conversation_model::RunKey::from_bytes(run),
+        };
+        if let Err(error) = self.deliver(&allow) {
+            tracing::debug!(%error, "the run's model grant was not sent");
+        }
+    }
+    /// Answer only inside the person's signed binding, while account lifetime
+    /// and active flow admission still permit it; the core verifies that binding.
+    fn answer_ssh(&mut self, request: &[u8; 16]) {
+        if self.admit().is_err() {
+            tracing::debug!("a Cloud certificate request exceeded active flow capacity");
+            return;
+        }
+        let slot = self.slot();
+        self.servers.answer(&mut self.chat, slot, request, now_ms());
+    }
     fn save(&self, checkpoint: VerifiedChat) {
-        let generation = self.task.generation.fetch_add(1, Ordering::AcqRel);
-        let checkpoints = self.task.checkpoints.clone();
-        let (place, file) = (self.place.clone(), self.file.clone());
-        let bytes = checkpoint.into_bytes();
-        tokio::task::spawn_blocking(move || {
-            if let Err(error) = checkpoints.store(&place, &file, generation, &bytes) {
-                tracing::warn!(error = %nocterm_core::error::chain(&error), "a Cloud chat checkpoint was not saved");
-            }
-        });
+        if let Err(error) =
+            self.task
+                .checkpoints
+                .offer(&self.place, &self.file, checkpoint.into_bytes())
+        {
+            tracing::warn!(error = %nocterm_core::error::chain(&error), "a Cloud chat checkpoint was not saved");
+        }
     }
 }

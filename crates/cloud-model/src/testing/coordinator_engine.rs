@@ -37,6 +37,7 @@ struct EngineScript {
 enum ScriptedEngineTransition {
     Model(ScriptedEngineTurn),
     Local(EngineCompletion),
+    Refused(EngineError),
 }
 #[derive(Clone, Default)]
 pub struct ScriptedEngineFactory {
@@ -49,6 +50,14 @@ impl ScriptedEngineFactory {
             .unwrap_or_else(PoisonError::into_inner)
             .turns
             .push_back(ScriptedEngineTransition::Model(turn));
+    }
+    /// A refusal before a provider request or reservation is made.
+    pub fn push_failure(&self, error: EngineError) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .turns
+            .push_back(ScriptedEngineTransition::Refused(error));
     }
     /// A completed SDK transition which makes no provider request or reservation.
     pub fn push_local_completion(&self, completion: EngineCompletion) {
@@ -200,6 +209,7 @@ impl AgentEngine for ScriptedEngine {
                 ScriptedEngineTransition::Local(completion) => {
                     return Ok(EngineAction::Complete(completion));
                 }
+                ScriptedEngineTransition::Refused(error) => return Err(error),
             };
             let request = ModelCallRequest::new(
                 self.config.run.clone(),

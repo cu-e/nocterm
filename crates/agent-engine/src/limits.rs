@@ -14,6 +14,14 @@ pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, En
     Ok(buffer.into_inner())
 }
 
+/// Size of a complete request, distinguished from cumulative run/output exhaustion.
+pub(crate) fn encode_request(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, EngineError> {
+    encode(value, limit).map_err(|error| match error {
+        EngineError::BudgetExceeded => EngineError::RequestTooLarge { limit },
+        other => other,
+    })
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Accounting {

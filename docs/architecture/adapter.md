@@ -129,7 +129,10 @@ nothing; their log lines go to an injected `GuestLog`. The crate has no thread a
 Input and output channels are bounded. An independent broadcast close signal
 interrupts blocked SSH I/O and local PTY writes/output delivery. Unix local PTY
 reads/writes are nonblocking and independently cancellable, including when a
-background job retains its slave descriptor. Local closure terminates the shell
+background job retains its slave descriptor. On Linux, reads wait for PTY readiness,
+an owner-close pipe or the leader's pidfd; kernels or sandboxes without pidfds retain
+bounded process-status polling. Other platforms retain their native fallback.
+Local closure terminates the shell
 and current foreground process groups and reaps the owned child; it does not
 enumerate and kill arbitrary detached jobs. Explicit input refusal
 is surfaced in the terminal instead of silently discarding text.
@@ -664,6 +667,40 @@ servers with the port this device last reached them on. `cloud_chats::answering`
 `agent_access` uses the contract's CA, CA document and per-server lines; reconcile rewrites a
 trusted server's shared-principal line to its own
 ([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+
+Cloud prompt actions carry an optional explicit model and neutral inline image bytes. The
+adapter maps them to the contract device core's prompt actions without copying image sources;
+the existing signed wire layout carries image parts. Chat creation and reopening retain the
+agent's catalog models for the captured composer. Own-agent records use the contract's
+`ProviderKeyRecord` for single- and multi-model encoding; the actual `ProviderLease` supplies
+all authorized models. Model-only browser edits keep the provider credential inside WASM. Native own-agent edits
+load canonical models and retain an exact original-account/object/version receipt for their
+compare-and-swap; stale metadata or incompatible private models fail before publication.
+`PromptModels` owns initial provider choice and actual delivered lease choices; a retained
+selection task survives UI cancellation, and lease renewals publish coalesced capability
+changes through the existing reader notification. Own history requires explicit user choice,
+never a model-to-credential guess. Neither catalog choices nor image attachment
+raise the sealed agent/operator request limits
+([ADR 0149](../adr/0149-cloud-composers-own-captured-prompt-drafts.md)).
+
+Cloud update subscriptions use eight queued updates per reader and one installation-wide
+64 MiB payload budget. Slow readers apply backpressure without losing deltas; dropping a
+reader wakes its original flow even when Watch is idle. Account end interrupts delivery.
+One retained pending delivery pauses further chat data while the bounded control mailbox
+and delivery/server effects continue. New subscriber snapshots are constructed one at a
+time. Sealed checkpoint writes coalesce by exact
+account/file in one retained physical drain, with eight pending files and 64 MiB pending
+bytes plus one active snapshot of at most 32 MiB. Checkpoint reads and lossless command
+outbox operations share two blocking slots and eight admitted operations; permits remain
+held through actual native completion after waiter cancellation. An ordinary exposed
+`Deliver` command is physically kept before its publication starts; staged SSH flows keep
+their existing separate core path. See [ADR 0148](../adr/0148-bounded-cloud-device-work.md).
+Command outbox admission scans at most 256 directory entries and charges at most 32
+commands and 32 MiB before private publication. A stable per-chat private OS lock
+coordinates this scan with writes, replacement and deletion across installations;
+replacing the same command is charged once. Resume reads use the remaining byte
+budget before allocation. Capacity refusal leaves existing files intact, and a hub
+capability downgrade retains valid original commands for a later retry.
 
 ### Native account admission
 

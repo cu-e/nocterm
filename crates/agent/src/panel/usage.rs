@@ -404,6 +404,37 @@ impl UsageCard {
 }
 
 impl Report {
+    pub(super) fn read(
+        thread: &crate::thread::AgentThread,
+        runtime: &crate::runtime::RuntimeHandle,
+        agents: &nocterm_agent_directory::AgentsHandle,
+        cx: &App,
+    ) -> Self {
+        let context = thread
+            .transcript()
+            .usage
+            .clone()
+            .filter(|usage| usage.size > 0);
+        let breakdown = context
+            .as_ref()
+            .map(|usage| Breakdown::estimate(&thread.transcript().entries, usage.used))
+            .unwrap_or_default();
+        let limits: Vec<RateLimit> = runtime
+            .limits(thread.document().agent_id(), cx)
+            .map(|limits| limits.iter().cloned().collect())
+            .unwrap_or_default();
+        let limits_hint = agents
+            .profile(thread.document().agent_id(), cx)
+            .and_then(|profile| profile.usage().empty_hint())
+            .filter(|_| limits.is_empty());
+        Self::new(
+            context,
+            breakdown,
+            thread.transcript().tokens.clone(),
+            limits,
+            limits_hint,
+        )
+    }
     pub(super) fn new(
         context: Option<ContextUsage>,
         breakdown: Breakdown,

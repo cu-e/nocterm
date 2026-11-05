@@ -270,6 +270,16 @@ impl CloudAgents {
         cx.background_spawn(self.deps.usage.personal_usage(hub, days))
     }
 
+    /// Loads an own agent's authenticated model list before constructing an edit form.
+    pub fn personal_models(
+        &self,
+        hub: &HubId,
+        agent: &AgentId,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<Result<Vec<String>, CloudAgentError>> {
+        cx.background_spawn(self.deps.personal.read_models(hub, agent))
+    }
+
     /// Saves a personal agent; the catalog refreshes through the hub's change hint.
     pub fn save_personal(
         &self,

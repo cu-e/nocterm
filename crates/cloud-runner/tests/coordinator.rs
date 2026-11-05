@@ -13,6 +13,8 @@ mod model_completion;
 mod provider_wake;
 #[path = "coordinator/reconciliation.rs"]
 mod reconciliation;
+#[path = "coordinator/request_limits.rs"]
+mod request_limits;
 #[path = "coordinator/snapshots.rs"]
 mod snapshots;
 #[path = "coordinator/ssh_access.rs"]

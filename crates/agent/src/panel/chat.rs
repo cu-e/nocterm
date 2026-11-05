@@ -8,7 +8,6 @@ use super::{
 use gpui_kit::AnyElement;
 use nocterm_agent_chat::conversation::{ConversationError, ConversationSource, LocalConversation};
 use nocterm_ai::conversation::PendingPromptKey;
-use nocterm_ai::usage::{Breakdown, RateLimit};
 use std::rc::Rc;
 
 impl AgentPanel {
@@ -32,8 +31,17 @@ impl AgentPanel {
                 .as_ref()
                 .and_then(|view| view.previous_local())
         });
+        let setup = self.host.cloud_agents().and_then(|access| {
+            super::cloud_servers::SetupAccess::capture(
+                access,
+                self.host.workspace(),
+                source.clone(),
+                cx,
+            )
+        });
         let selected = super::conversation_surface::ConversationSurface::attach(
             source,
+            setup,
             title,
             previous_local,
             cx.weak_entity(),
@@ -84,7 +92,15 @@ impl AgentPanel {
     ) {
         use nocterm_ai::conversation::ConversationAction;
         let text = self.composer.text(cx).to_string();
-        let action = if text.trim().is_empty() {
+        if self.composer.preparing() {
+            return;
+        }
+        let images = self
+            .conversation
+            .as_ref()
+            .and_then(|s| s.source().composer(cx))
+            .is_some_and(|c| !c.images(cx).is_empty());
+        let action = if text.trim().is_empty() && !images {
             if !stop_when_empty {
                 return;
             }
@@ -161,7 +177,7 @@ impl AgentPanel {
             .composer
             .input_ticket(cx)
             .ok()
-            .and_then(|ticket| selected.pending(&ticket))
+            .and_then(|ticket| selected.pending(&ticket, cx))
             .is_some_and(|(submission, _)| submission.pending_prompt() == Some(prompt));
         if composing {
             self.submit_conversation(false, window, cx);
@@ -253,23 +269,27 @@ impl AgentPanel {
         clear: Option<(gpui_kit::AnyWindowHandle, super::composer_view::InputTicket)>,
         cx: &mut Context<Self>,
     ) {
-        let ticket = self.composer.input_ticket(cx).ok();
+        let Ok(ticket) = self.composer.input_ticket(cx) else {
+            return;
+        };
+        let draft = self.conversation.as_ref().and_then(|selected| {
+            super::conversation_surface::DraftTicket::capture(selected.source().as_ref(), cx)
+                .ok()
+                .flatten()
+        });
         cx.spawn(async move |panel, cx| {
             let result = work.await;
             let _ = panel.update(cx, |panel, cx| {
-                if panel.conversation_identity() != Some(identity) {
-                    return;
-                }
-                let Some(ticket) = &ticket else {
-                    return;
-                };
-                if !panel.composer.input_current(ticket, cx) {
+                if panel.conversation_identity() != Some(identity)
+                    || !panel.composer.input_current(&ticket, cx)
+                    || draft.as_ref().is_some_and(|draft| !draft.current(cx))
+                {
                     return;
                 }
                 if clear.is_some()
                     && let Some(selected) = &mut panel.conversation
                 {
-                    selected.completed(ticket, result.is_err());
+                    selected.completed(&ticket, result.is_err());
                 }
                 match result {
                     Err(error) => panel.notices.set_error(Some(error.to_string())),
@@ -280,11 +300,21 @@ impl AgentPanel {
                             cx.defer(move |cx| {
                                 let _ = window.update(cx, |_, window, cx| {
                                     let _ = weak.update(cx, |panel, cx| {
-                                        if panel.conversation_identity() == Some(identity)
-                                            && panel.composer.input_current(&input, cx)
+                                        if panel.conversation_identity() != Some(identity)
+                                            || !panel.composer.input_current(&input, cx)
+                                            || draft
+                                                .as_ref()
+                                                .is_some_and(|draft| !draft.current(cx))
                                         {
-                                            panel.composer.set_text("", window, cx);
+                                            return;
                                         }
+                                        if let Some(draft) = draft
+                                            && let Err(error) = draft.clear_images(cx)
+                                        {
+                                            panel.notices.set_error(Some(error.to_string()));
+                                            return;
+                                        }
+                                        panel.composer.set_text("", window, cx);
                                     });
                                 });
                             });
@@ -315,12 +345,14 @@ impl AgentPanel {
             return div().into_any_element();
         };
         let busy = match (&self.conversation, self.composer.input_ticket(cx)) {
-            (Some(selected), Ok(ticket)) => selected.pending(&ticket).is_some_and(|(_, busy)| busy),
+            (Some(selected), Ok(ticket)) => {
+                selected.pending(&ticket, cx).is_some_and(|(_, busy)| busy)
+            }
             _ => false,
         };
         let approvals = self.render_approvals(source, local.as_ref(), window, cx);
         let status = match &local {
-            Some(thread) => self.chat_status(thread, cx),
+            Some(thread) => TranscriptView::chat_status(thread, cx),
             None => frame
                 .status()
                 .map(|(text, live)| TranscriptView::status(frame.origin(), text, live, cx)),
@@ -335,7 +367,13 @@ impl AgentPanel {
             .as_ref()
             .map(|thread| attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx));
         let queue = match (&local, &labels) {
-            (Some(thread), Some(labels)) => self.render_queue(thread, labels, cx),
+            (Some(thread), Some(labels)) => queue::QueueRenderer::if_present(
+                &self.composer,
+                &mut self.messages,
+                thread,
+                labels,
+                cx,
+            ),
             _ => None,
         };
         let commands = self.render_commands(window, cx);
@@ -532,27 +570,6 @@ impl AgentPanel {
             cx.notify();
         }
     }
-    pub(super) fn chat_status(
-        &self,
-        thread: &Entity<AgentThread>,
-        cx: &gpui_kit::App,
-    ) -> Option<AnyElement> {
-        let state = thread.read(cx);
-        let visible = state.session_generating()
-            || state.session().is_none()
-            || state.session_sign_in_required()
-            || state.document().pending_history()
-            || state.has_status_error()
-            || !state.session_accepts_updates();
-        visible.then(|| {
-            TranscriptView::status(
-                thread.entity_id(),
-                state.status(),
-                state.session_generating() && state.session_accepts_updates(),
-                cx,
-            )
-        })
-    }
     /// The transcript of the open chat or conversation, for its cached view; the
     /// rows changed since its last drawing redraw.
     pub(super) fn render_transcript_part(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -736,40 +753,10 @@ impl AgentPanel {
             cx.notify();
         }
     }
-    pub(super) fn usage_report(&self, cx: &App) -> Option<Report> {
-        let thread = self.current()?;
-        let thread = thread.read(cx);
-        let context = thread
-            .transcript()
-            .usage
-            .clone()
-            .filter(|usage| usage.size > 0);
-        let breakdown = context
-            .as_ref()
-            .map(|usage| Breakdown::estimate(&thread.transcript().entries, usage.used))
-            .unwrap_or_default();
-        let limits: Vec<RateLimit> = self
-            .host
-            .runtime()
-            .limits(thread.document().agent_id(), cx)
-            .map(|limits| limits.iter().cloned().collect())
-            .unwrap_or_default();
-        let limits_hint = self
-            .host
-            .agents()
-            .profile(thread.document().agent_id(), cx)
-            .and_then(|profile| profile.usage().empty_hint())
-            .filter(|_| limits.is_empty());
-        Some(Report::new(
-            context,
-            breakdown,
-            thread.transcript().tokens.clone(),
-            limits,
-            limits_hint,
-        ))
-    }
     pub(super) fn render_usage(&mut self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let Some(report) = self.usage_report(cx) else {
+        let Some(report) = self.current().map(|thread| {
+            Report::read(thread.read(cx), self.host.runtime(), self.host.agents(), cx)
+        }) else {
             return div().into_any_element();
         };
         usage::UsageCard::render(&report, self.menus.usage_focus(), self.host.timestamp(), cx)

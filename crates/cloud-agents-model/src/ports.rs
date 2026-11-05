@@ -161,6 +161,11 @@ pub enum SaveOutcome {
 
 /// Writes the signed-in person's own agents.
 pub trait PersonalAgents: Send + Sync {
+    /// The authenticated model list of an own agent, without its provider credential.
+    fn read_models(&self, _hub: &HubId, _agent: &AgentId) -> CloudFuture<Vec<String>> {
+        Box::pin(async { Err(CloudAgentError::Unsupported) })
+    }
+
     /// Creates an agent (`existing` is `None`) or replaces the one with this id and version.
     /// The key and the definition leave the device only sealed to the chosen pool.
     fn save(

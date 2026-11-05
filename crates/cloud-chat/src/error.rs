@@ -32,6 +32,11 @@ impl CloudChatError {
             Self::Rejected | Self::Conversation(CloudConversationError::Refused(_)) => {
                 Target::Rejected
             }
+            Self::Conversation(CloudConversationError::NoModel) => Target::ModelUnavailable,
+            Self::Conversation(error @ CloudConversationError::LargePromptUnsupported(_)) => {
+                Target::LargePromptUnsupported(nocterm_core::error::SharedCause::new(error))
+            }
+            Self::Conversation(CloudConversationError::ProviderBusy) => Target::ProviderBusy,
             Self::Conversation(CloudConversationError::Servers(refusal)) => {
                 Target::Servers(crate::servers::problem(refusal))
             }

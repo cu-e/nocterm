@@ -70,9 +70,12 @@ impl ModelPricing for ConservativeModelPricing {
         &self.selection
     }
     fn quote(&self, request: &ModelCallRequest) -> Result<ModelQuote, InferenceError> {
-        if request.request_bytes() > self.request_bytes
-            || request.output_token_limit() > self.output_tokens
-        {
+        if request.request_bytes() > self.request_bytes {
+            return Err(InferenceError::RequestTooLarge {
+                limit: self.request_bytes,
+            });
+        }
+        if request.output_token_limit() > self.output_tokens {
             return Err(InferenceError::PricingLimit);
         }
         ModelQuote::new(self.selection.clone(), self.spend)

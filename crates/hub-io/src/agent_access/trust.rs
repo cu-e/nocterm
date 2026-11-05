@@ -217,14 +217,32 @@ impl Trust {
         line_of(&ca.value, connection)
     }
 
-    pub(super) async fn allow(
-        &self,
+    /// Capture the immutable recipient synchronously, before native scheduling or device I/O.
+    pub(super) fn allow(
+        self: &Arc<Self>,
         hub: &HubId,
         connection: &str,
+    ) -> nocterm_hubs_model::AgentAccessFuture<()> {
+        let prepared = (|| {
+            let work = self.source.work(hub)?;
+            let host = self.host(connection)?;
+            Ok::<_, AgentAccessError>((work, host, self.source.device(hub)))
+        })();
+        let (trust, connection) = (self.clone(), connection.to_owned());
+        Box::pin(async move {
+            let (work, host, device) = prepared?;
+            let device = Self::guarded(&work, async { device.await.map_err(Into::into) }).await?;
+            trust.allow_on(work, host, connection, device).await
+        })
+    }
+
+    async fn allow_on(
+        &self,
+        work: OpenedWork,
+        host: HostAccess,
+        connection: String,
+        device: nocterm_hub_model::DeviceId,
     ) -> Result<(), AgentAccessError> {
-        let host = self.host(connection)?;
-        let device = self.source.device(hub).await?;
-        let work = self.source.work(hub)?;
         let store = work.transient_store();
         Self::guarded(&work, async {
             let mut registry = Registry::load(&store, true)
@@ -241,14 +259,14 @@ impl Trust {
                     connection: connection.to_owned(),
                 }
             })?;
-            let line = line_of(document, connection)?;
+            let line = line_of(document, &connection)?;
             let text = host.file.read().await.map_err(host_error)?;
             let updated = with_line(&without_lines(&text, document), &line);
             if updated != text {
                 host.file.replace(text, updated).await.map_err(host_error)?;
             }
             let mut record = SshTrustRecord::installed(
-                connection.to_owned(),
+                connection,
                 host.identity.host.clone(),
                 host.identity.user.clone(),
                 host.identity.host_key_fingerprint.clone(),

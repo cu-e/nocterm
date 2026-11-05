@@ -51,7 +51,7 @@ pub use error::{CloudAgentError, ReplyProblem};
 pub use ids::{AgentId, IdError, InstanceId, MAX_ID_BYTES, PoolId};
 pub use personal::{
     DraftError, KeyInput, MAX_ENDPOINT_BYTES, MAX_INSTRUCTIONS_BYTES, MAX_KEY_BYTES,
-    MAX_MODEL_BYTES, MAX_NAME_CHARS, PersonalAgentDraft, ProviderKind,
+    MAX_MODEL_BYTES, MAX_MODELS, MAX_NAME_CHARS, OwnModelBase, PersonalAgentDraft, ProviderKind,
 };
 pub use placement::Placement;
 pub use ports::{

@@ -169,6 +169,24 @@ impl PoolPinStore for CloudAgentsLink {
 }
 
 impl PersonalAgents for CloudAgentsLink {
+    fn read_models(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<Vec<String>> {
+        let (links, hub_id, agent) = (self.links.clone(), hub.clone(), agent.clone());
+        self.call(hub, move |captured| async move {
+            let work = links
+                .open_account(&hub_id)
+                .and_then(|account| account.work())
+                .map_err(hub_error)?;
+            personal::check_work(&captured, &work)?;
+            let key =
+                own_keys::get(&work, agent.as_str())
+                    .await?
+                    .ok_or(CloudAgentError::Invalid(
+                        nocterm_cloud_agents_model::DraftError::Key,
+                    ))?;
+            Ok(key.models().to_vec())
+        })
+    }
+
     fn save(
         &self,
         hub: &HubId,

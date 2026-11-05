@@ -101,6 +101,10 @@ impl Residency {
         self.bytes = Some(AllocationLease::new(reserved.bytes(), 0, reserved));
         Ok(())
     }
+    /// Physical preparation retains the same actual reservation as its accepted owner.
+    pub(crate) fn retain_work(&self) -> Result<AllocationLease, HistoryAdmissionError> {
+        self.bytes.clone().ok_or(HistoryAdmissionError::Closed)
+    }
     pub(crate) fn shown(&self) -> bool {
         self.shown
     }

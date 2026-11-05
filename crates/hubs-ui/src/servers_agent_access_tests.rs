@@ -221,30 +221,81 @@ fn a_server_with_the_shared_principal_needs_an_update_until_it_connects(cx: &mut
     assert!(page.shows(item("agent-server-trusted", "web"), cx));
 }
 
-#[gpui_kit::test]
-fn a_busy_host_edit_keeps_manual_ca_copy_available(cx: &mut TestAppContext) {
+fn busy_allow_page(cx: &mut TestAppContext, connections: &[&str]) -> Fixture {
     let page = page_with_access(cx);
-    page.agent_access.set_connected_hosts(vec![HostChoice {
-        connection: "new".into(),
-        user: "deploy".into(),
-        host: "new.example".into(),
-    }]);
+    page.agent_access.set_connected_hosts(
+        connections
+            .iter()
+            .map(|connection| HostChoice {
+                connection: (*connection).into(),
+                user: "deploy".into(),
+                host: format!("{connection}.example"),
+            })
+            .collect(),
+    );
     open_tab(&page, AGENTS, cx);
     page.agent_access
         .fail_next_allow(AgentAccessError::HostEditLocked {
             path: "/home/deploy/.ssh/.nocterm-authorized_keys.lock".into(),
         });
     page.click("agent-allow", cx);
-    page.click(item("agent-pick", "new"), cx);
+    for connection in connections {
+        page.click(item("agent-pick", connection), cx);
+    }
     page.click("agent-allow-confirm", cx);
     cx.run_until_parked();
     page.render(cx);
+    page
+}
+
+#[gpui_kit::test]
+fn a_busy_host_edit_keeps_manual_ca_copy_available(cx: &mut TestAppContext) {
+    let page = busy_allow_page(cx, &["new"]);
     assert!(page.shows("agent-access-error", cx));
-    assert!(page.shows("agent-copy-line", cx));
-    page.click("agent-copy-line", cx);
+    assert!(page.shows("agent-picker", cx));
+    assert!(!page.shows(item("agent-server", "new"), cx));
+    assert!(page.shows(item("agent-copy-line", "new"), cx));
+    page.click(item("agent-copy-line", "new"), cx);
     cx.run_until_parked();
     let copied = cx.read_from_clipboard().and_then(|item| item.text());
-    assert_eq!(copied.as_deref(), Some("cert-authority SHA256:abc"));
+    assert_eq!(copied.as_deref(), Some("cert-authority SHA256:abc new"));
+}
+
+#[gpui_kit::test]
+fn a_partially_allowed_batch_keeps_only_failed_servers_selected_for_retry(cx: &mut TestAppContext) {
+    let page = busy_allow_page(cx, &["busy", "ready"]);
+    assert!(page.shows("agent-access-error", cx));
+    assert!(page.shows(item("agent-server", "ready"), cx));
+    assert!(!page.shows(item("agent-server", "busy"), cx));
+    assert!(!page.shows(item("agent-pick", "ready"), cx));
+    assert!(page.shows(item("agent-pick", "busy"), cx));
+    page.click(item("agent-copy-line", "busy"), cx);
+    cx.run_until_parked();
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    assert_eq!(copied.as_deref(), Some("cert-authority SHA256:abc busy"));
+
+    // Retrying the retained choice succeeds without ticking it a second time.
+    page.click("agent-allow-confirm", cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(page.shows(item("agent-server", "busy"), cx));
+    assert!(page.shows(item("agent-server", "ready"), cx));
+    assert!(!page.shows("agent-picker", cx));
+}
+
+#[gpui_kit::test]
+fn locking_account_keys_forgets_failed_host_choices_and_their_notice(cx: &mut TestAppContext) {
+    let page = busy_allow_page(cx, &["new"]);
+    page.click("account-keys-lock", cx);
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(page.shows("account-keys-locked", cx));
+    assert!(!page.shows("agent-picker", cx));
+    assert!(!page.shows("agent-access-error", cx));
+
+    submit_password(&page, crate::test_support::PASSWORD, cx);
+    assert!(!page.shows("agent-picker", cx));
+    assert!(!page.shows("agent-access-error", cx));
 }
 
 #[gpui_kit::test]

@@ -198,6 +198,11 @@ impl ConfigMenuRenderer {
                     )),
                 }
             }
+            Some(MenuKind::CloudModels) => {
+                menu = menu
+                    .child(frame.query_input)
+                    .children(frame.attachment.take());
+            }
             Some(MenuKind::Context) => {
                 menu = menu.child(
                     frame
@@ -242,6 +247,7 @@ impl ConfigMenuRenderer {
         match kind {
             Some(MenuKind::Agents) => "New agent".into(),
             Some(MenuKind::Context) => "Servers and terminals".into(),
+            Some(MenuKind::CloudModels) => "Model".into(),
             Some(MenuKind::Modes) => "Agent mode".into(),
             Some(MenuKind::Usage) | None => String::new(),
             Some(MenuKind::Config(id)) => thread

@@ -16,6 +16,7 @@ mod directory;
 mod error;
 mod leases;
 mod managed;
+mod providers;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -33,7 +34,8 @@ use tokio::runtime::Handle;
 
 use crate::agent_access::AgentAccess;
 use crate::cloud_device::{
-    ChatSetup, Checkpoints, DeviceAccount, DeviceConversation, Outbox, ServerDirectory,
+    ChatSetup, Checkpoints, DeviceAccount, DeviceConversation, Outbox, ProviderDirectory,
+    ServerDirectory, StorageWork, UpdateBudget,
 };
 use crate::devices::Captured;
 use crate::hub_account::HubAccount;
@@ -98,6 +100,7 @@ struct Shared {
     links: Arc<HubLinks>,
     checkpoints: Arc<Checkpoints>,
     outbox: Arc<Outbox>,
+    updates: Arc<UpdateBudget>,
     /// The open Cloud sessions per hub, while a chat of them holds one.
     accounts: Mutex<HashMap<HubId, Weak<DeviceAccount>>>,
     leases: leases::Leases,
@@ -172,7 +175,7 @@ impl Shared {
 
     /// A chat of `account` on `hub` as a conversation a window presents.
     fn conversation(
-        &self,
+        self: &Arc<Self>,
         account: Arc<DeviceAccount>,
         hub: &HubId,
         mut setup: ChatSetup,
@@ -183,12 +186,21 @@ impl Shared {
                 hub: hub.clone(),
             }) as Arc<dyn ServerDirectory>
         });
-        Arc::new(DeviceConversation::new(
+        if setup.wake.is_none() && setup.model.is_none() {
+            setup.providers = Some(Arc::new(providers::HubProviders::new(
+                self,
+                account.clone(),
+                hub,
+                setup.chat,
+            )) as Arc<dyn ProviderDirectory>);
+        }
+        DeviceConversation::new(
             account,
             setup,
             (self.checkpoints.clone(), self.outbox.clone()),
+            self.updates.clone(),
             self.handle.clone(),
-        ))
+        )
     }
 }
 
@@ -201,12 +213,16 @@ impl CloudChatsLink {
     /// Fails with `Capacity` when the installation cannot be set up.
     pub fn new(links: Arc<HubLinks>, services: ChatServices) -> Result<Self, CloudChatError> {
         let (handle, pool) = links.agent_parts();
+        let storage = StorageWork::new();
         let shared = Arc::new(Shared {
             handle: handle.clone(),
             pool: pool.clone(),
             links,
-            checkpoints: Arc::new(Checkpoints::new(services.root.clone())),
-            outbox: Arc::new(Outbox::new(services.root)),
+            checkpoints: Arc::new(
+                Checkpoints::new(services.root.clone()).with_work(storage.clone()),
+            ),
+            outbox: Arc::new(Outbox::new(services.root).with_work(storage)),
+            updates: Arc::new(UpdateBudget::default()),
             accounts: Mutex::new(HashMap::new()),
             leases: leases::Leases::default(),
             servers: services.servers,

@@ -5,22 +5,28 @@
 //! ciphertext only; one that does not open is ignored by the core and read again from the hub.
 //! Files are published with `write_private_atomic` under a mode-0700 root, and a write never
 //! replaces a newer one of the same file.
+use super::storage_work::{StorageWork, StorageWorkError};
 use nocterm_cloud_device::AccountScope;
 use nocterm_core::fs::{BoundedReadError, FileError, read_regular_bounded, write_private_atomic};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
-/// The largest checkpoint read back.
-const MAX_CHECKPOINT_BYTES: usize = 32 * 1024 * 1024;
+#[path = "checkpoint_queue.rs"]
+mod queue;
+use queue::{MAX_CHECKPOINT_BYTES, PendingCheckpoints, QueueError};
+
 /// The directory of this layout under the chats root.
 const LAYOUT: &str = "device-v1";
 
 /// Why a checkpoint could not be read or written.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CheckpointError {
+    #[error(transparent)]
+    Queue(#[from] QueueError),
+    #[error(transparent)]
+    Worker(#[from] StorageWorkError),
     #[error("the checkpoint directory could not be prepared")]
     Directory(#[source] io::Error),
     #[error("the checkpoint could not be written")]
@@ -61,58 +67,114 @@ impl AccountPlace {
     }
 }
 
-/// The checkpoint files of an installation.
+/// One installation's latest pending checkpoints and one ordered physical writer.
+/// Pending work is bounded by files and bytes; accepted work retains this owner
+/// through physical completion even after the flow that offered it closes.
 pub(crate) struct Checkpoints {
     root: PathBuf,
-    /// The newest generation written per file.
-    written: Mutex<HashMap<PathBuf, u64>>,
+    pending: Mutex<PendingCheckpoints>,
+    drained: tokio::sync::Notify,
+    work: Arc<StorageWork>,
 }
 impl Checkpoints {
     pub(crate) fn new(root: PathBuf) -> Self {
         Self {
             root: root.join(LAYOUT),
-            written: Mutex::new(HashMap::new()),
+            pending: Mutex::default(),
+            drained: tokio::sync::Notify::new(),
+            work: StorageWork::new(),
         }
+    }
+    pub(crate) fn with_work(mut self, work: Arc<StorageWork>) -> Self {
+        self.work = work;
+        self
     }
     fn path(&self, account: &AccountPlace, file: &str) -> PathBuf {
         self.root.join(&account.0).join(file)
     }
-    /// The bytes of `file`, or `None` when it was never written.
-    pub(crate) fn load(
+    /// Loads a bounded file without occupying a Tokio worker.
+    pub(crate) async fn load_async(
         &self,
         account: &AccountPlace,
         file: &str,
     ) -> Result<Option<Vec<u8>>, CheckpointError> {
-        match read_regular_bounded(&self.path(account, file), MAX_CHECKPOINT_BYTES) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(error) if error.io_kind() == Some(io::ErrorKind::NotFound) => Ok(None),
-            Err(error) => Err(CheckpointError::Read(error)),
-        }
+        let path = self.path(account, file);
+        self.work.run(move || load(&path)).await?
     }
-    /// Publishes `bytes` as `file` unless a newer generation was written already.
-    pub(crate) fn store(
-        &self,
+    /// Coalesces the newest snapshot for this exact account/file. A queue that is
+    /// full refuses explicitly; no unbounded waiter or task retains rejected bytes.
+    /// Submission order, rather than a flow-local counter, orders reopened flows.
+    pub(crate) fn offer(
+        self: &Arc<Self>,
         account: &AccountPlace,
         file: &str,
-        generation: u64,
-        bytes: &[u8],
+        bytes: Vec<u8>,
     ) -> Result<(), CheckpointError> {
-        let path = self.path(account, file);
-        let mut written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
-        if written
-            .get(&path)
-            .is_some_and(|newest| *newest >= generation)
-        {
-            return Ok(());
+        let runtime =
+            tokio::runtime::Handle::try_current().map_err(|_| StorageWorkError::Unavailable)?;
+        let start = self
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .offer(self.path(account, file), bytes)?;
+        if start {
+            let owner = self.clone();
+            runtime.spawn_blocking(move || owner.drain());
         }
-        nocterm_core::paths::ensure_private_dir(&self.root).map_err(CheckpointError::Directory)?;
-        if let Some(parent) = path.parent() {
-            nocterm_core::paths::ensure_private_dir(parent).map_err(CheckpointError::Directory)?;
-        }
-        write_private_atomic(&path, bytes).map_err(CheckpointError::Write)?;
-        written.insert(path, generation);
         Ok(())
     }
+    fn drain(&self) {
+        loop {
+            let next = self
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            let Some((path, bytes, writing)) = next else {
+                self.drained.notify_waiters();
+                return;
+            };
+            if let Err(error) = write(&self.root, &path, &bytes) {
+                tracing::warn!(error = %nocterm_core::error::chain(&error), "a Cloud checkpoint was not saved");
+            }
+            drop(writing);
+            self.drained.notify_waiters();
+        }
+    }
+    /// Waits for accepted disk work, including its failures, without preventing new
+    /// offers. Actual I/O remains owned by the writer if this waiter is cancelled.
+    #[cfg(test)]
+    pub(crate) async fn flush(&self) {
+        loop {
+            let drained = self.drained.notified();
+            tokio::pin!(drained);
+            drained.as_mut().enable();
+            if self
+                .pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .idle()
+            {
+                return;
+            }
+            drained.await;
+        }
+    }
+}
+
+fn load(path: &Path) -> Result<Option<Vec<u8>>, CheckpointError> {
+    match read_regular_bounded(path, MAX_CHECKPOINT_BYTES) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.io_kind() == Some(io::ErrorKind::NotFound) => Ok(None),
+        Err(error) => Err(CheckpointError::Read(error)),
+    }
+}
+fn write(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), CheckpointError> {
+    nocterm_core::paths::ensure_private_dir(root).map_err(CheckpointError::Directory)?;
+    if let Some(parent) = path.parent() {
+        nocterm_core::paths::ensure_private_dir(parent).map_err(CheckpointError::Directory)?;
+    }
+    write_private_atomic(path, bytes).map_err(CheckpointError::Write)
 }
 
 /// The file of a chat's checkpoint.
@@ -156,17 +218,45 @@ pub(crate) fn remove_earlier_pages(root: &Path) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_checkpoint_is_read_back_and_an_older_write_never_replaces_a_newer_one() {
+    #[tokio::test]
+    async fn a_reopened_flow_can_keep_a_new_checkpoint_and_accounts_remain_separate() {
         let dir = tempfile::tempdir().unwrap();
-        let checkpoints = Checkpoints::new(dir.path().to_path_buf());
+        let checkpoints = Arc::new(Checkpoints::new(dir.path().to_path_buf()));
         let account = AccountPlace("a".repeat(32));
-        assert!(checkpoints.load(&account, "c.chat").unwrap().is_none());
-        checkpoints.store(&account, "c.chat", 2, b"newer").unwrap();
-        checkpoints.store(&account, "c.chat", 1, b"older").unwrap();
+        let other = AccountPlace("b".repeat(32));
+        assert!(
+            checkpoints
+                .load_async(&account, "c.chat")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        checkpoints
+            .offer(&account, "c.chat", b"earlier flow".to_vec())
+            .unwrap();
+        checkpoints.flush().await;
+        checkpoints
+            .offer(&account, "c.chat", b"reopened flow".to_vec())
+            .unwrap();
+        checkpoints
+            .offer(&other, "c.chat", b"other account".to_vec())
+            .unwrap();
+        checkpoints.flush().await;
         assert_eq!(
-            checkpoints.load(&account, "c.chat").unwrap().as_deref(),
-            Some(&b"newer"[..])
+            checkpoints
+                .load_async(&account, "c.chat")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(&b"reopened flow"[..])
+        );
+        assert_eq!(
+            checkpoints
+                .load_async(&other, "c.chat")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(&b"other account"[..])
         );
         #[cfg(unix)]
         {
@@ -177,6 +267,30 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o700);
         }
+    }
+
+    #[tokio::test]
+    async fn an_oversized_offer_does_not_replace_the_accepted_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkpoints = Arc::new(Checkpoints::new(dir.path().to_path_buf()));
+        let account = AccountPlace::of_hex("a");
+        checkpoints
+            .offer(&account, "c.chat", b"kept".to_vec())
+            .unwrap();
+        checkpoints.flush().await;
+        assert!(matches!(
+            checkpoints.offer(&account, "c.chat", vec![0; MAX_CHECKPOINT_BYTES + 1]),
+            Err(CheckpointError::Queue(QueueError::Oversized))
+        ));
+        checkpoints.flush().await;
+        assert_eq!(
+            checkpoints
+                .load_async(&account, "c.chat")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(&b"kept"[..])
+        );
     }
 
     #[test]

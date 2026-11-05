@@ -10,6 +10,9 @@ use nocterm_cloud_conversation_model::{
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "chat_exchange/composer.rs"]
+mod composer;
+
 /// Sends `prompt` and returns the assistant's reply once the runner has published one, or
 /// panics with the transcript when none arrives within `patience`.
 pub(crate) fn reply_to(
@@ -27,6 +30,8 @@ pub(crate) fn reply_to(
                 .deliver(ConversationAction::Prompt {
                     text: prompt.to_owned(),
                     server: None,
+                    model: None,
+                    images: Vec::new(),
                 })
                 .await
                 .expect("the prompt is tracked");

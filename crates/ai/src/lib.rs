@@ -6,6 +6,7 @@
 //! The terminal tool catalog includes file transfers and shared agent-facing terminal,
 //! command, observation and transfer reports; display data never grants execution authority.
 //! Image data is immutable and shared across projections; live transcript admission uses incremental pre-mutation costs.
+//! Neutral conversation model and provider choices are descriptive records, never key leases.
 //! Does not own: per-chat configuration/composer state, native workspace/sandbox lookup,
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: metadata::ChatMetadataSource,

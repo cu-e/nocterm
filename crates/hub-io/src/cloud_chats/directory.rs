@@ -35,21 +35,32 @@ pub(super) async fn list(
     hub: HubId,
 ) -> Result<Vec<Arc<dyn ChatHistoryEntry>>, CloudChatError> {
     let opened = shared.account(captured.clone(), account).await?;
+    tokio::select! {
+        biased;
+        () = opened.clone().ended() => Err(CloudChatError::Stale),
+        result = list_opened(shared, captured, opened, hub) => result,
+    }
+}
+
+async fn list_opened(
+    shared: &Arc<Shared>,
+    captured: Arc<Captured>,
+    opened: Arc<DeviceAccount>,
+    hub: HubId,
+) -> Result<Vec<Arc<dyn ChatHistoryEntry>>, CloudChatError> {
     let seats = managed::seats(&captured).await?;
     let session = opened.session();
     let place = AccountPlace::of(session.scope());
-    let directories: Vec<VerifiedDirectory> = session
-        .runners()
-        .iter()
-        .filter_map(|runner| {
-            shared
-                .checkpoints
-                .load(&place, &directory_file(&runner.runner().id))
-                .ok()
-                .flatten()
-                .map(VerifiedDirectory::from_bytes)
-        })
-        .collect();
+    let mut directories = Vec::new();
+    for runner in session.runners() {
+        if let Ok(Some(bytes)) = shared
+            .checkpoints
+            .load_async(&place, &directory_file(&runner.runner().id))
+            .await
+        {
+            directories.push(VerifiedDirectory::from_bytes(bytes));
+        }
+    }
     let device = opened.device().map_err(error::hub)?;
     let mut flow = ListChats::new(session.clone(), device).with_directories(&directories);
     let mut listed: HashMap<[u8; 16], Vec<ListedChat>> = HashMap::new();
@@ -104,19 +115,15 @@ pub(super) async fn list(
 
 /// Keeps the runners' verified directories for the next listing.
 fn save(shared: &Shared, place: AccountPlace, checkpoints: Vec<([u8; 16], VerifiedDirectory)>) {
-    if checkpoints.is_empty() {
-        return;
-    }
-    let files = shared.checkpoints.clone();
-    let generation = driver::now_ms().unsigned_abs();
-    shared.handle.spawn_blocking(move || {
-        for (runner, checkpoint) in checkpoints {
-            let stored = files.store(&place, &directory_file(&runner), generation, checkpoint.as_bytes());
-            if let Err(error) = stored {
-                tracing::warn!(error = %nocterm_core::error::chain(&error), "a chat directory checkpoint was not saved");
-            }
+    for (runner, checkpoint) in checkpoints {
+        let stored =
+            shared
+                .checkpoints
+                .offer(&place, &directory_file(&runner), checkpoint.into_bytes());
+        if let Err(error) = stored {
+            tracing::warn!(error = %nocterm_core::error::chain(&error), "a chat directory checkpoint was not queued");
         }
-    });
+    }
 }
 
 /// What every row of one listing shares.
@@ -223,9 +230,29 @@ impl Entry {
             chat: chat.chat,
             setup: ChatSetup {
                 chat: chat.chat,
+                models: seat
+                    .map(|seat| {
+                        seat.models
+                            .iter()
+                            .map(|model| nocterm_cloud_conversation_model::ModelName {
+                                provider: MANAGED_PROVIDER.to_owned(),
+                                model: model.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        model
+                            .iter()
+                            .map(|model| nocterm_cloud_conversation_model::ModelName {
+                                provider: model.provider.clone(),
+                                model: model.model.clone(),
+                            })
+                            .collect()
+                    }),
                 model,
                 wake,
                 servers: None,
+                providers: None,
             },
             summary,
         })

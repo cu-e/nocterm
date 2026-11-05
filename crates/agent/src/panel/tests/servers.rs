@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-fn summary(id: &str, group: Option<&str>) -> nocterm_workspace::ConnectionSummary {
+pub(super) fn summary(id: &str, group: Option<&str>) -> nocterm_workspace::ConnectionSummary {
     nocterm_workspace::ConnectionSummary {
         id: id.to_owned().into(),
         name: id.to_owned().into(),
@@ -24,7 +24,7 @@ fn summary(id: &str, group: Option<&str>) -> nocterm_workspace::ConnectionSummar
 
 /// Opens sessions the way the connections feature does: by updating the
 /// workspace it is handed.
-struct OpeningDirectory {
+pub(super) struct OpeningDirectory {
     after_background_open: RefCell<Option<AfterBackgroundOpen>>,
     servers: Vec<nocterm_workspace::ConnectionSummary>,
     opened: Cell<usize>,
@@ -108,10 +108,22 @@ impl nocterm_workspace::ChatConnectionOpen for OpeningDirectory {
     }
 }
 
-fn install(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
+pub(super) fn install(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
+    install_servers(
+        f,
+        vec![summary("web", Some("prod")), summary("db", Some("prod"))],
+        cx,
+    )
+}
+
+pub(super) fn install_servers(
+    f: &Fixture,
+    servers: Vec<nocterm_workspace::ConnectionSummary>,
+    cx: &mut TestAppContext,
+) -> Rc<OpeningDirectory> {
     let directory = Rc::new(OpeningDirectory {
         after_background_open: RefCell::default(),
-        servers: vec![summary("web", Some("prod")), summary("db", Some("prod"))],
+        servers,
         opened: Cell::new(0),
         background: RefCell::new(Vec::new()),
         sign_in: Default::default(),

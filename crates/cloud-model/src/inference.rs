@@ -20,6 +20,9 @@ pub enum InferenceError {
     InvalidLimits,
     #[error("the model request exceeds its configured trusted pricing ceiling")]
     PricingLimit,
+    /// The request body exceeds the operator's configured per-call input ceiling.
+    #[error("the model request exceeds the configured input limit of {limit} bytes")]
+    RequestTooLarge { limit: usize },
     #[error("the inference task or grant has expired")]
     Expired,
     #[error("the observed clock moved backwards; this run needs fresh authority")]

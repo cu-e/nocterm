@@ -69,7 +69,15 @@ pub fn read_regular_bounded(path: &Path, cap: usize) -> Result<Vec<u8>, BoundedR
 }
 
 pub(super) fn open_regular(path: &Path) -> Result<(File, Metadata), BoundedReadError> {
-    let file = open_without_following(path).map_err(|source| {
+    open_regular_mode(path, false)
+}
+
+pub(super) fn open_regular_read_write(path: &Path) -> Result<(File, Metadata), BoundedReadError> {
+    open_regular_mode(path, true)
+}
+
+fn open_regular_mode(path: &Path, write: bool) -> Result<(File, Metadata), BoundedReadError> {
+    let file = open_without_following(path, write).map_err(|source| {
         if is_link_refusal(&source) {
             BoundedReadError::NotRegular {
                 path: path.to_owned(),
@@ -90,11 +98,12 @@ pub(super) fn open_regular(path: &Path) -> Result<(File, Metadata), BoundedReadE
 }
 
 #[cfg(unix)]
-fn open_without_following(path: &Path) -> io::Result<File> {
+fn open_without_following(path: &Path, write: bool) -> io::Result<File> {
     use nix::fcntl::OFlag;
     use std::os::unix::fs::OpenOptionsExt as _;
     OpenOptions::new()
         .read(true)
+        .write(write)
         .custom_flags(
             (OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_NOCTTY | OFlag::O_CLOEXEC).bits(),
         )
@@ -102,19 +111,20 @@ fn open_without_following(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(windows)]
-fn open_without_following(path: &Path) -> io::Result<File> {
+fn open_without_following(path: &Path, write: bool) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt as _;
     /// `FILE_FLAG_OPEN_REPARSE_POINT`: open the link itself, not its target.
     const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     OpenOptions::new()
         .read(true)
+        .write(write)
         .custom_flags(OPEN_REPARSE_POINT)
         .open(path)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn open_without_following(path: &Path) -> io::Result<File> {
-    OpenOptions::new().read(true).open(path)
+fn open_without_following(path: &Path, write: bool) -> io::Result<File> {
+    OpenOptions::new().read(true).write(write).open(path)
 }
 
 /// `O_NOFOLLOW` reports a final link as ELOOP (Linux) or EMLINK (BSD, macOS).

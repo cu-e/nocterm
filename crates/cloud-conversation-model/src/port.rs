@@ -1,7 +1,7 @@
 //! The port through which the desktop's Cloud chat entity reads and steers one chat.
 use crate::{
     CloudConversationError, CommandKey, ConversationAction, ConversationDelta, ConversationKey,
-    Freshness, ServerChoice, ServerKey,
+    Freshness, ModelName, ServerChoice, ServerKey,
 };
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
@@ -11,9 +11,19 @@ pub type ConversationFuture<T> = BoxFuture<'static, Result<T, CloudConversationE
 /// The updates of one subscription.
 pub type ConversationUpdates = BoxStream<'static, ConversationUpdate>;
 
+/// One personal provider source the person may explicitly lease to an own-runner chat.
+/// Its identifier describes a choice; only the captured conversation can authorize it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderOption {
+    pub id: String,
+    pub label: String,
+}
+
 /// What a subscription reports, in order.
 #[derive(Clone, Debug)]
 pub enum ConversationUpdate {
+    /// The source's provider/model capabilities changed; read its current complete projection.
+    ComposerChanged,
     Transcript(ConversationDelta),
     Freshness(Freshness),
     /// A read round was refused; the verified prefix stays and a later round tries again.
@@ -29,6 +39,27 @@ pub trait CloudConversation: Send + Sync {
 
     /// Whether prompts can be sent: the chat knows the model they name.
     fn can_prompt(&self) -> bool;
+    /// Models the agent offers. The runner still admits the exact model of each prompt.
+    fn models(&self) -> Vec<ModelName> {
+        Vec::new()
+    }
+
+    /// The model used before the first verified run supplies one.
+    fn default_model(&self) -> Option<ModelName> {
+        self.models().into_iter().next()
+    }
+
+    /// An own-runner chat can choose its first provider; an admitted one is not switched.
+    fn can_choose_provider(&self) -> bool {
+        false
+    }
+    fn provider_options(&self) -> ConversationFuture<Vec<ProviderOption>> {
+        Box::pin(async { Err(CloudConversationError::Unsupported) })
+    }
+    /// Leases the explicitly chosen provider to this chat and resolves after verified delivery.
+    fn select_provider(&self, _id: String) -> ConversationFuture<()> {
+        Box::pin(async { Err(CloudConversationError::Unsupported) })
+    }
 
     /// Whether a sleeping managed seat serves the chat, so [`Self::wake`] can start it.
     fn can_wake(&self) -> bool;

@@ -66,6 +66,10 @@ impl AgentAccess {
         let keys = cx.new(|_| AccountKeys::new(hubs.clone()));
         let _keys_changed = cx.subscribe(&keys, |tab, _, event: &AccountKeysEvent, cx| {
             let AccountKeysEvent::Changed = event;
+            tab.working = None;
+            tab.picking = None;
+            tab.notice = None;
+            tab.selected.clear();
             tab.reload(cx);
         });
         Self {
@@ -87,6 +91,7 @@ impl AgentAccess {
         if self.hub.as_ref() == Some(hub) {
             return;
         }
+        self.working = None;
         self.hub = Some(hub.clone());
         self.keys.update(cx, |keys, cx| keys.show(hub, cx));
         self.selected.clear();
@@ -100,6 +105,8 @@ impl AgentAccess {
         self.hub = None;
         self.loading = None;
         self.working = None;
+        self.picking = None;
+        self.notice = None;
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -211,13 +218,21 @@ impl AgentAccess {
             .collect();
         self.working = Some(cx.spawn(async move |this, cx| {
             let (mut allowed, mut failure) = (0usize, None);
-            for (_, future) in allowing {
+            let mut failed = BTreeSet::new();
+            for (connection, future) in allowing {
                 match future.await {
                     Ok(()) => allowed += 1,
-                    Err(error) => failure = Some(agent_problem(&error)),
+                    Err(error) => {
+                        failed.insert(connection);
+                        failure = Some(agent_problem(&error));
+                    }
                 }
             }
             this.update(cx, |tab, cx| {
+                if tab.hub.as_ref() != Some(&hub) {
+                    return;
+                }
+                tab.picking = (!failed.is_empty()).then_some(failed);
                 tab.notice = Some(match failure {
                     Some(problem) => Err(problem),
                     None => Ok(format!("Agents can sign in to {allowed} server(s).")),
@@ -501,14 +516,19 @@ impl AgentAccess {
                     ),
             )
             .when(self.picking.is_some(), |column| {
-                column.child(self.picker(&candidates, cx))
+                column.child(self.picker(&candidates, overview.ca.is_some(), cx))
             })
             .child(list)
             .into_any_element()
     }
 
     /// The connected servers that do not trust the CA yet, to tick and allow.
-    fn picker(&self, candidates: &[HostChoice], cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn picker(
+        &self,
+        candidates: &[HostChoice],
+        has_ca: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         let picked = self.picking.clone().unwrap_or_default();
         let view = cx.entity();
@@ -522,7 +542,8 @@ impl AgentAccess {
             });
         let rows = candidates.iter().map(|choice| {
             let connection = choice.connection.clone();
-            Checkbox::new(item("agent-pick", &choice.connection))
+            let (copy, copied) = (cx.entity(), connection.clone());
+            let tick = Checkbox::new(item("agent-pick", &choice.connection))
                 .label(format!("{}@{} ({})", choice.user, choice.host, connection))
                 .checked(picked.contains(&choice.connection))
                 .on_click(cx.listener(move |tab, on: &bool, _, cx| {
@@ -530,7 +551,20 @@ impl AgentAccess {
                         Self::toggle(set, &connection, *on);
                     }
                     cx.notify();
-                }))
+                }));
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(div().flex_1().min_w_0().child(tick))
+                .child(
+                    Button::new(item("agent-copy-line", &choice.connection))
+                        .small()
+                        .label("Copy line")
+                        .disabled(!has_ca)
+                        .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                            copy.update(cx, |tab, cx| tab.copy_line(&copied, cx));
+                        }),
+                )
         });
         v_flex()
             .id("agent-picker")

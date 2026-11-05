@@ -11,9 +11,25 @@ mod servers;
 pub use servers::{
     BoundServerState, BoundServerView, ConversationServers, ServerOption, ServerProblem,
 };
+mod composer;
+pub use composer::{ConversationComposer, ConversationModel, ConversationProvider};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConversationError {
+    #[error(transparent)]
+    ImageCollection(#[from] nocterm_ai::images::ImageCollectionError),
+    #[error(
+        "The original prompt is no longer available. Restore its attachments, model and server, then send it again."
+    )]
+    OriginalPromptUnavailable,
+    #[error("Stop the active run before choosing a provider.")]
+    ProviderBusy,
+    #[error("The provider could not be selected: {0}")]
+    ProviderSelection(#[source] nocterm_core::error::SharedCause),
+    #[error("This model is not available for the conversation.")]
+    ModelUnavailable,
+    #[error("Update the Cloud hub to send large prompts and images.")]
+    LargePromptUnsupported(#[source] nocterm_core::error::SharedCause),
     #[error("The original conversation source is unavailable.")]
     Stale,
     #[error("This conversation cannot accept that action.")]
@@ -112,6 +128,10 @@ pub trait ConversationSource {
     /// The servers the conversation's agent may sign in to, when its source binds any
     /// (a Cloud chat, ADR 0147). A Local chat has none.
     fn servers(&self, _cx: &App) -> Option<Rc<dyn ConversationServers>> {
+        None
+    }
+    /// Images and model choice when the source owns a remote prompt draft.
+    fn composer(&self, _cx: &App) -> Option<Rc<dyn ConversationComposer>> {
         None
     }
 }

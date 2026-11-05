@@ -4,102 +4,51 @@
 //! collection (a hub sees ciphertext only) and is read back only on a device of the account
 //! to seal a short-lived lease to the own runner (ADR 0126). `Debug` never shows it.
 
-use std::fmt;
-
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
+use crate::account::operations::{OpenedSource, OpenedWork};
+use crate::store::{Located, OpError, Store};
 use nocterm_cloud_agents_model::CloudAgentError;
+use nocterm_cloud_device::records::{PROVIDER_KEYS_KIND, ProviderKeyRecord, provider_key_object};
 use nocterm_core::SharedCause;
-use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use zeroize::Zeroizing;
 
-use crate::account::operations::OpenedWork;
-use crate::store::OpError;
+pub(crate) const KIND: &str = PROVIDER_KEYS_KIND;
 
-/// The kind of the personal collection that holds these keys.
-pub(crate) const KIND: &str = "agent_provider_keys";
-const FORMAT: u8 = 1;
-
-#[derive(Serialize, Deserialize)]
-struct Stored {
-    format: u8,
-    provider: String,
-    model: String,
-    key: String,
-}
-
-/// What a runner-less agent needs to lease its credential: the provider family, the model and
-/// the key.
-pub(crate) struct OwnAgentKey {
-    provider: String,
-    model: String,
-    key: Zeroizing<String>,
-}
-
+/// The canonical account record; no copied native JSON layout or second plaintext key.
+#[derive(Debug)]
+pub(crate) struct OwnAgentKey(ProviderKeyRecord);
 impl OwnAgentKey {
-    pub(crate) fn new(provider: &str, model: &str, key: &str) -> Self {
-        Self {
-            provider: provider.to_owned(),
-            model: model.to_owned(),
-            key: Zeroizing::new(key.to_owned()),
-        }
+    pub(crate) fn new(
+        provider: &str,
+        models: &[String],
+        key: &str,
+    ) -> Result<Self, CloudAgentError> {
+        ProviderKeyRecord::new_models(provider, models.to_vec(), key.as_bytes())
+            .map(Self)
+            .map_err(failed)
     }
-
     pub(crate) fn provider(&self) -> &str {
-        &self.provider
+        self.0.provider()
     }
-
     pub(crate) fn model(&self) -> &str {
-        &self.model
+        self.0.model()
     }
-
-    /// The key bytes; callers hand them to the sealer and nothing else.
+    pub(crate) fn models(&self) -> &[String] {
+        self.0.models()
+    }
+    #[cfg(test)]
     pub(crate) fn expose(&self) -> &str {
-        &self.key
+        self.0.expose_text()
     }
-
+    pub(crate) fn with_models(self, models: Vec<String>) -> Result<Self, CloudAgentError> {
+        self.0.with_models(models).map(Self).map_err(failed)
+    }
     fn encode(&self) -> Result<Zeroizing<Vec<u8>>, CloudAgentError> {
-        serde_json::to_vec(&Stored {
-            format: FORMAT,
-            provider: self.provider.clone(),
-            model: self.model.clone(),
-            key: STANDARD.encode(self.key.as_bytes()),
-        })
-        .map(Zeroizing::new)
-        .map_err(failed)
+        self.0.encode().map_err(failed)
     }
-
     fn decode(bytes: &[u8]) -> Result<Self, CloudAgentError> {
-        let stored: Stored = serde_json::from_slice(bytes).map_err(failed)?;
-        if stored.format != FORMAT {
-            return Err(CloudAgentError::Registration(SharedCause::new(
-                KeyDocumentError::Format,
-            )));
-        }
-        let key = STANDARD.decode(&stored.key).map_err(failed)?;
-        let key = String::from_utf8(key).map_err(failed)?;
-        Ok(Self {
-            provider: stored.provider,
-            model: stored.model,
-            key: Zeroizing::new(key),
-        })
+        ProviderKeyRecord::decode(bytes).map(Self).map_err(failed)
     }
-}
-
-impl fmt::Debug for OwnAgentKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OwnAgentKey")
-            .field("provider", &self.provider)
-            .field("model", &self.model)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Why the stored key document cannot be used.
-#[derive(Debug, thiserror::Error)]
-enum KeyDocumentError {
-    #[error("the provider key document has another format")]
-    Format,
 }
 
 fn failed(error: impl std::error::Error + Send + Sync + 'static) -> CloudAgentError {
@@ -109,31 +58,60 @@ fn failed(error: impl std::error::Error + Send + Sync + 'static) -> CloudAgentEr
 fn store(error: OpError) -> CloudAgentError {
     match error {
         OpError::Hub(error) => super::error::hub_error(error),
+        OpError::Conflict => CloudAgentError::Conflict,
         other => failed(other),
     }
 }
 
 /// The object id of an agent's key.
 fn object(agent: &str) -> String {
-    format!("key-{agent}")
+    provider_key_object(agent)
 }
 
-/// Stores `key` for `agent`, replacing an earlier one.
-pub(crate) async fn put(
+/// The exact authenticated object and account read for a model-only edit. It cannot be
+/// redirected to another collection or updated to a later writer's version.
+pub(crate) struct OwnKeyVersion {
+    store: Store,
+    at: Located,
+    object: String,
+    expected: u64,
+    source: Arc<OpenedSource>,
+}
+
+/// Captures a compare-and-swap receipt, including a tombstone or a missing object.
+pub(crate) async fn prepare_write(
     work: &OpenedWork,
     agent: &str,
-    key: &OwnAgentKey,
-) -> Result<(), CloudAgentError> {
+) -> Result<(Option<OwnAgentKey>, OwnKeyVersion), CloudAgentError> {
+    work.source().check().map_err(super::error::hub_error)?;
     let store_ = work.transient_store();
     let at = store_.ensure(KIND).await.map_err(store)?;
-    let id = object(agent);
-    let current = work.ops().object(at.id(), &id).await.map_err(store)?;
-    let expected = current.map_or(0, |object| object.version);
-    store_
-        .put(&at, KIND, &id, &key.encode()?, expected)
+    read_at(work, store_, at, agent).await
+}
+
+pub(crate) async fn put_expected(
+    receipt: OwnKeyVersion,
+    key: &OwnAgentKey,
+) -> Result<(), CloudAgentError> {
+    receipt.source.check().map_err(super::error::hub_error)?;
+    receipt
+        .store
+        .put(
+            &receipt.at,
+            KIND,
+            &receipt.object,
+            &key.encode()?,
+            receipt.expected,
+        )
         .await
         .map_err(store)?;
-    Ok(())
+    receipt.source.check().map_err(super::error::hub_error)
+}
+
+#[cfg(test)]
+async fn put(work: &OpenedWork, agent: &str, key: &OwnAgentKey) -> Result<(), CloudAgentError> {
+    let (_, version) = prepare_write(work, agent).await?;
+    put_expected(version, key).await
 }
 
 /// The key stored for `agent`, if this account has one.
@@ -141,21 +119,52 @@ pub(crate) async fn get(
     work: &OpenedWork,
     agent: &str,
 ) -> Result<Option<OwnAgentKey>, CloudAgentError> {
-    let Some(at) = work.transient_store().find(KIND).await.map_err(store)? else {
+    Ok(get_versioned(work, agent).await?.map(|(key, _)| key))
+}
+
+pub(crate) async fn get_versioned(
+    work: &OpenedWork,
+    agent: &str,
+) -> Result<Option<(OwnAgentKey, OwnKeyVersion)>, CloudAgentError> {
+    work.source().check().map_err(super::error::hub_error)?;
+    let store_ = work.transient_store();
+    let Some(at) = store_.find(KIND).await.map_err(store)? else {
         return Ok(None);
     };
-    let id = object(agent);
-    let Some(stored) = work.ops().object(at.id(), &id).await.map_err(store)? else {
-        return Ok(None);
+    let (key, version) = read_at(work, store_, at, agent).await?;
+    Ok(key.map(|key| (key, version)))
+}
+
+async fn read_at(
+    work: &OpenedWork,
+    store_: Store,
+    at: Located,
+    agent: &str,
+) -> Result<(Option<OwnAgentKey>, OwnKeyVersion), CloudAgentError> {
+    let object = object(agent);
+    let stored = work.ops().object(at.id(), &object).await.map_err(store)?;
+    let expected = stored.as_ref().map_or(0, |stored| stored.version);
+    let key = match stored {
+        Some(stored) if !stored.deleted => {
+            let plain = at
+                .key()
+                .open_object(at.id(), &object, KIND, &stored.ciphertext)
+                .map_err(failed)?;
+            Some(OwnAgentKey::decode(&plain)?)
+        }
+        _ => None,
     };
-    if stored.deleted {
-        return Ok(None);
-    }
-    let plain = at
-        .key()
-        .open_object(at.id(), &id, KIND, &stored.ciphertext)
-        .map_err(failed)?;
-    OwnAgentKey::decode(&plain).map(Some)
+    work.source().check().map_err(super::error::hub_error)?;
+    Ok((
+        key,
+        OwnKeyVersion {
+            store: store_,
+            at,
+            object,
+            expected,
+            source: work.source().clone(),
+        },
+    ))
 }
 
 /// Forgets the key of `agent`; an agent without one succeeds.

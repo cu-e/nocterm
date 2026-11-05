@@ -71,6 +71,20 @@ pub struct ComposerCapabilities {
     pub usage: bool,
 }
 
+/// A model offered by the conversation's agent. Descriptive data, never provider authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConversationModel {
+    pub provider: String,
+    pub model: String,
+}
+
+/// A personal agent offered for explicit provider selection; this record leases no key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConversationProvider {
+    pub id: String,
+    pub label: String,
+}
+
 /// Presentation identity of one pending prompt within its source; it confers no authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PendingPromptKey([u8; 16]);

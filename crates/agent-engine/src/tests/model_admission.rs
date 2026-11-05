@@ -414,3 +414,44 @@ async fn source_revocation_during_final_usage_ack_refuses_a_tool_action() {
     assert!(matches!(result, Err(EngineError::Interrupted)));
     assert!(engine.checkpoint(StreamRevision::default()).is_err());
 }
+
+#[tokio::test]
+async fn an_inline_image_over_the_full_request_limit_is_typed_before_any_http_or_reservation() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use nocterm_ai::model::content::{Content, Image};
+    // This boundary checks MIME and request encoding; pixel admission is tested upstream.
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.resize(1024 * 1024, 0);
+    for kind in [ProviderKind::OpenAiChat, ProviderKind::AnthropicMessages] {
+        let server = Server::start(vec![]).await;
+        let mut engine = engine(kind, server.root());
+        let admission = admission();
+        let input = EngineInput {
+            next_step: StepId::from_bytes([1; 16]),
+            request: EngineRequest::Prompt(
+                EnginePrompt::new(vec![Content::Image(Image::new(
+                    STANDARD.encode(&bytes),
+                    "image/png",
+                ))])
+                .unwrap(),
+            ),
+        };
+        let (_, cancellation) = AbortHandle::new_pair();
+        assert!(matches!(
+            engine
+                .advance(
+                    input,
+                    Arc::new(Events::default()),
+                    admission.clone(),
+                    cancellation
+                )
+                .await,
+            Err(EngineError::RequestTooLarge { limit: 1_048_576 })
+        ));
+        assert!(server.requests().is_empty());
+        assert!(
+            admission.requests().is_empty(),
+            "no request was billed or reserved"
+        );
+    }
+}

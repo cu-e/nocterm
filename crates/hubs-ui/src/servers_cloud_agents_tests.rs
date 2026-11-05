@@ -293,3 +293,238 @@ fn editing_an_agent_starts_with_empty_instructions_that_are_saved_as_typed(
     cx.run_until_parked();
     assert_eq!(fake.saved()[0].instructions, "Answer briefly.");
 }
+
+fn personal_pool(fake: &FakeCloudAgents) {
+    fake.set_pools(
+        &hub_id(),
+        vec![PoolChoice {
+            pool: PoolId::new("p1").unwrap(),
+            name: "Shared".into(),
+            accepts_personal: true,
+        }],
+    );
+}
+
+#[gpui_kit::test]
+fn a_personal_agent_can_offer_multiple_models_from_the_one_per_line_field(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    personal_pool(&fake);
+    let page = page(cx, &fake);
+    page.click(item("cloud-agents-new", KEY), cx);
+    type_into(&page, "cloud-agent-name", "Scribe", cx);
+    type_into(&page, "cloud-agent-model", " gpt-x \n\nclaude-y\ngpt-x", cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    assert_eq!(fake.saved()[0].models, ["gpt-x", "claude-y"]);
+    assert!(!page.shows(item("cloud-agent-form", KEY), cx));
+}
+
+#[gpui_kit::test]
+fn editing_a_personal_agent_preserves_every_existing_model(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let mut existing = agent("mine", "Scribe", AgentScope::Personal);
+    existing.models = vec!["gpt-x".into(), "claude-y".into()];
+    fake.set_agents(&hub_id(), vec![existing]);
+    personal_pool(&fake);
+    let page = page(cx, &fake);
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    assert_eq!(fake.saved()[0].models, ["gpt-x", "claude-y"]);
+    assert_eq!(fake.saved()[0].version, 2);
+}
+
+#[gpui_kit::test]
+fn too_many_models_are_refused_and_correcting_them_keeps_the_unsent_provider_key(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    fake.set_agents(&hub_id(), Vec::new());
+    personal_pool(&fake);
+    let page = page(cx, &fake);
+    page.click(item("cloud-agents-new", KEY), cx);
+    type_into(&page, "cloud-agent-name", "Scribe", cx);
+    let models = (0..=32)
+        .map(|index| format!("model-{index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    type_into(&page, "cloud-agent-model", &models, cx);
+    type_into(&page, "cloud-agent-key", "sk-secret", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    assert!(fake.saved().is_empty());
+    assert!(page.shows(item("cloud-agents-problem", KEY), cx));
+    page.click(item("cloud-agent-model", KEY), cx);
+    page.press("ctrl-a", cx);
+    page.type_text("gpt-x\nclaude-y", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    cx.run_until_parked();
+    assert_eq!(fake.saved()[0].models, ["gpt-x", "claude-y"]);
+    assert!(!page.shows(item("cloud-agents-problem", KEY), cx));
+}
+
+fn own_agent_page(fake: &FakeCloudAgents, cx: &mut TestAppContext) -> Fixture {
+    let mut existing = agent("mine", "Scribe", AgentScope::Personal);
+    existing.pools.clear();
+    existing.models = vec!["stale-public-model".into()];
+    fake.set_agents(&hub_id(), vec![existing]);
+    fake.set_own_models(
+        &hub_id(),
+        &AgentId::new("mine").unwrap(),
+        vec!["gpt-x".into(), "claude-y".into()],
+    );
+    page(cx, fake)
+}
+
+#[gpui_kit::test]
+fn an_own_agent_edit_loads_its_canonical_models_and_keeps_own_placement_and_key(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    let page = own_agent_page(&fake, cx);
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    cx.update_window(page.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(item("cloud-agent-offline", KEY)).checked(),
+            Some(false)
+        );
+        assert!(window.try_find(item("cloud-agent-endpoint", KEY)).is_none());
+    })
+    .unwrap();
+    page.click(item("cloud-agent-save", KEY), cx);
+    let saved = fake.saved();
+    assert_eq!(saved[0].models, ["gpt-x", "claude-y"]);
+    assert_eq!(
+        saved[0].expected_models.as_deref(),
+        Some(["gpt-x".to_owned(), "claude-y".to_owned()].as_slice())
+    );
+    assert!(!saved[0].work_offline);
+}
+
+#[gpui_kit::test]
+fn editing_own_models_sends_the_unchanged_canonical_base_with_the_new_list(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    let page = own_agent_page(&fake, cx);
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    page.click(item("cloud-agent-model", KEY), cx);
+    page.press("ctrl-a", cx);
+    page.type_text("gpt-x\nclaude-y\nnew-model", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    let saved = fake.saved();
+    assert_eq!(saved[0].models, ["gpt-x", "claude-y", "new-model"]);
+    assert_eq!(
+        saved[0].expected_models.as_deref(),
+        Some(["gpt-x".to_owned(), "claude-y".to_owned()].as_slice())
+    );
+}
+
+#[gpui_kit::test]
+fn a_cancelled_own_model_read_cannot_overwrite_a_newer_form_of_the_same_agent(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    let page = own_agent_page(&fake, cx);
+    let release = fake.pause_next_own_models();
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    assert!(page.shows(item("cloud-agent-models-loading", KEY), cx));
+    assert!(!page.shows(item("cloud-agent-form", KEY), cx));
+    page.click(item("cloud-agent-models-cancel", KEY), cx);
+    assert!(!page.shows(item("cloud-agent-form", KEY), cx));
+    fake.set_own_models(
+        &hub_id(),
+        &AgentId::new("mine").unwrap(),
+        vec!["newer-model".into()],
+    );
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    let _ = release.send(());
+    cx.run_until_parked();
+    page.render(cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    assert_eq!(fake.saved()[0].models, ["newer-model"]);
+    assert_eq!(
+        fake.saved()[0].expected_models.as_deref(),
+        Some(["newer-model".to_owned()].as_slice())
+    );
+}
+
+#[gpui_kit::test]
+fn a_missing_own_key_requires_an_explicit_replacement_action_and_a_new_secret(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    let page = own_agent_page(&fake, cx);
+    fake.set_missing_own_key(&hub_id(), &AgentId::new("mine").unwrap());
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    assert!(!page.shows(item("cloud-agent-form", KEY), cx));
+    assert!(page.shows(item("cloud-agent-replace-key", KEY), cx));
+    assert!(fake.saved().is_empty());
+    page.click(item("cloud-agent-replace-key", KEY), cx);
+    assert!(page.shows(item("cloud-agent-form", KEY), cx));
+    page.click(item("cloud-agent-save", KEY), cx);
+    assert!(fake.saved().is_empty(), "a missing key never becomes Keep");
+    assert!(page.shows(item("cloud-agents-problem", KEY), cx));
+    type_into(&page, "cloud-agent-key", "sk-replacement-secret", cx);
+    page.click(item("cloud-agent-save", KEY), cx);
+    let saved = fake.saved();
+    assert_eq!(
+        saved[0].models,
+        ["stale-public-model"],
+        "the person reviewed the listing, not a claimed canonical key"
+    );
+    assert_eq!(
+        saved[0].own_model_base,
+        Some(nocterm_cloud_agents_model::OwnModelBase::Missing)
+    );
+    assert!(saved[0].expected_models.is_none());
+    assert!(!format!("{saved:?}").contains("sk-replacement-secret"));
+}
+
+#[gpui_kit::test]
+fn a_failed_own_model_read_offers_no_replacement_key_fallback(cx: &mut TestAppContext) {
+    let fake = FakeCloudAgents::default();
+    let page = own_agent_page(&fake, cx);
+    fake.fail(&hub_id(), FakeFailure::Stale);
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    assert!(page.shows(item("cloud-agents-problem", KEY), cx));
+    assert!(!page.shows(item("cloud-agent-form", KEY), cx));
+    assert!(!page.shows(item("cloud-agent-replace-key", KEY), cx));
+    assert!(fake.saved().is_empty());
+}
+
+#[gpui_kit::test]
+fn clicking_save_again_while_a_key_replacement_is_pending_keeps_the_accepted_submission(
+    cx: &mut TestAppContext,
+) {
+    let fake = FakeCloudAgents::default();
+    let page = own_agent_page(&fake, cx);
+    fake.set_missing_own_key(&hub_id(), &AgentId::new("mine").unwrap());
+    page.click(item("cloud-agent-edit-mine", KEY), cx);
+    page.click(item("cloud-agent-replace-key", KEY), cx);
+    type_into(&page, "cloud-agent-key", "sk-replacement-secret", cx);
+    let release = fake.pause_next_save();
+    page.click(item("cloud-agent-save", KEY), cx);
+    assert_eq!(fake.saved().len(), 1, "the original save was accepted");
+    assert!(page.shows(item("cloud-agent-form", KEY), cx));
+    assert!(page.shows(item("cloud-agent-save", KEY), cx));
+    page.click(item("cloud-agent-save", KEY), cx);
+    assert_eq!(
+        fake.saved().len(),
+        1,
+        "the pending button cannot submit again"
+    );
+    assert!(
+        !page.shows(item("cloud-agents-problem", KEY), cx),
+        "the cleared key cannot cause a false second error"
+    );
+    let _ = release.send(());
+    cx.run_until_parked();
+    page.render(cx);
+    assert!(!page.shows(item("cloud-agent-form", KEY), cx));
+    assert!(!page.shows(item("cloud-agents-problem", KEY), cx));
+    assert_eq!(fake.saved().len(), 1);
+}

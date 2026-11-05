@@ -119,7 +119,7 @@ impl HubEffects {
             },
             Effect::Capabilities { nonce } => answered(client.capabilities(nonce).await),
             Effect::Probe(request) => answered(client.probe_head(&request).await),
-            Effect::Publish(publication) => answered(client.publish_one(&publication).await),
+            Effect::Publish(publication) => answered(client.publish(&publication).await),
             Effect::RunnerStatus { runner_id } => answered(client.runner_status(runner_id).await),
             Effect::ListInstances => match client.agents().list_instances(None).await {
                 Ok(listed) => Event::Input(Input::Instances(listed.iter().map(instance).collect())),

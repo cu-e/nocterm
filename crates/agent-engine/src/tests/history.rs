@@ -95,7 +95,7 @@ async fn complete_context_budget_is_checked_before_opening_provider_http() {
     config.budget = ModelBudget::new(4, 1, 1024, 1024).unwrap();
     assert!(matches!(
         factory.create(config, None),
-        Err(EngineError::BudgetExceeded)
+        Err(EngineError::RequestTooLarge { limit: 1 })
     ));
     assert!(server.requests().is_empty());
 }

@@ -235,6 +235,13 @@ impl ConversationSource for ObservedConversation {
         self.0.read(cx).delegate.capture_actions(cx)
     }
 
+    fn composer(
+        &self,
+        cx: &App,
+    ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationComposer>> {
+        self.0.read(cx).delegate.composer(cx)
+    }
+
     fn servers(
         &self,
         cx: &App,

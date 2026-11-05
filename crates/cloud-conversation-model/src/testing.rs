@@ -2,9 +2,9 @@
 use crate::{
     Approval, CloudConversation, CloudConversationError, CloudTranscript, CommandKey, CommandKind,
     CommandState, ConversationAction, ConversationDelta, ConversationFuture, ConversationKey,
-    ConversationUpdate, ConversationUpdates, Freshness, IntentKey, ModelName, PendingCommand, Row,
-    RowRole, Run, RunKey, RunStatus, ServerBinding, ServerChoice, ServerKey, SessionRow, ToolRow,
-    ToolState, Usage,
+    ConversationUpdate, ConversationUpdates, Freshness, IntentKey, ModelName, PendingCommand,
+    ProviderOption, Row, RowRole, Run, RunKey, RunStatus, ServerBinding, ServerChoice, ServerKey,
+    SessionRow, ToolRow, ToolState, Usage,
 };
 use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
@@ -98,13 +98,43 @@ struct State {
     ended: Option<oneshot::Sender<()>>,
 }
 
+#[derive(Default)]
+struct PromptSetup {
+    enabled: bool,
+    models: Vec<ModelName>,
+    providers: Vec<(ProviderOption, Vec<ModelName>)>,
+    selected: Option<String>,
+    selecting: bool,
+    gate: Option<Shared<oneshot::Receiver<()>>>,
+}
+struct ProviderAttempt {
+    prompt: Arc<Mutex<PromptSetup>>,
+    committed: bool,
+}
+impl ProviderAttempt {
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+impl Drop for ProviderAttempt {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.prompt
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .selecting = false;
+        }
+    }
+}
+
 /// A conversation whose transcript a test writes. Clones share one state.
 #[derive(Clone)]
 pub struct FakeConversation {
     key: ConversationKey,
-    prompt: bool,
+    prompt: Arc<Mutex<PromptSetup>>,
     wake: bool,
     state: Arc<Mutex<State>>,
+    next_receipt: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
     ended: Shared<BoxFuture<'static, ()>>,
 }
 impl FakeConversation {
@@ -117,16 +147,69 @@ impl FakeConversation {
         };
         Self {
             key: ConversationKey::new(key),
-            prompt: true,
+            prompt: Arc::new(Mutex::new(PromptSetup {
+                enabled: true,
+                ..PromptSetup::default()
+            })),
             wake: true,
             state: Arc::new(Mutex::new(state)),
+            next_receipt: Arc::default(),
             ended: receiver.map(drop).boxed().shared(),
         }
     }
+    /// The models the agent offers to its composer.
+    #[must_use]
+    pub fn with_models(self, models: Vec<ModelName>) -> Self {
+        self.set_models(models);
+        self
+    }
+    pub fn set_models(&self, models: Vec<ModelName>) {
+        let mut prompt = self.prompt.lock().unwrap_or_else(PoisonError::into_inner);
+        if prompt.models == models {
+            return;
+        }
+        prompt.models = models;
+        drop(prompt);
+        self.composer_changed();
+    }
+    fn composer_changed(&self) {
+        self.state().subscribers.retain(|sender| {
+            sender
+                .unbounded_send(ConversationUpdate::ComposerChanged)
+                .is_ok()
+        });
+    }
+    /// An own-runner chat that requires an explicit provider before prompting.
+    #[must_use]
+    pub fn with_providers(self, providers: Vec<(ProviderOption, Vec<ModelName>)>) -> Self {
+        *self.prompt.lock().unwrap_or_else(PoisonError::into_inner) = PromptSetup {
+            providers,
+            ..PromptSetup::default()
+        };
+        self
+    }
+    pub fn selected_provider(&self) -> Option<String> {
+        self.prompt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .selected
+            .clone()
+    }
+    pub fn pause_provider_selection(&self) -> oneshot::Sender<()> {
+        let (sender, receiver) = oneshot::channel();
+        self.prompt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .gate = Some(receiver.shared());
+        sender
+    }
     /// The same chat without a model to prompt with.
     #[must_use]
-    pub fn without_prompt(mut self) -> Self {
-        self.prompt = false;
+    pub fn without_prompt(self) -> Self {
+        self.prompt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .enabled = false;
         self
     }
     fn state(&self) -> MutexGuard<'_, State> {
@@ -162,6 +245,21 @@ impl FakeConversation {
         delta.changed_from = None;
         delta.rows.clear();
         edit(&mut state, &mut delta);
+        Self::publish(&mut state, delta);
+    }
+    /// Reports a producer's delta, including reset or retention-window changes.
+    pub fn apply_delta(&self, delta: ConversationDelta) {
+        let mut state = self.state();
+        let next = delta
+            .rows
+            .iter()
+            .map(|row| row.index.saturating_add(1))
+            .max();
+        if delta.reset {
+            state.next_index = next.unwrap_or(0);
+        } else if let Some(next) = next {
+            state.next_index = state.next_index.max(next);
+        }
         Self::publish(&mut state, delta);
     }
     /// Appends rows, numbering them after the held ones.
@@ -253,6 +351,16 @@ impl FakeConversation {
         self.push_rows(vec![row(RowRole::User, Some(run_key), &text)]);
         self.settle(command, CommandState::Accepted);
     }
+    /// Holds the next delivery's receipt after its command has entered the transcript.
+    /// Sending or dropping the returned signal lets that original receipt complete.
+    pub fn pause_next_receipt(&self) -> oneshot::Sender<()> {
+        let (release, waiting) = oneshot::channel();
+        *self
+            .next_receipt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(waiting);
+        release
+    }
     /// Further delivered commands settle at once in `state` (`None`: they stay `Sending`).
     pub fn settle_deliveries(&self, state: Option<CommandState>) {
         self.state().settle = state;
@@ -277,6 +385,10 @@ impl FakeConversation {
         state.subscribers.retain(|sender| !sender.is_closed());
         state.subscribers.len()
     }
+    /// Ends the current reading streams without retiring the account or its commands.
+    pub fn close_reading(&self) {
+        self.state().subscribers.clear();
+    }
     /// The account ended: the conversation is stale and its subscriptions end.
     pub fn end(&self) {
         let mut state = self.state();
@@ -297,6 +409,77 @@ impl CloudConversation for FakeConversation {
     }
     fn can_prompt(&self) -> bool {
         self.prompt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .enabled
+    }
+    fn models(&self) -> Vec<ModelName> {
+        self.prompt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .models
+            .clone()
+    }
+    fn can_choose_provider(&self) -> bool {
+        let prompt = self.prompt.lock().unwrap_or_else(PoisonError::into_inner);
+        !prompt.providers.is_empty() && prompt.selected.is_none()
+    }
+    fn provider_options(&self) -> ConversationFuture<Vec<ProviderOption>> {
+        let result = self.check_current().map(|()| {
+            self.prompt
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .providers
+                .iter()
+                .map(|(choice, _)| choice.clone())
+                .collect()
+        });
+        Box::pin(async move { result })
+    }
+    fn select_provider(&self, id: String) -> ConversationFuture<()> {
+        if let Err(error) = self.check_current() {
+            return Box::pin(async move { Err(error) });
+        }
+        let mut prompt = self.prompt.lock().unwrap_or_else(PoisonError::into_inner);
+        if prompt.selecting {
+            return Box::pin(async { Err(CloudConversationError::ProviderSelectionPending) });
+        }
+        if prompt.selected.is_some() || !prompt.providers.iter().any(|(choice, _)| choice.id == id)
+        {
+            return Box::pin(async { Err(CloudConversationError::Unsupported) });
+        }
+        prompt.selecting = true;
+        let gate = prompt.gate.take();
+        let this = self.clone();
+        let attempt = ProviderAttempt {
+            prompt: self.prompt.clone(),
+            committed: false,
+        };
+        drop(prompt);
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                let _ = gate.await;
+            }
+            this.check_current()?;
+            let mut prompt = this.prompt.lock().unwrap_or_else(PoisonError::into_inner);
+            let models = prompt
+                .providers
+                .iter()
+                .find(|(choice, _)| choice.id == id)
+                .map(|(_, models)| models.clone())
+                .ok_or(CloudConversationError::Unsupported)?;
+            if models.is_empty() {
+                return Err(CloudConversationError::NoModel);
+            }
+            prompt.models = models;
+            prompt.selected = Some(id);
+            prompt.enabled = !prompt.models.is_empty();
+            prompt.selecting = false;
+            drop(prompt);
+            attempt.commit();
+            this.composer_changed();
+            Ok(())
+        })
     }
     fn can_wake(&self) -> bool {
         self.wake
@@ -350,7 +533,17 @@ impl CloudConversation for FakeConversation {
             Self::publish(&mut state, delta);
             Ok(command)
         })();
-        Box::pin(async move { result })
+        let waiting = self
+            .next_receipt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        Box::pin(async move {
+            if let Some(waiting) = waiting {
+                let _ = waiting.await;
+            }
+            result
+        })
     }
     fn refresh(&self) {
         self.state().refreshes += 1;
@@ -397,5 +590,34 @@ impl CloudConversation for FakeConversation {
     }
     fn ended(&self) -> BoxFuture<'static, ()> {
         self.ended.clone().boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unpolled_provider_choice_stays_busy_until_its_future_is_cancelled() {
+        let fake = FakeConversation::new("provider-cancellation").with_providers(vec![(
+            ProviderOption {
+                id: "personal".into(),
+                label: "Personal".into(),
+            },
+            vec![ModelName {
+                provider: "own".into(),
+                model: "first".into(),
+            }],
+        )]);
+        let pending = fake.select_provider("personal".into());
+        assert!(matches!(
+            futures::executor::block_on(fake.select_provider("personal".into())),
+            Err(CloudConversationError::ProviderSelectionPending)
+        ));
+        assert!(!fake.can_prompt());
+        drop(pending);
+        futures::executor::block_on(fake.select_provider("personal".into())).unwrap();
+        assert!(fake.can_prompt());
+        assert_eq!(fake.selected_provider().as_deref(), Some("personal"));
     }
 }

@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn a_private_file_lock_stays_exclusive_until_its_descriptor_is_dropped() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("stable.lock");
+    let first = lock_private(&path).unwrap();
+    assert!(first.metadata().unwrap().is_file());
+    let other = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    assert!(other.try_lock().is_err());
+    drop(first);
+    other.try_lock().unwrap();
+    drop(other);
+    drop(lock_private(&path).unwrap());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn private_file_lock_refuses_a_final_symlink_and_a_fifo_without_touching_the_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("target");
+    fs::write(&target, b"unchanged").unwrap();
+    let link = directory.path().join("alias.lock");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(lock_private(&link).is_err());
+    assert_eq!(fs::read(&target).unwrap(), b"unchanged");
+    let fifo = directory.path().join("pipe.lock");
+    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+    assert!(lock_private(&fifo).is_err());
+}
+
+#[test]
 fn namespace_commit_is_visible_before_parent_sync_and_receipt_drop_never_rolls_it_back() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("snapshot");

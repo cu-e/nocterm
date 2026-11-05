@@ -141,3 +141,26 @@ fn a_conversation_that_refuses_the_prompt_leaves_no_row(cx: &mut TestAppContext)
     drop(sent);
     assert!(pending(&chat, cx).is_empty());
 }
+
+#[gpui::test]
+async fn a_hidden_chat_pauses_after_its_last_pending_command_settles(cx: &mut TestAppContext) {
+    let (fake, chat) = opened(cx);
+    let controls = actions(&chat, cx);
+    let sent = cx.update(|cx| controls.perform(ConversationAction::Prompt("finish".into()), cx));
+    cx.run_until_parked();
+    cx.update(|cx| chat.update(cx, |chat, cx| chat.set_shown(false, cx).unwrap()));
+    cx.run_until_parked();
+    assert_eq!(
+        fake.subscribers(),
+        1,
+        "the pending command still needs its answer"
+    );
+    fake.settle(FIRST, CommandState::Accepted);
+    cx.run_until_parked();
+    sent.await.unwrap();
+    assert_eq!(
+        fake.subscribers(),
+        0,
+        "a settled hidden chat no longer reads"
+    );
+}

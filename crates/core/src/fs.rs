@@ -60,6 +60,26 @@ pub fn create_private(path: &Path) -> Result<File, FileError> {
         .map_err(|source| FileError::at(path, source))
 }
 
+/// Creates or opens a stable private regular lock file without following its final link,
+/// then blocks for its exclusive OS lock. Call only on a disk worker. The returned descriptor
+/// retains the lock until dropped; cooperating owners must never unlink or replace this file.
+/// Parents must be trusted. Unix additionally checks owner-only, single-link inode policy.
+pub fn lock_private(path: &Path) -> Result<File, FileError> {
+    let file = match create_private(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            bounded::open_regular_read_write(path)
+                .map_err(|error| FileError::at(path, io::Error::other(error)))?
+                .0
+        }
+        Err(error) => return Err(error),
+    };
+    #[cfg(unix)]
+    require_private_regular(&file).map_err(|error| FileError::at(path, io::Error::other(error)))?;
+    file.lock().map_err(|error| FileError::at(path, error))?;
+    Ok(file)
+}
+
 /// Publishes bytes at their exact path, creating missing parent directories.
 ///
 /// The final symlink is replaced, never followed. Bytes and file metadata are

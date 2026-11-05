@@ -22,15 +22,40 @@ use super::{
 };
 use crate::thread::{AgentThread, config_label};
 
-fn remove_image(origin: gpui_kit::EntityId, index: usize, cx: &mut Context<AgentPanel>) -> Button {
-    Button::new(("remove-image", index))
-        .ghost()
-        .xsmall()
-        .icon(IconName::X)
-        .tooltip("Remove image")
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.on_image_removed(origin, index, cx);
-        }))
+fn remove_image(
+    origin: gpui_kit::EntityId,
+    index: usize,
+    captured: Option<Rc<super::conversation_surface::RenderedImageRemoval>>,
+    cx: &mut Context<AgentPanel>,
+) -> AnyElement {
+    let id = captured
+        .as_ref()
+        .map(|action| action.element_id(origin))
+        .unwrap_or_else(|| ("remove-local-image", index).into());
+    div()
+        .id(("remove-image", index))
+        .test_support()
+        .child(
+            Button::new(id)
+                .ghost()
+                .xsmall()
+                .icon(IconName::X)
+                .tooltip("Remove image")
+                .on_click(cx.listener(move |panel, _, _, cx| {
+                    if let Some(action) = &captured {
+                        if panel.conversation_identity() != Some(origin) {
+                            return;
+                        }
+                        if let Err(error) = action.activate(cx) {
+                            panel.notices.set_error(Some(error.to_string()));
+                        }
+                        cx.notify();
+                    } else {
+                        panel.on_image_removed(origin, index, cx);
+                    }
+                })),
+        )
+        .into_any_element()
 }
 
 /// Pasted files and images become attachments where the composer takes them; anything else
@@ -117,12 +142,17 @@ impl ComposerRenderer {
     pub(super) fn render_image_strip(
         origin: gpui_kit::EntityId,
         previews: Vec<AnyElement>,
+        removals: Vec<Rc<super::conversation_surface::RenderedImageRemoval>>,
         cx: &mut Context<AgentPanel>,
     ) -> Option<AnyElement> {
         if previews.is_empty() {
             return None;
         }
-        let mut strip = h_flex().id("agent-image-strip").flex_wrap().gap_2();
+        let mut strip = h_flex()
+            .id("agent-image-strip")
+            .test_support()
+            .flex_wrap()
+            .gap_2();
         for (index, thumbnail) in previews.into_iter().enumerate() {
             strip = strip.child(
                 div()
@@ -133,13 +163,12 @@ impl ComposerRenderer {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(thumbnail)
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .right_0()
-                            .child(remove_image(origin, index, cx)),
-                    ),
+                    .child(div().absolute().top_0().right_0().child(remove_image(
+                        origin,
+                        index,
+                        removals.get(index).cloned(),
+                        cx,
+                    ))),
             );
         }
         Some(strip.into_any_element())
@@ -234,23 +263,47 @@ impl ComposerRenderer {
         composer: &super::composer_view::ComposerView,
         menus: &super::menu_view::MenuView,
         local: Option<&Entity<AgentThread>>,
+        conversation: Option<&super::conversation_surface::ConversationSurface>,
         stop: Option<Rc<super::conversation_surface::RenderedStop>>,
         busy: bool,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
         let attach = local.filter(|_| frame.can_attach());
-        let images = attach.is_some_and(|thread| !thread.read(cx).composer().images().is_empty());
+        let images = attach.is_some_and(|thread| !thread.read(cx).composer().images().is_empty())
+            || conversation
+                .and_then(|s| s.source().composer(cx))
+                .is_some_and(|c| !c.images(cx).is_empty());
         let stops = frame.stops(composer, images, cx);
-        let attach = attach.map(|thread| Self::render_attach(composer, menus, thread, cx));
+        let attach = match attach {
+            Some(thread) => Self::render_attach(composer, menus, thread, cx)
+                .into_iter()
+                .collect(),
+            None => conversation
+                .map(|selected| {
+                    super::cloud_composer::CloudComposerRenderer::attach(
+                        selected,
+                        composer.preparing(),
+                        frame.can_prompt(),
+                        cx,
+                    )
+                })
+                .unwrap_or_default(),
+        };
         let options = match local.filter(|_| frame.can_configure()) {
             Some(thread) => Some(Self::render_config_controls(composer, menus, thread, cx)),
-            None => (!frame.can_prompt()).then(|| {
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("New prompts unavailable")
-                    .into_any_element()
-            }),
+            None => conversation
+                .and_then(|selected| {
+                    super::cloud_composer::CloudComposerRenderer::picker(selected, menus, cx)
+                })
+                .or_else(|| {
+                    (!frame.can_prompt()).then(|| {
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("New prompts unavailable")
+                            .into_any_element()
+                    })
+                }),
         };
         let usage = frame.usage().map(|usage| {
             super::usage::UsageCard::usage_button(menus.is_open(&MenuKind::Usage), usage, cx)
@@ -268,7 +321,7 @@ impl ComposerRenderer {
         );
         h_flex()
             .gap_1()
-            .children(attach.into_iter().flatten())
+            .children(attach)
             .child(div().flex_1().min_w_0().children(options))
             .children(usage)
             .children(allow)

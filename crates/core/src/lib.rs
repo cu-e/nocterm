@@ -1,7 +1,7 @@
 //! Shared error ownership, filesystem primitives and standard application locations.
 //!
 //! Owns: paths, exclusive private creation, replacing or no-clobber atomic publication,
-//! strict opened private-file policy, bounded no-follow reads of
+//! strict opened private-file policy, retained private regular-file OS locks, bounded no-follow reads of
 //! regular files, bounded in-memory byte sinks, TOML persistence with cooperative
 //! document locks and observed-revision conflict detection,
 //! ordered write queues, shutdown deadlines, opaque allocation lifetime carriers,

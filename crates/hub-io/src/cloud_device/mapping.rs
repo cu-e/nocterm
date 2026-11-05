@@ -234,6 +234,9 @@ pub(crate) fn error(error: CloudDeviceError) -> CloudConversationError {
         CloudDeviceError::NoApproval => CloudConversationError::NoApproval,
         CloudDeviceError::NoModel => CloudConversationError::NoModel,
         CloudDeviceError::Unsupported => CloudConversationError::Unsupported,
+        error @ CloudDeviceError::LargePublicationUnsupported => {
+            CloudConversationError::LargePromptUnsupported(SharedCause::new(error))
+        }
         CloudDeviceError::Capacity => CloudConversationError::Capacity,
         CloudDeviceError::Ended => CloudConversationError::Ended,
         CloudDeviceError::Effect(EffectFailure::Unavailable | EffectFailure::Unknown) => {

@@ -309,7 +309,7 @@ fn configured_pricing_and_exact_model_binding_are_required_before_reservation() 
         ModelCallRequest::new(task().run().clone(), StepId::from_bytes([1; 16]), 101, 50).unwrap();
     assert!(matches!(
         pricing.quote(&larger),
-        Err(InferenceError::PricingLimit)
+        Err(InferenceError::RequestTooLarge { limit: 100 })
     ));
     let other = ModelSelection::new(
         NamespaceId::new("other-provider").unwrap(),

@@ -38,6 +38,10 @@ the actual inode's effective UID, single link and exact0400/0600 Unix permission
 Unsupported platforms refuse before opening. It returns a handle without reading
 secrets; the adapter supplies its fixed zeroizing buffer and bounded read loop.
 These stricter helpers do not change ordinary file readers or pin ancestry.
+`fs::lock_private` creates or reopens a private regular lock file through the same
+no-follow/nonblocking descriptor opener, then takes an exclusive OS lock on the caller's
+disk worker. The returned descriptor retains it. Cooperating owners keep that lock inode
+stable and never unlink it; adapters own the protected state and admission rules.
 `nocterm-core::clock` holds the wall-clock contract: `WallClock::now` returns a
 `WallTime` (UTC seconds and the local offset) that does only integer arithmetic for the
 local time of day and calendar date, so the layer has no time-zone library. `FixedClock` is behind

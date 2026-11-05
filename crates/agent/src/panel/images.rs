@@ -8,6 +8,8 @@ use std::{io::Read as _, path::PathBuf};
 #[derive(Debug, thiserror::Error)]
 pub(super) enum ImageAttachError {
     #[error(transparent)]
+    Conversation(#[from] nocterm_agent_chat::conversation::ConversationError),
+    #[error(transparent)]
     Read(#[from] std::io::Error),
     #[error(transparent)]
     Decode(#[from] base64::DecodeError),

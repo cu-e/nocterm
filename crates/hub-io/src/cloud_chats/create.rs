@@ -23,41 +23,84 @@ struct Plan {
     host: CoreHost,
     title: String,
     model: Option<ModelChoice>,
+    models: Vec<nocterm_cloud_conversation_model::ModelName>,
     wake: Option<String>,
     /// The personal agent whose key this device leases to the person's own runner.
     lease: Option<nocterm_cloud_agents_model::AgentId>,
 }
 
-async fn plan(account: &HubAccount, host: ChatHost) -> Result<Plan, CloudChatError> {
+async fn plan(
+    captured: &Arc<Captured>,
+    account: &HubAccount,
+    host: ChatHost,
+) -> Result<Plan, CloudChatError> {
     Ok(match host {
-        ChatHost::Agent { agent, model } => Plan {
-            host: CoreHost::Managed {
-                agent_id: agent.to_string(),
-            },
-            title: agent.to_string(),
-            model: Some(ModelChoice {
-                provider: MANAGED_PROVIDER.to_owned(),
-                model,
-            }),
-            wake: Some(agent.to_string()),
-            lease: None,
-        },
+        ChatHost::Agent { agent, model } => {
+            let catalog = crate::agents::list_agents(captured.clone()).await?;
+            let models = catalog
+                .iter()
+                .find(|entry| entry.id == agent)
+                .map(|entry| {
+                    entry
+                        .models
+                        .iter()
+                        .map(|model| nocterm_cloud_conversation_model::ModelName {
+                            provider: MANAGED_PROVIDER.to_owned(),
+                            model: model.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Plan {
+                models,
+                host: CoreHost::Managed {
+                    agent_id: agent.to_string(),
+                },
+                title: agent.to_string(),
+                model: Some(ModelChoice {
+                    provider: MANAGED_PROVIDER.to_owned(),
+                    model,
+                }),
+                wake: Some(agent.to_string()),
+                lease: None,
+            }
+        }
         ChatHost::Runner(runner) => Plan {
             host: CoreHost::Own { runner: runner.id },
             title: runner.label,
             model: None,
+            models: Vec::new(),
             wake: None,
             lease: None,
         },
         // The key is checked before any chat material exists, so a missing key leaves nothing
         // behind.
-        ChatHost::OwnAgent { runner, agent, .. } => Plan {
-            host: CoreHost::Own { runner: runner.id },
-            title: runner.label,
-            model: Some(leases::key_model(account, &agent).await?),
-            wake: None,
-            lease: Some(agent),
-        },
+        ChatHost::OwnAgent {
+            runner,
+            agent,
+            model,
+        } => {
+            let models = leases::key_models(account, &agent).await?;
+            let selected = models
+                .iter()
+                .find(|choice| choice.model == model)
+                .cloned()
+                .ok_or(nocterm_cloud_conversation_model::CloudConversationError::NoModel)?;
+            Plan {
+                models: models
+                    .into_iter()
+                    .map(|model| nocterm_cloud_conversation_model::ModelName {
+                        provider: model.provider,
+                        model: model.model,
+                    })
+                    .collect(),
+                host: CoreHost::Own { runner: runner.id },
+                title: runner.label,
+                model: Some(selected),
+                wake: None,
+                lease: Some(agent),
+            }
+        }
     })
 }
 
@@ -68,7 +111,7 @@ pub(super) async fn create(
     hub: &HubId,
     host: ChatHost,
 ) -> Result<OpenedChat, CloudChatError> {
-    let plan = plan(account, host).await?;
+    let plan = plan(&captured, account, host).await?;
     let opened = shared.account(captured, account).await?;
     let device = opened.device().map_err(error::hub)?;
     let mut flow =
@@ -90,8 +133,10 @@ pub(super) async fn create(
         ChatSetup {
             chat: created.chat,
             model: plan.model,
+            models: plan.models,
             wake: plan.wake,
             servers: None,
+            providers: None,
         },
     );
     if let Some(agent) = plan.lease {
@@ -101,7 +146,8 @@ pub(super) async fn create(
             chat: created.chat,
             control_revision: 0,
         };
-        leases::lease(shared, opened, request, Arc::downgrade(&conversation)).await?;
+        let lease = leases::lease(shared, opened, request, Arc::downgrade(&conversation)).await?;
+        conversation.adopt_own_lease(&lease)?;
     }
     let key = conversation.key().to_string();
     Ok(OpenedChat {

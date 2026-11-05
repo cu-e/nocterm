@@ -114,6 +114,8 @@ fn a_delivered_prompt_is_pending_until_the_runner_accepts_it() {
             .deliver(ConversationAction::Prompt {
                 text: "hi".into(),
                 server: None,
+                model: None,
+                images: Vec::new(),
             })
             .await
             .unwrap();

@@ -53,6 +53,8 @@
 //! order after validating original session, registration, workspace and window authority.
 //! Ordering releases after synchronous launch; direct calls after connection retain
 //! their existing admission path and long-running commands remain independent.
+//! Captured conversation composers expose source-owned images, model choices and draft revisions
+//! through `ConversationComposer`; they grant no Local terminal or provider authority.
 pub mod chat_deps;
 pub mod roster;
 pub mod seat;

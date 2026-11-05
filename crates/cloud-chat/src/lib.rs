@@ -7,7 +7,8 @@
 //! presentation (ADR 0134) and the chat's share of the Local installation's history admission.
 //! Provides the agent-chat `ConversationSource` of a chat, the same one composer as Local chats
 //! use (ADR 0134), with its `ConversationServers` (the binding, binding and unbinding, and the
-//! server the next prompts run on, ADR 0147).
+//! server the next prompts run on, ADR 0147), and its source-owned `ConversationComposer` draft
+//! (prepared images, selected model and revision, ADR 0149).
 //! Does not own: login/unlock, the device protocol, verification, the reduction of runner
 //! events, checkpoints, command delivery and its retries (`nocterm-hub-io` runs the contract
 //! device core behind the port), runner execution, views or Local SessionLease lifecycle.
@@ -18,15 +19,20 @@
 //! prefix the device core accepted; freshness is shown as the core reports it, and a chat
 //! whose runner did not answer says so and offers Wake (sleeping seats); a prompt shows at
 //! once and follows its command's state until the runner accepts it, a refused or unanswered
-//! one stays until it is sent again or dismissed and at most four refused ones are shown;
+//! one stays until it is sent again or dismissed and at most four refused ones are shown.
+//! Incoming growth is admitted before mutation, and row/JSON conversion is prepared in one
+//! quota-retaining background job per reading before its generation-bound atomic acceptance;
 //! viewer close never sends Stop; a chat whose account ended fails and keeps nothing.
 mod admission;
+mod composer;
 mod conversation;
 mod error;
+mod incoming;
 mod installation;
 mod pending;
 mod servers;
 mod thread;
+mod transcript_cost;
 pub use conversation::CloudConversationView;
 pub use error::CloudChatError;
 pub use installation::CloudChatInstallation;
@@ -35,6 +41,7 @@ use admission::Residency;
 use futures::StreamExt as _;
 use futures::channel::oneshot;
 use gpui::{App, AppContext as _, Context, Entity, Task};
+use incoming::{AdmittedUpdate, PreparedUpdate};
 use nocterm_agent_chat::conversation::ConversationError;
 use nocterm_agent_runtime::history_admission::HistoryAdmissionHandle;
 use nocterm_ai::conversation::{ConversationFreshness, PendingPromptKey};
@@ -43,23 +50,28 @@ use nocterm_cloud_conversation_model::{
     CloudConversation, CloudConversationError, CloudTranscript, CommandKey, CommandKind,
     CommandState, ConversationAction, ConversationUpdate, Freshness, RunKey, RunStatus,
 };
+use nocterm_core::allocation::Allocated;
 use pending::{CommandFailure, PendingPrompts};
 use std::{cell::Cell, rc::Rc, sync::Arc};
 use thread::ThreadMirror;
+use transcript_cost::TranscriptCost;
 
 /// The key a submission learns once the conversation tracked its command.
 pub(crate) type SubmittedKey = Rc<Cell<Option<CommandKey>>>;
 
 pub struct CloudChat {
     conversation: Arc<dyn CloudConversation>,
+    draft: composer::PromptDraft,
     transcript: CloudTranscript,
     thread: ThreadMirror,
+    transcript_cost: TranscriptCost,
     /// What the core last reported (`Opening` before its first round); `None` until the
     /// subscription delivered one.
     freshness: Option<Freshness>,
     prompts: PendingPrompts,
     residency: Residency,
     subscription: Option<Task<()>>,
+    subscription_generation: u64,
     membership: Option<Task<()>>,
     error: Option<CloudChatError>,
     /// The last read round went unanswered; the next change clears it.
@@ -79,12 +91,15 @@ impl CloudChat {
         let payload = admission.reserve_payload_reclaiming(None, cx)?;
         let entity = cx.new(|_| Self {
             conversation,
+            draft: composer::PromptDraft::default(),
             transcript: CloudTranscript::new(),
             thread: ThreadMirror::default(),
+            transcript_cost: TranscriptCost::default(),
             freshness: None,
             prompts: PendingPrompts::default(),
             residency: Residency::new(admission, payload),
             subscription: None,
+            subscription_generation: 0,
             membership: None,
             error: None,
             reconnecting: false,
@@ -130,6 +145,22 @@ impl CloudChat {
             .check_current()
             .map_err(CloudChatError::from)
     }
+    fn reserve_draft(
+        &mut self,
+        incoming: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ConversationError> {
+        self.residency
+            .fit(
+                self.transcript_cost
+                    .bytes()
+                    .saturating_add(self.draft.bytes())
+                    .saturating_add(self.prompts.bytes())
+                    .saturating_add(incoming),
+                cx,
+            )
+            .map_err(|error| CloudChatError::from(error).into_conversation())
+    }
     pub(crate) fn port(&self) -> &Arc<dyn CloudConversation> {
         &self.conversation
     }
@@ -149,6 +180,8 @@ impl CloudChat {
         target: Option<nocterm_cloud_conversation_model::ServerKey>,
         cx: &mut Context<Self>,
     ) -> Result<(), ConversationError> {
+        self.check_current()
+            .map_err(CloudChatError::into_conversation)?;
         if let Some(target) = target
             && !self
                 .transcript
@@ -158,6 +191,12 @@ impl CloudChat {
         {
             return Err(nocterm_agent_chat::conversation::ServerProblem::NotSelectable.into());
         }
+        if self.target == target {
+            return Ok(());
+        }
+        self.draft
+            .advance_revision()
+            .map_err(CloudChatError::into_conversation)?;
         self.target = target;
         cx.notify();
         Ok(())
@@ -173,58 +212,130 @@ impl CloudChat {
         if self.subscription.is_none() {
             let mut updates = self.conversation.subscribe()?;
             self.freshness = None;
+            self.subscription_generation = self
+                .subscription_generation
+                .checked_add(1)
+                .ok_or(CloudConversationError::Capacity)?;
+            let generation = self.subscription_generation;
             self.subscription = Some(cx.spawn(async move |chat, cx| {
+                let mut batch = 0;
                 while let Some(update) = updates.next().await {
-                    let applied = chat.update(cx, |chat, cx| chat.apply(update, cx));
+                    let admitted = chat.update(cx, |chat, cx| chat.admit(update, generation, cx));
+                    let Ok(Ok(admitted)) = admitted else { return };
+                    let prepared = admitted.prepare(cx.background_executor()).await;
+                    let applied = chat.update(cx, |chat, cx| chat.apply(prepared, generation, cx));
                     if !matches!(applied, Ok(Ok(()))) {
                         return;
                     }
+                    batch += 1;
+                    if batch == 16 {
+                        yield_update_batch().await;
+                        batch = 0;
+                    }
                 }
+                let _ = chat.update(cx, |chat, cx| chat.reading_ended(generation, cx));
             }));
         }
         Ok(())
     }
-    /// Applies one update of the subscription; an update that does not fit the admission
-    /// ends the subscription.
-    fn apply(
+    fn reading_ended(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if self.subscription.is_none() || self.subscription_generation != generation {
+            return;
+        }
+        if let Err(error) = self.check_current() {
+            self.fail(error, cx);
+            return;
+        }
+        self.subscription.take();
+        self.prompts.reading_ended();
+        self.error
+            .get_or_insert_with(|| CloudConversationError::Ended.into());
+        cx.notify();
+    }
+    /// Reserves a candidate before either authoritative state or its mirror changes.
+    fn admit(
         &mut self,
         update: ConversationUpdate,
+        generation: u64,
         cx: &mut Context<Self>,
-    ) -> Result<(), CloudChatError> {
+    ) -> Result<AdmittedUpdate, CloudChatError> {
+        self.require_reading(generation, cx)?;
         match update {
             ConversationUpdate::Transcript(delta) => {
-                let changed_from = if delta.reset || delta.first_index > self.first_index() {
-                    Some(0)
-                } else {
-                    delta.changed_from
-                };
-                self.transcript.apply(delta);
-                if let Err(error) = self
-                    .residency
-                    .fit(thread::resident_bytes(&self.transcript), cx)
-                {
+                let cost = self.transcript_cost.prepare(&delta);
+                if let Err(error) = self.residency.fit(
+                    cost.bytes()
+                        .saturating_add(self.draft.bytes())
+                        .saturating_add(self.prompts.bytes()),
+                    cx,
+                ) {
                     self.fail(error.into(), cx);
                     return Err(CloudChatError::Closed);
                 }
-                self.thread.follow(&self.transcript, changed_from);
+                let allocation = self.residency.retain_work()?;
+                Ok(AdmittedUpdate::Transcript(Box::new(Allocated::new(
+                    (delta, cost),
+                    allocation,
+                ))))
+            }
+            ConversationUpdate::ComposerChanged => Ok(AdmittedUpdate::ComposerChanged),
+            ConversationUpdate::Freshness(value) => Ok(AdmittedUpdate::Freshness(value)),
+            ConversationUpdate::Refused(error) => Ok(AdmittedUpdate::Refused(error)),
+        }
+    }
+    fn require_reading(
+        &mut self,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CloudChatError> {
+        if self.subscription.is_none() || self.subscription_generation != generation {
+            return Err(CloudChatError::Closed);
+        }
+        if let Err(error) = self.check_current() {
+            self.fail(error, cx);
+            return Err(CloudChatError::Closed);
+        }
+        Ok(())
+    }
+    /// Accepts a prepared delta only for its original source and reading generation.
+    fn apply(
+        &mut self,
+        update: PreparedUpdate,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CloudChatError> {
+        self.require_reading(generation, cx)?;
+        match update {
+            PreparedUpdate::Transcript(prepared) => {
+                (*prepared).map(|prepared| {
+                    let (delta, cost, rows) = prepared.into_parts();
+                    self.transcript_cost.accept(&delta, cost);
+                    self.thread.accept(&delta, rows);
+                    self.transcript.apply(delta);
+                    self.thread.sync_usage(&self.transcript);
+                });
                 self.prompts.follow(&self.transcript);
                 self.reconnecting = false;
                 self.error = None;
             }
-            ConversationUpdate::Freshness(freshness) => {
+            PreparedUpdate::ComposerChanged => {
+                self.draft
+                    .capabilities_changed(self.conversation.models())?;
+            }
+            PreparedUpdate::Freshness(freshness) => {
                 self.freshness = Some(freshness);
                 self.reconnecting = false;
             }
-            ConversationUpdate::Refused(error) => {
+            PreparedUpdate::Refused(error) => {
                 self.reconnecting = matches!(error, CloudConversationError::Unavailable);
                 self.error = Some(error.into());
             }
         }
+        if !self.is_shown() && !self.prompts.busy() && self.pending_commands() == 0 {
+            self.subscription.take();
+        }
         cx.notify();
         Ok(())
-    }
-    fn first_index(&self) -> u64 {
-        self.transcript.rows().first().map_or(0, |row| row.index)
     }
     pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) -> Result<(), CloudChatError> {
         self.check_current()?;
@@ -296,11 +407,33 @@ impl CloudChat {
         action: ConversationAction,
         cx: &mut Context<Self>,
     ) -> (SubmittedKey, Task<Result<(), ConversationError>>) {
+        self.send_replacing(action, None, cx)
+    }
+    fn send_replacing(
+        &mut self,
+        action: ConversationAction,
+        replaces: Option<CommandKey>,
+        cx: &mut Context<Self>,
+    ) -> (SubmittedKey, Task<Result<(), ConversationError>>) {
         let key: SubmittedKey = Rc::new(Cell::new(None));
-        if let Err(error) = self.check_current() {
+        if let Err(error) = self.resume(cx) {
             return (key, Task::ready(Err(error.into_conversation())));
         }
-        let placeholder = action.prompt_text().map(|text| self.prompts.sending(text));
+        if action.prompt_text().is_some() {
+            if !self.prompts.admits(&action, replaces) {
+                return (key, Task::ready(Err(ConversationError::Capacity)));
+            }
+            if let Err(error) = self.reserve_draft(
+                pending::prompt_bytes(&action)
+                    .saturating_sub(self.prompts.replacement_bytes(replaces)),
+                cx,
+            ) {
+                return (key, Task::ready(Err(error)));
+            }
+        }
+        let placeholder = action
+            .prompt_text()
+            .map(|_| self.prompts.sending(&action, replaces));
         let delivery = self.conversation.deliver(action);
         let learned = key.clone();
         cx.notify();
@@ -309,12 +442,21 @@ impl CloudChat {
             let (waiter, settled) = oneshot::channel();
             chat.update(cx, |chat, cx| {
                 if let Some(placeholder) = placeholder {
-                    chat.prompts.tracked(placeholder);
+                    chat.prompts
+                        .tracked(placeholder, result.as_ref().ok().copied());
+                    chat.prompts.follow(&chat.transcript);
                 }
                 cx.notify();
-                result.map(|command| {
+                result.and_then(|command| {
+                    chat.conversation.check_current()?;
                     learned.set(Some(command));
-                    chat.prompts.wait(command, waiter, &chat.transcript);
+                    chat.prompts.wait(
+                        command,
+                        waiter,
+                        &chat.transcript,
+                        chat.subscription.is_some(),
+                    );
+                    Ok(())
                 })
             })
             .map_err(|_| ConversationError::Stale)?
@@ -344,10 +486,10 @@ impl CloudChat {
         ) {
             return Task::ready(Ok(()));
         }
-        let text = known.text.clone();
-        self.prompts.dismiss(command, &self.transcript);
-        let server = self.prompt_target();
-        self.send(ConversationAction::Prompt { text, server }, cx).1
+        let Some(original) = self.prompts.body(command) else {
+            return Task::ready(Err(ConversationError::OriginalPromptUnavailable));
+        };
+        self.send_replacing(original, Some(command), cx).1
     }
     pub(crate) fn dismiss_prompt(
         &mut self,
@@ -381,29 +523,53 @@ impl CloudChat {
             CloudChatError::Conversation(CloudConversationError::Stale)
         ) {
             self.prompts.invalidate();
+            self.draft.clear();
             self.transcript = CloudTranscript::new();
             self.thread.clear();
+            self.transcript_cost.clear();
             self.residency.evicted();
         }
+        self.prompts.reading_ended();
         self.error = Some(error);
         self.subscription.take();
         cx.notify();
     }
     fn can_evict(&self) -> bool {
-        !self.is_shown() && !self.prompts.busy() && self.pending_commands() == 0
+        !self.is_shown()
+            && !self.prompts.busy()
+            && !self.prompts.holds_retry_bodies()
+            && self.pending_commands() == 0
+            && self.draft.images().is_empty()
     }
     fn evict(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.can_evict() {
             return false;
         }
         self.subscription.take();
+        self.draft.clear();
+        self.prompts.invalidate();
         self.transcript = CloudTranscript::new();
         self.thread.clear();
+        self.transcript_cost.clear();
         self.freshness = None;
         self.residency.evicted();
         cx.notify();
         true
     }
+}
+
+/// A ready subscription must still let input and painting run between finite batches.
+async fn yield_update_batch() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if std::mem::replace(&mut yielded, true) {
+            std::task::Poll::Ready(())
+        } else {
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    })
+    .await;
 }
 
 #[cfg(test)]

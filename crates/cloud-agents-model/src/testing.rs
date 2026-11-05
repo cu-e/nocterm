@@ -84,6 +84,11 @@ pub struct SavedAgent {
     pub work_offline: bool,
     /// The instructions the form had.
     pub instructions: String,
+    /// Complete model list submitted through the public form.
+    pub models: Vec<String>,
+    /// The exact canonical model snapshot captured before editing.
+    pub expected_models: Option<Vec<String>>,
+    pub own_model_base: Option<crate::OwnModelBase>,
 }
 
 /// What the own runner was asked.
@@ -128,11 +133,44 @@ struct State {
 #[derive(Clone, Default)]
 pub struct FakeCloudAgents {
     state: Arc<Mutex<State>>,
+    own_models: Arc<Mutex<OwnModelReads>>,
+    save_completion: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+}
+#[derive(Default)]
+struct OwnModelReads {
+    values: BTreeMap<(HubId, AgentId), crate::OwnModelBase>,
+    gate: Option<futures::channel::oneshot::Receiver<()>>,
 }
 
 impl FakeCloudAgents {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn set_own_models(&self, hub: &HubId, agent: &AgentId, models: Vec<String>) {
+        self.own_models
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values
+            .insert(
+                (hub.clone(), agent.clone()),
+                crate::OwnModelBase::Models(models),
+            );
+    }
+    pub fn set_missing_own_key(&self, hub: &HubId, agent: &AgentId) {
+        self.own_models
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values
+            .insert((hub.clone(), agent.clone()), crate::OwnModelBase::Missing);
+    }
+    pub fn pause_next_own_models(&self) -> futures::channel::oneshot::Sender<()> {
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        self.own_models
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .gate = Some(receiver);
+        sender
     }
 
     /// The hub lists exactly these agents from now on, and watchers get a hint.
@@ -246,6 +284,16 @@ impl FakeCloudAgents {
     pub fn hold_seat_calls(&self) -> oneshot::Sender<()> {
         let (sender, receiver) = oneshot::channel();
         self.state().seats.gate = Some(receiver.shared());
+        sender
+    }
+
+    /// The next accepted save completes only when the sender is released.
+    pub fn pause_next_save(&self) -> oneshot::Sender<()> {
+        let (sender, receiver) = oneshot::channel();
+        *self
+            .save_completion
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(receiver);
         sender
     }
 
@@ -412,6 +460,41 @@ impl PoolPinStore for FakeCloudAgents {
 }
 
 impl PersonalAgents for FakeCloudAgents {
+    fn read_models(&self, hub: &HubId, agent: &AgentId) -> CloudFuture<Vec<String>> {
+        let (models, gate) = {
+            let mut reads = self
+                .own_models
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            (
+                reads.values.get(&(hub.clone(), agent.clone())).cloned(),
+                reads.gate.take(),
+            )
+        };
+        let models = models.or_else(|| {
+            self.state()
+                .agents
+                .get(hub)
+                .and_then(|agents| agents.iter().find(|row| &row.id == agent))
+                .map(|row| crate::OwnModelBase::Models(row.models.clone()))
+        });
+        let (this, hub) = (self.clone(), hub.clone());
+        async move {
+            if let Some(gate) = gate {
+                let _ = gate.await;
+            }
+            this.check(&hub)?;
+            match models {
+                Some(crate::OwnModelBase::Models(models)) => Ok(models),
+                Some(crate::OwnModelBase::Missing) => {
+                    Err(CloudAgentError::Invalid(crate::DraftError::Key))
+                }
+                None => Err(CloudAgentError::Unsupported),
+            }
+        }
+        .boxed()
+    }
+
     fn save(
         &self,
         hub: &HubId,
@@ -439,10 +522,24 @@ impl PersonalAgents for FakeCloudAgents {
                 name: draft.name().to_owned(),
                 work_offline: draft.work_offline(),
                 instructions: draft.instructions().to_owned(),
+                models: draft.models().to_vec(),
+                expected_models: draft.expected_models().map(<[String]>::to_vec),
+                own_model_base: draft.own_model_base().cloned(),
             });
             Ok(SaveOutcome::Saved(id))
         })();
-        async move { result }.boxed()
+        let completion = self
+            .save_completion
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        async move {
+            if let Some(completion) = completion {
+                let _ = completion.await;
+            }
+            result
+        }
+        .boxed()
     }
 
     fn delete(&self, hub: &HubId, agent: &AgentId, _version: u64) -> CloudFuture<()> {

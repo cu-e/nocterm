@@ -75,8 +75,11 @@ impl ConversationSource for CloudConversationView {
             pending_commands: chat.pending_commands(),
             reconnecting: chat.reconnecting(),
             freshness: chat.shown_freshness(),
-            // The runner owns its terminals, model and usage; a Cloud prompt is text.
-            composer: ComposerCapabilities::default(),
+            composer: ComposerCapabilities {
+                attach: chat.can_prompt(),
+                configure: !chat.port().models().is_empty(),
+                usage: false,
+            },
             pending_prompts: &pending_prompts,
         });
         Ok(())
@@ -99,6 +102,12 @@ impl ConversationSource for CloudConversationView {
         _cx: &App,
     ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationServers>> {
         Some(Rc::new(crate::servers::CloudServers::new(self.0.clone())))
+    }
+    fn composer(
+        &self,
+        _cx: &App,
+    ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationComposer>> {
+        Some(Rc::new(crate::composer::CloudComposer::new(self.0.clone())))
     }
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError> {
         self.chat()?
@@ -136,6 +145,8 @@ impl CloudActions {
             ConversationAction::Prompt(text) if chat.can_prompt() => Ok(CloudAction::Prompt {
                 text,
                 server: chat.prompt_target(),
+                model: crate::composer::effective_model(chat),
+                images: chat.draft.prompt_images(),
             }),
             ConversationAction::Stop => Ok(CloudAction::Stop {
                 run: Some(chat.stoppable_run().ok_or(ConversationError::Unavailable)?),
@@ -232,6 +243,9 @@ impl ConversationSubmission for CloudSubmission {
     fn retry(&self, cx: &mut App) -> Task<Result<(), ConversationError>> {
         // The core already resends the same command until its window ends; what is left is
         // to say how it went.
+        if self.key.get().is_none() {
+            return Task::ready(Err(ConversationError::Unavailable));
+        }
         Task::ready(match self.state(cx) {
             Some(CommandState::Refused) => Err(ConversationError::Rejected),
             Some(CommandState::Unreachable) => Err(ConversationError::Unreachable),
@@ -244,7 +258,9 @@ impl ConversationSubmission for CloudSubmission {
             return true;
         }
         if self.key.get().is_none() {
-            return false;
+            // The surface waits for a busy submission before asking this. A completed
+            // pre-admission refusal has no command to replay: sending again is a new action.
+            return true;
         }
         match self.state(cx) {
             Some(CommandState::Refused | CommandState::Unreachable) | None => true,

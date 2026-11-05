@@ -49,6 +49,16 @@ fn access(
     window_hub: Option<&str>,
     cx: &mut TestAppContext,
 ) -> crate::CloudAgentsAccess {
+    access_with_trust(fake, hubs, window_hub, &FakeAgentAccess::default(), cx)
+}
+
+pub(super) fn access_with_trust(
+    fake: &FakeCloudAgents,
+    hubs: &[&str],
+    window_hub: Option<&str>,
+    trust: &FakeAgentAccess,
+    cx: &mut TestAppContext,
+) -> crate::CloudAgentsAccess {
     let mut fake_hub = FakeHub::new();
     let mut records = Vec::new();
     for (seed, address) in hubs.iter().enumerate() {
@@ -70,8 +80,8 @@ fn access(
                 sign_in: Arc::new(fake_hub.clone()),
                 admin_keys: Arc::new(admin),
                 devices: Arc::new(FakeAccountDevices::default()),
-                agent_trust: Arc::new(FakeAgentAccess::default()),
-                agent_grants: Arc::new(FakeAgentAccess::default()),
+                agent_trust: Arc::new(trust.clone()),
+                agent_grants: Arc::new(trust.clone()),
                 account_keys: Arc::new(nocterm_hubs_model::testing::FakeAccountKeys::alongside(
                     &fake_hub, "password",
                 )),

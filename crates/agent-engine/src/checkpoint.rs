@@ -29,9 +29,11 @@ impl EngineIdentity {
     ) -> Result<Self, EngineError> {
         use sha2::{Digest, Sha256};
         if config.history.encoded_bytes() > config.budget.input_bytes() {
-            return Err(EngineError::BudgetExceeded);
+            return Err(EngineError::RequestTooLarge {
+                limit: config.budget.input_bytes(),
+            });
         }
-        let seed = limits::encode(
+        let seed = limits::encode_request(
             &crate::mapping::history(&config.history)?,
             config.budget.input_bytes(),
         )?;

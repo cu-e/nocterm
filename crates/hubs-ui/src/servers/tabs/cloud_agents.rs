@@ -14,27 +14,30 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
-        checkbox::Checkbox,
         dialog::DialogFooter,
-        h_flex,
-        input::{Input, Textarea},
-        v_flex,
+        h_flex, v_flex,
     },
     div,
     prelude::*,
-    rems,
 };
 use nocterm_cloud_agents::{CatalogStatus, CloudAgents};
 use nocterm_cloud_agents_model::{
-    AgentScope, CloudAgent, CloudAgentError, PinnedPool, PoolId, ProviderKind, SaveOutcome,
+    AgentScope, CloudAgent, CloudAgentError, DraftError, PinnedPool, PoolId, ProviderKind,
+    SaveOutcome,
 };
 use nocterm_hubs_model::HubId;
 
-use crate::layout::{field, note, problem};
+use crate::layout::{note, problem};
 use crate::servers::item;
-use form::{Form, Prefill};
+use form::{Form, Prefill, PrefillModels, render_form};
 use pinned::pinned_section;
 use usage::{USAGE_DAYS, UsageTable};
+
+enum Opening {
+    Closed,
+    Loading { _work: Task<()> },
+    Missing(Prefill),
+}
 
 /// The agents of the server that is shown, and the form of one of them.
 pub(in crate::servers) struct CloudAgentsTab {
@@ -42,6 +45,8 @@ pub(in crate::servers) struct CloudAgentsTab {
     hub: Option<HubId>,
     form: Option<Form>,
     working: Option<Task<()>>,
+    opening: Opening,
+    form_epoch: u64,
     problem: Option<String>,
     pinned: Vec<PinnedPool>,
     pinning: Option<Task<()>>,
@@ -57,6 +62,8 @@ impl CloudAgentsTab {
             hub: None,
             form: None,
             working: None,
+            opening: Opening::Closed,
+            form_epoch: 0,
             problem: None,
             pinned: Vec::new(),
             pinning: None,
@@ -68,8 +75,7 @@ impl CloudAgentsTab {
     pub(in crate::servers) fn show(&mut self, hub: &HubId, cx: &mut Context<Self>) {
         if self.hub.as_ref() != Some(hub) {
             self.hub = Some(hub.clone());
-            self.form = None;
-            self.working = None;
+            self.reset_form();
             self.problem = None;
             self.pinned.clear();
             self.usage.clear();
@@ -85,8 +91,14 @@ impl CloudAgentsTab {
         self.hub = None;
         self.pinning = None;
         self.usage.clear();
+        self.reset_form();
+    }
+
+    fn reset_form(&mut self) {
+        self.form_epoch = self.form_epoch.wrapping_add(1);
         self.form = None;
         self.working = None;
+        self.opening = Opening::Closed;
     }
 
     fn refresh_pinned(&mut self, cx: &mut Context<Self>) {
@@ -152,9 +164,76 @@ impl CloudAgentsTab {
     }
 
     fn open_form(&mut self, prefill: Option<Prefill>, window: &mut Window, cx: &mut Context<Self>) {
+        self.reset_form();
+        self.problem = None;
+        let epoch = self.form_epoch;
         let Some(hub) = self.hub.clone() else {
             return;
         };
+        let mut prefill = match prefill {
+            Some(prefill) if !prefill.work_offline => prefill,
+            other => {
+                self.install_form(other, window, cx);
+                return;
+            }
+        };
+        let reading = self.service.update(cx, |service, cx| {
+            service.personal_models(&hub, &prefill.id, cx)
+        });
+        let work = cx.spawn_in(window, async move |this, cx| {
+            let result = reading.await;
+            let _ = this.update_in(cx, |tab, window, cx| {
+                if tab.hub.as_ref() != Some(&hub) || tab.form_epoch != epoch {
+                    return;
+                }
+                tab.opening = Opening::Closed;
+                match result {
+                    Ok(models) => {
+                        prefill.models = PrefillModels::Canonical(models);
+                        tab.install_form(Some(prefill), window, cx);
+                    }
+                    Err(CloudAgentError::Invalid(DraftError::Key)) => {
+                        tab.opening = Opening::Missing(prefill);
+                        tab.problem = Some("No saved provider key was found. You can enter a replacement key and review the models from the agent listing.".to_owned());
+                        cx.notify();
+                    }
+                    Err(error) => {
+                        tab.problem = Some(describe(&error));
+                        cx.notify();
+                    }
+                }
+            });
+        });
+        self.opening = Opening::Loading { _work: work };
+        cx.notify();
+    }
+
+    fn replace_missing_key(&mut self, epoch: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.form_epoch != epoch || !matches!(self.opening, Opening::Missing(_)) {
+            return;
+        }
+        let Opening::Missing(mut prefill) = std::mem::replace(&mut self.opening, Opening::Closed)
+        else {
+            return;
+        };
+        let models = match prefill.models {
+            PrefillModels::Listed(models) => models,
+            _ => return,
+        };
+        prefill.models = PrefillModels::Missing(models);
+        self.install_form(Some(prefill), window, cx);
+    }
+
+    fn install_form(
+        &mut self,
+        prefill: Option<Prefill>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hub) = self.hub.clone() else {
+            return;
+        };
+        let epoch = self.form_epoch;
         self.problem = None;
         self.form = Some(Form::new(prefill, window, cx));
         let pools = self
@@ -163,6 +242,10 @@ impl CloudAgentsTab {
         self.working = Some(cx.spawn(async move |this, cx| {
             let result = pools.await;
             this.update(cx, |tab, cx| {
+                if tab.form_epoch != epoch || tab.hub.as_ref() != Some(&hub) {
+                    return;
+                }
+                tab.working = None;
                 match result {
                     Ok(pools) => {
                         if let Some(form) = &mut tab.form {
@@ -179,12 +262,19 @@ impl CloudAgentsTab {
     }
 
     fn close_form(&mut self, cx: &mut Context<Self>) {
-        self.form = None;
-        self.working = None;
+        self.reset_form();
         cx.notify();
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.working.is_some()
+            || self
+                .form
+                .as_ref()
+                .is_some_and(|form| form.waiting_offer().is_some())
+        {
+            return;
+        }
         let (Some(hub), Some(form)) = (self.hub.clone(), self.form.as_mut()) else {
             return;
         };
@@ -205,6 +295,7 @@ impl CloudAgentsTab {
         draft: nocterm_cloud_agents_model::PersonalAgentDraft,
         cx: &mut Context<Self>,
     ) {
+        let epoch = self.form_epoch;
         self.problem = None;
         let saving = self.service.update(cx, |service, cx| {
             service.save_personal(&hub, existing, draft.clone(), cx)
@@ -212,6 +303,10 @@ impl CloudAgentsTab {
         self.working = Some(cx.spawn(async move |this, cx| {
             let outcome = saving.await;
             this.update(cx, |tab, cx| {
+                if tab.form_epoch != epoch || tab.hub.as_ref() != Some(&hub) {
+                    return;
+                }
+                tab.working = None;
                 match outcome {
                     Ok(SaveOutcome::Saved(_)) => tab.form = None,
                     Ok(SaveOutcome::NeedsPoolTrust(offer)) => {
@@ -230,9 +325,13 @@ impl CloudAgentsTab {
 
     /// The person compared the fingerprint: pins the pool and saves again.
     fn trust_and_save(&mut self, cx: &mut Context<Self>) {
+        if self.working.is_some() {
+            return;
+        }
         let (Some(hub), Some(form)) = (self.hub.clone(), self.form.as_mut()) else {
             return;
         };
+        let epoch = self.form_epoch;
         let existing = form.existing();
         let Some((draft, offer)) = form.take_waiting() else {
             return;
@@ -242,11 +341,17 @@ impl CloudAgentsTab {
             .update(cx, |service, cx| service.pin_pool(&hub, &offer, cx));
         self.working = Some(cx.spawn(async move |this, cx| {
             let pinned = pinning.await;
-            this.update(cx, |tab, cx| match pinned {
-                Ok(()) => tab.save(hub, existing, draft, cx),
-                Err(error) => {
-                    tab.problem = Some(describe(&error));
-                    cx.notify();
+            this.update(cx, |tab, cx| {
+                if tab.form_epoch != epoch || tab.hub.as_ref() != Some(&hub) {
+                    return;
+                }
+                tab.working = None;
+                match pinned {
+                    Ok(()) => tab.save(hub, existing, draft, cx),
+                    Err(error) => {
+                        tab.problem = Some(describe(&error));
+                        cx.notify();
+                    }
                 }
             })
             .ok();
@@ -257,6 +362,7 @@ impl CloudAgentsTab {
         let Some(hub) = self.hub.clone() else {
             return;
         };
+        let epoch = self.form_epoch;
         self.problem = None;
         let deleting = self.service.update(cx, |service, cx| {
             service.delete_personal(&hub, &agent.id, agent.version, cx)
@@ -264,6 +370,10 @@ impl CloudAgentsTab {
         self.working = Some(cx.spawn(async move |this, cx| {
             let result = deleting.await;
             this.update(cx, |tab, cx| {
+                if tab.form_epoch != epoch || tab.hub.as_ref() != Some(&hub) {
+                    return;
+                }
+                tab.working = None;
                 if let Err(error) = result {
                     tab.problem = Some(describe(&error));
                 }
@@ -302,6 +412,82 @@ fn describe(error: &CloudAgentError) -> String {
     error.to_string()
 }
 
+fn pending_form(
+    opening: &Opening,
+    epoch: u64,
+    key: &str,
+    view: &Entity<CloudAgentsTab>,
+    cx: &App,
+) -> Option<gpui_kit::AnyElement> {
+    let view = view.clone();
+    match opening {
+        Opening::Closed => None,
+        Opening::Loading { .. } => Some(
+            h_flex()
+                .id(item("cloud-agent-models-loading", key))
+                .test_support()
+                .gap_2()
+                .child(note("Reading the agent's saved models…", cx))
+                .child(
+                    Button::new(item("cloud-agent-models-cancel", key))
+                        .label("Cancel")
+                        .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                            view.update(cx, |tab, cx| {
+                                if tab.form_epoch == epoch {
+                                    tab.close_form(cx);
+                                }
+                            });
+                        }),
+                )
+                .into_any_element(),
+        ),
+        Opening::Missing(_) => Some(
+            Button::new(item("cloud-agent-replace-key", key))
+                .label("Enter replacement key")
+                .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    view.update(cx, |tab, cx| tab.replace_missing_key(epoch, window, cx));
+                })
+                .into_any_element(),
+        ),
+    }
+}
+
+fn catalog_header(
+    key: &str,
+    web: String,
+    view: &Entity<CloudAgentsTab>,
+    cx: &App,
+) -> impl IntoElement {
+    v_flex()
+            .gap_2()
+            .child(note(
+                "Your own agents live here. Agents of an organization or of the server are managed in the web panel of the server.",
+                cx,
+            ))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(item("cloud-agents-new", key))
+                            .primary()
+                            .label("New personal agent")
+                            .on_click({
+                                let view = view.clone();
+                                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                    view.update(cx, |tab, cx| tab.open_form(None, window, cx));
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new(item("cloud-agents-web", key))
+                            .label("Manage agents on the web")
+                            .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                                cx.open_url(&web)
+                            }),
+                    ),
+            )
+}
+
 impl Render for CloudAgentsTab {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(hub) = self.hub.clone() else {
@@ -313,34 +499,7 @@ impl Render for CloudAgentsTab {
         let status = service.status(&hub);
         let agents: Vec<CloudAgent> = service.agents(&hub).to_vec();
         let web = service.web_panel_url(&hub);
-        let header = v_flex()
-            .gap_2()
-            .child(note(
-                "Your own agents live here. Agents of an organization or of the server are managed in the web panel of the server.",
-                cx,
-            ))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new(item("cloud-agents-new", &key))
-                            .primary()
-                            .label("New personal agent")
-                            .on_click({
-                                let view = view.clone();
-                                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                    view.update(cx, |tab, cx| tab.open_form(None, window, cx));
-                                }
-                            }),
-                    )
-                    .child(
-                        Button::new(item("cloud-agents-web", &key))
-                            .label("Manage agents on the web")
-                            .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                                cx.open_url(&web)
-                            }),
-                    ),
-            );
+        let header = catalog_header(&key, web, &view, cx);
         let body = match status {
             Some(CatalogStatus::Unsupported) => div()
                 .id(item("cloud-agents-unsupported", &key))
@@ -373,11 +532,23 @@ impl Render for CloudAgentsTab {
                     .test_support()
                     .child(problem(text, cx))
             }))
-            .children(
-                self.form
-                    .as_ref()
-                    .map(|form| render_form(form, &key, &view, cx)),
-            )
+            .children(pending_form(
+                &self.opening,
+                self.form_epoch,
+                &key,
+                &view,
+                cx,
+            ))
+            .children(self.form.as_ref().map(|form| {
+                render_form(
+                    form,
+                    self.form_epoch,
+                    self.working.is_some(),
+                    &key,
+                    &view,
+                    cx,
+                )
+            }))
             .child(body)
             .children(self.usage.render(&key, cx))
             .children(pinned_section(&self.pinned, &key, &view, cx))
@@ -437,8 +608,10 @@ fn row(agent: &CloudAgent, key: &str, view: &Entity<CloudAgentsTab>, cx: &App) -
                             id: edit_agent.id.clone(),
                             version: edit_agent.version,
                             name: edit_agent.name.clone(),
-                            model: edit_agent.primary_model().unwrap_or_default().to_owned(),
+                            models: PrefillModels::Listed(edit_agent.models.clone()),
                             provider: ProviderKind::from_id(&edit_agent.provider),
+                            work_offline: edit_agent.placement()
+                                == nocterm_cloud_agents_model::Placement::Pool,
                         };
                         edit_view.update(cx, |tab, cx| tab.open_form(Some(prefill), window, cx));
                     }),
@@ -457,188 +630,4 @@ fn row(agent: &CloudAgent, key: &str, view: &Entity<CloudAgentsTab>, cx: &App) -
                     }),
             )
         })
-}
-
-fn provider_buttons(
-    form: &Form,
-    key: &str,
-    view: &Entity<CloudAgentsTab>,
-) -> impl IntoIterator<Item = Button> {
-    ProviderKind::ALL.map(|kind| {
-        let view = view.clone();
-        Button::new(item(&format!("cloud-agent-provider-{}", kind.id()), key))
-            .label(kind.label())
-            .when(form.provider() == kind, |button| button.primary())
-            .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                view.update(cx, |tab, cx| {
-                    if let Some(form) = &mut tab.form {
-                        form.set_provider(kind);
-                    }
-                    cx.notify();
-                });
-            })
-    })
-}
-
-fn offline_checkbox(form: &Form, key: &str, view: &Entity<CloudAgentsTab>) -> Checkbox {
-    let offline_view = view.clone();
-    Checkbox::new(item("cloud-agent-offline", key))
-        .label("Agents work when I'm offline")
-        .checked(form.work_offline())
-        .on_click(move |checked: &bool, _: &mut Window, cx: &mut App| {
-            let on = *checked;
-            offline_view.update(cx, |tab, cx| {
-                if let Some(form) = &mut tab.form {
-                    form.set_work_offline(on);
-                }
-                cx.notify();
-            });
-        })
-}
-
-fn pool_choices(form: &Form, key: &str, view: &Entity<CloudAgentsTab>) -> Option<impl IntoElement> {
-    form.work_offline().then(|| {
-        let buttons = form
-            .pools()
-            .iter()
-            .filter(|pool| pool.accepts_personal)
-            .map(|pool| {
-                let (view, id) = (view.clone(), pool.pool.clone());
-                Button::new(item(&format!("cloud-agent-pool-{}", pool.pool), key))
-                    .label(pool.name.clone())
-                    .when(form.chosen_pool() == Some(&pool.pool), |button| {
-                        button.primary()
-                    })
-                    .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                        view.update(cx, |tab, cx| {
-                            if let Some(form) = &mut tab.form {
-                                form.choose_pool(id.clone());
-                            }
-                            cx.notify();
-                        });
-                    })
-            });
-        field("Pool", h_flex().gap_2().children(buttons))
-    })
-}
-
-fn trust_block(
-    form: &Form,
-    key: &str,
-    view: &Entity<CloudAgentsTab>,
-    cx: &App,
-) -> Option<impl IntoElement> {
-    let theme = cx.theme().clone();
-    form.waiting_offer().map(|offer| {
-        let view = view.clone();
-        v_flex()
-            .id(item("cloud-agent-trust", key))
-            .test_support()
-            .gap_2()
-            .child(note(
-                format!(
-                    "Trust pool \"{}\"? Compare this fingerprint with the one its owner publishes before you do.",
-                    offer.name
-                ),
-                cx,
-            ))
-            .child(
-                div()
-                    .id(item("cloud-agent-trust-fingerprint", key))
-                    .test_support()
-                    .font_family(theme.mono_font_family.clone())
-                    .text_sm()
-                    .child(offer.fingerprint.clone()),
-            )
-            .child(
-                Button::new(item("cloud-agent-trust-confirm", key))
-                    .primary()
-                    .label("Trust pool and save")
-                    .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                        view.update(cx, |tab, cx| tab.trust_and_save(cx));
-                    }),
-            )
-    })
-}
-
-fn render_form(
-    form: &Form,
-    key: &str,
-    view: &Entity<CloudAgentsTab>,
-    cx: &mut Context<CloudAgentsTab>,
-) -> impl IntoElement {
-    let [name, endpoint, model, secret] = form.inputs();
-    let theme = cx.theme().clone();
-    let submit_view = view.clone();
-    let cancel_view = view.clone();
-    let (provider_buttons, offline) = (
-        provider_buttons(form, key, view),
-        offline_checkbox(form, key, view),
-    );
-    let instructions = form.work_offline().then(|| {
-        field(
-            "Instructions",
-            div()
-                .id(item("cloud-agent-instructions", key))
-                .test_support()
-                .child(
-                    Textarea::new(form.instructions_input())
-                        .h(rems(8.))
-                        .aria_label("Instructions"),
-                ),
-        )
-    });
-    let (pools, trust) = (
-        pool_choices(form, key, view),
-        trust_block(form, key, view, cx),
-    );
-    v_flex()
-        .id(item("cloud-agent-form", key))
-        .test_support()
-        .gap_3()
-        .p_3()
-        .rounded(theme.radius)
-        .border_1()
-        .border_color(theme.border)
-        .child(field("Name", div().id(item("cloud-agent-name", key)).test_support().child(Input::new(name))))
-        .child(field("Provider", h_flex().gap_2().children(provider_buttons)))
-        .child(field("Endpoint", div().id(item("cloud-agent-endpoint", key)).test_support().child(Input::new(endpoint))))
-        .child(field("Model", div().id(item("cloud-agent-model", key)).test_support().child(Input::new(model))))
-        .child(field("Provider key", div().id(item("cloud-agent-key", key)).test_support().child(Input::new(secret))))
-        .child(note(
-            if form.is_edit() {
-                "Saving replaces the whole definition, so enter the endpoint, the key and the instructions again; leave the instructions empty to remove them. The key is stored encrypted and is never shown."
-            } else {
-                "The key is stored encrypted and is never shown again. Use a provider key with a spending limit."
-            },
-            cx,
-        ))
-        .child(offline)
-        .child(note(
-            "On: the agent keeps working on a server pool while this computer is off, which means the pool's host can use the key. Off: it runs only on this computer.",
-            cx,
-        ))
-        .children(instructions)
-        .children(pools)
-        .children(trust)
-        .child(
-            h_flex()
-                .gap_2()
-                .justify_end()
-                .child(
-                    Button::new(item("cloud-agent-cancel", key))
-                        .label("Cancel")
-                        .on_click(move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                            cancel_view.update(cx, |tab, cx| tab.close_form(cx));
-                        }),
-                )
-                .child(
-                    Button::new(item("cloud-agent-save", key))
-                        .primary()
-                        .label("Save")
-                        .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                            submit_view.update(cx, |tab, cx| tab.submit(window, cx));
-                        }),
-                ),
-        )
 }

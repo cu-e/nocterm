@@ -50,7 +50,7 @@ fn listing(
         icon: String::new(),
         color: String::new(),
         provider_kind: to_wire(draft.provider()).as_str().to_owned(),
-        models: vec![draft.model().to_owned()],
+        models: draft.models().to_vec(),
         resources: ResourceRequest {
             cpu_milli: 500,
             mem_mib: 512,
@@ -75,6 +75,7 @@ async fn save_own(
     existing: Option<(AgentId, u64)>,
     draft: PersonalAgentDraft,
 ) -> Result<SaveOutcome, CloudAgentError> {
+    check_work(captured, &work)?;
     let (id, expected) = match &existing {
         Some((id, version)) => (
             id.as_str().parse().map_err(|_| CloudAgentError::Conflict)?,
@@ -83,17 +84,22 @@ async fn save_own(
         None => (nocterm_hub_model::AgentId::new(), 0),
     };
     let agent = id.to_string();
-    let secret = match draft.key() {
-        KeyInput::Replace(secret) => secret.expose().to_owned(),
-        KeyInput::Keep => own_keys::get(&work, &agent)
-            .await?
-            .map(|kept| kept.expose().to_owned())
-            .ok_or(CloudAgentError::Invalid(DraftError::Key))?,
-    };
-    let stored =
-        own_keys::OwnAgentKey::new(to_wire(draft.provider()).as_str(), draft.model(), &secret);
-    // The key is durable before the listing exists, so a listed agent always has its key.
-    own_keys::put(&work, &agent, &stored).await?;
+    let base = existing_models(
+        captured,
+        &work,
+        id,
+        existing.as_ref().map(|(_, version)| *version),
+    )
+    .await?;
+    let (kept, receipt) = own_keys::prepare_write(&work, &agent).await?;
+    if existing.is_none() && kept.is_some() {
+        return Err(CloudAgentError::Conflict);
+    }
+    let (stored, changed) = own_draft_key(kept, &draft, base.as_deref())?;
+    // A listing never precedes its key, and a model-only write uses the exact read receipt.
+    if changed {
+        own_keys::put_expected(receipt, &stored).await?;
+    }
     let address = captured.hub.address().clone();
     captured
         .client
@@ -107,6 +113,97 @@ async fn save_own(
         .map_err(|error| agent_error(&address, error))?;
     let saved = AgentId::new(agent).map_err(|_| CloudAgentError::Conflict)?;
     Ok(SaveOutcome::Saved(saved))
+}
+
+pub(super) fn check_work(captured: &Captured, work: &OpenedWork) -> Result<(), CloudAgentError> {
+    captured.observed.check().map_err(super::error::hub_error)?;
+    let original = captured
+        .observed
+        .original_subject()
+        .map_err(super::error::hub_error)?
+        .ok_or(CloudAgentError::Stale)?;
+    let actual = work
+        .source()
+        .native()
+        .subject()
+        .map_err(super::error::hub_error)?;
+    if !Arc::ptr_eq(&original, &actual) {
+        return Err(CloudAgentError::Stale);
+    }
+    Ok(())
+}
+
+async fn existing_models(
+    captured: &Captured,
+    work: &OpenedWork,
+    id: nocterm_hub_model::AgentId,
+    expected: Option<u64>,
+) -> Result<Option<Vec<String>>, CloudAgentError> {
+    let Some(expected) = expected else {
+        return Ok(None);
+    };
+    let detail = captured
+        .client
+        .agents()
+        .get_agent(id)
+        .await
+        .map_err(|error| agent_error(captured.hub.address(), error))?;
+    let owner = work
+        .source()
+        .native()
+        .subject()
+        .map_err(super::error::hub_error)?;
+    if detail.owner_account_id != owner.account() {
+        return Err(CloudAgentError::Conflict);
+    }
+    let current = detail.listing.ok_or(CloudAgentError::Conflict)?;
+    if current
+        .scope
+        .as_ref()
+        .is_none_or(|scope| scope.kind != nocterm_hub_proto::v1::ScopeKind::Account as i32)
+    {
+        return Err(CloudAgentError::Conflict);
+    }
+    if current.agent_id != id.to_string() || current.version != expected {
+        return Err(CloudAgentError::Conflict);
+    }
+    Ok(Some(current.models))
+}
+
+fn own_draft_key(
+    kept: Option<own_keys::OwnAgentKey>,
+    draft: &PersonalAgentDraft,
+    listing_models: Option<&[String]>,
+) -> Result<(own_keys::OwnAgentKey, bool), CloudAgentError> {
+    if matches!(
+        draft.own_model_base(),
+        Some(nocterm_cloud_agents_model::OwnModelBase::Missing)
+    ) && kept.is_some()
+    {
+        return Err(CloudAgentError::Conflict);
+    }
+    let base = draft.expected_models().or(listing_models);
+    if let (Some(kept), Some(base)) = (&kept, base)
+        && kept.models() != base
+        && kept.models() != draft.models()
+    {
+        return Err(CloudAgentError::Conflict);
+    }
+    let provider = to_wire(draft.provider());
+    match draft.key() {
+        KeyInput::Replace(secret) => Ok((
+            own_keys::OwnAgentKey::new(provider.as_str(), draft.models(), secret.expose())?,
+            true,
+        )),
+        KeyInput::Keep => {
+            let kept = kept.ok_or(CloudAgentError::Invalid(DraftError::Key))?;
+            if kept.provider() != provider.as_str() {
+                return Err(CloudAgentError::Invalid(DraftError::Key));
+            }
+            let changed = kept.models() != draft.models();
+            Ok((kept.with_models(draft.models().to_vec())?, changed))
+        }
+    }
 }
 
 pub(super) async fn save(
@@ -163,7 +260,7 @@ pub(super) async fn save(
         provider: ProviderBlock {
             kind: to_wire(draft.provider()).as_str().to_owned(),
             endpoint: endpoint.to_owned(),
-            models: vec![draft.model().to_owned()],
+            models: draft.models().to_vec(),
             api_key: Some(secret.expose().to_owned()),
         },
         secrets: Vec::new(),
@@ -243,5 +340,77 @@ mod tests {
         assert!(listed.pools.is_empty());
         let shown = super::super::convert::agent(listed, None, &HashMap::new()).unwrap();
         assert_eq!(shown.placement(), Placement::OwnRunner);
+    }
+    #[test]
+    fn a_changed_private_model_snapshot_is_not_overwritten_by_a_stale_edit() {
+        let edited = PersonalAgentDraft::new(
+            "Helper",
+            ProviderKind::OpenAiChat,
+            "",
+            "desired",
+            KeyInput::Keep,
+            false,
+            None,
+        )
+        .unwrap()
+        .with_expected_models(vec!["base".into()])
+        .unwrap();
+        let changed =
+            own_keys::OwnAgentKey::new("openai_chat", &["other-client".into()], "new-secret")
+                .unwrap();
+        assert!(matches!(
+            own_draft_key(Some(changed), &edited, Some(&["base".into()])),
+            Err(CloudAgentError::Conflict)
+        ));
+    }
+    #[test]
+    fn retry_after_a_private_write_keeps_the_latest_key_and_only_repairs_metadata() {
+        let edited = PersonalAgentDraft::new(
+            "Helper",
+            ProviderKind::OpenAiChat,
+            "",
+            "desired",
+            KeyInput::Keep,
+            false,
+            None,
+        )
+        .unwrap()
+        .with_expected_models(vec!["base".into()])
+        .unwrap();
+        let current =
+            own_keys::OwnAgentKey::new("openai_chat", &["desired".into()], "latest-secret")
+                .unwrap();
+        let (accepted, changed) =
+            own_draft_key(Some(current), &edited, Some(&["base".into()])).unwrap();
+        assert!(
+            !changed,
+            "the record is already current; do not rewrite the private object"
+        );
+        assert_eq!(accepted.models(), ["desired"]);
+        assert_eq!(accepted.expose(), "latest-secret");
+    }
+    #[test]
+    fn an_explicit_missing_key_repair_refuses_a_new_key_from_another_editor() {
+        let repair = PersonalAgentDraft::new(
+            "Helper",
+            ProviderKind::OpenAiChat,
+            "",
+            "desired",
+            KeyInput::Replace(Secret::new("repair-secret")),
+            false,
+            None,
+        )
+        .unwrap()
+        .with_missing_key()
+        .unwrap();
+        let created =
+            own_keys::OwnAgentKey::new("openai_chat", &["other".into()], "other-secret").unwrap();
+        assert!(matches!(
+            own_draft_key(Some(created), &repair, None),
+            Err(CloudAgentError::Conflict)
+        ));
+        let (created, changed) = own_draft_key(None, &repair, None).unwrap();
+        assert!(changed);
+        assert_eq!(created.expose(), "repair-secret");
     }
 }

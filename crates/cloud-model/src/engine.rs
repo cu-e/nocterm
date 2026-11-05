@@ -438,6 +438,9 @@ pub enum EngineError {
     Interrupted,
     #[error("the engine budget is exhausted or invalid")]
     BudgetExceeded,
+    /// The complete model input exceeds a known request ceiling before HTTP.
+    #[error("the model request exceeds its input limit of {limit} bytes")]
+    RequestTooLarge { limit: usize },
     #[error("provider access must be installed again")]
     NeedsProviderAccess,
     #[error("the configured model needs an unsupported provider capability")]
@@ -466,6 +469,7 @@ impl fmt::Debug for EngineError {
             Self::InvalidStream => "InvalidStream",
             Self::Interrupted => "Interrupted",
             Self::BudgetExceeded => "BudgetExceeded",
+            Self::RequestTooLarge { .. } => "RequestTooLarge",
             Self::Unavailable => "Unavailable",
             Self::NeedsProviderAccess => "NeedsProviderAccess",
             Self::UnsupportedCapability(_) => "UnsupportedCapability",

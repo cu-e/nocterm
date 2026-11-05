@@ -7,6 +7,9 @@
 //! CI cannot silently skip them.
 //! Cloud runner tests also require the independently retained public authority pin
 //! in `NOCTERM_CLOUD_AUTHORITY`; it is never adopted from an untrusted offer.
+//! The composer exchange uses a separate disposable account named by
+//! `NOCTERM_HUB_COMPOSER_USERNAME` / `NOCTERM_HUB_COMPOSER_PASSWORD`, because its
+//! runner enrollment must not alter the primary account's registry fixtures.
 //!
 //! The relay test that reaches a destination also needs `NOCTERM_HUB_RELAY_TARGET` (`host:port`
 //! of an SSH server the hub is allowed to reach, for example a container of the compose file);

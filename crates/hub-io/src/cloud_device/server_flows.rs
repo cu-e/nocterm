@@ -49,6 +49,9 @@ pub(super) struct ServerFlows {
     flows: Vec<(u32, ServerFlow)>,
 }
 impl ServerFlows {
+    pub(super) fn len(&self) -> usize {
+        self.flows.len()
+    }
     pub(super) fn bind(&mut self, slot: u32, flow: BindServers, reply: BindReply) {
         self.flows.push((slot, ServerFlow::Bind(flow, Some(reply))));
     }

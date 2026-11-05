@@ -15,6 +15,8 @@ pub enum CloudConversationError {
     /// The hub does not offer what this needs.
     #[error("this hub does not support that Cloud chat feature")]
     Unsupported,
+    #[error("update the Cloud hub to send large prompts and images")]
+    LargePromptUnsupported(#[source] SharedCause),
     /// The transcript has no such run, or none to stop.
     #[error("the chat has no such run")]
     NoRun,
@@ -24,6 +26,10 @@ pub enum CloudConversationError {
     /// The chat has no model to prompt with.
     #[error("the chat has no model to prompt with")]
     NoModel,
+    #[error("the provider is already being selected; wait for it to finish")]
+    ProviderSelectionPending,
+    #[error("stop the active run before choosing a provider")]
+    ProviderBusy,
     /// The chat was deleted.
     #[error("the chat was deleted")]
     Deleted,

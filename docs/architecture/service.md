@@ -416,8 +416,12 @@ providers recheck their retained source immediately before capability effects.
 
 `nocterm-cloud-chat` owns one GPUI entity per open Cloud chat over the `CloudConversation`
 port of `nocterm-cloud-conversation-model`. The entity subscribes while a window shows the chat
-or a command of it is on its way, applies each delta to its `CloudTranscript`, follows it with
-the thread the renderer draws (only rows from the first changed one are rebuilt), shows the
+or a command of it is on its way. It admits each candidate before changing its `CloudTranscript`,
+prepares changed renderer rows and tool JSON on a sequential background task retaining that
+admission, then commits the transcript and renderer together under the original subscription
+generation and account. Retained accounting follows changed rows, and finite foreground batches
+yield to input. Hiding a chat with pending commands keeps it subscribed only until they settle.
+It shows the
 freshness the device core reports after its first round, and presents this device's pending
 prompts (ADR 0134): a prompt shows at once, follows its command's state, and a refused or
 unanswered one stays until it is sent again as a new prompt or dismissed. Actions captured for
@@ -428,6 +432,16 @@ offers `ConversationServers`: the binding the verified history states, binding a
 through the port, and the server the next prompts run on, which is only ever a selectable bound
 server and is dropped once the server is no longer selectable
 ([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+
+The optional `ConversationComposer` is the captured image/model draft of a Cloud source.
+`PromptDraft` owns prepared shared image bytes, model selection and one revision. Source and
+revision checks fence late picker and send completions; append is atomic under image collection
+and history admission. Pending prompts retain bounded original bodies, including images,
+model and server, for retries; accepted/dismissed prompts release them. Model listings grant
+no provider access. An own-runner history offers explicit provider choice through that same
+captured composer; it never selects a key by matching public model names. `ComposerChanged`
+updates advance the draft revision when the actual delivered lease changes its model choices,
+including after waiter cancellation and across independent windows. See [ADR 0149](../adr/0149-cloud-composers-own-captured-prompt-drafts.md).
 
 ## Shared monitor collection
 

@@ -129,7 +129,7 @@ acceptance; a later record supersedes an earlier one.
 | [0131](0131-one-container-watch-per-host-connection.md) | One container watch per host connection, relisted only for listing changes |
 | [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local (supersedes process/resource rules of 0059; document organization refined by 0135) |
 | [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat (row titles and projection superseded by 0144) |
-| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript (projection placement superseded by 0144) |
+| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript (projection placement superseded by 0144; Cloud text-only and refused-text-only rules superseded by 0149) |
 | [0135](0135-responsibility-and-cost-guided-agent-work.md) | Agent procedures verify responsibility and runtime cost; gate owns the detailed check matrix |
 | [0136](0136-shared-bounded-streams-and-tool-result-formats.md) | Bounded byte collection and terminal-tool result formats have shared owners |
 | [0137](0137-observed-configuration-publication.md) | Settings and profiles reject publication against an externally changed owned document |
@@ -143,3 +143,6 @@ acceptance; a later record supersedes an earlier one.
 | [0145](0145-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 (SSH row class, boot host-key rule and journal version superseded by 0147) |
 | [0146](0146-device-transport-and-resumable-commands.md) | Cloud effects go through the hub client; commands resume after a restart |
 | [0147](0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md) | The desktop binds chats to servers and answers their certificate requests; prompts run on bound servers; journal v9 |
+| [0148](0148-bounded-cloud-device-work.md) | Cloud device delivery, transactional presentation and native persistence have bounded owners |
+
+| [0149](0149-cloud-composers-own-captured-prompt-drafts.md) | Cloud composers own captured image/model drafts and preserve submitted bodies for retry |

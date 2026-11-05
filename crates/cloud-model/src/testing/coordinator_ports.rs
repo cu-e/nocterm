@@ -281,8 +281,13 @@ impl ArgumentFingerprint for FixtureArgumentFingerprint {
 pub struct ObservedCoordinatorEvents {
     events: Mutex<Vec<CoordinatorEvent>>,
     next: AtomicU64,
+    refuse_progress: AtomicBool,
 }
 impl ObservedCoordinatorEvents {
+    /// Refuse one progress publication while leaving terminal status publication available.
+    pub fn fail_next_progress(&self) {
+        self.refuse_progress.store(true, Ordering::Release);
+    }
     pub fn events(&self) -> Vec<CoordinatorEvent> {
         self.events
             .lock()
@@ -298,6 +303,11 @@ impl CoordinatorEventEncoder for ObservedCoordinatorEvents {
         event: &CoordinatorEvent,
         work: &dyn PublicationWorkBudget,
     ) -> Result<ResidentPublication, JournalError> {
+        if matches!(event, CoordinatorEvent::Progress { .. })
+            && self.refuse_progress.swap(false, Ordering::AcqRel)
+        {
+            return Err(JournalError::Capacity);
+        }
         self.events
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

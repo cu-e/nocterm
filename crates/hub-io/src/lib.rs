@@ -65,9 +65,10 @@
 //! [ADR 0144](../../../docs/adr/0144-the-device-side-runs-on-the-contract-device-core.md)):
 //! this crate performs the effects a flow asks for (the hub client's Cloud device calls, Store
 //! and agent calls, signatures through `HubClient::sign_cloud`, sleeps, Watch), keeps the core's
-//! sealed checkpoints and the sealed commands on their way in private files, resuming them after
-//! a restart ([ADR 0146](../../../docs/adr/0146-device-transport-and-resumable-commands.md)),
-//! and maps the core's display
+//! sealed checkpoints and the sealed commands on their way in private files for restart
+//! ([ADR 0146](../../../docs/adr/0146-device-transport-and-resumable-commands.md)). A per-chat
+//! private OS lock coordinates encrypted outbox byte/count admission, replacement and deletion
+//! before publication across installations. This crate maps the core's display
 //! values to `nocterm-cloud-conversation-model`, whose `CloudConversation` port it implements.
 //! A flow holds a copy of the unlocked account keys and is dropped when the account's keys
 //! change.

@@ -217,15 +217,30 @@ The tab is hidden while no server offers agents.
 
 Earlier Cloud chats of the server are listed in the chat history (the clock button of the
 assistant panel), after your local chats, and the search finds them by name, agent and model.
-Opening one wakes its agent if it sleeps. Sending a message to a chat whose agent fell asleep
-wakes it too; until it answers, the chat shows "Reconnecting to the agent". If a message cannot
+Opening one shows its stored history while its agent sleeps. **Wake**, or sending a message,
+wakes the agent; until it answers, the chat shows "Reconnecting to the agent". If a message cannot
 reach the agent, send it again to retry it; if the agent refuses it, sending it again sends a
 new message.
+
+The Cloud composer has **+** to choose servers and an image button to attach screenshots
+or other PNG, JPEG, GIF and WebP images. Pasting an image uses the same preparation and
+preview flow. You can remove an attachment before sending. When an agent offers several
+models, choose the model in its composer; the next message uses that choice. When reopening
+a chat on your own runner, choose your own agent explicitly to lease its key before sending.
+Its picker offers the models of that delivered lease. Changes to an own agent's models
+appear when its key lease renews, or in a new chat. A failed
+message keeps its original submitted model, images and server when retried. If its original
+body is unavailable after restarting the app, restore those choices and send a new message;
+the app reports this instead of sending a text-only replacement. Configured
+provider and operator limits still apply to image requests.
 
 A Cloud chat can sign in to your own servers. The **Servers** bar above its composer shows the
 servers the chat is bound to and where each stands: *waiting for an unlocked device*, *active
 until* a time, *not reachable by this agent*, *refused*, *expired* or *revoked*. **Bind
-servers…** lists the servers that trust your agent CA (see **Agent access (SSH)** below); tick
+servers…** lists the servers that trust your agent CA (see **Agent access (SSH)** below).
+The same form lists your saved servers: **Connect** opens a connection, and **Allow agent
+access** installs your account's CA explicitly. **Refresh** updates the list after connecting.
+Once the server trusts the CA, tick
 them, pick how long the binding lasts (1, 7, 14 or 30 days, 7 unless you choose) and press
 **Bind**. A server you have not connected to since the application started cannot be ticked
 yet: connect to it once so its port is known. **Prompts run on** picks the server your next
@@ -247,7 +262,9 @@ and the search finds them.
   - **Allow on servers…** lists the servers you are connected to now; ticked ones get the CA
     line in the `authorized_keys` of the session's user, over that session. Other lines are
     kept. Each server's line admits only that server: **Copy line** on its row copies it to add
-    by hand. A server that still has the line an earlier version wrote says *Needs a CA update*;
+    by hand. If an automatic edit fails, that server stays selected for retry and its
+    **Copy line** remains available in the list. A server that still has the line an
+    earlier version wrote says *Needs a CA update*;
     connecting to it once rewrites the line, after which chat certificates open it.
   - **Reissue CA…** asks, then replaces the CA; servers that can be reached move to the new one.
   - **Active chat accesses** lists the accesses agents hold, each with **Revoke**.

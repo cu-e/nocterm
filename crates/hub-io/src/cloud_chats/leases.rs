@@ -106,12 +106,36 @@ pub(super) async fn key_model(
     account: &HubAccount,
     agent: &AgentId,
 ) -> Result<ModelChoice, CloudChatError> {
+    let key = own_key(account, agent).await?;
+    Ok(ModelChoice {
+        provider: key.provider().to_owned(),
+        model: key.model().to_owned(),
+    })
+}
+
+/// Every model the own agent's canonical encrypted record authorizes leasing.
+pub(super) async fn key_models(
+    account: &HubAccount,
+    agent: &AgentId,
+) -> Result<Vec<ModelChoice>, CloudChatError> {
+    let key = own_key(account, agent).await?;
+    Ok(key
+        .models()
+        .iter()
+        .map(|model| ModelChoice {
+            provider: key.provider().to_owned(),
+            model: model.clone(),
+        })
+        .collect())
+}
+
+async fn own_key(
+    account: &HubAccount,
+    agent: &AgentId,
+) -> Result<crate::agents::own_keys::OwnAgentKey, CloudChatError> {
     let work = account.work().map_err(error::hub)?;
     match crate::agents::own_keys::get(&work, agent.as_str()).await {
-        Ok(Some(key)) => Ok(ModelChoice {
-            provider: key.provider().to_owned(),
-            model: key.model().to_owned(),
-        }),
+        Ok(Some(key)) => Ok(key),
         Ok(None) => Err(CloudChatError::NoProviderKey),
         Err(CloudAgentError::Hub(error)) => Err(error::hub(error)),
         Err(other) => Err(CloudChatError::Agent(other)),
@@ -147,6 +171,7 @@ pub(super) async fn lease(
     let expires = Arc::new(AtomicI64::new(0));
     let renewed = expires.clone();
     let liveness = held.clone();
+    let refreshing = held.clone();
     let effects = account.effects().clone();
     let ended = account.clone().ended();
     shared.handle.spawn(async move {
@@ -155,6 +180,10 @@ pub(super) async fn lease(
             renewed.store(lease.expires_at_ms, Ordering::Release);
             if let Some(first) = first.take() {
                 let _ = first.send(Ok(lease));
+            } else if let Some(chat) = refreshing.upgrade()
+                && let Err(error) = chat.refresh_own_lease(&lease)
+            {
+                tracing::debug!(%error, "the renewed provider's model projection was not accepted");
             }
             driver::Control::Continue
         });

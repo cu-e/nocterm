@@ -2,7 +2,7 @@
 use super::{
     chat::Chat,
     effects::EffectHost,
-    frame::{Frame, Ledger, PlannedCall},
+    frame::{Frame, Ledger, PlannedCall, Progress},
     history,
     model::{ModelAdmission, StepProgress},
     run::RunRecord,
@@ -46,6 +46,11 @@ impl RunWorker {
         } else if status != RunStatus::Completed {
             self.run.control().fence();
         }
+        // A diagnostic failure cannot skip the terminal status attempt or local retirement.
+        let notice = match result.as_ref().err().and_then(request_limit) {
+            Some(limit) => self.request_limit_notice(limit).await,
+            None => Ok(()),
+        };
         // A tombstone remains terminal; cleanup may not append ordinary status.
         let publication = if self.chat.check().is_ok() {
             self.run.status(self.chat.log(), status).await
@@ -56,7 +61,38 @@ impl RunWorker {
         let retired = self.run.control().retire(retirement).await;
         publication?;
         retired?;
+        notice?;
         result
+    }
+    async fn request_limit_notice(&self, limit: usize) -> Result<(), CoordinatorError> {
+        self.chat.check()?;
+        let step = StepId::from_bytes(self.services.identity().fresh()?);
+        let event = EngineEvent::Text(EngineText::new(
+            TextChannel::Assistant,
+            format!(
+                "Nocterm error: this model request exceeds the input limit of {limit} bytes, including conversation history, tools and image encoding. Use a smaller image or start a new chat with less history."
+            ),
+        )?);
+        let record = JournalRecord::new(
+            RecordContext::Run(self.run.binding().clone()),
+            JournalRecordKind::Progress { step },
+            Frame::Progress(Progress::from(&event)).bytes()?,
+        )?;
+        self.chat
+            .log()
+            .append(
+                None,
+                vec![(
+                    record,
+                    Some(CoordinatorEvent::Progress {
+                        run: self.run.binding().clone(),
+                        event,
+                    }),
+                )],
+                None,
+            )
+            .await?;
+        Ok(())
     }
     async fn advance(&self) -> Result<(), CoordinatorError> {
         self.run.control().check(self.services.source().as_ref())?;
@@ -302,4 +338,20 @@ fn failure(error: &CoordinatorError) -> (RunStatus, RunRetirement) {
         RunRetirement::Interrupted
     };
     (status, retirement)
+}
+
+/// Only exact known input ceilings receive this diagnosis; other exhausted budgets do not.
+fn request_limit(error: &CoordinatorError) -> Option<usize> {
+    match error {
+        CoordinatorError::Engine(EngineError::RequestTooLarge { limit })
+        | CoordinatorError::Inference(
+            nocterm_cloud_model::inference::InferenceError::RequestTooLarge { limit },
+        ) => Some(*limit),
+        CoordinatorError::Engine(EngineError::Admission(cause) | EngineError::Progress(cause)) => {
+            cause
+                .downcast_ref::<CoordinatorError>()
+                .and_then(request_limit)
+        }
+        _ => None,
+    }
 }

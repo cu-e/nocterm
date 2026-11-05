@@ -4,6 +4,7 @@ use nocterm_ai::model::controls::{ConfigChoice, ConfigOption};
 use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, StopReason};
 use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
+mod cloud_composer;
 mod cloud_delivery;
 pub(super) use cloud_delivery::captured_panel;
 mod cloud_servers;

@@ -18,6 +18,7 @@ pub(super) struct Seat {
     pub(super) agent: AgentId,
     pub(super) name: String,
     pub(super) model: String,
+    pub(super) models: Vec<String>,
 }
 
 fn runner_id(instance: &v1::Instance) -> Option<[u8; 16]> {
@@ -60,6 +61,7 @@ pub(super) async fn seats(
                     agent: agent.id.clone(),
                     name: agent.name.clone(),
                     model: agent.primary_model()?.to_owned(),
+                    models: agent.models.clone(),
                 },
             ))
         })

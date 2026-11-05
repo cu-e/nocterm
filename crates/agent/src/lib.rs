@@ -26,6 +26,8 @@
 //! admission, filesystem storage or image decoding.
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,
 //! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
+//! SourceProviderControl owns the explicit personal-agent chooser for an own-runner chat;
+//! its captured composer lists and leases credentials, and its pending work stays source-bound.
 //! A Cloud chat's Servers bar shows its binding, binds and unbinds it and picks the server its
 //! prompts run on through the source's `ConversationServers` (ADR 0147).
 //! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel,

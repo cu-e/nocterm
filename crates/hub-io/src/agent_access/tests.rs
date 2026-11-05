@@ -1,7 +1,8 @@
 //! Behaviour of the agent CA registry over an in-memory hub and fake servers.
 
-use std::sync::Arc;
+use nocterm_session::testing::Gate;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use nocterm_hub_model::DeviceId;
 use nocterm_hub_model::cloud::ssh::SshServerId;
@@ -23,23 +24,43 @@ use crate::pool::Pool;
 use crate::store::memory::MemoryHub;
 
 struct Fixed {
-    operations: Arc<AccountOperations>,
+    operations: Mutex<Arc<AccountOperations>>,
     device: DeviceId,
+    wait: Mutex<Option<(Gate, Gate)>>,
 }
 
 impl AccountWork for Fixed {
     fn work(&self, _hub: &HubId) -> Result<OpenedWork, HubError> {
-        self.operations.opened()
+        self.operations.lock().unwrap().opened()
     }
 
     fn device(&self, _hub: &HubId) -> HubFuture<DeviceId> {
         let device = self.device;
-        Box::pin(async move { Ok(device) })
+        let wait = self.wait.lock().unwrap().take();
+        Box::pin(async move {
+            if let Some((entered, release)) = wait {
+                entered.release();
+                release.wait().await;
+            }
+            Ok(device)
+        })
+    }
+}
+
+impl Fixed {
+    fn replace(&self, operations: Arc<AccountOperations>) {
+        *self.operations.lock().unwrap() = operations;
+    }
+    fn pause_device(&self) -> (Gate, Gate) {
+        let pair = (Gate::pending(), Gate::pending());
+        *self.wait.lock().unwrap() = Some(pair.clone());
+        pair
     }
 }
 
 struct Fixture {
     access: AgentAccess,
+    source: Arc<Fixed>,
     operations: Arc<AccountOperations>,
     hosts: FakeAgentHosts,
     hub: Arc<MemoryHub>,
@@ -59,17 +80,20 @@ fn fixture() -> Fixture {
         Arc::new(Accounts::new(dir.path().join("pool"))),
     ));
     let clock = Arc::new(AtomicI64::new(1_000));
+    let source = Arc::new(Fixed {
+        operations: Mutex::new(operations.clone()),
+        device: DeviceId::new(),
+        wait: Mutex::default(),
+    });
     let access = AgentAccess::with_parts(
-        Arc::new(Fixed {
-            operations: operations.clone(),
-            device: DeviceId::new(),
-        }),
+        source.clone(),
         Arc::new(hosts.clone()),
         Arc::new(move || clock.fetch_add(1, Ordering::SeqCst)),
         pool,
     );
     Fixture {
         access,
+        source,
         operations,
         hosts,
         hub,
@@ -310,4 +334,74 @@ async fn a_chat_binds_only_trusted_servers_with_the_port_this_device_reached_the
             )
         )
     ));
+}
+
+#[tokio::test]
+async fn a_queued_ca_authorization_keeps_the_account_captured_by_the_call() {
+    let original = fixture();
+    let replacement = fixture();
+    let file = server(&original, "web", OTHER);
+    let allowing = original.access.allow(&original.id, "web");
+    original.source.replace(replacement.operations.clone());
+    allowing.await.unwrap();
+    original.source.replace(original.operations.clone());
+    let overview = original.access.overview(&original.id).await.unwrap();
+    assert_eq!(overview.servers.len(), 1);
+    assert!(
+        replacement
+            .hub
+            .collections_of_kind("agent_ssh_trust")
+            .is_empty()
+    );
+    assert!(file.text().starts_with(OTHER));
+    assert!(file.text().contains("cert-authority"));
+}
+
+#[tokio::test]
+async fn an_authorization_waiting_for_its_device_refuses_a_retired_account() {
+    let original = fixture();
+    let replacement = fixture();
+    let file = server(&original, "web", OTHER);
+    let (entered, release) = original.source.pause_device();
+    let allowing = original.access.allow(&original.id, "web");
+    entered.wait().await;
+    original
+        .operations
+        .current_opened_source()
+        .unwrap()
+        .slot()
+        .unwrap()
+        .lock();
+    original.source.replace(replacement.operations.clone());
+    release.release();
+    assert!(matches!(
+        allowing.await,
+        Err(AgentAccessError::Hub(
+            HubError::Stale | HubError::KeysLocked
+        ))
+    ));
+    assert_eq!(file.text(), OTHER);
+    assert!(
+        original
+            .hub
+            .collections_of_kind("agent_ssh_trust")
+            .is_empty()
+    );
+    assert!(
+        replacement
+            .hub
+            .collections_of_kind("agent_ssh_trust")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_queued_authorization_never_edits_a_replacement_server_session() {
+    let fx = fixture();
+    let original = server(&fx, "web", OTHER);
+    let allowing = fx.access.allow(&fx.id, "web");
+    let replacement = server(&fx, "web", OTHER);
+    allowing.await.unwrap();
+    assert_eq!(replacement.text(), OTHER);
+    assert!(original.text().contains("cert-authority"));
 }

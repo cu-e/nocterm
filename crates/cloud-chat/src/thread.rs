@@ -11,41 +11,84 @@ use nocterm_ai::{
     tool_display::{ToolDisplay, ToolOutcome},
 };
 use nocterm_cloud_conversation_model::{
-    CloudTranscript, Row, RowRole, RunStatus, SessionEnd, SessionRow, SessionState,
-    ToolOutcome as CloudOutcome, ToolRow, ToolState,
+    CloudTranscript, ConversationDelta, Row, RowRole, RunStatus, SessionEnd, SessionRow,
+    SessionState, ToolOutcome as CloudOutcome, ToolRow, ToolState,
 };
 use serde_json::Value;
+
+/// Expensive text/JSON conversion of the incoming rows, prepared off the foreground.
+pub(crate) struct PreparedRows {
+    entries: Vec<Entry>,
+    indices: Vec<u64>,
+    times: Vec<u64>,
+}
+impl PreparedRows {
+    pub(crate) fn new(delta: &ConversationDelta) -> Self {
+        let rows = if delta.changed_from.is_some() {
+            delta.rows.as_slice()
+        } else {
+            &[]
+        };
+        Self {
+            entries: rows.iter().map(entry).collect(),
+            indices: rows.iter().map(|row| row.index).collect(),
+            times: rows.iter().map(|row| row.at_ms / 1000).collect(),
+        }
+    }
+}
 
 /// The thread of one transcript, and which row each entry shows.
 #[derive(Default)]
 pub(crate) struct ThreadMirror {
     thread: ThreadState,
     indices: Vec<u64>,
+    ordered: bool,
 }
 impl ThreadMirror {
     pub(crate) fn thread(&self) -> &ThreadState {
         &self.thread
     }
-    /// Brings the thread up to `transcript`: entries of rows that did not change stay.
-    pub(crate) fn follow(&mut self, transcript: &CloudTranscript, changed_from: Option<u64>) {
-        let rows = transcript.rows();
-        let kept = match changed_from {
-            Some(from) => rows.iter().take_while(|row| row.index < from).count(),
-            None => rows.len(),
-        };
-        let unchanged = self.indices.len() >= kept
-            && self.indices[..kept]
-                .iter()
-                .zip(rows)
-                .all(|(index, row)| *index == row.index);
-        let keep = if unchanged { kept } else { 0 };
-        self.thread.truncate(keep);
-        self.indices.truncate(keep);
-        for row in &rows[keep..] {
-            self.thread.entries.push(entry(row));
-            self.thread.times.push(row.at_ms / 1000);
-            self.indices.push(row.index);
+    /// Existing rows follow the same retention rule as the neutral transcript. A normal
+    /// ordered append/replacement cuts by binary search; unusual unordered input retains
+    /// the original public delta semantics without a sorting assumption.
+    pub(crate) fn accept(&mut self, delta: &ConversationDelta, rows: PreparedRows) {
+        self.retain(delta);
+        self.ordered = (self.ordered || self.indices.is_empty())
+            && rows.indices.windows(2).all(|pair| pair[0] <= pair[1])
+            && self
+                .indices
+                .last()
+                .zip(rows.indices.first())
+                .is_none_or(|(last, first)| last <= first);
+        self.thread.entries.extend(rows.entries);
+        self.thread.times.extend(rows.times);
+        self.indices.extend(rows.indices);
+    }
+    fn retain(&mut self, delta: &ConversationDelta) {
+        if delta.reset {
+            self.clear();
+        } else if self.ordered {
+            let first = self
+                .indices
+                .partition_point(|index| *index < delta.first_index);
+            let end = delta.changed_from.map_or(self.indices.len(), |from| {
+                self.indices.partition_point(|index| *index < from)
+            });
+            self.thread.truncate(end);
+            self.indices.truncate(end);
+            let first = first.min(end);
+            if first != 0 {
+                self.thread.entries.drain(..first);
+                self.thread.times.drain(..first);
+                self.indices.drain(..first);
+            }
+        } else {
+            retain_entries(&mut self.thread.entries, &self.indices, delta);
+            retain_entries(&mut self.thread.times, &self.indices, delta);
+            self.indices.retain(|index| keeps(*index, delta));
         }
+    }
+    pub(crate) fn sync_usage(&mut self, transcript: &CloudTranscript) {
         self.thread.tokens = transcript.shown_run().and_then(|run| {
             let usage = run.usage;
             let mut totals = TokenTotals::new(
@@ -61,6 +104,17 @@ impl ThreadMirror {
     pub(crate) fn clear(&mut self) {
         *self = Self::default();
     }
+}
+fn keeps(index: u64, delta: &ConversationDelta) -> bool {
+    index >= delta.first_index && delta.changed_from.is_none_or(|from| index < from)
+}
+fn retain_entries<T>(values: &mut Vec<T>, indices: &[u64], delta: &ConversationDelta) {
+    let mut position = 0;
+    values.retain(|_| {
+        let kept = keeps(indices[position], delta);
+        position += 1;
+        kept
+    });
 }
 
 fn entry(row: &Row) -> Entry {
@@ -180,28 +234,4 @@ pub(crate) fn phase(transcript: &CloudTranscript) -> ConversationPhase {
         Some(RunStatus::Stopped) => ConversationPhase::Stopped,
         Some(RunStatus::Completed) => ConversationPhase::Completed,
     }
-}
-
-/// Roughly what the transcript keeps in memory, for its admission.
-pub(crate) fn resident_bytes(transcript: &CloudTranscript) -> usize {
-    let rows: usize = transcript
-        .rows()
-        .iter()
-        .map(|row| {
-            256 + row.text.len()
-                + row.tool.as_ref().map_or(0, |tool| {
-                    tool.arguments_json.len()
-                        + tool.output_json.as_ref().map_or(0, String::len)
-                        + tool
-                            .outcome
-                            .as_ref()
-                            .map_or(0, |outcome| outcome.text().len())
-                        + 1024
-                })
-        })
-        .sum();
-    // The thread holds a second copy of the text.
-    rows.saturating_mul(2)
-        .saturating_add(transcript.runs().len() * 256)
-        .saturating_add(4096)
 }

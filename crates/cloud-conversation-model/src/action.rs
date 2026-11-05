@@ -1,5 +1,5 @@
 //! What the person asks of an open Cloud chat.
-use crate::{IntentKey, RunKey, ServerKey};
+use crate::{IntentKey, ModelName, PromptImage, RunKey, ServerKey};
 
 /// One request. The implementation builds the signed command from the verified transcript; a
 /// request names only what the person chose.
@@ -10,6 +10,9 @@ pub enum ConversationAction {
     Prompt {
         text: String,
         server: Option<ServerKey>,
+        /// Explicit choice for this prompt; absent means the conversation's current model.
+        model: Option<ModelName>,
+        images: Vec<PromptImage>,
     },
     /// Stop a run; without one, the active run.
     Stop { run: Option<RunKey> },

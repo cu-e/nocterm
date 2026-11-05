@@ -87,7 +87,7 @@ impl ModelDriver {
         tokio::runtime::Handle::try_current().map_err(|_| EngineError::Unavailable)?;
         state.sdk().advertise_tools(turn, self.tools.clone());
         let request = self.request(prompt, history);
-        let bytes = limits::encode(&request, self.budget.input_bytes())?.len();
+        let bytes = limits::encode_request(&request, self.budget.input_bytes())?.len();
         let before = state.accounting().output_bytes();
         let reserved = state.accounting().reserve(self.budget, bytes)?;
         let call = self.calls.begin(context, reserved)?;

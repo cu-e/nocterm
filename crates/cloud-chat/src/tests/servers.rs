@@ -6,8 +6,8 @@ use gpui::TestAppContext;
 use nocterm_agent_chat::conversation::{BoundServerState, ConversationError, ServerProblem};
 use nocterm_ai::conversation::ConversationAction;
 use nocterm_cloud_conversation_model::{
-    BoundServer, ConversationAction as CloudAction, ServerAccess, ServerBinding, ServerChoice,
-    ServerKey,
+    BoundServer, CommandKey, CommandState, ConversationAction as CloudAction, ServerAccess,
+    ServerBinding, ServerChoice, ServerKey,
 };
 use std::time::Duration;
 
@@ -68,6 +68,8 @@ fn the_chat_shows_each_bound_server_and_its_prompts_run_on_the_one_picked(cx: &m
         Some(&CloudAction::Prompt {
             text: "df -h".into(),
             server: Some(DB),
+            model: None,
+            images: Vec::new(),
         })
     );
 
@@ -77,6 +79,57 @@ fn the_chat_shows_each_bound_server_and_its_prompts_run_on_the_one_picked(cx: &m
     fake.set_servers(lapsed);
     cx.run_until_parked();
     assert_eq!(cx.update(|cx| servers.target(cx)), None);
+}
+
+#[gpui::test]
+async fn a_server_change_invalidates_the_old_draft_and_retry_keeps_its_original_target(
+    cx: &mut TestAppContext,
+) {
+    let (fake, chat) = opened(cx);
+    fake.set_servers(binding());
+    cx.run_until_parked();
+    let source = CloudChat::conversation(&chat);
+    let (servers, composer) =
+        cx.update(|cx| (source.servers(cx).unwrap(), source.composer(cx).unwrap()));
+    cx.update(|cx| servers.set_target(Some(DB.to_string()), cx))
+        .unwrap();
+    let original = cx.update(|cx| composer.revision(cx)).unwrap();
+    let controls = actions(&chat, cx);
+    let first = cx.update(|cx| controls.perform(ConversationAction::Prompt("same".into()), cx));
+    cx.run_until_parked();
+    cx.update(|cx| servers.set_target(None, cx)).unwrap();
+    let changed = cx.update(|cx| composer.revision(cx)).unwrap();
+    assert!(changed > original);
+    assert!(matches!(
+        cx.update(|cx| composer.clear_images(original, cx)),
+        Err(ConversationError::Stale)
+    ));
+    cx.update(|cx| servers.set_target(None, cx)).unwrap();
+    assert_eq!(cx.update(|cx| composer.revision(cx)).unwrap(), changed);
+    let second = cx.update(|cx| controls.perform(ConversationAction::Prompt("same".into()), cx));
+    cx.run_until_parked();
+    let delivered = fake.delivered();
+    assert!(
+        matches!(&delivered[0], CloudAction::Prompt { server: Some(server), .. } if *server == DB)
+    );
+    assert!(matches!(
+        &delivered[1],
+        CloudAction::Prompt { server: None, .. }
+    ));
+    fake.settle(CommandKey::from_bytes([1; 16]), CommandState::Refused);
+    cx.run_until_parked();
+    assert!(matches!(first.await, Err(ConversationError::Rejected)));
+    let refused = super::view(&chat, cx, |view| view.pending_prompts[0].key);
+    let retry = cx.update(|cx| controls.retry_prompt(refused, cx));
+    cx.run_until_parked();
+    assert_eq!(fake.delivered()[0], fake.delivered()[2]);
+    fake.end();
+    cx.run_until_parked();
+    assert!(matches!(
+        cx.update(|cx| servers.set_target(Some(DB.to_string()), cx)),
+        Err(ConversationError::Stale)
+    ));
+    drop((second, retry));
 }
 
 #[gpui::test]

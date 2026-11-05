@@ -12,6 +12,18 @@ pub(in crate::panel::tests) fn captured_panel(
     cx: &mut TestAppContext,
 ) -> (FakeConversation, crate::ConversationPanel) {
     let source = FakeConversation::new("runner-chat-1");
+    let (_, selector) = open_source(f, source.clone(), cx);
+    (source, selector)
+}
+
+pub(super) fn open_source(
+    f: &Fixture,
+    source: FakeConversation,
+    cx: &mut TestAppContext,
+) -> (
+    Rc<dyn nocterm_agent_chat::conversation::ConversationSource>,
+    crate::ConversationPanel,
+) {
     let facade = cx.update(|cx| {
         f.installation
             .installed
@@ -22,12 +34,12 @@ pub(in crate::panel::tests) fn captured_panel(
     let selector = crate::ConversationPanel::new(f.panel.downgrade(), f.handle);
     cx.update_window(f.handle, |_, window, cx| {
         selector
-            .open(facade, "Cloud task".into(), window, cx)
+            .open(facade.clone(), "Cloud task".into(), window, cx)
             .unwrap();
     })
     .unwrap();
     cx.run_until_parked();
-    (source, selector)
+    (facade, selector)
 }
 
 pub(super) fn send(f: &Fixture, text: &str, cx: &mut TestAppContext) {
@@ -72,6 +84,8 @@ fn prompts(text: &str) -> CloudAction {
     CloudAction::Prompt {
         text: text.into(),
         server: None,
+        model: None,
+        images: Vec::new(),
     }
 }
 
@@ -116,7 +130,7 @@ fn a_cloud_chat_shows_its_rows_answers_an_approval_and_stops_its_run(cx: &mut Te
             Some("Cloud question")
         );
         assert!(window.try_find(("fork-message", 0usize)).is_none());
-        assert!(window.try_find("agent-attach-context").is_none());
+        assert!(window.try_find("agent-attach-context").is_some());
         let approvals = window.find("agent-approvals").bounds();
         assert!(approvals.bottom() <= window.find("agent-composer").bounds().origin.y);
         window.click(("tool-Allow once", 0usize), cx);
@@ -299,15 +313,15 @@ fn a_cloud_chat_draws_the_local_composer_with_only_the_controls_it_supports(
     assert!(shown(&f, "agent-composer", cx));
     assert!(shown(&f, "agent-send", cx));
     assert!(
-        !shown(&f, "agent-attach-context", cx),
-        "a Cloud prompt is text"
+        shown(&f, "agent-attach-context", cx),
+        "a Cloud chat offers server binding"
     );
-    assert!(!shown(&f, "agent-attach-image", cx));
+    assert!(shown(&f, "agent-attach-image", cx));
     assert!(!shown(&f, "agent-status", cx), "nothing happens yet");
 }
 
 #[gpui_kit::test]
-fn attaching_an_image_to_a_cloud_prompt_opens_no_file_dialog(cx: &mut TestAppContext) {
+fn attaching_an_image_to_a_cloud_prompt_opens_the_file_picker(cx: &mut TestAppContext) {
     let f = fixture(cx);
     let (_source, _selector) = captured_panel(&f, cx);
     cx.update_window(f.handle, |_, window, cx| {
@@ -318,7 +332,8 @@ fn attaching_an_image_to_a_cloud_prompt_opens_no_file_dialog(cx: &mut TestAppCon
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(!cx.did_prompt_for_paths(), "a Cloud prompt is text");
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|_| None);
 }
 
 #[gpui_kit::test]

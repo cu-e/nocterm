@@ -7,7 +7,8 @@
 //! `AgentHostTrust` and `AgentGrants` ports. `authorized_keys` is reached only through
 //! `AgentHosts`. The CA, its document, principals, lines and trust records are the
 //! contract's (`nocterm_keys::agents`, contract ADR 0009, ADR 0147); contract types stay here
-//! (ADR 0096).
+//! (ADR 0096). Allow captures the original open account, device request and exact host before
+//! scheduling; retirement while it waits refuses the edit rather than selecting another account.
 
 mod grants;
 mod registry;
@@ -129,8 +130,8 @@ impl AgentHostTrust for AgentAccess {
     }
 
     fn allow(&self, hub: &HubId, connection: &str) -> AgentAccessFuture<()> {
-        let (trust, hub, connection) = (self.trust.clone(), hub.clone(), connection.to_owned());
-        self.run(async move { trust.allow(&hub, &connection).await })
+        // Capture the account and the exact server before scheduling native work.
+        self.run(self.trust.allow(hub, connection))
     }
 
     fn deny(&self, hub: &HubId, connection: &str) -> AgentAccessFuture<ServerTrust> {

@@ -11,6 +11,8 @@ pub const MAX_NAME_CHARS: usize = 80;
 pub const MAX_ENDPOINT_BYTES: usize = 512;
 /// Longest model id.
 pub const MAX_MODEL_BYTES: usize = 128;
+/// Most model ids one agent offers.
+pub const MAX_MODELS: usize = 32;
 /// Longest provider key.
 pub const MAX_KEY_BYTES: usize = 1024;
 /// Longest instructions text: the hub's bound for a system prompt.
@@ -61,7 +63,7 @@ pub enum DraftError {
     #[error("the endpoint must be an https URL, or http for localhost")]
     Endpoint,
     /// The model is empty or too long.
-    #[error("name the model")]
+    #[error("choose between one and {MAX_MODELS} valid model ids")]
     Model,
     /// A new agent needs a provider key, or the key is too long.
     #[error("the provider key is missing or too long")]
@@ -83,13 +85,21 @@ pub enum KeyInput {
     Replace(Secret),
 }
 
+/// The authenticated starting state of an own-key model edit or an explicit key repair.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnModelBase {
+    Missing,
+    Models(Vec<String>),
+}
+
 /// A personal agent as the form describes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PersonalAgentDraft {
     name: String,
     provider: ProviderKind,
     endpoint: String,
-    model: String,
+    models: Vec<String>,
+    own_model_base: Option<OwnModelBase>,
     key: KeyInput,
     work_offline: bool,
     pool: Option<PoolId>,
@@ -119,13 +129,7 @@ impl PersonalAgentDraft {
         if !endpoint.is_empty() && !acceptable_endpoint(endpoint) {
             return Err(DraftError::Endpoint);
         }
-        let model = model.trim();
-        if model.is_empty()
-            || model.len() > MAX_MODEL_BYTES
-            || model.chars().any(char::is_whitespace)
-        {
-            return Err(DraftError::Model);
-        }
+        let model = model_id(model)?;
         if let KeyInput::Replace(secret) = &key {
             let key = secret.expose();
             if key.trim().is_empty() || key.len() > MAX_KEY_BYTES {
@@ -139,12 +143,63 @@ impl PersonalAgentDraft {
             name: name.to_owned(),
             provider,
             endpoint: endpoint.to_owned(),
-            model: model.to_owned(),
+            models: vec![model],
+            own_model_base: None,
             key,
             work_offline,
             pool,
             instructions: String::new(),
         })
+    }
+
+    /// Replaces the complete model list. The first is the default; duplicates keep their
+    /// first position. Admission is bounded before normalization.
+    pub fn with_models(mut self, models: Vec<String>) -> Result<Self, DraftError> {
+        if models.is_empty() || models.len() > MAX_MODELS {
+            return Err(DraftError::Model);
+        }
+        let mut accepted = Vec::with_capacity(models.len());
+        for model in models {
+            let model = model_id(&model)?;
+            if !accepted.contains(&model) {
+                accepted.push(model);
+            }
+        }
+        self.models = accepted;
+        Ok(self)
+    }
+    pub fn models(&self) -> &[String] {
+        &self.models
+    }
+    /// The exact model snapshot the editor loaded; never normalize an optimistic base.
+    pub fn with_expected_models(mut self, models: Vec<String>) -> Result<Self, DraftError> {
+        if models.is_empty()
+            || models.len() > MAX_MODELS
+            || models
+                .iter()
+                .any(|model| model.is_empty() || model.len() > MAX_MODEL_BYTES)
+        {
+            return Err(DraftError::Model);
+        }
+        self.own_model_base = Some(OwnModelBase::Models(models));
+        Ok(self)
+    }
+    pub fn expected_models(&self) -> Option<&[String]> {
+        match &self.own_model_base {
+            Some(OwnModelBase::Models(models)) => Some(models),
+            _ => None,
+        }
+    }
+    /// Repairs a missing key only with an explicit replacement credential.
+    pub fn with_missing_key(mut self) -> Result<Self, DraftError> {
+        if matches!(&self.key, KeyInput::Keep) {
+            return Err(DraftError::Key);
+        }
+        self.own_model_base = Some(OwnModelBase::Missing);
+        Ok(self)
+    }
+    pub fn own_model_base(&self) -> Option<&OwnModelBase> {
+        self.own_model_base.as_ref()
     }
 
     /// Gives the agent instructions: the system prompt it works under, sealed with the
@@ -180,7 +235,7 @@ impl PersonalAgentDraft {
 
     /// The model id.
     pub fn model(&self) -> &str {
-        &self.model
+        &self.models[0]
     }
 
     /// What the form does with the key.
@@ -206,6 +261,19 @@ impl PersonalAgentDraft {
     pub fn pool(&self) -> Option<&PoolId> {
         self.pool.as_ref()
     }
+}
+
+fn model_id(model: &str) -> Result<String, DraftError> {
+    let model = model.trim();
+    if model.is_empty()
+        || model.len() > MAX_MODEL_BYTES
+        || model
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return Err(DraftError::Model);
+    }
+    Ok(model.to_owned())
 }
 
 fn acceptable_endpoint(endpoint: &str) -> bool {
@@ -344,5 +412,39 @@ mod tests {
         )
         .unwrap();
         assert!(!format!("{ok:?}").contains("sk-secret"));
+    }
+    #[test]
+    fn model_lists_preserve_the_default_and_all_distinct_valid_ids() {
+        let draft = draft("", KeyInput::Keep, false, false)
+            .unwrap()
+            .with_models(vec![" first ".into(), "second".into(), "first".into()])
+            .unwrap();
+        assert_eq!(draft.model(), "first");
+        assert_eq!(draft.models(), ["first", "second"]);
+        assert_eq!(
+            draft.clone().with_models(Vec::new()),
+            Err(DraftError::Model)
+        );
+        assert_eq!(
+            draft
+                .clone()
+                .with_models(vec!["valid".into(); MAX_MODELS + 1]),
+            Err(DraftError::Model)
+        );
+        assert_eq!(
+            draft.with_models(vec!["two words".into()]),
+            Err(DraftError::Model)
+        );
+    }
+    #[test]
+    fn missing_key_repair_requires_a_new_key_and_has_one_explicit_starting_state() {
+        let keep = draft("", KeyInput::Keep, false, false).unwrap();
+        assert_eq!(keep.with_missing_key(), Err(DraftError::Key));
+        let repair = draft("", KeyInput::Replace(Secret::new("new-key")), false, false)
+            .unwrap()
+            .with_missing_key()
+            .unwrap();
+        assert_eq!(repair.own_model_base(), Some(&OwnModelBase::Missing));
+        assert_eq!(repair.expected_models(), None);
     }
 }
