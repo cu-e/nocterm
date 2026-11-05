@@ -52,7 +52,8 @@ pub struct CloudChat {
     conversation: Arc<dyn CloudConversation>,
     transcript: CloudTranscript,
     thread: ThreadMirror,
-    /// What the core reported after a round; `None` until the first round of a subscription.
+    /// What the core last reported (`Opening` before its first round); `None` until the
+    /// subscription delivered one.
     freshness: Option<Freshness>,
     prompts: PendingPrompts,
     residency: Residency,
@@ -136,14 +137,8 @@ impl CloudChat {
             let mut updates = self.conversation.subscribe()?;
             self.freshness = None;
             self.subscription = Some(cx.spawn(async move |chat, cx| {
-                let mut first_freshness = true;
                 while let Some(update) = updates.next().await {
-                    let provisional =
-                        matches!(update, ConversationUpdate::Freshness(_)) && first_freshness;
-                    if matches!(update, ConversationUpdate::Freshness(_)) {
-                        first_freshness = false;
-                    }
-                    let applied = chat.update(cx, |chat, cx| chat.apply(update, provisional, cx));
+                    let applied = chat.update(cx, |chat, cx| chat.apply(update, cx));
                     if !matches!(applied, Ok(Ok(()))) {
                         return;
                     }
@@ -157,7 +152,6 @@ impl CloudChat {
     fn apply(
         &mut self,
         update: ConversationUpdate,
-        provisional: bool,
         cx: &mut Context<Self>,
     ) -> Result<(), CloudChatError> {
         match update {
@@ -181,10 +175,8 @@ impl CloudChat {
                 self.error = None;
             }
             ConversationUpdate::Freshness(freshness) => {
-                if !provisional {
-                    self.freshness = Some(freshness);
-                    self.reconnecting = false;
-                }
+                self.freshness = Some(freshness);
+                self.reconnecting = false;
             }
             ConversationUpdate::Refused(error) => {
                 self.reconnecting = matches!(error, CloudConversationError::Unavailable);
@@ -238,7 +230,10 @@ impl CloudChat {
     }
     pub(crate) fn shown_freshness(&self) -> ConversationFreshness {
         match self.freshness {
-            None | Some(Freshness::Current { .. }) => ConversationFreshness::Live,
+            // While the chat is opening nothing is claimed, so nothing alarming is shown.
+            None | Some(Freshness::Opening { .. } | Freshness::Current { .. }) => {
+                ConversationFreshness::Live
+            }
             Some(Freshness::Unconfirmed { .. }) => ConversationFreshness::Unconfirmed {
                 can_wake: self.conversation.can_wake(),
             },

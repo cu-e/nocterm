@@ -85,7 +85,16 @@ async fn a_sleeping_seat_shows_its_stored_history_as_unconfirmed_and_offers_wake
     cx: &mut TestAppContext,
 ) {
     let (fake, chat) = opened(cx);
-    // The subscription's first freshness is the one before any round: nothing is claimed yet.
+    // The subscription's first freshness is `Opening`: nothing is claimed yet, so a stored
+    // history is not shown as unconfirmed.
+    assert_eq!(
+        view(&chat, cx, |view| view.freshness),
+        ConversationFreshness::Live
+    );
+    fake.set_freshness(Freshness::Opening {
+        last_witnessed_at_ms: Some(3),
+    });
+    cx.run_until_parked();
     assert_eq!(
         view(&chat, cx, |view| view.freshness),
         ConversationFreshness::Live

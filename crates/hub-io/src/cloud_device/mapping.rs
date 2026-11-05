@@ -25,7 +25,7 @@ pub(crate) fn freshness(value: reader::Freshness) -> Freshness {
     match value {
         reader::Freshness::Opening {
             last_witnessed_at_ms,
-        } => Freshness::Unconfirmed {
+        } => Freshness::Opening {
             last_witnessed_at_ms,
         },
         reader::Freshness::Current { witnessed_at_ms } => Freshness::Current { witnessed_at_ms },
@@ -260,6 +260,15 @@ mod tests {
             }
         );
         assert!(freshness(reader::Freshness::Current { witnessed_at_ms: 1 }).is_current());
+        // Before its first round a chat claims nothing, and is not a sleeping seat.
+        assert_eq!(
+            freshness(reader::Freshness::Opening {
+                last_witnessed_at_ms: Some(2)
+            }),
+            Freshness::Opening {
+                last_witnessed_at_ms: Some(2)
+            }
+        );
     }
 
     #[test]

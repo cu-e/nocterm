@@ -4,6 +4,9 @@
 /// be all of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Freshness {
+    /// Nothing has been asked of the runner yet since the chat was opened: the stored history
+    /// is shown, and nothing is claimed about it (not "the seat is asleep").
+    Opening { last_witnessed_at_ms: Option<i64> },
     /// The runner answered a fresh head probe and the replay reached that head. Later records
     /// keep this state.
     Current { witnessed_at_ms: i64 },
@@ -15,7 +18,7 @@ pub enum Freshness {
 }
 impl Freshness {
     /// What a chat is before its first round.
-    pub const OPENING: Self = Self::Unconfirmed {
+    pub const OPENING: Self = Self::Opening {
         last_witnessed_at_ms: None,
     };
 
