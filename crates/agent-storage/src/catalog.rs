@@ -1,35 +1,13 @@
-//! Per-scope discovery verifies transcript authority before consulting sidecars.
+//! Per-scope discovery reads authoritative transcript headers directly.
 use crate::{
     input::Input,
     namespace::{Partition, Root},
-    publication,
 };
 use nocterm_ai::{
-    history::{self, ChatSummary, MAX_RESTORED, SavedChat},
+    history::{self, ChatSummary, MAX_RESTORED},
     local_environment::ChatScope,
     storage::{AgentStorageError, require_local_scope},
 };
-const MAX_METADATA_BYTES: usize = 16 * 1024;
-
-pub(super) fn update_cache(partition: &Partition, chat: &SavedChat, queued: bool) {
-    let Ok(input) = Input::open(partition, &chat.header.id, "json") else {
-        return;
-    };
-    let summary = ChatSummary::from_chat(chat).with_stamp(input.stamp(), queued);
-    write_cache(partition, &summary);
-}
-fn write_cache(partition: &Partition, summary: &ChatSummary) {
-    if let Ok(bytes) = serde_json::to_vec(summary) {
-        let _ = publication::publish(partition, &summary.id, "meta", &bytes);
-    }
-}
-fn cached(partition: &Partition, id: &str) -> Option<ChatSummary> {
-    let input = Input::open(partition, id, "meta").ok()?;
-    if input.stamp().bytes > MAX_METADATA_BYTES as u64 {
-        return None;
-    }
-    serde_json::from_slice(&input.prefix().ok()?).ok()
-}
 fn summary(partition: &Partition, id: &str) -> Result<Option<ChatSummary>, AgentStorageError> {
     let input = Input::open(partition, id, "json")?;
     let stamp = input.stamp();
@@ -58,9 +36,6 @@ fn summary(partition: &Partition, id: &str) -> Result<Option<ChatSummary>, Agent
     };
     if let Some(summary) = &summary {
         require_local_scope(partition.chat_scope(), &summary.chat_scope())?;
-        if cached(partition, id).as_ref() != Some(summary) {
-            write_cache(partition, summary);
-        }
     }
     Ok(summary)
 }

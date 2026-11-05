@@ -137,26 +137,11 @@ fn save(root: &Root, chat: &SharedChat) -> Result<(), AgentStorageError> {
         let mut original = load(root, &chat.header.chat_scope(), &chat.header.id)?;
         original.draft = draft;
         original.header.updated = updated;
-        return save_record(
-            root,
-            &original,
-            history::encode(&original)?,
-            !original.queue.is_empty(),
-        );
+        return save_record(root, &original, history::encode(&original)?);
     }
-    save_record(
-        root,
-        &chat.metadata,
-        history::encode_shared(chat)?,
-        !chat.queue.is_empty(),
-    )
+    save_record(root, &chat.metadata, history::encode_shared(chat)?)
 }
-fn save_record(
-    root: &Root,
-    chat: &SavedChat,
-    bytes: Vec<u8>,
-    queued: bool,
-) -> Result<(), AgentStorageError> {
+fn save_record(root: &Root, chat: &SavedChat, bytes: Vec<u8>) -> Result<(), AgentStorageError> {
     let directory = root
         .open(true)?
         .ok_or_else(|| AgentStorageError::NotFound(chat.header.id.clone()))?;
@@ -173,7 +158,6 @@ fn save_record(
     let partition = partition.ok_or_else(|| AgentStorageError::NotFound(chat.header.id.clone()))?;
     existing(&partition, &chat.header.id)?;
     publication::publish(&partition, &chat.header.id, "json", &bytes)?;
-    catalog::update_cache(&partition, chat, queued);
     Ok(())
 }
 fn delete(root: &Root, scope: &ChatScope, id: &str) -> Result<(), AgentStorageError> {
