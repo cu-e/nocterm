@@ -10,17 +10,36 @@ fn fixture(
     Entity<Workspace>,
     Installed,
 ) {
+    fixture_library(cx, nocterm_snippets::Library::default())
+}
+
+fn fixture_library(
+    cx: &mut TestAppContext,
+    library: nocterm_snippets::Library,
+) -> (
+    AnyWindowHandle,
+    Entity<SnippetsPanel>,
+    Entity<Workspace>,
+    Installed,
+) {
     let (handle, workspace, installed) = cx.update(|cx| {
         cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         cx.set_global(Design::new(DesignTokens::builtin()));
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        let installed = crate::test_support::install(
-            settings,
+        let model = nocterm_snippets_store::SnippetsHandle::install(
+            nocterm_snippets_store::PreparedLibrary::loaded(Ok(Some(library)), false),
+            std::sync::Arc::new(|_| Box::pin(async { Ok(()) })),
             &nocterm_store::ShutdownCoordinator::default(),
             cx,
         )
         .unwrap();
+        let installed = crate::init(
+            model,
+            settings,
+            std::sync::Arc::new(nocterm_snippets::test_support::SequenceIds::new(10_000)),
+            cx,
+        );
         let (handle, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
@@ -214,3 +233,136 @@ fn deletion_requires_separate_confirmation_and_cancel_keeps_snippet(cx: &mut Tes
 }
 #[path = "run_tests.rs"]
 mod run_tests;
+
+fn rendered_snippets(window: &Window) -> Vec<usize> {
+    (1..=256)
+        .filter(|index| {
+            window
+                .try_find(SharedString::from(format!(
+                    "snippet-{}",
+                    uuid::Uuid::from_u128(*index as u128)
+                )))
+                .is_some()
+        })
+        .collect()
+}
+
+fn scroll_snippets_to_end(window: &mut Window, cx: &mut gpui_kit::App) {
+    let mut visible = rendered_snippets(window);
+    // Variable row heights replace estimates as we arrive. Native extent can therefore
+    // grow at the end of a long jump; convergence must stay bounded and make progress.
+    for _ in 0..3 {
+        if visible.contains(&256) {
+            break;
+        }
+        let previous = visible.last().copied().unwrap_or(0);
+        window.scroll(
+            "snippets-list",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(-100_000.),
+            )),
+            cx,
+        );
+        visible = rendered_snippets(window);
+        assert!(
+            visible.last().is_some_and(|last| *last > previous),
+            "native wheel stopped progressing: {visible:?}"
+        );
+    }
+    assert!(
+        visible.contains(&256),
+        "native wheel must reach the exact final row within four jumps: {visible:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_large_library_builds_visible_rows_and_scrolls_to_the_exact_last_content(
+    cx: &mut TestAppContext,
+) {
+    let snippets: Vec<_> = (0..256)
+        .map(|index| Snippet {
+            name: format!("Snippet {index:03}"),
+            content: format!("echo {index}\n{}", "# padding\n".repeat(2000)),
+            ..Snippet::new(uuid::Uuid::from_u128(index + 1))
+        })
+        .collect();
+    let last = snippets.last().unwrap().clone();
+    let (handle, _, _, _) = fixture_library(cx, nocterm_snippets::Library { snippets });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let materialized = rendered_snippets(window).len();
+        assert!(
+            (1..40).contains(&materialized),
+            "materialized {materialized}/256 rows"
+        );
+        assert!(
+            window
+                .try_find(SharedString::from(format!("snippet-{}", last.id)))
+                .is_none()
+        );
+        window.scroll(
+            "snippets-list",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                gpui_kit::px(0.),
+                gpui_kit::px(-100_000.),
+            )),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        scroll_snippets_to_end(window, cx);
+        window.click("snippet-library-search", cx);
+        window.input("Snippet 255", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("copy", cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().unwrap(),
+            last.content
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_filtered_library_updates_after_a_saved_record_changes(cx: &mut TestAppContext) {
+    let original = snippet();
+    let (handle, _, _, installed) = fixture_library(
+        cx,
+        nocterm_snippets::Library {
+            snippets: vec![original.clone()],
+        },
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("snippet-library-search", cx);
+        window.input("future", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("copy").is_none());
+    })
+    .unwrap();
+    let mut changed = original.clone();
+    changed.content = "future exact content".into();
+    cx.update(|cx| installed.save(changed.clone(), Some(original), cx).detach());
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("copy", cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().unwrap(),
+            changed.content
+        );
+    })
+    .unwrap();
+}

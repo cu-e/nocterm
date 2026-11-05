@@ -1,99 +1,230 @@
-//! Connections shared through the account's organizations, one section each below the
-//! personal list.
+//! Prepared sidebar positions and organization headers. Saved profiles stay in their service.
 use super::*;
-use crate::spaces::Spaces;
-use nocterm_connections_model::replica::{ReplicaAccess, ReplicaScope, ReplicaSpace};
+use gpui_kit::{ListAlignment, ListState, px};
+use nocterm_connections_model::{
+    profiles::Profiles,
+    replica::{ReplicaAccess, ReplicaScope, ReplicaSpace},
+};
+use std::{collections::HashMap, rc::Rc};
 
-/// The section of the connections whose organization the account does not reach now: before
-/// the first synchronization, while the vault is locked, or once its group left the layout.
-const UNAVAILABLE: &str = "unavailable";
+pub(super) enum Entry {
+    Ungrouped,
+    Profile {
+        index: usize,
+        id: ProfileId,
+        group: Option<Rc<str>>,
+        writable: bool,
+    },
+    Group(Rc<str>, bool),
+    Append(Option<Rc<str>>),
+    Space(Section),
+    SpaceEmpty(String),
+}
 
-/// One organization and the connections of it that the filter lets through.
-pub(super) struct Section {
-    id: String,
-    name: String,
-    /// The organization the members belong to; none for the section of unreachable ones.
-    scope: Option<ReplicaScope>,
+impl Entry {
+    pub(super) fn render(
+        &self,
+        panel: &ConnectionsPanel,
+        cx: &mut Context<ConnectionsPanel>,
+    ) -> AnyElement {
+        let row = match self {
+            Self::Ungrouped => ungrouped(cx).into_any_element(),
+            Self::Profile {
+                index,
+                id,
+                group,
+                writable,
+            } => profile_row(*index, *id, group.as_ref(), *writable, panel, cx),
+            Self::Group(group, collapsed) => panel
+                .render_group_header(group, *collapsed, cx)
+                .into_any_element(),
+            Self::Append(group) => {
+                let zone = panel
+                    .render_append_zone(group.as_deref(), cx)
+                    .into_any_element();
+                match group {
+                    Some(group) => div()
+                        .id(SharedString::from(format!("group-members-{group}")))
+                        .test_support()
+                        .pl_3()
+                        .child(zone)
+                        .into_any_element(),
+                    None => div().child(zone).into_any_element(),
+                }
+            }
+            Self::Space(section) => section.render(cx).into_any_element(),
+            Self::SpaceEmpty(id) => div()
+                .id(SharedString::from(format!("connections-space-{id}-empty")))
+                .test_support()
+                .mx_1()
+                .px_2()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Nothing shared yet.")
+                .into_any_element(),
+        };
+        div().pb_px().child(row).into_any_element()
+    }
+}
+fn ungrouped(cx: &mut Context<ConnectionsPanel>) -> impl IntoElement {
+    h_flex()
+        .id("connections-ungrouped")
+        .test_support()
+        .mx_1()
+        .px_2()
+        .py_1()
+        .rounded(cx.theme().radius)
+        .gap_1()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(Icon::new(IconName::Server).small())
+        .child("Ungrouped")
+        .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
+        .on_drop(cx.listener(|this, dragged: &DraggedProfile, window, cx| {
+            this.move_profile(dragged, None, None, window, cx)
+        }))
+}
+fn profile_row(
+    index: usize,
+    id: ProfileId,
+    group: Option<&Rc<str>>,
     writable: bool,
-    members: Vec<Profile>,
+    panel: &ConnectionsPanel,
+    cx: &mut Context<ConnectionsPanel>,
+) -> AnyElement {
+    let profiles = panel.installed.connections().read(cx).profiles(cx);
+    // A frame prepared before a deferred publication observation cannot display
+    // a different record that moved into the same position.
+    let Some(profile) = profiles
+        .iter()
+        .nth(index)
+        .filter(|profile| profile.id == id)
+    else {
+        return div().into_any_element();
+    };
+    let visual = row::RowVisual::new(profile, &panel.installed, cx);
+    let row = panel.render_row(visual, writable, cx).into_any_element();
+    div()
+        .when(group.is_some(), |row| row.pl_3())
+        .when_some(group.cloned(), |row, group| {
+            row.drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
+                .on_drop(
+                    cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
+                        this.move_profile(dragged, Some(group.to_string()), None, window, cx)
+                    }),
+                )
+        })
+        .child(row)
+        .into_any_element()
 }
 
-impl Section {
-    fn of(space: &ReplicaSpace, editable: bool) -> Self {
+pub(super) struct ConnectionList {
+    rows: Rc<Vec<Entry>>,
+    scroll: ListState,
+    dirty: bool,
+    empty: bool,
+    nothing_matches: bool,
+}
+impl Default for ConnectionList {
+    fn default() -> Self {
         Self {
-            id: space_id(&space.scope),
-            name: space.name.clone(),
-            scope: Some(space.scope.clone()),
-            writable: editable && space.access == ReplicaAccess::Write,
-            members: Vec::new(),
+            rows: Rc::default(),
+            scroll: ListState::new(0, ListAlignment::Top, px(100.)),
+            dirty: true,
+            empty: true,
+            nothing_matches: false,
         }
     }
-
-    /// Connections of organizations that cannot be reached: shown, but only to open.
-    fn unavailable(members: Vec<Profile>) -> Self {
-        Self {
-            id: UNAVAILABLE.to_owned(),
-            name: "Unavailable".to_owned(),
-            scope: None,
-            writable: false,
-            members,
-        }
-    }
 }
-
-/// The list as shown: the personal connections filed in folders, then the sections.
-pub(super) struct Listing {
-    top: Vec<Profile>,
-    groups: Vec<(String, Vec<Profile>)>,
-    sections: Vec<Section>,
-}
-
-impl Listing {
-    /// The ungrouped connections, the folders and the organization sections.
-    pub(super) fn into_parts(self) -> (Vec<Profile>, Vec<(String, Vec<Profile>)>, Vec<Section>) {
-        (self.top, self.groups, self.sections)
+impl ConnectionList {
+    pub(super) fn invalidate(&mut self) {
+        self.dirty = true;
     }
-
-    /// Moves the connections of each organization out of the folders into its section.
-    /// Folders are the user's own way to file their connections, so a shared connection
-    /// is listed flat. Without organizations the list is returned as it came.
-    pub(super) fn new(
+    pub(super) fn rows(&self) -> Rc<Vec<Entry>> {
+        self.rows.clone()
+    }
+    pub(super) fn scroll(&self) -> ListState {
+        self.scroll.clone()
+    }
+    pub(super) fn empty(&self) -> bool {
+        self.empty
+    }
+    pub(super) fn nothing_matches(&self) -> bool {
+        self.nothing_matches
+    }
+    pub(super) fn prepare(
+        &mut self,
+        profiles: &Profiles,
         spaces: &Spaces,
-        top: Vec<Profile>,
-        groups: Vec<(String, Vec<Profile>)>,
+        filter: &str,
+        collapsed: &HashSet<String>,
+        rename: Option<(&str, FocusHandle)>,
         cx: &App,
-    ) -> Self {
-        let mut sections: Vec<Section> = spaces
+    ) {
+        if !self.dirty {
+            return;
+        }
+        let listing = Listing::new(profiles, spaces, filter, cx);
+        self.empty = profiles.is_empty() && !spaces.shared();
+        self.nothing_matches = listing.is_empty(!filter.trim().is_empty());
+        let rows = listing.into_rows(profiles, spaces, filter, collapsed, cx);
+        let offset = self.scroll.logical_scroll_top();
+        self.scroll.splice_focusable(
+            0..self.rows.len(),
+            rows.iter().map(|entry| match (entry, &rename) {
+                (Entry::Group(group, _), Some((name, focus))) if group.as_ref() == *name => {
+                    Some(focus.clone())
+                }
+                _ => None,
+            }),
+        );
+        // Unmeasured rows otherwise contribute zero scroll extent. A height hint lets
+        // native wheel/thumb jumps reach unseen rows without constructing the whole list.
+        self.scroll = self.scroll.clone().with_uniform_item_height(px(64.));
+        self.scroll.scroll_to(offset);
+        self.rows = Rc::new(rows);
+        self.dirty = false;
+    }
+}
+
+/// A temporary borrowed partition, used only when semantic list inputs change.
+struct Listing<'a> {
+    top: Vec<&'a Profile>,
+    groups: Vec<(String, Vec<&'a Profile>)>,
+    sections: Vec<(Section, Vec<&'a Profile>)>,
+}
+impl<'a> Listing<'a> {
+    fn new(profiles: &'a Profiles, spaces: &Spaces, filter: &str, cx: &App) -> Self {
+        let (top, groups) = profiles.grouped(filter);
+        let mut sections: Vec<_> = spaces
             .organizations()
-            .map(|space| Section::of(space, spaces.editable()))
+            .map(|space| (Section::of(space, spaces.editable()), Vec::new()))
             .collect();
         let mut unreachable = Vec::new();
-        let mut file = |profile: Profile| match spaces.scope(profile.id, cx) {
+        let mut file = |profile: &'a Profile| match spaces.scope(profile.id, cx) {
             ReplicaScope::Personal => Some(profile),
             scope => {
                 match sections
                     .iter_mut()
-                    .find(|s| s.scope.as_ref() == Some(&scope))
+                    .find(|(section, _)| section.scope.as_ref() == Some(&scope))
                 {
-                    Some(section) => section.members.push(profile),
+                    Some((_, members)) => members.push(profile),
                     None => unreachable.push(profile),
                 }
                 None
             }
         };
-        let top: Vec<Profile> = top.into_iter().filter_map(&mut file).collect();
-        // A folder that became empty only because its connections are shown in a section
-        // goes with them; one that was empty already is the user's remembered folder.
+        let top = top.into_iter().filter_map(&mut file).collect();
         let groups = groups
             .into_iter()
             .filter_map(|(name, members)| {
                 let listed = !members.is_empty();
-                let rest: Vec<Profile> = members.into_iter().filter_map(&mut file).collect();
+                let rest: Vec<_> = members.into_iter().filter_map(&mut file).collect();
                 (rest.is_empty() == !listed).then_some((name, rest))
             })
             .collect();
         if !unreachable.is_empty() {
-            sections.push(Section::unavailable(unreachable));
+            sections.push((Section::unavailable(), unreachable));
         }
         Self {
             top,
@@ -101,37 +232,104 @@ impl Listing {
             sections,
         }
     }
-
-    /// Whether the filter leaves nothing to show.
-    pub(super) fn is_empty(&self, filtering: bool) -> bool {
+    fn is_empty(&self, filtering: bool) -> bool {
         self.top.is_empty()
             && self.groups.is_empty()
             && self
                 .sections
                 .iter()
-                .all(|section| filtering && section.members.is_empty())
+                .all(|(_, members)| filtering && members.is_empty())
+    }
+    fn into_rows(
+        self,
+        profiles: &Profiles,
+        spaces: &Spaces,
+        filter: &str,
+        collapsed: &HashSet<String>,
+        cx: &App,
+    ) -> Vec<Entry> {
+        let indices: HashMap<_, _> = profiles
+            .iter()
+            .enumerate()
+            .map(|(index, profile)| (profile.id, index))
+            .collect();
+        let profile_row = |profile: &Profile, group, writable| Entry::Profile {
+            index: indices[&profile.id],
+            id: profile.id,
+            group,
+            writable,
+        };
+        let mut rows = vec![Entry::Ungrouped];
+        rows.extend(
+            self.top
+                .into_iter()
+                .map(|profile| profile_row(profile, None, spaces.writable(profile.id, cx))),
+        );
+        rows.push(Entry::Append(None));
+        for (name, members) in self.groups {
+            let collapsed = filter.trim().is_empty() && collapsed.contains(&name);
+            let group: Rc<str> = name.into();
+            rows.push(Entry::Group(group.clone(), collapsed));
+            if !collapsed {
+                rows.extend(members.into_iter().map(|profile| {
+                    profile_row(
+                        profile,
+                        Some(group.clone()),
+                        spaces.writable(profile.id, cx),
+                    )
+                }));
+                rows.push(Entry::Append(Some(group)));
+            }
+        }
+        for (section, members) in self.sections {
+            let writable = section.writable;
+            let id = section.id.clone();
+            let empty = members.is_empty();
+            rows.push(Entry::Space(section));
+            rows.extend(
+                members
+                    .into_iter()
+                    .map(|profile| profile_row(profile, None, writable)),
+            );
+            if empty && filter.trim().is_empty() {
+                rows.push(Entry::SpaceEmpty(id));
+            }
+        }
+        rows
     }
 }
 
-fn space_id(scope: &ReplicaScope) -> String {
-    match scope {
-        ReplicaScope::Personal => "personal".to_owned(),
-        ReplicaScope::Organization(id) => id.clone(),
-    }
+pub(super) struct Section {
+    id: String,
+    name: String,
+    scope: Option<ReplicaScope>,
+    writable: bool,
 }
-
 impl Section {
-    /// The header and the rows, each built by `row` from a connection and whether it can be
-    /// changed. Without write access the rows can only be opened.
-    pub(super) fn render<T: 'static>(
-        &self,
-        filtering: bool,
-        cx: &mut Context<T>,
-        row: impl Fn(&Profile, bool, &mut Context<T>) -> AnyElement,
-    ) -> impl IntoElement {
+    fn of(space: &ReplicaSpace, editable: bool) -> Self {
+        let id = match &space.scope {
+            ReplicaScope::Personal => "personal".to_owned(),
+            ReplicaScope::Organization(id) => id.clone(),
+        };
+        Self {
+            id,
+            name: space.name.clone(),
+            scope: Some(space.scope.clone()),
+            writable: editable && space.access == ReplicaAccess::Write,
+        }
+    }
+    fn unavailable() -> Self {
+        Self {
+            id: "unavailable".into(),
+            name: "Unavailable".into(),
+            scope: None,
+            writable: false,
+        }
+    }
+    pub(super) fn render(&self, cx: &App) -> impl IntoElement + use<> {
         let id = &self.id;
         let theme = cx.theme();
-        let header = h_flex()
+        h_flex()
             .id(SharedString::from(format!("connections-space-{id}")))
             .test_support()
             .mx_1()
@@ -154,24 +352,6 @@ impl Section {
                         .font_normal()
                         .child("read-only"),
                 )
-            });
-        let muted = theme.muted_foreground;
-        let mut list = v_flex().gap_px().child(header);
-        for profile in &self.members {
-            list = list.child(row(profile, self.writable, cx));
-        }
-        if self.members.is_empty() && !filtering {
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("connections-space-{id}-empty")))
-                    .test_support()
-                    .mx_1()
-                    .px_2()
-                    .text_xs()
-                    .text_color(muted)
-                    .child("Nothing shared yet."),
-            );
-        }
-        list
+            })
     }
 }

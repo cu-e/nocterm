@@ -133,31 +133,4 @@ impl ConnectionsPanel {
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_group(&name, cx)))
     }
-
-    /// The members of a folder, which also takes a profile dropped on it.
-    pub(super) fn render_folder(
-        &self,
-        group: &str,
-        members: &[Profile],
-        spaces: &Spaces,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let drop_group = group.to_owned();
-        let mut folder = v_flex()
-            .id(SharedString::from(format!("group-members-{group}")))
-            .test_support()
-            .pl_3()
-            .gap_px()
-            .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, Some(drop_group.clone()), None, window, cx)
-                }),
-            );
-        for profile in members {
-            let writable = spaces.writable(profile.id, cx);
-            folder = folder.child(self.render_row(profile, writable, cx));
-        }
-        folder.child(self.render_append_zone(Some(group), cx))
-    }
 }
