@@ -1,3 +1,4 @@
+use crate::changes::Changes;
 use crate::reservations::ReservationBook;
 use nocterm_session::local_fs::CancelFlag;
 use nocterm_transfers::{
@@ -8,6 +9,7 @@ use std::sync::Arc;
 
 pub(crate) struct Batch {
     sequence: u64,
+    revision: Arc<Changes>,
     request: Request,
     tracker: Mutex<ProgressTracker>,
     cancellation: CancelFlag,
@@ -19,9 +21,11 @@ impl Batch {
         id: TransferId,
         request: Request,
         limits: StreamLimits,
+        revision: Arc<Changes>,
     ) -> Self {
         Self {
             sequence,
+            revision,
             tracker: Mutex::new(ProgressTracker::new(id, &request, limits)),
             request,
             cancellation: CancelFlag::default(),
@@ -38,7 +42,11 @@ impl Batch {
         self.tracker.lock().snapshot()
     }
     pub(crate) fn event(&self, event: TransferEvent) {
-        self.tracker.lock().apply(event);
+        let mut tracker = self.tracker.lock();
+        if !tracker.is_finished() {
+            tracker.apply(event);
+            self.revision.advance();
+        }
     }
     pub(crate) fn cancellation(&self) -> CancelFlag {
         self.cancellation.clone()
@@ -54,6 +62,6 @@ impl Batch {
         &self.reservations
     }
     pub(crate) fn finished(&self) -> bool {
-        self.snapshot().state.finished()
+        self.tracker.lock().is_finished()
     }
 }

@@ -223,6 +223,9 @@ impl ProgressTracker {
             cancel_requested: false,
         }
     }
+    pub fn is_finished(&self) -> bool {
+        self.progress.state.finished()
+    }
     pub fn snapshot(&self) -> Progress {
         self.progress.clone()
     }

@@ -108,6 +108,17 @@ pub trait TransferService: Send + Sync + 'static {
     fn enqueue(&self, request: UploadRequest) -> Result<TransferId, TransferError>;
     fn enqueue_download(&self, request: DownloadRequest) -> Result<TransferId, TransferError>;
     fn snapshot(&self) -> Vec<Progress>;
+    /// A monotonic hint for coalesced snapshot readers. None keeps legacy adapters
+    /// polling; a changed revision requires a fresh snapshot. It grants no authority.
+    fn revision(&self) -> Option<u64> {
+        None
+    }
+    /// Coalesced wakeup after a newer revision, including changes before first poll.
+    /// None keeps adapters without notifications on the consumer's bounded cadence.
+    fn changed_since(&self, _revision: u64) -> Option<BoxFuture<'static, ()>> {
+        None
+    }
+
     fn cancel(&self, id: TransferId) -> Result<(), TransferError>;
     fn retry(&self, id: TransferId, fs: Arc<dyn RemoteFs>) -> Result<TransferId, TransferError>;
     /// Closes admission and requests cancellation synchronously, before the future

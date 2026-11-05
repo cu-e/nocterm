@@ -1,6 +1,6 @@
 use crate::{
     remote_discovery::{self, Destination},
-    scheduler::{FileJob, UploadJob, Work},
+    scheduler::{FileJob, QueuedJob, UploadJob, Work},
 };
 use nocterm_session::{
     EntryKind, FileMetadata,
@@ -14,7 +14,7 @@ use nocterm_transfers::{
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 use tokio::sync::mpsc;
 
-pub(crate) async fn run(work: Work, sender: mpsc::Sender<FileJob>) {
+pub(crate) async fn run(work: Work, sender: mpsc::Sender<QueuedJob>) {
     match work.batch().request().clone() {
         Request::Upload(request) => {
             let mut discovery = UploadDiscovery::new(work.clone(), sender);
@@ -89,12 +89,12 @@ struct LocalNode {
 }
 struct UploadDiscovery {
     work: Work,
-    sender: mpsc::Sender<FileJob>,
+    sender: mpsc::Sender<QueuedJob>,
     budget: DiscoveryBudget,
     stack: Vec<LocalFrame>,
 }
 impl UploadDiscovery {
-    fn new(work: Work, sender: mpsc::Sender<FileJob>) -> Self {
+    fn new(work: Work, sender: mpsc::Sender<QueuedJob>) -> Self {
         let budget = DiscoveryBudget::new(work.state().limits().discovery());
         Self {
             work,
@@ -289,8 +289,9 @@ pub(crate) fn skip(work: &Work, path: TransferPath) {
 }
 pub(crate) async fn send(
     work: &Work,
-    sender: &mpsc::Sender<FileJob>,
+    sender: &mpsc::Sender<QueuedJob>,
     job: FileJob,
 ) -> Result<(), TransferCause> {
-    tokio::select! {result=sender.send(job)=>result.map_err(|_|TransferCause::Cancelled),()=work.cancelled()=>Err(TransferCause::Cancelled)}
+    let queued = work.queued(job).await?;
+    tokio::select! {result=sender.send(queued)=>result.map_err(|_|TransferCause::Cancelled),()=work.cancelled()=>Err(TransferCause::Cancelled)}
 }

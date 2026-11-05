@@ -1,7 +1,7 @@
 //! One bounded DFS over a remote source, preserving each destination's authority.
 use crate::{
     discovery::{send, skip},
-    scheduler::{DownloadJob, FileJob, RelayJob, Work},
+    scheduler::{DownloadJob, FileJob, QueuedJob, RelayJob, Work},
 };
 use nocterm_session::{
     DirEntry, EntryKind, FsError, RemoteFs,
@@ -68,7 +68,7 @@ impl Destination {
 }
 pub(crate) async fn run(
     work: Work,
-    sender: mpsc::Sender<FileJob>,
+    sender: mpsc::Sender<QueuedJob>,
     source_fs: Arc<dyn RemoteFs>,
     sources: Vec<String>,
     destination: Destination,
@@ -108,7 +108,7 @@ struct Node {
 }
 struct RemoteDiscovery {
     work: Work,
-    sender: mpsc::Sender<FileJob>,
+    sender: mpsc::Sender<QueuedJob>,
     source_fs: Arc<dyn RemoteFs>,
     budget: DiscoveryBudget,
     stack: Vec<Frame>,

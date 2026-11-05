@@ -7,7 +7,10 @@ use futures::future::BoxFuture;
 use nocterm_session::RemoteFs;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -34,8 +37,13 @@ struct Recordings {
 #[derive(Default)]
 pub struct FakeTransfers {
     recordings: Mutex<Recordings>,
+    snapshots: AtomicUsize,
 }
 impl FakeTransfers {
+    /// Full snapshot requests, for consumers that coalesce externally requested work.
+    pub fn snapshot_count(&self) -> usize {
+        self.snapshots.load(Ordering::Relaxed)
+    }
     pub fn request(&self, id: TransferId) -> Result<Request, FakeTransferError> {
         let recordings = self
             .recordings
@@ -115,6 +123,7 @@ impl TransferService for FakeTransfers {
         self.admit(Request::Download(request))
     }
     fn snapshot(&self) -> Vec<Progress> {
+        self.snapshots.fetch_add(1, Ordering::Relaxed);
         self.recordings
             .lock()
             .map(|recordings| {

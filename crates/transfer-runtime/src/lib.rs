@@ -10,6 +10,7 @@
 //! cancellation drains work before terminal progress and retained-runtime release.
 mod batch;
 mod blocking;
+mod changes;
 mod chunks;
 mod discovery;
 mod download;
