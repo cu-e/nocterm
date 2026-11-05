@@ -86,7 +86,9 @@ pub use target::{
 };
 pub use text::TextEncodingError;
 
-pub use launch::{LaunchValidationError, ShellLaunch, quote_posix, quote_powershell};
+pub use launch::{
+    LaunchValidationError, ShellLaunch, ShellLaunchPreparation, quote_posix, quote_powershell,
+};
 pub use program::{ProgramTransport, TerminalRequest};
 pub use program_opener::{ProgramOpenError, ProgramOpenFuture, ProgramOpenRequest, ProgramOpener};
 

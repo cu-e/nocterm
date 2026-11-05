@@ -79,10 +79,17 @@ fn local_workspace_activation_passes_the_activated_launch_into_native_factory() 
     base.queue(None, None);
     let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
     let launches = recorded.clone();
-    let native = Arc::new(move |launch: ShellLaunch| {
-        launches.lock().unwrap().push(launch);
-        Arc::new(base.clone()) as Arc<dyn Transport>
-    });
+    let native = Arc::new(
+        move |launch: ShellLaunch,
+              preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>| {
+            assert!(
+                preparation.is_some(),
+                "native startup receives deferred preparation"
+            );
+            launches.lock().unwrap().push(launch);
+            Arc::new(base.clone()) as Arc<dyn Transport>
+        },
+    );
     let session = NativeWorkspaceSessions
         .wrap_local(native)
         .open(connection(ShellLaunch {

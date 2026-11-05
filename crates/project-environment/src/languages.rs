@@ -16,6 +16,7 @@ pub(crate) fn installation(
     paths: &InstallPaths,
 ) -> Result<ExecRequest, EnvironmentError> {
     let mut script = String::from(layout::PREPARE);
+    script.push_str(&crate::managed::path_export("base"));
     script.push_str(match (selection.language(), selection.version()) {
         (ProgrammingLanguage::Python, VersionChoice::DistributionDefault) => python::DISTRIBUTION,
         (ProgrammingLanguage::Python, _) => python::MANAGED,
@@ -26,7 +27,7 @@ pub(crate) fn installation(
         (ProgrammingLanguage::Java, VersionChoice::DistributionDefault) => java::DISTRIBUTION,
         (ProgrammingLanguage::Java, _) => java::ADOPTIUM,
     });
-    script.push_str(layout::FINISH);
+    script.push_str(&layout::finish());
     Ok(ExecRequest::new("sh")
         .args([
             "-s",

@@ -17,7 +17,7 @@ fn runs_a_script_from_its_input() {
     let request = ExecRequest::new("sh")
         .arg("-s")
         .stdin("echo one; echo \"$((40 + 2))\"\n");
-    let output = block_on(LocalExec.exec(request)).unwrap();
+    let output = block_on(LocalExec::default().exec(request)).unwrap();
     assert_eq!(collect(output), "one\n42\n");
 }
 
@@ -30,7 +30,7 @@ fn dropping_the_output_stops_the_program_and_its_children() {
         file.display()
     );
     let request = ExecRequest::new("sh").arg("-c").arg(script);
-    let mut output = block_on(LocalExec.exec(request)).unwrap();
+    let mut output = block_on(LocalExec::default().exec(request)).unwrap();
     assert_eq!(block_on(output.next()).as_deref(), Some(&b"started\n"[..]));
     drop(output);
     thread::sleep(Duration::from_millis(600));
@@ -42,18 +42,22 @@ fn programs_report_their_exit_and_errors() {
     let request = ExecRequest::new("sh")
         .arg("-c")
         .arg("echo out; echo 'no such container' >&2; exit 3");
-    let collected = block_on(block_on(LocalExec.exec(request)).unwrap().collect(1024));
+    let collected = block_on(
+        block_on(LocalExec::default().exec(request))
+            .unwrap()
+            .collect(1024),
+    );
     assert_eq!(collected.text(), "out\n");
     assert_eq!(collected.exit.status, Some(3));
     assert_eq!(collected.exit.error(), "no such container");
-    let fine = block_on(LocalExec.exec(ExecRequest::new("true"))).unwrap();
+    let fine = block_on(LocalExec::default().exec(ExecRequest::new("true"))).unwrap();
     assert!(block_on(fine.exit()).success());
 }
 
 #[test]
 fn programs_run_on_a_terminal_of_their_own() {
     use nocterm_session::{CloseReason, Event, PtySize};
-    let session = LocalExec.terminal(TerminalRequest {
+    let session = LocalExec::default().terminal(TerminalRequest {
         program: ExecRequest::new("sh")
             .arg("-c")
             .arg("test -t 1 && echo on-a-tty; exit 4"),
@@ -78,7 +82,8 @@ fn programs_run_on_a_terminal_of_their_own() {
 #[test]
 fn a_missing_program_is_an_error() {
     let started = Instant::now();
-    let error = block_on(LocalExec.exec(ExecRequest::new("/nonexistent/nocterm"))).unwrap_err();
+    let error =
+        block_on(LocalExec::default().exec(ExecRequest::new("/nonexistent/nocterm"))).unwrap_err();
     assert_eq!(error, ExecError::NotFound("/nonexistent/nocterm".into()));
     assert!(started.elapsed() < Duration::from_secs(5));
 }
@@ -88,7 +93,7 @@ fn constructing_or_dropping_an_unpolled_exec_never_spawns() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("unexpected");
     let request = ExecRequest::new("touch").arg(marker.to_string_lossy().to_string());
-    let future = LocalExec.exec(request);
+    let future = LocalExec::default().exec(request);
     thread::sleep(Duration::from_millis(50));
     assert!(!marker.exists());
     drop(future);
@@ -105,7 +110,11 @@ fn exited_leader_does_not_leave_descendants_or_hold_stdout_open() {
         marker.display()
     ));
     let started = Instant::now();
-    let collected = block_on(block_on(LocalExec.exec(request)).unwrap().collect(1024));
+    let collected = block_on(
+        block_on(LocalExec::default().exec(request))
+            .unwrap()
+            .collect(1024),
+    );
     assert_eq!(collected.text(), "started\n");
     assert_eq!(collected.exit.status, Some(7));
     assert!(started.elapsed() < Duration::from_millis(900));
@@ -121,7 +130,7 @@ fn cancellation_after_parent_exit_kills_a_child_that_closed_its_output() {
         "echo started; (exec >/dev/null 2>&1; sleep 0.3; touch '{}') & exit",
         marker.display()
     ));
-    let output = block_on(LocalExec.exec(request)).unwrap();
+    let output = block_on(LocalExec::default().exec(request)).unwrap();
     thread::sleep(Duration::from_millis(100));
     drop(output);
     thread::sleep(Duration::from_millis(500));
@@ -134,7 +143,7 @@ fn exit_observation_does_not_discard_buffered_output() {
         .arg("-c")
         .arg("i=0; while [ $i -lt 4096 ]; do printf '1234567890\\n'; i=$((i+1)); done; exit 9");
     let collected = block_on(
-        block_on(LocalExec.exec(request))
+        block_on(LocalExec::default().exec(request))
             .unwrap()
             .collect(128 * 1024),
     );
@@ -165,7 +174,7 @@ fn cancellation_interrupts_a_backpressured_output_worker_and_stops_descendants()
         "(sleep 1; touch '{}') & while :; do printf '%01024d\\n' 0; done",
         marker.display()
     ));
-    let mut output = block_on(LocalExec.exec(request)).unwrap();
+    let mut output = block_on(LocalExec::default().exec(request)).unwrap();
     assert!(block_on(output.next()).is_some());
     // Leave stdout unread long enough to fill the bounded ExecOutput queue.
     thread::sleep(Duration::from_millis(100));
@@ -175,4 +184,32 @@ fn cancellation_interrupts_a_backpressured_output_worker_and_stops_descendants()
         !marker.exists(),
         "cancellation must bypass output backpressure"
     );
+}
+
+#[test]
+fn cloned_executors_share_the_native_command_capacity_and_release_it_after_cleanup() {
+    let exec = LocalExec::default();
+    let clone = exec.clone();
+    let mut outputs = Vec::new();
+    for _ in 0..32 {
+        let mut output =
+            block_on(exec.exec(ExecRequest::new("sh").args(["-c", "echo ready; sleep 60"])))
+                .unwrap();
+        assert!(block_on(output.next()).is_some());
+        outputs.push(output);
+    }
+    assert!(matches!(
+        block_on(clone.exec(ExecRequest::new("true"))),
+        Err(ExecError::Failed(_))
+    ));
+    drop(outputs.pop());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let output = loop {
+        match block_on(clone.exec(ExecRequest::new("true"))) {
+            Ok(output) => break output,
+            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            error => panic!("command capacity did not recover: {error:?}"),
+        }
+    };
+    assert!(block_on(output.exit()).success());
 }
