@@ -291,3 +291,43 @@ fn stored_rows_and_staging_refuse_inconsistent_revisions() {
         Err(JournalError::Conflict)
     ));
 }
+
+fn bound(phase: crate::ssh_access::SshAccessPhase) -> SummarySsh {
+    use crate::{
+        coordinator::{GrantClass, GrantReference},
+        identity::{GrantEpoch, GrantId},
+    };
+    SummarySsh {
+        binding: OpaqueBytes::new(vec![7; 40]).unwrap(),
+        report: SshAccessReport {
+            grant: GrantReference::new(
+                GrantClass::SshBinding,
+                GrantId::from_bytes([1; 16]),
+                GrantEpoch::new(1).unwrap(),
+            ),
+            access: phase,
+            servers: Vec::new(),
+        },
+    }
+}
+
+#[test]
+fn a_changed_ssh_binding_makes_a_new_revision_due_that_carries_it_and_an_equal_one_does_not() {
+    use crate::ssh_access::SshAccessPhase;
+    let mut facts = ChatSummaryFacts::default();
+    prompted(&mut facts, 1, "hello", "model", 100);
+    let mut tracker = ChatSummaryTracker::restore(run(1).stream(), facts, None).unwrap();
+    assert!(seal_next(&mut tracker, 1_000).ssh().is_none());
+    tracker.published(1, at(1_000));
+    tracker.observe_ssh(None);
+    assert!(matches!(tracker.next(at(10_000)), SummaryStep::Idle));
+    tracker.observe_ssh(Some(bound(SshAccessPhase::Pending)));
+    let draft = seal_next(&mut tracker, 10_000);
+    assert_eq!(draft.ssh(), Some(&bound(SshAccessPhase::Pending)));
+    assert_eq!(draft.at(), at(10_000));
+    tracker.published(2, at(10_000));
+    tracker.observe_ssh(Some(bound(SshAccessPhase::Pending)));
+    assert!(matches!(tracker.next(at(20_000)), SummaryStep::Idle));
+    tracker.observe_ssh(Some(bound(SshAccessPhase::Revoked)));
+    assert_eq!(seal_next(&mut tracker, 20_000).revision(), 3);
+}

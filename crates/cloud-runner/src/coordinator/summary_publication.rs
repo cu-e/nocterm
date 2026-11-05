@@ -211,6 +211,9 @@ async fn advance(
             break;
         }
     }
+    if let Some(ssh) = services.ssh() {
+        tracker.observe_ssh(ssh.summary(&stream));
+    }
     deliver(services, owner, tracker).await
 }
 

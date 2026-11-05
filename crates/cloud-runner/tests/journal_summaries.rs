@@ -72,6 +72,42 @@ fn a_version_6_journal_gains_an_empty_summary_table_and_keeps_its_chats() {
 }
 
 #[test]
+fn a_version_8_journal_keeps_its_summary_rows_and_takes_summaries_that_list_sixteen_servers() {
+    let root = private_root();
+    let cipher = Arc::new(TestCipher::default());
+    let store = with_one_chat(root.path(), &cipher);
+    block_on(store.stage_summary(sealed(1, false), at(10), at(20))).unwrap();
+    drop(store);
+    let old = summary_table(root.path()).replace("6286", "4096");
+    sql(
+        root.path(),
+        &format!(
+            "CREATE TABLE old_rows AS SELECT * FROM chat_summaries; DROP TABLE chat_summaries; \
+             {old}; INSERT INTO chat_summaries SELECT * FROM old_rows; DROP TABLE old_rows; \
+             PRAGMA user_version=8"
+        ),
+    );
+    let store = journal(root.path(), cipher);
+    assert_eq!(version(root.path()), 9);
+    assert!(summary_table(root.path()).contains("6286"));
+    let kept = block_on(store.summary(stream())).unwrap().unwrap();
+    assert_eq!(kept.pending(), Some(&sealed(1, false)));
+    let large = SealedChatSummary::new(
+        stream(),
+        ChatKeyEpoch::new(1).unwrap(),
+        2,
+        false,
+        bytes(&[3; MAX_SEALED_CHAT_SUMMARY_BYTES]),
+    )
+    .unwrap();
+    block_on(store.stage_summary(large.clone(), at(10), at(30))).unwrap();
+    drop(store);
+    let store = journal(root.path(), Arc::new(TestCipher::default()));
+    let stored = block_on(store.summary(stream())).unwrap().unwrap();
+    assert_eq!(stored.pending(), Some(&large));
+}
+
+#[test]
 fn journals_of_other_versions_are_refused() {
     for other in [4, 10] {
         let root = private_root();

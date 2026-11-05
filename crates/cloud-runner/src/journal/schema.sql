@@ -132,7 +132,7 @@ CREATE TABLE chat_summaries (
   last_activity INTEGER NOT NULL CHECK(last_activity>=created_at),
   deleted INTEGER NOT NULL CHECK(deleted IN(0,1)),
   key_epoch INTEGER CHECK(key_epoch IS NULL OR key_epoch>0),
-  sealed BLOB CHECK(sealed IS NULL OR length(sealed) BETWEEN 1 AND 4096),
+  sealed BLOB CHECK(sealed IS NULL OR length(sealed) BETWEEN 1 AND 6286),
   CHECK((sealed IS NULL)=(key_epoch IS NULL)),
   CHECK((published<revision)=(sealed IS NOT NULL))
 ) WITHOUT ROWID;

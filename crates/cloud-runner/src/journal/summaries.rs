@@ -1,4 +1,4 @@
-//! Journal v7 summary rows: per chat the newest staged summary revision, the newest one the
+//! Journal summary rows (v7; v9 raised the sealed bound for bound servers, ADR 0139): per chat the newest staged summary revision, the newest one the
 //! hub confirmed, the creation and last-activity times and, while unconfirmed, the sealed
 //! bytes of the staged revision (ADR 0135).
 //!
@@ -18,7 +18,8 @@ use nocterm_cloud_model::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
-/// The table journal v7 adds; `schema.sql` creates the same one.
+/// The summary table as journal v9 defines it; `schema.sql` creates the same one. The v6
+/// to v7 upgrade creates it as it is now, and v9 rebuilds a v7 table with this bound.
 pub(super) const TABLE: &str = "CREATE TABLE chat_summaries (
   chat BLOB PRIMARY KEY REFERENCES chats(chat),
   revision INTEGER NOT NULL CHECK(revision>0),
@@ -27,7 +28,7 @@ pub(super) const TABLE: &str = "CREATE TABLE chat_summaries (
   last_activity INTEGER NOT NULL CHECK(last_activity>=created_at),
   deleted INTEGER NOT NULL CHECK(deleted IN(0,1)),
   key_epoch INTEGER CHECK(key_epoch IS NULL OR key_epoch>0),
-  sealed BLOB CHECK(sealed IS NULL OR length(sealed) BETWEEN 1 AND 4096),
+  sealed BLOB CHECK(sealed IS NULL OR length(sealed) BETWEEN 1 AND 6286),
   CHECK((sealed IS NULL)=(key_epoch IS NULL)),
   CHECK((published<revision)=(sealed IS NOT NULL))
 ) WITHOUT ROWID;";

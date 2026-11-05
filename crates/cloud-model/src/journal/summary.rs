@@ -19,6 +19,7 @@ use crate::{
     identity::{ChatKeyEpoch, IntentId, Timestamp},
     inference::ModelSelection,
     payload::OpaqueBytes,
+    ssh_access::SshAccessReport,
 };
 use nocterm_ai::model::content::Content;
 use std::collections::BTreeMap;
@@ -27,8 +28,9 @@ use std::collections::BTreeMap;
 /// replacing control characters never shrinks a line below half its bytes, so 256 bytes
 /// always cover the title.
 pub const MAX_SUMMARY_PROMPT_LINE_BYTES: usize = 256;
-/// The largest sealed summary the runner journal stores.
-pub const MAX_SEALED_CHAT_SUMMARY_BYTES: usize = 4096;
+/// The largest sealed summary the runner journal stores: the contract's sealed bound, which
+/// sixteen bound servers with the longest names fit (contract ADR 0011, journal v9).
+pub const MAX_SEALED_CHAT_SUMMARY_BYTES: usize = 6286;
 /// At most one summary per chat in this interval; a deletion is published at once.
 pub const SUMMARY_INTERVAL_MS: u64 = 5_000;
 /// The longest wait between attempts after failed publications.
@@ -72,6 +74,15 @@ pub enum SummaryObservation<'a> {
     Activity,
 }
 
+/// A chat's current SSH binding as its summary lists it (ADR 0139): the binding's signed
+/// bytes and the access the runner last reported. The adapter derives the bound servers
+/// and their states from both with the contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SummarySsh {
+    pub binding: OpaqueBytes,
+    pub report: SshAccessReport,
+}
+
 /// The reduced facts of one chat. Bounded: a chat tracks at most 64 unfinished runs and 64
 /// open approvals; further ones only move the last activity.
 #[derive(Clone, Debug, Default)]
@@ -84,6 +95,7 @@ pub struct ChatSummaryFacts {
     approvals: BTreeMap<IntentId, RunBinding>,
     failed: bool,
     deleted: bool,
+    ssh: Option<SummarySsh>,
 }
 impl ChatSummaryFacts {
     /// The facts of a chat whose records are no longer readable, after its deletion.
@@ -181,6 +193,18 @@ impl ChatSummaryFacts {
     pub fn deleted(&self) -> bool {
         self.deleted
     }
+    /// The chat's current SSH binding and access; `None` when it is not bound.
+    pub fn ssh(&self) -> Option<&SummarySsh> {
+        self.ssh.as_ref()
+    }
+    /// Takes the binding the runner holds now; whether that changed the facts.
+    fn observe_ssh(&mut self, ssh: Option<SummarySsh>) -> bool {
+        if self.deleted || self.ssh == ssh {
+            return false;
+        }
+        self.ssh = ssh;
+        true
+    }
     /// Keeps times a previous process recorded: its creation time wins, and the later of
     /// the two activities stays.
     fn restore_times(&mut self, created_at: Timestamp, last_activity: Timestamp) {
@@ -198,6 +222,9 @@ impl ChatSummaryFacts {
         }
         if self.model.is_none() {
             self.model.clone_from(&earlier.model);
+        }
+        if self.ssh.is_none() {
+            self.ssh.clone_from(&earlier.ssh);
         }
         if let (Some(created), Some(last)) = (earlier.created_at, earlier.last_activity) {
             self.restore_times(created, last);
@@ -232,6 +259,8 @@ pub struct ChatSummaryDraft {
     model: Option<ModelSelection>,
     activity: ChatActivity,
     pending_approvals: u16,
+    ssh: Option<SummarySsh>,
+    at: Timestamp,
 }
 impl ChatSummaryDraft {
     fn new(stream: StreamBinding, revision: u64, facts: &ChatSummaryFacts, now: Timestamp) -> Self {
@@ -245,7 +274,13 @@ impl ChatSummaryDraft {
             model: facts.model.clone(),
             activity: facts.activity(),
             pending_approvals: facts.pending_approvals(),
+            ssh: facts.ssh.clone(),
+            at: now,
         }
+    }
+    /// When the runner drafted this revision: the time a bound server's state is read at.
+    pub fn at(&self) -> Timestamp {
+        self.at
     }
     pub fn stream(&self) -> &StreamBinding {
         &self.stream
@@ -272,6 +307,10 @@ impl ChatSummaryDraft {
     }
     pub fn pending_approvals(&self) -> u16 {
         self.pending_approvals
+    }
+    /// The chat's binding and access when it is bound.
+    pub fn ssh(&self) -> Option<&SummarySsh> {
+        self.ssh.as_ref()
     }
 }
 

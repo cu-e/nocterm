@@ -94,6 +94,13 @@ impl ChatSummaryTracker {
             self.changed = true;
         }
     }
+    /// Takes the SSH binding and access the runner holds for the chat now; a change makes a
+    /// new revision due (ADR 0139).
+    pub fn observe_ssh(&mut self, ssh: Option<super::SummarySsh>) {
+        if !self.finished() && self.facts.observe_ssh(ssh) {
+            self.changed = true;
+        }
+    }
     /// Replaces the facts after a reload from a journal whose earlier records are gone,
     /// keeping the title, model and times the earlier facts already held.
     pub fn reload(&mut self, mut facts: ChatSummaryFacts) {

@@ -5,15 +5,17 @@ use nocterm_cloud_model::{
     identity::Timestamp,
     journal::{
         ChatActivity, ChatSummaryDraft, CurrentChatHead, CurrentCloudHeads, JournalError,
-        SealedChatSummary,
+        SealedChatSummary, SummarySsh,
     },
     payload::OpaqueBytes,
 };
 use nocterm_core::SharedCause;
 use nocterm_hub_model::cloud::{
     ChatCoordinate, CloudTextId,
+    ssh::SignedSshBinding,
     summary::{
-        ChatState, ChatSummary, SummaryContext, SummaryHead, SummaryModel, title_from_prompt,
+        BoundServer, ChatState, ChatSummary, SummaryContext, SummaryHead, SummaryModel,
+        bound_servers, title_from_prompt,
     },
 };
 use nocterm_keys::{PublicKey, cloud::seal_summary};
@@ -78,7 +80,7 @@ impl SummarySealer {
             draft.revision(),
         )
         .map_err(storage_error)?;
-        let summary = self.summary(&draft, &head)?;
+        let summary = self.summary(&draft, &head, millis(draft.at())?)?;
         let sealed = self
             .identity
             .with_keys(|keys| {
@@ -101,6 +103,7 @@ impl SummarySealer {
         &self,
         draft: &ChatSummaryDraft,
         head: &CurrentChatHead,
+        now_ms: i64,
     ) -> Result<ChatSummary, JournalError> {
         let facts = head.facts();
         let model = draft
@@ -125,10 +128,21 @@ impl SummarySealer {
             model,
             state: state(draft.activity()),
             pending_approvals: draft.pending_approvals(),
-            servers: Vec::new(),
+            servers: draft
+                .ssh()
+                .map_or(Ok(Vec::new()), |ssh| servers(ssh, now_ms))?,
             features: self.host.features,
         })
     }
+}
+
+/// The bound servers of the chat's current binding with the state its last report gives
+/// them (contract ADR 0011, ADR 0139).
+fn servers(ssh: &SummarySsh, now_ms: i64) -> Result<Vec<BoundServer>, JournalError> {
+    let signed =
+        SignedSshBinding::from_canonical_bytes(ssh.binding.as_bytes()).map_err(storage_error)?;
+    let update = crate::cloud::events::ssh::update(&ssh.report)?;
+    Ok(bound_servers(signed.binding(), &update, now_ms))
 }
 
 fn millis(at: Timestamp) -> Result<i64, JournalError> {

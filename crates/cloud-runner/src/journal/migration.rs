@@ -20,7 +20,9 @@
 //! effect slot; version 9 seals it under its own journal class (contract journal class set 2),
 //! and a row never opens under another class. Re-sealing would need each chat's key, which an
 //! upgrade does not hold, and no v8 row has left a development machine: a chat bound on v8
-//! is bound again by its device. Every chat keeps its records.
+//! is bound again by its device. Every chat keeps its records. The same step rebuilds a
+//! summary table created by version 7 with the sealed bound of journal v9 (6286 bytes, so a
+//! summary lists sixteen bound servers), keeping its rows.
 use crate::storage::storage;
 use nocterm_cloud_model::journal::{JournalError, OUTBOX_RETRY_WINDOW_MS};
 use rusqlite::Connection;
@@ -61,7 +63,8 @@ pub(super) fn upgrade(db: &Connection, version: i64) -> Result<(), JournalError>
     if version <= 7 {
         to_v8(db)?;
     }
-    to_v9(db)
+    // A version 6 journal got the current summary table from `to_v7`.
+    to_v9(db, version >= 7)
 }
 
 fn to_v6(db: &Connection, now_ms: i64) -> Result<(), JournalError> {
@@ -94,10 +97,20 @@ fn to_v8(db: &Connection) -> Result<(), JournalError> {
     tx.commit().map_err(storage)
 }
 
-fn to_v9(db: &Connection) -> Result<(), JournalError> {
+fn to_v9(db: &Connection, rebuild_summaries: bool) -> Result<(), JournalError> {
     let tx = db.unchecked_transaction().map_err(storage)?;
     tx.execute("DELETE FROM chat_ssh_keys", [])
         .map_err(storage)?;
+    if rebuild_summaries {
+        let next = super::summaries::TABLE.replacen("chat_summaries", "chat_summaries_v9", 1);
+        tx.execute_batch(&next).map_err(storage)?;
+        tx.execute_batch(
+            "INSERT INTO chat_summaries_v9 SELECT * FROM chat_summaries;
+             DROP TABLE chat_summaries;
+             ALTER TABLE chat_summaries_v9 RENAME TO chat_summaries;",
+        )
+        .map_err(storage)?;
+    }
     tx.pragma_update(None, "user_version", 9).map_err(storage)?;
     tx.commit().map_err(storage)
 }

@@ -267,6 +267,20 @@ impl CoordinatorSsh {
     pub fn report(&self, stream: &StreamBinding) -> Option<SshAccessReport> {
         self.held.lock().get(stream)?.access.report()
     }
+    /// The chat's current binding and access as its summary lists them (ADR 0139); `None`
+    /// while the chat is not bound or its row was not loaded yet.
+    pub fn summary(&self, stream: &StreamBinding) -> Option<SummarySsh> {
+        let held = self.held.lock();
+        let access = &held.get(stream)?.access;
+        Some(SummarySsh {
+            binding: access.binding()?.signed().clone(),
+            report: access.report()?,
+        })
+    }
+    /// Whether this runner states egress, without which every binding is refused.
+    pub fn takes_bindings(&self) -> bool {
+        !self.reach.egress().is_empty()
+    }
 }
 impl ChatSshCredentials for CoordinatorSsh {
     fn credential(

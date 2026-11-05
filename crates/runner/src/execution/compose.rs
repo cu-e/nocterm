@@ -197,7 +197,13 @@ pub(super) async fn compose(
         handle,
     )
     .with_publication(Arc::new(publication))
-    .with_summaries(summaries(state, &journal, &peer, brokered.as_ref())?);
+    .with_summaries(summaries(
+        state,
+        &journal,
+        &peer,
+        brokered.as_ref(),
+        &ssh_access,
+    )?);
     let source: Arc<dyn AuthenticatedCommandSource> = Arc::new(inbox);
     let tool_timer: Arc<dyn ToolTimer> = timer.clone();
     let broker_setup = SessionBrokerSetup::new(
@@ -301,10 +307,16 @@ fn summaries(
     journal: &DurableRunJournal,
     peer: &RunnerHubPeer,
     brokered: Option<&Arc<BrokeredProviders>>,
+    ssh: &CoordinatorSsh,
 ) -> Result<Arc<CoordinatorSummaries>, RunnerError> {
     let host = match brokered {
         Some(brokered) => RunnerChatHost::managed(brokered.agent())?,
         None => RunnerChatHost::own(),
+    };
+    let host = if ssh.takes_bindings() {
+        host.with_ssh_bindings()
+    } else {
+        host
     };
     let directory = RunnerChatDirectory::new(
         peer.clone(),

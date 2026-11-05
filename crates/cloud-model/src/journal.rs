@@ -56,7 +56,7 @@ pub use summary::{
     ChatActivity, ChatSummaryDirectory, ChatSummaryDraft, ChatSummaryFacts, ChatSummaryJournal,
     ChatSummaryTracker, MAX_SEALED_CHAT_SUMMARY_BYTES, MAX_SUMMARY_PROMPT_LINE_BYTES,
     SUMMARY_INTERVAL_MS, SUMMARY_RETRY_CEILING_MS, SealedChatSummary, StoredChatSummary,
-    SummaryObservation, SummaryStep,
+    SummaryObservation, SummarySsh, SummaryStep,
 };
 pub use writer::{RunJournalWriter, WriterClaim, WriterLease};
 

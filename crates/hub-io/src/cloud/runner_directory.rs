@@ -22,7 +22,9 @@ use nocterm_core::SharedCause;
 use nocterm_hub_client::cloud::CloudUpload;
 use nocterm_hub_model::cloud::{
     ChatCoordinate, CloudTextId,
-    summary::{SUMMARY_FEATURE_PROVIDER_LEASE, SummaryContext, SummaryHost},
+    summary::{
+        SUMMARY_FEATURE_PROVIDER_LEASE, SUMMARY_FEATURE_SSH_BINDING, SummaryContext, SummaryHost,
+    },
 };
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -62,6 +64,12 @@ impl RunnerChatHost {
             },
             features: 0,
         })
+    }
+    /// This runner takes chat SSH bindings (it states egress): its summaries say so and
+    /// list a bound chat's servers (contract ADR 0011, ADR 0139).
+    pub fn with_ssh_bindings(mut self) -> Self {
+        self.features |= SUMMARY_FEATURE_SSH_BINDING;
+        self
     }
 }
 

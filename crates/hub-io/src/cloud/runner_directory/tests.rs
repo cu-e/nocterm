@@ -259,3 +259,125 @@ fn every_chat_activity_names_its_contract_state() {
         assert_eq!(state(activity), expected);
     }
 }
+
+/// A CA-signed binding of the fixture's chat to two servers, as its device sent it.
+fn signed_binding(
+    fixture: &Fixture,
+) -> Result<nocterm_hub_model::cloud::ssh::SignedSshBinding, Box<dyn std::error::Error>> {
+    use nocterm_hub_model::cloud::ssh::{BindingWindow, SshBinding, SshServerId, SshTarget};
+    let binding = fixture.identity.binding();
+    let ca = nocterm_keys::agents::ssh_ca::UserCa::from_seed([5; 32]);
+    let target = |profile: &str, host: &str| -> Result<SshTarget, Box<dyn std::error::Error>> {
+        Ok(SshTarget {
+            server: SshServerId::of_profile(profile),
+            host: CloudTextId::new(host)?,
+            port: 22,
+            user: CloudTextId::new("deploy")?,
+            host_key_sha256: [6; 32],
+        })
+    };
+    Ok(ca.sign_binding(SshBinding {
+        chat: ChatCoordinate::new(
+            metadata_crypto::namespace(binding)?,
+            metadata_crypto::runner(binding),
+            [7; 16],
+            2,
+        )?,
+        grant: nocterm_hub_model::cloud::payload::GrantReference {
+            id: [8; 16],
+            epoch: 1,
+        },
+        window: BindingWindow {
+            issued_at_ms: 1_000,
+            expires_at_ms: 1_000 + 86_400_000,
+        },
+        ca_key: ca.public_key(),
+        targets: vec![target("db", "db.example")?, target("web", "web.example")?],
+    })?)
+}
+
+#[tokio::test]
+async fn a_bound_chat_lists_its_servers_with_the_state_the_runner_reported() -> TestResult {
+    use nocterm_cloud_model::{
+        coordinator::{GrantClass, GrantReference},
+        payload::OpaqueBytes,
+        ssh_access::{SshAccessPhase, SshAccessReport, SshServerKey, SshServerReach},
+    };
+    use nocterm_hub_model::cloud::{
+        ssh::SshServerId,
+        summary::{SUMMARY_FEATURE_SSH_BINDING, ServerState},
+    };
+    let fixture = Fixture::new()?;
+    let signed = signed_binding(&fixture)?;
+    let key =
+        |profile: &str| SshServerKey::from_bytes(*SshServerId::of_profile(profile).as_bytes());
+    let ssh = SummarySsh {
+        binding: OpaqueBytes::new(signed.canonical_bytes()?)?,
+        report: SshAccessReport {
+            grant: GrantReference::new(
+                GrantClass::SshBinding,
+                GrantId::from_bytes([8; 16]),
+                GrantEpoch::new(1)?,
+            ),
+            access: SshAccessPhase::Active {
+                request: [9; 16],
+                valid_before: Timestamp::from_millis(50_000),
+            },
+            servers: vec![
+                (key("db"), SshServerReach::Admitted),
+                (key("web"), SshServerReach::Unreachable),
+            ],
+        },
+    };
+    let mut tracker =
+        ChatSummaryTracker::restore(fixture.stream.clone(), ChatSummaryFacts::default(), None)?;
+    tracker.observe_ssh(Some(ssh));
+    let SummaryStep::Seal(draft) = tracker.next(Timestamp::from_millis(2_000)) else {
+        return Err("a revision is due".into());
+    };
+    let sealer = fixture.sealer(RunnerChatHost::own().with_ssh_bindings())?;
+    let sealed = sealer.seal(draft).await?;
+    let binding = fixture.identity.binding();
+    let context = SummaryContext::new(
+        ChatCoordinate::new(
+            metadata_crypto::namespace(binding)?,
+            metadata_crypto::runner(binding),
+            [7; 16],
+            2,
+        )?,
+        1,
+    )?;
+    let opened = open_summary(
+        &fixture.account,
+        &fixture.pins()?,
+        &context,
+        sealed.ciphertext().as_bytes(),
+    )?;
+    let summary = opened.summary();
+    assert_eq!(
+        summary.features,
+        SUMMARY_FEATURE_PROVIDER_LEASE | SUMMARY_FEATURE_SSH_BINDING
+    );
+    let servers: Vec<_> = summary
+        .servers
+        .iter()
+        .map(|server| (server.host.as_str(), server.state, server.valid_before_ms))
+        .collect();
+    assert_eq!(
+        servers,
+        vec![
+            ("db.example", ServerState::Active, Some(50_000)),
+            ("web.example", ServerState::Unreachable, None),
+        ]
+    );
+    assert_eq!(summary.servers[0].server, SshServerId::of_profile("db"));
+    Ok(())
+}
+
+#[test]
+fn the_runner_journal_stores_every_sealed_summary_the_contract_allows() {
+    assert_eq!(
+        MAX_SEALED_CHAT_SUMMARY_BYTES,
+        nocterm_hub_model::cloud::summary::MAX_SEALED_SUMMARY_BYTES
+    );
+}

@@ -55,7 +55,10 @@ fn request(value: &SshCertificateRequest) -> Result<wire::SshCertificateRequest,
     Ok(request)
 }
 
-fn update(report: &SshAccessReport) -> Result<wire::SshAccessUpdate, JournalError> {
+/// A report as the contract's `SshAccessState`, also the input of a summary's servers.
+pub(in crate::cloud) fn update(
+    report: &SshAccessReport,
+) -> Result<wire::SshAccessUpdate, JournalError> {
     let refusal = |refusal| match refusal {
         SshBindingRefusal::NoSourceAddress => wire::SshBindingRefusal::NoSourceAddress,
         SshBindingRefusal::NoReachableServer => wire::SshBindingRefusal::NoReachableServer,
