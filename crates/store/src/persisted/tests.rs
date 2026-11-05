@@ -618,3 +618,49 @@ fn joined_failures_retain_leaf_primary_secondary_and_recursive_identity() {
         first.as_ref()
     ));
 }
+
+#[gpui::test]
+fn an_acquired_baseline_is_visible_and_captured_without_rewriting_it(cx: &mut TestAppContext) {
+    let writes = Arc::default();
+    let entity = cx.new(|_| Persisted::new(0, recording(&writes), Publication::Optimistic, 8));
+    entity
+        .update(cx, |state, cx| state.initialize(42, cx))
+        .unwrap();
+    entity.read_with(cx, |state, _| {
+        assert_eq!(*state.visible(), 42);
+        assert_eq!(*state.durable(), 42);
+        assert!(!state.is_dirty());
+    });
+    let captured = entity.update(cx, |state, _| state.capture_shutdown());
+    cx.background_executor.spawn(captured).detach();
+    cx.run_until_parked();
+    assert!(writes.lock().unwrap().is_empty());
+}
+
+#[gpui::test]
+fn baseline_initialization_cannot_overwrite_accepted_work_or_a_closing_owner(
+    cx: &mut TestAppContext,
+) {
+    let writes = Arc::default();
+    let entity = cx.new(|_| Persisted::new(0, recording(&writes), Publication::Optimistic, 8));
+    let receipt = entity
+        .update(cx, |state, cx| state.update(|value| *value = 7, cx))
+        .unwrap();
+    assert!(matches!(
+        entity.update(cx, |state, cx| state.initialize(42, cx)),
+        Err(StoreError::BaselineLocked)
+    ));
+    cx.run_until_parked();
+    futures::executor::block_on(receipt.wait()).unwrap();
+    assert!(matches!(
+        entity.update(cx, |state, cx| state.initialize(42, cx)),
+        Err(StoreError::BaselineLocked)
+    ));
+    entity.read_with(cx, |state, _| assert_eq!(*state.visible(), 7));
+    let pristine = cx.new(|_| Persisted::new(0, recording(&writes), Publication::Optimistic, 8));
+    let _captured = pristine.update(cx, |state, _| state.capture_shutdown());
+    assert!(matches!(
+        pristine.update(cx, |state, cx| state.initialize(42, cx)),
+        Err(StoreError::Closing)
+    ));
+}
