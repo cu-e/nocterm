@@ -1,11 +1,11 @@
 //! Immutable capabilities retained by terminal models and every workspace window.
 use crate::credentials::CredentialAssociationError;
 use gpui_kit::{App, Task};
+use nocterm_project_providers::LocalTransportFactory;
 use nocterm_session::{CredentialId, CredentialStore, ShellLaunch, Transport};
 use nocterm_workspace::SessionSpec;
 use std::sync::Arc;
 
-type LocalFactory = Arc<dyn Fn(ShellLaunch) -> Arc<dyn Transport> + Send + Sync>;
 type Association = Arc<
     dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), CredentialAssociationError>>
         + Send
@@ -14,11 +14,11 @@ type Association = Arc<
 
 #[derive(Clone)]
 pub struct LocalSessions {
-    factory: Option<LocalFactory>,
+    factory: Option<LocalTransportFactory>,
     default_program: String,
 }
 impl LocalSessions {
-    pub fn new(factory: LocalFactory, default_program: String) -> Self {
+    pub fn new(factory: LocalTransportFactory, default_program: String) -> Self {
         Self {
             factory: Some(factory),
             default_program,
@@ -37,7 +37,7 @@ impl LocalSessions {
         &self.default_program
     }
     fn transport(&self, launch: ShellLaunch) -> Option<Arc<dyn Transport>> {
-        self.factory.as_ref().map(|factory| factory(launch))
+        self.factory.as_ref().map(|factory| factory(launch, None))
     }
 }
 
@@ -199,7 +199,10 @@ impl Installed {
         };
         let local = self.0.local.factory.clone().map(|native| {
             let factory = factory.clone();
-            Arc::new(move |_: ShellLaunch| factory.wrap_local(native.clone())) as LocalFactory
+            // Terminal opening has no preparation of its own; the workspace
+            // adapter supplies it to the original two-argument native factory.
+            Arc::new(move |_: ShellLaunch, _| factory.wrap_local(native.clone()))
+                as LocalTransportFactory
         });
         Self(Arc::new(InstalledDeps {
             remote: factory.wrap(self.remote()),

@@ -31,7 +31,7 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
         let installed = install(
             Deps::new(
                 transport.clone(),
-                LocalSessions::new(Arc::new(move |_| local.clone()), "/bin/sh".into()),
+                LocalSessions::new(Arc::new(move |_, _| local.clone()), "/bin/sh".into()),
             ),
             &ready,
             cx,
