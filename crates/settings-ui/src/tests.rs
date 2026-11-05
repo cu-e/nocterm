@@ -39,7 +39,7 @@ fn supplied_builtin_pages_are_created_eagerly_in_navigation_order(cx: &mut TestA
             cx.new(|cx| {
                 SettingsView::with_pages(
                     test_catalog(builtins, Vec::new()),
-                    Installed::new(ready.settings().clone()),
+                    ready.settings().clone(),
                     window,
                     cx,
                 )
@@ -62,7 +62,7 @@ use std::{
     rc::Rc,
 };
 struct HostFixture {
-    installed: Installed,
+    installed: SettingsHandle,
     pages: SettingsCatalog,
 }
 fn host_fixture(cx: &mut App) -> HostFixture {
@@ -80,7 +80,7 @@ fn host_fixture(cx: &mut App) -> HostFixture {
         })
     });
     HostFixture {
-        installed: Installed::new(ready.settings().clone()),
+        installed: ready.settings().clone(),
         pages: test_catalog(builtins, Vec::new()),
     }
 }
