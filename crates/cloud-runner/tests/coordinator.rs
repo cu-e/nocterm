@@ -15,6 +15,10 @@ mod provider_wake;
 mod reconciliation;
 #[path = "coordinator/snapshots.rs"]
 mod snapshots;
+#[path = "coordinator/ssh_access.rs"]
+mod ssh_access;
+#[path = "coordinator/summary_publication.rs"]
+mod summary_publication;
 #[path = "coordinator/supervision.rs"]
 mod supervision;
 mod support;
@@ -24,28 +28,15 @@ use nocterm_cloud_model::{
     inference::*, journal::*, testing::*,
 };
 use nocterm_cloud_runner::coordinator::{
-    CoordinatorExecution, CoordinatorServices, CoordinatorStorage, RunCoordinator,
-    ToolApprovalPolicy,
+    CoordinatorExecution, CoordinatorServices, CoordinatorStorage, CoordinatorSummaries,
+    RunCoordinator, ToolApprovalPolicy,
 };
 use std::sync::Arc;
 use support::*;
 
-/// Records the deleted chats the coordinator announced.
-#[derive(Default)]
-struct RecordedRetirements(std::sync::Mutex<Vec<ChatRetirementRequest>>);
-impl ChatRetirement for RecordedRetirements {
-    fn retire(&self, request: ChatRetirementRequest) {
-        self.0.lock().unwrap().push(request);
-    }
-}
-impl RecordedRetirements {
-    fn requests(&self) -> Vec<ChatRetirementRequest> {
-        self.0.lock().unwrap().clone()
-    }
-}
-
 struct Fixture {
     retirements: Arc<RecordedRetirements>,
+    directory: Arc<RecordedSummaryDirectory>,
     root: tempfile::TempDir,
     journal: Arc<nocterm_cloud_runner::DurableRunJournal>,
     actor: RunCoordinator,
@@ -60,6 +51,7 @@ struct Fixture {
     cipher: Arc<TestCipher>,
     task_limits: SupervisorLimits,
     receive_budget: CommandReceiveBudget,
+    ssh: Option<Arc<nocterm_cloud_runner::coordinator::CoordinatorSsh>>,
 }
 impl Fixture {
     fn new() -> Self {
@@ -86,7 +78,7 @@ impl Fixture {
         receive_budget: CommandReceiveBudget,
         transport: Arc<ScriptedPublicationTransport>,
     ) -> Self {
-        Self::build(task_limits, receive_budget, transport, None)
+        Self::build(task_limits, receive_budget, transport, None, None)
     }
     fn with_approval_policy(policy: Arc<dyn ToolApprovalPolicy>) -> Self {
         Self::build(
@@ -94,6 +86,7 @@ impl Fixture {
             CommandReceiveBudget::new(IntakeLimits::default()),
             Arc::new(ScriptedPublicationTransport::default()),
             Some(policy),
+            None,
         )
     }
     fn build(
@@ -101,6 +94,7 @@ impl Fixture {
         receive_budget: CommandReceiveBudget,
         transport: Arc<ScriptedPublicationTransport>,
         approval: Option<Arc<dyn ToolApprovalPolicy>>,
+        ssh: Option<ssh_access::SshAccessInputs>,
     ) -> Self {
         let root = private_root();
         let retirements = Arc::new(RecordedRetirements::default());
@@ -133,6 +127,8 @@ impl Fixture {
             task_limits,
         )
         .with_publication(publication_config(&journal, transport));
+        let directory = Arc::new(RecordedSummaryDirectory::default());
+        let storage = storage.with_summaries(summaries(&journal, &directory));
         let tools = Arc::new(ScriptedRunTools::default());
         let mut execution = CoordinatorExecution::new(
             providers,
@@ -144,6 +140,7 @@ impl Fixture {
         if let Some(policy) = approval {
             execution = execution.with_approval_policy(policy);
         }
+        let (execution, ssh) = ssh_access::with_ssh_access(execution, &journal, ssh);
         let identity = Arc::new(ScriptedCoordinatorIdentity::default());
         let services = CoordinatorServices::new(
             source.clone(),
@@ -153,20 +150,15 @@ impl Fixture {
             timer.clone(),
         )
         .unwrap();
-        let admissions = AdmissionLimits::new(
-            task_limits.workers(),
-            task_limits.workers().min(2),
-            128,
-            32,
-            8,
-            64,
+        let actor = RunCoordinator::with_receive_budget(
+            services,
+            admissions(task_limits),
+            receive_budget.clone(),
         )
         .unwrap();
-        let actor =
-            RunCoordinator::with_receive_budget(services, admissions, receive_budget.clone())
-                .unwrap();
         Self {
             retirements,
+            directory,
             root,
             journal,
             actor,
@@ -181,6 +173,7 @@ impl Fixture {
             cipher,
             task_limits,
             receive_budget,
+            ssh,
         }
     }
     fn restart(&mut self) {
@@ -209,7 +202,8 @@ impl Fixture {
         .with_publication(publication_config(
             &self.journal,
             Arc::new(ScriptedPublicationTransport::default()),
-        ));
+        ))
+        .with_summaries(summaries(&self.journal, &self.directory));
         let execution = CoordinatorExecution::new(
             providers,
             Arc::new(RefusedSessionConsent),
@@ -226,18 +220,12 @@ impl Fixture {
             self.timer.clone(),
         )
         .unwrap();
-        let admissions = AdmissionLimits::new(
-            self.task_limits.workers(),
-            self.task_limits.workers().min(2),
-            128,
-            32,
-            8,
-            64,
+        self.actor = RunCoordinator::with_receive_budget(
+            services,
+            admissions(self.task_limits),
+            self.receive_budget.clone(),
         )
         .unwrap();
-        self.actor =
-            RunCoordinator::with_receive_budget(services, admissions, self.receive_budget.clone())
-                .unwrap();
     }
     async fn binding(&self) -> RunBinding {
         let page = self
@@ -265,6 +253,19 @@ impl Fixture {
             .position()
             .control()
     }
+}
+fn admissions(task_limits: SupervisorLimits) -> AdmissionLimits {
+    let workers = task_limits.workers();
+    AdmissionLimits::new(workers, workers.min(2), 128, 32, 8, 64).unwrap()
+}
+fn summaries(
+    journal: &Arc<nocterm_cloud_runner::DurableRunJournal>,
+    directory: &Arc<RecordedSummaryDirectory>,
+) -> Arc<CoordinatorSummaries> {
+    Arc::new(CoordinatorSummaries::new(
+        journal.clone(),
+        directory.clone(),
+    ))
 }
 fn issuer() -> CommandIssuer {
     CommandIssuer::new(NamespaceId::new("device").unwrap(), fp(51), fp(52))

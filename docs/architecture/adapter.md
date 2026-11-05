@@ -474,7 +474,8 @@ Native identity files do not become public wire formats, and generic signing or
 private-key access is not an application port.
 
 `nocterm-hub-io` is the only crate that speaks the hub protocol. It uses the hub contract
-(`nocterm-hub-client`, `nocterm-hub-proto`, `nocterm-keys`), a public repository outside this
+(`nocterm-hub-client`, `nocterm-hub-model`, `nocterm-hub-proto`, `nocterm-keys`,
+`nocterm-cloud-device`), a public repository outside this
 workspace that is pinned by commit, and implements the `HubTrust`, `HubSignIn` and
 `HubAdminKeys` ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`. `tonic` and
 `prost` values stop at its boundary. The device key and tokens of each hub are kept in one
@@ -568,6 +569,16 @@ purge T-1 remain distinct. Later records, the current writer, command receipts,
 tombstones and unresolved target effects survive. Native archives retain the
 original ModelAction checkpoint binding, independently from public Snapshot S;
 a genuinely absent action has no invented checkpoint anchor.
+`CoordinatorSsh` keeps each chat's SSH binding, certificate request, certificate and
+Ed25519 subject seed in one journal row sealed by the chat's journal cipher under the SSH access
+class (journal v9; the v8 to v9 upgrade deletes rows sealed as effects), stores a
+transition's row before it journals the command and events, restores the previous row when
+journaling fails, and lends the session broker the in-memory key and certificate
+(`ChatSshCredentials`, [ADR 0145](../adr/0145-per-server-ca-principals-and-runner-certificate-sessions.md),
+[ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+The runner's session broker opens a run's bound-server destination (the session access
+hub-io derived from the signed binding) with a configured SSH target or a keyed managed boot
+v3 target of the same endpoint and host key, signing in only with the chat's certificate.
 `CoordinatorPublicationBudgets` shares the exact command receive owner for normal
 and urgent publication lanes. Immutable accepted Stop/Revoke/Delete kinds select
 the urgent reserve; subsequent status uses that actual durable receipt. Observed
@@ -594,6 +605,19 @@ after restart still requires an external trusted head to detect. See
 [ADR 0109](../adr/0109-native-cloud-journal-and-effect-recovery.md) and
 [ADR 0113](../adr/0113-account-bound-journal-catalog.md).
 
+The journal (v7, its sealed bound raised by v9) also keeps one `chat_summaries` row per chat:
+the newest staged and published summary revisions, creation and last-activity times and,
+while the hub has not confirmed the newest revision, its sealed bytes and chat key epoch. The
+row needs no chat key. Versions 5 to 8 are upgraded in order on open; other versions are
+refused. A bound chat's summary lists its servers (`summary::bound_servers`) and a runner that
+states egress sets the SSH binding feature bit.
+`CoordinatorSummaries` follows each chat's committed records through the coordinator's
+journal gate (the first call derives the whole journal, backfilling older chats) and
+publishes due revisions from the runner's delivery sweep. `RunnerChatDirectory` in
+`nocterm-hub-io` signs and seals them with the chat's current head and publishes them to the
+runner's directory stream while the hub negotiated bit 256
+([ADR 0143](../adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)).
+
 A runner's command source also reports `CommandInput::ChatOpened { stream }` after it
 durably admits (or finds already installed) a chat key grant. It is not a command: it has no
 acceptance, acknowledgement or control position, and a retired generation reports nothing. The
@@ -602,11 +626,44 @@ empty head and the catalog row, so a chat the device just created becomes visibl
 grant changes nothing ([ADR 0122](../adr/0122-cloud-chat-creation-protocol.md)).
 
 A prompt the runner accepts only queues its run; the run starts when a signed inference grant
-for it installs. The device issues that grant: the chat sends one `IssueGrant` inference
-command when the runner accepts the person's own prompt, with the prompt's own bounds, and
-an Allow action issues it for any other waiting run. `ConversationPromptPolicy` builds the
-payload, so the grant never exceeds the configured per-run limits
+for it installs. The device issues that grant: the device core's `OpenChat` asks for it once
+(`AllowRun`) when the runner accepts the person's own prompt, the conversation delivers it,
+and an Allow action issues it for any other waiting run. The core's prompt policy builds the
+payload, so the grant never exceeds the per-run limits
 ([ADR 0129](../adr/0129-the-device-allows-a-queued-run-to-use-the-model.md)).
+
+### Cloud device side
+
+The device side of Cloud chats is the contract's sans-I/O `nocterm-cloud-device`, run by
+`nocterm-hub-io::cloud_device`. A `DeviceAccount` copies the unlocked account keys for the
+core, discovers the account's session with `Discover` (hub trust, the hub's capability proof,
+trusted runners) and drops it when the account's keys change. The `driver` runs a flow,
+starting every `Effect` it asks for through an `EffectRunner` and answering each with its
+input or its replay and Watch frames in arrival order; `effects` performs them with the hub
+client's device calls (`capabilities`, `probe_head`, `publish_one`, `replay`, `watch`,
+`runner_status`, under the client's own signer; the device key never leaves
+`nocterm-hub-client`), the hub's Store and agent services and `sign_cloud`. A seat is started
+exactly as the core names it (the enrolled seat's pool); an explicit Wake runs the core's
+`WakeSeat`. `DeviceConversation`
+implements the `CloudConversation` port with one task per open chat over `OpenChat` and the
+`Deliver` flows of its commands; it never polls (it probes on open, on Watch reconnect, after
+its own receipts and on Refresh), keeps the core's sealed `VerifiedChat` checkpoints and its
+commands' sealed `StoredCommand`s in private files under the chats root, and resumes a command
+left from an earlier run with `OpenChat::resume` (its pending row again, the same bytes and a
+receipt probe) ([ADR 0146](../adr/0146-device-transport-and-resumable-commands.md)). `cloud_chats` implements
+`CloudChatLauncher` with `ListChats` (runner directories confirmed by catalogs, kept as sealed
+`VerifiedDirectory` checkpoints), `CreateChat` and, for an own-agent chat, `ProviderLease`.
+Runner enrolment keeps writing the account's hub-trust and registry objects through the
+contract's record layouts
+([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)). A read chat binds
+and unbinds its servers with the core's `BindServers` and unbind (`server_flows`), maps the
+core's `ChatSsh` to the neutral `ServerBinding` (`servers`) and answers each certificate request
+with `SshAnswer` while the account is unlocked; the servers it offers are the account's trusted
+servers with the port this device last reached them on. `cloud_chats::answering` implements
+`ChatSshCertifier`: each sweep keeps every chat whose summary lists bound servers read.
+`agent_access` uses the contract's CA, CA document and per-server lines; reconcile rewrites a
+trusted server's shared-principal line to its own
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ### Native account admission
 

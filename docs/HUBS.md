@@ -222,6 +222,19 @@ wakes it too; until it answers, the chat shows "Reconnecting to the agent". If a
 reach the agent, send it again to retry it; if the agent refuses it, sending it again sends a
 new message.
 
+A Cloud chat can sign in to your own servers. The **Servers** bar above its composer shows the
+servers the chat is bound to and where each stands: *waiting for an unlocked device*, *active
+until* a time, *not reachable by this agent*, *refused*, *expired* or *revoked*. **Bind
+servers…** lists the servers that trust your agent CA (see **Agent access (SSH)** below); tick
+them, pick how long the binding lasts (1, 7, 14 or 30 days, 7 unless you choose) and press
+**Bind**. A server you have not connected to since the application started cannot be ticked
+yet: connect to it once so its port is known. **Prompts run on** picks the server your next
+messages run on (**Default** is the agent's own place). **Unbind** ends the binding at once.
+While this device is signed in and its account keys are unlocked, it renews the agent's short
+certificates for every bound chat, also when the chat is not open; with no such device online,
+access lapses when the last certificate ends. History rows name the servers a chat is bound to,
+and the search finds them.
+
 - **Agent access (SSH)** controls how cloud agents sign in to your own servers. A personal CA
   (shown with its fingerprint and date) signs certificates that are valid for hours at most,
   only from the runner's address, with a terminal and no forwarding. The CA key stays in your
@@ -233,7 +246,9 @@ new message.
     access** acts on one row; tick several rows and use **Deny on selected**.
   - **Allow on servers…** lists the servers you are connected to now; ticked ones get the CA
     line in the `authorized_keys` of the session's user, over that session. Other lines are
-    kept. **Copy CA line** copies the line to add by hand on any other server.
+    kept. Each server's line admits only that server: **Copy line** on its row copies it to add
+    by hand. A server that still has the line an earlier version wrote says *Needs a CA update*;
+    connecting to it once rewrites the line, after which chat certificates open it.
   - **Reissue CA…** asks, then replaces the CA; servers that can be reached move to the new one.
   - **Active chat accesses** lists the accesses agents hold, each with **Revoke**.
 

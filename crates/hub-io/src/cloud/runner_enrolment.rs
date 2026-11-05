@@ -20,7 +20,7 @@ use super::{
     AccountMaterialError, AccountMaterialReservations, AccountRunnerRegistry, CloudRunnerSetup,
     CloudTrustError, CloudTrustReservations, RunnerRegistration, RunnerRegistryError,
     RunnerRegistryReservations, account_material_work_bytes, cloud_trust_work_bytes,
-    runner_catalog_work_bytes, runner_registry_work_bytes,
+    runner_registry_work_bytes,
 };
 use crate::hub_account::HubAccount;
 
@@ -63,7 +63,6 @@ impl Budget {
             cloud_trust_work_bytes().map_err(EnrolmentError::Trust)?,
             account_material_work_bytes().map_err(EnrolmentError::Material)?,
             runner_registry_work_bytes().map_err(EnrolmentError::Registry)?,
-            runner_catalog_work_bytes(),
         ]
         .into_iter()
         .max()

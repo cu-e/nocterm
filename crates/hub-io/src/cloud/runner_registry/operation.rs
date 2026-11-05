@@ -6,7 +6,6 @@ pub(super) struct RegistryOperation {
     bound: BoundOperations,
     cloud: Arc<CloudClient>,
     scope: AccountScope,
-    context: Vec<u8>,
     registration: Option<RunnerRegistration>,
     resident: AllocationLease,
 }
@@ -16,7 +15,6 @@ impl RegistryOperation {
         bound: BoundOperations,
         cloud: Arc<CloudClient>,
         scope: AccountScope,
-        context: Vec<u8>,
         registration: Option<RunnerRegistration>,
         resident: AllocationLease,
     ) -> Self {
@@ -25,19 +23,13 @@ impl RegistryOperation {
             bound,
             cloud,
             scope,
-            context,
             registration,
             resident,
         }
     }
     pub(super) async fn execute(&self) -> Result<TrustedRunnerRoster, RunnerRegistryError> {
-        let (version, runners) = storage::load_or_register(
-            &self.work,
-            &self.scope,
-            &self.context,
-            self.registration.as_ref(),
-        )
-        .await?;
+        let (version, runners) =
+            storage::load_or_register(&self.work, &self.scope, self.registration.as_ref()).await?;
         self.work.source().check().map_err(account)?;
         self.cloud.check_source().map_err(backend)?;
         let result = TrustedRunnerRoster {

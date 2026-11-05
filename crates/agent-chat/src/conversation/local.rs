@@ -77,6 +77,7 @@ impl ConversationSource for LocalConversation {
             updated_at: thread.updated_at(),
             pending_commands: thread.queued_prompt_ids().len(),
             reconnecting: false,
+            freshness: nocterm_ai::conversation::ConversationFreshness::Live,
             composer: nocterm_ai::conversation::ComposerCapabilities {
                 attach: true,
                 configure: true,

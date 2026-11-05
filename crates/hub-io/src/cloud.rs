@@ -21,14 +21,16 @@ pub use runner_peer::{
     RunnerCredentialDeadlines, RunnerHubConnection, RunnerHubError, RunnerHubPeer, RunnerHubTrust,
 };
 pub use runner_reclaim::{ChatRetirementOutcome, RunnerReclaimError, retire_until_compacted};
+mod runner_directory;
+pub use runner_directory::{RunnerChatDirectory, RunnerChatHost, RunnerDirectoryError};
 mod runner_horizons;
+mod runner_ssh_certificates;
+pub use runner_ssh_certificates::RunnerSshCertificates;
 mod runner_retirement;
 pub use runner_retirement::RunnerChatRetirement;
 #[cfg(test)]
 mod runner_test_support;
 
-mod observations;
-pub use observations::{AccountObservationDecoder, ObservationError};
 mod events;
 pub use events::{RunnerArgumentFingerprint, RunnerEventEncoder};
 mod runner_inbox;
@@ -40,9 +42,9 @@ pub use runner_inbox::{
 
 pub(crate) mod account_material;
 pub use account_material::{
-    ACCOUNT_MATERIAL_RESIDENT_BYTES, ACCOUNT_MATERIAL_WORK_BYTES, AccountChatMaterial,
-    AccountMaterialError, AccountMaterialFailure, AccountMaterialReservations, ChatMaterialPins,
-    ChatMaterialRequest, CloudAccountMaterial, StoredChatKeyGrant, account_material_work_bytes,
+    ACCOUNT_MATERIAL_RESIDENT_BYTES, ACCOUNT_MATERIAL_WORK_BYTES, AccountMaterialError,
+    AccountMaterialFailure, AccountMaterialReservations, ChatMaterialPins, CloudAccountMaterial,
+    account_material_work_bytes,
 };
 
 mod runner_enrolment;
@@ -59,21 +61,5 @@ pub use hub_trust::{
     CloudTrustReservations, TrustedCloudHub, cloud_trust_work_bytes,
 };
 
-mod head_mapping;
-mod runner_catalog;
-pub use runner_catalog::{
-    AccountRunnerCatalog, RUNNER_CATALOG_RESIDENT_BYTES, RunnerCatalogError, RunnerCatalogPage,
-    runner_catalog_page_bytes, runner_catalog_work_bytes,
-};
-
-mod conversation_source;
-pub use conversation_source::{
-    CloudConversationSource, ConversationPromptPolicy, ConversationSetup, ConversationStorage,
-    ConversationWorkers,
-};
-
 mod provider_boot;
-pub use provider_boot::{
-    AccountProviderBoot, LeaseRequest, PROVIDER_BOOT_RESIDENT_BYTES, ProviderBootError,
-    ProviderBootReservations, SealedLease, TrustedProviderBoot, provider_boot_work_bytes,
-};
+pub use provider_boot::{ProviderBootError, provider_boot_work_bytes};

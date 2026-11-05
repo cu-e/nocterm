@@ -113,23 +113,23 @@ acceptance; a later record supersedes an earlier one.
 | [0115](0115-retained-physical-terminals.md) | Physical terminals outlive immutable run views |
 | [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix |
 | [0117](0117-contained-local-tool-processes.md) | Cloud local tools receive an explicit contained process capability |
-| [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account |
-| [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers |
+| [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account (device-flow freshness and work leases superseded by 0144) |
+| [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers (single principal superseded by 0145; desktop CA signer and document by 0147) |
 | [0120](0120-cloud-agent-catalog-in-the-chat-menu.md) | The Cloud agent catalog lives in the new-chat menu |
 | [0121](0121-managed-pools-as-a-trusted-gateway.md) | Managed pools are a trusted gateway with per-lease broker tokens |
 | [0122](0122-cloud-chat-creation-protocol.md) | Cloud chats are created on the device and claimed by the runner on key admission |
 | [0123](0123-runner-control-channel.md) | The managed runner reads per-chat broker tokens from a framed control channel |
 | [0124](0124-managed-execution-containment.md) | Managed execution runs tools in nested containment behind the host broker |
-| [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) | Account-key lock port, journal v6 horizon and own-runner placement |
+| [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) | Account-key lock port, journal v6 horizon and own-runner placement (journal version rule superseded by 0143) |
 | [0126](0126-own-runner-provider-lease.md) | A device leases a personal agent's key to the own runner |
 | [0127](0127-managed-runner-agent-policy.md) | The managed runner enforces the agent definition policy from boot v2 |
 | [0128](0128-agents-transfer-files-through-the-shared-transfer-runtime.md) | Agents transfer files through the shared transfer runtime, relaying between servers |
-| [0129](0129-the-device-allows-a-queued-run-to-use-the-model.md) | The device allows a queued Cloud run to use the model |
+| [0129](0129-the-device-allows-a-queued-run-to-use-the-model.md) | The device allows a queued Cloud run to use the model (projection placement superseded by 0144) |
 | [0130](0130-cloud-agents-only-in-hub-windows.md) | Cloud agents are offered only in the window of their hub |
 | [0131](0131-one-container-watch-per-host-connection.md) | One container watch per host connection, relisted only for listing changes |
 | [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local (supersedes process/resource rules of 0059; document organization refined by 0135) |
-| [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat |
-| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript |
+| [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat (row titles and projection superseded by 0144) |
+| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript (projection placement superseded by 0144) |
 | [0135](0135-responsibility-and-cost-guided-agent-work.md) | Agent procedures verify responsibility and runtime cost; gate owns the detailed check matrix |
 | [0136](0136-shared-bounded-streams-and-tool-result-formats.md) | Bounded byte collection and terminal-tool result formats have shared owners |
 | [0137](0137-observed-configuration-publication.md) | Settings and profiles reject publication against an externally changed owned document |
@@ -138,3 +138,8 @@ acceptance; a later record supersedes an earlier one.
 | [0140](0140-offer-confirmation-publication.md) | Displayed key confirmations await bounded native publication |
 | [0141](0141-versioned-plugin-publication.md) | Plugin records select immutable package versions and await actual completion |
 | [0142](0142-live-transcript-and-image-admission.md) | Live transcript and image preparation admit aggregate growth before expensive work |
+| [0143](0143-the-runner-publishes-chat-summaries-journal-v7.md) | The runner publishes signed chat summaries to its directory; journal v7 (journal version rule superseded by 0145) |
+| [0144](0144-the-device-side-runs-on-the-contract-device-core.md) | The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter (request signer, outbox and first-freshness rule superseded by 0146) |
+| [0145](0145-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 (SSH row class, boot host-key rule and journal version superseded by 0147) |
+| [0146](0146-device-transport-and-resumable-commands.md) | Cloud effects go through the hub client; commands resume after a restart |
+| [0147](0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md) | The desktop binds chats to servers and answers their certificate requests; prompts run on bound servers; journal v9 |

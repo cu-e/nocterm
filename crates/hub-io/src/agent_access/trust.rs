@@ -3,23 +3,27 @@
 //! Every change that depends on a server first records the intent in the account's own
 //! collection and only then edits the server, so a server that cannot be reached is never
 //! forgotten: a denial stays `RemovalPending` and is finished on the next connection.
+//!
+//! A trusted server's line admits only that server's principal (`principal_for(ca, server)`,
+//! line version 2). A server that still holds the shared principal of line version 1 needs a
+//! CA update: its next connection rewrites the line and records the per-server form (trust
+//! record schema 2, ADR 0147).
 
 use std::future::Future;
 use std::sync::Arc;
 
+use nocterm_hub_model::cloud::ssh::SshServerId;
 use nocterm_hubs_model::{
     AgentAccessError, AgentCa, AgentTrustOverview, HostChoice, HubId, ServerTrust, TrustedServer,
 };
+use nocterm_keys::agents::ssh_ca::{CaDocument, UserCa};
 use nocterm_keys::agents::{
-    CaLine, Observation, PRINCIPAL_PREFIX, SshTrustRecord, TrustAction, TrustState, find_ca_lines,
-    remove_ca_lines,
+    CaLine, CaLineForm, Observation, ServerLine, SshTrustRecord, TrustAction, TrustState,
+    find_ca_lines, remove_ca_lines, server_line,
 };
-use nocterm_keys::random_bytes;
 use nocterm_ssh_keys::authorized_keys::{AgentHosts, HostAccess, HostAccessError, with_line};
-use sha2::{Digest, Sha256};
 
 use super::AccountWork;
-use super::document::CaDocument;
 use super::registry::{Registry, records};
 use crate::account::operations::OpenedWork;
 
@@ -28,22 +32,13 @@ pub(super) type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
 const LINE_COMMENT: &str = "nocterm agent access";
 
-/// The principal a CA line admits: derived from the CA key, so a line and its certificates
-/// agree without the server knowing the account.
-pub(super) fn principal_of(ca_key: &[u8; 32]) -> String {
-    let digest = Sha256::digest(ca_key);
-    let mut principal = String::from(PRINCIPAL_PREFIX);
-    principal.push_str(&hex::encode(&digest[..8]));
-    principal
-}
-
-pub(super) fn line_of(document: &CaDocument) -> Result<String, AgentAccessError> {
-    let ca_key = document.ca().public_key();
-    CaLine {
-        ca_key,
-        principals: vec![principal_of(&ca_key)],
-        comment: LINE_COMMENT.to_owned(),
-    }
+/// The line that lets the CA certify the server reached through `connection` only.
+pub(super) fn line_of(document: &CaDocument, connection: &str) -> Result<String, AgentAccessError> {
+    CaLine::for_server(
+        document.ca().public_key(),
+        &SshServerId::of_profile(connection),
+        LINE_COMMENT,
+    )
     .to_line()
     .map_err(records)
 }
@@ -97,6 +92,8 @@ fn summary(record: &SshTrustRecord) -> TrustedServer {
         user: record.user.clone(),
         host: record.host.clone(),
         state: state_of(record.state()),
+        needs_ca_update: record.state() == TrustState::Trusted
+            && record.line() == CaLineForm::Shared,
         added_at_ms: record.added_at_ms,
         added_by_device: record.added_by_device.to_string(),
         last_verified_at_ms: record.last_verified_at_ms,
@@ -110,8 +107,8 @@ fn ca_summary(document: &CaDocument) -> AgentCa {
     }
 }
 
-fn fresh_seed() -> Result<[u8; 32], AgentAccessError> {
-    random_bytes::<32>().map_err(records)
+fn fresh_ca() -> Result<UserCa, AgentAccessError> {
+    UserCa::generate().map_err(records)
 }
 
 pub(super) struct Trust {
@@ -181,7 +178,33 @@ impl Trust {
         )
     }
 
-    pub(super) async fn ca_line(&self, hub: &HubId) -> Result<String, AgentAccessError> {
+    pub(super) async fn server_choices(
+        &self,
+        hub: &HubId,
+    ) -> Result<Vec<nocterm_cloud_conversation_model::ServerChoice>, AgentAccessError> {
+        let overview = self.overview(hub).await?;
+        Ok(overview
+            .servers
+            .into_iter()
+            .filter(|server| server.state == ServerTrust::Trusted)
+            .map(|server| nocterm_cloud_conversation_model::ServerChoice {
+                server: nocterm_cloud_conversation_model::ServerKey::from_bytes(
+                    *SshServerId::of_profile(&server.connection).as_bytes(),
+                ),
+                port: self.hosts.port(&server.connection),
+                host: server.host,
+                user: server.user,
+                needs_ca_update: server.needs_ca_update,
+                connection: server.connection,
+            })
+            .collect())
+    }
+
+    pub(super) async fn ca_line(
+        &self,
+        hub: &HubId,
+        connection: &str,
+    ) -> Result<String, AgentAccessError> {
         let work = self.source.work(hub)?;
         let store = work.transient_store();
         let registry = Self::guarded(&work, Registry::load(&store, false)).await?;
@@ -191,7 +214,7 @@ impl Trust {
                 .ok_or_else(|| AgentAccessError::Unknown {
                     connection: String::new(),
                 })?;
-        line_of(&ca.value)
+        line_of(&ca.value, connection)
     }
 
     pub(super) async fn allow(
@@ -210,7 +233,7 @@ impl Trust {
                     nocterm_hubs_model::HubError::NotFound,
                 ))?;
             if registry.ca.is_none() {
-                let document = CaDocument::new(fresh_seed()?, (self.clock)()).map_err(records)?;
+                let document = CaDocument::new(fresh_ca()?, (self.clock)());
                 registry.save_ca(&store, document).await?;
             }
             let document = &registry.ca.as_ref().map(|ca| &ca.value).ok_or_else(|| {
@@ -218,13 +241,13 @@ impl Trust {
                     connection: connection.to_owned(),
                 }
             })?;
-            let line = line_of(document)?;
+            let line = line_of(document, connection)?;
             let text = host.file.read().await.map_err(host_error)?;
             let updated = with_line(&without_lines(&text, document), &line);
             if updated != text {
                 host.file.replace(text, updated).await.map_err(host_error)?;
             }
-            let record = SshTrustRecord::installed(
+            let mut record = SshTrustRecord::installed(
                 connection.to_owned(),
                 host.identity.host.clone(),
                 host.identity.user.clone(),
@@ -234,6 +257,7 @@ impl Trust {
                 device,
             )
             .map_err(records)?;
+            record.set_line(CaLineForm::PerServer, (self.clock)());
             registry.save_server(&store, record).await
         })
         .await
@@ -328,12 +352,44 @@ impl Trust {
                 if host.file.replace(text, updated).await.is_ok() {
                     record.removal_confirmed((self.clock)());
                 }
+            } else if record.state() == TrustState::Trusted {
+                self.update_line(connection, document, &mut record, text, &host)
+                    .await;
             }
             let state = state_of(record.state());
             registry.save_server(&store, record).await?;
             Ok(state)
         })
         .await
+    }
+
+    /// Gives a trusted server that still holds the shared principal its own line, and records
+    /// the per-server form once the server has it. A failed edit keeps "needs a CA update"
+    /// for the next connection.
+    async fn update_line(
+        &self,
+        connection: &str,
+        document: &CaDocument,
+        record: &mut SshTrustRecord,
+        text: String,
+        host: &HostAccess,
+    ) {
+        let ca_key = document.ca().public_key();
+        match server_line(&text, &ca_key, &SshServerId::of_profile(connection)) {
+            ServerLine::PerServer if record.line() == CaLineForm::Shared => {
+                record.set_line(CaLineForm::PerServer, (self.clock)());
+            }
+            ServerLine::Shared => {
+                let Ok(line) = line_of(document, connection) else {
+                    return;
+                };
+                let updated = with_line(&without_lines(&text, document), &line);
+                if host.file.replace(text, updated).await.is_ok() {
+                    record.set_line(CaLineForm::PerServer, (self.clock)());
+                }
+            }
+            ServerLine::PerServer | ServerLine::Absent => {}
+        }
     }
 
     pub(super) async fn reissue(&self, hub: &HubId) -> Result<AgentCa, AgentAccessError> {
@@ -349,12 +405,10 @@ impl Trust {
             let now = (self.clock)();
             let old = registry.ca.as_ref().map(|ca| &ca.value);
             let replaced = match old {
-                Some(old) => old.replaced(fresh_seed()?, now),
-                None => CaDocument::new(fresh_seed()?, now),
-            }
-            .map_err(records)?;
+                Some(old) => old.replaced(fresh_ca()?, now),
+                None => CaDocument::new(fresh_ca()?, now),
+            };
             let summary = ca_summary(&replaced);
-            let line = line_of(&replaced)?;
             let fingerprint = replaced.ca().fingerprint().to_owned();
             registry.save_ca(&store, replaced).await?;
             let targets: Vec<SshTrustRecord> = registry
@@ -371,13 +425,14 @@ impl Trust {
                     continue;
                 };
                 let moved = async {
+                    let line = line_of(document, &record.profile_id)?;
                     let text = host.file.read().await.map_err(host_error)?;
                     let updated = with_line(&without_lines(&text, document), &line);
                     host.file.replace(text, updated).await.map_err(host_error)
                 }
                 .await;
                 if moved.is_ok()
-                    && let Ok(fresh) = SshTrustRecord::installed(
+                    && let Ok(mut fresh) = SshTrustRecord::installed(
                         record.profile_id.clone(),
                         record.host.clone(),
                         record.user.clone(),
@@ -387,6 +442,7 @@ impl Trust {
                         device,
                     )
                 {
+                    fresh.set_line(CaLineForm::PerServer, now);
                     registry.save_server(&store, fresh).await?;
                 }
             }

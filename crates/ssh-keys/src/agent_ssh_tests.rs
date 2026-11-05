@@ -1,4 +1,4 @@
-use crate::ca::{
+use crate::testing::ca::{
     CertificateError, CertificateSpec, IssuedCertificate, MAX_VALIDITY_MS, UserCa, fingerprint_of,
 };
 use ssh_key::{HashAlg, certificate::CertType};

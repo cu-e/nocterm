@@ -1,12 +1,12 @@
 //! One installation's retained conversations and independent window observers.
-use crate::{CloudChat, CloudChatError, CloudConversation};
+use crate::{CloudChat, CloudChatError, CloudConversationView};
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, WeakEntity};
 use nocterm_agent_chat::conversation::{
     ConversationActions, ConversationError, ConversationSource,
 };
 use nocterm_agent_runtime::history_admission::HistoryAdmissionHandle;
 use nocterm_ai::conversation::ConversationView;
-use nocterm_cloud_model::projection::{ProjectionError, ports::CapturedConversationSource};
+use nocterm_cloud_conversation_model::{CloudConversation, CloudConversationError};
 use std::{collections::BTreeSet, rc::Rc, sync::Arc};
 
 // Metadata bounds are independent of the stricter shared payload/byte budget.
@@ -29,10 +29,10 @@ impl CloudChatInstallation {
 
     /// The returned renderer source owns one observer. Sharing its Rc shares
     /// that observer; a second call creates an independent window observer.
-    /// Existing views always keep their original captured native source.
+    /// Existing views always keep the conversation they were opened with.
     pub fn open(
         &self,
-        source: Arc<dyn CapturedConversationSource>,
+        source: Arc<dyn CloudConversation>,
         cx: &mut App,
     ) -> Result<Rc<dyn ConversationSource>, CloudChatError> {
         self.0.update(cx, |registry, cx| registry.open(source, cx))
@@ -58,23 +58,23 @@ struct RegisteredChat {
 impl ConversationRegistry {
     fn open(
         &mut self,
-        source: Arc<dyn CapturedConversationSource>,
+        source: Arc<dyn CloudConversation>,
         cx: &mut Context<Self>,
     ) -> Result<Rc<dyn ConversationSource>, CloudChatError> {
         source.check_current()?;
         self.release_idle(cx);
         if self.observers >= MAX_OBSERVERS {
-            return Err(ProjectionError::Capacity.into());
+            return Err(CloudConversationError::Capacity.into());
         }
         let retained = self.chats.iter().position(|entry| {
             let chat = entry.chat.read(cx);
-            Arc::ptr_eq(&chat.source, &source) && chat.check_current().is_ok()
+            chat.same_conversation(&source) && chat.check_current().is_ok()
         });
         let index = match retained {
             Some(index) => index,
             None => {
                 if self.chats.len() >= MAX_CONVERSATIONS {
-                    return Err(ProjectionError::Capacity.into());
+                    return Err(CloudConversationError::Capacity.into());
                 }
                 let chat = CloudChat::open(source, self.admission.clone(), cx)?;
                 self.chats.push(RegisteredChat {
@@ -95,7 +95,7 @@ impl ConversationRegistry {
                 observer.release(cx);
             });
             ConversationObserver {
-                delegate: CloudConversation::new(&chat),
+                delegate: CloudConversationView::new(&chat),
                 chat,
                 registry,
                 id: cx.entity_id(),
@@ -167,7 +167,7 @@ impl ConversationRegistry {
 /// Owns its original chat but only weakly references the registry. Its GPUI
 /// release callback runs with an App, including when a window is destroyed.
 struct ConversationObserver {
-    delegate: CloudConversation,
+    delegate: CloudConversationView,
     chat: Entity<CloudChat>,
     registry: WeakEntity<ConversationRegistry>,
     id: EntityId,
@@ -223,7 +223,7 @@ impl ConversationSource for ObservedConversation {
         changed: Rc<dyn Fn(&mut App)>,
     ) -> Result<Subscription, ConversationError> {
         let chat = self.0.read(cx).chat.clone();
-        CloudConversation::new(&chat).observe(cx, changed)
+        CloudConversationView::new(&chat).observe(cx, changed)
     }
 
     fn set_shown(&self, shown: bool, cx: &mut App) -> Result<(), ConversationError> {
@@ -233,5 +233,12 @@ impl ConversationSource for ObservedConversation {
 
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError> {
         self.0.read(cx).delegate.capture_actions(cx)
+    }
+
+    fn servers(
+        &self,
+        cx: &App,
+    ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationServers>> {
+        self.0.read(cx).delegate.servers(cx)
     }
 }

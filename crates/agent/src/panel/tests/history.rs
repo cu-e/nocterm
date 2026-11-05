@@ -757,7 +757,7 @@ fn reopened_workspace_panel_keeps_its_clock_after_the_old_deadline(cx: &mut Test
 #[gpui_kit::test]
 fn history_widens_the_panel_beside_a_cloud_chat_as_beside_a_local_one(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    let (_source, _projection, _selector) = super::composer::captured_panel(&f, cx);
+    let (_source, _selector) = super::composer::captured_panel(&f, cx);
     let width = |cx: &mut TestAppContext| {
         cx.update_window(f.handle, |_, window, cx| {
             window.render_frame(cx);

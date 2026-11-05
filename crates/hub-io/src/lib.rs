@@ -41,8 +41,14 @@
 //! Personal refreshes coalesce waiting readers; four shared vault operations
 //! bound staging, and sealed snapshots reject excess bytes, rows and pages.
 //! The personal SSH CA for cloud agents lives in `agent_access`: its seed and the registry of
-//! trusting servers are objects of the account's own `agent_ssh_trust` collection, and the
-//! `AgentHostTrust` and `AgentGrants` ports are implemented there ([ADR 0119](../../../docs/adr/0119-agent-ssh-ca.md)).
+//! trusting servers are objects of the account's own `agent_ssh_trust` collection, kept with the
+//! contract's CA, CA document and per-server lines, and the `AgentHostTrust` and `AgentGrants`
+//! ports are implemented there ([ADR 0119](../../../docs/adr/0119-agent-ssh-ca.md),
+//! [ADR 0147](../../../docs/adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+//! A Cloud chat binds its servers and answers its runner's certificate requests with the device
+//! core while it is read; `CloudChatsLink` implements `ChatSshCertifier`, keeping every bound
+//! chat read. `runner_control::boot_ssh` re-exports the contract's boot SSH section for the
+//! runner.
 //! Native Cloud adapter owners also keep the runner's three purpose-specific keys,
 //! original enrolled source and durable rotated session, authenticated chat material,
 //! signed public coordinator observations and exact ciphertext publication metadata.
@@ -50,29 +56,28 @@
 //! RPC readiness is separate, and unknown refresh/expiry permanently fences it.
 //! Publication and argument encoding use the public canonical codec with injected
 //! finite work reservations; native journal framing never supplies a wire payload.
-//! Provider boot announcements/status use guarded SDK RPCs and independently
-//! installed runner signing pins; hub receipt times never establish freshness.
-//! Account/R catalog pages use the original normal unlocked account and trusted
-//! runner registration before any ChatKey; opaque resident pages bind fresh
-//! signed revisions/cursors and preserve deleted and zero-event heads.
-//! Account Cloud material uses only a dedicated personal encrypted collection.
-//! Normal account keys also open an immutable hub-authority bootstrap record;
-//! explicit setup verifies the candidate capability before creating trust.
-//! Capability pinning and actual native membership precede stable scope checks;
-//! normal unlocked account keysets restore wrapped chat keys on another device.
-//! Material facades keep weak key ownership, immutable runner pins and actual
-//! allocation leases; they never retain a plaintext chat key across operations.
-//! Captured Cloud conversations provide the neutral `CapturedConversationSource`
-//! port: nonce-authenticated current heads, bounded signed event replay, durable
-//! exact-command outbox and one encrypted verified-page cache. Installation-owned
-//! finite workers/storage drivers survive a view or original membership ending;
-//! each publication still checks that original membership. Sparse snapshot
-//! activation and first-chat creation are separate consumer transitions.
+//! The runner announces its provider boot through guarded SDK RPCs; a device verifies that boot
+//! and leases a key to it with the device core's `ProviderLease`.
+//! Account Cloud trust and the trusted runner registry are personal encrypted objects that
+//! runner enrolment writes in the contract's record layouts; explicit setup verifies the
+//! candidate capability before creating trust.
+//! The device side of Cloud chats runs the contract's sans-I/O device core (`cloud_device`,
+//! [ADR 0144](../../../docs/adr/0144-the-device-side-runs-on-the-contract-device-core.md)):
+//! this crate performs the effects a flow asks for (the hub client's Cloud device calls, Store
+//! and agent calls, signatures through `HubClient::sign_cloud`, sleeps, Watch), keeps the core's
+//! sealed checkpoints and the sealed commands on their way in private files, resuming them after
+//! a restart ([ADR 0146](../../../docs/adr/0146-device-transport-and-resumable-commands.md)),
+//! and maps the core's display
+//! values to `nocterm-cloud-conversation-model`, whose `CloudConversation` port it implements.
+//! A flow holds a copy of the unlocked account keys and is dropped when the account's keys
+//! change.
 //! Does not own: which hubs the user knows or trusts (the `[hubs]` settings section and the
 //! trust decision belong to `nocterm-hubs-model` and the callers), connection status, retries,
 //! windows, terminal emulation, or any view.
 //! Ports provided: `HubTrust`, `HubSignIn`, `HubAdminKeys` and `AccountDevices` from
-//! `nocterm-hubs-model`, all implemented by [`HubLinks`], `LocalAccountSource` captured
+//! `nocterm-hubs-model`, all implemented by [`HubLinks`], `CloudChatLauncher` and
+//! `OwnRunnerLauncher` (by [`CloudChatsLink`]) and their `CloudConversation`s,
+//! `LocalAccountSource` captured
 //! by [`HubAccount`], its captured `CredentialStore` of `nocterm-session`, the `VaultAccess` of `nocterm-vault` and the `ProfileReplica` of
 //! `nocterm-connections-model`, implemented by [`HubVault`] and [`HubProfileReplica`], and the `RelayDialer` of `nocterm-session`, implemented
 //! by [`HubRelay`] over the clients of the hubs this device is signed in to. Ports used: none.
@@ -109,6 +114,19 @@
 //! Its encryption, transcript-signing and Cloud-token proof keys are independent;
 //! setup/open never resets an existing identity. It exports public identity facts
 //! and neutral cipher ports, never a generic signer, private seed or SDK wire type.
+//! `RunnerChatDirectory` implements cloud-model's `ChatSummaryDirectory`: it maps a neutral
+//! summary draft and the chat's current head to the contract summary, signs it with the
+//! runner signing key, seals it to the pinned account key and publishes it to the runner's
+//! directory stream only while the hub negotiated the chat directory (bit 256)
+//! ([ADR 0143](../../../docs/adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)).
+//! The runner inbox maps chat SSH bindings and certificates (contract ADR 0009) to native
+//! commands for this chat's key epoch with each server's principal, the event encoder maps
+//! SSH access events to tags 14 and 15, and `RunnerSshCertificates` reads a certificate
+//! under the binding's CA key; each bound server also carries the session access a prompt
+//! names it by. The journal's SSH row is sealed under the contract's SSH access class, and a
+//! summary's servers come from `summary::bound_servers`
+//! ([ADR 0145](../../../docs/adr/0145-per-server-ca-principals-and-runner-certificate-sessions.md),
+//! [ADR 0147](../../../docs/adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 //!
 //! The managed-agent ports of `nocterm-cloud-agents-model` (`agents`) read the failure code,
 //! the web panel address and the provider kinds through the contract's own vocabulary
@@ -116,14 +134,11 @@
 //! caller's own instances of the agent.
 //!
 //! Cloud chats (`cloud_chats`) implement the `CloudChatLauncher` port of
-//! `nocterm-cloud-agents-model`: the device mints a chat and its first key epoch, stores the
-//! wrapped key and the sealed runner grant in the account before publishing, waits (bounded,
-//! republishing) for the runner to claim the chat, and lists chats from the authenticated
-//! catalogs of the registered runners. Managed chats start their seat for the chat first and
-//! prompt at the runner's default destination
-//! ([ADR 0122](../../../docs/adr/0122-cloud-chat-creation-protocol.md)); their source wakes
-//! the seat again before it delivers a command the runner must admit
-//! ([ADR 0133](../../../docs/adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md)).
+//! `nocterm-cloud-agents-model` with the core's flows: `ListChats` lists chats from the runners'
+//! signed summary directories confirmed by their catalogs, `CreateChat` creates one (ADR 0122),
+//! `OpenChat` reads one incrementally from its checkpoint and wakes a managed seat before each
+//! command (ADR 0133), and `ProviderLease` leases an own agent's key while its chat is open
+//! (ADR 0126).
 
 mod account;
 mod account_keys;
@@ -134,6 +149,7 @@ mod checked;
 mod classify;
 pub mod cloud;
 mod cloud_chats;
+mod cloud_device;
 mod connect;
 mod convert;
 mod credentials;

@@ -163,11 +163,11 @@ fn a_started_agent_opens_a_chat_and_its_runner_container_runs() {
     let chats = CloudChatsLink::new(links.clone(), services).unwrap();
     let model = std::env::var("NOCTERM_HUB_AGENT_MODEL").unwrap_or_else(|_| "qwen2.5:0.5b".into());
     let opened = block_on(chats.create(&hub.id(), ChatHost::Agent { agent, model })).unwrap();
-    assert!(opened.source.supports_prompt());
+    assert!(opened.conversation.can_prompt());
 
     // The model answers through the host's broker, which holds the only provider credential.
     let reply = super::chat_exchange::reply_to(
-        &opened.source,
+        &opened.conversation,
         "Reply with one short sentence.",
         std::time::Duration::from_secs(60),
     );
@@ -208,5 +208,5 @@ fn a_sleeping_seat_wakes_for_a_new_chat_and_its_runner_claims_it() {
     let model = std::env::var("NOCTERM_HUB_AGENT_MODEL").unwrap_or_else(|_| "qwen2.5:0.5b".into());
     let opened = block_on(chats.create(&hub.id(), ChatHost::Agent { agent, model }))
         .unwrap_or_else(|error| panic!("{}", nocterm_core::error::chain(&error)));
-    assert!(opened.source.supports_prompt());
+    assert!(opened.conversation.can_prompt());
 }

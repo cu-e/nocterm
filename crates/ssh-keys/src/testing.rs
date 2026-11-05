@@ -1,4 +1,5 @@
-//! An in-memory [`VaultSshKeys`] for consumer tests: no vault, no files, no entropy.
+//! An in-memory [`VaultSshKeys`] for consumer tests: no vault, no files, no entropy, and a
+//! user CA ([`ca`]) that issues OpenSSH certificates for SSH tests.
 use crate::{KeyImportError, KeyMaterial, KeySource, StoredKey, VaultSshKeys, VaultSshKeysError};
 use futures::future::BoxFuture;
 use nocterm_core::error::SharedCause;
@@ -139,6 +140,7 @@ impl VaultSshKeys for MemoryVaultSshKeys {
     }
 }
 
+pub mod ca;
 mod connected_hosts;
 mod login;
 pub use connected_hosts::ScriptedConnectedHosts;
@@ -149,6 +151,7 @@ pub use login::LoginProofFixture;
 #[derive(Clone, Default)]
 pub struct FakeAuthorizedKeys {
     text: Arc<Mutex<String>>,
+    read_only: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FakeAuthorizedKeys {
@@ -156,7 +159,22 @@ impl FakeAuthorizedKeys {
     pub fn with_text(text: &str) -> Self {
         Self {
             text: Arc::new(Mutex::new(text.to_owned())),
+            read_only: Arc::default(),
         }
+    }
+
+    /// Replaces the file's text, as an edit on the server would.
+    pub fn set_text(&self, text: &str) {
+        *self
+            .text
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = text.to_owned();
+    }
+
+    /// Every later replacement fails as if the server refused the write.
+    pub fn fail_writes(&self) {
+        self.read_only
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// The file as it is now.
@@ -182,7 +200,9 @@ impl crate::authorized_keys::AuthorizedKeysFile for FakeAuthorizedKeys {
             .text
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result = if *text == previous {
+        let result = if self.read_only.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(crate::authorized_keys::HostAccessError::NotText)
+        } else if *text == previous {
             *text = updated;
             Ok(())
         } else {
@@ -196,6 +216,7 @@ impl crate::authorized_keys::AuthorizedKeysFile for FakeAuthorizedKeys {
 #[derive(Clone, Default)]
 pub struct FakeAgentHosts {
     hosts: Arc<Mutex<HashMap<String, crate::authorized_keys::HostAccess>>>,
+    ports: Arc<Mutex<HashMap<String, u16>>>,
 }
 
 impl FakeAgentHosts {
@@ -215,6 +236,14 @@ impl FakeAgentHosts {
             .insert(connection.to_owned(), access);
     }
 
+    /// Remembers that `connection` was reached on `port`.
+    pub fn set_port(&self, connection: &str, port: u16) {
+        self.ports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(connection.to_owned(), port);
+    }
+
     /// Makes `connection` unreachable, as a server that went away.
     pub fn disconnect(&self, connection: &str) {
         self.hosts
@@ -225,6 +254,13 @@ impl FakeAgentHosts {
 }
 
 impl crate::authorized_keys::AgentHosts for FakeAgentHosts {
+    fn port(&self, connection: &str) -> Option<u16> {
+        self.ports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(connection)
+            .copied()
+    }
     fn sessions(&self) -> Vec<crate::authorized_keys::HostSession> {
         let hosts = self
             .hosts

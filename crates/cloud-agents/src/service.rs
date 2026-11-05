@@ -35,6 +35,7 @@ pub struct CloudAgents {
     deps: Deps,
     catalogs: Catalogs,
     starts: Starts,
+    ssh: crate::ssh_renewal::SshRenewals,
 }
 
 impl EventEmitter<CloudAgentsEvent> for CloudAgents {}
@@ -45,6 +46,7 @@ impl CloudAgents {
             deps,
             catalogs: Catalogs::default(),
             starts: Starts::default(),
+            ssh: crate::ssh_renewal::SshRenewals::default(),
         }
     }
 
@@ -53,6 +55,8 @@ impl CloudAgents {
         if self.catalogs.contains(hub) {
             return;
         }
+        let certifier = self.deps.certifier.clone();
+        self.ssh.start(hub, certifier, cx);
         let (catalog, seats) = (self.deps.catalog.clone(), self.deps.seats.clone());
         let hub_id = hub.clone();
         let watcher = cx.spawn(async move |this, cx| {
@@ -97,6 +101,7 @@ impl CloudAgents {
 
     /// Stops tracking `hub` (it was removed or signed out) and forgets its agents and starts.
     pub fn untrack(&mut self, hub: &HubId, cx: &mut Context<Self>) {
+        self.ssh.stop(hub, self.deps.certifier.as_ref());
         let removed = self.catalogs.remove(hub);
         let dropped = self.starts.drop_hub(hub);
         if removed || dropped {

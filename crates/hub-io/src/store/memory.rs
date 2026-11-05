@@ -234,18 +234,6 @@ impl MemoryHub {
         id
     }
 
-    /// Simulates legitimate millisecond timestamp ties, independently of insertion order.
-    pub(crate) fn set_collection_created_at(&self, id: &str, timestamp: i64) {
-        if let Some(collection) = self
-            .held()
-            .collections
-            .iter_mut()
-            .find(|row| row.collection_id == id)
-        {
-            collection.created_at_ms = timestamp;
-        }
-    }
-
     /// The ids of the collections of `kind`.
     pub(crate) fn collections_of_kind(&self, kind: &str) -> Vec<String> {
         self.held()

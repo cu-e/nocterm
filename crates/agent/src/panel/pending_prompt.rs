@@ -41,8 +41,7 @@ impl PendingMark {
     pub(super) fn on_its_way(&self) -> bool {
         self.state.on_its_way()
     }
-    /// The line under the bubble: its progress, or why it failed with Retry (and Dismiss for
-    /// a refused prompt).
+    /// The line under the bubble: its progress, or why it failed with Retry and Dismiss.
     pub(super) fn render(
         &self,
         chat: EntityId,
@@ -87,19 +86,17 @@ impl PendingMark {
                         panel.retry_pending_prompt(chat, key, window, cx);
                     })),
             )
-            .when(self.state == PendingPromptState::Refused, |line| {
-                line.child(
-                    Button::new(("agent-pending-dismiss", row))
-                        .ghost()
-                        .xsmall()
-                        .flex_shrink_0()
-                        .icon(IconName::X)
-                        .tooltip("Dismiss")
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.dismiss_pending_prompt(chat, key, cx);
-                        })),
-                )
-            })
+            .child(
+                Button::new(("agent-pending-dismiss", row))
+                    .ghost()
+                    .xsmall()
+                    .flex_shrink_0()
+                    .icon(IconName::X)
+                    .tooltip("Dismiss")
+                    .on_click(cx.listener(move |panel, _, _, cx| {
+                        panel.dismiss_pending_prompt(chat, key, cx);
+                    })),
+            )
             .into_any_element()
     }
 }

@@ -5,6 +5,7 @@ mod mapping;
 mod prompt;
 mod sealing;
 mod snapshot;
+pub(super) mod ssh;
 mod tools;
 pub(super) mod values;
 use super::RunnerJournalCrypto;

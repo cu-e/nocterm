@@ -28,6 +28,9 @@ struct Document {
     execution: Option<crate::execution::config::ExecutionConfig>,
     #[serde(default)]
     session_targets: Option<crate::sessions::config::SessionTargetConfiguration>,
+    /// An own runner's SSH egress for chat SSH bindings (ADR 0145).
+    #[serde(default)]
+    ssh: Option<crate::sessions::reach::SshConfiguration>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,6 +115,8 @@ pub(crate) struct Configuration {
     pub(crate) limits: ControlLimits,
     pub(crate) execution: Option<crate::execution::config::ExecutionConfig>,
     pub(crate) session_targets: Option<crate::sessions::config::SessionTargetConfiguration>,
+    /// Empty without `[ssh]`: every chat SSH binding is then refused.
+    pub(crate) ssh_egress: Vec<String>,
 }
 impl Configuration {
     pub(crate) fn read(path: &Path) -> Result<Self, RunnerError> {
@@ -144,6 +149,11 @@ impl Configuration {
         {
             return Err(RunnerError::Value("state"));
         }
+        let ssh_egress = match document.ssh {
+            Some(ssh) if document.session_targets.is_some() => ssh.egress()?,
+            Some(_) => return Err(RunnerError::Value("ssh")),
+            None => Vec::new(),
+        };
         let authority = fixed_hex(&document.hub.authority, "hub.authority")?;
         let account = fixed_hex(&document.account.public_key, "account.public_key")?;
         let runner = RunnerId::from_bytes(fixed_hex(&document.runner.id, "runner.id")?);
@@ -181,6 +191,7 @@ impl Configuration {
             limits: document.limits,
             execution: document.execution,
             session_targets: document.session_targets,
+            ssh_egress,
         })
     }
 }
@@ -217,6 +228,7 @@ pub(crate) fn fixture(state: PathBuf) -> Configuration {
         limits: ControlLimits::default(),
         execution: None,
         session_targets: None,
+        ssh: None,
     })
     .unwrap()
 }
@@ -235,6 +247,21 @@ mod tests {
         assert!(limits.validate().is_err());
         assert!(fixed_hex::<32>(&"ff".repeat(31), "pin").is_err());
         assert!(fixed_hex::<32>(&"gg".repeat(32), "pin").is_err());
+    }
+    #[test]
+    fn ssh_egress_without_session_targets_is_refused_and_none_means_no_egress() {
+        let plain = fixture(PathBuf::from("/private/runner"));
+        assert!(plain.ssh_egress.is_empty());
+        let text = format!(
+            "state = \"/private/runner\"\n[hub]\naddress = \"https://localhost:8443\"\ninstance = \"hub\"\nauthority = \"{a}\"\n[account]\nid = \"account\"\npublic_key = \"{a}\"\n[runner]\nid = \"{r}\"\nkey_epoch = 1\n[ssh]\negress = [\"203.0.113.7\"]\n",
+            a = "05".repeat(32),
+            r = "07".repeat(16),
+        );
+        let document: Document = toml::from_str(&text).unwrap();
+        assert!(matches!(
+            Configuration::prepare(document),
+            Err(RunnerError::Value("ssh"))
+        ));
     }
 
     #[test]

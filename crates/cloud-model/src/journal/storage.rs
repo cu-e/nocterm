@@ -20,6 +20,8 @@ pub enum JournalStorageClass {
     BackgroundCommand,
     Effect,
     RunHead,
+    /// A chat's SSH row: subject key seed and access (journal v8, ADR 0145).
+    SshAccess,
 }
 
 /// Authenticated storage coordinates. A cipher must bind every field and use a

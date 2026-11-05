@@ -1,7 +1,7 @@
 //! Account-encrypted immutable hub pin, located before Cloud capability admission.
 mod capture;
-mod codec;
 mod operation;
+mod records;
 mod setup;
 mod storage;
 #[cfg(test)]
@@ -28,8 +28,8 @@ pub fn cloud_trust_work_bytes() -> Result<usize, CloudTrustError> {
     let collections = (MAX_RESPONSE + 2) * std::mem::size_of::<nocterm_hub_proto::v1::Collection>();
     Ok(collections
         + 2 * CLOUD_TRUST_RESIDENT_BYTES
-        + 2 * codec::MAX_PLAINTEXT
-        + 2 * (codec::MAX_PLAINTEXT + 42)
+        + 2 * records::MAX_PLAINTEXT
+        + 2 * (records::MAX_PLAINTEXT + 42)
         + 2 * MAX_RESPONSE
         + nocterm_hub_client::cloud::capability_work_bytes()
         + nocterm_hub_client::store_work_bytes(MAX_RESPONSE).map_err(backend)?)
@@ -117,7 +117,7 @@ impl CloudTrustReservations {
 pub struct AccountCloudTrust {
     bound: BoundOperations,
     client: Arc<CapturedClient>,
-    normal: codec::NormalAccount,
+    normal: records::NormalAccount,
     handle: Handle,
     _allocation: AllocationLease,
 }

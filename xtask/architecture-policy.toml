@@ -1,5 +1,7 @@
 # Explicit plain-data exemptions only. Stateful entities are never DTOs.
 [dto]
+"nocterm_agent_chat::conversation::servers::BoundServerView" = "One bound server a remote conversation shows, copied by value to the window."
+"nocterm_agent_chat::conversation::servers::ServerOption" = "One server a remote conversation can be bound to, copied by value to the window."
 "nocterm_monitor_service::WatchPlan" = "Immutable metric set and cadence supplied by each monitor consumer."
 "nocterm_agent::AgentServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::RuntimeServices" = "Composition dependencies, copied into constructors."

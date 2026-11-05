@@ -3,6 +3,7 @@ pub(crate) mod archive;
 pub(crate) mod head;
 pub(crate) mod identity;
 pub(crate) mod record;
+pub(crate) mod ssh;
 mod value;
 
 pub(crate) use value::{Checkpoint, Header, Outbox, Position, Receipt, Snapshot};

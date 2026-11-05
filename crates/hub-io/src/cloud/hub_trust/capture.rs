@@ -36,7 +36,7 @@ impl CloudTrustCapture {
             )
             .map_err(account)?;
             let sdk = client.captured_cloud().map_err(account)?;
-            let normal = codec::NormalAccount::capture(&bound, &sdk.info().hub_id)?;
+            let normal = records::NormalAccount::capture(&bound, &sdk.info().hub_id)?;
             client.check_cloud().map_err(account)?;
             bound
                 .source()

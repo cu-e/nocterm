@@ -5210,7 +5210,7 @@ dependencies = [
  "nocterm-cloud-agents",
  "nocterm-cloud-agents-model",
  "nocterm-cloud-chat",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-hubs",
  "nocterm-hubs-model",
  "nocterm-plugin-model",
@@ -5385,7 +5385,7 @@ dependencies = [
  "futures",
  "gpui-pre",
  "nocterm-cloud-agents-model",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-hubs-model",
  "nocterm-session",
  "tracing",
@@ -5396,7 +5396,7 @@ name = "nocterm-cloud-agents-model"
 version = "0.0.0"
 dependencies = [
  "futures",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-core",
  "nocterm-hubs-model",
  "nocterm-session",
@@ -5412,10 +5412,35 @@ dependencies = [
  "nocterm-agent-chat",
  "nocterm-agent-runtime",
  "nocterm-ai",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-core",
- "nocterm-session",
+ "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-cloud-conversation-model"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "nocterm-core",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nocterm-cloud-device"
+version = "0.1.0"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81#edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "nocterm-hub-model",
+ "nocterm-keys",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "zeroize",
 ]
 
 [[package]]
@@ -5423,7 +5448,6 @@ name = "nocterm-cloud-model"
 version = "0.0.0"
 dependencies = [
  "futures",
- "hex",
  "nocterm-ai",
  "nocterm-core",
  "nocterm-hubs-model",
@@ -5432,6 +5456,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
+ "zeroize",
 ]
 
 [[package]]
@@ -5657,12 +5682,13 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-client"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81#edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81"
 dependencies = [
  "base64 0.22.1",
  "hex",
  "http-body",
  "hyper-util",
+ "nocterm-cloud-device",
  "nocterm-hub-grpc",
  "nocterm-hub-model",
  "nocterm-hub-proto",
@@ -5686,7 +5712,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-grpc"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81#edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81"
 dependencies = [
  "nocterm-hub-proto",
  "prost",
@@ -5705,6 +5731,8 @@ dependencies = [
  "hex",
  "nocterm-ai",
  "nocterm-cloud-agents-model",
+ "nocterm-cloud-conversation-model",
+ "nocterm-cloud-device",
  "nocterm-cloud-model",
  "nocterm-connections-model",
  "nocterm-core",
@@ -5733,8 +5761,9 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-model"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81#edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81"
 dependencies = [
+ "base64 0.22.1",
  "ed25519-dalek",
  "hex",
  "serde",
@@ -5748,7 +5777,7 @@ dependencies = [
 [[package]]
 name = "nocterm-hub-proto"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81#edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81"
 dependencies = [
  "nocterm-hub-model",
  "prost",
@@ -5793,7 +5822,7 @@ dependencies = [
  "gpui-kit",
  "nocterm-cloud-agents",
  "nocterm-cloud-agents-model",
- "nocterm-cloud-model",
+ "nocterm-cloud-conversation-model",
  "nocterm-core",
  "nocterm-hubs",
  "nocterm-hubs-model",
@@ -5841,7 +5870,7 @@ dependencies = [
 [[package]]
 name = "nocterm-keys"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81#edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -5854,7 +5883,9 @@ dependencies = [
  "nocterm-hub-model",
  "postcard",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
+ "ssh-key",
  "thiserror 2.0.21",
  "uuid",
  "x25519-dalek",
@@ -5879,7 +5910,7 @@ dependencies = [
 [[package]]
 name = "nocterm-link"
 version = "0.1.0"
-source = "git+https://github.com/cu-e/nocterm-contract?rev=3453bef762d1160dded91377ae41fd0cd3887071#3453bef762d1160dded91377ae41fd0cd3887071"
+source = "git+https://github.com/cu-e/nocterm-contract?rev=edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81#edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81"
 dependencies = [
  "thiserror 2.0.21",
 ]

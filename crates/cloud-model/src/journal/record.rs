@@ -142,6 +142,8 @@ pub enum JournalRecordKind {
     Tombstone {
         command: CommandId,
     },
+    /// A chat's SSH access event; it changes neither control nor effects.
+    SshAccess,
     BackgroundCommand {
         intent: IntentId,
         terminal: String,
@@ -195,6 +197,7 @@ impl JournalRecord {
                 RecordContext::Chat,
                 JournalRecordKind::Tombstone { .. }
                 | JournalRecordKind::QueueChanged { .. }
+                | JournalRecordKind::SshAccess
                 | JournalRecordKind::PublicSnapshot,
             ) => true,
             _ => false,

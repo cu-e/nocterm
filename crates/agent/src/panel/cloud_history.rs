@@ -158,6 +158,7 @@ fn matches_row(row: &ChatSummary, query: &str) -> bool {
     [Some(&row.title), Some(&row.host), row.model.as_ref()]
         .into_iter()
         .flatten()
+        .chain(&row.servers)
         .any(|text| text.to_lowercase().contains(query))
 }
 
@@ -166,13 +167,12 @@ mod tests {
     use super::*;
 
     fn row() -> ChatSummary {
-        ChatSummary {
-            key: "k".into(),
-            title: "Release notes".into(),
-            host: "Scribe".into(),
-            model: Some("gpt-x".into()),
-            updated_at: None,
-        }
+        ChatSummary::plain(
+            "k".into(),
+            "Release notes".into(),
+            "Scribe".into(),
+            Some("gpt-x".into()),
+        )
     }
 
     #[test]
@@ -181,5 +181,8 @@ mod tests {
         assert!(matches_row(&row(), "scribe"));
         assert!(matches_row(&row(), "gpt"));
         assert!(!matches_row(&row(), "budget"));
+        let mut bound = row();
+        bound.servers = vec!["deploy@db.example".into()];
+        assert!(matches_row(&bound, "db.example"));
     }
 }

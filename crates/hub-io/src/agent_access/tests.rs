@@ -4,15 +4,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use nocterm_hub_model::DeviceId;
-use nocterm_hub_model::InstanceId;
+use nocterm_hub_model::cloud::ssh::SshServerId;
 use nocterm_hubs_model::{
     AgentAccessError, AgentHostTrust as _, HubError, HubFuture, HubId, ServerTrust,
 };
-use nocterm_keys::agents::{CaLine, SshCaGrant};
-use nocterm_ssh_keys::ca::UserCa;
+use nocterm_keys::agents::ssh_ca::agent_principal;
+use nocterm_keys::agents::{CaLine, CaLineForm};
 use nocterm_ssh_keys::testing::{FakeAgentHosts, FakeAuthorizedKeys};
 
-use super::{AccountWork, AgentAccess, certify};
+use super::registry::Registry;
+use super::{AccountWork, AgentAccess};
 use crate::account::{
     Accounts,
     operations::{AccountOperations, OpenedWork},
@@ -39,6 +40,7 @@ impl AccountWork for Fixed {
 
 struct Fixture {
     access: AgentAccess,
+    operations: Arc<AccountOperations>,
     hosts: FakeAgentHosts,
     hub: Arc<MemoryHub>,
     id: HubId,
@@ -59,7 +61,7 @@ fn fixture() -> Fixture {
     let clock = Arc::new(AtomicI64::new(1_000));
     let access = AgentAccess::with_parts(
         Arc::new(Fixed {
-            operations,
+            operations: operations.clone(),
             device: DeviceId::new(),
         }),
         Arc::new(hosts.clone()),
@@ -68,6 +70,7 @@ fn fixture() -> Fixture {
     );
     Fixture {
         access,
+        operations,
         hosts,
         hub,
         id: testing::hub(),
@@ -92,10 +95,15 @@ async fn allowing_a_server_adds_the_ca_line_and_keeps_the_other_lines() {
 
     let text = file.text();
     assert!(text.starts_with(OTHER));
-    let line = fx.access.ca_line(&fx.id).await.unwrap();
+    let line = fx.access.ca_line(&fx.id, "web").await.unwrap();
     assert!(text.lines().any(|existing| existing == line));
     let parsed = CaLine::parse(&line).unwrap();
     assert_eq!(parsed.to_line().unwrap(), line);
+    // The line admits this server's own principal only.
+    let web = SshServerId::of_profile("web");
+    assert!(parsed.admits_server(&parsed.ca_key, &web));
+    assert!(!parsed.admits_server(&parsed.ca_key, &SshServerId::of_profile("db")));
+    assert!(!parsed.principals.contains(&agent_principal(&parsed.ca_key)));
 
     let overview = fx.access.overview(&fx.id).await.unwrap();
     assert_eq!(overview.servers.len(), 1);
@@ -107,6 +115,7 @@ async fn allowing_a_server_adds_the_ca_line_and_keeps_the_other_lines() {
         ),
         ("deploy", "web.example")
     );
+    assert!(!overview.servers[0].needs_ca_update);
     assert!(overview.ca.is_some());
 }
 
@@ -188,12 +197,12 @@ async fn reissuing_the_ca_moves_reachable_servers_and_drifts_the_others() {
     fx.access.allow(&fx.id, "near").await.unwrap();
     fx.access.allow(&fx.id, "far").await.unwrap();
     let before = fx.access.overview(&fx.id).await.unwrap().ca.unwrap();
-    let old_line = fx.access.ca_line(&fx.id).await.unwrap();
+    let old_line = fx.access.ca_line(&fx.id, "near").await.unwrap();
     fx.hosts.disconnect("far");
 
     let after = fx.access.reissue_ca(&fx.id).await.unwrap();
     assert_ne!(before.fingerprint, after.fingerprint);
-    let new_line = fx.access.ca_line(&fx.id).await.unwrap();
+    let new_line = fx.access.ca_line(&fx.id, "near").await.unwrap();
     assert!(near.text().contains(&new_line) && !near.text().contains(&old_line));
 
     fx.hosts
@@ -204,22 +213,101 @@ async fn reissuing_the_ca_moves_reachable_servers_and_drifts_the_others() {
     );
 }
 
-#[test]
-fn a_certificate_follows_the_grant_and_refuses_another_ca() {
-    let ca = UserCa::from_seed([3; 32]).unwrap();
-    let grant = SshCaGrant {
-        instance: InstanceId::new(),
-        principal: "nocterm-agent-0011223344556677".into(),
-        ca_key: ca.public_key(),
-        subject_key: [9; 32],
-        serial: 7,
-        valid_after_ms: 1_700_000_000_000,
-        valid_before_ms: 1_700_000_000_000 + 3_600_000,
-        source_addresses: vec!["203.0.113.5".into()],
-    };
-    let issued = certify(&ca, &grant, [1; 32]).unwrap();
-    let certificate = nocterm_ssh_keys::ca::IssuedCertificate::parse(issued.openssh()).unwrap();
-    assert_eq!(certificate.serial(), 7);
-    let other = UserCa::from_seed([4; 32]).unwrap();
-    assert!(certify(&other, &grant, [1; 32]).is_err());
+/// What an earlier client left on `connection`: the shared principal of line version 1 in the
+/// file and a trust record of schema 1. Returns the shared line.
+async fn shared_principal(fx: &Fixture, connection: &str, file: &FakeAuthorizedKeys) -> String {
+    let store = fx.operations.opened().unwrap().transient_store();
+    let mut registry = Registry::load(&store, false).await.unwrap().unwrap();
+    let ca_key = registry.ca.as_ref().unwrap().value.ca().public_key();
+    let shared = CaLine {
+        ca_key,
+        principals: vec![agent_principal(&ca_key)],
+        comment: "nocterm agent access".into(),
+    }
+    .to_line()
+    .unwrap();
+    file.set_text(&format!("{OTHER}{shared}\n"));
+    let mut record = registry.servers[connection].value.clone();
+    record.set_line(CaLineForm::Shared, 1);
+    registry.save_server(&store, record).await.unwrap();
+    shared
+}
+
+#[tokio::test]
+async fn a_server_with_the_shared_principal_gets_its_own_line_on_its_next_connection() {
+    let fx = fixture();
+    let file = server(&fx, "web", OTHER);
+    fx.access.allow(&fx.id, "web").await.unwrap();
+    let shared = shared_principal(&fx, "web", &file).await;
+    let overview = fx.access.overview(&fx.id).await.unwrap();
+    assert!(overview.servers[0].needs_ca_update);
+
+    let state = fx.access.reconcile(&fx.id, "web").await.unwrap();
+    assert_eq!(state, ServerTrust::Trusted);
+    let own = fx.access.ca_line(&fx.id, "web").await.unwrap();
+    let text = file.text();
+    assert!(text.starts_with(OTHER));
+    assert!(text.lines().any(|line| line == own));
+    assert!(!text.lines().any(|line| line == shared));
+    let overview = fx.access.overview(&fx.id).await.unwrap();
+    assert!(!overview.servers[0].needs_ca_update);
+}
+
+#[tokio::test]
+async fn a_shared_principal_that_cannot_be_rewritten_still_needs_an_update() {
+    let fx = fixture();
+    let file = server(&fx, "web", OTHER);
+    fx.access.allow(&fx.id, "web").await.unwrap();
+    let shared = shared_principal(&fx, "web", &file).await;
+    file.fail_writes();
+    assert_eq!(
+        fx.access.reconcile(&fx.id, "web").await.unwrap(),
+        ServerTrust::Trusted
+    );
+    assert!(file.text().contains(&shared));
+    let overview = fx.access.overview(&fx.id).await.unwrap();
+    assert!(overview.servers[0].needs_ca_update);
+}
+
+#[tokio::test]
+async fn a_chat_binds_only_trusted_servers_with_the_port_this_device_reached_them_on() {
+    let fx = fixture();
+    server(&fx, "web", OTHER);
+    server(&fx, "db", OTHER);
+    fx.access.allow(&fx.id, "web").await.unwrap();
+    fx.access.allow(&fx.id, "db").await.unwrap();
+    fx.hosts.set_port("web", 2222);
+    fx.access.deny(&fx.id, "db").await.unwrap();
+
+    let choices = fx.access.server_choices(&fx.id).await.unwrap();
+    assert_eq!(choices.len(), 1);
+    let web = &choices[0];
+    assert_eq!(
+        web.server.as_bytes(),
+        SshServerId::of_profile("web").as_bytes()
+    );
+    assert_eq!((web.port, web.user.as_str()), (Some(2222), "deploy"));
+    assert!(!web.needs_ca_update);
+
+    let keys = [web.server];
+    let chosen = crate::cloud_device::chosen_servers(&keys, &choices).unwrap();
+    assert_eq!(chosen[0].port, 2222);
+    let mut portless = choices.clone();
+    portless[0].port = None;
+    assert!(matches!(
+        crate::cloud_device::chosen_servers(&keys, &portless),
+        Err(
+            nocterm_cloud_conversation_model::CloudConversationError::Servers(
+                nocterm_cloud_conversation_model::ServerRefusal::UnknownPort
+            )
+        )
+    ));
+    assert!(matches!(
+        crate::cloud_device::chosen_servers(&keys, &[]),
+        Err(
+            nocterm_cloud_conversation_model::CloudConversationError::Servers(
+                nocterm_cloud_conversation_model::ServerRefusal::Untrusted
+            )
+        )
+    ));
 }

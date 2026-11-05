@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Entity};
 use nocterm_cloud_agents_model::{
-    AgentSeats, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, OwnRunnerLauncher,
-    PersonalAgents, PoolPinStore,
+    AgentSeats, AgentUsage, ChatSshCertifier, CloudAgentCatalog, CloudAgentLauncher,
+    OwnRunnerLauncher, PersonalAgents, PoolPinStore,
 };
 
 use crate::service::CloudAgents;
@@ -20,6 +20,8 @@ pub struct Deps {
     pub seats: Arc<dyn AgentSeats>,
     pub usage: Arc<dyn AgentUsage>,
     pub pins: Arc<dyn PoolPinStore>,
+    /// Answers the certificate requests of bound Cloud chats (ADR 0147).
+    pub certifier: Arc<dyn ChatSshCertifier>,
 }
 
 /// The entity shared by every window, kept alive by whoever composes the application.

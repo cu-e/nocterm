@@ -4,7 +4,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
-`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-cloud-model`, `nocterm-monitor`,
+`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-cloud-model`, `nocterm-cloud-conversation-model`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
 `nocterm-vault`, `nocterm-ssh-keys`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
@@ -543,6 +543,25 @@ replace the existing certificate fingerprint and address trust rules.
 A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-environments.md)), so the crate holds no record of open windows.
 
 
+## Cloud conversations
+
+`nocterm-cloud-conversation-model` is what a desktop window shows of one Cloud chat: the
+neutral `CloudTranscript` (rows, runs, approvals, this device's pending commands) changed only
+by `ConversationDelta`s (tool rows carry the core's title and typed `ToolOutcome`), the
+`Freshness` the device core reports (`Opening` before the first round, `Current`,
+`Unconfirmed` for a runner that did not answer, `Withheld`), the `ConversationAction`s a
+person sends (a prompt may name a bound server), the chat's `ServerBinding` (each
+`BoundServer` with its `ServerAccess` and whether a prompt may name it), the `ServerChoice`s it
+can be bound to with typed `ServerRefusal`s, and the
+`CloudConversation` port (with `servers`, `bind_servers` and `unbind_servers`) and its typed
+`CloudConversationError`. It holds no protocol types and
+does no I/O; `nocterm-hub-io` implements the port over the contract's device core and
+`nocterm-cloud-chat` presents it. Its `test-support` `FakeConversation` scripts deltas,
+freshness and command outcomes for consumers' tests
+([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md),
+[ADR 0146](../adr/0146-device-transport-and-resumable-commands.md),
+[ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+
 ## Cloud run contracts
 
 `LoginConsentLedger` retains at most 32 device-issued SSH login consents for at
@@ -624,6 +643,23 @@ catalog bytes. Composition must inject its implementation; DTO construction does
 not verify cryptography, source authority or durability. The native adapter owns
 complete physical row checks and explicit create/open lifecycle
 ([ADR 0113](../adr/0113-account-bound-journal-catalog.md)).
+
+A chat summary is runner-derived display data. `ChatSummaryFacts` reduces journaled
+observations (first prompt line, latest model, unfinished run statuses, open approvals,
+deletion) to a `ChatActivity`; `ChatSummaryTracker` adds the revision ledger and the
+cadence (one attempt per chat per 5 s, longer after failures, a deletion at once and last).
+`ChatSummaryJournal` and `ChatSummaryDirectory` are the ports for its durable row and its
+signed publication; the contract format stays in the adapter
+([ADR 0143](../adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)). The facts also
+take a bound chat's `SummarySsh` (the binding's signed bytes and the runner's latest access
+report), from which the adapter derives the summary's servers.
+
+`ssh_access` holds the runner's rules for a chat's SSH binding (ADR 0145). Reach is selected:
+`SshReach` lists the endpoints this runner may reach, each with its host key, which must equal
+the binding's. Each `BoundTarget` carries the session access the adapter derived from the
+signed binding, and `ChatSshAccess::select` names the admitted server a run's destination
+selects by exact equality, with its credential while a certificate is active
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ### Displayed account confirmations
 

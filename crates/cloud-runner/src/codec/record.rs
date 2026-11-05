@@ -91,6 +91,7 @@ enum Kind {
     Declined([u8; 16]),
     RunStatus,
     PublicSnapshot,
+    SshAccess,
 }
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Record {
@@ -107,6 +108,7 @@ impl From<&JournalRecord> for Record {
         };
         let kind = match value.kind() {
             JournalRecordKind::PublicSnapshot => Kind::PublicSnapshot,
+            JournalRecordKind::SshAccess => Kind::SshAccess,
             JournalRecordKind::RunStatus => Kind::RunStatus,
             JournalRecordKind::ModelAction { step } => Kind::ModelAction(*step.as_bytes()),
             JournalRecordKind::Approval { intent, open } => {
@@ -177,6 +179,7 @@ impl Kind {
     fn restore(self) -> Result<JournalRecordKind, JournalError> {
         Ok(match self {
             Self::PublicSnapshot => JournalRecordKind::PublicSnapshot,
+            Self::SshAccess => JournalRecordKind::SshAccess,
             Self::RunStatus => JournalRecordKind::RunStatus,
             Self::ModelAction(step) => JournalRecordKind::ModelAction {
                 step: StepId::from_bytes(step),

@@ -7,6 +7,11 @@ use ssh_key::{
 };
 use std::fmt;
 
+/// The raw Ed25519 public key of `seed`, as an OpenSSH certificate names its subject.
+pub fn ed25519_public_key(seed: &[u8; 32]) -> [u8; 32] {
+    Ed25519Keypair::from_seed(seed).public.0
+}
+
 /// The smallest RSA modulus accepted, in bits.
 pub const MIN_RSA_BITS: u32 = 2048;
 

@@ -252,3 +252,135 @@ mod lifecycle;
 mod snapshot;
 
 mod inverse;
+
+mod ssh_access {
+    use super::*;
+    use nocterm_cloud_model::{
+        coordinator::{GrantClass, GrantReference},
+        payload::OpaqueBytes,
+        ssh_access::{
+            SshAccessEvent, SshAccessPhase, SshAccessReport, SshCertificateRequest, SshServerKey,
+            SshServerReach,
+        },
+    };
+    use nocterm_hub_model::cloud::{
+        CloudTextId,
+        payload::GrantReference as WireGrant,
+        ssh::{BindingWindow, SshAccess, SshBinding, SshServerId, SshTarget},
+    };
+    use nocterm_keys::agents::ssh_ca::UserCa;
+
+    fn ssh_binding(
+        fixture: &Fixture,
+    ) -> (
+        nocterm_hub_model::cloud::ssh::SignedSshBinding,
+        nocterm_hub_model::cloud::ssh::SshServerId,
+    ) {
+        let stream = fixture.lease.stream();
+        let ca = UserCa::from_seed([20; 32]);
+        let server = SshServerId::of_profile("profile");
+        let binding = ca
+            .sign_binding(SshBinding {
+                chat: nocterm_hub_model::cloud::ChatCoordinate::new(
+                    crate::cloud::metadata_crypto::namespace(&JournalCatalogBinding::new(
+                        stream.scope().clone(),
+                        stream.runner(),
+                        stream.runner_epoch(),
+                    ))
+                    .unwrap(),
+                    nocterm_hub_model::cloud::RunnerCoordinate {
+                        id: *stream.runner().as_bytes(),
+                        key_epoch: stream.runner_epoch().get(),
+                    },
+                    [5; 16],
+                    6,
+                )
+                .unwrap(),
+                grant: WireGrant {
+                    id: [21; 16],
+                    epoch: 1,
+                },
+                window: BindingWindow {
+                    issued_at_ms: 1_700_000_000_000 - 1_000,
+                    expires_at_ms: 1_700_000_000_000 + 3_600_000,
+                },
+                ca_key: ca.public_key(),
+                targets: vec![SshTarget {
+                    server,
+                    host: CloudTextId::new("db.example").unwrap(),
+                    port: 22,
+                    user: CloudTextId::new("deploy").unwrap(),
+                    host_key_sha256: [22; 32],
+                }],
+            })
+            .unwrap();
+        (binding, server)
+    }
+
+    #[test]
+    fn chat_ssh_access_events_are_published_as_certificate_requests_and_access_states() {
+        let fixture = Fixture::new();
+        let (binding, server) = ssh_binding(&fixture);
+        let key = SshServerKey::from_bytes(*server.as_bytes());
+        let grant = GrantReference::new(
+            GrantClass::SshBinding,
+            GrantId::from_bytes([21; 16]),
+            GrantEpoch::new(1).unwrap(),
+        );
+        let events = [
+            SshAccessEvent::Requested(Box::new(SshCertificateRequest {
+                request: [23; 16],
+                binding: OpaqueBytes::new(binding.canonical_bytes().unwrap()).unwrap(),
+                subject_key: [24; 32],
+                source_addresses: vec!["203.0.113.7".into()],
+                servers: vec![key],
+                not_after: Timestamp::from_millis(1_700_000_000_000),
+            })),
+            SshAccessEvent::State(SshAccessReport {
+                grant,
+                access: SshAccessPhase::Active {
+                    request: [23; 16],
+                    valid_before: Timestamp::from_millis(1_700_000_000_000),
+                },
+                servers: vec![(key, SshServerReach::Admitted)],
+            }),
+        ];
+        let encoder = fixture.encoder();
+        let work = Fixture::budget(4 * 1024 * 1024);
+        let public = fixture.identity.public_identity().unwrap();
+        let mut next = JournalPosition::default();
+        for (index, event) in events.into_iter().enumerate() {
+            next = next.next(1, 1, index == 0).unwrap();
+            let event = CoordinatorEvent::SshAccess(Box::new(event));
+            let publication =
+                CoordinatorEventEncoder::encode(&encoder, &fixture.lease, next, &event, &work)
+                    .unwrap();
+            let context = crate::cloud::runner_transport::record_context(
+                publication.stream(),
+                publication.key_epoch(),
+                publication.anchor(),
+            )
+            .unwrap();
+            let opened = open_event(
+                &fixture.key,
+                public.signing_key(),
+                &context,
+                publication.sealed().as_bytes(),
+            )
+            .unwrap();
+            let record = opened.record().unwrap();
+            match (index, CloudEvent::from_record(&record).unwrap().payload) {
+                (0, CloudEventPayload::SshCertificateRequested(request)) => {
+                    assert_eq!(request.binding, binding);
+                    assert_eq!(request.servers, vec![server]);
+                }
+                (1, CloudEventPayload::SshAccessState(update)) => {
+                    assert!(
+                        matches!(update.access, SshAccess::Active { request, .. } if request == [23; 16])
+                    );
+                }
+                _ => panic!("the SSH event changed"),
+            }
+        }
+    }
+}

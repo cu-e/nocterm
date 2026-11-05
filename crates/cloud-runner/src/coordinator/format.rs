@@ -349,6 +349,7 @@ impl From<GrantReference> for Reference {
                 GrantClass::Inference => 1,
                 GrantClass::Tools => 2,
                 GrantClass::Provider => 3,
+                GrantClass::SshBinding => 4,
             },
             *value.id().as_bytes(),
             value.epoch().get(),
@@ -361,6 +362,7 @@ impl Reference {
             1 => GrantClass::Inference,
             2 => GrantClass::Tools,
             3 => GrantClass::Provider,
+            4 => GrantClass::SshBinding,
             _ => return Err(JournalError::Corrupt.into()),
         };
         Ok(GrantReference::new(
@@ -384,6 +386,8 @@ enum Body {
     Delete,
     Issuer(String, [u8; 32], u64, Vec<Reference>),
     Begin(super::session_request::SessionStart),
+    SshBinding(crate::codec::ssh::OfferRow),
+    SshCertificate(Reference, [u8; 16], Vec<u8>),
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -442,6 +446,12 @@ impl From<&ReceivedCommand> for Command {
                 consent.expires().as_millis(),
             ),
             CommandBody::BeginSession(request) => Body::Begin(request.as_ref().into()),
+            CommandBody::SshBinding(offer) => Body::SshBinding(offer.as_ref().into()),
+            CommandBody::SshCertificate(offer) => Body::SshCertificate(
+                offer.grant().into(),
+                *offer.request(),
+                offer.certificate().as_bytes().to_vec(),
+            ),
             CommandBody::DeleteChat => Body::Delete,
             CommandBody::RevokeIssuer(revoke) => Body::Issuer(
                 revoke.issuer().device().as_str().into(),
@@ -517,6 +527,10 @@ impl Command {
             }
             Body::Delete => CommandBody::DeleteChat,
             Body::Begin(request) => CommandBody::BeginSession(Box::new(request.restore()?)),
+            Body::SshBinding(offer) => CommandBody::SshBinding(Box::new(offer.restore()?)),
+            Body::SshCertificate(grant, request, certificate) => {
+                ssh_certificate(grant, request, certificate)?
+            }
             Body::Issuer(device, key, cutoff, grants) => {
                 CommandBody::RevokeIssuer(IssuerRevocation::new(
                     IssuerSubject::new(namespace(device)?, fp(key)),
@@ -543,6 +557,20 @@ impl Command {
             self.hard.map(Timestamp::from_millis),
         )
     }
+}
+
+fn ssh_certificate(
+    grant: Reference,
+    request: [u8; 16],
+    certificate: Vec<u8>,
+) -> Result<CommandBody, CoordinatorError> {
+    let offer = nocterm_cloud_model::ssh_access::SshCertificateOffer::new(
+        grant.restore()?,
+        request,
+        nocterm_cloud_model::payload::OpaqueBytes::new(certificate).map_err(JournalError::from)?,
+    )
+    .map_err(|_| JournalError::Corrupt)?;
+    Ok(CommandBody::SshCertificate(Box::new(offer)))
 }
 
 #[cfg(test)]

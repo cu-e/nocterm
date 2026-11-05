@@ -1,4 +1,5 @@
-//! Weak projection participation in the retained Local installation admission.
+//! A chat's share of the Local installation's history admission: one payload slot and the
+//! bytes of its transcript, reserved before the transcript grows.
 use crate::CloudChat;
 use gpui::{App, Context, EntityId, WeakEntity};
 use nocterm_agent_runtime::{
@@ -9,25 +10,25 @@ use nocterm_agent_runtime::{
     },
 };
 use nocterm_ai::storage::AgentStorageError;
-use nocterm_cloud_model::projection::ports::AllocationRequirements;
 use nocterm_core::allocation::AllocationLease;
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
-pub(crate) struct ProjectionResidency {
+pub(crate) struct Residency {
     admission: HistoryAdmissionHandle,
     registration: Option<HistoryRegistration>,
     payload: Option<HistoryPayloadPermit>,
+    bytes: Option<AllocationLease>,
     shown: bool,
 }
-struct ProjectionUsage(WeakEntity<CloudChat>);
-impl HistoryParticipant for ProjectionUsage {
+struct Usage(WeakEntity<CloudChat>);
+impl HistoryParticipant for Usage {
     fn entity_id(&self) -> Option<EntityId> {
         Some(self.0.entity_id())
     }
     fn usage(&self, cx: &App) -> Result<Option<HistoryUsage>, AgentStorageError> {
         Ok(self.0.upgrade().map(|chat| {
             let chat = chat.read(cx);
-            HistoryUsage::new(0, chat.projection().updated_at(), chat.is_shown())
+            HistoryUsage::new(0, chat.updated_at(), chat.is_shown())
         }))
     }
     fn evict(&self, cx: &mut App) -> bool {
@@ -51,12 +52,13 @@ impl HistoryParticipant for ProjectionUsage {
         self.evict(cx)
     }
 }
-impl ProjectionResidency {
+impl Residency {
     pub(crate) fn new(admission: HistoryAdmissionHandle, payload: HistoryPayloadPermit) -> Self {
         Self {
             admission,
             registration: None,
             payload: Some(payload),
+            bytes: None,
             shown: true,
         }
     }
@@ -64,91 +66,40 @@ impl ProjectionResidency {
         &mut self,
         cx: &Context<CloudChat>,
     ) -> Result<(), HistoryAdmissionError> {
-        self.registration = Some(
-            self.admission
-                .register(Rc::new(ProjectionUsage(cx.weak_entity())))?,
-        );
+        self.registration = Some(self.admission.register(Rc::new(Usage(cx.weak_entity())))?);
         Ok(())
     }
-    /// A new independently retained generation reserves both installation bounds
-    /// before its data is materialized. Cloned leases share these exact proofs.
-    pub(crate) fn allocate(
-        &self,
+    /// Reserves `bytes` for the transcript in place of the earlier reservation, and the
+    /// payload slot when the chat was evicted.
+    pub(crate) fn fit(
+        &mut self,
         bytes: usize,
         cx: &mut Context<CloudChat>,
-    ) -> Result<(AllocationLease, HistoryPayloadPermit), HistoryAdmissionError> {
-        let payload = self
-            .admission
-            .reserve_payload_reclaiming(Some(cx.entity_id()), cx)?;
-        let bytes = self.admission.reserve_bytes(
-            self.registration
-                .as_ref()
-                .ok_or(HistoryAdmissionError::Closed)?,
-            bytes,
-            cx,
-        )?;
-        let lease = AllocationLease::new(bytes.bytes(), 1, Arc::new((bytes, payload.clone())));
-        Ok((lease, payload))
-    }
-    /// Bytes without a payload permit, for presentation text kept beside the projection.
-    pub(crate) fn retained_text(
-        &self,
-        bytes: usize,
-        cx: &mut Context<CloudChat>,
-    ) -> Result<AllocationLease, HistoryAdmissionError> {
-        let bytes = self.admission.reserve_bytes(
-            self.registration
-                .as_ref()
-                .ok_or(HistoryAdmissionError::Closed)?,
-            bytes,
-            cx,
-        )?;
-        Ok(AllocationLease::new(bytes.bytes(), 0, bytes))
-    }
-    pub(crate) fn work(
-        &self,
-        required: AllocationRequirements,
-        cx: &mut Context<CloudChat>,
-    ) -> Result<AllocationLease, HistoryAdmissionError> {
-        if required.payloads() > nocterm_agent_runtime::history_admission::MAX_HISTORY_PAYLOADS {
-            return Err(HistoryAdmissionError::PayloadCapacity);
+    ) -> Result<(), HistoryAdmissionError> {
+        if self
+            .bytes
+            .as_ref()
+            .is_some_and(|held| held.bytes() >= bytes)
+        {
+            return Ok(());
         }
-        let mut payloads = Vec::with_capacity(required.payloads());
-        for _ in 0..required.payloads() {
-            payloads.push(
-                self.admission
-                    .reserve_payload_reclaiming(Some(cx.entity_id()), cx)?,
-            );
-        }
-        let bytes = self.admission.reserve_bytes(
+        let payload = match self.payload.take() {
+            Some(payload) => payload,
+            None => self
+                .admission
+                .reserve_payload_reclaiming(Some(cx.entity_id()), cx)?,
+        };
+        let reserved = self.admission.reserve_bytes(
             self.registration
                 .as_ref()
                 .ok_or(HistoryAdmissionError::Closed)?,
-            required.bytes(),
+            bytes.saturating_mul(2),
             cx,
-        )?;
-        Ok(AllocationLease::new(
-            bytes.bytes(),
-            payloads.len(),
-            (bytes, payloads),
-        ))
-    }
-    pub(crate) fn urgent(
-        &self,
-        required: AllocationRequirements,
-        cx: &mut Context<CloudChat>,
-    ) -> Result<AllocationLease, HistoryAdmissionError> {
-        self.admission.reserve_urgent_control(
-            self.registration
-                .as_ref()
-                .ok_or(HistoryAdmissionError::Closed)?,
-            required.bytes(),
-            required.payloads(),
-            cx,
-        )
-    }
-    pub(crate) fn published(&mut self, payload: HistoryPayloadPermit) {
+        );
         self.payload = Some(payload);
+        let reserved = reserved?;
+        self.bytes = Some(AllocationLease::new(reserved.bytes(), 0, reserved));
+        Ok(())
     }
     pub(crate) fn shown(&self) -> bool {
         self.shown
@@ -158,5 +109,6 @@ impl ProjectionResidency {
     }
     pub(crate) fn evicted(&mut self) {
         self.payload.take();
+        self.bytes.take();
     }
 }

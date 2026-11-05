@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use gpui::TestAppContext;
-use nocterm_cloud_agents_model::testing::{FakeCloudAgents, FakeFailure};
+use nocterm_cloud_agents_model::testing::{FakeChatSshCertifier, FakeCloudAgents, FakeFailure};
 use nocterm_cloud_agents_model::{
-    AgentId, AgentLimits, AgentScope, AgentStatus, CloudAgent, PoolId, PoolOffer,
+    AgentId, AgentLimits, AgentScope, AgentStatus, CloudAgent, CloudAgentError, PoolId, PoolOffer,
 };
 use nocterm_hubs_model::{HubAddress, HubId};
 
@@ -48,7 +48,15 @@ fn own_runner_agent(id: &str, name: &str) -> CloudAgent {
 }
 
 fn install_with(fake: &FakeCloudAgents, cx: &mut TestAppContext) -> crate::Installed {
-    let fake = fake.clone();
+    install_certifying(fake, &FakeChatSshCertifier::default(), cx)
+}
+
+fn install_certifying(
+    fake: &FakeCloudAgents,
+    certifier: &FakeChatSshCertifier,
+    cx: &mut TestAppContext,
+) -> crate::Installed {
+    let (fake, certifier) = (fake.clone(), certifier.clone());
     cx.update(|cx| {
         install(
             Deps {
@@ -59,6 +67,7 @@ fn install_with(fake: &FakeCloudAgents, cx: &mut TestAppContext) -> crate::Insta
                 usage: Arc::new(fake.clone()),
                 personal: Arc::new(fake.clone()),
                 pins: Arc::new(fake),
+                certifier: Arc::new(certifier),
             },
             cx,
         )
@@ -526,4 +535,72 @@ async fn a_late_removal_does_not_forget_a_start_begun_after_it(cx: &mut TestAppC
     installed
         .agents()
         .read_with(cx, |agents, _| assert!(agents.start_view(second).is_some()));
+}
+
+#[gpui::test]
+async fn a_tracked_hubs_bound_chats_are_swept_every_minute_until_it_is_untracked(
+    cx: &mut TestAppContext,
+) {
+    let certifier = FakeChatSshCertifier::default();
+    let installed = install_certifying(&FakeCloudAgents::default(), &certifier, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    assert_eq!(
+        certifier.sweeps(&hub()),
+        1,
+        "a tracked hub is swept at once"
+    );
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(certifier.sweeps(&hub()), 2);
+
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.untrack(&hub(), cx));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(120));
+    cx.run_until_parked();
+    assert_eq!(certifier.sweeps(&hub()), 2, "an untracked hub is not swept");
+    assert_eq!(certifier.forgotten(), [hub()]);
+}
+
+#[gpui::test]
+async fn a_failed_sweep_is_tried_again_and_a_hub_without_cloud_chats_stops(
+    cx: &mut TestAppContext,
+) {
+    let certifier = FakeChatSshCertifier::default();
+    certifier.fail(&hub(), || CloudAgentError::Stale);
+    let installed = install_certifying(&FakeCloudAgents::default(), &certifier, cx);
+    installed
+        .agents()
+        .update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    certifier.heal(&hub());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(
+        certifier.sweeps(&hub()),
+        1,
+        "the account unlocked again is swept"
+    );
+
+    certifier.fail(&hub(), || CloudAgentError::Unsupported);
+    for _ in 0..3 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(61));
+        cx.run_until_parked();
+    }
+    certifier.heal(&hub());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(
+        certifier.sweeps(&hub()),
+        1,
+        "an unsupported hub is not swept again"
+    );
 }

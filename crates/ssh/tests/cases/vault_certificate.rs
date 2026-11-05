@@ -3,7 +3,7 @@ use super::*;
 use nocterm_session::CredentialId;
 use nocterm_ssh_keys::{
     KeyMaterial,
-    ca::{CertificateSpec, UserCa},
+    testing::ca::{CertificateSpec, UserCa},
 };
 use russh::keys::ssh_key::{PublicKey, public::KeyData};
 

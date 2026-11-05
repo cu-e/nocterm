@@ -196,3 +196,48 @@ fn material_reopens_for_the_original_persistent_runner_and_retirement_is_conditi
     restored.retire();
     assert!(crypto.chat_key_epoch(&stream).is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn an_ssh_row_is_sealed_under_the_ssh_access_class_and_never_opens_as_an_effect() {
+    let fixture = Fixture::new();
+    let crypto = RunnerJournalCrypto::new(fixture.identity.clone(), 1).unwrap();
+    fixture.install(&crypto);
+    let slot = nocterm_hub_model::cloud::SSH_ACCESS_SLOT;
+    let context = |class| {
+        JournalCipherContext::new(
+            fixture.stream.clone(),
+            class,
+            slot,
+            JournalSequence::from_u64(1),
+            StreamRevision::from_u64(1),
+            WriterEpoch::new(1).unwrap(),
+        )
+    };
+    let sealed = crypto
+        .seal(&context(JournalStorageClass::SshAccess), b"ssh row")
+        .unwrap();
+    let contract =
+        |class| JournalCoordinate::new(fixture.coordinate.clone(), class, slot, 1, 1, 1).unwrap();
+    assert_eq!(
+        &**fixture
+            .key
+            .open_journal(&contract(JournalClass::SshAccess), &sealed)
+            .unwrap(),
+        b"ssh row"
+    );
+    assert!(
+        fixture
+            .key
+            .open_journal(&contract(JournalClass::Effect), &sealed)
+            .is_err()
+    );
+    let legacy = crypto
+        .seal(&context(JournalStorageClass::Effect), b"ssh row")
+        .unwrap();
+    assert!(
+        crypto
+            .open(&context(JournalStorageClass::SshAccess), &legacy)
+            .is_err()
+    );
+}

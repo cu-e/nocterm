@@ -26,6 +26,8 @@
 //! admission, filesystem storage or image decoding.
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,
 //! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
+//! A Cloud chat's Servers bar shows its binding, binds and unbinds it and picks the server its
+//! prompts run on through the source's `ConversationServers` (ADR 0147).
 //! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel,
 //! its narrow ConversationPanel selector, and the TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.

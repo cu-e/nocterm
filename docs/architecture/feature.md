@@ -608,8 +608,8 @@ sources use the same transcript, footer, composer, send control and immutable ap
 cards; `ConversationView::composer` capabilities (attach, configure, usage) decide which
 controls show, and configuration, attachment and sign-in controls also require
 their actual Local thread. Prompts a source has not accepted (`pending_prompts`) follow the
-transcript as user rows marked on their way or failed, with Retry and, for a refused one,
-Dismiss, until the accepted row replaces them
+transcript as user rows marked on their way or failed, with Retry and Dismiss, until the
+accepted row replaces them
 ([ADR 0134](../adr/0134-one-composer-for-every-conversation-and-pending-prompts.md)).
 Selection deselects the Local roster through its normal visibility transition.
 Detaching a captured observer never sends Stop. Original source identity and input
@@ -617,10 +617,20 @@ tickets fence deferred action errors and successful composer clearing.
 The installation retains one `CloudChatInstallation`, sharing the runtime's
 history admission across captured environment handles and root windows.
 HistoryColumn owns `CloudHistory`, the Cloud chats of the window's hub; the history renders
-local and Cloud rows through one neutral row model, and a Cloud row offers only opening
-([ADR 0133](../adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md)).
-A refused submission (`ConversationSubmission::refused`) releases the composer, so sending
-the same text again is a new prompt; an unanswered one is retried under its original ID.
+local and Cloud rows through one neutral row model in one order by last activity, a Cloud row
+shows its runner's title, time and state, and offers only opening
+([ADR 0133](../adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md),
+[ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)).
+A refused or unanswered submission (`ConversationSubmission::refused`) releases the composer,
+so sending the same text again is a new prompt. A Cloud chat whose runner did not confirm its
+history (`ConversationView::freshness`) says so in its status line, and a sleeping seat offers
+Wake (`ConversationActions::wake`); while the chat is still opening nothing is said
+([ADR 0146](../adr/0146-device-transport-and-resumable-commands.md)). A source that binds
+servers (`ConversationSource::servers`) gets a Servers bar above the composer
+(`CloudServersControl`, owned by the conversation surface): the bound servers and where each
+stands, the server the next prompts run on, a form to bind CA-trusted servers for one to thirty
+days (seven by default) and Unbind. A Cloud history row names the servers its chat is bound to
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. Its 32-entry,
 64 MiB preview budget retains full immutable source identities and charges image/source

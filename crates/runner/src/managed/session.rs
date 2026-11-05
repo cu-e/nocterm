@@ -22,7 +22,8 @@ impl Launch {
                 .execution
                 .as_ref()
                 .is_some_and(ExecutionConfig::is_brokered);
-            if !brokered || config.session_targets.is_none() {
+            // A managed runner's SSH egress is the host's, stated in boot v3.
+            if !brokered || config.session_targets.is_none() || !config.ssh_egress.is_empty() {
                 return Err(RunnerError::Value("managed execution configuration"));
             }
             // An unbuffered duplicate of fd 0: `Stdin` keeps its own buffer that is
@@ -74,6 +75,10 @@ impl Session {
     }
     pub(crate) fn providers(&self) -> &Arc<BrokeredProviders> {
         &self.providers
+    }
+    /// The boot's SSH targets and egress for chat SSH bindings (ADR 0145).
+    pub(crate) fn ssh(&self) -> crate::sessions::reach::BootSsh {
+        crate::sessions::reach::BootSsh::new(self.boot.ssh_targets(), self.boot.ssh_egress())
     }
     /// Completes when the host closes the channel, which ends the lease. A
     /// channel that failed instead is reported once and never completes: the

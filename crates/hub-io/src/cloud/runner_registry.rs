@@ -1,6 +1,6 @@
 //! One bounded encrypted personal roster; no directory-offered runner key is trusted.
-mod codec;
 mod operation;
+mod records;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -26,8 +26,8 @@ const MAX_RESPONSE: usize = 16 * 1024;
 pub fn runner_registry_work_bytes() -> Result<usize, RunnerRegistryError> {
     let collections = (MAX_RESPONSE + 2) * std::mem::size_of::<nocterm_hub_proto::v1::Collection>();
     let native = 2 * RUNNER_REGISTRY_RESIDENT_BYTES;
-    let plaintext = 2 * codec::MAX_PLAINTEXT;
-    let crypto = 2 * (codec::MAX_PLAINTEXT + 42);
+    let plaintext = 2 * records::MAX_PLAINTEXT;
+    let crypto = 2 * (records::MAX_PLAINTEXT + 42);
     let request_and_response = 2 * MAX_RESPONSE;
     Ok(collections
         + native
@@ -111,7 +111,6 @@ pub struct AccountRunnerRegistry {
     bound: BoundOperations,
     cloud: Arc<CloudClient>,
     scope: AccountScope,
-    context: Vec<u8>,
     handle: Handle,
     _allocation: AllocationLease,
 }
@@ -128,12 +127,10 @@ impl AccountRunnerRegistry {
         let result = (|| {
             let (bound, cloud, authority) = material.conversation_parts();
             validate_scope(&bound, &cloud, authority, &scope)?;
-            let context = codec::context(&scope)?;
             Ok(Self {
                 bound,
                 cloud,
                 scope,
-                context,
                 handle,
                 _allocation: resident.clone(),
             })
@@ -177,7 +174,6 @@ impl AccountRunnerRegistry {
                 self.bound.clone(),
                 self.cloud.clone(),
                 self.scope.clone(),
-                self.context.clone(),
                 registration,
                 reservations.resident,
             ))
@@ -292,7 +288,7 @@ fn resident_fits(allocation: &AllocationLease) -> bool {
     // element capacity. Each row also owns two bounded namespace strings and a
     // bounded label; RosterData owns one additional full scope.
     let maximum = std::mem::size_of::<RosterData>()
-        + codec::MAX_RUNNERS
+        + records::MAX_RUNNERS
             * (2 * std::mem::size_of::<RunnerRegistration>()
                 + 2 * nocterm_cloud_model::identity::MAX_NAMESPACE_BYTES
                 + 128)

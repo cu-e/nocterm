@@ -508,6 +508,7 @@ fn prepare(
         stream,
         acceptance,
         &owner.principal.default,
+        owner.material.chat_key_epoch(acknowledgement.stream()),
     ) {
         Ok(value) => value,
         Err(_) => {
@@ -590,10 +591,9 @@ fn wire_error(
         return backend(changed);
     }
     let fault = match &error {
-        CloudError::Protocol
-        | CloudError::Relay(_)
-        | CloudError::Command(_)
-        | CloudError::Encryption(_) => RunnerInboxFault::Authentication,
+        CloudError::Protocol | CloudError::Relay(_) | CloudError::Command(_) => {
+            RunnerInboxFault::Authentication
+        }
         CloudError::SourceChanged | CloudError::NotSignedIn => RunnerInboxFault::NeedsRunnerAccess,
         _ => RunnerInboxFault::DeliveryUnconfirmed,
     };

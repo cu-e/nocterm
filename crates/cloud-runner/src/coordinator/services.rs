@@ -18,6 +18,7 @@ pub struct CoordinatorStorage {
     runs: super::authority::RunAuthorities,
     tasks: TaskSupervisor,
     publication: Option<Arc<super::publication::CoordinatorPublication>>,
+    summaries: Option<Arc<super::summary_publication::CoordinatorSummaries>>,
 }
 impl CoordinatorStorage {
     pub fn new(
@@ -56,6 +57,7 @@ impl CoordinatorStorage {
             runs: super::authority::RunAuthorities::default(),
             tasks,
             publication: None,
+            summaries: None,
         }
     }
     pub fn with_publication(
@@ -63,6 +65,14 @@ impl CoordinatorStorage {
         publication: Arc<super::publication::CoordinatorPublication>,
     ) -> Self {
         self.publication = Some(publication);
+        self
+    }
+    /// Publishes chat summaries to the runner directory from the delivery sweep.
+    pub fn with_summaries(
+        mut self,
+        summaries: Arc<super::summary_publication::CoordinatorSummaries>,
+    ) -> Self {
+        self.summaries = Some(summaries);
         self
     }
     /// Supply this exact tracked owner to retained native tools at composition.
@@ -126,6 +136,7 @@ pub struct CoordinatorExecution {
     session_setup: Option<super::session_services::CoordinatorSessions>,
     retirement: Option<Arc<dyn ChatRetirement>>,
     approval: Option<Arc<dyn super::ToolApprovalPolicy>>,
+    ssh: Option<Arc<super::ssh_access::CoordinatorSsh>>,
 }
 impl CoordinatorExecution {
     pub fn new(
@@ -142,7 +153,14 @@ impl CoordinatorExecution {
             session_setup: None,
             retirement: None,
             approval: None,
+            ssh: None,
         }
+    }
+    /// Admits chat SSH bindings and keeps each chat's key and certificate (ADR 0145).
+    /// Without it a binding is refused as unsupported.
+    pub fn with_ssh(mut self, ssh: Arc<super::ssh_access::CoordinatorSsh>) -> Self {
+        self.ssh = Some(ssh);
+        self
     }
     /// Lets the embedding runner decide which mutating calls need a person.
     /// Without it every mutating call asks.
@@ -210,6 +228,11 @@ impl CoordinatorServices {
     pub(super) fn publication(&self) -> Option<&Arc<super::publication::CoordinatorPublication>> {
         self.storage.publication.as_ref()
     }
+    pub(super) fn summaries(
+        &self,
+    ) -> Option<&Arc<super::summary_publication::CoordinatorSummaries>> {
+        self.storage.summaries.as_ref()
+    }
     pub(super) fn source(&self) -> &Arc<dyn AuthenticatedCommandSource> {
         &self.source
     }
@@ -238,6 +261,9 @@ impl CoordinatorServices {
     }
     pub(super) fn retirement(&self) -> Option<&Arc<dyn ChatRetirement>> {
         self.execution.retirement.as_ref()
+    }
+    pub(super) fn ssh(&self) -> Option<&Arc<super::ssh_access::CoordinatorSsh>> {
+        self.execution.ssh.as_ref()
     }
     pub(super) fn approval(&self) -> Option<&Arc<dyn super::ToolApprovalPolicy>> {
         self.execution.approval.as_ref()

@@ -1,24 +1,31 @@
-//! Borrowed presentation and actions retain the originally displayed authority.
-use crate::{CloudChat, CloudChatError};
+//! A chat as the agent-chat renderer and composer see it. Borrowed presentation; every action
+//! goes to the chat's own conversation.
+use crate::{CloudChat, CloudChatError, SubmittedKey};
 use gpui::{App, Entity, Subscription, Task, WeakEntity};
 use nocterm_agent_chat::conversation::{
-    ConversationActions, ConversationError, ConversationSource, ConversationToolApproval,
-    ToolApprovalChoice, ToolApprovalView,
+    ConversationActions, ConversationError, ConversationSource, ConversationSubmission,
+    ConversationSubmissionStart, ConversationToolApproval, ToolApprovalChoice, ToolApprovalView,
 };
 use nocterm_ai::conversation::{
-    ConversationAction, ConversationPhase, ConversationView, PendingPromptKey,
+    ComposerCapabilities, ConversationAction, ConversationPhase, ConversationView, PendingPromptKey,
 };
-use nocterm_cloud_model::projection::ports::ConversationCoordinates;
+use nocterm_ai::tool_display::ToolDisplay;
+use nocterm_cloud_conversation_model::{
+    CommandState, ConversationAction as CloudAction, IntentKey,
+};
 use std::rc::Rc;
 
 #[derive(Clone)]
-pub struct CloudConversation(WeakEntity<CloudChat>);
-impl CloudConversation {
+pub struct CloudConversationView(WeakEntity<CloudChat>);
+impl CloudConversationView {
     pub fn new(chat: &Entity<CloudChat>) -> Self {
         Self(chat.downgrade())
     }
+    fn chat(&self) -> Result<Entity<CloudChat>, ConversationError> {
+        self.0.upgrade().ok_or(ConversationError::Stale)
+    }
 }
-impl ConversationSource for CloudConversation {
+impl ConversationSource for CloudConversationView {
     fn identity(&self) -> gpui::EntityId {
         self.0.entity_id()
     }
@@ -26,18 +33,19 @@ impl ConversationSource for CloudConversation {
         &self,
         cx: &mut App,
     ) -> Result<Vec<Rc<dyn ConversationToolApproval>>, ConversationError> {
-        let chat = self.0.upgrade().ok_or(ConversationError::Stale)?;
+        let chat = self.chat()?;
         let chat = chat.read(cx);
         chat.check_current()
             .map_err(CloudChatError::into_conversation)?;
-        let control = chat.projection().control();
+        let control = chat.transcript().control_revision();
         Ok(chat
-            .projection()
+            .transcript()
             .approvals()
-            .map(|card| {
+            .iter()
+            .map(|approval| {
                 Rc::new(CloudApproval {
                     chat: self.0.clone(),
-                    key: card.key(),
+                    intent: approval.intent,
                     control,
                 }) as Rc<dyn ConversationToolApproval>
             })
@@ -48,34 +56,27 @@ impl ConversationSource for CloudConversation {
         cx: &App,
         visitor: &mut dyn for<'a> FnMut(ConversationView<'a>),
     ) -> Result<(), ConversationError> {
-        let chat = self.0.upgrade().ok_or(ConversationError::Stale)?;
+        let chat = self.chat()?;
         let chat = chat.read(cx);
         chat.check_current()
             .map_err(CloudChatError::into_conversation)?;
-        let pending_prompts = chat.pending.prompts();
+        let pending_prompts = chat.pending_rows();
+        let phase = crate::thread::phase(chat.transcript());
         visitor(ConversationView {
-            transcript: chat.projection().transcript(),
-            phase: chat.projection().phase(),
-            generating: chat.projection().phase() == ConversationPhase::Running,
-            // check_current above fences the original replay producer, including
-            // background observations after a run has stopped.
+            transcript: chat.thread(),
+            phase,
+            generating: phase == ConversationPhase::Running,
             accepts_updates: true,
             can_fork: false,
-            can_prompt: chat.source.supports_prompt()
-                && chat.projection().phase() != ConversationPhase::Deleted,
-            can_allow: chat.can_allow(),
-            can_stop: chat.projection().run().is_some()
-                && !matches!(
-                    chat.projection().phase(),
-                    ConversationPhase::Deleted
-                        | ConversationPhase::Stopped
-                        | ConversationPhase::Completed
-                ),
-            updated_at: chat.projection().updated_at(),
-            pending_commands: chat.pending_commands().len(),
+            can_prompt: chat.can_prompt(),
+            can_allow: chat.allowable_run().is_some(),
+            can_stop: chat.stoppable_run().is_some(),
+            updated_at: chat.updated_at(),
+            pending_commands: chat.pending_commands(),
             reconnecting: chat.reconnecting(),
+            freshness: chat.shown_freshness(),
             // The runner owns its terminals, model and usage; a Cloud prompt is text.
-            composer: nocterm_ai::conversation::ComposerCapabilities::default(),
+            composer: ComposerCapabilities::default(),
             pending_prompts: &pending_prompts,
         });
         Ok(())
@@ -85,52 +86,92 @@ impl ConversationSource for CloudConversation {
         cx: &mut App,
         changed: Rc<dyn Fn(&mut App)>,
     ) -> Result<Subscription, ConversationError> {
-        let chat = self.0.upgrade().ok_or(ConversationError::Stale)?;
+        let chat = self.chat()?;
         Ok(cx.observe(&chat, move |_, cx| changed(cx)))
     }
     fn set_shown(&self, shown: bool, cx: &mut App) -> Result<(), ConversationError> {
-        let chat = self.0.upgrade().ok_or(ConversationError::Stale)?;
-        chat.update(cx, |chat, cx| chat.set_shown(shown, cx))
+        self.chat()?
+            .update(cx, |chat, cx| chat.set_shown(shown, cx))
             .map_err(CloudChatError::into_conversation)
     }
+    fn servers(
+        &self,
+        _cx: &App,
+    ) -> Option<Rc<dyn nocterm_agent_chat::conversation::ConversationServers>> {
+        Some(Rc::new(crate::servers::CloudServers::new(self.0.clone())))
+    }
     fn capture_actions(&self, cx: &App) -> Result<Rc<dyn ConversationActions>, ConversationError> {
-        let chat = self.0.upgrade().ok_or(ConversationError::Stale)?;
-        let chat = chat.read(cx);
-        chat.check_current()
+        self.chat()?
+            .read(cx)
+            .check_current()
             .map_err(CloudChatError::into_conversation)?;
+        let chat = self.chat()?;
+        let chat = chat.read(cx);
         Ok(Rc::new(CloudActions {
             chat: self.0.clone(),
-            coordinates: chat.coordinates(),
+            shown: chat.transcript().shown_run().map(|run| run.run),
         }))
     }
 }
+
+/// Actions captured with the run the chat showed: a Stop or Allow drawn for one run never acts
+/// on a run that replaced it.
 struct CloudActions {
     chat: WeakEntity<CloudChat>,
-    coordinates: ConversationCoordinates,
+    shown: Option<nocterm_cloud_conversation_model::RunKey>,
+}
+impl CloudActions {
+    /// The Cloud command of `action`, against what the chat showed when it was captured.
+    fn command(
+        &self,
+        action: ConversationAction,
+        chat: &CloudChat,
+    ) -> Result<CloudAction, ConversationError> {
+        let shown = chat.transcript().shown_run().map(|run| run.run);
+        let run_action = matches!(action, ConversationAction::Stop | ConversationAction::Allow);
+        if run_action && shown != self.shown {
+            return Err(ConversationError::Stale);
+        }
+        match action {
+            ConversationAction::Prompt(text) if chat.can_prompt() => Ok(CloudAction::Prompt {
+                text,
+                server: chat.prompt_target(),
+            }),
+            ConversationAction::Stop => Ok(CloudAction::Stop {
+                run: Some(chat.stoppable_run().ok_or(ConversationError::Unavailable)?),
+            }),
+            ConversationAction::Allow => Ok(CloudAction::Allow {
+                run: chat.allowable_run().ok_or(ConversationError::Unavailable)?,
+            }),
+            ConversationAction::Prompt(_) => Err(ConversationError::Unavailable),
+        }
+    }
+    fn send(
+        &self,
+        action: ConversationAction,
+        cx: &mut App,
+    ) -> Result<(SubmittedKey, Task<Result<(), ConversationError>>), ConversationError> {
+        let chat = self.chat.upgrade().ok_or(ConversationError::Stale)?;
+        chat.update(cx, |chat, cx| {
+            chat.check_current()
+                .map_err(CloudChatError::into_conversation)?;
+            let command = self.command(action, chat)?;
+            Ok(chat.send(command, cx))
+        })
+    }
 }
 impl ConversationActions for CloudActions {
     fn submit(
         &self,
         action: ConversationAction,
         cx: &mut App,
-    ) -> Result<nocterm_agent_chat::conversation::ConversationSubmissionStart, ConversationError>
-    {
-        let chat = self.chat.upgrade().ok_or(ConversationError::Stale)?;
+    ) -> Result<ConversationSubmissionStart, ConversationError> {
         let prompt = matches!(action, ConversationAction::Prompt(_));
-        let (id, receipt, completion) =
-            chat.update(cx, |chat, cx| -> Result<_, ConversationError> {
-                let (id, completion) = chat.submit(self.coordinates.clone(), action, cx)?;
-                let receipt = chat
-                    .pending
-                    .receipt(id)
-                    .map_err(|error| CloudChatError::from(error).into_conversation())?;
-                Ok((id, receipt, completion))
-            })?;
+        let (key, completion) = self.send(action, cx)?;
         Ok((
             Rc::new(CloudSubmission {
                 chat: self.chat.clone(),
-                id,
-                receipt,
+                key,
                 prompt,
             }),
             completion,
@@ -141,12 +182,10 @@ impl ConversationActions for CloudActions {
         action: ConversationAction,
         cx: &mut App,
     ) -> Task<Result<(), ConversationError>> {
-        let Some(chat) = self.chat.upgrade() else {
-            return Task::ready(Err(ConversationError::Stale));
-        };
-        chat.update(cx, |chat, cx| {
-            chat.perform(self.coordinates.clone(), action, cx)
-        })
+        match self.send(action, cx) {
+            Ok((_, completion)) => completion,
+            Err(error) => Task::ready(Err(error)),
+        }
     }
     fn retry_prompt(
         &self,
@@ -156,10 +195,7 @@ impl ConversationActions for CloudActions {
         let Some(chat) = self.chat.upgrade() else {
             return Task::ready(Err(ConversationError::Stale));
         };
-        if let Err(error) = chat.read(cx).check_current() {
-            return Task::ready(Err(error.into_conversation()));
-        }
-        chat.update(cx, |chat, cx| chat.retry_prompt(command(prompt), cx))
+        chat.update(cx, |chat, cx| chat.retry_prompt(prompt, cx))
     }
     fn dismiss_prompt(
         &self,
@@ -167,52 +203,65 @@ impl ConversationActions for CloudActions {
         cx: &mut App,
     ) -> Result<(), ConversationError> {
         let chat = self.chat.upgrade().ok_or(ConversationError::Stale)?;
-        chat.update(cx, |chat, cx| chat.dismiss_prompt(command(prompt), cx))
+        chat.update(cx, |chat, cx| chat.dismiss_prompt(prompt, cx))
     }
-}
-fn command(prompt: PendingPromptKey) -> nocterm_cloud_model::identity::CommandId {
-    nocterm_cloud_model::identity::CommandId::from_bytes(*prompt.as_bytes())
-}
-struct CloudSubmission {
-    chat: WeakEntity<CloudChat>,
-    id: nocterm_cloud_model::identity::CommandId,
-    receipt: super::pending::SubmissionReceipt,
-    prompt: bool,
-}
-impl nocterm_agent_chat::conversation::ConversationSubmission for CloudSubmission {
-    fn retry(&self, cx: &mut App) -> Task<Result<(), ConversationError>> {
+    fn wake(&self, cx: &mut App) -> Task<Result<(), ConversationError>> {
         let Some(chat) = self.chat.upgrade() else {
             return Task::ready(Err(ConversationError::Stale));
         };
-        if let Err(error) = chat.read(cx).check_current() {
-            return Task::ready(Err(error.into_conversation()));
-        }
-        match self.receipt.get() {
-            Some(true) => return Task::ready(Ok(())),
-            Some(false) => return Task::ready(Err(ConversationError::Rejected)),
-            None => {}
-        }
-        chat.update(cx, |chat, cx| chat.retry(self.id, cx))
+        chat.update(cx, |chat, cx| chat.wake(cx))
     }
-    /// Refused by the runner, or no longer held because its source ended.
+}
+
+struct CloudSubmission {
+    chat: WeakEntity<CloudChat>,
+    key: SubmittedKey,
+    prompt: bool,
+}
+impl CloudSubmission {
+    fn state(&self, cx: &App) -> Option<CommandState> {
+        let key = self.key.get()?;
+        let chat = self.chat.upgrade()?;
+        let chat = chat.read(cx);
+        chat.transcript()
+            .pending_command(key)
+            .map(|known| known.state)
+    }
+}
+impl ConversationSubmission for CloudSubmission {
+    fn retry(&self, cx: &mut App) -> Task<Result<(), ConversationError>> {
+        // The core already resends the same command until its window ends; what is left is
+        // to say how it went.
+        Task::ready(match self.state(cx) {
+            Some(CommandState::Refused) => Err(ConversationError::Rejected),
+            Some(CommandState::Unreachable) => Err(ConversationError::Unreachable),
+            _ => Ok(()),
+        })
+    }
+    /// Refused or unanswered for good, or no longer held because its conversation ended.
     fn refused(&self, cx: &App) -> bool {
-        match self.receipt.get() {
-            Some(accepted) => !accepted,
-            None => self
-                .chat
-                .upgrade()
-                .is_none_or(|chat| !chat.read(cx).pending.contains(self.id)),
+        if self.chat.upgrade().is_none() {
+            return true;
+        }
+        if self.key.get().is_none() {
+            return false;
+        }
+        match self.state(cx) {
+            Some(CommandState::Refused | CommandState::Unreachable) | None => true,
+            Some(_) => false,
         }
     }
     fn pending_prompt(&self) -> Option<PendingPromptKey> {
-        self.prompt.then(|| super::pending::prompt_key(self.id))
+        self.prompt
+            .then(|| self.key.get().map(crate::pending::prompt_key))
+            .flatten()
     }
 }
 
 struct CloudApproval {
     chat: WeakEntity<CloudChat>,
-    key: nocterm_cloud_model::projection::ApprovalKey,
-    control: nocterm_cloud_model::identity::ChatControlRevision,
+    intent: IntentKey,
+    control: u64,
 }
 impl ConversationToolApproval for CloudApproval {
     fn with_view(
@@ -224,23 +273,29 @@ impl ConversationToolApproval for CloudApproval {
         let chat = chat.read(cx);
         chat.check_current()
             .map_err(CloudChatError::into_conversation)?;
-        if chat.projection().control() != self.control {
+        let transcript = chat.transcript();
+        if transcript.control_revision() != self.control {
             return Err(ConversationError::Unavailable);
         }
-        let card = chat
-            .projection()
-            .approval(self.key)
+        let approval = transcript
+            .approval(self.intent)
             .ok_or(ConversationError::Unavailable)?;
-        let principal = card.intent().authority().session().target().principal();
+        let tool = transcript
+            .tool(self.intent)
+            .ok_or(ConversationError::Unavailable)?;
+        let mut display = ToolDisplay::requested(
+            tool.tool.clone(),
+            serde_json::from_str(&tool.arguments_json).unwrap_or_default(),
+        );
+        display.destination.clone_from(&tool.destination);
+        display.redacted = tool.redacted;
+        let call = display
+            .display_request()
+            .ok_or(ConversationError::Unavailable)?;
         visitor(
-            ToolApprovalView::new(
-                card.call(),
-                card.display().destination.as_deref().unwrap_or(""),
-                false,
-            )
-            .with_display(card.display())
-            .with_principal(principal.as_str())
-            .with_expiry(Some(self.key.expires().as_millis())),
+            ToolApprovalView::new(&call, tool.destination.as_deref().unwrap_or(""), false)
+                .with_display(&display)
+                .with_expiry(Some(approval.expires_at_ms)),
         );
         Ok(())
     }
@@ -252,17 +307,22 @@ impl ConversationToolApproval for CloudApproval {
         let Some(chat) = self.chat.upgrade() else {
             return Task::ready(Err(ConversationError::Stale));
         };
-        let choice = match choice {
-            ToolApprovalChoice::Deny => nocterm_cloud_model::coordinator::ApprovalChoice::Deny,
-            ToolApprovalChoice::AllowOnce => {
-                nocterm_cloud_model::coordinator::ApprovalChoice::Approve
-            }
+        let approve = match choice {
+            ToolApprovalChoice::Deny => false,
+            ToolApprovalChoice::AllowOnce => true,
             ToolApprovalChoice::AllowForSession => {
                 return Task::ready(Err(ConversationError::Unavailable));
             }
         };
+        let intent = self.intent;
+        let control = self.control;
         chat.update(cx, |chat, cx| {
-            chat.perform_approval(self.key, self.control, choice, cx)
+            if chat.transcript().control_revision() != control
+                || chat.transcript().approval(intent).is_none()
+            {
+                return Task::ready(Err(ConversationError::Unavailable));
+            }
+            chat.send(CloudAction::Answer { intent, approve }, cx).1
         })
     }
 }

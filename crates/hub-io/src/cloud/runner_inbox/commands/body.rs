@@ -118,7 +118,9 @@ pub(super) fn grant(
                 operations,
             )?))
         }
-        wire::GrantPayload::Provider { .. } => Err(CoordinatorError::InvalidCommand),
+        wire::GrantPayload::Provider { .. }
+        | wire::GrantPayload::SshBinding { .. }
+        | wire::GrantPayload::SshCertificate { .. } => Err(CoordinatorError::InvalidCommand),
     }
 }
 

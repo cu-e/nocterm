@@ -36,6 +36,7 @@ impl State {
         let execution = crate::execution::ExecutionSetup::capture(
             config.execution,
             config.session_targets,
+            config.ssh_egress,
             durable.cleanup_work_bytes(),
         )?;
         // The execution sections can arrive after `init` (a managed host appends them at each

@@ -23,11 +23,14 @@ pub(crate) struct ExecutionSetup {
     configuration: ExecutionConfig,
     targets: SessionTargetConfiguration,
     budgets: ExecutionBudgets,
+    /// `[ssh] egress` of an own runner; a managed boot's egress replaces it.
+    ssh_egress: Vec<String>,
 }
 impl ExecutionSetup {
     pub(crate) fn capture(
         configuration: Option<ExecutionConfig>,
         targets: Option<SessionTargetConfiguration>,
+        ssh_egress: Vec<String>,
         cleanup_bytes: usize,
     ) -> Result<Option<Self>, RunnerError> {
         match (configuration, targets) {
@@ -39,6 +42,7 @@ impl ExecutionSetup {
                     configuration,
                     targets,
                     budgets: ExecutionBudgets::new(cleanup_bytes)?,
+                    ssh_egress,
                 }))
             }
             _ => Err(RunnerError::Value("execution/session_targets")),
@@ -72,30 +76,40 @@ mod tests {
     }
     #[test]
     fn a_daemon_without_execution_configuration_stays_a_control_plane() {
-        assert!(ExecutionSetup::capture(None, None, 1024).unwrap().is_none());
+        assert!(
+            ExecutionSetup::capture(None, None, Vec::new(), 1024)
+                .unwrap()
+                .is_none()
+        );
     }
     #[test]
     fn execution_without_session_targets_or_the_reverse_is_refused() {
         assert!(matches!(
-            ExecutionSetup::capture(Some(execution()), None, 1024),
+            ExecutionSetup::capture(Some(execution()), None, Vec::new(), 1024),
             Err(RunnerError::Value("execution/session_targets"))
         ));
         assert!(matches!(
-            ExecutionSetup::capture(None, Some(targets("local")), 1024),
+            ExecutionSetup::capture(None, Some(targets("local")), Vec::new(), 1024),
             Err(RunnerError::Value("execution/session_targets"))
         ));
     }
     #[test]
     fn complete_configuration_captures_one_bounded_setup_and_an_unknown_default_is_refused() {
-        let setup = ExecutionSetup::capture(Some(execution()), Some(targets("local")), 1024)
-            .unwrap()
-            .unwrap();
+        let setup =
+            ExecutionSetup::capture(Some(execution()), Some(targets("local")), Vec::new(), 1024)
+                .unwrap()
+                .unwrap();
         assert!(Arc::ptr_eq(
             &setup.transport_work(),
             &setup.transport_work()
         ));
         assert!(matches!(
-            ExecutionSetup::capture(Some(execution()), Some(targets("missing")), 1024),
+            ExecutionSetup::capture(
+                Some(execution()),
+                Some(targets("missing")),
+                Vec::new(),
+                1024
+            ),
             Err(RunnerError::Value("session_targets.default"))
         ));
     }

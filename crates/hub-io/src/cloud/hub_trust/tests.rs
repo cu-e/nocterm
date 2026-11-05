@@ -32,7 +32,7 @@ async fn load(
             .map_err(account)?,
         work.clone(),
     );
-    let normal = codec::NormalAccount::capture(bound, testing::HUB_UID)?;
+    let normal = records::NormalAccount::capture(bound, testing::HUB_UID)?;
     let pin = storage::load_or_register(opened.value(), &normal.context(), authority)
         .await
         .map_err(|error| retained(error, work))?;
@@ -52,10 +52,10 @@ async fn account_cloud_trust_restores_on_normal_second_unlock_and_reuses_lost_re
         load(&a, None).await,
         Err(CloudTrustError::NotConfigured)
     ));
-    let context = codec::NormalAccount::capture(&a, testing::HUB_UID)
+    let context = records::NormalAccount::capture(&a, testing::HUB_UID)
         .unwrap()
         .context();
-    let collection = codec::collection_id(&context);
+    let collection = records::collection_id(&context);
     assert!(hub.objects(&collection).is_empty());
     let (entered, release) = hub.pause_next_error(StoreBoundary::PutReady, HubError::NotSignedIn);
     let old = a.clone();
@@ -114,26 +114,26 @@ async fn account_cloud_trust_refuses_late_relogin_context_tamper_and_deleted_pin
     assert!(pending.await.unwrap().is_err());
     assert!(load(&captured, None).await.is_err());
     assert_eq!(load(&new, None).await.unwrap().value(), &[31; 32]);
-    let context = codec::NormalAccount::capture(&new, testing::HUB_UID)
+    let context = records::NormalAccount::capture(&new, testing::HUB_UID)
         .unwrap()
         .context();
-    let encoded = codec::encode(&context, [31; 32]).unwrap();
+    let encoded = records::encode(&context, [31; 32]).unwrap();
     let mut moved = context.clone();
     moved[0] ^= 1;
-    assert!(codec::decode(&moved, &encoded).is_err());
-    assert!(codec::decode(&context, &[0; codec::MAX_PLAINTEXT + 1]).is_err());
-    let collection = codec::collection_id(&context);
+    assert!(records::decode(&moved, &encoded).is_err());
+    assert!(records::decode(&context, &[0; records::MAX_PLAINTEXT + 1]).is_err());
+    let collection = records::collection_id(&context);
     let ciphertext = hub.objects(&collection)[0].ciphertext.clone();
     let mut tampered = ciphertext.clone();
     tampered[0] ^= 1;
-    hub.tamper(&collection, codec::OBJECT, tampered);
+    hub.tamper(&collection, records::OBJECT, tampered);
     assert!(load(&new, None).await.is_err());
-    hub.tamper(&collection, codec::OBJECT, ciphertext);
+    hub.tamper(&collection, records::OBJECT, ciphertext);
     let work = new.capture().unwrap();
     work.ops()
         .delete_object(nocterm_hub_proto::v1::DeleteObjectRequest {
             collection_id: collection,
-            object_id: codec::OBJECT.into(),
+            object_id: records::OBJECT.into(),
             expected_version: 1,
         })
         .await
@@ -158,7 +158,7 @@ fn account_cloud_trust_import_checks_original_namespace_before_storage() {
     let directory = tempfile::tempdir().unwrap();
     let (_accounts, slot, _) = testing::signed_in(directory.path());
     let (_operations, bound) = bound(&slot, hub.clone());
-    let normal = codec::NormalAccount::capture(&bound, testing::HUB_UID).unwrap();
+    let normal = records::NormalAccount::capture(&bound, testing::HUB_UID).unwrap();
     let scope = normal.scope([15; 32]).unwrap();
     let binding = JournalCatalogBinding::new(
         scope.clone(),
@@ -207,7 +207,7 @@ fn account_cloud_trust_import_checks_original_namespace_before_storage() {
     }
     assert_ne!(scope.hub().instance().as_str(), testing::HUB_UID);
     assert!(
-        hub.objects(&codec::collection_id(&normal.context()))
+        hub.objects(&records::collection_id(&normal.context()))
             .is_empty()
     );
 }

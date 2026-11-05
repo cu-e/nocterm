@@ -70,8 +70,9 @@ impl ExecutionRuntime {
         state: &State,
         peer: RunnerHubPeer,
         brokered: Option<Arc<BrokeredProviders>>,
+        boot_ssh: Option<crate::sessions::reach::BootSsh>,
     ) -> Result<Self, RunnerError> {
-        let mut runtime = compose(setup, state, peer, brokered).await?;
+        let mut runtime = compose(setup, state, peer, brokered, boot_ssh).await?;
         let begun = runtime.begin().await;
         match begun {
             Ok(()) => Ok(runtime),

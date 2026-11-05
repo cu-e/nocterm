@@ -1,29 +1,19 @@
-//! Account-owned Cloud chat material restored by ordinary account keyset unlock.
-//! Only ciphertext survives an operation; an opaque material handle retains weak
-//! native key ownership and cannot revive after lock or replacement sign-in.
+//! The account's captured Cloud access under its pinned hub authority, as runner enrolment
+//! and the trusted runner registry use it. Chat material and grants are the contract device
+//! core's (`CreateChat`, `OpenChat`, ADR 0144). The handle retains weak native key ownership
+//! and cannot revive after lock or replacement sign-in.
 mod capture;
 mod failure;
-mod grant;
 pub use failure::AccountMaterialFailure;
-pub use grant::StoredChatKeyGrant;
-mod operation;
 mod reservations;
 pub use reservations::AccountMaterialReservations;
-mod record;
-mod storage;
 #[cfg(test)]
 mod tests;
 
 use crate::account::operations::BoundOperations;
-use futures::future::BoxFuture;
-use nocterm_cloud_model::{authority::StreamBinding, identity::ChatKeyEpoch};
-use nocterm_core::{
-    SharedCause,
-    allocation::{Allocated, AllocationLease},
-};
+use nocterm_core::{SharedCause, allocation::AllocationLease};
 use nocterm_hub_client::cloud::CloudClient;
 use nocterm_hubs_model::HubError;
-use nocterm_keys::cloud::ChatKey;
 use std::{error::Error, sync::Arc};
 use tokio::runtime::Handle;
 
@@ -34,13 +24,6 @@ pub struct ChatMaterialPins {
     pub encryption: [u8; 32],
     pub signing: [u8; 32],
     pub proof: [u8; 32],
-}
-/// Descriptive selectors; only the captured native/SDK owner authenticates them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChatMaterialRequest {
-    pub stream: StreamBinding,
-    pub epoch: ChatKeyEpoch,
-    pub pins: ChatMaterialPins,
 }
 #[derive(Debug, thiserror::Error)]
 pub enum AccountMaterialError {
@@ -87,7 +70,6 @@ pub fn account_material_work_bytes() -> Result<usize, AccountMaterialError> {
 }
 
 pub struct CloudAccountMaterial {
-    handle: Handle,
     bound: BoundOperations,
     cloud: Arc<CloudClient>,
     authority: [u8; 32],
@@ -100,99 +82,6 @@ impl CloudAccountMaterial {
         &self,
     ) -> (BoundOperations, Arc<CloudClient>, [u8; 32]) {
         (self.bound.clone(), self.cloud.clone(), self.authority)
-    }
-
-    pub fn create(
-        &self,
-        request: ChatMaterialRequest,
-        reservations: AccountMaterialReservations,
-    ) -> BoxFuture<'static, Result<AccountChatMaterial, AccountMaterialError>> {
-        self.run(request, reservations, true)
-    }
-    pub fn open(
-        &self,
-        request: ChatMaterialRequest,
-        reservations: AccountMaterialReservations,
-    ) -> BoxFuture<'static, Result<AccountChatMaterial, AccountMaterialError>> {
-        self.run(request, reservations, false)
-    }
-    fn run(
-        &self,
-        request: ChatMaterialRequest,
-        reservations: AccountMaterialReservations,
-        create: bool,
-    ) -> BoxFuture<'static, Result<AccountChatMaterial, AccountMaterialError>> {
-        let prepared: Result<_, AccountMaterialError> = (|| {
-            reservations.require(account_material_work_bytes()?)?;
-            self.cloud.check_source().map_err(cause)?;
-            capture::require_request(&self.bound, &self.cloud, self.authority, &request)?;
-            let work = self
-                .bound
-                .capture_bounded(MAX_RESPONSE, reservations.work())?;
-            Ok((work, self.bound.clone(), self.cloud.clone()))
-        })();
-        let (work, bound, cloud) = match prepared {
-            Ok(value) => value,
-            Err(error) => {
-                let error = retain_error(error, reservations.work());
-                return Box::pin(async move { Err(error) });
-            }
-        };
-        let source = Allocated::new(bound.source().clone(), reservations.resident());
-        let operation = Allocated::new(
-            operation::MaterialOperation::new(work, request, bound, cloud, reservations.resident()),
-            reservations.work(),
-        );
-        let worker = crate::task::spawn(&self.handle, async move {
-            operation
-                .value()
-                .execute(create)
-                .await
-                .map_err(|error| retain_error(error, operation.allocation().clone()))
-        });
-        Box::pin(async move {
-            let result = source
-                .value()
-                .during(worker)
-                .await?
-                .ok_or(AccountMaterialError::Stale)??;
-            source
-                .value()
-                .publish(|| result)
-                .map_err(AccountMaterialError::from)
-        })
-    }
-}
-/// No plaintext key or strong OpenKeys survives in this handle. Its reservation
-/// remains alive until the actual wrapped bytes and selectors have been dropped.
-pub struct AccountChatMaterial {
-    resident: Allocated<MaterialOwner>,
-}
-struct MaterialOwner {
-    record: record::MaterialRecord,
-    bound: BoundOperations,
-    cloud: Arc<CloudClient>,
-}
-impl AccountChatMaterial {
-    pub fn request(&self) -> &ChatMaterialRequest {
-        self.resident.value().record.request()
-    }
-    pub(super) fn check_current(&self) -> Result<(), AccountMaterialError> {
-        let owner = self.resident.value();
-        owner.cloud.check_source().map_err(cause)?;
-        owner
-            .bound
-            .source()
-            .check()
-            .map_err(AccountMaterialError::from)
-    }
-    pub(super) fn with_key<T>(
-        &self,
-        use_key: impl FnOnce(&ChatKey) -> Result<T, AccountMaterialError>,
-    ) -> Result<T, AccountMaterialError> {
-        let owner = self.resident.value();
-        self.check_current()?;
-        storage::with_key(owner.bound.source(), &owner.record, use_key)
     }
 }
 

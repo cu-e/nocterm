@@ -14,8 +14,8 @@ pub(super) async fn load_or_register(
 ) -> Result<[u8; 32], CloudTrustError> {
     work.source().check().map_err(account)?;
     let store = work.transient_store();
-    let collection_id = codec::collection_id(context);
-    let collection = ExactPersonalCollection::new(&store, codec::KIND, &collection_id);
+    let collection_id = records::collection_id(context);
+    let collection = ExactPersonalCollection::new(&store, records::KIND, &collection_id);
     let found = work
         .source()
         .during(collection.find())
@@ -56,16 +56,16 @@ async fn publish(
     context: &[u8],
     authority: [u8; 32],
 ) -> Result<[u8; 32], CloudTrustError> {
-    let plaintext = codec::encode(context, authority)?;
+    let plaintext = records::encode(context, authority)?;
     let ciphertext = at
         .key()
-        .seal_object(at.id(), codec::OBJECT, codec::KIND, &plaintext)
+        .seal_object(at.id(), records::OBJECT, records::KIND, &plaintext)
         .map_err(backend)?;
     let request = v1::PutObjectRequest {
         collection_id: at.id().to_owned(),
-        object_id: codec::OBJECT.to_owned(),
+        object_id: records::OBJECT.to_owned(),
         expected_version: 0,
-        kind: codec::KIND.to_owned(),
+        kind: records::KIND.to_owned(),
         ciphertext,
     };
     if request.encoded_len() > MAX_RESPONSE {
@@ -79,7 +79,7 @@ async fn publish(
     match written {
         Ok(receipt)
             if receipt.collection_id == at.id()
-                && receipt.object_id == codec::OBJECT
+                && receipt.object_id == records::OBJECT
                 && receipt.version == 1
                 && receipt.stream_version != 0 =>
         {
@@ -99,19 +99,20 @@ async fn read(
 ) -> Result<Option<[u8; 32]>, CloudTrustError> {
     let object = work
         .source()
-        .during(work.ops().object(at.id(), codec::OBJECT))
+        .during(work.ops().object(at.id(), records::OBJECT))
         .await
         .map_err(account)?
         .map_err(store_error)?;
     let Some(object) = object else {
         return Ok(None);
     };
-    if object.encoded_len() > MAX_RESPONSE || object.ciphertext.len() > codec::MAX_PLAINTEXT + 42 {
+    if object.encoded_len() > MAX_RESPONSE || object.ciphertext.len() > records::MAX_PLAINTEXT + 42
+    {
         return Err(CloudTrustError::Capacity);
     }
     if object.collection_id != at.id()
-        || object.object_id != codec::OBJECT
-        || object.kind != codec::KIND
+        || object.object_id != records::OBJECT
+        || object.kind != records::KIND
         || object.updated_by_device.len() > 128
         || object.stream_version == 0
     {
@@ -125,9 +126,9 @@ async fn read(
     }
     let plaintext = at
         .key()
-        .open_object(at.id(), codec::OBJECT, codec::KIND, &object.ciphertext)
+        .open_object(at.id(), records::OBJECT, records::KIND, &object.ciphertext)
         .map_err(backend)?;
-    codec::decode(context, &plaintext).map(Some)
+    records::decode(context, &plaintext).map(Some)
 }
 fn store_error(error: OpError) -> CloudTrustError {
     match error {

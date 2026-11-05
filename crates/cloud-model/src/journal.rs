@@ -13,6 +13,7 @@ mod record;
 mod session;
 mod snapshot_publication;
 mod storage;
+mod summary;
 mod writer;
 
 pub use crate::authority::CommandIssuer;
@@ -50,6 +51,12 @@ pub use session::{
 pub use snapshot_publication::*;
 pub use storage::{
     JournalCipher, JournalCipherContext, JournalStorageClass, MAX_STORED_JOURNAL_BYTES,
+};
+pub use summary::{
+    ChatActivity, ChatSummaryDirectory, ChatSummaryDraft, ChatSummaryFacts, ChatSummaryJournal,
+    ChatSummaryTracker, MAX_SEALED_CHAT_SUMMARY_BYTES, MAX_SUMMARY_PROMPT_LINE_BYTES,
+    SUMMARY_INTERVAL_MS, SUMMARY_RETRY_CEILING_MS, SealedChatSummary, StoredChatSummary,
+    SummaryObservation, SummarySsh, SummaryStep,
 };
 pub use writer::{RunJournalWriter, WriterClaim, WriterLease};
 

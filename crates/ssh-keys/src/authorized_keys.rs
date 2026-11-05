@@ -91,6 +91,11 @@ pub trait AgentHosts: Send + Sync {
 
     /// [`HostAccessError::NotConnected`] when no session of `connection` is up.
     fn access(&self, connection: &str) -> Result<HostAccess, HostAccessError>;
+
+    /// The SSH port `connection` was last reached on, while this device remembers it.
+    fn port(&self, _connection: &str) -> Option<u16> {
+        None
+    }
 }
 
 /// A saved connection that came up, offered with the file system of its session.

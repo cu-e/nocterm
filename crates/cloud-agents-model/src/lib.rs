@@ -14,9 +14,9 @@
 //! the catalog entity and the order of a start (`nocterm-cloud-agents`), views.
 //!
 //! Ports provided: `CloudAgentCatalog`, `CloudAgentLauncher`, `OwnRunnerLauncher`,
-//! `AgentSeats`, `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`. Ports used: `nocterm-hubs-model`
+//! `AgentSeats`, `AgentUsage`, `PersonalAgents`, `CloudChatLauncher`, `ChatSshCertifier`. Ports used: `nocterm-hubs-model`
 //! (`HubId`, `HubColor`, `HubError`), the `Secret` of `nocterm-session` and the
-//! `CapturedConversationSource` of `nocterm-cloud-model`.
+//! `CloudConversation` port of `nocterm-cloud-conversation-model`.
 //!
 //! Settings: none. Globals: none.
 //!
@@ -44,8 +44,8 @@ mod usage;
 
 pub use agent::{AgentLimits, CloudAgent, PoolLabel};
 pub use chats::{
-    ChatFuture, ChatHistoryEntry, ChatHost, ChatRunner, ChatSummary, CloudChatError,
-    CloudChatLauncher, OpenedChat,
+    ChatActivity, ChatFuture, ChatHistoryEntry, ChatHost, ChatListing, ChatRunner, ChatSummary,
+    CloudChatError, CloudChatLauncher, OpenedChat,
 };
 pub use error::{CloudAgentError, ReplyProblem};
 pub use ids::{AgentId, IdError, InstanceId, MAX_ID_BYTES, PoolId};
@@ -55,9 +55,9 @@ pub use personal::{
 };
 pub use placement::Placement;
 pub use ports::{
-    AgentHints, AgentSeats, AgentUsage, CloudAgentCatalog, CloudAgentLauncher, CloudFuture,
-    OwnRunnerLauncher, OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice, PoolPinStore,
-    SaveOutcome, StartOutcome, StepSink, web_panel_url,
+    AgentHints, AgentSeats, AgentUsage, ChatSshCertifier, CloudAgentCatalog, CloudAgentLauncher,
+    CloudFuture, OwnRunnerLauncher, OwnRunnerSeat, PersonalAgents, PinnedPool, PoolChoice,
+    PoolPinStore, SaveOutcome, StartOutcome, StepSink, web_panel_url,
 };
 pub use scope::AgentScope;
 pub use sections::{HubAgents, Section, SectionTitle, arrange};

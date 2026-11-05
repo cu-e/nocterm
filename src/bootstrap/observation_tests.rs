@@ -65,17 +65,3 @@ fn memory_observations_ignore_even_an_existing_native_cache(cx: &mut gpui_kit::T
     cx.run_until_parked();
     assert!(cx.read(|cx| installed.flag("xx", cx).is_none()));
 }
-
-#[test]
-fn actual_cloud_stop_work_fits_the_reserved_installation_bytes_and_two_slots() {
-    use nocterm_agent_runtime::history_admission::{
-        MAX_HISTORY_PAYLOADS, MAX_NORMAL_HISTORY_PAYLOADS, URGENT_HISTORY_BYTES,
-    };
-    let requirement =
-        nocterm_hub_io::cloud::CloudConversationSource::urgent_requirements().unwrap();
-    assert!(
-        requirement.bytes() <= URGENT_HISTORY_BYTES,
-        "actual guarded SDK Stop requirement exceeds reserved bytes"
-    );
-    assert!(requirement.payloads() <= MAX_HISTORY_PAYLOADS - MAX_NORMAL_HISTORY_PAYLOADS);
-}

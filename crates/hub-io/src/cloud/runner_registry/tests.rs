@@ -68,8 +68,7 @@ async fn load(
             .map_err(account)?,
         allocation,
     );
-    let context = codec::context(scope)?;
-    let result = storage::load_or_register(work.value(), scope, &context, registration.as_ref())
+    let result = storage::load_or_register(work.value(), scope, registration.as_ref())
         .await
         .map_err(|error| retained(error, work.allocation().clone()))?;
     bound
@@ -93,8 +92,7 @@ async fn account_runner_registry_restores_on_normal_second_unlock_and_reuses_los
     release.release();
     let created = pending.await.unwrap().unwrap();
     assert_eq!(created.value().0, 1);
-    let context = codec::context(&scope).unwrap();
-    let collection = codec::collection_id(&context);
+    let collection = records::collection_id(&scope).unwrap();
     let stored = hub.objects(&collection);
     assert_eq!(stored.len(), 1);
     assert!(
@@ -175,12 +173,11 @@ async fn account_runner_registry_cas_race_keeps_other_runner_and_honors_bounds_a
         load(&source, &scope, Some(registration(&scope, 18, 1, 6))).await,
         Err(RunnerRegistryError::Capacity)
     ));
-    let context = codec::context(&scope).unwrap();
-    let collection = codec::collection_id(&context);
+    let collection = records::collection_id(&scope).unwrap();
     let ops = source.capture().unwrap();
     let deleted = nocterm_hub_proto::v1::DeleteObjectRequest {
         collection_id: collection.clone(),
-        object_id: codec::OBJECT.into(),
+        object_id: records::OBJECT.into(),
         expected_version: 16,
     };
     ops.ops().delete_object(deleted).await.unwrap();
@@ -236,13 +233,12 @@ async fn account_runner_registry_rejects_late_original_login_publication_and_con
         load(&new, &foreign, None).await,
         Err(RunnerRegistryError::Binding)
     ));
-    let context = codec::context(&scope).unwrap();
     let row = registration(&scope, 1, 1, 6);
     assert!(RunnerRegistration::new(row.binding().clone(), row.pins(), "x".repeat(129)).is_err());
-    let bytes = codec::encode(&context, 1, &[row]).unwrap();
+    let bytes = records::encode(&scope, 1, &[row]).unwrap();
     let mut tampered = bytes.to_vec();
     tampered[0] ^= 1;
-    assert!(codec::decode(&scope, &context, 1, &tampered).is_err());
-    assert!(codec::decode(&scope, &context, 2, &bytes).is_err());
-    assert!(codec::decode(&scope, &context, 1, &vec![0; codec::MAX_PLAINTEXT + 1]).is_err());
+    assert!(records::decode(&scope, 1, &tampered).is_err());
+    assert!(records::decode(&scope, 2, &bytes).is_err());
+    assert!(records::decode(&scope, 1, &vec![0; records::MAX_PLAINTEXT + 1]).is_err());
 }

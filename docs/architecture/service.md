@@ -412,6 +412,22 @@ providers recheck their retained source immediately before capability effects.
 
 `nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. Registry and sign-in actions await the native publication receipt before reporting success, and retain the original source checks across that wait. See [ADR 0114](../adr/0114-native-captured-account-operations.md) and [ADR 0140](../adr/0140-offer-confirmation-publication.md).
 
+## Cloud chats
+
+`nocterm-cloud-chat` owns one GPUI entity per open Cloud chat over the `CloudConversation`
+port of `nocterm-cloud-conversation-model`. The entity subscribes while a window shows the chat
+or a command of it is on its way, applies each delta to its `CloudTranscript`, follows it with
+the thread the renderer draws (only rows from the first changed one are rebuilt), shows the
+freshness the device core reports after its first round, and presents this device's pending
+prompts (ADR 0134): a prompt shows at once, follows its command's state, and a refused or
+unanswered one stays until it is sent again as a new prompt or dismissed. Actions captured for
+one run never act on a run that replaced it. `CloudChatInstallation` keeps the bounded registry
+of chats and window observers, sharing the Local installation's history admission
+([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)). A chat's source
+offers `ConversationServers`: the binding the verified history states, binding and unbinding
+through the port, and the server the next prompts run on, which is only ever a selectable bound
+server and is dropped once the server is no longer selectable
+([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
 
 ## Shared monitor collection
 

@@ -394,8 +394,8 @@ impl Hubs {
     }
 
     /// The `authorized_keys` line of the agent CA.
-    pub fn agent_ca_line(&self, hub: &HubId) -> AgentAccessFuture<String> {
-        self.deps.agent_trust.ca_line(hub)
+    pub fn agent_ca_line(&self, hub: &HubId, connection: &str) -> AgentAccessFuture<String> {
+        self.deps.agent_trust.ca_line(hub, connection)
     }
 
     /// The chat accesses agents hold on `hub`.

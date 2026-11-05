@@ -77,7 +77,8 @@ struct Shape<'a> {
     name: &'a str,
     secret_names: usize,
     allowed_hosts: usize,
-    ssh_targets: &'a [SshTarget],
+    /// How many SSH targets; each version checks their fields itself.
+    ssh_targets: usize,
 }
 fn check_shape(shape: &Shape<'_>) -> Result<(), RunnerError> {
     for text in shape.identity {
@@ -90,11 +91,7 @@ fn check_shape(shape: &Shape<'_>) -> Result<(), RunnerError> {
     }
     if shape.secret_names > MAX_ENTRIES
         || shape.allowed_hosts > MAX_ENTRIES
-        || shape.ssh_targets.len() > MAX_ENTRIES
-        || shape
-            .ssh_targets
-            .iter()
-            .any(|t| t.host.is_empty() || t.user.is_empty() || t.port == 0)
+        || shape.ssh_targets > MAX_ENTRIES
     {
         return Err(RunnerError::Value("boot.lists"));
     }
@@ -130,8 +127,15 @@ impl Boot {
             name: &document.name,
             secret_names: document.secret_names.len(),
             allowed_hosts: document.allowed_hosts.len(),
-            ssh_targets: &document.ssh_targets,
+            ssh_targets: document.ssh_targets.len(),
         })?;
+        if document
+            .ssh_targets
+            .iter()
+            .any(|t| t.host.is_empty() || t.user.is_empty() || t.port == 0)
+        {
+            return Err(RunnerError::Value("boot.lists"));
+        }
         let provider = &document.provider;
         if !matches!(provider.kind.as_str(), "openai_chat" | "anthropic_messages")
             || provider.models.is_empty()

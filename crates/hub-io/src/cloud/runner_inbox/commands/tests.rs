@@ -95,6 +95,7 @@ fn authenticated_stop_keeps_original_id_run_and_signed_header_digest() {
         source.clone(),
         acceptance.clone(),
         &default,
+        None,
     )
     .unwrap();
     assert_eq!(mapped.command.stream(), &source);
@@ -205,6 +206,7 @@ fn a_device_inference_grant_maps_to_the_run_it_names_with_the_signed_bounds() {
         source,
         acceptance(&original).unwrap(),
         &default,
+        None,
     )
     .unwrap();
     let CommandBody::InferenceGrant(grant) = mapped.command.body() else {
@@ -216,4 +218,149 @@ fn a_device_inference_grant_maps_to_the_run_it_names_with_the_signed_bounds() {
     assert_eq!(grant.allowance().budget().turns(), 4);
     assert_eq!(grant.allowance().window().expires().as_millis(), 150_000);
     assert!(mapped.attachment.is_none());
+}
+
+mod ssh_grants {
+    use super::*;
+    use nocterm_cloud_model::ssh_access::{CertificateFacts as Facts, SshCertificateReader};
+    use nocterm_hub_model::cloud::{
+        ChatCoordinate,
+        ssh::{BindingWindow, SshBinding, SshServerId, SshTarget},
+    };
+    use nocterm_keys::agents::ssh_ca::{CertificateSpec, UserCa, principal_for};
+
+    const CA_SEED: [u8; 32] = [21; 32];
+
+    fn signed(key_epoch: u64) -> nocterm_hub_model::cloud::ssh::SignedSshBinding {
+        let ca = UserCa::from_seed(CA_SEED);
+        let chat = ChatCoordinate::new(
+            CloudNamespace {
+                hub_instance_id: CloudTextId::new("hub").unwrap(),
+                account_id: CloudTextId::new("account").unwrap(),
+            },
+            RunnerCoordinate {
+                id: [2; 16],
+                key_epoch: 3,
+            },
+            [4; 16],
+            key_epoch,
+        )
+        .unwrap();
+        ca.sign_binding(SshBinding {
+            chat,
+            grant: wire::GrantReference {
+                id: [30; 16],
+                epoch: 2,
+            },
+            window: BindingWindow {
+                issued_at_ms: 1_000,
+                expires_at_ms: 1_000 + 3_600_000,
+            },
+            ca_key: ca.public_key(),
+            targets: vec![SshTarget {
+                server: SshServerId::of_profile("profile-1"),
+                host: CloudTextId::new("db.example").unwrap(),
+                port: 2222,
+                user: CloudTextId::new("deploy").unwrap(),
+                host_key_sha256: [31; 32],
+            }],
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_binding_for_this_chat_key_names_each_server_with_its_own_principal() {
+        let account = AccountKeyPair::generate().unwrap();
+        let (stream, _) = stream_and_destination(&account);
+        let body = ssh::binding(&signed(5), &stream, Some(ChatKeyEpoch::new(5).unwrap())).unwrap();
+        let CommandBody::SshBinding(offer) = body else {
+            panic!("not a binding");
+        };
+        let server = SshServerId::of_profile("profile-1");
+        let target = &offer.targets()[0];
+        assert_eq!(target.server.as_bytes(), server.as_bytes());
+        assert_eq!(
+            target.principal,
+            principal_for(&UserCa::from_seed(CA_SEED).public_key(), &server)
+        );
+        assert_eq!(
+            (target.endpoint.host.as_str(), target.endpoint.port),
+            ("db.example", 2222)
+        );
+        assert_eq!(offer.grant().class(), GrantClass::SshBinding);
+        assert_eq!(
+            offer.signed().as_bytes(),
+            signed(5).canonical_bytes().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_bound_server_carries_the_session_access_a_prompt_names_for_it() {
+        let account = AccountKeyPair::generate().unwrap();
+        let (stream, _) = stream_and_destination(&account);
+        let body = ssh::binding(&signed(5), &stream, Some(ChatKeyEpoch::new(5).unwrap())).unwrap();
+        let CommandBody::SshBinding(offer) = body else {
+            panic!("not a binding");
+        };
+        let server = SshServerId::of_profile("profile-1");
+        let prompt = signed(5).binding().target_access(&server).unwrap();
+        let access = offer.targets()[0].access.clone().unwrap();
+        // A prompt's target maps through the same functions as `submit` does.
+        assert_eq!(access.target, super::target(&prompt.target).unwrap());
+        assert_eq!(
+            access.authentication,
+            super::authentication(prompt.authentication)
+        );
+        assert_eq!(access.target.host().as_bytes(), &[31; 32]);
+        assert_eq!(access.target.principal().as_str(), "deploy");
+        // A newer epoch of the same grant names another credential revision.
+        let mut newer = signed(5).binding().clone();
+        newer.grant.epoch += 1;
+        let newer = UserCa::from_seed(CA_SEED).sign_binding(newer).unwrap();
+        let moved = newer.binding().target_access(&server).unwrap();
+        assert_ne!(
+            access.authentication,
+            super::authentication(moved.authentication)
+        );
+    }
+
+    #[test]
+    fn a_binding_for_another_chat_key_epoch_is_refused() {
+        let account = AccountKeyPair::generate().unwrap();
+        let (stream, _) = stream_and_destination(&account);
+        for epoch in [None, Some(ChatKeyEpoch::new(6).unwrap())] {
+            assert!(matches!(
+                ssh::binding(&signed(5), &stream, epoch),
+                Err(CoordinatorError::InvalidCommand)
+            ));
+        }
+    }
+
+    #[test]
+    fn a_certificate_of_the_binding_ca_is_read_and_another_ca_is_refused() {
+        let ca = UserCa::from_seed(CA_SEED);
+        let spec = CertificateSpec {
+            principals: vec![principal_for(
+                &ca.public_key(),
+                &SshServerId::of_profile("p"),
+            )],
+            key_id: "nocterm-chat-test".into(),
+            subject_key: [40; 32],
+            serial: 7,
+            valid_after_ms: 1_700_000_000_000,
+            valid_before_ms: 1_700_000_000_000 + 3_600_000,
+            source_addresses: vec!["203.0.113.7".into()],
+        };
+        let issued = ca.issue(&spec, [41; 32]).unwrap();
+        let reader = crate::cloud::RunnerSshCertificates;
+        let facts: Facts = reader.read(issued.as_bytes(), &ca.public_key()).unwrap();
+        assert_eq!(facts.subject_key, [40; 32]);
+        assert_eq!(facts.principals, spec.principals);
+        assert_eq!(
+            facts.valid_before.as_millis(),
+            1_700_000_000_000 + 3_600_000
+        );
+        let other = UserCa::from_seed([22; 32]).public_key();
+        assert!(reader.read(issued.as_bytes(), &other).is_err());
+    }
 }

@@ -3,17 +3,25 @@
 //! Owns: explicit private R initialization/enrollment/restoration, configured
 //! native collaborators, bounded fresh-head service, explicit execution
 //! composition (command inbox, coordinator, providers, session broker, outbox
-//! delivery) when configured, and graceful task drain.
+//! and chat summary delivery) when configured, and graceful task drain. Chat summaries
+//! name the managed agent from the boot document, or the own runner (ADR 0143).
 //! Managed mode (`managed --config <path>`) is started by a pool host. Boot v1 on stdin
 //! (ADR 0121) validates and stays control-plane only. With `--control stdin` (ADR 0123)
 //! stdin is a framed channel: a boot v2 document, then contract chat access frames that
-//! give each chat a memory-only broker token; closing it ends the lease.
+//! give each chat a memory-only broker token; closing it ends the lease. Boot v3 adds the
+//! host's `ssh_egress` and, per target, an optional host key and session settings; the SSH
+//! section is read with the contract's `boot_ssh` (ADR 0147). Chat SSH bindings (ADR 0145)
+//! are admitted for the configured SSH targets and a managed boot's targets with a host key
+//! equal to the binding's, with the egress of `[ssh]` or boot v3; a configured SSH target
+//! without device consent signs in with the chat's in-memory key and certificate, a run whose
+//! destination is a bound server's session access signs in to that server's configured or
+//! boot target the same way, and the delivery sweep renews certificates.
 //! Does not own: GPUI, model/tool engines, device/account root keys, provider
 //! credentials, protocol codecs or server implementation. Execution stays disabled
 //! unless both `[execution]` and `[session_targets]` are configured.
 //! Control channel reader: a blocking thread owning stdin; the token store, wake hook and
 //! brokered providers live in `managed/`.
-//! Ports used: hub-io runner identity/session/head responder, cloud-runner native
+//! Ports used: hub-io runner identity/session/head responder/chat directory, cloud-runner native
 //! journal/current heads and cloud-model finite budgets. Agent file transfers run on
 //! one remote-only `nocterm-transfer-runtime` runtime owned by the session broker: it
 //! relays between hosts, refuses local upload/download, cancels a chat's transfers when

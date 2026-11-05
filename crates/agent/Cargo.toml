@@ -53,7 +53,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-nocterm-cloud-model = { workspace = true, features = ["test-support"] }
+nocterm-cloud-conversation-model = { workspace = true, features = ["test-support"] }
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-cloud-agents-model = { workspace = true, features = ["test-support"] }
 nocterm-workspace-ports.workspace = true

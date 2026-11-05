@@ -173,7 +173,9 @@ impl CausalFacts {
                 self.latest_prompt = Some(index);
                 return Ok((Some(key), None));
             }
-            CloudEventPayload::Deleted { .. } => return Ok((None, None)),
+            CloudEventPayload::Deleted { .. }
+            | CloudEventPayload::SshCertificateRequested(_)
+            | CloudEventPayload::SshAccessState(_) => return Ok((None, None)),
             CloudEventPayload::CommandAccepted { run, .. } => {
                 return Ok((run.map(|run| self.run(run)).transpose()?, None));
             }

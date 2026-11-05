@@ -1,445 +1,388 @@
-//! Desktop Cloud conversation projection and captured command delivery, without views.
+//! The desktop's Cloud chat: one GPUI entity per open chat over the `CloudConversation` port,
+//! without views.
 //!
-//! Owns: one installation's bounded conversation registry, independent window
-//! observers, GPUI replay, immutable accepted transcript, pending command IDs and
-//! original-source publication. Uses the existing Local installation history
-//! admission, including retained pages, pending commands and cache work.
-//! Does not own: login/unlock, cryptography, native storage/network, runner execution,
-//! wire encodings, model/tool credentials, views or Local SessionLease lifecycle.
-//! Ports used: cloud-model::projection::ports::CapturedConversationSource and
+//! Owns: one installation's bounded conversation registry and its independent window
+//! observers ([`CloudChatInstallation`]); per chat, the neutral transcript kept current by the
+//! port's deltas, the thread the renderer draws from it, the shown freshness, the pending-prompt
+//! presentation (ADR 0134) and the chat's share of the Local installation's history admission.
+//! Provides the agent-chat `ConversationSource` of a chat, the same one composer as Local chats
+//! use (ADR 0134), with its `ConversationServers` (the binding, binding and unbinding, and the
+//! server the next prompts run on, ADR 0147).
+//! Does not own: login/unlock, the device protocol, verification, the reduction of runner
+//! events, checkpoints, command delivery and its retries (`nocterm-hub-io` runs the contract
+//! device core behind the port), runner execution, views or Local SessionLease lifecycle.
+//! Ports used: `nocterm-cloud-conversation-model::CloudConversation` and
 //! agent-runtime::history_admission. Ports provided: agent-chat::ConversationSource.
 //! Settings sections: none. Globals: none.
-//! Invariants: an accepted own prompt issues one inference grant for its run (ADR 0129);
-//! source is captured before enqueue and rechecked after every await; replay candidates reduce off-thread and publish only against their original projection;
-//! atomic publication is delegated to the original native membership. Accepted
-//! prompts enter only through verified PromptAccepted. A retry retains its ID and
-//! durable body. Captured tool-card choices preserve the exact intent/args/run,
-//! observed source/control and cutoff through the same durable command owner.
-//! Viewer close never sends Stop. Native ports have no fake default. An unanswered replay
-//! poll is retried with a growing delay and reported as reconnecting, never as the end of the
-//! chat; a delivery nobody answered is `Unreachable`, a refused one `Rejected` (ADR 0133).
-//! Prompts not yet accepted are presented as pending prompts in send order; a refusal retires
-//! its command and payload and keeps at most four refused texts under a bytes reservation
-//! until they are sent again or dismissed (ADR 0134).
+//! Invariants: the transcript changes only by the port's deltas, so it is always the verified
+//! prefix the device core accepted; freshness is shown as the core reports it, and a chat
+//! whose runner did not answer says so and offers Wake (sleeping seats); a prompt shows at
+//! once and follows its command's state until the runner accepts it, a refused or unanswered
+//! one stays until it is sent again or dismissed and at most four refused ones are shown;
+//! viewer close never sends Stop; a chat whose account ended fails and keeps nothing.
 mod admission;
-mod command_operation;
 mod conversation;
 mod error;
 mod installation;
 mod pending;
-mod replay;
-pub use conversation::CloudConversation;
+mod servers;
+mod thread;
+pub use conversation::CloudConversationView;
 pub use error::CloudChatError;
 pub use installation::CloudChatInstallation;
-pub use pending::{PendingCommandState, PendingCommandView};
 
-use admission::ProjectionResidency;
-use command_operation::CommandOperation;
+use admission::Residency;
+use futures::StreamExt as _;
 use futures::channel::oneshot;
 use gpui::{App, AppContext as _, Context, Entity, Task};
 use nocterm_agent_chat::conversation::ConversationError;
 use nocterm_agent_runtime::history_admission::HistoryAdmissionHandle;
-use nocterm_ai::conversation::{ConversationAction, ConversationPhase};
-use nocterm_cloud_model::{
-    identity::CommandId,
-    projection::{
-        ConversationIntent, ConversationProjection, MAX_REPLAY_BYTES, ProjectionBatch,
-        ProjectionCursor, ProjectionError,
-        ports::{CapturedConversationSource, ConversationCoordinates, ConversationWork},
-    },
+use nocterm_ai::conversation::{ConversationFreshness, PendingPromptKey};
+use nocterm_ai::thread::ThreadState;
+use nocterm_cloud_conversation_model::{
+    CloudConversation, CloudConversationError, CloudTranscript, CommandKey, CommandKind,
+    CommandState, ConversationAction, ConversationUpdate, Freshness, RunKey, RunStatus,
 };
-use nocterm_core::allocation::{Allocated, AllocationLease};
-use pending::PendingCommands;
-use std::{rc::Rc, sync::Arc};
+use pending::{CommandFailure, PendingPrompts};
+use std::{cell::Cell, rc::Rc, sync::Arc};
+use thread::ThreadMirror;
+
+/// The key a submission learns once the conversation tracked its command.
+pub(crate) type SubmittedKey = Rc<Cell<Option<CommandKey>>>;
 
 pub struct CloudChat {
-    source: Arc<dyn CapturedConversationSource>,
-    projection: Option<Arc<Allocated<ConversationProjection>>>,
-    empty: ConversationProjection,
-    residency: ProjectionResidency,
-    pending: PendingCommands,
+    conversation: Arc<dyn CloudConversation>,
+    transcript: CloudTranscript,
+    thread: ThreadMirror,
+    /// What the core last reported (`Opening` before its first round); `None` until the
+    /// subscription delivered one.
+    freshness: Option<Freshness>,
+    prompts: PendingPrompts,
+    residency: Residency,
     subscription: Option<Task<()>>,
-    error: Option<CloudChatError>,
-    cache: Option<Task<()>>,
     membership: Option<Task<()>>,
-    /// The replay lost its producer (a hub or runner that does not answer) and retries.
+    error: Option<CloudChatError>,
+    /// The last read round went unanswered; the next change clears it.
     reconnecting: bool,
+    /// The bound server the person picked for the next prompts (ADR 0147).
+    target: Option<nocterm_cloud_conversation_model::ServerKey>,
 }
 impl CloudChat {
     /// Every partition receives the same handle from RuntimeHandle::history_admission.
     /// Construction does not create a new budget or an execution/session lease.
     pub fn open(
-        source: Arc<dyn CapturedConversationSource>,
+        conversation: Arc<dyn CloudConversation>,
         admission: HistoryAdmissionHandle,
         cx: &mut App,
     ) -> Result<Entity<Self>, CloudChatError> {
-        source.check_current()?;
+        conversation.check_current()?;
         let payload = admission.reserve_payload_reclaiming(None, cx)?;
-        let initial = admission.reserve_unowned_bytes(1024, cx)?;
-        let empty = ConversationProjection::new(source.binding().clone());
-        let allocation =
-            AllocationLease::new(initial.bytes(), 1, Arc::new((initial, payload.clone())));
-        let projection = Arc::new(Allocated::new(
-            ConversationProjection::new(source.binding().clone()),
-            allocation,
-        ));
         let entity = cx.new(|_| Self {
-            source,
-            projection: Some(projection),
-            empty,
-            residency: ProjectionResidency::new(admission, payload),
-            pending: PendingCommands::default(),
+            conversation,
+            transcript: CloudTranscript::new(),
+            thread: ThreadMirror::default(),
+            freshness: None,
+            prompts: PendingPrompts::default(),
+            residency: Residency::new(admission, payload),
             subscription: None,
-            error: None,
-            cache: None,
             membership: None,
+            error: None,
             reconnecting: false,
+            target: None,
         });
         entity.update(cx, |chat, cx| {
             chat.residency.register(cx)?;
-            let source = chat.source.clone();
+            let ended = chat.conversation.ended();
             chat.membership = Some(cx.spawn(async move |chat, cx| {
-                source.ended().await;
-                let _ = chat.update(cx, |chat, cx| chat.fail(ProjectionError::Stale.into(), cx));
+                ended.await;
+                let _ = chat.update(cx, |chat, cx| {
+                    chat.fail(CloudConversationError::Stale.into(), cx);
+                });
             }));
             chat.resume(cx)
         })?;
         Ok(entity)
     }
-    pub fn projection(&self) -> &ConversationProjection {
-        self.projection
-            .as_ref()
-            .map(|value| value.value())
-            .unwrap_or(&self.empty)
+    pub fn transcript(&self) -> &CloudTranscript {
+        &self.transcript
+    }
+    /// The thread the renderer draws.
+    pub fn thread(&self) -> &ThreadState {
+        self.thread.thread()
+    }
+    /// How far the shown history is confirmed; `None` before the first read round ended.
+    pub fn freshness(&self) -> Option<Freshness> {
+        self.freshness
     }
     pub fn last_error(&self) -> Option<&CloudChatError> {
         self.error.as_ref()
     }
-    pub fn pending_commands(&self) -> Vec<PendingCommandView> {
-        self.pending.views()
-    }
     pub fn is_shown(&self) -> bool {
         self.residency.shown()
-    }
-    /// Whether the replay lost contact and is retrying; what the chat shows may be behind.
-    pub fn reconnecting(&self) -> bool {
-        self.reconnecting && self.subscription.is_some()
     }
     pub fn conversation(
         entity: &Entity<Self>,
     ) -> Rc<dyn nocterm_agent_chat::conversation::ConversationSource> {
-        Rc::new(CloudConversation::new(entity))
+        Rc::new(CloudConversationView::new(entity))
     }
     pub fn check_current(&self) -> Result<(), CloudChatError> {
-        self.source.check_current().map_err(CloudChatError::from)
+        self.conversation
+            .check_current()
+            .map_err(CloudChatError::from)
     }
-    pub fn resume(&mut self, cx: &mut Context<Self>) -> Result<(), CloudChatError> {
-        self.source.check_current()?;
+    pub(crate) fn port(&self) -> &Arc<dyn CloudConversation> {
+        &self.conversation
+    }
+    /// The server the next prompts run on: the one the person picked while a prompt may still
+    /// name it, else none (the runner's default destination).
+    pub(crate) fn prompt_target(&self) -> Option<nocterm_cloud_conversation_model::ServerKey> {
+        self.target.filter(|target| {
+            self.transcript
+                .servers()
+                .selectable()
+                .any(|server| &server.server == target)
+        })
+    }
+    /// Picks the server the next prompts run on; only a selectable bound server.
+    pub(crate) fn set_target(
+        &mut self,
+        target: Option<nocterm_cloud_conversation_model::ServerKey>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ConversationError> {
+        if let Some(target) = target
+            && !self
+                .transcript
+                .servers()
+                .selectable()
+                .any(|server| server.server == target)
+        {
+            return Err(nocterm_agent_chat::conversation::ServerProblem::NotSelectable.into());
+        }
+        self.target = target;
+        cx.notify();
+        Ok(())
+    }
+    pub(crate) fn same_conversation(&self, other: &Arc<dyn CloudConversation>) -> bool {
+        self.conversation.key() == other.key()
+    }
+    fn updated_at(&self) -> u64 {
+        self.transcript.updated_at_ms() / 1000
+    }
+    fn resume(&mut self, cx: &mut Context<Self>) -> Result<(), CloudChatError> {
+        self.check_current()?;
         if self.subscription.is_none() {
-            if self.projection.is_none() {
-                let (allocation, payload) = self.residency.allocate(1024, cx)?;
-                let projection = ConversationProjection::new(self.source.binding().clone());
-                self.projection = Some(Arc::new(Allocated::new(projection, allocation)));
-                self.residency.published(payload);
-            }
-            self.subscription =
-                Some(replay::ReplaySubscription::new(self.source.clone()).start(cx));
+            let mut updates = self.conversation.subscribe()?;
+            self.freshness = None;
+            self.subscription = Some(cx.spawn(async move |chat, cx| {
+                while let Some(update) = updates.next().await {
+                    let applied = chat.update(cx, |chat, cx| chat.apply(update, cx));
+                    if !matches!(applied, Ok(Ok(()))) {
+                        return;
+                    }
+                }
+            }));
         }
         Ok(())
     }
+    /// Applies one update of the subscription; an update that does not fit the admission
+    /// ends the subscription.
+    fn apply(
+        &mut self,
+        update: ConversationUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CloudChatError> {
+        match update {
+            ConversationUpdate::Transcript(delta) => {
+                let changed_from = if delta.reset || delta.first_index > self.first_index() {
+                    Some(0)
+                } else {
+                    delta.changed_from
+                };
+                self.transcript.apply(delta);
+                if let Err(error) = self
+                    .residency
+                    .fit(thread::resident_bytes(&self.transcript), cx)
+                {
+                    self.fail(error.into(), cx);
+                    return Err(CloudChatError::Closed);
+                }
+                self.thread.follow(&self.transcript, changed_from);
+                self.prompts.follow(&self.transcript);
+                self.reconnecting = false;
+                self.error = None;
+            }
+            ConversationUpdate::Freshness(freshness) => {
+                self.freshness = Some(freshness);
+                self.reconnecting = false;
+            }
+            ConversationUpdate::Refused(error) => {
+                self.reconnecting = matches!(error, CloudConversationError::Unavailable);
+                self.error = Some(error.into());
+            }
+        }
+        cx.notify();
+        Ok(())
+    }
+    fn first_index(&self) -> u64 {
+        self.transcript.rows().first().map_or(0, |row| row.index)
+    }
     pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) -> Result<(), CloudChatError> {
-        self.source.check_current()?;
+        self.check_current()?;
         self.residency.set_shown(shown);
         if shown {
             self.resume(cx)?;
-        } else {
+        } else if !self.prompts.busy() && self.pending_commands() == 0 {
+            // Nobody looks and nothing waits for an answer: reading pauses until a window
+            // shows the chat again, which reads on from the conversation's checkpoint.
             self.subscription.take();
         }
         cx.notify();
         Ok(())
     }
-    pub fn retry(
-        &mut self,
-        id: CommandId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), ConversationError>> {
-        if let Err(error) = self.source.check_current() {
-            return Task::ready(Err(CloudChatError::from(error).into_conversation()));
+    /// The run the person may allow to use the model: theirs, waiting for its grant, and no
+    /// grant on its way (ADR 0129).
+    pub(crate) fn allowable_run(&self) -> Option<RunKey> {
+        if !self.conversation.can_prompt() {
+            return None;
         }
-        let work = match self.pending.item(id).and_then(|command| {
-            self.source
-                .allocation_requirements(ConversationWork::Stage {
-                    command: command.value(),
-                })
-        }) {
-            Ok(required) => match self
-                .pending
-                .item(id)
-                .map(|command| matches!(command.value().action, ConversationIntent::Stop))
-                .map_err(CloudChatError::from)
-                .and_then(|urgent| {
-                    if urgent {
-                        self.residency.urgent(required, cx)
-                    } else {
-                        self.residency.work(required, cx)
-                    }
-                    .map_err(CloudChatError::from)
-                }) {
-                Ok(work) => work,
-                Err(error) => {
-                    return Task::ready(Err(error.into_conversation()));
-                }
-            },
-            Err(error) => return Task::ready(Err(CloudChatError::from(error).into_conversation())),
-        };
-        let (waiter, receive) = oneshot::channel();
-        let retained = match self.pending.retry(id, waiter) {
-            Ok(retained) => retained,
-            Err(error) => return Task::ready(Err(CloudChatError::from(error).into_conversation())),
-        };
-        let task = CommandOperation::new(self.source.clone(), retained, work, true).start(cx);
-        self.pending.attach(id, task);
-        Self::wait_for_command(receive, cx)
+        let run = self.transcript.shown_run()?;
+        let own = self
+            .transcript
+            .pending_command(run.prompt_command)
+            .is_some_and(|known| known.kind == CommandKind::Prompt);
+        let granting = self.transcript.pending().iter().any(|known| {
+            known.kind == CommandKind::Allow
+                && known.run == Some(run.run)
+                && matches!(known.state, CommandState::Sending | CommandState::Delivered)
+        });
+        (own && !granting && matches!(run.status, RunStatus::Queued | RunStatus::NeedsGrant))
+            .then_some(run.run)
     }
-    /// Sends a failed prompt again: a refused one as a new prompt with its text, which replaces
-    /// it, an unanswered one under its original ID.
-    fn retry_prompt(
-        &mut self,
-        id: CommandId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), ConversationError>> {
-        let Some(text) = self.pending.refused_text(id).map(str::to_owned) else {
-            return self.retry(id, cx);
-        };
-        match self.submit(self.coordinates(), ConversationAction::Prompt(text), cx) {
-            Ok((_, completion)) => {
-                self.pending.forget_refused(id);
-                cx.notify();
-                completion
+    pub(crate) fn stoppable_run(&self) -> Option<RunKey> {
+        let run = self.transcript.shown_run()?;
+        (!self.transcript.deleted() && !run.status.finished()).then_some(run.run)
+    }
+    pub(crate) fn can_prompt(&self) -> bool {
+        self.conversation.can_prompt() && !self.transcript.deleted()
+    }
+    pub(crate) fn shown_freshness(&self) -> ConversationFreshness {
+        match self.freshness {
+            // While the chat is opening nothing is claimed, so nothing alarming is shown.
+            None | Some(Freshness::Opening { .. } | Freshness::Current { .. }) => {
+                ConversationFreshness::Live
             }
-            Err(error) => Task::ready(Err(error)),
+            Some(Freshness::Unconfirmed { .. }) => ConversationFreshness::Unconfirmed {
+                can_wake: self.conversation.can_wake(),
+            },
+            Some(Freshness::Withheld { .. }) => ConversationFreshness::Withheld,
         }
     }
-    /// Forgets a refused prompt; only a refused prompt can be dismissed.
-    fn dismiss_prompt(
+    pub(crate) fn reconnecting(&self) -> bool {
+        self.reconnecting && self.subscription.is_some()
+    }
+    pub(crate) fn pending_rows(&self) -> Vec<nocterm_ai::conversation::PendingPrompt<'_>> {
+        self.prompts.rows(&self.transcript)
+    }
+    pub(crate) fn pending_commands(&self) -> usize {
+        self.transcript
+            .pending()
+            .iter()
+            .filter(|known| !known.state.settled())
+            .count()
+    }
+    /// Sends `action`; the task resolves once the command was delivered or settled badly.
+    pub(crate) fn send(
         &mut self,
-        id: CommandId,
+        action: ConversationAction,
+        cx: &mut Context<Self>,
+    ) -> (SubmittedKey, Task<Result<(), ConversationError>>) {
+        let key: SubmittedKey = Rc::new(Cell::new(None));
+        if let Err(error) = self.check_current() {
+            return (key, Task::ready(Err(error.into_conversation())));
+        }
+        let placeholder = action.prompt_text().map(|text| self.prompts.sending(text));
+        let delivery = self.conversation.deliver(action);
+        let learned = key.clone();
+        cx.notify();
+        let task = cx.spawn(async move |chat, cx| {
+            let result = delivery.await;
+            let (waiter, settled) = oneshot::channel();
+            chat.update(cx, |chat, cx| {
+                if let Some(placeholder) = placeholder {
+                    chat.prompts.tracked(placeholder);
+                }
+                cx.notify();
+                result.map(|command| {
+                    learned.set(Some(command));
+                    chat.prompts.wait(command, waiter, &chat.transcript);
+                })
+            })
+            .map_err(|_| ConversationError::Stale)?
+            .map_err(|error| CloudChatError::from(error).into_conversation())?;
+            match settled.await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(CommandFailure::Rejected)) => Err(ConversationError::Rejected),
+                Ok(Err(CommandFailure::Unreachable)) => Err(ConversationError::Unreachable),
+                Ok(Err(CommandFailure::Stale)) | Err(_) => Err(ConversationError::Stale),
+            }
+        });
+        (key, task)
+    }
+    /// Sends a failed prompt's text again as a new prompt, which replaces its row.
+    pub(crate) fn retry_prompt(
+        &mut self,
+        prompt: PendingPromptKey,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), ConversationError>> {
+        let command = pending::command_key(prompt);
+        let Some(known) = self.transcript.pending_command(command) else {
+            return Task::ready(Err(ConversationError::Unavailable));
+        };
+        if !matches!(
+            known.state,
+            CommandState::Refused | CommandState::Unreachable
+        ) {
+            return Task::ready(Ok(()));
+        }
+        let text = known.text.clone();
+        self.prompts.dismiss(command, &self.transcript);
+        let server = self.prompt_target();
+        self.send(ConversationAction::Prompt { text, server }, cx).1
+    }
+    pub(crate) fn dismiss_prompt(
+        &mut self,
+        prompt: PendingPromptKey,
         cx: &mut Context<Self>,
     ) -> Result<(), ConversationError> {
-        if !self.pending.forget_refused(id) {
+        if !self
+            .prompts
+            .dismiss(pending::command_key(prompt), &self.transcript)
+        {
             return Err(ConversationError::Unavailable);
         }
         cx.notify();
         Ok(())
     }
-    fn coordinates(&self) -> ConversationCoordinates {
-        ConversationCoordinates {
-            binding: self.projection().binding().clone(),
-            run: self.projection().run().cloned(),
-            control: self.projection().control(),
+    /// Wakes the chat's sleeping seat; the conversation reads again once it is up.
+    pub(crate) fn wake(&mut self, cx: &mut Context<Self>) -> Task<Result<(), ConversationError>> {
+        if !self.conversation.can_wake() {
+            return Task::ready(Err(ConversationError::Unavailable));
         }
-    }
-    fn perform(
-        &mut self,
-        coordinates: ConversationCoordinates,
-        action: ConversationAction,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), ConversationError>> {
-        match self.submit(coordinates, action, cx) {
-            Ok((_, completion)) => completion,
-            Err(error) => Task::ready(Err(error)),
-        }
-    }
-    fn submit(
-        &mut self,
-        coordinates: ConversationCoordinates,
-        action: ConversationAction,
-        cx: &mut Context<Self>,
-    ) -> Result<(CommandId, Task<Result<(), ConversationError>>), ConversationError> {
-        let (waiter, receive) = oneshot::channel();
-        let id = self
-            .enqueue(coordinates, action, waiter, cx)
-            .map_err(CloudChatError::into_conversation)?;
-        Ok((id, Self::wait_for_command(receive, cx)))
-    }
-    fn perform_approval(
-        &mut self,
-        key: nocterm_cloud_model::projection::ApprovalKey,
-        control: nocterm_cloud_model::identity::ChatControlRevision,
-        choice: nocterm_cloud_model::coordinator::ApprovalChoice,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), ConversationError>> {
-        let (waiter, receive) = oneshot::channel();
-        let result = self.enqueue_approval(key, control, choice, waiter, cx);
-        if let Err(error) = result {
-            return Task::ready(Err(error.into_conversation()));
-        }
-        Self::wait_for_command(receive, cx)
-    }
-    fn enqueue_approval(
-        &mut self,
-        key: nocterm_cloud_model::projection::ApprovalKey,
-        control: nocterm_cloud_model::identity::ChatControlRevision,
-        choice: nocterm_cloud_model::coordinator::ApprovalChoice,
-        waiter: pending::CommandWaiter,
-        cx: &mut Context<Self>,
-    ) -> Result<(), CloudChatError> {
-        self.source.check_current()?;
-        if self.projection().control() != control
-            || self.projection().phase() == ConversationPhase::Deleted
-        {
-            return Err(ProjectionError::Stale.into());
-        }
-        self.pending.require_room()?;
-        if self.pending.has_approval(key) {
-            return Err(ProjectionError::Unavailable.into());
-        }
-        // Reserve bounded immutable command coordinates BEFORE cloning the
-        // observed execution descriptor. Exact call/display payload stays borrowed.
-        let allocation = self.residency.allocate(4096 + 512, cx)?.0;
-        let card = self
-            .projection()
-            .approval(key)
-            .ok_or(ProjectionError::Unavailable)?;
-        let action = ConversationIntent::AnswerApproval(Box::new(card.request(choice)?));
-        let coordinates = ConversationCoordinates {
-            binding: self.projection().binding().clone(),
-            run: Some(card.intent().authority().run().clone()),
-            control,
-        };
-        self.enqueue_intent(coordinates, action, allocation, waiter, cx)
-            .map(|_| ())
-    }
-    fn wait_for_command(
-        receive: oneshot::Receiver<Result<(), pending::CommandFailure>>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), ConversationError>> {
+        let waking = self.conversation.wake();
         cx.spawn(async move |_, _| {
-            receive
+            waking
                 .await
-                .unwrap_or(Err(pending::CommandFailure::Source(ProjectionError::Stale)))
-                .map_err(|failure| CloudChatError::from(failure).into_conversation())
+                .map_err(|error| CloudChatError::from(error).into_conversation())
         })
     }
-    fn enqueue(
-        &mut self,
-        coordinates: ConversationCoordinates,
-        action: ConversationAction,
-        waiter: pending::CommandWaiter,
-        cx: &mut Context<Self>,
-    ) -> Result<CommandId, CloudChatError> {
-        self.source.check_current()?;
-        if coordinates != self.coordinates() {
-            return Err(ProjectionError::Stale.into());
-        }
-        if self.projection().phase() == ConversationPhase::Deleted
-            || (action == ConversationAction::Allow && !self.can_allow())
-        {
-            return Err(ProjectionError::Unavailable.into());
-        }
-        self.pending.require_room()?;
-        let bytes =
-            nocterm_cloud_model::projection::ports::ConversationCommand::action_bytes(&action);
-        if bytes > MAX_REPLAY_BYTES {
-            return Err(ProjectionError::Capacity.into());
-        }
-        let urgent = matches!(action, ConversationAction::Stop);
-        let allocation = if urgent {
-            self.residency.urgent(
-                nocterm_cloud_model::projection::ports::AllocationRequirements::new(
-                    bytes.saturating_add(512),
-                    1,
-                ),
-                cx,
-            )?
-        } else {
-            self.residency.allocate(bytes.saturating_add(512), cx)?.0
-        };
-        self.enqueue_intent(coordinates, action.into(), allocation, waiter, cx)
-    }
-    fn enqueue_intent(
-        &mut self,
-        coordinates: ConversationCoordinates,
-        action: ConversationIntent,
-        allocation: AllocationLease,
-        waiter: pending::CommandWaiter,
-        cx: &mut Context<Self>,
-    ) -> Result<CommandId, CloudChatError> {
-        self.source.check_current()?;
-        let bytes = action.resident_bytes();
-        let urgent = matches!(action, ConversationIntent::Stop);
-        let command = self.source.prepare(coordinates.clone(), action.clone())?;
-        if command.coordinates != coordinates || command.action != action {
-            return Err(ProjectionError::WrongSource.into());
-        }
-        let required = self
-            .source
-            .allocation_requirements(ConversationWork::Stage { command: &command })?;
-        let work = if urgent {
-            if bytes.saturating_add(512).saturating_add(required.bytes())
-                > nocterm_agent_runtime::history_admission::URGENT_HISTORY_BYTES
-                || required.payloads() > 1
-            {
-                return Err(ProjectionError::Capacity.into());
-            }
-            self.residency.urgent(required, cx)?
-        } else {
-            self.residency.work(required, cx)?
-        };
-        let id = command.id;
-        let source = self.source.clone();
-        let mut prepared = Some((command, allocation, waiter));
-        let mut inserted = Ok(());
-        source.with_current(&mut || {
-            if let Some((command, allocation, waiter)) = prepared.take() {
-                inserted = self.pending.insert(command, allocation, waiter);
-            }
-        })?;
-        inserted?;
-        let retained = self.pending.item(id)?;
-        let operation = CommandOperation::new(source, retained, work, false).start(cx);
-        self.pending.attach(id, operation);
-        cx.notify();
-        Ok(id)
-    }
-    fn finish_command(
-        &mut self,
-        id: CommandId,
-        result: Result<PendingCommandState, ProjectionError>,
-        cx: &mut Context<Self>,
-    ) {
-        let reached = result.is_ok();
-        if let Some(refusal) = self.pending.finish(id, result) {
-            // Without room the refusal is still reported to its sender; only its row is lost.
-            if let Ok(allocation) = self.residency.retained_text(refusal.bytes(), cx) {
-                self.pending.keep_refused(refusal, allocation);
-            }
-        }
-        // The command reached the hub, and a managed seat was woken for it: a replay waiting
-        // out an unanswered poll polls again now instead of after its delay.
-        if reached && self.reconnecting && self.subscription.is_some() {
-            self.subscription.take();
-            if let Err(error) = self.resume(cx) {
-                self.record_error(error);
-            }
-        }
-        cx.notify();
-    }
-    fn record_error(&mut self, error: CloudChatError) {
-        self.error = Some(error);
-    }
-    /// A replay poll was not answered; the subscription waits and polls again. A sleeping seat
-    /// answers no poll until a prompt wakes it, so this is not the end of the chat.
-    fn replay_interrupted(&mut self, error: CloudChatError, cx: &mut Context<Self>) {
-        self.error = Some(error);
-        self.reconnecting = true;
-        cx.notify();
-    }
     fn fail(&mut self, error: CloudChatError, cx: &mut Context<Self>) {
-        if matches!(error, CloudChatError::Source(ProjectionError::Stale)) {
-            self.pending.invalidate();
-            self.cache.take();
-            self.projection = None;
+        if matches!(
+            error,
+            CloudChatError::Conversation(CloudConversationError::Stale)
+        ) {
+            self.prompts.invalidate();
+            self.transcript = CloudTranscript::new();
+            self.thread.clear();
             self.residency.evicted();
         }
         self.error = Some(error);
@@ -447,157 +390,19 @@ impl CloudChat {
         cx.notify();
     }
     fn can_evict(&self) -> bool {
-        !self.is_shown() && self.pending.is_empty() && self.cache.is_none()
+        !self.is_shown() && !self.prompts.busy() && self.pending_commands() == 0
     }
     fn evict(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.can_evict() {
             return false;
         }
         self.subscription.take();
-        self.projection = None;
+        self.transcript = CloudTranscript::new();
+        self.thread.clear();
+        self.freshness = None;
         self.residency.evicted();
         cx.notify();
         true
-    }
-    fn publish(
-        &mut self,
-        next: Arc<Allocated<ConversationProjection>>,
-        accepted: &[CommandId],
-    ) -> Result<bool, ProjectionError> {
-        let source = self.source.clone();
-        let mut prompt = false;
-        source.with_current(&mut || {
-            self.projection = Some(next.clone());
-            prompt = self.pending.accepted(accepted);
-            self.error = None;
-            self.reconnecting = false;
-        })?;
-        Ok(prompt)
-    }
-    /// Whether the displayed run waits for the person's permission to use the model.
-    pub(crate) fn can_allow(&self) -> bool {
-        self.source.supports_prompt()
-            && matches!(
-                self.projection().phase(),
-                ConversationPhase::Queued | ConversationPhase::NeedsGrant
-            )
-            && self.projection().run().is_some()
-            && !self.pending.has_inference_grant()
-    }
-    /// The person's own prompt was accepted: allow its run now, within the chat's bounds
-    /// (ADR 0129). A refusal leaves the explicit Allow action available.
-    fn allow_accepted_prompt(&mut self, cx: &mut Context<Self>) {
-        if !self.can_allow() {
-            return;
-        }
-        let (waiter, _) = oneshot::channel();
-        if let Err(error) = self.enqueue(self.coordinates(), ConversationAction::Allow, waiter, cx)
-        {
-            self.record_error(error);
-        }
-    }
-    fn prepare_replay(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Result<(ProjectionCursor, AllocationLease), CloudChatError> {
-        self.source.check_current()?;
-        // A native page is a separately retained allocation. Its proof travels
-        // into actual workers/results, even after this GPUI observer disappears.
-        let required = self
-            .source
-            .allocation_requirements(ConversationWork::Replay {
-                after: self.projection().cursor(),
-                maximum_bytes: MAX_REPLAY_BYTES,
-            })?;
-        let allocation = self.residency.work(required, cx)?;
-        Ok((self.projection().cursor(), allocation))
-    }
-    fn prepare_page(
-        &self,
-        batch: Allocated<ProjectionBatch>,
-        cx: &mut Context<Self>,
-    ) -> Result<
-        (
-            replay::PreparedPage,
-            nocterm_agent_runtime::history_admission::HistoryPayloadPermit,
-        ),
-        CloudChatError,
-    > {
-        self.source.check_current()?;
-        let original = self.projection.clone().ok_or(ProjectionError::Stale)?;
-        let bytes = original
-            .value()
-            .resident_bytes()
-            .saturating_add(batch.value().projection_growth_bytes()?)
-            .saturating_add(4096);
-        let (allocation, payload) = self.residency.allocate(bytes, cx)?;
-        Ok((
-            replay::PreparedPage::new(original, batch, allocation),
-            payload,
-        ))
-    }
-    fn accept_page(
-        &mut self,
-        page: replay::ReducedPage,
-        payload: nocterm_agent_runtime::history_admission::HistoryPayloadPermit,
-        cx: &mut Context<Self>,
-    ) -> Result<(), CloudChatError> {
-        self.source.check_current()?;
-        let Some((next, accepted)) = page.into_transition(self.projection.as_ref()) else {
-            return Ok(());
-        };
-        let prompt = self.publish(next, &accepted)?;
-        self.residency.published(payload);
-        if prompt {
-            self.allow_accepted_prompt(cx);
-        }
-        cx.notify();
-        self.persist_projection(cx);
-        Ok(())
-    }
-    fn persist_projection(&mut self, cx: &mut Context<Self>) {
-        if self.cache.is_some() {
-            return;
-        }
-        let source = self.source.clone();
-        let Some(projection) = self.projection.clone() else {
-            return;
-        };
-        let required = match source.allocation_requirements(ConversationWork::Cache {
-            projection: projection.value(),
-        }) {
-            Ok(required) => required,
-            Err(error) => {
-                self.record_error(error.into());
-                return;
-            }
-        };
-        let work = match self.residency.work(required, cx) {
-            Ok(work) => work,
-            Err(error) => {
-                self.record_error(error.into());
-                return;
-            }
-        };
-        let cursor = projection.value().cursor();
-        self.cache = Some(cx.spawn(async move |chat, cx| {
-            let result = match source.check_current() {
-                Ok(()) => source
-                    .cache(projection, work)
-                    .await
-                    .and_then(|()| source.check_current()),
-                Err(error) => Err(error),
-            };
-            let _ = chat.update(cx, |chat, cx| {
-                chat.cache.take();
-                if let Err(error) = result {
-                    chat.fail(error.into(), cx);
-                } else if chat.projection().cursor() != cursor {
-                    chat.persist_projection(cx);
-                }
-                cx.notify();
-            });
-        }));
     }
 }
 

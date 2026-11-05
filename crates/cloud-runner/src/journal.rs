@@ -17,6 +17,8 @@ mod snapshot_publication;
 pub use snapshot_publication::DurableSnapshotPublication;
 mod run_heads;
 mod session_loss;
+mod ssh_access;
+mod summaries;
 
 use crate::{
     codec,
@@ -89,7 +91,7 @@ impl Default for JournalLimits {
     }
 }
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 9;
 
 struct Driver {
     connection: Connection,
@@ -549,8 +551,8 @@ fn initialize(db: &Connection, limits: JournalLimits, create: bool) -> Result<()
     let version: i64 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(storage)?;
-    if !create && version == migration::PREVIOUS_VERSION {
-        migration::upgrade(db)?;
+    if !create && migration::upgradable(version) {
+        migration::upgrade(db, version)?;
     } else if (create && version != 0) || (!create && version != SCHEMA_VERSION) {
         return Err(JournalError::UnsupportedFormat);
     }
