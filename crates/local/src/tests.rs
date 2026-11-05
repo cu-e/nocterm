@@ -36,6 +36,8 @@ pub(super) fn next(rx: &std::sync::mpsc::Receiver<Event>) -> Event {
 }
 
 mod launch_resources;
+#[cfg(target_os = "linux")]
+mod leader_exit;
 
 #[test]
 fn invalid_launch_reports_typed_failure_before_starting_a_pty() {

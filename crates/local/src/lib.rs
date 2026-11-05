@@ -13,6 +13,8 @@
 //! recording::OutputLogFactory, nocterm_core::clock::WallClock (`SystemClock`). Output-log
 //! operations run only on their caller executor.
 //! Settings section: local options are composed by the app. Globals: none.
+//! Linux PTY reads wait for descriptor readiness, owner closure or the owned leader's pidfd;
+//! kernels denying pidfds and other platforms retain bounded process-status polling.
 //! Invariants: PTY/exec cancellation owns process cleanup; external editors instead
 //! retain a bounded independent wait owner and survive receipt/application exit.
 
@@ -40,6 +42,8 @@ mod containment;
 mod exec;
 mod integration;
 mod program_opener;
+#[cfg(target_os = "linux")]
+mod readiness;
 mod recording;
 
 pub use clock::SystemClock;
@@ -233,6 +237,9 @@ enum LaunchError {
     Fcntl(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[cfg(target_os = "linux")]
+    #[error(transparent)]
+    Descriptor(#[from] filedescriptor::Error),
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
@@ -277,6 +284,8 @@ fn start(
         .master
         .take_writer()
         .map_err(|e| LaunchError::Pty(e.to_string()))?;
+    #[cfg(target_os = "linux")]
+    let (mut readiness, close_wake) = readiness::Readiness::new(pair.master.as_ref())?;
     driver.source().check()?;
     if driver.closed().now_or_never().is_some() {
         block_on(driver.emit(Event::Closed(CloseReason::ClosedByUser)));
@@ -296,6 +305,13 @@ fn start(
     let shell_group = child_pid.map(|pid| pid as i32);
     #[cfg(not(unix))]
     let shell_group = None;
+    #[cfg(target_os = "linux")]
+    if let Err(error) = readiness.observe_exit(child.process_id()) {
+        let mut failed_killer = child.clone_killer();
+        kill_process(failed_killer.as_mut(), &master, shell_group);
+        let _ = child.wait();
+        return Err(error.into());
+    }
     let (done_tx, done_rx) = async_channel::bounded::<()>(1);
     let command_driver = driver.clone();
     let closed_by_user = Arc::new(AtomicBool::new(false));
@@ -306,6 +322,10 @@ fn start(
     let close_master = master.clone();
     let command_master = master.clone();
     thread::spawn(move || {
+        // Dropping this pipe wakes a readiness wait even when a descendant
+        // still holds the slave and killing the shell produces no PTY EOF.
+        #[cfg(target_os = "linux")]
+        let _wake = close_wake;
         let requested = block_on(async {
             select! {
                 _ = close_driver.closed().fuse() => true,
@@ -359,6 +379,8 @@ fn start(
         kill_process(disconnected_killer.as_mut(), &master, shell_group);
     }
     let mut buffer = [0; 8192];
+    #[cfg(target_os = "linux")]
+    let mut read_failure = None;
     loop {
         // Closing is independent of slave EOF: a disowned/HUP-ignoring
         // background job can legitimately retain the terminal descriptor.
@@ -376,6 +398,14 @@ fn start(
                     done_tx.close();
                     break;
                 }
+                #[cfg(target_os = "linux")]
+                if let Err(error) = readiness.wait() {
+                    read_failure = Some(error);
+                    let mut failed_killer = child.clone_killer();
+                    kill_process(failed_killer.as_mut(), &master, shell_group);
+                    break;
+                }
+                #[cfg(not(target_os = "linux"))]
                 thread::sleep(Duration::from_millis(10));
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
@@ -402,6 +432,10 @@ fn start(
     done_tx.close();
     // Keep ephemeral scripts alive until the shell has exited.
     drop(integration);
+    #[cfg(target_os = "linux")]
+    if let Some(error) = read_failure {
+        return Err(error.into());
+    }
     block_on(
         driver.emit(Event::Closed(if closed_by_user.load(Ordering::Acquire) {
             CloseReason::ClosedByUser
