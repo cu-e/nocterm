@@ -35,53 +35,66 @@ impl ListingBudget {
         Ok(())
     }
 }
-pub(super) async fn read_dir(sftp: &Sftp, dir: &str) -> Result<Vec<DirEntry>, FsError> {
+pub(super) async fn read_dir(
+    sftp: &Sftp,
+    dir: &str,
+    reply: &mut Answer<Vec<DirEntry>>,
+) -> Result<Vec<DirEntry>, FsError> {
     let handle = sftp
         .raw
         .opendir(dir)
         .await
         .map_err(|e| fs_error(e, dir))?
         .handle;
-    let result = async {
-        let mut entries = Vec::new();
-        let mut budget = ListingBudget::default();
-        loop {
-            match sftp.raw.readdir(&handle).await {
-                Ok(names) => {
-                    budget.page()?;
-                    for name in &names.files {
-                        budget.entry(&name.filename)?;
-                    }
-                    // Following a listing link is optional metadata enrichment.
-                    // Pipeline a small window rather than one network roundtrip
-                    // per link; buffered retains the server's listing order.
-                    let enriched = names
-                        .files
-                        .into_iter()
-                        .filter(|name| name.filename != "." && name.filename != "..")
-                        .map(|name| async move {
-                            let mut item = entry(name.filename, &name.attrs);
-                            if item.is_symlink
-                                && let Ok(target) = sftp.raw.stat(path::join(dir, &item.name)).await
-                            {
-                                item.kind = entry_kind(target.attrs.file_type());
-                                item.size = target.attrs.size;
-                            }
-                            item
-                        });
-                    let mut enriched = futures::stream::iter(enriched).buffered(8);
-                    while let Some(item) = enriched.next().await {
-                        entries.push(item);
-                    }
-                }
-                Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => break,
-                Err(e) => return Err(fs_error(e, dir)),
-            }
+    let result = {
+        let listing = collect_directory(sftp, dir, &handle);
+        tokio::pin!(listing);
+        tokio::select! {
+            biased;
+            () = reply.cancellation() => Err(FsError::NotConnected),
+            result = &mut listing => result,
         }
-        Ok(entries)
-    }
-    .await;
-    let closed = sftp.raw.close(handle).await.map_err(|e| fs_error(e, dir));
-    closed?;
+    };
+    // Even a cancelled listing closes its opened directory before releasing the worker.
+    sftp.raw.close(handle).await.map_err(|e| fs_error(e, dir))?;
     result
+}
+
+async fn collect_directory(sftp: &Sftp, dir: &str, handle: &str) -> Result<Vec<DirEntry>, FsError> {
+    let mut entries = Vec::new();
+    let mut budget = ListingBudget::default();
+    loop {
+        match sftp.raw.readdir(handle).await {
+            Ok(names) => {
+                budget.page()?;
+                for name in &names.files {
+                    budget.entry(&name.filename)?;
+                }
+                // Following a listing link is optional metadata enrichment.
+                // Pipeline a small window rather than one network roundtrip
+                // per link; buffered retains the server's listing order.
+                let enriched = names
+                    .files
+                    .into_iter()
+                    .filter(|name| name.filename != "." && name.filename != "..")
+                    .map(|name| async move {
+                        let mut item = entry(name.filename, &name.attrs);
+                        if item.is_symlink
+                            && let Ok(target) = sftp.raw.stat(path::join(dir, &item.name)).await
+                        {
+                            item.kind = entry_kind(target.attrs.file_type());
+                            item.size = target.attrs.size;
+                        }
+                        item
+                    });
+                let mut enriched = futures::stream::iter(enriched).buffered(8);
+                while let Some(item) = enriched.next().await {
+                    entries.push(item);
+                }
+            }
+            Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => break,
+            Err(e) => return Err(fs_error(e, dir)),
+        }
+    }
+    Ok(entries)
 }

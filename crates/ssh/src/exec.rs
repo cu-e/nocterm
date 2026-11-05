@@ -32,21 +32,20 @@ const START_TIMEOUT: Duration = Duration::from_secs(15);
 /// The extended-data stream SSH carries standard error on.
 const STDERR: u32 = 1;
 
-enum Job {
-    Exec {
-        request: ExecRequest,
-        answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
-    },
-    Terminal {
-        request: TerminalRequest,
-        driver: SessionDriver,
-    },
+struct Job {
+    request: ExecRequest,
+    answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
+}
+struct TerminalJob {
+    request: TerminalRequest,
+    driver: SessionDriver,
 }
 
 /// Runs programs on the host of one SSH session.
 #[derive(Clone)]
 pub(crate) struct SshExec {
     requests: mpsc::Sender<Job>,
+    terminals: mpsc::Sender<TerminalJob>,
     runtime: runtime::Handle,
     source: nocterm_session::ConnectionSource,
 }
@@ -54,6 +53,7 @@ pub(crate) struct SshExec {
 /// The connection's end of [`SshExec`].
 pub(crate) struct ExecRequests {
     requests: mpsc::Receiver<Job>,
+    terminals: mpsc::Receiver<TerminalJob>,
     source: nocterm_session::ConnectionSource,
 }
 
@@ -62,14 +62,17 @@ pub(crate) fn channel(
     source: nocterm_session::ConnectionSource,
 ) -> (SshExec, ExecRequests) {
     let (requests, receiver) = mpsc::channel(REQUEST_BACKLOG);
+    let (terminals, terminal_receiver) = mpsc::channel(REQUEST_BACKLOG);
     (
         SshExec {
             requests,
+            terminals,
             runtime,
             source: source.clone(),
         },
         ExecRequests {
             requests: receiver,
+            terminals: terminal_receiver,
             source,
         },
     )
@@ -81,7 +84,7 @@ impl HostExec for SshExec {
         self.source.guard(async move {
             let (answer, answered) = oneshot::channel();
             requests
-                .send(Job::Exec { request, answer })
+                .send(Job { request, answer })
                 .await
                 .map_err(|_| ExecError::Disconnected)?;
             answered.await.map_err(|_| ExecError::Disconnected)?
@@ -90,9 +93,9 @@ impl HostExec for SshExec {
 
     fn terminal(&self, request: TerminalRequest) -> Session {
         let (session, driver) = nocterm_session::channel_with_source(None, self.source.clone());
-        let requests = self.requests.clone();
+        let requests = self.terminals.clone();
         self.runtime.spawn(async move {
-            let job = Job::Terminal {
+            let job = TerminalJob {
                 request,
                 driver: driver.clone(),
             };
@@ -128,29 +131,22 @@ pub(crate) async fn serve(
             _ = &mut shutdown => break,
             Some(_) = running.join_next(), if !running.is_empty() => {}
             Some(_) = terminals.join_next(), if !terminals.is_empty() => {}
-            job = requests.requests.recv(), if running.len() < CONCURRENT_PROGRAMS => {
-                match job {
-                    None => break,
-                    Some(Job::Exec { request, answer }) => {
-                        let handle=handle.clone();
-                        let source=requests.source.clone();
-                        running.spawn(async move {
-                            let _=source.guard::<_,ExecError,_>(run(handle, request, answer, source.clone())).await;
-                        });
-                    }
-                    Some(Job::Terminal { request, driver }) => {
-                        let source=requests.source.clone();
-                        let handle=handle.clone(); let observed=observed.clone(); let stopped=stopped.clone();
-                        terminals.spawn(async move { let _=source.guard::<_,ExecError,_>(async move { terminal(
-                            handle.clone(),
-                            observed.clone(),
-                            request,
-                            driver,
-                            stopped,
-                        ).await; Ok(()) }).await; });
-                    }
-                }
+            job = requests.terminals.recv() => {
+                let Some(TerminalJob { request, driver }) = job else { break; };
+                let source=requests.source.clone();
+                let handle=handle.clone(); let observed=observed.clone(); let stopped=stopped.clone();
+                terminals.spawn(async move { let _=source.guard::<_,ExecError,_>(async move { terminal(
+                    handle, observed, request, driver, stopped,
+                ).await; Ok(()) }).await; });
+            }            job = requests.requests.recv(), if running.len() < CONCURRENT_PROGRAMS => {
+                let Some(Job { request, answer }) = job else { break; };
+                let handle=handle.clone();
+                let source=requests.source.clone();
+                running.spawn(async move {
+                    let _=source.guard::<_,ExecError,_>(run(handle, request, answer, source.clone())).await;
+                });
             }
+
         }
     }
     running.abort_all();
