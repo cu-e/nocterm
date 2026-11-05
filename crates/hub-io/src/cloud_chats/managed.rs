@@ -1,5 +1,5 @@
 //! The managed side of chats: which runners are agent seats. Waking a seat for a chat is the
-//! device core's (`StartInstance` before a command, ADR 0133).
+//! device core's (its enrolled seat's pool, `StartInstance` before a command, ADR 0133).
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -189,4 +189,63 @@ mod tests {
         let more = tokio::time::timeout(Duration::from_millis(50), effects.next()).await;
         assert!(more.is_err(), "the answer after the page end is dropped");
     }
+
+    /// Lists one seat per agent and answers every start with the seat it names.
+    #[derive(Default)]
+    struct Seats(Mutex<Vec<Effect>>);
+    impl EffectRunner for Seats {
+        fn run(&self, effect: Effect) -> BoxStream<'static, Event> {
+            let seat = |agent: &str, pool: &str| nocterm_cloud_device::flow::InstanceEntry {
+                instance_id: format!("{agent}-seat"),
+                agent_id: agent.into(),
+                pool_id: pool.into(),
+                runner_id: Some([1; 16]),
+                state: nocterm_cloud_device::flow::InstanceState::Suspended,
+            };
+            let answer = match &effect {
+                Effect::ListInstances => {
+                    Input::Instances(vec![seat("other", "pool-b"), seat("agent", "pool-a")])
+                }
+                Effect::StartInstance {
+                    agent_id, pool_id, ..
+                } => Input::Instance(seat(agent_id, pool_id)),
+                _ => Input::Failed(EffectFailure::Refused),
+            };
+            self.0.lock().unwrap().push(effect);
+            stream::once(async move { Event::Input(answer) }).boxed()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wake_starts_the_agents_enrolled_seat_through_its_own_pool() {
+        let runner = Arc::new(Seats::default());
+        let mut wake = nocterm_cloud_device::seat::WakeSeat::new("agent", Some([9; 16]));
+        let mut woken = Vec::new();
+        run(&mut wake, runner.clone(), |_, seat| {
+            woken.push(seat.instance_id);
+            Control::Continue
+        })
+        .await
+        .unwrap();
+        assert_eq!(woken, ["agent-seat"]);
+        let effects = runner.0.lock().unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::ListInstances, Effect::StartInstance { agent_id, pool_id, chat_id }]
+                if agent_id == "agent" && pool_id == "pool-a"
+                    && chat_id.as_deref() == Some("09".repeat(16).as_str())
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_agent_without_an_enrolled_seat_is_not_woken() {
+        let runner = Arc::new(Seats::default());
+        let mut wake = nocterm_cloud_device::seat::WakeSeat::new("unknown", None);
+        let woken = run(&mut wake, runner.clone(), |_, _| Control::Continue).await;
+        assert!(matches!(woken, Err(CloudDeviceError::NotEnrolled)));
+        assert!(matches!(
+            runner.0.lock().unwrap().as_slice(),
+            [Effect::ListInstances]
+        ));
+    }
 }

@@ -11,7 +11,7 @@
 //! again and the same bytes are published, with a receipt probe.
 use super::account::DeviceAccount;
 use super::checkpoints::{AccountPlace, Checkpoints, chat_file};
-use super::driver::{self, Effects, now_ms};
+use super::driver::{self, Control, Effects, now_ms};
 use super::mapping;
 use super::outbox::Outbox;
 use futures::FutureExt as _;
@@ -24,9 +24,10 @@ use nocterm_cloud_conversation_model::{
 };
 use nocterm_cloud_device::command::{Deliver, DeliveryUpdate, StoredCommand};
 use nocterm_cloud_device::context::ChatRef;
-use nocterm_cloud_device::flow::{Effect, Flow, Input, Step};
+use nocterm_cloud_device::flow::{Effect, Flow, Step};
 use nocterm_cloud_device::open::{ChatAction, ChatUpdate, ModelChoice, OpenChat};
 use nocterm_cloud_device::reader::VerifiedChat;
+use nocterm_cloud_device::seat::WakeSeat;
 use nocterm_cloud_device::transcript::CommandState;
 use nocterm_cloud_device::{CloudDeviceError, DeviceIdentity};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -141,34 +142,27 @@ impl CloudConversation for DeviceConversation {
     fn refresh(&self) {
         let _ = self.send(Request::Refresh);
     }
+    /// Wakes the managed seat of the chat with the core's `WakeSeat` (its enrolled seat,
+    /// through its own pool); an agent without one is refused, never provisioned.
     fn wake(&self) -> ConversationFuture<()> {
         let Some(agent_id) = self.setup.wake.clone() else {
             return Box::pin(async { Err(CloudConversationError::Unsupported) });
         };
-        let chat_id = Some(
-            self.setup
-                .chat
-                .chat_id
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-        );
+        let mut flow = WakeSeat::new(agent_id, Some(self.setup.chat.chat_id));
         let effects = self.account.effects().clone();
         let started = self.handle.spawn(async move {
-            effects
-                .run(Effect::StartInstance {
-                    agent_id,
-                    pool_id: String::new(),
-                    chat_id,
-                })
-                .next()
-                .await
+            let mut woken = false;
+            driver::run(&mut flow, effects, |_, _| {
+                woken = true;
+                Control::Stop
+            })
+            .await
+            .map(|()| woken)
         });
         let refresh = self.mailbox.clone();
         Box::pin(async move {
-            let answer = started.await.map_err(|_| CloudConversationError::Ended)?;
-            match answer {
-                Some(super::effects::Event::Input(Input::Instance(_))) => {
+            match started.await.map_err(|_| CloudConversationError::Ended)? {
+                Ok(true) => {
                     if let Some(sender) = refresh
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
@@ -178,10 +172,8 @@ impl CloudConversation for DeviceConversation {
                     }
                     Ok(())
                 }
-                Some(super::effects::Event::Input(Input::Failed(failure))) => {
-                    Err(mapping::error(CloudDeviceError::Effect(failure)))
-                }
-                _ => Err(CloudConversationError::Unavailable),
+                Ok(false) => Err(CloudConversationError::Unavailable),
+                Err(error) => Err(mapping::error(error)),
             }
         })
     }

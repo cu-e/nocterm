@@ -30,14 +30,14 @@ pub(super) fn account(error: DeviceAccountError) -> CloudChatError {
 /// A refusal of a device core flow.
 pub(super) fn device(error: CloudDeviceError) -> CloudChatError {
     match error {
-        CloudDeviceError::NoRunner | CloudDeviceError::NotEnrolled => CloudChatError::NotEnrolled,
+        CloudDeviceError::NoRunner => CloudChatError::NotEnrolled,
+        // The agent has no enrolled seat (the core never provisions one for a chat): starting
+        // the agent enrols it.
+        CloudDeviceError::NotEnrolled => CloudChatError::AgentNotStarted,
         CloudDeviceError::NotClaimed => CloudChatError::RunnerNotReady,
         CloudDeviceError::Unsupported => CloudChatError::Unsupported,
         CloudDeviceError::Capacity => CloudChatError::Capacity,
         CloudDeviceError::NoProviderKey => CloudChatError::NoProviderKey,
-        // A seat is started only when the agent has an enrolled one (the effect answers
-        // `NotFound` otherwise): starting the agent enrols it.
-        CloudDeviceError::Effect(EffectFailure::NotFound) => CloudChatError::AgentNotStarted,
         CloudDeviceError::Effect(EffectFailure::Unavailable | EffectFailure::Unknown) => {
             CloudChatError::RunnerNotReady
         }
@@ -68,9 +68,17 @@ mod tests {
     #[test]
     fn a_runner_that_did_not_take_the_chat_asks_the_person_to_try_again() {
         assert!(device(CloudDeviceError::NotClaimed).is_retryable());
+    }
+
+    #[test]
+    fn an_agent_without_an_enrolled_seat_is_started_first() {
         assert!(matches!(
-            device(CloudDeviceError::Effect(EffectFailure::NotFound)),
+            device(CloudDeviceError::NotEnrolled),
             CloudChatError::AgentNotStarted
+        ));
+        assert!(matches!(
+            device(CloudDeviceError::NoRunner),
+            CloudChatError::NotEnrolled
         ));
     }
 
