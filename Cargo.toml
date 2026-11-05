@@ -172,6 +172,7 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+nocterm-plugin-ports = { workspace = true, features = ["test-support"] }
 nocterm-connections-store = { workspace = true, features = ["test-support"] }
 async-io.workspace = true
 nocterm-monitor.workspace = true

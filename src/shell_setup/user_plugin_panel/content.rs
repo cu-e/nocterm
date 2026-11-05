@@ -1,23 +1,34 @@
 //! What a panel and a widget share: the plugin's view, drawn in its frame, and the calls that
 //! refresh it and report what the user did to it.
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
+use super::driver::RefreshDriver;
 use gpui_kit::{
-    App, AppContext as _, Entity, FocusHandle, IntoElement as _,
+    App, AppContext as _, Entity, FocusHandle, IntoElement as _, WeakEntity,
     component::{ActiveTheme as _, Icon, Sizable as _},
 };
-use nocterm_plugin_api::{Event, PluginIcon, Refresh};
+use nocterm_plugin_api::{Event, PluginIcon, Refresh, View};
 use nocterm_plugin_host::{Call, CallError, Input, PluginHost};
+use nocterm_plugin_model::ContributionId;
 use nocterm_plugin_ports::PluginProviders;
 use nocterm_plugin_view::{FrameKind, Hooks, Interaction, Origin, PluginView, ViewStyle};
 use nocterm_ui::contribution_icon;
+use nocterm_workspace::Workspace;
 
-/// How often a window checks whether its plugin views are due.
-const POLL: Duration = Duration::from_millis(250);
 /// The shortest wait between two draws the shell grants.
 const MIN_WAIT: Duration = Duration::from_millis(250);
 /// How long a window waits before it looks again at a view that asked for no refresh.
 const IDLE: Duration = Duration::from_secs(1);
+
+pub(super) struct FrameSpec<'a> {
+    pub(super) name: &'a str,
+    pub(super) kind: FrameKind,
+    pub(super) dev: bool,
+}
 
 /// The plugin's view and the way to ask the host for the next one.
 pub(super) struct Content {
@@ -26,106 +37,157 @@ pub(super) struct Content {
     call: Call,
     providers: PluginProviders,
     revision: u64,
-    wait: Duration,
-    waited: Duration,
+    next: Instant,
+    visible: bool,
+    last: Option<View>,
+    appearance: ViewStyle,
+    panel: Option<(WeakEntity<Workspace>, ContributionId)>,
+    driver: WeakEntity<RefreshDriver>,
 }
 
 impl Content {
     pub(super) fn new<T: 'static>(
         host: Entity<PluginHost>,
+        driver: Entity<RefreshDriver>,
         call: Call,
-        name: &str,
-        kind: FrameKind,
+        frame: FrameSpec<'_>,
         providers: PluginProviders,
-        dev: bool,
         cx: &mut gpui_kit::Context<T>,
-    ) -> Self {
+    ) -> Entity<Self> {
         let hooks = hooks(host.clone(), call.clone(), providers.clone());
         let view = cx.new(|cx| {
-            let mut view = PluginView::new(name.to_owned(), kind, style(cx), hooks);
-            if dev {
+            let mut view = PluginView::new(frame.name.to_owned(), frame.kind, style(cx), hooks);
+            if frame.dev {
                 view.mark_dev();
             }
             view
         });
         let revision = host.read(cx).revision();
-        Self {
+        let now = cx.background_executor().now();
+        let appearance = style(cx);
+        let entity = cx.new(|_| Self {
             host,
             view,
             call,
             providers,
             revision,
-            wait: Duration::ZERO,
-            waited: Duration::ZERO,
-        }
+            next: now,
+            visible: false,
+            last: None,
+            appearance,
+            panel: None,
+            driver: driver.downgrade(),
+        });
+        driver.update(cx, |driver, cx| driver.add(entity.downgrade(), cx));
+        entity
     }
 
     pub(super) fn view(&self) -> &Entity<PluginView> {
         &self.view
     }
 
-    /// One step of the refresh loop: asks the host for a new view when the plugin's own refresh
-    /// is due or the host's records changed, but only while the view `shown`. Says whether it
-    /// asked.
-    pub(super) fn poll(&mut self, shown: bool, in_focus: bool, cx: &mut App) -> bool {
-        self.waited += POLL;
-        let stale = self.host.read(cx).revision() != self.revision;
-        let due = shown && (stale || self.waited >= self.wait);
-        if due {
-            self.refresh(in_focus, cx);
+    pub(super) fn panel(&mut self, workspace: WeakEntity<Workspace>, id: ContributionId) {
+        self.panel = Some((workspace, id));
+    }
+    pub(super) fn visible(&mut self, visible: bool, in_focus: bool, cx: &mut App) {
+        let changed = self.visible != visible || self.call.in_focus != in_focus;
+        self.visible = visible;
+        self.call.in_focus = in_focus;
+        if changed {
+            self.next = cx.background_executor().now();
+            let driver = self.driver.clone();
+            cx.defer(move |cx| {
+                let _ = driver.update(cx, |driver, cx| driver.defer_wake(cx));
+            });
         }
-        due
+        self.restyle(cx);
+    }
+    pub(super) fn restyle(&mut self, cx: &mut App) {
+        let next = style(cx);
+        if style_key(next) != style_key(self.appearance) {
+            self.appearance = next;
+            self.view.update(cx, |view, cx| {
+                view.restyle(next);
+                cx.notify();
+            });
+        }
+    }
+    pub(super) fn tick(&mut self, now: Instant, cx: &mut App) -> Option<Instant> {
+        if let Some((workspace, id)) = &self.panel {
+            self.visible = workspace
+                .read_with(cx, |workspace, _| workspace.panel_is_open(id))
+                .unwrap_or(false);
+        }
+        if !self.visible {
+            return None;
+        }
+        if now >= self.next || self.host.read(cx).revision() != self.revision {
+            self.refresh(now, cx);
+        }
+        Some(self.next)
     }
 
     /// Asks the host for the view and shows it. A plugin that failed shows the fault chip; one
     /// over the render budget keeps its last view and is asked again soon.
-    fn refresh(&mut self, in_focus: bool, cx: &mut App) {
-        self.waited = Duration::ZERO;
-        self.call.in_focus = in_focus;
+    fn refresh(&mut self, now: Instant, cx: &mut App) {
         let answer = self
             .host
             .update(cx, |host, cx| host.render(&self.call, &self.providers, cx));
         self.revision = self.host.read(cx).revision();
-        let style = style(cx);
+        self.restyle(cx);
         match answer {
             Ok(view) => {
-                self.wait = wait_of(view.refresh);
-                self.view.update(cx, |plugin_view, cx| {
-                    plugin_view.restyle(style);
-                    if let Err(error) = plugin_view.show(view) {
-                        tracing::warn!(%error, plugin = %self.call.plugin, "a plugin view was refused");
-                    }
-                    cx.notify();
-                });
+                self.next = now + wait_of(view.refresh);
+                let changed = self
+                    .last
+                    .as_ref()
+                    .is_none_or(|last| last.nodes != view.nodes);
+                if changed {
+                    let shown = view.clone();
+                    self.view.update(cx, |plugin_view, cx| {
+                        if let Err(error) = plugin_view.show(shown) { tracing::warn!(%error, plugin = %self.call.plugin, "a plugin view was refused"); }
+                        cx.notify();
+                    });
+                }
+                self.last = Some(view);
             }
             Err(CallError::Throttled { retry_after_ms }) => {
-                self.wait = Duration::from_millis(u64::from(retry_after_ms)).max(MIN_WAIT);
+                self.next = now + Duration::from_millis(u64::from(retry_after_ms)).max(MIN_WAIT);
+            }
+            Err(CallError::NotRunning(_))
+                if self.host.read(cx).plugins().iter().any(|plugin| {
+                    plugin.id == self.call.plugin
+                        && matches!(plugin.status, nocterm_plugin_host::PluginStatus::Running)
+                }) =>
+            {
+                // Native data publication temporarily holds effects; keep the last valid tree.
+                self.next = now + MIN_WAIT;
             }
             Err(error) => {
                 tracing::debug!(%error, plugin = %self.call.plugin, "a plugin view is not drawn");
-                self.wait = IDLE;
+                self.next = now + IDLE;
+                self.last = None;
                 self.view.update(cx, |plugin_view, cx| {
-                    plugin_view.fault();
-                    cx.notify();
+                    if !plugin_view.is_fault() {
+                        plugin_view.fault();
+                        cx.notify();
+                    }
                 });
             }
         }
     }
 }
 
-/// Runs `tick` on the owner now and then every quarter second until the owner is gone.
-pub(super) fn drive<T: 'static>(
-    cx: &mut gpui_kit::Context<T>,
-    tick: impl Fn(&mut T, &mut gpui_kit::Context<T>) + 'static,
-) -> gpui_kit::Task<()> {
-    cx.spawn(async move |this, cx| {
-        loop {
-            if this.update(cx, |this, cx| tick(this, cx)).is_err() {
-                break;
-            }
-            cx.background_executor().timer(POLL).await;
-        }
-    })
+fn style_key(style: ViewStyle) -> [gpui_kit::Hsla; 7] {
+    [
+        style.text,
+        style.muted,
+        style.success,
+        style.caution,
+        style.border,
+        style.hover,
+        style.marker,
+    ]
 }
 
 fn wait_of(refresh: Option<Refresh>) -> Duration {

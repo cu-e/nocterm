@@ -34,6 +34,8 @@ fn load(
     id: &PluginId,
     cx: &mut TestAppContext,
 ) -> Result<PluginDataDoc, PluginDataError> {
+    let acquired = cx.update(|cx| files.acquire(id.clone(), cx));
+    cx.foreground_executor().block_test(acquired);
     cx.update(|cx| files.load(id, cx))
 }
 

@@ -55,6 +55,16 @@ fn start_in(
     settings: &SettingsHandle,
     cx: &mut TestAppContext,
 ) -> Run {
+    let run = start_pending(state, mode, settings, cx);
+    cx.run_until_parked();
+    run
+}
+fn start_pending(
+    state: TempDir,
+    mode: UserPluginMode,
+    settings: &SettingsHandle,
+    cx: &mut TestAppContext,
+) -> Run {
     let catalog = Arc::new(plugin_catalog().expect("the application catalog"));
     let paths = nocterm_core::Paths::rooted_at(state.path());
     let shell = cx.update(|cx| {
@@ -68,7 +78,6 @@ fn start_in(
             cx,
         )
     });
-    cx.run_until_parked();
     Run {
         shell,
         catalog,
@@ -87,8 +96,11 @@ fn installation(cx: &mut TestAppContext) -> TempDir {
             .expect("an allowed run has a host")
             .update(cx, |host, cx| {
                 let package = host.read_package(clock).expect("the example reads");
-                host.install(package, &[], cx)
+                let id = host
+                    .install(package, &[], cx)
                     .expect("the example installs");
+                host.set_placeable(&id, true, cx)
+                    .expect("the earlier run approved placing its clock");
             });
     });
     cx.run_until_parked();
@@ -269,4 +281,98 @@ fn a_developer_session_is_not_held_by_the_switch_and_saves_nothing(cx: &mut Test
         "nothing installed loads in a session"
     );
     assert_eq!(files_under(&run.plugins_dir()), before);
+}
+
+#[gpui_kit::test]
+fn delayed_startup_preserves_saved_user_placement_during_an_unrelated_layout_edit(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_plugin_model::{ContributionId, UserAvailability, Zone};
+    use nocterm_window_layout::{BarItem, EditOp, EditTarget, LayoutSettings, Slot};
+    let state = installation(cx);
+    let run = start_pending(state, UserPluginMode::Installed, &allowing(cx), cx);
+    let source = run.shell.source(&run.catalog);
+    let mut document: LayoutSettings = serde_json::from_value(serde_json::json!({
+        "active": "saved", "presets": [{ "id": "saved", "name": "Saved", "bar": {
+            "right": [{ "item": "user-example-clock.face" }, { "item": "user-example-missing.face" }]
+        }, "tray": [] }]
+    })).unwrap();
+    let placed = |document: &LayoutSettings, wanted: &str| {
+        document.presets[0]
+            .bar
+            .right
+            .iter()
+            .any(|item| matches!(item, BarItem::Item { id } if id.as_str() == wanted))
+    };
+    let edit = |document: &mut LayoutSettings, set: &nocterm_plugin_model::PluginSet| {
+        nocterm_window_layout::edit(
+            document,
+            false,
+            set,
+            EditTarget::Selected,
+            EditOp::InsertSeparator {
+                place: Slot::Zone(Zone::Right),
+                index: 0,
+            },
+        )
+        .unwrap();
+    };
+    cx.update(|cx| {
+        let set = source.current(cx);
+        assert_eq!(set.availability(), UserAvailability::Held);
+        edit(&mut document, &set);
+    });
+    assert!(placed(&document, "user-example-clock.face"));
+    assert!(placed(&document, "user-example-missing.face"));
+    assert!(document.presets[0].tray.is_empty());
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let set = source.current(cx);
+        assert_eq!(set.availability(), UserAvailability::Installed);
+        assert!(
+            set.contribution(&ContributionId::owned("user-example-clock.face"))
+                .is_some()
+        );
+        edit(&mut document, &set);
+    });
+    assert!(placed(&document, "user-example-clock.face"));
+    assert!(
+        !document.presets[0]
+            .tray
+            .iter()
+            .any(|id| id.as_str() == "user-example-clock.face")
+    );
+}
+
+#[gpui_kit::test]
+fn an_empty_successful_start_publishes_the_availability_transition(cx: &mut TestAppContext) {
+    use nocterm_plugin_model::UserAvailability;
+    use std::{cell::Cell, rc::Rc};
+    let run = start_pending(
+        TempDir::new().unwrap(),
+        UserPluginMode::Installed,
+        &allowing(cx),
+        cx,
+    );
+    let source = run.shell.source(&run.catalog);
+    let heard = Rc::new(Cell::new(0));
+    let changes = heard.clone();
+    let _observer =
+        cx.update(|cx| source.observe(Box::new(move |_| changes.set(changes.get() + 1)), cx));
+    assert_eq!(
+        cx.update(|cx| source.current(cx).availability()),
+        UserAvailability::Held
+    );
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            source.current(cx).availability(),
+            UserAvailability::Installed
+        );
+        assert!(source.current(cx).users().is_empty());
+    });
+    assert!(
+        heard.get() > 0,
+        "the catalog stays empty but layout consumers receive completion"
+    );
 }

@@ -18,7 +18,7 @@ use nocterm_plugin_model::{
 
 use super::{
     Workspace,
-    chrome::{WidgetFactory, ZoneHook},
+    chrome::{VisibilityHook, WidgetFactory, ZoneHook},
     panel_groups::{ExpandableHandle, HostedPanel, Presentation},
 };
 use crate::Panel;
@@ -187,6 +187,7 @@ pub struct WidgetRegistration {
     id: ContributionId,
     create: WidgetFactory,
     zone: Option<ZoneHook>,
+    visibility: Option<VisibilityHook>,
 }
 
 impl WidgetRegistration {
@@ -209,6 +210,7 @@ impl WidgetRegistration {
             id: id.clone(),
             create: Rc::new(move |workspace, window, cx| factory(workspace, window, cx).into()),
             zone: None,
+            visibility: None,
         }
     }
 
@@ -226,11 +228,25 @@ impl WidgetRegistration {
         registration
     }
 
+    /// Observe actual placement in the bar or its open overflow. Delivery is deferred,
+    /// and equal visibility produces no callback. Other widgets need no hook.
+    pub fn with_visibility<V: Render>(
+        mut self,
+        changed: impl Fn(&mut V, bool, &mut Context<V>) + 'static,
+    ) -> Self {
+        self.visibility = Some(Rc::new(move |view, visible, cx| {
+            if let Ok(view) = view.clone().downcast::<V>() {
+                view.update(cx, |view, cx| changed(view, visible, cx));
+            }
+        }));
+        self
+    }
+
     pub(super) fn id(&self) -> &ContributionId {
         &self.id
     }
-    pub(super) fn into_parts(self) -> (WidgetFactory, Option<ZoneHook>) {
-        (self.create, self.zone)
+    pub(super) fn into_parts(self) -> (WidgetFactory, Option<ZoneHook>, Option<VisibilityHook>) {
+        (self.create, self.zone, self.visibility)
     }
 }
 

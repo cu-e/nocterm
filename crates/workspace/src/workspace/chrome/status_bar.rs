@@ -4,7 +4,7 @@
 //! arrangement places the widget. [`BarInputs`] resolves the arrangement against the window's
 //! state, and [`StatusBarRow`] draws it.
 
-use std::rc::Rc;
+use std::{collections::HashSet, rc::Rc};
 
 use gpui_kit::{AnyView, App, Context, Window};
 use nocterm_plugin_model::{ContributionId, Zone};
@@ -31,16 +31,33 @@ pub(in crate::workspace) type WidgetFactory =
 
 /// Tells a widget's view the zone it is placed in.
 pub(in crate::workspace) type ZoneHook = Rc<dyn Fn(&AnyView, Zone, &mut App)>;
+/// Receives actual bar/overflow visibility after composition, outside the shell borrow.
+pub(in crate::workspace) type VisibilityHook = Rc<dyn Fn(&AnyView, bool, &mut App)>;
 
 struct WidgetEntry {
     id: ContributionId,
     factory: WidgetFactory,
     /// For a widget that follows its zone.
     zone_hook: Option<ZoneHook>,
+    visibility_hook: Option<VisibilityHook>,
+    visible: bool,
     /// `None` while the arrangement does not place the widget.
     view: Option<AnyView>,
     /// The zone the view was last told about.
     zone: Option<Zone>,
+}
+
+impl WidgetEntry {
+    fn visibility(&mut self, visible: bool, cx: &mut App) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        if let (Some(view), Some(hook)) = (&self.view, &self.visibility_hook) {
+            let (view, hook) = (view.clone(), hook.clone());
+            cx.defer(move |cx| hook(&view, visible, cx));
+        }
+    }
 }
 
 /// The registered status bar widgets, in registration order.
@@ -75,11 +92,14 @@ impl StatusBar {
         id: ContributionId,
         factory: WidgetFactory,
         zone_hook: Option<ZoneHook>,
+        visibility_hook: Option<VisibilityHook>,
     ) {
         self.widgets.push(WidgetEntry {
             id,
             factory,
             zone_hook,
+            visibility_hook,
+            visible: false,
             view: None,
             zone: None,
         });
@@ -87,7 +107,10 @@ impl StatusBar {
 
     /// Forgets a widget, so its plugin's uninstall or replacement leaves no view behind.
     #[cfg(feature = "user-plugins")]
-    pub(in crate::workspace) fn remove(&mut self, id: &ContributionId) {
+    pub(in crate::workspace) fn remove(&mut self, id: &ContributionId, cx: &mut App) {
+        if let Some(entry) = self.widgets.iter_mut().find(|entry| entry.id == *id) {
+            entry.visibility(false, cx);
+        }
         self.widgets.retain(|entry| entry.id != *id);
     }
 
@@ -119,12 +142,23 @@ impl StatusBar {
     }
 
     /// Drops the views of the widgets the arrangement does not place.
-    pub(in crate::workspace) fn release_unplaced(&mut self, layout: &ResolvedLayout) {
+    pub(in crate::workspace) fn release_unplaced(&mut self, layout: &ResolvedLayout, cx: &mut App) {
         for entry in &mut self.widgets {
             if !layout.is_placed(&entry.id) {
+                entry.visibility(false, cx);
                 entry.view = None;
                 entry.zone = None;
             }
+        }
+    }
+
+    pub(in crate::workspace) fn publish_visibility(
+        &mut self,
+        visible: &HashSet<ContributionId>,
+        cx: &mut App,
+    ) {
+        for entry in &mut self.widgets {
+            entry.visibility(entry.view.is_some() && visible.contains(&entry.id), cx);
         }
     }
 

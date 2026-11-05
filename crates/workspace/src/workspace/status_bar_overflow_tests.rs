@@ -1,6 +1,9 @@
 //! A bar too narrow for its entries moves the least important into the `»` menu, and the menu
 //! lists and activates them. Pinned entries and entries that ask for the user stay.
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use gpui_kit::{
     Anchor, AppContext as _, Bounds, Context, ElementId, Entity, IntoElement, Pixels, Render,
@@ -81,7 +84,14 @@ fn flat_with<V: Render>(
     width: f32,
     widget: impl Fn(&mut Context<Workspace>) -> Entity<V> + 'static,
 ) -> Bar {
-    let layouts = layout(
+    let bar = bar_of(cx, width, flat_layout());
+    add_right_widget(cx, &bar, widget);
+    settle(cx, &bar);
+    bar
+}
+
+fn flat_layout() -> nocterm_window_layout::LayoutSettings {
+    layout(
         serde_json::json!({
             "left": [{
                 "group": "navigation",
@@ -98,11 +108,7 @@ fn flat_with<V: Render>(
             ],
         }),
         &[],
-    );
-    let bar = bar_of(cx, width, layouts);
-    add_right_widget(cx, &bar, widget);
-    settle(cx, &bar);
-    bar
+    )
 }
 
 /// A narrow flat bar that also holds a notice: everything that can leave the bar has.
@@ -445,4 +451,47 @@ fn a_press_outside_closes_the_widgets_popover_first_and_then_the_menu(cx: &mut T
 
     click(cx, &bar, toggle_id(Toggle::Navigation(0)));
     assert!(!shown(cx, &bar, "status-overflow-list"), "the menu closed");
+}
+
+#[gpui_kit::test]
+fn widget_visibility_follows_overflow_and_ignores_unchanged_frames(cx: &mut TestAppContext) {
+    let transitions = Rc::new(RefCell::new(Vec::new()));
+    let bar = bar_of(cx, 1280., flat_layout());
+    let notified = transitions.clone();
+    cx.update_window(bar.handle, |_, window, cx| {
+        bar.workspace.update(cx, |workspace, cx| {
+            workspace
+                .register_widget(
+                    WidgetRegistration::new(RIGHT_WIDGET, |_, _, cx| {
+                        cx.new(|_| Block {
+                            name: "observed-widget",
+                            width: 120.,
+                        })
+                    })
+                    .with_visibility::<Block>(move |_, visible, _| {
+                        notified.borrow_mut().push(visible)
+                    }),
+                    window,
+                    cx,
+                )
+                .unwrap();
+        });
+    })
+    .unwrap();
+    settle(cx, &bar);
+    assert_eq!(*transitions.borrow(), [true]);
+    settle(cx, &bar);
+    assert_eq!(
+        *transitions.borrow(),
+        [true],
+        "unchanged redraw sends nothing"
+    );
+    resize(cx, &bar, 200.);
+    assert_eq!(*transitions.borrow(), [true, false]);
+    open_menu(cx, &bar);
+    assert_eq!(*transitions.borrow(), [true, false, true]);
+    click(cx, &bar, toggle_id(Toggle::Navigation(0)));
+    assert_eq!(*transitions.borrow(), [true, false, true, false]);
+    resize(cx, &bar, 1280.);
+    assert_eq!(*transitions.borrow(), [true, false, true, false, true]);
 }
