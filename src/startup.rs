@@ -263,7 +263,7 @@ fn hub_links(
 }
 
 /// The hub access ports of the links.
-fn hub_dependencies(links: Arc<nocterm_hub_io::HubLinks>) -> nocterm_hubs::Deps {
+pub(crate) fn hub_dependencies(links: Arc<nocterm_hub_io::HubLinks>) -> nocterm_hubs::Deps {
     nocterm_hubs::Deps {
         trust: links.clone(),
         sign_in: links.clone(),
@@ -274,7 +274,7 @@ fn hub_dependencies(links: Arc<nocterm_hub_io::HubLinks>) -> nocterm_hubs::Deps 
 
 /// The agents, agent servers and chat changes of the hubs, all read by one link, and the
 /// sessions of saved connections Agent access writes `authorized_keys` through.
-fn hub_agents_dependencies(
+pub(crate) fn hub_agents_dependencies(
     links: &nocterm_hub_io::HubLinks,
     hosts: Arc<nocterm_ssh::authorized_keys::HostDirectory>,
 ) -> nocterm_hub_agents::Deps {
@@ -282,7 +282,7 @@ fn hub_agents_dependencies(
     nocterm_hub_agents::Deps {
         directory: link.clone(),
         servers: link.clone(),
-        chats: link,
+        changes: link,
         hosts,
     }
 }
@@ -326,7 +326,7 @@ fn local_sessions() -> nocterm_terminal::LocalSessions {
 }
 
 /// Local agents run over ACP; hub agents run on their hub.
-fn agent_connector(
+pub(crate) fn agent_connector(
     executable: &std::path::Path,
     links: Option<&nocterm_hub_io::HubLinks>,
 ) -> Arc<dyn nocterm_ai::AgentConnector> {

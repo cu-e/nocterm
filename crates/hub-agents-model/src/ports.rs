@@ -58,14 +58,25 @@ pub trait HubServers: Send + Sync {
     fn remove_server(&self, hub: &HubId, server: &ServerId) -> AgentsFuture<ServerRemoval>;
 }
 
-/// Lossy hints that the chats of a hub changed (created, renamed, ran, deleted): a hint means
-/// "list again".
-pub trait ChatChangeHints: Send {
-    /// Waits for the next hint; `None` when the hub ended the stream (subscribe again).
-    fn next(&mut self) -> BoxFuture<'_, Result<Option<()>, HubAgentsError>>;
+/// What changed on a hub, here or on another device. A hint means "list it again".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HubChange {
+    /// Chats were created, renamed, ran or deleted.
+    Chats,
+    /// Agents, or the providers and models they use.
+    Agents,
+    /// Servers connected to agents, the agent key, or what agents last found on a server.
+    Servers,
 }
 
-/// Follows the chat list of a hub, so every window shows chats made on other devices.
-pub trait HubChatChanges: Send + Sync {
-    fn watch(&self, hub: &HubId) -> AgentsFuture<Box<dyn ChatChangeHints>>;
+/// Lossy hints of what changed on a hub.
+pub trait HubChangeHints: Send {
+    /// Waits for the next hint; `None` when the hub ended the stream (subscribe again).
+    fn next(&mut self) -> BoxFuture<'_, Result<Option<HubChange>, HubAgentsError>>;
+}
+
+/// Follows the chats, agents and servers of a hub, so every window shows what other devices
+/// changed.
+pub trait HubChanges: Send + Sync {
+    fn watch(&self, hub: &HubId) -> AgentsFuture<Box<dyn HubChangeHints>>;
 }

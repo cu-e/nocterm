@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Entity};
-use nocterm_hub_agents_model::{HubAgentDirectory, HubChatChanges, HubServers};
+use nocterm_hub_agents_model::{HubAgentDirectory, HubChanges, HubServers};
 use nocterm_ssh_keys::authorized_keys::AgentHosts;
 
 use crate::service::HubAgents;
@@ -13,7 +13,7 @@ use crate::service::HubAgents;
 pub struct Deps {
     pub directory: Arc<dyn HubAgentDirectory>,
     pub servers: Arc<dyn HubServers>,
-    pub chats: Arc<dyn HubChatChanges>,
+    pub changes: Arc<dyn HubChanges>,
     /// The sessions of saved connections, through which Agent access edits `authorized_keys`.
     pub hosts: Arc<dyn AgentHosts>,
 }

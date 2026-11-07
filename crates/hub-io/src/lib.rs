@@ -26,7 +26,7 @@
 //! windows, terminal emulation, the transcript of a chat, or any view.
 //! Ports provided: `HubTrust`, `HubSignIn` and `AccountDevices` from `nocterm-hubs-model`
 //! (by [`HubLinks`]) and `AccountKeyLock` (by [`AccountKeys`]); `HubAgentDirectory`,
-//! `HubServers` and `HubChatChanges` (by [`HubAgentsLink`]); `AgentConnector` and
+//! `HubServers` and `HubChanges` (by [`HubAgentsLink`]); `AgentConnector` and
 //! `ChatRepository` of `nocterm-ai`; the `LocalAccountSource` captured by [`HubAccount`], its
 //! captured `CredentialStore` of `nocterm-session`, the `VaultAccess` of `nocterm-vault` and
 //! the `ProfileReplica` of `nocterm-connections-model`, implemented by [`HubVault`] and

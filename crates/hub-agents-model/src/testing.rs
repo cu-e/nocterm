@@ -9,9 +9,9 @@ use futures::{FutureExt as _, StreamExt as _};
 use nocterm_hubs_model::{HubError, HubId};
 
 use crate::{
-    AgentDraft, AgentId, AgentKey, AgentsFuture, ChatChangeHints, HubAgent, HubAgentDirectory,
-    HubAgentsError, HubChatChanges, HubServer, HubServers, NewServer, Provider, ProviderDraft,
-    ProviderId, ProviderScope, ProviderTest, ServerId, ServerRemoval, ServerStatus,
+    AgentDraft, AgentId, AgentKey, AgentsFuture, HubAgent, HubAgentDirectory, HubAgentsError,
+    HubChange, HubChangeHints, HubChanges, HubServer, HubServers, NewServer, Provider,
+    ProviderDraft, ProviderId, ProviderScope, ProviderTest, ServerId, ServerRemoval, ServerStatus,
 };
 
 #[derive(Default)]
@@ -27,7 +27,7 @@ struct Account {
 struct State {
     accounts: HashMap<HubId, Account>,
     offline: bool,
-    hints: Vec<mpsc::UnboundedSender<()>>,
+    hints: Vec<mpsc::UnboundedSender<HubChange>>,
     calls: Vec<String>,
 }
 
@@ -102,11 +102,11 @@ impl FakeHubAgents {
         }
     }
 
-    /// Tells every watcher that the chats changed.
-    pub fn chats_changed(&self) {
+    /// Tells every watcher that `change` happened, as another device would.
+    pub fn changed(&self, change: HubChange) {
         lock(&self.0)
             .hints
-            .retain(|hint| hint.unbounded_send(()).is_ok());
+            .retain(|hint| hint.unbounded_send(change).is_ok());
     }
 
     /// The names of the calls made so far, oldest first.
@@ -343,16 +343,16 @@ impl HubServers for FakeHubAgents {
     }
 }
 
-struct Hints(mpsc::UnboundedReceiver<()>);
+struct Hints(mpsc::UnboundedReceiver<HubChange>);
 
-impl ChatChangeHints for Hints {
-    fn next(&mut self) -> BoxFuture<'_, Result<Option<()>, HubAgentsError>> {
+impl HubChangeHints for Hints {
+    fn next(&mut self) -> BoxFuture<'_, Result<Option<HubChange>, HubAgentsError>> {
         self.0.next().map(Ok).boxed()
     }
 }
 
-impl HubChatChanges for FakeHubAgents {
-    fn watch(&self, hub: &HubId) -> AgentsFuture<Box<dyn ChatChangeHints>> {
+impl HubChanges for FakeHubAgents {
+    fn watch(&self, hub: &HubId) -> AgentsFuture<Box<dyn HubChangeHints>> {
         let (sender, receiver) = mpsc::unbounded();
         let mut state = lock(&self.0);
         state.calls.push(format!("watch {hub}"));
@@ -360,6 +360,6 @@ impl HubChatChanges for FakeHubAgents {
             return ready(Err(HubError::NotSignedIn.into()));
         }
         state.hints.push(sender);
-        ready(Ok(Box::new(Hints(receiver)) as Box<dyn ChatChangeHints>))
+        ready(Ok(Box::new(Hints(receiver)) as Box<dyn HubChangeHints>))
     }
 }

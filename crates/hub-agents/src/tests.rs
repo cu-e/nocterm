@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use gpui::TestAppContext;
+use nocterm_hub_agents_model::HubChange;
 use nocterm_hub_agents_model::testing::FakeHubAgents;
 use nocterm_hubs_model::{HubAddress, HubId};
 
@@ -19,7 +20,7 @@ fn deps_over(fake: &FakeHubAgents, hosts: &FakeAgentHosts) -> Deps {
     Deps {
         directory: Arc::new(fake.clone()),
         servers: Arc::new(fake.clone()),
-        chats: Arc::new(fake.clone()),
+        changes: Arc::new(fake.clone()),
         hosts: Arc::new(hosts.clone()),
     }
 }
@@ -70,7 +71,7 @@ fn a_change_of_the_hubs_chats_is_told_to_the_views(cx: &mut TestAppContext) {
     });
     agents.update(cx, |agents, cx| agents.track(&hub(), cx));
     cx.run_until_parked();
-    fake.chats_changed();
+    fake.changed(HubChange::Chats);
     cx.run_until_parked();
     assert!(
         seen.lock()
@@ -169,5 +170,32 @@ fn withdrawing_access_removes_only_the_agent_key_line_and_the_record(cx: &mut Te
     assert_eq!(file.text(), "ssh-ed25519 AAAAown me\n");
     agents.read_with(cx, |agents, _| {
         assert!(agents.server_of(&hub(), &web()).is_none())
+    });
+}
+
+#[gpui::test]
+fn a_server_connected_on_another_device_is_listed_after_its_hint(cx: &mut TestAppContext) {
+    use nocterm_hub_agents_model::{HubServers as _, NewServer};
+    let fake = FakeHubAgents::new();
+    let installed = cx.update(|cx| install(deps(&fake), cx));
+    let agents = installed.agents().clone();
+    agents.update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    agents.read_with(cx, |agents, _| assert!(agents.servers(&hub()).is_empty()));
+    let elsewhere = fake.add_server(
+        &hub(),
+        NewServer {
+            name: "prod".into(),
+            host: "prod.example".into(),
+            port: 22,
+            user: "ops".into(),
+            host_key: String::new(),
+        },
+    );
+    futures::executor::block_on(elsewhere).unwrap();
+    fake.changed(HubChange::Servers);
+    cx.run_until_parked();
+    agents.read_with(cx, |agents, _| {
+        assert_eq!(agents.servers(&hub())[0].name, "prod");
     });
 }

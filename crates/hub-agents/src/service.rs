@@ -7,8 +7,8 @@ use std::time::Duration;
 use gpui::{Context, EventEmitter, Task};
 use nocterm_ai::agents::AgentLaunch;
 use nocterm_hub_agents_model::{
-    HubAgent, HubAgentDirectory, HubAgentsError, HubChatChanges, HubServer, HubServers, ServerId,
-    ServerRemoval,
+    HubAgent, HubAgentDirectory, HubAgentsError, HubChange, HubChanges, HubServer, HubServers,
+    ServerId, ServerRemoval,
 };
 use nocterm_hubs_model::HubId;
 
@@ -59,7 +59,7 @@ impl HubAgents {
         if self.hubs.contains_key(hub) {
             return;
         }
-        let follow = follow_chats(self.deps.chats.clone(), hub.clone(), cx);
+        let follow = follow_changes(self.deps.changes.clone(), hub.clone(), cx);
         self.hubs.insert(
             hub.clone(),
             Entry {
@@ -241,20 +241,22 @@ impl HubAgents {
     }
 }
 
-/// Follows the chat list of `hub`, re-subscribing with growing delays, until it is untracked.
-fn follow_chats(
-    chats: Arc<dyn HubChatChanges>,
+/// Follows what changes on `hub`, re-subscribing with growing delays, until it is untracked:
+/// changed chats are announced, changed agents or servers are listed again.
+fn follow_changes(
+    changes: Arc<dyn HubChanges>,
     hub: HubId,
     cx: &mut Context<HubAgents>,
 ) -> Task<()> {
     cx.spawn(async move |this, cx| {
         let mut delay = FIRST_RETRY;
         loop {
-            if let Ok(mut hints) = chats.watch(&hub).await {
+            if let Ok(mut hints) = changes.watch(&hub).await {
                 delay = FIRST_RETRY;
-                while let Ok(Some(())) = hints.next().await {
-                    let alive = this.update(cx, |_, cx| {
-                        cx.emit(HubAgentsEvent::ChatsChanged(hub.clone()));
+                while let Ok(Some(change)) = hints.next().await {
+                    let alive = this.update(cx, |this, cx| match change {
+                        HubChange::Chats => cx.emit(HubAgentsEvent::ChatsChanged(hub.clone())),
+                        HubChange::Agents | HubChange::Servers => this.refresh(&hub, cx),
                     });
                     if alive.is_err() {
                         return;

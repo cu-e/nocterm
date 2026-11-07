@@ -1,8 +1,8 @@
 //! The agent key and agent servers of the account, over `ServerService`.
 
 use nocterm_hub_agents_model::{
-    AgentKey, AgentsFuture, ChatChangeHints, HubAgentsError, HubChatChanges, HubServer, HubServers,
-    NewServer, ServerId, ServerRemoval,
+    AgentKey, AgentsFuture, HubAgentsError, HubChange, HubChangeHints, HubChanges, HubServer,
+    HubServers, NewServer, ServerId, ServerRemoval,
 };
 use nocterm_hub_proto::v2;
 use nocterm_hubs_model::HubId;
@@ -75,34 +75,43 @@ impl HubServers for HubAgentsLink {
     }
 }
 
-/// Hints from one `Watch` of the chat list (no open chats), where every chat event is a hint,
-/// and from the lists this device refreshed.
-struct ChatHints {
+/// Hints from one `Watch` of the account (no open chats) and from the chat lists this device
+/// refreshed.
+struct ChangeHints {
     hub: tonic::Streaming<v2::WatchEvent>,
     here: tokio::sync::watch::Receiver<u64>,
 }
 
-impl ChatChangeHints for ChatHints {
-    fn next(&mut self) -> futures::future::BoxFuture<'_, Result<Option<()>, HubAgentsError>> {
+/// The hint of an event of the account's stream, if it is one.
+fn hint_of(event: v2::watch_event::Event) -> Option<HubChange> {
+    use v2::watch_event::Event;
+    match event {
+        Event::Chat(_) | Event::ChatDeleted(_) | Event::Resync(_) => Some(HubChange::Chats),
+        Event::Account(changed) => match changed.list() {
+            v2::AccountList::Agents | v2::AccountList::Providers => Some(HubChange::Agents),
+            v2::AccountList::Servers => Some(HubChange::Servers),
+            v2::AccountList::Unspecified => None,
+        },
+        Event::Item(_) | Event::Draft(_) | Event::Ready(_) => None,
+    }
+}
+
+impl HubChangeHints for ChangeHints {
+    fn next(
+        &mut self,
+    ) -> futures::future::BoxFuture<'_, Result<Option<HubChange>, HubAgentsError>> {
         Box::pin(async move {
             loop {
                 tokio::select! {
                     changed = self.here.changed() => {
                         if changed.is_ok() {
-                            return Ok(Some(()));
+                            return Ok(Some(HubChange::Chats));
                         }
                     }
                     message = self.hub.message() => match message {
                         Ok(Some(event)) => {
-                            if matches!(
-                                event.event,
-                                Some(
-                                    v2::watch_event::Event::Chat(_)
-                                        | v2::watch_event::Event::ChatDeleted(_)
-                                        | v2::watch_event::Event::Resync(_)
-                                )
-                            ) {
-                                return Ok(Some(()));
+                            if let Some(hint) = event.event.and_then(hint_of) {
+                                return Ok(Some(hint));
                             }
                         }
                         Ok(None) | Err(_) => return Ok(None),
@@ -113,8 +122,8 @@ impl ChatChangeHints for ChatHints {
     }
 }
 
-impl HubChatChanges for HubAgentsLink {
-    fn watch(&self, hub: &HubId) -> AgentsFuture<Box<dyn ChatChangeHints>> {
+impl HubChanges for HubAgentsLink {
+    fn watch(&self, hub: &HubId) -> AgentsFuture<Box<dyn HubChangeHints>> {
         let here = self.hints.subscribe();
         self.call(hub, |client| async move {
             let request = v2::WatchRequest {
@@ -122,7 +131,7 @@ impl HubChatChanges for HubAgentsLink {
                 open: Vec::new(),
             };
             let hub = client.chats().watch(request).await?.into_inner();
-            Ok(Box::new(ChatHints { hub, here }) as Box<dyn ChatChangeHints>)
+            Ok(Box::new(ChangeHints { hub, here }) as Box<dyn HubChangeHints>)
         })
     }
 }

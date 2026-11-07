@@ -546,7 +546,7 @@ servers), `Provider` and its drafts with their validation, the account's `AgentK
 `is_line_of`, which finds the key's line in an `authorized_keys` file whatever its options),
 `HubServer` with its `ServerStatus`, `NewServer` and `ServerRemoval`, and the typed
 `HubAgentsError`. Its ports are `HubAgentDirectory` (agents and providers), `HubServers` (the
-agent key and the agent servers) and `HubChatChanges` (hints that the chat list changed);
+agent key and the agent servers) and `HubChanges` (hints that the chats, agents or agent servers changed on any device);
 `nocterm-hub-io` implements them. The `test-support` `FakeHubAgents` is one in-memory account
 behind all three. A hub agent's chat uses the neutral agent ports of `nocterm-ai`, not a model
 of its own ([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)).

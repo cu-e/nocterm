@@ -10,14 +10,14 @@
 //! Does not own: the hub protocol (the injected ports are implemented by `nocterm-hub-io`),
 //! the rules of a draft (`nocterm-hub-agents-model`), the chats themselves (an agent chat over
 //! the hub connector), views.
-//! Ports used: `HubAgentDirectory`, `HubServers` and `HubChatChanges` of
+//! Ports used: `HubAgentDirectory`, `HubServers` and `HubChanges` of
 //! `nocterm-hub-agents-model` and `AgentHosts` of `nocterm-ssh-keys`, passed in [`Deps`]. Provides: [`Installed`] with the
 //! [`HubAgents`] entity and its [`HubAgentsEvent`]s.
 //! Settings: none. Globals: none.
 //! Invariants: a hub that is no longer tracked forgets its lists and stops its follow; a
 //! failed listing keeps the last lists shown; every change of a hub's lists emits
-//! [`HubAgentsEvent::Changed`] once, and every hint of its chat list
-//! [`HubAgentsEvent::ChatsChanged`]; a server is recorded on the hub only after the agent
+//! [`HubAgentsEvent::Changed`] once, every hint of its chat list
+//! [`HubAgentsEvent::ChatsChanged`], and a hint of its agents or servers lists them again; a server is recorded on the hub only after the agent
 //! key's line was written to it, with the host key this device recorded.
 
 mod access;
