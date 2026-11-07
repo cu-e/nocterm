@@ -99,6 +99,27 @@ fn a_failed_listing_keeps_the_last_lists_and_says_why(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_listing_that_failed_is_read_again_once_the_hub_answers(cx: &mut TestAppContext) {
+    let fake = FakeHubAgents::new()
+        .with_provider(&hub(), "Models", &["m1"])
+        .with_agent(&hub(), "Ops", "m1");
+    fake.set_offline(true);
+    let installed = cx.update(|cx| install(deps(&fake), cx));
+    let agents = installed.agents().clone();
+    agents.update(cx, |agents, cx| agents.track(&hub(), cx));
+    cx.run_until_parked();
+    agents.read_with(cx, |agents, _| assert!(agents.problem(&hub()).is_some()));
+    fake.set_offline(false);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    agents.read_with(cx, |agents, _| {
+        assert!(agents.problem(&hub()).is_none());
+        assert_eq!(agents.agents(&hub()).len(), 1);
+    });
+}
+
+#[gpui::test]
 fn granting_access_writes_the_agent_key_line_and_records_the_server(cx: &mut TestAppContext) {
     let (fake, hosts) = (FakeHubAgents::new(), FakeAgentHosts::default());
     let file = FakeAuthorizedKeys::with_text("ssh-ed25519 AAAAown me\n");

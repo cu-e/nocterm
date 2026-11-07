@@ -34,6 +34,8 @@ struct Entry {
     servers: Vec<HubServer>,
     /// Why the last listing failed, while it does.
     problem: Option<HubAgentsError>,
+    /// How long the next listing after a failed one waits; none while listings succeed.
+    retry: Option<Duration>,
     _listing: Option<Task<()>>,
     _follow: Option<Task<()>>,
 }
@@ -114,6 +116,18 @@ impl HubAgents {
         }
         if let Some(error) = &problem {
             tracing::debug!(%error, hub = %hub, "the hub's agents could not be listed");
+            // A hub that is still connecting answers soon: the lists are read again then.
+            let delay = entry
+                .retry
+                .map_or(FIRST_RETRY, |delay| (delay * 2).min(MAX_RETRY));
+            entry.retry = Some(delay);
+            let hub_id = hub.clone();
+            entry._listing = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(delay).await;
+                this.update(cx, |this, cx| this.refresh(&hub_id, cx)).ok();
+            }));
+        } else {
+            entry.retry = None;
         }
         entry.problem = problem;
         cx.emit(HubAgentsEvent::Changed(hub.clone()));
@@ -242,7 +256,8 @@ impl HubAgents {
 }
 
 /// Follows what changes on `hub`, re-subscribing with growing delays, until it is untracked:
-/// changed chats are announced, changed agents or servers are listed again.
+/// changed chats are announced, changed agents or servers are listed again. Hints sent while
+/// no subscription was open are lost, so after a re-subscription everything is read again.
 fn follow_changes(
     changes: Arc<dyn HubChanges>,
     hub: HubId,
@@ -250,9 +265,19 @@ fn follow_changes(
 ) -> Task<()> {
     cx.spawn(async move |this, cx| {
         let mut delay = FIRST_RETRY;
+        let mut subscribed = false;
         loop {
             if let Ok(mut hints) = changes.watch(&hub).await {
                 delay = FIRST_RETRY;
+                if std::mem::replace(&mut subscribed, true) {
+                    let alive = this.update(cx, |this, cx| {
+                        this.refresh(&hub, cx);
+                        cx.emit(HubAgentsEvent::ChatsChanged(hub.clone()));
+                    });
+                    if alive.is_err() {
+                        return;
+                    }
+                }
                 while let Ok(Some(change)) = hints.next().await {
                     let alive = this.update(cx, |this, cx| match change {
                         HubChange::Chats => cx.emit(HubAgentsEvent::ChatsChanged(hub.clone())),
