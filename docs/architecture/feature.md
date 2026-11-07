@@ -615,7 +615,9 @@ HistoryColumn, PanelLayout and MenuView. Original chat/input/search/catalog/list
 identities guard deferred completion. Transcript rows borrow the chat's `AgentThread` into
 the same `EntryRenderer`, preserving original producer activity. A hub agent's chat is an
 ordinary agent chat over the hub connector, so its transcript, composer, approvals, model
-choice and history use the same owners as a local chat; the new-chat menu of a hub window adds
+choice and history use the same owners as a local chat; its servers are configuration flags
+(`ConfigCategory::Server`) that the attach menu and the composer's chips show in place of
+terminals for an agent with tools of its own; the new-chat menu of a hub window adds
 that hub's agents (`AvailableAgents::offered_in`), the window of this computer offers none,
 and a `ChatsChanged` event of the hub reloads the history. A run started from another device
 shows as a neutral turn notice and keeps the composer waiting until it ends

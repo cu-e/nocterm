@@ -77,8 +77,9 @@ impl ComposerRenderer {
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<AgentPanel>,
     ) -> Option<AnyElement> {
+        let servers = super::chat_servers::ChatServersRenderer::chips(thread, cx);
         let composer = thread.read(cx).composer();
-        if composer.attachments().is_empty() && composer.files().is_empty() {
+        if composer.attachments().is_empty() && composer.files().is_empty() && servers.is_empty() {
             return None;
         }
         let origin = thread.entity_id();
@@ -88,7 +89,8 @@ impl ComposerRenderer {
             .min_w_0()
             .gap_1()
             .flex_wrap()
-            .items_start();
+            .items_start()
+            .children(servers);
         for attachment in thread.read(cx).composer().attachments() {
             let value = attachment.clone();
             let label = labels.label(attachment);
@@ -205,7 +207,12 @@ impl ComposerRenderer {
     ) -> AnyElement {
         let generating = thread.read(cx).session_generating();
         let mut controls = h_flex().w_full().min_w_0().gap_1().flex_wrap();
-        for option in &thread.read(cx).config_options() {
+        let options = thread.read(cx).config_options();
+        // Servers are attached from the attach menu, not configured here.
+        for option in options
+            .iter()
+            .filter(|option| !super::chat_servers::is_server(option))
+        {
             let id = option.id.to_string();
             controls = controls.child(super::menu::ConfigMenuRenderer::popover(
                 menus,
@@ -284,12 +291,17 @@ impl ComposerRenderer {
         thread: &Entity<AgentThread>,
         cx: &mut Context<AgentPanel>,
     ) -> [AnyElement; 2] {
-        let context_tooltip = format!(
-            "{} attached terminals · sent metadata {} B · terminal output {} B",
-            thread.read(cx).composer().attachments().len(),
-            thread.read(cx).context_bytes(),
-            thread.read(cx).tool_bytes()
-        );
+        let context_tooltip = if super::chat_servers::takes_servers(thread.read(cx)) {
+            "Attach servers the agent may sign in to".to_owned()
+        } else {
+            format!(
+                "Attach terminal or server\n{} attached terminals · sent metadata {} B · terminal \
+                 output {} B",
+                thread.read(cx).composer().attachments().len(),
+                thread.read(cx).context_bytes(),
+                thread.read(cx).tool_bytes()
+            )
+        };
         [
             super::menu::ConfigMenuRenderer::popover(
                 menus,
@@ -299,7 +311,7 @@ impl ComposerRenderer {
                     .ghost()
                     .small()
                     .icon(IconName::Plus)
-                    .tooltip(format!("Attach terminal or server\n{context_tooltip}")),
+                    .tooltip(context_tooltip),
                 Anchor::BottomLeft,
                 cx,
             )

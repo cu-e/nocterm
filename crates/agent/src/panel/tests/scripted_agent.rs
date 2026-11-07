@@ -167,6 +167,10 @@ impl Connector {
     pub(super) fn support_images(&self) {
         self.info.lock().unwrap().capabilities.image_prompts = true;
     }
+    /// The agent runs elsewhere with tools of its own, as a hub agent does.
+    pub(super) fn run_elsewhere(&self) {
+        self.info.lock().unwrap().capabilities.own_tools = true;
+    }
 }
 impl AgentConnector for Connector {
     fn connect(

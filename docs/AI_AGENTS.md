@@ -420,7 +420,10 @@ queue like Files transfers.
 Hub agents ([ADR 0148](adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md))
 run on the hub, not on this computer: they reach the servers given Agent access with
 the account's agent key and use the hub's own server tools, never these terminal and
-transfer tools. See [Hubs](HUBS.md#agents-of-a-hub).
+transfer tools. A hub agent signs in only to the servers attached to its chat: the attach
+menu (**+**) of such a chat lists the account's servers instead of terminals, and the
+choice is stored with the chat on the hub, so the web panel and every other device show
+it. See [Hubs](HUBS.md#agents-of-a-hub).
 
 Agents also have their own permission prompts (for example before running a tool
 of their own or accessing files). **Agent permissions → Ask before an agent uses

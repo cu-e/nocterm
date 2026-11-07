@@ -108,7 +108,7 @@ pub(super) fn agent_key(wire: v2::AgentKey) -> AgentKey {
     }
 }
 
-pub(super) fn server(wire: v2::Server) -> Result<HubServer, HubAgentsError> {
+pub(crate) fn server(wire: v2::Server) -> Result<HubServer, HubAgentsError> {
     Ok(HubServer {
         id: ServerId::new(wire.id).map_err(malformed)?,
         name: wire.name,

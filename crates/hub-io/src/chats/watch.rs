@@ -15,7 +15,7 @@ use nocterm_ai::{AgentEvent, PermissionResponder};
 use nocterm_hub_proto::v2;
 
 use super::connector::{Inner, fresh};
-use super::items;
+use super::options::ChatOptions;
 use super::state::{ChatState, Output};
 
 /// How long a broken stream waits before it is opened again.
@@ -24,29 +24,6 @@ const RETRY: Duration = Duration::from_secs(3);
 const ALLOW: &str = "allow";
 const ALLOW_IN_CHAT: &str = "allow_chat";
 const DENY: &str = "deny";
-
-/// The model and approval mode a chat runs with now.
-pub(super) struct ChatOptions {
-    model: String,
-    approval: i32,
-    models: Vec<String>,
-    title: String,
-}
-
-impl ChatOptions {
-    pub(super) fn of(chat: &v2::Chat, models: &[String]) -> Self {
-        Self {
-            model: chat.model.clone(),
-            approval: chat.approval,
-            models: models.to_vec(),
-            title: chat.title.clone(),
-        }
-    }
-
-    pub(super) fn wire(&self) -> (String, i32) {
-        (self.model.clone(), self.approval)
-    }
-}
 
 /// The task that follows one chat. It holds the connection weakly: closing the chat or the
 /// connection ends it.
@@ -127,6 +104,12 @@ impl Follow {
                 }
                 return Next::End;
             }
+            Some(Event::Account(changed))
+                if changed.list == i32::from(v2::AccountList::Servers) =>
+            {
+                self.servers_changed();
+                Vec::new()
+            }
             Some(Event::Resync(_)) => return Next::Reopen,
             _ => Vec::new(),
         };
@@ -138,11 +121,11 @@ impl Follow {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A changed title or model of the chat, told as metadata and options.
+    /// A changed title, model or set of servers of the chat, told as metadata and options.
     fn settings(&self, chat: &v2::Chat) -> Vec<Output> {
         let mut options = self.options.lock().unwrap_or_else(PoisonError::into_inner);
         let mut outputs = Vec::new();
-        if chat.title != options.title && !chat.title.is_empty() {
+        if chat.title != options.title() && !chat.title.is_empty() {
             outputs.push(Output::notice(SessionUpdate::SessionInfoUpdate(
                 SessionInfo {
                     title: Change::Set(chat.title.clone()),
@@ -150,14 +133,35 @@ impl Follow {
                 },
             )));
         }
-        if chat.model != options.model || chat.approval != options.approval {
+        let differs = options.differs(chat);
+        *options = options.stored(chat);
+        if differs && let Some(inner) = self.inner.upgrade() {
             outputs.push(Output::notice(SessionUpdate::ConfigOptionUpdate(
-                items::options(&options.models, &chat.model, chat.approval),
+                inner.config(&options),
             )));
         }
-        let models = std::mem::take(&mut options.models);
-        *options = ChatOptions::of(chat, &models);
         outputs
+    }
+
+    /// The account's servers changed: they are listed again and the chat shows them.
+    fn servers_changed(&self) {
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        let options = self.options.clone();
+        let chat = self.chat.clone();
+        let weak = self.inner.clone();
+        inner.handle.spawn(async move {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            if !inner.list_servers().await {
+                return;
+            }
+            let shown = inner.config(&options.lock().unwrap_or_else(PoisonError::into_inner));
+            let notice = SessionNotice::new(chat, SessionUpdate::ConfigOptionUpdate(shown));
+            let _ = inner.events.try_send(AgentEvent::Session(notice));
+        });
     }
 
     fn perform(&self, outputs: Vec<Output>) {

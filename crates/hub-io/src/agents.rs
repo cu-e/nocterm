@@ -8,6 +8,8 @@
 mod convert;
 mod servers;
 
+pub(crate) use convert::server as hub_server;
+
 use std::sync::Arc;
 
 use nocterm_hub_agents_model::{

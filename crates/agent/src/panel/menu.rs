@@ -237,6 +237,12 @@ impl ConfigMenuRenderer {
     ) -> String {
         match kind {
             Some(MenuKind::Agents) => "New agent".into(),
+            Some(MenuKind::Context)
+                if thread
+                    .is_some_and(|thread| super::chat_servers::takes_servers(thread.read(cx))) =>
+            {
+                "Servers the agent may sign in to".into()
+            }
             Some(MenuKind::Context) => "Servers and terminals".into(),
             Some(MenuKind::Modes) => "Agent mode".into(),
             Some(MenuKind::Usage) | None => String::new(),

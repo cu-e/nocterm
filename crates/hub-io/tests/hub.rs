@@ -20,6 +20,8 @@ use nocterm_session::{RelayDialer as _, RelayError, RelayRefusal, Secret, Target
 
 #[path = "hub/account.rs"]
 mod account;
+#[path = "hub/chats.rs"]
+mod chats;
 #[path = "hub/revocation.rs"]
 mod revocation;
 

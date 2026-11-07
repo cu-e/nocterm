@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use futures::future::BoxFuture;
 use nocterm_ai::model::{
-    controls::{ConfigOption, ConfigSetting},
+    controls::ConfigOption,
     diagnostic::ModelError,
     ids::{AuthMethodId, SessionId},
     session::{
@@ -17,14 +17,15 @@ use nocterm_ai::{
     AgentCommands, AgentConnection, AgentConnector, AgentError, AgentEvent, AgentInfo,
     CloseSessionOutcome, ConnectError, ConnectRequest,
 };
+use nocterm_hub_agents_model::HubServer;
 use nocterm_hub_client::{ClientError, HubClient};
 use nocterm_hub_proto::v2;
 use nocterm_hubs_model::HubError;
 use tokio::runtime::Handle;
 
-use super::items;
+use super::options::{Changed, ChatOptions};
 use super::state::ChatState;
-use super::watch::{ChatOptions, Follow};
+use super::watch::Follow;
 use crate::classify::classify;
 use crate::devices::Captured;
 use crate::links::HubLinks;
@@ -145,17 +146,20 @@ impl AgentConnector for HubAgentConnector {
         let wanted = agent.agent.clone();
         let listed = call(&handle, &captured, |client| async move {
             let agents = client.agents().list_agents(v2::Empty {}).await?;
-            agents
+            let agent = agents
                 .into_inner()
                 .agents
                 .into_iter()
                 .find(|agent| agent.id == wanted)
                 .ok_or_else(|| {
                     CallFailure::Refused("The agent no longer exists on the hub.".into())
-                })
+                })?;
+            // Without the servers a chat still works; it offers none until they are listed.
+            let servers = servers_of(&client).await.unwrap_or_default();
+            Ok((agent, servers))
         });
         Box::pin(async move {
-            let record = listed.await?;
+            let (record, servers) = listed.await?;
             let (events_sender, events) = async_channel::unbounded();
             let commands = Arc::new(HubChatCommands(Arc::new(Inner {
                 handle,
@@ -163,6 +167,7 @@ impl AgentConnector for HubAgentConnector {
                 agent: record,
                 events: events_sender,
                 chats: Mutex::default(),
+                servers: Mutex::new(servers),
             })));
             Ok(AgentConnection {
                 info: AgentInfo {
@@ -188,6 +193,19 @@ pub(super) struct Inner {
     agent: v2::Agent,
     pub(super) events: async_channel::Sender<AgentEvent>,
     chats: Mutex<HashMap<String, OpenChat>>,
+    /// The account's servers as last listed: a chat offers to attach each of them.
+    servers: Mutex<Vec<HubServer>>,
+}
+
+/// The account's servers; a record the hub sent malformed is left out.
+async fn servers_of(client: &HubClient) -> Result<Vec<HubServer>, CallFailure> {
+    let listed = client.servers().list_servers(v2::Empty {}).await?;
+    Ok(listed
+        .into_inner()
+        .servers
+        .into_iter()
+        .filter_map(|server| crate::agents::hub_server(server).ok())
+        .collect())
 }
 
 /// A chat this connection shows. A new chat exists only here until its first message creates
@@ -218,20 +236,40 @@ impl Inner {
         lock(&self.chats)
     }
 
-    fn options(&self, chat: &v2::Chat) -> Vec<ConfigOption> {
-        items::options(&self.agent.models, &chat.model, chat.approval)
+    /// What `options` shows as the chat's configuration, with the account's servers.
+    pub(super) fn config(&self, options: &ChatOptions) -> Vec<ConfigOption> {
+        options.config(&lock(&self.servers))
     }
 
-    /// Shows `chat` from `state` on; it is followed once [`Self::follow`] is called.
-    fn track(&self, chat: &v2::Chat, state: ChatState) {
+    /// Lists the account's servers again; `false` when the hub did not answer.
+    pub(super) async fn list_servers(&self) -> bool {
+        let listed = async {
+            let client = fresh(&self.captured).await?;
+            self.captured.observed.during(servers_of(&client)).await?
+        };
+        match listed.await {
+            Ok(servers) => {
+                *lock(&self.servers) = servers;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Shows `chat` from `state` on, returning its options; it is followed once
+    /// [`Self::follow`] is called.
+    fn track(&self, chat: &v2::Chat, state: ChatState) -> Vec<ConfigOption> {
+        let options = ChatOptions::of(chat, &self.agent.models);
+        let shown = self.config(&options);
         self.chats().insert(
             chat.id.clone(),
             OpenChat {
                 state: Arc::new(Mutex::new(state)),
-                options: Arc::new(Mutex::new(ChatOptions::of(chat, &self.agent.models))),
+                options: Arc::new(Mutex::new(options)),
                 follow: None,
             },
         );
+        shown
     }
 
     /// Follows the hub's chat `id`, telling the person what its state left open. Following
@@ -282,21 +320,22 @@ impl Inner {
     }
 }
 
-/// Creates the chat `id` of `agent` on the hub with the model and mode it was shown with.
-/// Creating it again (a retried first message) returns it.
+/// Creates the chat `id` of `agent` on the hub with the model, mode and servers it was shown
+/// with. Creating it again (a retried first message) returns it.
 async fn create(
     client: &HubClient,
     agent: String,
     id: &str,
-    model: String,
-    approval: i32,
+    options: ChatOptions,
 ) -> Result<(), CallFailure> {
+    let (model, approval) = options.model();
     let chat = client
         .chats()
         .create_chat(v2::CreateChatRequest {
             agent_id: agent,
             chat_id: id.to_owned(),
             model: model.clone(),
+            server_ids: options.servers(),
             ..Default::default()
         })
         .await?
@@ -354,8 +393,7 @@ impl AgentCommands for HubChatCommands {
             approval: inner.agent.approval,
             ..Default::default()
         };
-        let options = inner.options(&chat);
-        inner.track(&chat, ChatState::default());
+        let options = inner.track(&chat, ChatState::default());
         Box::pin(async move { Ok(SessionOpened::new(chat.id).configuration(options)) })
     }
 
@@ -385,8 +423,7 @@ impl AgentCommands for HubChatCommands {
             let (chat, items) = read.await?;
             let mut state = ChatState::default();
             let updates = items.iter().flat_map(|item| state.replay(item)).collect();
-            let options = inner.options(&chat);
-            inner.track(&chat, state);
+            let options = inner.track(&chat, state);
             inner.follow(&chat.id);
             Ok(SessionOpened::new(chat.id)
                 .configuration(options)
@@ -406,11 +443,11 @@ impl AgentCommands for HubChatCommands {
         let client_message = uuid::Uuid::new_v4().to_string();
         let (done, answer) = futures::channel::oneshot::channel();
         lock(&state).expect(client_message.clone(), done);
-        let creation = (!created).then(|| (inner.agent.id.clone(), lock(&options).wire()));
+        let creation = (!created).then(|| (inner.agent.id.clone(), lock(&options).clone()));
         let id = chat.clone();
         let sent = call(&inner.handle, &inner.captured, move |client| async move {
-            if let Some((agent, (model, approval))) = creation {
-                create(&client, agent, &chat, model, approval).await?;
+            if let Some((agent, options)) = creation {
+                create(&client, agent, &chat, options).await?;
             }
             let (text, attachment_ids) =
                 super::upload::prepare(&client, &chat, request.content).await?;
@@ -460,69 +497,60 @@ impl AgentCommands for HubChatCommands {
         })
     }
 
+    /// Chooses the model or the approval mode, or attaches or detaches a server. A chat its
+    /// first message has not created keeps the choice until it does.
     fn set_config_option(
         &self,
         request: SetConfigOption,
     ) -> BoxFuture<'static, Result<Vec<ConfigOption>, AgentError>> {
         let inner = self.0.clone();
         let chat = request.session.to_string();
-        let Some(current) = inner.chats().get(&chat).map(|open| open.options.clone()) else {
-            return Box::pin(async { Err(AgentError::Io("The chat is not open.".into())) });
-        };
-        let ConfigSetting::Choice(choice) = request.setting else {
-            return Box::pin(async {
-                Err(AgentError::Unsupported(ModelError::Unsupported(
-                    "a setting that is not a choice",
-                )))
-            });
-        };
-        let created = inner
+        let Some((current, created)) = inner
             .chats()
             .get(&chat)
-            .is_some_and(|open| open.follow.is_some());
-        let (mut model, mut approval) = lock(&current).wire();
-        match request.config.as_str() {
-            items::MODEL => model = choice.to_string(),
-            items::APPROVAL => match items::approval_of(choice.as_str()) {
-                Some(mode) => approval = mode.into(),
-                None => {
-                    return Box::pin(async {
-                        Err(AgentError::Io("Unknown approval mode.".into()))
-                    });
-                }
-            },
-            _ => {
-                return Box::pin(async {
-                    Err(AgentError::Unsupported(ModelError::Unsupported(
-                        "an option a hub chat does not have",
-                    )))
-                });
-            }
-        }
+            .map(|open| (open.options.clone(), open.follow.is_some()))
+        else {
+            return Box::pin(async { Err(AgentError::Io("The chat is not open.".into())) });
+        };
+        let mut chosen = lock(&current).clone();
+        let changed = match chosen.choose(request.config.as_str(), &request.setting) {
+            Ok(changed) => changed,
+            Err(refused) => return Box::pin(async move { Err(AgentError::Io(refused.0.into())) }),
+        };
         if !created {
             // Not on the hub yet: its first message creates it with these.
-            let shown = v2::Chat {
-                id: chat,
-                model,
-                approval,
-                ..Default::default()
-            };
-            *lock(&current) = ChatOptions::of(&shown, &inner.agent.models);
-            let options = inner.options(&shown);
-            return Box::pin(async move { Ok(options) });
+            let shown = inner.config(&chosen);
+            *lock(&current) = chosen;
+            return Box::pin(async move { Ok(shown) });
         }
         let saved = call(&inner.handle, &inner.captured, move |client| async move {
-            let request = v2::SetChatModelRequest {
-                id: chat,
-                model,
-                approval,
+            let mut chats = client.chats();
+            let stored = match changed {
+                Changed::Model => {
+                    let (model, approval) = chosen.model();
+                    let request = v2::SetChatModelRequest {
+                        id: chat,
+                        model,
+                        approval,
+                    };
+                    chats.set_chat_model(request).await?
+                }
+                Changed::Servers => {
+                    let request = v2::SetChatServersRequest {
+                        id: chat,
+                        server_ids: chosen.servers(),
+                    };
+                    chats.set_chat_servers(request).await?
+                }
             };
-            Ok(client.chats().set_chat_model(request).await?.into_inner())
+            Ok(stored.into_inner())
         });
         Box::pin(async move {
             let chat = saved.await?;
-            *lock(&current) = ChatOptions::of(&chat, &inner.agent.models);
-            Ok(inner.options(&chat))
+            let stored = lock(&current).stored(&chat);
+            let shown = inner.config(&stored);
+            *lock(&current) = stored;
+            Ok(shown)
         })
     }
 

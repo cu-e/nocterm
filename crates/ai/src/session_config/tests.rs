@@ -40,6 +40,9 @@ fn options() -> Vec<ConfigOption> {
         .category(ConfigCategory::Mode),
         ConfigOption::boolean("web", "Web search", false)
             .category(ConfigCategory::Other("_tools".into())),
+        ConfigOption::boolean("server:1", "Build box", true)
+            .description("root@build.example")
+            .category(ConfigCategory::Server),
     ]
 }
 

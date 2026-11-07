@@ -6,7 +6,9 @@
 //! chat (a new one is created by its first message under the session's id, a reopened one
 //! reads its `History`), a prompt is `Send` and resolves when the
 //! run that answers it ends, cancel is `Stop`, an approval request is a permission request
-//! answered with `ResolveApproval`, and the model is a configuration option (`SetChatModel`).
+//! answered with `ResolveApproval`, and the chat's settings are configuration options: the model
+//! and approval mode (`SetChatModel`) and one flag per server of the account, on while the chat
+//! has it attached (`SetChatServers`; the agent signs in only to attached servers).
 //! One `Watch` per open chat follows its items and the text the agent is writing; a turn
 //! someone started on another device arrives as `SessionUpdate::Turn`.
 //! [`HubChatRepository`] puts the hub's chats beside the local history of a hub window and
@@ -15,6 +17,7 @@
 mod connector;
 mod hints;
 mod items;
+mod options;
 mod repository;
 mod state;
 mod upload;

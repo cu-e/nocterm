@@ -2,20 +2,12 @@
 
 use nocterm_ai::model::{
     content::Content,
-    controls::{ConfigCategory, ConfigChoice, ConfigOption},
     ids::ToolId,
     session::SessionUpdate,
     tools::{ToolChanges, ToolKind, ToolPatch, ToolRecord, ToolStatus},
     usage::TokenTotals,
 };
 use nocterm_hub_proto::v2;
-
-/// The configuration option that chooses a chat's model among its agent's.
-pub(super) const MODEL: &str = "model";
-/// The configuration option that chooses whether changing tools wait for an approval.
-pub(super) const APPROVAL: &str = "approval";
-const AUTO: &str = "auto";
-const ASK: &str = "ask";
 
 /// The prompt of a person's message: its text, and the names of its attachments.
 pub(super) fn prompt(message: &v2::UserMessage) -> Vec<Content> {
@@ -110,39 +102,4 @@ pub(super) fn usage(ended: &v2::RunEnded) -> Option<TokenTotals> {
             usage.output_tokens,
         )
     })
-}
-
-/// The options a hub chat offers: its model among the agent's models, and its approval mode.
-pub(super) fn options(models: &[String], model: &str, approval: i32) -> Vec<ConfigOption> {
-    let mut choices: Vec<ConfigChoice> = models
-        .iter()
-        .map(|model| ConfigChoice::new(model.clone(), model.clone()))
-        .collect();
-    if !model.is_empty() && !models.iter().any(|known| known == model) {
-        choices.insert(0, ConfigChoice::new(model.to_owned(), model.to_owned()));
-    }
-    let ask = v2::ApprovalMode::try_from(approval) == Ok(v2::ApprovalMode::Ask);
-    vec![
-        ConfigOption::select(MODEL, "Model", model.to_owned(), choices)
-            .category(ConfigCategory::Model),
-        ConfigOption::select(
-            APPROVAL,
-            "Approval",
-            if ask { ASK } else { AUTO },
-            vec![
-                ConfigChoice::new(AUTO, "Auto"),
-                ConfigChoice::new(ASK, "Ask before changes"),
-            ],
-        )
-        .category(ConfigCategory::Mode),
-    ]
-}
-
-/// The approval mode a choice of the approval option stands for.
-pub(super) fn approval_of(choice: &str) -> Option<v2::ApprovalMode> {
-    match choice {
-        AUTO => Some(v2::ApprovalMode::Auto),
-        ASK => Some(v2::ApprovalMode::Ask),
-        _ => None,
-    }
 }

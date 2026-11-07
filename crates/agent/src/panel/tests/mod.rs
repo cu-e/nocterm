@@ -457,6 +457,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 mod approvals;
 mod authentication;
 mod bridge_outcomes;
+mod chat_servers;
 mod composer;
 mod context_rosters;
 mod durable_config;

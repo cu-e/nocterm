@@ -17,6 +17,7 @@ mod attach_files;
 mod attachments;
 mod bindings;
 mod chat;
+mod chat_servers;
 pub(crate) mod commands;
 mod composer;
 mod composer_frame;
@@ -482,12 +483,15 @@ impl AgentPanel {
 impl AgentPanel {
     pub(super) fn render_menu(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let kind = self.menus.current().cloned();
-        let attachment = matches!(kind, Some(MenuKind::Context)).then(|| {
-            attach::AttachmentMenuRenderer::render_attach_menu(
-                self.current(),
+        let attachment = matches!(kind, Some(MenuKind::Context)).then(|| match self.current() {
+            Some(thread) if chat_servers::takes_servers(thread.read(cx)) => {
+                chat_servers::ChatServersRenderer::render_menu(&thread, cx)
+            }
+            thread => attach::AttachmentMenuRenderer::render_attach_menu(
+                thread,
                 self.host.workspace().clone(),
                 cx,
-            )
+            ),
         });
         let frame = menu::MenuFrame::new(
             kind,
