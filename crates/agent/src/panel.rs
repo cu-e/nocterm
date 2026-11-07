@@ -425,10 +425,14 @@ impl AgentPanel {
             parts::PartKind::History => {
                 let stamp = history::HistoryProjection::stamp(&self.chats, &self.history, cx);
                 self.layout.parts_mut().drew_history(stamp);
+                let hub_window = self
+                    .host
+                    .hub_agents()
+                    .is_some_and(|access| access.hub().is_some());
                 let history = history::HistoryProjection::render(
                     &self.chats,
                     &self.history,
-                    self.host.agents(),
+                    (self.host.agents(), hub_window),
                     self.host.timestamp(),
                     cx,
                 );
@@ -444,6 +448,13 @@ impl AgentPanel {
     }
     fn toggle_history(&mut self, cx: &mut Context<Self>) {
         self.set_history(!self.layout.history(), cx);
+    }
+    /// Lists the chats of `side` in the history of a hub window.
+    fn show_history_side(&mut self, side: history_column::HistorySide, cx: &mut Context<Self>) {
+        if self.history.show_side(side) {
+            self.layout.parts().invalidate(cx);
+            cx.notify();
+        }
     }
     fn new_thread_with_last(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.last_agent(cx) {

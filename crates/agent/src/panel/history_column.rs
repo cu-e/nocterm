@@ -1,4 +1,4 @@
-//! Search, rename and display-clock lifetimes of the history column.
+//! Search, rename, the listed side and display-clock lifetimes of the history column.
 use super::AgentPanel;
 use crate::runtime::HistoryReader;
 use gpui_kit::{
@@ -16,6 +16,26 @@ use std::{
     },
     time::Duration,
 };
+
+/// Which chats a hub window's history lists: those of agents on this computer, or those of
+/// the hub's agents, which run on the server. Other windows have no hub chats and list all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(super) enum HistorySide {
+    #[default]
+    Local,
+    Server,
+}
+
+impl HistorySide {
+    /// The side of a chat of `agent`.
+    pub(super) fn of(agent: &str) -> Self {
+        if nocterm_ai::agents::is_hub_agent(agent) {
+            Self::Server
+        } else {
+            Self::Local
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct SearchTicket {
@@ -111,6 +131,7 @@ struct HistoryClock {
 }
 pub(super) struct HistoryColumn {
     input: Entity<InputState>,
+    side: HistorySide,
     search: SearchState,
     rename: Option<RenameSession>,
     tick: Option<HistoryClock>,
@@ -126,6 +147,7 @@ impl HistoryColumn {
         });
         Self {
             input,
+            side: HistorySide::default(),
             search: SearchState::default(),
             rename: None,
             tick: None,
@@ -137,6 +159,13 @@ impl HistoryColumn {
         self.search = SearchState::default();
         self.input
             .update(cx, |input, cx| input.set_value("", window, cx));
+    }
+    pub(super) fn side(&self) -> HistorySide {
+        self.side
+    }
+    /// Lists `side`; returns whether that changed what is listed.
+    pub(super) fn show_side(&mut self, side: HistorySide) -> bool {
+        std::mem::replace(&mut self.side, side) != side
     }
     pub(super) fn search_requested(&self, cx: &App) -> bool {
         !self.query(cx).is_empty() || !self.search.query.is_empty()

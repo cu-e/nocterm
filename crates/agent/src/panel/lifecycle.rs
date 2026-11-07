@@ -337,6 +337,9 @@ impl AgentPanel {
         self.sync_approval_attention(window, cx);
     }
     pub(super) fn new_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        // The new chat is listed on its own side of a hub window's history.
+        self.history
+            .show_side(super::history_column::HistorySide::of(&id));
         let terminal = self.chats.host().seat().terminals(cx).and_then(|entries| {
             entries
                 .into_iter()
