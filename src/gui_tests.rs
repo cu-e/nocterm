@@ -19,6 +19,8 @@ mod chat_history;
 mod default_shell_geometry;
 mod hub_account;
 mod hub_live;
+mod hub_ports;
+use hub_ports::HubPorts;
 mod hub_windows;
 mod keymap;
 mod menu_layouts;
@@ -347,22 +349,6 @@ fn fixture_hosts(
     }
 }
 
-/// The hub ports a fixture composes the application over.
-#[derive(Default)]
-struct HubPorts {
-    deps: Option<nocterm_hubs::Deps>,
-    accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
-}
-
-impl From<Option<nocterm_hubs::Deps>> for HubPorts {
-    fn from(deps: Option<nocterm_hubs::Deps>) -> Self {
-        Self {
-            deps,
-            accounts: None,
-        }
-    }
-}
-
 fn boot_with_ports_and_probe(
     directory: tempfile::TempDir,
     settings: nocterm_store::SettingsConfig,
@@ -391,6 +377,7 @@ fn boot_with_ports_and_probe(
     cx.set_global(FixtureDirectory {
         _directory: directory,
     });
+    let (connector, chats, live_hosts) = hubs.agents(&paths);
     let booted = crate::bootstrap::bootstrap(
         crate::bootstrap::Services {
             images: {
@@ -405,6 +392,12 @@ fn boot_with_ports_and_probe(
             hosts: crate::bootstrap::HostServices {
                 hubs: hubs.deps,
                 hub_accounts: hubs.accounts,
+                hub_agents: hubs
+                    .live
+                    .as_ref()
+                    .zip(live_hosts.clone())
+                    .map(|(links, hosts)| crate::startup::hub_agents_dependencies(links, hosts)),
+                agent_hosts: live_hosts.map(|hosts| hosts as _),
                 ..fixture_hosts(transport, local, local_host)
             },
             terminal_auth_factory: None,
@@ -416,7 +409,7 @@ fn boot_with_ports_and_probe(
                 transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
                 catalog: nocterm_agent_providers::catalog(),
                 metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
-                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
+                connector,
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(
                     paths.clone(),
                     nocterm_acp::RelayCommand {
@@ -428,10 +421,7 @@ fn boot_with_ports_and_probe(
                     Arc::new(nocterm_agent_storage::FileAgentStateRepository::new(
                         paths.state_dir().join("agents.toml"),
                     )),
-                    Arc::new(nocterm_agent_storage::FileChatRepository::new(
-                        paths.state_dir().join("agent-chats"),
-                        Arc::new(nocterm_localfs::LocalFilesystem::new().unwrap()),
-                    )),
+                    chats,
                 )),
                 workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
                 workdir: paths.state_dir().join("agent-workspace"),

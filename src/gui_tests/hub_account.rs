@@ -183,6 +183,7 @@ pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> Wor
             HubPorts {
                 deps: Some(deps),
                 accounts: Some(accounts),
+                live: None,
             },
             cx,
         )

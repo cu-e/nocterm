@@ -10,6 +10,7 @@
 //! temporary credentials directory. The adapter works on its own runtime, so the test waits in
 //! real time: it polls the windows with short sleeps until a deadline.
 mod account_key;
+mod agent_chat;
 
 use super::*;
 use crate::bootstrap::Booted;
@@ -97,6 +98,37 @@ fn boot(links: &Arc<HubLinks>, cx: &mut TestAppContext) -> (Booted, Saved) {
             unsupported_sandbox(),
             UserPluginMode::default(),
             Some(deps),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    (booted, saved)
+}
+
+/// The application composed over the real hub as the application composes it: its accounts,
+/// agents, chats and the hub agent connector.
+fn boot_live(links: &Arc<HubLinks>, cx: &mut TestAppContext) -> (Booted, Saved) {
+    let saved = Saved::default();
+    let log = saved.clone();
+    let writer: SnapshotWriter<SettingsDocument> = Arc::new(move |document| {
+        log.lock().unwrap().push(document);
+        Box::pin(async { Ok(()) })
+    });
+    let booted = cx.update(|cx| {
+        boot_with_ports_and_probe(
+            tempfile::tempdir().unwrap(),
+            SettingsConfig::with_writer(SettingsDocument::default(), writer)
+                .with(HubsSettings::default()),
+            (
+                Arc::new(MockTransport::default()),
+                nocterm_terminal::LocalSessions::disabled("/bin/bash".into()),
+            ),
+            false,
+            None,
+            None,
+            unsupported_sandbox(),
+            UserPluginMode::default(),
+            HubPorts::live(links.clone()),
             cx,
         )
     });
