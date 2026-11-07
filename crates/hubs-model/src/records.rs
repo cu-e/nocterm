@@ -33,10 +33,6 @@ text_id!(
     /// An account on a hub.
     AccountId
 );
-text_id!(
-    /// An organization of a hub.
-    OrgId
-);
 
 /// A hub and the trust decided for it; the adapter refuses a certificate that does not match.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,26 +61,20 @@ pub struct HubInfo {
     pub signed_in: bool,
 }
 
-/// An organization an account belongs to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OrgSummary {
-    pub id: OrgId,
-    pub name: String,
-}
-
 /// Who this device is signed in as.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Account {
     pub id: AccountId,
     pub username: String,
     pub display_name: String,
-    pub orgs: Vec<OrgSummary>,
+    /// The account administers the hub (its users, server-wide providers and limits).
+    pub admin: bool,
 }
 
 /// What a sign-in leaves to do about the account's keys.
 ///
-/// The keys protect what the account keeps on the hub (profiles, the vault); the hub never
-/// holds them. They are opened with the login password, or with a vault passphrase for an
+/// The keys protect what the account keeps in its vault on the hub (saved servers and their
+/// credentials); the hub never holds them. Chats and agents never need them. They are opened with the login password, or with a vault passphrase for an
 /// account that signs in through a provider.
 #[derive(Clone, Debug, PartialEq)]
 pub enum KeyStatus {

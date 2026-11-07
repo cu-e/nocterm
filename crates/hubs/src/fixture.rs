@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui::{Entity, TestAppContext};
-use nocterm_hubs_model::testing::{FakeAdminKeys, FakeHub, FakeServer};
+use nocterm_hubs_model::testing::{FakeHub, FakeServer};
 use nocterm_hubs_model::{HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SettingsHandle, StoreError};
@@ -14,7 +14,6 @@ pub(crate) const ADDRESS: &str = "hub.home:7443";
 
 pub(crate) struct Fixture {
     pub hub: FakeHub,
-    pub admin_keys: FakeAdminKeys,
     pub hubs: Entity<Hubs>,
     pub settings: SettingsHandle,
 }
@@ -27,11 +26,11 @@ pub(crate) fn id() -> HubId {
     HubId::from(address())
 }
 
-/// The server most tests talk to: certificate `[7; 32]`, user `ada` in organization `lab`.
+/// The server most tests talk to: certificate `[7; 32]`, user `ada`.
 pub(crate) fn server() -> FakeServer {
     FakeServer::new(ADDRESS, 7)
         .named("Home hub")
-        .with_user("ada", "secret", "lab")
+        .with_user("ada", "secret")
         .with_provider("corp", "Corporate SSO")
 }
 
@@ -87,15 +86,16 @@ fn build(
             Some(writer) => SettingsConfig::with_writer(document, writer),
             None => SettingsConfig::in_memory(document),
         };
-        let settings = config.with(HubsSettings { servers: known }).install(cx);
-        let admin_keys = FakeAdminKeys::alongside(&hub);
+        let settings = config
+            .with(HubsSettings {
+                servers: known,
+                ..HubsSettings::default()
+            })
+            .install(cx);
         let deps = Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
-            admin_keys: Arc::new(admin_keys.clone()),
             devices: Arc::new(nocterm_hubs_model::testing::FakeAccountDevices::default()),
-            agent_trust: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
-            agent_grants: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
             account_keys: Arc::new(nocterm_hubs_model::testing::FakeAccountKeys::alongside(
                 &hub, "password",
             )),
@@ -103,7 +103,6 @@ fn build(
         let installed = install(deps, settings.clone(), cx);
         Fixture {
             hub,
-            admin_keys,
             hubs: installed.hubs().clone(),
             settings,
         }

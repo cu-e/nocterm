@@ -190,6 +190,7 @@ impl AgentProfile {
                 .iter()
                 .map(|&name| name.into())
                 .collect(),
+            hub: None,
         }
     }
 }

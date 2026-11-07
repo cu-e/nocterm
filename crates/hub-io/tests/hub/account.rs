@@ -280,18 +280,14 @@ fn captured_relay_cannot_follow_relogin_or_change_its_original_route() {
     let relay = account.local_relay(source).unwrap();
     let name = hub.address.to_string();
     let target = Target::new("relay", "example.com", 22);
-    let captured = relay.capture(&name, None, &target).unwrap();
-    assert!(matches!(
-        captured.capture(&name, Some("substituted-node"), &target),
-        Err(RelayError::CaptureUnsupported)
-    ));
+    let captured = relay.capture(&name, &target).unwrap();
     let other = Target::new("another-principal", "example.com", 22);
     assert!(matches!(
-        captured.capture(&name, None, &other),
+        captured.capture(&name, &other),
         Err(RelayError::CaptureUnsupported)
     ));
     sign_in(&device.links, &hub).unwrap();
-    let stale = super::within(captured.dial(&name, None, &target));
+    let stale = super::within(captured.dial(&name, &target));
     assert!(
         matches!(stale, Err(RelayError::NotSignedIn { .. })),
         "an old native worker selected replacement membership"
@@ -299,7 +295,7 @@ fn captured_relay_cannot_follow_relogin_or_change_its_original_route() {
     let current = account
         .local_relay(account.local_source().unwrap())
         .unwrap();
-    current.capture(&name, None, &target).unwrap();
+    current.capture(&name, &target).unwrap();
 }
 #[test]
 fn an_ordinary_relay_captures_before_its_future_is_polled() {
@@ -310,12 +306,12 @@ fn an_ordinary_relay_captures_before_its_future_is_polled() {
     let relay = HubRelay::new(&device.links);
     let name = hub.address.to_string();
     let target = Target::new("relay", "example.com", 22);
-    let original = relay.capture(&name, None, &target).unwrap();
+    let original = relay.capture(&name, &target).unwrap();
     sign_in(&device.links, &hub).unwrap();
     assert!(matches!(
-        super::within(original.dial(&name, None, &target)),
+        super::within(original.dial(&name, &target)),
         Err(RelayError::NotSignedIn { .. })
     ));
-    let current = relay.capture(&name, None, &target).unwrap();
+    let current = relay.capture(&name, &target).unwrap();
     drop(current);
 }

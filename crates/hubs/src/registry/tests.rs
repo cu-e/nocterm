@@ -2,9 +2,7 @@ use std::time::Duration;
 
 use gpui::TestAppContext;
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp};
-use nocterm_hubs_model::{
-    AdminKeyError, Fingerprint, HubColor, HubError, HubRecord, PendingAdminKey, TrustPolicy,
-};
+use nocterm_hubs_model::{Fingerprint, HubColor, HubError, HubRecord, TrustPolicy};
 
 use crate::fixture::{
     address, fixture, fixture_with_known_failing_settings, id, pinned_record, server,
@@ -328,80 +326,6 @@ async fn credentials_that_cannot_be_erased_keep_the_server_listed(cx: &mut TestA
     cx.run_until_parked();
     assert_eq!(fx.servers(cx), vec![pinned_record()]);
     assert_eq!(fx.status(cx), Some(HubStatus::Online));
-}
-
-fn grace_of_acme(fingerprint: &str) -> PendingAdminKey {
-    PendingAdminKey {
-        organization: "Acme".to_owned(),
-        admin: "Grace".to_owned(),
-        account_id: "grace".to_owned(),
-        fingerprint: fingerprint.to_owned(),
-        replaces: None,
-    }
-}
-
-#[gpui::test]
-async fn a_pending_admin_key_is_listed_for_a_known_hub_and_confirming_it_redraws_observers(
-    cx: &mut TestAppContext,
-) {
-    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
-    cx.run_until_parked();
-    let redraws = std::rc::Rc::new(std::cell::Cell::new(0));
-    let counted = redraws.clone();
-    let _observed =
-        cx.update(|cx| cx.observe(&fx.hubs, move |_, _| counted.set(counted.get() + 1)));
-
-    // A synchronization found an administrator nobody confirmed: the list follows at once.
-    fx.admin_keys.offer(&id(), grace_of_acme("aaaa bbbb"));
-    cx.run_until_parked();
-    assert!(redraws.get() > 0);
-    let listed = fx
-        .hubs
-        .read_with(cx, |hubs, _| hubs.pending_admin_keys(&id()));
-    assert_eq!(
-        listed
-            .iter()
-            .map(|offer| offer.key().clone())
-            .collect::<Vec<_>>(),
-        [grace_of_acme("aaaa bbbb")]
-    );
-
-    let before = redraws.get();
-    let confirmed = fx.hubs.update(cx, |hubs, cx| {
-        hubs.confirm_admin_key(&listed[0], "AAAA-BBBB", cx)
-    });
-    cx.run_until_parked();
-    assert!(confirmed.await.is_ok());
-    assert!(redraws.get() > before);
-    let listed = fx
-        .hubs
-        .read_with(cx, |hubs, _| hubs.pending_admin_keys(&id()));
-    assert!(listed.is_empty());
-}
-
-#[gpui::test]
-async fn a_key_that_is_not_the_one_shown_is_not_confirmed(cx: &mut TestAppContext) {
-    let fx = fixture(cx, signed_in_hub(), vec![pinned_record()]);
-    fx.admin_keys.offer(&id(), grace_of_acme("aaaa"));
-
-    let refused = fx.hubs.update(cx, |hubs, cx| {
-        hubs.confirm_admin_key(&hubs.pending_admin_keys(&id())[0], "ffff", cx)
-    });
-
-    assert!(matches!(refused.await, Err(AdminKeyError::Mismatch)));
-    assert!(fx.admin_keys.confirmed().is_empty());
-}
-
-#[gpui::test]
-async fn a_hub_that_is_not_listed_has_no_pending_admin_keys(cx: &mut TestAppContext) {
-    let fx = fixture(cx, signed_in_hub(), Vec::new());
-    fx.admin_keys.offer(&id(), grace_of_acme("aaaa"));
-
-    let listed = fx
-        .hubs
-        .read_with(cx, |hubs, _| hubs.pending_admin_keys(&id()));
-
-    assert!(listed.is_empty());
 }
 
 #[gpui::test]

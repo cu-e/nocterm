@@ -19,7 +19,7 @@ pub use access::*;
 pub use device_unlock::*;
 pub use error::VaultError;
 pub use material::{CreateMaterial, RotationMaterial, SealNonces};
-pub use model::{CredentialBinding, CredentialGroup, CredentialInfo};
+pub use model::{CredentialBinding, CredentialInfo};
 pub use registration::DeviceRegistration;
 pub use state::{DeviceEnrollment, EnvelopeInfo, PreparedUnlock, PreparedWrite, VaultState};
 

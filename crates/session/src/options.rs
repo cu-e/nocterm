@@ -31,8 +31,6 @@ pub enum ProxyError {
     EmptyHubAddress,
     #[error("Hub address must be up to 255 characters without whitespace.")]
     InvalidHubAddress,
-    #[error("Hub node must be up to 128 characters without whitespace.")]
-    InvalidHubNode,
 }
 
 /// Why explicit output-recording options cannot be applied.
@@ -107,19 +105,17 @@ pub enum ProxyConfig {
         port: u16,
         remote_dns: bool,
     },
-    /// A Nocterm hub relays the first connection, optionally through one of its nodes.
-    /// The address is the text the hub is known by; the hub is found by it, never dialled here.
+    /// A Nocterm hub relays the first connection. The address is the text the hub is known
+    /// by; the hub is found by it, never dialled here.
     Hub {
         address: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        node: Option<String>,
     },
 }
 impl ProxyConfig {
     pub fn validate(&self) -> Result<(), ProxyError> {
         let (host, port) = match self {
             Self::Direct => return Ok(()),
-            Self::Hub { address, node } => return validate_hub(address, node.as_deref()),
+            Self::Hub { address } => return validate_hub(address),
             Self::HttpConnect { host, port } | Self::Socks5 { host, port, .. } => (host, port),
         };
         if host.is_empty() {
@@ -146,16 +142,13 @@ impl ProxyConfig {
     }
 }
 
-fn validate_hub(address: &str, node: Option<&str>) -> Result<(), ProxyError> {
+fn validate_hub(address: &str) -> Result<(), ProxyError> {
     let plain = |text: &str| !text.chars().any(|c| c.is_whitespace() || c.is_control());
     if address.is_empty() {
         return Err(ProxyError::EmptyHubAddress);
     }
     if address.len() > 255 || !plain(address) {
         return Err(ProxyError::InvalidHubAddress);
-    }
-    if node.is_some_and(|node| node.is_empty() || node.len() > 128 || !plain(node)) {
-        return Err(ProxyError::InvalidHubNode);
     }
     Ok(())
 }
@@ -413,29 +406,18 @@ mod tests {
     }
 
     #[test]
-    fn a_hub_route_needs_an_address_and_a_plain_node_name() {
-        let hub = |address: &str, node: Option<&str>| ProxyConfig::Hub {
+    fn a_hub_route_needs_a_plain_address() {
+        let hub = |address: &str| ProxyConfig::Hub {
             address: address.into(),
-            node: node.map(Into::into),
         };
-        assert!(hub("hub.example.com:7443", None).validate().is_ok());
-        assert!(hub("hub.example.com", Some("office")).validate().is_ok());
-        assert_eq!(hub("", None).validate(), Err(ProxyError::EmptyHubAddress));
+        assert!(hub("hub.example.com:7443").validate().is_ok());
+        assert_eq!(hub("").validate(), Err(ProxyError::EmptyHubAddress));
         for address in ["hub example", "hub\n", &"a".repeat(256)] {
-            assert_eq!(
-                hub(address, None).validate(),
-                Err(ProxyError::InvalidHubAddress)
-            );
-        }
-        for node in ["", "of fice", &"n".repeat(129)] {
-            assert_eq!(
-                hub("hub", Some(node)).validate(),
-                Err(ProxyError::InvalidHubNode)
-            );
+            assert_eq!(hub(address).validate(), Err(ProxyError::InvalidHubAddress));
         }
         assert_eq!(
             SessionOptions {
-                proxy: Some(hub("", None)),
+                proxy: Some(hub("")),
                 ..Default::default()
             }
             .validate(),
@@ -444,25 +426,15 @@ mod tests {
     }
 
     #[test]
-    fn a_hub_route_round_trips_and_omits_an_absent_node() {
-        for node in [None, Some("office".to_owned())] {
-            let options = SessionOptions {
-                proxy: Some(ProxyConfig::Hub {
-                    address: "hub.example.com:7443".into(),
-                    node,
-                }),
-                ..Default::default()
-            };
-            let text = toml::to_string(&options).unwrap();
-            assert!(text.contains("type = \"hub\""), "{text}");
-            assert_eq!(
-                text.contains("node"),
-                options
-                    .proxy
-                    .as_ref()
-                    .is_some_and(|proxy| matches!(proxy, ProxyConfig::Hub { node: Some(_), .. }))
-            );
-            assert_eq!(toml::from_str::<SessionOptions>(&text).unwrap(), options);
-        }
+    fn a_hub_route_round_trips() {
+        let options = SessionOptions {
+            proxy: Some(ProxyConfig::Hub {
+                address: "hub.example.com:7443".into(),
+            }),
+            ..Default::default()
+        };
+        let text = toml::to_string(&options).unwrap();
+        assert!(text.contains("type = \"hub\""), "{text}");
+        assert_eq!(toml::from_str::<SessionOptions>(&text).unwrap(), options);
     }
 }

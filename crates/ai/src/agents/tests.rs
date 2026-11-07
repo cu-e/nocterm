@@ -192,3 +192,34 @@ fn catalog_finds_profiles_by_id_then_by_marker() {
         [".alpha", ".config/alpha"]
     );
 }
+
+#[test]
+fn a_hub_window_offers_its_hub_agents_and_a_local_window_none() {
+    use nocterm_hubs_model::{HubAddress, HubId};
+    let hub = |text: &str| HubId::from(HubAddress::parse(text).unwrap());
+    let (work, home) = (hub("work.example:7443"), hub("home.example:7443"));
+    let agents = AvailableAgents::resolve(&catalog(), &AiSettings::default()).with_hub_agents([
+        AgentLaunch::hub_agent(work.clone(), "a1".into(), "Ops".into()),
+        AgentLaunch::hub_agent(home.clone(), "a1".into(), "Ops".into()),
+    ]);
+    let names = |hub: Option<&HubId>| {
+        agents
+            .clone()
+            .offered_in(hub)
+            .iter()
+            .map(|agent| (agent.name().to_owned(), agent.hub().cloned()))
+            .collect::<Vec<_>>()
+    };
+    let local = names(None).len();
+    let offered = names(Some(&work));
+    assert_eq!(offered.len(), local + 1);
+    assert!(offered.contains(&("Ops".into(), Some(work.clone()))));
+    let offered = agents.clone().offered_in(Some(&work));
+    let ops = offered.iter().find(|agent| agent.hub().is_some()).unwrap();
+    assert_eq!(ops.source(), AgentSource::Hub);
+    assert!(super::valid_id(ops.id()));
+    assert_ne!(
+        AgentLaunch::hub_agent(work, "a1".into(), "x".into()).id,
+        AgentLaunch::hub_agent(home, "a1".into(), "x".into()).id
+    );
+}

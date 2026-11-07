@@ -22,9 +22,9 @@ fn object(
     profile_id: ProfileId,
     kind: &str,
     plain: &[u8],
-) -> v1::StoredObject {
+) -> v2::StoredObject {
     let object_id = profile_id.to_string();
-    v1::StoredObject {
+    v2::StoredObject {
         collection_id: "c".into(),
         object_id: object_id.clone(),
         version: 3,
@@ -129,7 +129,7 @@ fn an_object_that_does_not_authenticate_is_an_error() {
 #[test]
 fn an_object_that_is_not_a_profile_id_is_skipped() {
     let key = key();
-    let stored = v1::StoredObject {
+    let stored = v2::StoredObject {
         object_id: "not-a-profile".into(),
         ..object(&key, profile_id_for("x"), KIND, b"{}")
     };

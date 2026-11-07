@@ -20,8 +20,6 @@ use crate::records::{Account, HubEndpointSpec, HubInfo, KeyStatus, SignedIn};
 use crate::trust::{ProbedHub, TrustPolicy};
 
 mod account_keys;
-mod admin_keys;
-mod agent_access;
 mod devices;
 mod local_source;
 mod login;
@@ -30,8 +28,6 @@ mod server;
 pub use local_source::ScriptedLocalAccountFactory;
 
 pub use account_keys::FakeAccountKeys;
-pub use admin_keys::FakeAdminKeys;
-pub use agent_access::FakeAgentAccess;
 pub use devices::FakeAccountDevices;
 pub use server::{FakeKeyset, FakeServer, FakeUser};
 
@@ -201,11 +197,6 @@ impl FakeHub {
         if state.locked.remove(hub) {
             state.keys_changed();
         }
-    }
-
-    /// Tells whoever follows the keys that something that depends on them changed.
-    pub(crate) fn raise_keys_changed(&self) {
-        lock(&self.state).keys_changed();
     }
 
     pub fn revoke_device(&self, hub: &HubId) {

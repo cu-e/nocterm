@@ -231,3 +231,17 @@ fn editing_a_server_changes_only_that_server() {
     assert!(settings.set_color(&a, None));
     assert_eq!(settings.find(&a).unwrap().color, None);
 }
+
+#[test]
+fn the_hub_keys_stay_open_by_default_and_their_lock_is_bounded() {
+    let mut settings = HubsSettings::default();
+    assert_eq!(settings.key_lock(), None);
+    settings.key_lock_minutes = 10_000;
+    settings.sanitize();
+    assert_eq!(
+        settings.key_lock(),
+        Some(std::time::Duration::from_secs(1440 * 60))
+    );
+    let read: HubsSettings = toml::from_str("key_lock_minutes = 30").unwrap();
+    assert_eq!(read.key_lock(), Some(std::time::Duration::from_secs(1800)));
+}

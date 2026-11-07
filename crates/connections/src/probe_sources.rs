@@ -111,7 +111,7 @@ impl ProjectedSource {
             identity: HostIdentity {
                 user: self.target.user.clone(),
                 host: self.target.host.clone(),
-                host_key_fingerprint: String::new(),
+                host_key: String::new(),
             },
             port: self.target.port,
             fs: self.fs.clone(),

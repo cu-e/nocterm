@@ -6,8 +6,6 @@ use gpui_kit::{
     Subscription, TestSupportExt as _, Window, component::v_flex, div, prelude::*,
 };
 use nocterm_ai::model::controls::ConfigCategory;
-use nocterm_cloud_agents::StartId;
-use nocterm_cloud_agents_model::{CloudChatError, OpenedChat};
 use nocterm_plugin_model::Side;
 use nocterm_ui::IconName;
 use nocterm_workspace::{ExpandablePanel, Panel, PanelRequest, WorkspaceEvent};
@@ -18,15 +16,11 @@ mod attach;
 mod attachments;
 mod bindings;
 mod chat;
-mod cloud_history;
-mod cloud_menu;
-mod cloud_servers;
 pub(crate) mod commands;
 mod composer;
 mod composer_frame;
 mod composer_renderer;
 mod composer_view;
-mod conversation_surface;
 mod entries;
 mod history;
 mod history_column;
@@ -44,7 +38,6 @@ mod message_markdown;
 mod navigation;
 mod notices;
 mod parts;
-mod pending_prompt;
 mod preview_operation;
 mod queue;
 mod queue_image_preparation;
@@ -80,8 +73,6 @@ pub(crate) struct AgentPanel {
     menus: menu_view::MenuView,
     settings: nocterm_store::SettingsHandle,
     source: nocterm_workspace::ProjectSurfaceReceipt,
-    conversation: Option<conversation_surface::ConversationSurface>,
-    cloud: cloud_menu::CloudMenu,
 }
 impl EventEmitter<PanelRequest> for AgentPanel {}
 
@@ -99,8 +90,7 @@ impl AgentPanel {
         let settings = host.settings().clone();
         let composer = composer_view::ComposerView::new(window, cx);
         let menus = menu_view::MenuView::new(composer.focus(cx), window, cx);
-        let cloud = cloud_menu::CloudMenu::new(host.cloud_agents().cloned(), window, cx);
-        let history = history_column::HistoryColumn::new(host.cloud_agents().cloned(), window, cx);
+        let history = history_column::HistoryColumn::new(window, cx);
         let layout = layout::PanelLayout::new(layout, cx);
         let messages = message_list::MessageList::new(images, cx);
         let subscriptions = Self::bind_panel(&host, &settings, window, cx);
@@ -126,8 +116,6 @@ impl AgentPanel {
             layout,
             menus,
             settings,
-            conversation: None,
-            cloud,
         }
     }
     fn bind_panel(
@@ -154,7 +142,13 @@ impl AgentPanel {
                 let _ = panel.update(cx, |panel, cx| panel.on_runtime_changed(window, cx));
             });
         });
-        [Some(settings), workspace, Some(runtime)]
+        let hubs = host.hub_agents().map(|access| {
+            let hub = access.hub().cloned();
+            cx.subscribe(access.agents(), move |panel, _, event, cx| {
+                panel.on_hub_agents_event(hub.as_ref(), event, cx);
+            })
+        });
+        [Some(settings), workspace, Some(runtime), hubs]
             .into_iter()
             .flatten()
             .collect()
@@ -176,9 +170,6 @@ impl AgentPanel {
             .ok()
             .is_some_and(|deps| self.chats.switch_context(deps, cx));
         if switched || removed {
-            if switched && let Some(previous) = self.conversation.take() {
-                previous.detach(cx);
-            }
             self.composer.clear();
             self.history.switch_context(window, cx);
             self.sign_ins.clear();
@@ -193,7 +184,6 @@ impl AgentPanel {
             return;
         }
         self.load_history(cx);
-        self.history.cloud_mut().refresh(false, cx);
         self.adopt_saved_chats(window, cx);
         cx.notify();
     }
@@ -234,9 +224,6 @@ impl AgentPanel {
         };
         self.notices.set_account(None);
         self.leave_composer(cx);
-        if let Some(previous) = self.conversation.take() {
-            previous.detach(cx);
-        }
         self.chats.switch_context(deps, cx);
         self.source = source;
         self.composer.clear();
@@ -320,7 +307,7 @@ impl AgentPanel {
     }
     fn history_is_visible(&self, cx: &App) -> bool {
         self.layout.history()
-            && (!self.chats.is_empty() || !self.history.cloud().is_empty(cx))
+            && !self.chats.is_empty()
             && self
                 .host
                 .workspace()
@@ -358,16 +345,24 @@ impl AgentPanel {
         }
     }
     pub(crate) fn current(&self) -> Option<Entity<AgentThread>> {
-        self.conversation
-            .is_none()
-            .then(|| self.chats.current())
-            .flatten()
+        self.chats.current()
     }
-    pub(super) fn conversation_identity(&self) -> Option<EntityId> {
-        self.conversation
-            .as_ref()
-            .map(|view| view.identity())
-            .or_else(|| self.current().map(|thread| thread.entity_id()))
+    /// The hub's agents or chats changed: a hub window lists the hub's chats again and offers
+    /// the agents it lists now.
+    fn on_hub_agents_event(
+        &mut self,
+        window_hub: Option<&nocterm_hubs_model::HubId>,
+        event: &nocterm_hub_agents::HubAgentsEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use nocterm_hub_agents::HubAgentsEvent;
+        match event {
+            HubAgentsEvent::ChatsChanged(hub) if Some(hub) == window_hub => {
+                self.host.runtime().reload_history(cx);
+            }
+            HubAgentsEvent::Changed(hub) if Some(hub) == window_hub => cx.notify(),
+            _ => {}
+        }
     }
     #[cfg(test)]
     pub(crate) fn chat_documents(&self) -> impl ExactSizeIterator<Item = &Entity<AgentThread>> {
@@ -385,7 +380,7 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let agents = self.host.agents().available(cx);
+        let agents = self.host.window_agents(cx);
         let known = |id: &&String| agents.get(id).is_some();
         self.host
             .runtime()
@@ -403,11 +398,7 @@ impl AgentPanel {
             .or_else(|| agents.iter().next().map(|agent| agent.id().to_owned()))
     }
     pub(super) fn set_history(&mut self, open: bool, cx: &mut Context<Self>) {
-        if open {
-            self.history.cloud_mut().refresh(true, cx);
-        }
-        // A Cloud conversation is a chat too: the history opens beside it the same way.
-        let chat = self.current().is_some() || self.conversation.is_some();
+        let chat = self.current().is_some();
         if let Some(width) = self.layout.set_history(open, chat, cx) {
             cx.emit(PanelRequest::Widen(width));
         }
@@ -432,11 +423,11 @@ impl AgentPanel {
         match kind {
             parts::PartKind::Transcript => self.render_transcript_part(cx),
             parts::PartKind::History => {
-                let open = self.conversation.as_ref().and_then(|view| view.origin());
-                let stamp = history::HistoryProjection::stamp(&self.chats, &self.history, open, cx);
+                let stamp = history::HistoryProjection::stamp(&self.chats, &self.history, cx);
                 self.layout.parts_mut().drew_history(stamp);
                 let history = history::HistoryProjection::render(
-                    history::HistorySources::new(&self.chats, &self.history, open),
+                    &self.chats,
+                    &self.history,
                     self.host.agents(),
                     self.host.timestamp(),
                     cx,
@@ -460,14 +451,6 @@ impl AgentPanel {
         }
     }
     fn stop_generation(&mut self, cx: &mut Context<Self>) {
-        if self.conversation.is_some() {
-            self.perform_conversation_action(
-                nocterm_ai::conversation::ConversationAction::Stop,
-                None,
-                cx,
-            );
-            return;
-        }
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.stop(cx));
         }
@@ -500,93 +483,19 @@ impl AgentPanel {
             self.current(),
             self.menus.query_input(),
             self.menus.query(cx).to_lowercase(),
-            self.host.agents().available(cx),
+            self.host.window_agents(cx),
             self.last_agent(cx),
             self.focus.clone(),
             self.host.runtime().favorites(cx).clone(),
             attachment,
         );
-        let (tabs, rows) = if matches!(frame.kind(), Some(MenuKind::Agents)) {
-            let tabs = self.cloud.render_menu_tabs(cx);
-            let rows = (self.cloud.tab(cx) == cloud_menu::MenuTab::Cloud)
-                .then(|| self.cloud.render_tab(cx));
-            (tabs, rows)
-        } else {
-            (None, None)
-        };
-        menu::ConfigMenuRenderer::render_menu(frame.with_cloud(tabs, rows), window, cx)
+        menu::ConfigMenuRenderer::render_menu(frame, window, cx)
     }
 }
 
 impl AgentPanel {
     pub(super) fn on_config_query_changed(&mut self, cx: &mut Context<Self>) {
         cx.notify();
-    }
-
-    /// Opens the Servers page of the settings, where personal agents are created and edited.
-    fn new_personal_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.menus.reset();
-        if let Ok(action) = cx.build_action("hubs::ManageServers", None) {
-            window.dispatch_action(action, cx);
-        }
-        cx.notify();
-    }
-
-    /// Shows the chat a Cloud request opened, or tells the Cloud tab why it could not.
-    fn finish_cloud_chat(
-        &mut self,
-        result: Result<OpenedChat, CloudChatError>,
-        start: Option<StartId>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match self.present_cloud_chat(result, window, cx) {
-            None => {
-                self.cloud.chat_opened(start, cx);
-                self.menus.reset();
-            }
-            Some(notice) => self.cloud.chat_failed(notice, start),
-        }
-        cx.notify();
-    }
-    /// Shows the chat a history row opened, or says on the error line why it could not.
-    fn finish_cloud_history_chat(
-        &mut self,
-        result: Result<OpenedChat, CloudChatError>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(notice) = self.present_cloud_chat(result, window, cx) {
-            self.notices.set_error(Some(notice));
-        }
-        cx.notify();
-    }
-    /// Presents an opened Cloud chat in this panel; its history row is the open one, and the
-    /// history lists it at once if it is new. Returns what to tell the person when it could not.
-    fn present_cloud_chat(
-        &mut self,
-        result: Result<OpenedChat, CloudChatError>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<String> {
-        let opened = match result {
-            Ok(opened) => opened,
-            Err(error) => return Some(cloud_menu::notice_text(&error)),
-        };
-        let source = match self.host.cloud_chats().open(opened.conversation, cx) {
-            Ok(source) => source,
-            Err(error) => return Some(error.to_string()),
-        };
-        if let Err(error) =
-            self.open_conversation(source, SharedString::from(opened.title), window, cx)
-        {
-            return Some(error.to_string());
-        }
-        if let Some(open) = &mut self.conversation {
-            open.set_origin(Some(opened.key));
-        }
-        self.history.cloud_mut().refresh(true, cx);
-        None
     }
 }
 
@@ -598,9 +507,6 @@ impl Focusable for AgentPanel {
 
 impl Panel for AgentPanel {
     fn title(&self, cx: &App) -> SharedString {
-        if let Some(conversation) = &self.conversation {
-            return conversation.title();
-        }
         self.current()
             .map(|thread| thread.read(cx).title())
             .unwrap_or_else(|| "New Agent".into())
@@ -610,19 +516,10 @@ impl Panel for AgentPanel {
         IconName::Bot
     }
     fn attention(&self, cx: &App) -> Option<SharedString> {
-        let mut captured = false;
-        if let Some(selected) = &self.conversation {
-            let _ = selected.source().with_view(cx, &mut |view| {
-                captured =
-                    view.phase == nocterm_ai::conversation::ConversationPhase::WaitingApproval;
-            });
-        }
-        (captured
-            || self
-                .chats
-                .iter()
-                .any(|thread| thread.read(cx).has_pending_approvals()))
-        .then(|| "An agent needs permission to continue.".into())
+        self.chats
+            .iter()
+            .any(|thread| thread.read(cx).has_pending_approvals())
+            .then(|| "An agent needs permission to continue.".into())
     }
 }
 
@@ -654,7 +551,7 @@ impl Render for AgentPanel {
             cx,
         );
         let mut body = shell::ShellRenderer::body(&self.focus, cx).child(header);
-        body = if self.conversation.is_none() && current.is_none() {
+        body = if current.is_none() {
             body.child(self.layout.parts().history())
         } else {
             let chat = v_flex()

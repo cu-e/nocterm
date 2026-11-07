@@ -31,10 +31,6 @@ impl AgentPanel {
         self.send(window, cx);
     }
     pub(super) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.conversation.is_some() {
-            self.submit_conversation(false, window, cx);
-            return;
-        }
         if self.preparing_images() {
             return;
         }
@@ -65,9 +61,6 @@ impl AgentPanel {
     }
     pub(super) fn toggle_menu(&mut self, menu: MenuKind, cx: &mut Context<Self>) {
         self.menus.toggle(menu);
-        if self.menus.current() == Some(&MenuKind::Agents) {
-            self.cloud.reopened(cx);
-        }
         cx.notify();
     }
     pub(super) fn reset_commands(&mut self) {
@@ -174,54 +167,40 @@ impl AgentPanel {
     ) {
         self.composer.select_command_token(range, window, cx);
     }
-    /// The composer of the open chat or conversation: the same field, controls and frame for
-    /// every source. Attachments and the Local chat's notices need its thread.
+    /// The composer of the open chat: its field, attachments, controls and notices.
     pub(super) fn render_composer(
         &mut self,
         frame: &composer_frame::ComposerFrame,
-        local: Option<&Entity<AgentThread>>,
-        labels: Option<&attachments::AttachmentLabels>,
-        busy: bool,
+        thread: &Entity<AgentThread>,
+        labels: &attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let attach = local.filter(|_| frame.can_attach());
-        let chips = attach.zip(labels).and_then(|(thread, labels)| {
-            composer_renderer::ComposerRenderer::render_attachment_chips(thread, labels, cx)
-        });
-        let images = attach.and_then(|thread| {
-            let previews = preview_operation::PreviewOperation::composer_previews(
-                &mut self.messages,
-                thread,
-                cx,
-            );
-            composer_renderer::ComposerRenderer::render_image_strip(
-                thread.entity_id(),
-                previews,
-                cx,
-            )
-        });
+        let chips =
+            composer_renderer::ComposerRenderer::render_attachment_chips(thread, labels, cx);
+        let previews =
+            preview_operation::PreviewOperation::composer_previews(&mut self.messages, thread, cx);
+        let images = composer_renderer::ComposerRenderer::render_image_strip(
+            thread.entity_id(),
+            previews,
+            cx,
+        );
         let input = composer_renderer::ComposerRenderer::render_input(&self.composer, cx);
-        let stop = self.capture_rendered_stop(cx);
+        let stop = composer_frame::RenderedStop::capture(thread, cx);
         let footer = composer_renderer::ComposerRenderer::render_footer(
             frame,
             &self.composer,
             &self.menus,
-            local,
+            thread,
             stop,
-            busy,
             cx,
         );
         let terminal = self.host.sign_in().is_some();
-        let notices = local
-            .map(|thread| {
-                composer_renderer::ComposerRenderer::render_notices(
-                    &self.composer,
-                    terminal,
-                    thread,
-                    cx,
-                )
-            })
-            .unwrap_or_default();
+        let notices = composer_renderer::ComposerRenderer::render_notices(
+            &self.composer,
+            terminal,
+            thread,
+            cx,
+        );
         composer_renderer::ComposerRenderer::compose(
             chips,
             images,
@@ -372,17 +351,9 @@ impl AgentPanel {
             self.add_images(paths, cx);
         }
     }
-    /// Whether the composer takes images and files: the open source attaches them, and only
-    /// a Local thread holds a composer's attachments.
-    pub(super) fn composer_attaches(&self, cx: &App) -> bool {
-        use nocterm_agent_chat::conversation::ConversationSource as _;
-        let Some(thread) = self.current() else {
-            return false;
-        };
-        let mut attaches = false;
-        let _ = nocterm_agent_chat::conversation::LocalConversation::new(&thread)
-            .with_view(cx, &mut |view| attaches = view.composer.attach);
-        attaches
+    /// Whether the composer takes images and files: a chat is open.
+    pub(super) fn composer_attaches(&self, _cx: &App) -> bool {
+        self.current().is_some()
     }
     pub(super) fn pick_images(&mut self, cx: &mut Context<Self>) {
         if !self.composer_attaches(cx) {
@@ -414,9 +385,6 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if open {
-            if kind == MenuKind::Agents {
-                self.cloud.reopened(cx);
-            }
             self.menus.open(kind);
         } else {
             self.menus.close_if_same(&kind);
@@ -719,14 +687,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .conversation
-            .as_ref()
-            .is_some_and(|source| source.identity() == chat)
-        {
-            self.submit_conversation(false, window, cx);
-            return;
-        }
         // The send button stops a run through its rendered stop; this sends.
         if self
             .current()

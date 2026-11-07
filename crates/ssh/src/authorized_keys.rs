@@ -158,7 +158,7 @@ struct Live {
     edits: Arc<futures::lock::Mutex<()>>,
 }
 
-/// The saved connections that have a live session, for the trust service to reach.
+/// The saved connections that have a live session, for Agent access to reach.
 pub struct HostDirectory {
     known_hosts: Vec<std::path::PathBuf>,
     hosts: Mutex<HashMap<String, Live>>,
@@ -175,11 +175,11 @@ impl HostDirectory {
         }
     }
 
-    fn recorded_fingerprint(&self, host: &str, port: u16) -> Option<String> {
+    fn recorded_key(&self, host: &str, port: u16) -> Option<String> {
         let (writable, read_only) = self.known_hosts.split_first()?;
         HostKeys::load(writable.clone(), read_only.to_vec())
             .ok()?
-            .fingerprints(host, port)
+            .public_keys(host, port)
             .into_iter()
             .next()
     }
@@ -187,10 +187,10 @@ impl HostDirectory {
 
 impl ConnectedHosts for HostDirectory {
     fn prepare(&self, mut host: ConnectedHost) -> ConnectedHost {
-        if host.identity.host_key_fingerprint.is_empty() {
-            host.identity.host_key_fingerprint = self
-                .recorded_fingerprint(&host.identity.host, host.port)
-                .unwrap_or_else(|| "unrecorded".to_owned());
+        if host.identity.host_key.is_empty() {
+            host.identity.host_key = self
+                .recorded_key(&host.identity.host, host.port)
+                .unwrap_or_default();
         }
         host
     }

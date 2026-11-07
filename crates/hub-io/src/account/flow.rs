@@ -17,7 +17,7 @@ use tokio::runtime::Handle;
 use futures::future::BoxFuture;
 use nocterm_core::SharedCause;
 use nocterm_hub_client::{Keyset, KeysetError, UnlockMethod as KeysetUnlock};
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::{HubError, HubId, KeyStatus};
 use nocterm_keys::{LoginError, LoginSecrets, RecoveryKey, UnlockKdf, UnlockKey};
 use nocterm_session::Secret;
@@ -194,7 +194,7 @@ impl KeyFlow {
     fn needs_vault_passphrase(
         &self,
         owner: &KeyAdmission,
-        record: &v1::AccountKeyset,
+        record: &v2::Keyset,
     ) -> Result<bool, HubError> {
         match KeysetUnlock::of(record).map_err(|error| self.keyset_failure(owner, error))? {
             KeysetUnlock::LoginPassword => Ok(false),
@@ -286,7 +286,7 @@ impl KeyFlow {
         client: &dyn KeysetHub,
         keyset: &Keyset,
         recovery: &RecoveryKey,
-    ) -> Result<v1::AccountKeyset, HubError> {
+    ) -> Result<v2::Keyset, HubError> {
         let mut attempt = 1;
         loop {
             match owner
@@ -515,13 +515,7 @@ impl KeyFlow {
             &record,
         );
         cache.recovery_unconfirmed = unconfirmed;
-        // What this device pinned for the account survives a new sign-in.
-        match owner.cache() {
-            Ok(earlier) => cache.inherit_pins(&earlier),
-            Err(HubError::NotFound) => {}
-            Err(error) => return Err(error),
-        }
-        let keys = OpenKeys::pinning(keyset, cache.pinned());
+        let keys = OpenKeys::new(keyset);
         owner.install(keys, cache).await
     }
 
@@ -529,7 +523,7 @@ impl KeyFlow {
         &self,
         owner: &KeyAdmission,
         client: &dyn KeysetHub,
-    ) -> Result<Option<v1::AccountKeyset>, HubError> {
+    ) -> Result<Option<v2::Keyset>, HubError> {
         owner
             .during(client.record())
             .await?
@@ -547,7 +541,7 @@ impl KeyFlow {
 /// Keep the hub's accepted recovery envelope in the offline copy. The pending
 /// recovery fact was persisted before resealing; a cache failure cannot undo
 /// the successful remote replacement or suppress the new recovery key.
-async fn keep_recovery_record(owner: &KeyAdmission, record: &v1::AccountKeyset) {
+async fn keep_recovery_record(owner: &KeyAdmission, record: &v2::Keyset) {
     if let Err(error) = owner
         .update_cache(|cache| cache.keyset = KeysetCopy::of(record))
         .await
@@ -562,7 +556,6 @@ fn keyset_error(error: KeysetError) -> HubError {
         KeysetError::Damaged(_)
         | KeysetError::Kdf(_)
         | KeysetError::Incomplete
-        | KeysetError::PublicKey(_)
         | KeysetError::AlreadyExists
         | KeysetError::WrongRecoveryKey
         | KeysetError::WrongUnlockKey

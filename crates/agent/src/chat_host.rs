@@ -57,16 +57,16 @@ impl ChatHost {
     pub(crate) fn source(&self) -> ProjectSurfaceReceipt {
         self.source
     }
-    /// Capture a committed UI origin synchronously. This supplies descriptive
-    /// membership; terminals remain attached to that original ordinary surface.
-    /// The Cloud agents this window offers, if the application has hubs.
-    pub(crate) fn cloud_agents(&self) -> Option<&crate::CloudAgentsAccess> {
-        self.installed.cloud_agents()
+    /// The hub agents this window offers, if the application has hubs.
+    pub(crate) fn hub_agents(&self) -> Option<&crate::HubAgentsAccess> {
+        self.installed.hub_agents()
     }
 
-    /// The shared owner that presents a captured Cloud conversation.
-    pub(crate) fn cloud_chats(&self) -> &nocterm_cloud_chat::CloudChatInstallation {
-        self.installed.cloud_chats()
+    /// The agents the window's new-chat menu offers: the local ones, and in a hub window also
+    /// that hub's agents.
+    pub(crate) fn window_agents(&self, cx: &gpui_kit::App) -> nocterm_ai::AvailableAgents {
+        let hub = self.hub_agents().and_then(|access| access.hub());
+        self.agents().available(cx).offered_in(hub)
     }
 
     pub(crate) fn deps_for_source(

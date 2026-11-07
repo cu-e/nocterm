@@ -12,7 +12,7 @@ use nocterm_connections_model::replica::{
     RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaScope, ReplicaVersion,
 };
 use nocterm_core::SharedCause;
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_keys::CollectionKey;
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +46,7 @@ pub(super) fn read(
     scope: ReplicaScope,
     collection_id: &str,
     key: &CollectionKey,
-    object: &v1::StoredObject,
+    object: &v2::StoredObject,
 ) -> Result<Option<RemoteProfile>, ReplicaError> {
     let Ok(id) = ProfileId::from_str(&object.object_id) else {
         return Ok(None);

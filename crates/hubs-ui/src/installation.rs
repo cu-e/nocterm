@@ -8,7 +8,7 @@ use nocterm_hubs_model::HubId;
 #[derive(Clone)]
 pub struct Installed {
     hubs: nocterm_hubs::Installed,
-    cloud_agents: Option<Entity<nocterm_cloud_agents::CloudAgents>>,
+    hub_agents: Option<Entity<nocterm_hub_agents::HubAgents>>,
 }
 
 impl Installed {
@@ -20,14 +20,15 @@ impl Installed {
             .map(|summary| summary.label)
     }
 
-    /// The Servers page also manages the person's Cloud agents through `agents`.
-    pub fn with_cloud_agents(mut self, agents: Entity<nocterm_cloud_agents::CloudAgents>) -> Self {
-        self.cloud_agents = Some(agents);
+    /// The Servers page also manages the account's agents, providers and agent servers
+    /// through `agents`.
+    pub fn with_hub_agents(mut self, agents: Entity<nocterm_hub_agents::HubAgents>) -> Self {
+        self.hub_agents = Some(agents);
         self
     }
 
-    pub(crate) fn cloud_agents(&self) -> Option<&Entity<nocterm_cloud_agents::CloudAgents>> {
-        self.cloud_agents.as_ref()
+    pub(crate) fn hub_agents(&self) -> Option<&Entity<nocterm_hub_agents::HubAgents>> {
+        self.hub_agents.as_ref()
     }
 
     pub(crate) fn hubs(&self) -> &Entity<Hubs> {
@@ -39,6 +40,6 @@ impl Installed {
 pub fn install(hubs: nocterm_hubs::Installed) -> Installed {
     Installed {
         hubs,
-        cloud_agents: None,
+        hub_agents: None,
     }
 }

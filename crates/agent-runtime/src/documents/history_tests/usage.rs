@@ -37,6 +37,7 @@ fn connected(cx: &mut TestAppContext, agent: &str) -> UsageFixture {
             args: vec![],
             env: Default::default(),
             inherit_env: vec![],
+            hub: None,
         });
     runtime.update(cx, |runtime, cx| {
         ownership::register(runtime, client.clone(), cx).unwrap();

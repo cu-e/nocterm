@@ -6,7 +6,7 @@ use crate::{
     task::spawn,
 };
 use nocterm_hub_client::HubClient;
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::{HubError, HubFuture, HubId};
 use std::sync::Arc;
 use tokio::runtime::Handle;
@@ -70,12 +70,10 @@ impl SignOut {
                     .into_parts();
                 self.observed.published(next);
                 result?;
-                let request = v1::RevokeDeviceRequest {
-                    device_id: subject.device().to_owned(),
-                };
+                // Signing out revokes this device on the hub.
                 if let Err(error) = self
                     .observed
-                    .during(client.directory().revoke_device(request))
+                    .during(client.account().logout(v2::Empty {}))
                     .await?
                 {
                     tracing::debug!(%error,"the hub did not end the original device session");

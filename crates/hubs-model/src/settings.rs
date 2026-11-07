@@ -10,6 +10,9 @@
 //! [[hubs.servers]]
 //! address = "hub.example.com"
 //! trust = "public-ca"       # any certificate a public authority vouches for
+//!
+//! [hubs]
+//! key_lock_minutes = 0      # the account keys of a hub stay open until locked or signed out
 //! ```
 
 use std::collections::HashSet;
@@ -168,7 +171,14 @@ pub struct HubsSettings {
     /// ignored without affecting the others.
     #[serde(deserialize_with = "lenient_servers")]
     pub servers: Vec<HubRecord>,
+    /// Close the account keys of a hub after this many minutes without vault use (at most
+    /// 1440); 0 keeps them open until the person locks them or signs out. Independent of the
+    /// local vault's auto-lock: chats and agents never need the keys.
+    pub key_lock_minutes: u32,
 }
+
+/// The longest wait before the account keys of a hub close.
+pub const MAX_KEY_LOCK_MINUTES: u32 = 1440;
 
 /// Reads every table that is a usable server and skips the rest.
 fn lenient_servers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<HubRecord>, D::Error> {
@@ -189,6 +199,12 @@ fn lenient_servers<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Hub
 }
 
 impl HubsSettings {
+    /// How long the account keys stay open without vault use; `None` keeps them open.
+    pub fn key_lock(&self) -> Option<std::time::Duration> {
+        (self.key_lock_minutes > 0)
+            .then(|| std::time::Duration::from_secs(u64::from(self.key_lock_minutes) * 60))
+    }
+
     pub fn find(&self, hub: &HubId) -> Option<&HubRecord> {
         self.servers.iter().find(|record| record.id() == *hub)
     }
@@ -236,8 +252,9 @@ impl HubsSettings {
 impl SettingsSection for HubsSettings {
     const KEY: &'static str = "hubs";
 
-    /// Keeps the first server of each address and shortens labels.
+    /// Keeps the first server of each address, shortens labels and bounds the key lock.
     fn sanitize(&mut self) {
+        self.key_lock_minutes = self.key_lock_minutes.min(MAX_KEY_LOCK_MINUTES);
         let mut seen = HashSet::new();
         self.servers.retain(|record| seen.insert(record.id()));
         for record in &mut self.servers {

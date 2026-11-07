@@ -125,6 +125,7 @@ fn launch() -> AgentLaunch {
         args: vec!["--base".into()],
         env: Default::default(),
         inherit_env: vec![],
+        hub: None,
     }
 }
 fn auth_method() -> AuthMethod {

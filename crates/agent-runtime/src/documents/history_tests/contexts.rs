@@ -62,6 +62,7 @@ fn general_registration_and_direct_start_refuse_project_documents_without_native
             args: Vec::new(),
             env: Default::default(),
             inherit_env: Vec::new(),
+            hub: None,
         };
         assert!(matches!(
             runtime.connect(client.clone(), chat.header.id.clone(), launch, cx),
@@ -320,6 +321,7 @@ fn a_scoped_document_uses_the_ordinary_local_connector_without_changing_its_memb
             args: Vec::new(),
             env: Default::default(),
             inherit_env: Vec::new(),
+            hub: None,
         };
         let registration = project
             .register_bridge(&(client.clone() as Client), cx)
@@ -367,6 +369,7 @@ fn closed_clients_and_mismatched_chat_arguments_cannot_reach_native_ports(cx: &m
         args: Vec::new(),
         env: Default::default(),
         inherit_env: Vec::new(),
+        hub: None,
     };
     cx.update(|cx| {
         assert!(matches!(

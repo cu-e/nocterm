@@ -15,7 +15,7 @@ struct Device {
     _dir: tempfile::TempDir,
 }
 
-fn device(hub: &Arc<MemoryHub>) -> (Device, nocterm_hub_proto::v1::AccountKeyset) {
+fn device(hub: &Arc<MemoryHub>) -> (Device, nocterm_hub_proto::v2::Keyset) {
     let dir = tempfile::tempdir().unwrap();
     let (_accounts, slot, record) = signed_in(dir.path());
     let ledger = Ledger::new(Arc::clone(&slot), hub.clone());

@@ -67,5 +67,3 @@ mod tests;
 pub mod storage;
 
 pub mod model;
-
-pub mod conversation;

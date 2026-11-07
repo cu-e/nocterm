@@ -36,7 +36,6 @@ pub(crate) async fn run(
     driver: SessionDriver,
     fs_requests: FsRequests,
     exec_requests: ExecRequests,
-    login: Option<crate::proof::PurposeLogin>,
 ) {
     let _cleanup = crate::source_stream::CloseOnDrop::new(driver.clone());
     let source = driver.source().clone();
@@ -50,7 +49,6 @@ pub(crate) async fn run(
                     &driver,
                     fs_requests,
                     exec_requests,
-                    login,
                 )
                 .await,
             )
@@ -72,7 +70,6 @@ async fn session(
     driver: &SessionDriver,
     fs_requests: FsRequests,
     exec_requests: ExecRequests,
-    login: Option<crate::proof::PurposeLogin>,
 ) -> CloseReason {
     let observed = Arc::new(Mutex::new(Observed::default()));
     let mut size = request.size;
@@ -81,13 +78,7 @@ async fn session(
     // start it with and the user giving up.
     let established = tokio::select! {
         () = driver.closed() => return CloseReason::ClosedByUser,
-        result = async {
-            if let Some(login)=login {
-                let handle=timeout(request.connect_timeout,login.establish(request,driver,&observed)).await
-                    .map_err(|_|SessionError::TimedOut{host:request.target.host.clone(),seconds:request.connect_timeout.as_secs()})??;
-                Ok((handle,route::Route::new(None)))
-            } else {route::establish(config,request,relay,driver,&observed).await}
-        } => result,
+        result = route::establish(config, request, relay, driver, &observed) => result,
         () = closed_while_connecting(driver, &mut size) => return CloseReason::ClosedByUser,
     };
     let (handle, route) = match established {

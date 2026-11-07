@@ -140,11 +140,8 @@ impl VaultSshKeys for MemoryVaultSshKeys {
     }
 }
 
-pub mod ca;
 mod connected_hosts;
-mod login;
 pub use connected_hosts::ScriptedConnectedHosts;
-pub use login::LoginProofFixture;
 
 /// An `authorized_keys` file kept in memory, with the same compare-before-swap rule as the
 /// adapter that edits a real one.
@@ -226,7 +223,7 @@ impl FakeAgentHosts {
             identity: crate::authorized_keys::HostIdentity {
                 user: user.to_owned(),
                 host: host.to_owned(),
-                host_key_fingerprint: "SHA256:fake-host-key".to_owned(),
+                host_key: "ssh-ed25519 AAAAfakehostkey".to_owned(),
             },
             file: Arc::new(file),
         };

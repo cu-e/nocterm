@@ -152,6 +152,7 @@ pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> Wor
     let settings =
         nocterm_store::SettingsConfig::in_memory(Default::default()).with(HubsSettings {
             servers: vec![record(ADDRESS), record(OTHER)],
+            ..HubsSettings::default()
         });
     let hub = FakeHub::new()
         .with_server(FakeServer::new(ADDRESS, 7))
@@ -163,10 +164,7 @@ pub(super) fn world(accounts: Arc<FakeAccounts>, cx: &mut TestAppContext) -> Wor
         let deps = nocterm_hubs::Deps {
             trust: Arc::new(hub.clone()),
             sign_in: Arc::new(hub.clone()),
-            admin_keys: Arc::new(nocterm_hubs_model::testing::FakeAdminKeys::alongside(&hub)),
             devices: Arc::new(nocterm_hubs_model::testing::FakeAccountDevices::default()),
-            agent_trust: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
-            agent_grants: Arc::new(nocterm_hubs_model::testing::FakeAgentAccess::default()),
             account_keys: Arc::new(nocterm_hubs_model::testing::FakeAccountKeys::alongside(
                 &hub, "password",
             )),

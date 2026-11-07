@@ -174,10 +174,9 @@ impl KeyAdmission {
             .as_deref()
             .filter(|old| old.account_id == cache.account_id)
         {
-            cache.inherit_pins(earlier);
             cache.vault = earlier.vault.clone();
         }
-        let keys = slot.noticed_keys(keys, &cache);
+        let keys = Arc::new(keys);
         let draft = slot.stage_cache(original, cache).await?;
         let committed = self
             .member

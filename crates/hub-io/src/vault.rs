@@ -8,7 +8,7 @@
 
 mod codec;
 pub(crate) mod credentials;
-mod groups;
+
 mod idle;
 mod ledger;
 mod snapshot_budget;
@@ -27,7 +27,7 @@ use nocterm_vault::{
 };
 use tokio::runtime::Handle;
 
-pub(crate) use self::ledger::{Ledger, Space};
+pub(crate) use self::ledger::Ledger;
 use self::unlock::Unlocker;
 use crate::account::{Slot, operations::AccountOperations};
 use crate::task::spawn;

@@ -9,12 +9,14 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod agent_auth;
+mod agent_connector;
 mod agent_hosts;
 mod app_menus;
 mod application;
 mod bootstrap;
-mod cloud_agents_wiring;
 mod connection_setup;
+mod hub_agents_wiring;
+mod hub_server_access;
 mod hub_sources;
 mod keymap;
 #[cfg(feature = "user-plugins")]

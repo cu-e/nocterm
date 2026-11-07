@@ -10,7 +10,7 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: views (the panel's sections per organization, the strip for the account's state and the editor's space choice, from the bound replication; the list may be changed only while the copy is in step with the account), editor inputs and their shared `ConnectionInputs`, the in-memory installation `install_volatile` (no settings, key bindings or shutdown registration), session-intent conversion and detected-server image presentation and weak source projection.
+//! Owns: views (the panel's sections per organization and the strip for the account's state, from the bound replication; the list may be changed only while the copy is in step with the account; in a hub window, the editor's Agent access switch of a saved server), editor inputs and their shared `ConnectionInputs`, the in-memory installation `install_volatile` (no settings, key bindings or shutdown registration), session-intent conversion and detected-server image presentation and weak source projection.
 //! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
 //! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
@@ -18,7 +18,7 @@
 //! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
 //! Ports provided: ConnectionDirectory, checked original-workspace parent
 //! SessionSpec resolution for app composition and the core `connections.servers`
-//! contribution (`plugin::CORE`); `HostObserver`, told once per freshly connected session (the application supplies it through `Installed::bind_host_observer`). Settings section: none.
+//! contribution (`plugin::CORE`); `HostObserver`, told once per freshly connected session (the application supplies it through `Installed::bind_host_observer`); `ServerAgentAccess`, supplied through `EditorInputs::with_agent_access` by a hub window. Settings section: none.
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
@@ -31,8 +31,10 @@
 //! Workspace recovery compares original profile, destination and ordered resolved
 //! route before opening; it never supplies authentication from project metadata.
 
+mod agent_access;
 mod installed;
 mod session_intents;
+pub use agent_access::{AgentAccessRefused, AgentServer, ServerAgentAccess};
 pub use credential_spaces::CredentialSpaces;
 pub use installed::{Installed, install, install_volatile};
 pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};

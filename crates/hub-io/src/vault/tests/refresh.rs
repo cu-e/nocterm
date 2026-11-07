@@ -1,7 +1,7 @@
 //! Refresh ordering and unchanged-cache behavior through the actual native vault port.
 use super::*;
 use crate::store::memory::StoreBoundary;
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unordered_change_page_after_the_requested_cursor_is_accepted() {
@@ -22,7 +22,7 @@ async fn an_unordered_change_page_after_the_requested_cursor_is_accepted() {
     assert_eq!(changes.len(), 2);
     changes[0].stream_version = 4;
     changes[1].stream_version = 3;
-    hub.script_changes(vec![v1::ChangeBatch {
+    hub.script_changes(vec![v2::ChangeBatch {
         changes,
         head: 4,
         more: false,
@@ -54,7 +54,7 @@ async fn unordered_changes_for_one_object_keep_its_newest_version() {
     new.version = 4;
     old.stream_version = 3;
     old.version = 3;
-    hub.script_changes(vec![v1::ChangeBatch {
+    hub.script_changes(vec![v2::ChangeBatch {
         changes: vec![new, old],
         head: 4,
         more: false,
@@ -99,7 +99,7 @@ async fn a_nonadvancing_change_page_is_refused_once_and_preserves_offline_creden
         .await
         .unwrap();
     let before = hub.change_calls();
-    hub.script_changes(vec![v1::ChangeBatch {
+    hub.script_changes(vec![v2::ChangeBatch {
         changes: Vec::new(),
         head: 100,
         more: true,
@@ -117,8 +117,8 @@ async fn oversized_snapshot_content_is_refused_before_cache_publication() {
         .put(None, "Work".into(), binding(), Secret::new("pw"))
         .await
         .unwrap();
-    hub.script_changes(vec![v1::ChangeBatch {
-        changes: vec![v1::StoredObject {
+    hub.script_changes(vec![v2::ChangeBatch {
+        changes: vec![v2::StoredObject {
             object_id: "new-format".into(),
             kind: "future".into(),
             stream_version: 2,
@@ -144,8 +144,8 @@ async fn a_progressing_but_unending_change_stream_has_a_finite_page_budget() {
     let before = hub.change_calls();
     hub.script_changes(
         (2..=1_026)
-            .map(|cursor| v1::ChangeBatch {
-                changes: vec![v1::StoredObject {
+            .map(|cursor| v2::ChangeBatch {
+                changes: vec![v2::StoredObject {
                     object_id: "future-object".into(),
                     kind: "future".into(),
                     stream_version: cursor,

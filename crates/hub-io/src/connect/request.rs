@@ -8,7 +8,7 @@ use crate::{
     task::spawn,
 };
 use nocterm_hub_client::{ClientError, HubClient, StatusCode};
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::{HubEndpointSpec, HubError, HubFuture, HubId, HubInfo};
 use nocterm_keys::DeviceKey;
 use std::sync::Arc;
@@ -82,7 +82,7 @@ impl Reconnect {
         if let Some((client, login)) = self.known.take() {
             let now = self
                 .observed
-                .during(client.auth().get_hub_info(v1::Empty {}))
+                .during(client.auth().get_hub_info(v2::Empty {}))
                 .await?;
             self.observed.check()?;
             if let Ok(now) = now {

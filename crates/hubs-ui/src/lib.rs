@@ -7,10 +7,10 @@
 //!
 //! Owns: the presentation of the known hubs and their status ([`register`] installs the menu);
 //! the Servers page of the settings ([`settings_page`]), a list of servers and, for the chosen
-//! one, the tabs Overview, Devices (listed and revoked through the service), Agent access (SSH)
-//! (the agent CA, the servers that trust it and the chat accesses, through the service) and Keys & trust
-//! with the administrator keys waiting for the person's confirmation (each with its
-//! fingerprint to compare out of band, and a warning when the key changed), and the palette
+//! one, the tabs Overview, Devices (listed and revoked through the service), Keys (the vault
+//! keys of the account, opened and closed on this device, and a new recovery key), Agents (the
+//! account's agents and model providers, through `nocterm-hub-agents`) and Agent access (the
+//! agent key and the servers connected to agents, checked and disconnected), and the palette
 //! commands; the steps of the sign-in dialog as
 //! the service orders them; the confirmation before a window with tabs switches.
 //!

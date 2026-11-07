@@ -63,13 +63,13 @@ pub(crate) struct HostServices {
     pub(crate) container_actions: Arc<dyn nocterm_project_providers::WorkspaceContainerActions>,
     /// The hub access ports; `None` leaves the application without hubs.
     pub(crate) hubs: Option<nocterm_hubs::Deps>,
-    /// The Cloud agents ports; without them the new-chat menu has no Cloud tab.
-    pub(crate) cloud_agents: Option<nocterm_cloud_agents::Deps>,
-    /// Creates, lists and opens Cloud chats; without it the Cloud tab offers agents only.
-    pub(crate) cloud_chats: Option<Arc<dyn nocterm_cloud_agents_model::CloudChatLauncher>>,
+    /// The agents, providers and agent servers of the hubs; without them a hub window offers
+    /// no hub agents.
+    pub(crate) hub_agents: Option<nocterm_hub_agents::Deps>,
     /// The encrypted data of hub accounts; without it the hubs cannot open windows.
     pub(crate) hub_accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
-    /// Receives the sessions of saved connections for the agent SSH CA; `None` without hubs.
+    /// Receives the sessions of saved connections, so Agent access can write a server's
+    /// `authorized_keys`; `None` without hubs.
     pub(crate) agent_hosts: Option<Arc<dyn nocterm_ssh_keys::authorized_keys::ConnectedHosts>>,
 }
 
@@ -85,13 +85,13 @@ pub(crate) struct HubWindows {
 pub(crate) struct PendingHubs {
     pub(crate) hubs: nocterm_hubs::Installed,
     accounts: Option<Arc<dyn crate::hub_sources::HubAccounts>>,
-    /// The Cloud agents the Servers page manages personal agents of.
-    cloud: Option<gpui_kit::Entity<nocterm_cloud_agents::CloudAgents>>,
-    /// Receives the sessions of saved connections for the agent SSH CA.
+    /// The agents the Servers page manages.
+    agents: Option<gpui_kit::Entity<nocterm_hub_agents::HubAgents>>,
+    /// Receives the sessions of saved connections for Agent access.
     agent_hosts: Option<Arc<dyn nocterm_ssh_keys::authorized_keys::ConnectedHosts>>,
 }
 
-/// Lets the agent SSH CA follow the saved connections once both are installed.
+/// Lets Agent access reach the sessions of saved connections once both are installed.
 fn observe_agent_hosts(
     pending: Option<&PendingHubs>,
     connections: Option<&nocterm_connections::Installed>,
@@ -100,12 +100,7 @@ fn observe_agent_hosts(
     if let (Some(pending), Some(connections)) = (pending, connections)
         && let Some(sessions) = pending.agent_hosts.clone()
     {
-        crate::agent_hosts::observe(
-            sessions,
-            pending.hubs.hubs().clone(),
-            connections,
-            cx.background_executor().clone(),
-        );
+        crate::agent_hosts::observe(sessions, connections, cx.background_executor().clone());
     }
 }
 
@@ -119,20 +114,26 @@ fn start_hubs(
     let PendingHubs {
         hubs,
         accounts,
-        cloud,
+        agents,
         ..
     } = pending?;
     let sources = accounts.map(|accounts| {
         let (hubs, terminal) = (hubs.hubs().clone(), terminal.clone());
         let ready = ready.clone();
+        let agents = agents.clone();
         cx.new(|cx| {
-            crate::hub_sources::HubSources::new(accounts, hubs, inputs, terminal, ready, cx)
+            let sources =
+                crate::hub_sources::HubSources::new(accounts, hubs, inputs, terminal, ready, cx);
+            match agents {
+                Some(agents) => sources.with_agents(agents),
+                None => sources,
+            }
         })
     });
     let ui = nocterm_hubs_ui::install(hubs);
     Some(HubWindows {
-        ui: match cloud {
-            Some(cloud) => ui.with_cloud_agents(cloud),
+        ui: match agents {
+            Some(agents) => ui.with_hub_agents(agents),
             None => ui,
         },
         sources,
@@ -355,7 +356,7 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let (ui, shutdown, themes, layout) = install_interface(tokens, settings, themes, stored, cx);
     let resources = ProjectResources::new(&hosts, ui.settings().clone(), files.directory_readers());
     let local_host = hosts.local_host.clone();
-    let (hubs, cloud_agents) = install_hubs(&hosts, &ui, cx);
+    let (hubs, hub_agents) = install_hubs(&hosts, &ui, cx);
     let terminal_deps = terminal_dependencies(hosts, stored, &shutdown);
     // The vault opens first: the connection editor offers its keys, and its
     // credentials need the installed connections afterwards.
@@ -376,8 +377,8 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     );
     let terminal_auth = terminal_auth_factory.map(|factory| factory(terminal.clone()));
     let snippets = install_snippets(stored, ui.settings(), &shutdown, cx);
-    let agent = install_agent(agent, terminal_auth, images, &layout, &ui, &shutdown, cx);
-    let agent = agent.with_cloud_agents(cloud_agents);
+    let shell = (&layout, &ui, &shutdown);
+    let agent = install_agent(agent, terminal_auth, images, shell, hub_agents, cx);
     let files = install_files(files, &ui, &shutdown, cx);
     let keymap = install_keymap(stored, &shutdown, cx);
     let clock: Arc<dyn WallClock> = Arc::new(nocterm_local::SystemClock);
@@ -547,27 +548,19 @@ fn install_hubs(
     hosts: &HostServices,
     ui: &nocterm_ui::UiReady,
     cx: &mut App,
-) -> (
-    Option<PendingHubs>,
-    Option<nocterm_agent::CloudAgentsAccess>,
-) {
+) -> (Option<PendingHubs>, Option<nocterm_agent::HubAgentsAccess>) {
     let Some(deps) = hosts.hubs.clone() else {
         return (None, None);
     };
     let mut pending = PendingHubs {
         hubs: nocterm_hubs::install(deps, ui.settings().clone(), cx),
         accounts: hosts.hub_accounts.clone(),
-        cloud: None,
+        agents: None,
         agent_hosts: hosts.agent_hosts.clone(),
     };
-    let cloud = crate::cloud_agents_wiring::install(
-        hosts.cloud_agents.clone(),
-        hosts.cloud_chats.clone(),
-        Some(&pending),
-        cx,
-    );
-    pending.cloud = cloud.as_ref().map(|access| access.service().clone());
-    (Some(pending), cloud)
+    let access = crate::hub_agents_wiring::install(hosts.hub_agents.clone(), Some(&pending), cx);
+    pending.agents = access.as_ref().map(|access| access.service().clone());
+    (Some(pending), access)
 }
 
 /// The shared keymap: the defaults and the user's overrides, when the application keeps files.
@@ -650,16 +643,19 @@ fn install_agent(
     mut agent: nocterm_agent::AgentServices,
     terminal_auth: Option<nocterm_agent::TerminalAuthOpener>,
     images: nocterm_agent::ImageDeps,
-    layout: &nocterm_ui::LayoutHandle,
-    ui: &nocterm_ui::UiReady,
-    shutdown: &nocterm_store::ShutdownCoordinator,
+    (layout, ui, shutdown): (
+        &nocterm_ui::LayoutHandle,
+        &nocterm_ui::UiReady,
+        &nocterm_store::ShutdownCoordinator,
+    ),
+    hubs: Option<nocterm_agent::HubAgentsAccess>,
     cx: &mut App,
 ) -> nocterm_agent::Installed {
     if terminal_auth.is_some() {
         agent.terminal_auth = terminal_auth;
     }
     let (agent, registration) =
-        nocterm_agent::init(agent, images, layout.clone(), ui, shutdown, cx);
+        nocterm_agent::init(agent, images, layout.clone(), ui, shutdown, hubs, cx);
     report_store_registration("agent", registration);
     agent
 }

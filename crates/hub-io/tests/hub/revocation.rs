@@ -4,7 +4,7 @@ use futures::executor::block_on;
 use nocterm_connections_model::replica::ProfileReplica as _;
 use nocterm_hub_client::{DeviceInfo, HubClient, HubEndpoint, Trust};
 use nocterm_hub_io::{HubLinks, HubLinksConfig};
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::HubSignIn as _;
 use nocterm_keys::DeviceKey;
 use nocterm_vault::{VaultAccess as _, VaultError, VaultStatus};
@@ -48,8 +48,8 @@ impl Revoker {
         self.runtime.block_on(async {
             let listed = self
                 .client
-                .directory()
-                .list_devices(v1::Empty {})
+                .account()
+                .list_devices(v2::Empty {})
                 .await
                 .unwrap()
                 .into_inner();
@@ -59,16 +59,16 @@ impl Revoker {
                 .find(|device| device.name == name)
                 .expect("the native device is registered");
             self.client
-                .directory()
-                .revoke_device(v1::RevokeDeviceRequest {
-                    device_id: device.device_id.clone(),
+                .account()
+                .revoke_device(v2::IdRequest {
+                    id: device.device_id.clone(),
                 })
                 .await
                 .unwrap();
             let listed = self
                 .client
-                .directory()
-                .list_devices(v1::Empty {})
+                .account()
+                .list_devices(v2::Empty {})
                 .await
                 .unwrap()
                 .into_inner();
@@ -84,11 +84,11 @@ impl Revoker {
 }
 impl Drop for Revoker {
     fn drop(&mut self) {
-        let _ = self.runtime.block_on(self.client.directory().revoke_device(
-            v1::RevokeDeviceRequest {
-                device_id: self.device.clone(),
-            },
-        ));
+        let _ = self
+            .runtime
+            .block_on(self.client.account().revoke_device(v2::IdRequest {
+                id: self.device.clone(),
+            }));
     }
 }
 

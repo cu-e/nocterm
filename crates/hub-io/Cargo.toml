@@ -12,21 +12,17 @@ layer = "adapter"
 [dependencies]
 hex.workspace = true
 nocterm-core.workspace = true
-nocterm-cloud-model.workspace = true
 nocterm-ai.workspace = true
 nocterm-hubs-model.workspace = true
-nocterm-cloud-agents-model.workspace = true
-nocterm-cloud-conversation-model.workspace = true
+nocterm-hub-agents-model.workspace = true
 nocterm-session.workspace = true
-nocterm-ssh-keys.workspace = true
 nocterm-hub-client.workspace = true
-nocterm-cloud-device.workspace = true
-nocterm-hub-model.workspace = true
 nocterm-hub-proto.workspace = true
 nocterm-keys.workspace = true
 nocterm-connections-model.workspace = true
 nocterm-vault.workspace = true
 
+async-channel.workspace = true
 base64.workspace = true
 futures.workspace = true
 prost.workspace = true
@@ -42,15 +38,12 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-nocterm-cloud-model = { workspace = true, features = ["test-support"] }
 nocterm-core = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
-nocterm-ssh-keys = { workspace = true, features = ["test-support"] }
-nocterm-cloud-conversation-model = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

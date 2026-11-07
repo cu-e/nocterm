@@ -222,6 +222,12 @@ impl SessionDriver {
     pub(super) fn begin_cancel(&mut self) -> bool {
         self.phase.stop()
     }
+    pub(super) fn begin_external_turn(&mut self) -> bool {
+        self.phase.start_external_turn()
+    }
+    pub(super) fn finish_external_turn(&mut self) -> bool {
+        self.phase.finish_external_turn()
+    }
     pub(super) fn opened(&mut self) {
         self.phase.opened()
     }

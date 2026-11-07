@@ -4,17 +4,15 @@ fn address() -> HubAddress {
     "hub.example:7443".parse().unwrap()
 }
 
-fn record() -> v1::AccountKeyset {
-    v1::AccountKeyset {
+fn record() -> v2::Keyset {
+    v2::Keyset {
         version: 3,
         kdf: "argon2id;m=65536;t=3;p=4".into(),
         salt: vec![1; 16],
         wrapped_account_key: vec![2; 60],
         updated_at_ms: 9,
-        public_key: vec![3; 32],
-        sealed_private_key: vec![4; 70],
         recovery_wrapped_account_key: vec![5; 60],
-        unlock_kind: v1::UnlockKind::LoginPassword as i32,
+        unlock_kind: v2::UnlockKind::LoginPassword as i32,
     }
 }
 

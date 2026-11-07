@@ -1,10 +1,11 @@
-//! Captured local-history identity; deliberately no stable Cloud authority.
+//! Captured local-history identity of the signed-in account.
 use super::{OpenKeys, Slot};
 use crate::classify::remote;
 use nocterm_hubs_model::{
     HubError, HubId,
     source_identity::{
-        Fingerprint, LocalAccountPartition, LocalAccountSource, LocalAccountSourceError,
+        Fingerprint, LegacyConfiguredAccount, LocalAccountPartition, LocalAccountSource,
+        LocalAccountSourceError, NamespaceId,
     },
 };
 use std::sync::{Arc, Weak};
@@ -144,17 +145,15 @@ impl LocalAccountSource for CapturedAccount {
     }
 }
 
-fn key_fingerprint(keys: &OpenKeys) -> Result<Fingerprint, HubError> {
-    // The SDK already owns SHA-256 of this public key. Reuse the bounded hex
-    // parser for its bytes; the certificate type does not establish hub trust here.
-    let text = keys.keyset().public_key().fingerprint();
-    if text.len() > 79 {
-        return Err(remote(nocterm_hubs_model::FingerprintError::Length {
-            found: text.len(),
-        }));
-    }
-    let parsed = nocterm_hubs_model::Fingerprint::parse(&text.replace('-', "")).map_err(remote)?;
-    Ok(Fingerprint::from_bytes(*parsed.as_bytes()))
+/// The local history partition of `account` on `hub`. It depends on the account only, never
+/// on its keys, so a locked vault keeps the same chats.
+pub(crate) fn partition_of(hub: &HubId, account: &str) -> Result<LocalAccountPartition, HubError> {
+    use sha2::{Digest as _, Sha256};
+    let id = NamespaceId::new(account.to_owned()).map_err(remote)?;
+    let digest: [u8; 32] = Sha256::digest(account.as_bytes()).into();
+    Ok(LocalAccountPartition::LegacyConfigured(
+        LegacyConfiguredAccount::new(hub.clone(), id, Fingerprint::from_bytes(digest)),
+    ))
 }
 
 #[cfg(test)]

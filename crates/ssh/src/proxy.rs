@@ -72,15 +72,16 @@ pub(crate) async fn connect(
             socks(&mut stream, target, *remote_dns).await?;
             Box::new(stream)
         }
-        ProxyConfig::Hub { address, node } => {
+        ProxyConfig::Hub { address } => {
             let relay = relay.ok_or(ConnectError::NoRelay)?;
-            let stream = relay
-                .dial(address, node.as_deref(), target)
-                .await
-                .map_err(|source| ConnectError::Relay {
-                    hub: address.clone(),
-                    source,
-                })?;
+            let stream =
+                relay
+                    .dial(address, target)
+                    .await
+                    .map_err(|source| ConnectError::Relay {
+                        hub: address.clone(),
+                        source,
+                    })?;
             Box::new(relay::bridge(stream))
         }
     })

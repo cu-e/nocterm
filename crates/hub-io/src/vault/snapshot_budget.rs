@@ -1,7 +1,7 @@
 //! Bounds one operation's sealed snapshots before retaining another object or page.
 use std::{collections::BTreeMap, sync::Arc};
 
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 
 use crate::{
     cache::{ObjectCopy, VaultCopy},
@@ -13,7 +13,7 @@ pub(super) fn merge_vault(
     mut vault: Arc<VaultCopy>,
     budget: Option<SnapshotBudget>,
     envelope: Vec<u8>,
-    batch: v1::ChangeBatch,
+    batch: v2::ChangeBatch,
 ) -> Result<(Arc<VaultCopy>, SnapshotBudget, bool), OpError> {
     let mut budget = match budget {
         Some(budget) => budget,
@@ -31,7 +31,7 @@ pub(super) fn merge_vault(
 
 const MAX_BYTES: usize = 24 * 1024 * 1024;
 const MAX_OBJECTS: usize = 32_768;
-pub(super) const MAX_GROUPS: usize = 256;
+
 const MAX_PAGES: usize = 1_024;
 
 #[derive(Debug, thiserror::Error)]
@@ -72,7 +72,7 @@ impl SnapshotBudget {
         &mut self,
         objects: &mut BTreeMap<String, ObjectCopy>,
         cursor: &mut u64,
-        batch: v1::ChangeBatch,
+        batch: v2::ChangeBatch,
     ) -> Result<bool, OpError> {
         self.pages += 1;
         if self.pages > MAX_PAGES {

@@ -5,10 +5,7 @@ use gpui_kit::{AppContext as _, TestAppContext};
 use nocterm_connections_store::{ProbeSourceIdentity, test_support::ScriptedProbeSource};
 use nocterm_session::testing::{Gate, InMemoryFs};
 use nocterm_ssh_keys::{authorized_keys::HostIdentity, testing::ScriptedConnectedHosts};
-use std::{
-    cell::Cell,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 fn host(connection: &str, fs: Arc<dyn RemoteFs>) -> ConnectedHost {
     ConnectedHost {
@@ -16,7 +13,7 @@ fn host(connection: &str, fs: Arc<dyn RemoteFs>) -> ConnectedHost {
         identity: HostIdentity {
             user: "user".into(),
             host: "host".into(),
-            host_key_fingerprint: String::new(),
+            host_key: String::new(),
         },
         port: 22,
         fs,
@@ -26,22 +23,9 @@ fn source(cx: &mut TestAppContext) -> ScriptedProbeSource {
     let identity = cx.update(|cx| cx.new(|_| ()).entity_id());
     ScriptedProbeSource::new(ProbeSourceIdentity::new(identity, 1))
 }
-fn observer(
-    cx: &mut TestAppContext,
-    native: &ScriptedConnectedHosts,
-) -> (Reconciling, Rc<Cell<usize>>) {
+fn observer(cx: &mut TestAppContext, native: &ScriptedConnectedHosts) -> Announcing {
     cx.executor().allow_parking();
-    let executor = cx.executor().clone();
-    let reconciled = Rc::new(Cell::new(0));
-    let count = reconciled.clone();
-    (
-        Reconciling::new(
-            Arc::new(native.clone()),
-            Rc::new(move |_, _| count.set(count.get() + 1)),
-            executor,
-        ),
-        reconciled,
-    )
+    Announcing::new(Arc::new(native.clone()), cx.executor().clone())
 }
 fn start_preparation(
     cx: &TestAppContext,
@@ -68,7 +52,7 @@ fn newer_session_announcements_cannot_be_overwritten_by_old_preparation(cx: &mut
     let gate = Gate::pending();
     let waiting = gate.clone();
     native.suspend_prepare(async move { waiting.wait().await }.boxed());
-    let (observer, reconciled) = observer(cx, &native);
+    let observer = observer(cx, &native);
     let old = source(cx);
     let latest = source(cx);
     let first: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
@@ -82,7 +66,6 @@ fn newer_session_announcements_cannot_be_overwritten_by_old_preparation(cx: &mut
     assert_eq!(native.published().len(), 1);
     assert!(Arc::ptr_eq(&native.published()[0].fs, &replacement));
     assert_eq!(native.prepared(), 2);
-    assert_eq!(reconciled.get(), 1);
 }
 
 #[gpui_kit::test]
@@ -91,7 +74,7 @@ fn a_closed_original_session_discards_its_prepared_metadata(cx: &mut TestAppCont
     let gate = Gate::pending();
     let waiting = gate.clone();
     native.suspend_prepare(async move { waiting.wait().await }.boxed());
-    let (observer, reconciled) = observer(cx, &native);
+    let observer = observer(cx, &native);
     let original = source(cx);
     let other = source(cx);
     cx.update(|cx| {
@@ -115,7 +98,6 @@ fn a_closed_original_session_discards_its_prepared_metadata(cx: &mut TestAppCont
     cx.run_until_parked();
     assert_eq!(native.published().len(), 1);
     assert_eq!(native.published()[0].connection, "other");
-    assert_eq!(reconciled.get(), 1);
 }
 
 #[gpui_kit::test]
@@ -124,7 +106,7 @@ fn repeated_announcements_of_the_same_source_share_native_preparation(cx: &mut T
     let gate = Gate::pending();
     let waiting = gate.clone();
     native.suspend_prepare(async move { waiting.wait().await }.boxed());
-    let (observer, reconciled) = observer(cx, &native);
+    let observer = observer(cx, &native);
     let original = source(cx);
     let lease = original.lease();
     let fs: Arc<dyn RemoteFs> = Arc::new(InMemoryFs::default());
@@ -146,5 +128,4 @@ fn repeated_announcements_of_the_same_source_share_native_preparation(cx: &mut T
     cx.run_until_parked();
     assert_eq!(native.published().len(), 2);
     assert_eq!(native.prepared(), 2);
-    assert_eq!(reconciled.get(), 2);
 }

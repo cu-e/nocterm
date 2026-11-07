@@ -10,11 +10,10 @@ use std::{
     },
 };
 
-/// What one dial asked of the relay: the hub, its node and the destination.
+/// What one dial asked of the relay: the hub and the destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayRequest {
     pub hub: String,
-    pub node: Option<String>,
     pub target: Target,
 }
 
@@ -99,24 +98,17 @@ impl Drop for Abandoned {
 }
 
 impl RelayDialer for ScriptedRelay {
-    fn capture(
-        &self,
-        _hub: &str,
-        _node: Option<&str>,
-        _target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
-        Ok(capture_relay(Arc::new(self.clone()), _hub, _node, _target))
+    fn capture(&self, _hub: &str, _target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        Ok(capture_relay(Arc::new(self.clone()), _hub, _target))
     }
 
     fn dial(
         &self,
         hub: &str,
-        node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
         lock(&self.0.asked).push(RelayRequest {
             hub: hub.to_owned(),
-            node: node.map(str::to_owned),
             target: target.clone(),
         });
         let reply = lock(&self.0.replies)
@@ -146,14 +138,12 @@ impl RelayDialer for ScriptedRelay {
 pub fn capture_relay(
     inner: Arc<dyn RelayDialer>,
     hub: &str,
-    node: Option<&str>,
     target: &Target,
 ) -> Arc<dyn RelayDialer> {
     Arc::new(CapturedRelay {
         inner,
         request: RelayRequest {
             hub: hub.to_owned(),
-            node: node.map(str::to_owned),
             target: target.clone(),
         },
     })
@@ -164,20 +154,13 @@ struct CapturedRelay {
     request: RelayRequest,
 }
 impl CapturedRelay {
-    fn matches(&self, hub: &str, node: Option<&str>, target: &Target) -> bool {
-        self.request.hub == hub
-            && self.request.node.as_deref() == node
-            && self.request.target == *target
+    fn matches(&self, hub: &str, target: &Target) -> bool {
+        self.request.hub == hub && self.request.target == *target
     }
 }
 impl RelayDialer for CapturedRelay {
-    fn capture(
-        &self,
-        hub: &str,
-        node: Option<&str>,
-        target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
-        if !self.matches(hub, node, target) {
+    fn capture(&self, hub: &str, target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        if !self.matches(hub, target) {
             return Err(RelayError::CaptureUnsupported);
         }
         Ok(Arc::new(self.clone()))
@@ -185,12 +168,11 @@ impl RelayDialer for CapturedRelay {
     fn dial(
         &self,
         hub: &str,
-        node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
-        if !self.matches(hub, node, target) {
+        if !self.matches(hub, target) {
             return async { Err(RelayError::CaptureUnsupported) }.boxed();
         }
-        self.inner.dial(hub, node, target)
+        self.inner.dial(hub, target)
     }
 }

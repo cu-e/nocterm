@@ -207,6 +207,7 @@ fn fixture_with_width(
                 layout.clone(),
                 &ui,
                 &shutdown,
+                None,
                 cx,
             );
             registration.unwrap();
@@ -333,6 +334,7 @@ fn install_fixture(
             f.installation.layout.clone(),
             &f.installation.ready,
             &f.installation.shutdown,
+            None,
             cx,
         );
         registration.unwrap();
@@ -567,4 +569,3 @@ fn set_input(f: &Fixture, text: &str, cx: &mut TestAppContext) {
     })
     .unwrap();
 }
-mod cloud_agents;

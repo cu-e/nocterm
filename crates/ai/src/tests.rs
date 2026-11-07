@@ -19,6 +19,7 @@ fn environment_blocks_sensitive_and_injection_vars_even_if_requested() {
         args: Vec::new(),
         env: Default::default(),
         inherit_env: vec!["ANTHROPIC_API_KEY".into()],
+        hub: None,
     };
     for name in [
         "SSH_AUTH_SOCK",

@@ -16,23 +16,9 @@ async fn queued_replica_mutations_never_choose_the_replacement_account() {
     let item = profile("A");
     let put = replica.put(ReplicaScope::Personal, item.clone(), None);
     let delete = replica.delete(ReplicaScope::Personal, item.id, ReplicaVersion::new(1));
-    let carry = replica.carry(
-        item.id,
-        ReplicaScope::Personal,
-        ReplicaScope::Personal,
-        Vec::new(),
-    );
-    let copy = replica.copy(
-        item.id,
-        ReplicaScope::Personal,
-        ReplicaScope::Personal,
-        Vec::new(),
-    );
     fixture.login(1);
     assert!(matches!(put.await, Err(ReplicaError::Stale)));
     assert!(matches!(delete.await, Err(ReplicaError::Stale)));
-    assert!(matches!(carry.await, Err(ReplicaError::Stale)));
-    assert!(matches!(copy.await, Err(ReplicaError::Stale)));
     assert!(
         fixture
             .hub(0)
@@ -52,7 +38,7 @@ async fn queued_replica_mutations_never_choose_the_replacement_account() {
 }
 
 #[tokio::test]
-async fn late_replica_changes_publish_neither_a_page_nor_spaces_for_b() {
+async fn late_replica_changes_publish_no_page_for_b() {
     let fixture = NativeAccounts::new();
     let a = captured(&fixture);
     a.put(ReplicaScope::Personal, profile("A"), None)
@@ -64,11 +50,8 @@ async fn late_replica_changes_publish_neither_a_page_nor_spaces_for_b() {
     fixture.login(1);
     let b = captured(&fixture);
     assert!(b.changes(None).await.unwrap().changes.is_empty());
-    let b_spaces = b.spaces();
     release.release();
     assert!(matches!(old.await, Err(ReplicaError::Stale)));
-    assert!(a.spaces().is_empty());
-    assert_eq!(b.spaces(), b_spaces);
 }
 
 #[tokio::test]
@@ -79,8 +62,9 @@ async fn a_finished_replica_page_is_rechecked_when_its_caller_first_polls() {
         .put(ReplicaScope::Personal, profile("A"), None)
         .await
         .unwrap();
+    let calls = fixture.hub(0).change_calls();
     let old = replica.changes(None);
-    while replica.spaces().is_empty() {
+    while fixture.hub(0).change_calls() == calls {
         tokio::task::yield_now().await;
     }
     fixture.login(1);

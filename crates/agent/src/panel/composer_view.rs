@@ -34,17 +34,19 @@ impl Default for InputGeneration {
         }
     }
 }
+/// The composer's input was replaced since its text was read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("The composer changed meanwhile.")]
+pub(super) struct StaleInput;
+
 impl InputGeneration {
-    fn ticket(
-        &mut self,
-        revision: u64,
-    ) -> Result<InputTicket, nocterm_agent_chat::conversation::ConversationError> {
+    fn ticket(&mut self, revision: u64) -> Result<InputTicket, StaleInput> {
         // The native counter wraps. Once an observed generation regresses,
         // only a new input instance can restore this fence.
         self.fenced |= revision < self.observed;
         self.observed = self.observed.max(revision);
         if self.fenced {
-            return Err(nocterm_agent_chat::conversation::ConversationError::Stale);
+            return Err(StaleInput);
         }
         Ok(InputTicket {
             revision,
@@ -147,10 +149,7 @@ impl ComposerView {
     pub(super) fn revision(&self) -> u64 {
         self.state.revision
     }
-    pub(super) fn input_ticket(
-        &self,
-        cx: &App,
-    ) -> Result<InputTicket, nocterm_agent_chat::conversation::ConversationError> {
+    pub(super) fn input_ticket(&self, cx: &App) -> Result<InputTicket, StaleInput> {
         let revision = self.input.read(cx).document_revision();
         self.input_generation.borrow_mut().ticket(revision)
     }

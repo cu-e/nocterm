@@ -6,17 +6,16 @@ use nocterm_store::{SettingsHandle, ShutdownCoordinator, StoreError};
 use nocterm_ui::{LayoutHandle, UiReady};
 use std::{rc::Rc, sync::Arc};
 mod source;
-use crate::cloud_access::CloudAgentsAccess;
+use crate::hub_access::HubAgentsAccess;
 use source::SourceBinding;
 #[derive(Clone)]
 pub struct Installed {
     inner: Rc<Installation>,
     source: SourceBinding,
-    cloud: Option<CloudAgentsAccess>,
+    hubs: Option<HubAgentsAccess>,
 }
 struct Installation {
     agents: AgentsHandle,
-    cloud_chats: nocterm_cloud_chat::CloudChatInstallation,
     settings: SettingsHandle,
     metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     images: ImageDeps,
@@ -34,7 +33,7 @@ impl Installed {
     ) -> Result<Self, nocterm_ai::storage::AgentStorageError> {
         Ok(Self {
             inner: self.inner.clone(),
-            cloud: self.cloud.clone(),
+            hubs: self.hubs.clone(),
             source: SourceBinding::fixed(self.runtime().for_environment(access)?),
         })
     }
@@ -42,7 +41,7 @@ impl Installed {
     pub fn unavailable_account(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            cloud: self.cloud.clone(),
+            hubs: self.hubs.clone(),
             source: SourceBinding::fixed(self.runtime().unavailable_account()),
         }
     }
@@ -52,29 +51,19 @@ impl Installed {
     ) -> Self {
         Self {
             inner: self.inner.clone(),
-            cloud: self.cloud.clone(),
+            hubs: self.hubs.clone(),
             source: SourceBinding::account(self.runtime(), factory),
         }
     }
-    /// The Cloud agents of the signed-in hubs. Only a hub window made from this installation
-    /// ([`Self::for_hub_window`]) offers them in its new-chat menu; `None` keeps every menu
-    /// local-only.
-    pub fn with_cloud_agents(&self, access: Option<CloudAgentsAccess>) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            source: self.source.clone(),
-            cloud: access,
-        }
-    }
-    /// A window of one hub offers only that hub's Cloud agents.
+    /// A window of one hub offers that hub's agents beside the local ones, and lists its chats.
     pub fn for_hub_window(&self, hub: &nocterm_hubs_model::HubId) -> Self {
         Self {
-            cloud: self.cloud.as_ref().map(|access| access.for_hub_window(hub)),
+            hubs: self.hubs.as_ref().map(|access| access.for_hub_window(hub)),
             ..self.clone()
         }
     }
-    pub(crate) fn cloud_agents(&self) -> Option<&CloudAgentsAccess> {
-        self.cloud.as_ref()
+    pub(crate) fn hub_agents(&self) -> Option<&HubAgentsAccess> {
+        self.hubs.as_ref()
     }
     pub(crate) fn capture_runtime(
         &self,
@@ -84,11 +73,6 @@ impl Installed {
     /// The agents available to start, for other surfaces such as settings.
     pub fn agents(&self) -> &AgentsHandle {
         &self.inner.agents
-    }
-    /// One shared Cloud owner across root windows and their captured environments.
-    /// Native sources still retain and validate their original account membership.
-    pub fn cloud_chats(&self) -> &nocterm_cloud_chat::CloudChatInstallation {
-        &self.inner.cloud_chats
     }
     pub(crate) fn settings(&self) -> &SettingsHandle {
         &self.inner.settings
@@ -112,10 +96,15 @@ pub(crate) fn install(
     layout: LayoutHandle,
     ready: &UiReady,
     shutdown: &ShutdownCoordinator,
+    hubs: Option<HubAgentsAccess>,
     cx: &mut App,
 ) -> (Installed, Result<(), StoreError>) {
     let settings = ready.settings().clone();
-    let agents = AgentsHandle::new(services.catalog, settings.clone(), cx);
+    let mut agents = AgentsHandle::new(services.catalog, settings.clone(), cx);
+    if let Some(hubs) = &hubs {
+        let service = hubs.agents().clone();
+        agents = agents.with_hub_agents(Rc::new(move |cx| service.read(cx).launches()));
+    }
     let runtime = runtime::RuntimeHandle::new(
         runtime::RuntimeServices {
             settings: settings.clone(),
@@ -134,17 +123,14 @@ pub(crate) fn install(
         cx,
     );
     let observation = runtime.observe_settings(&settings, cx);
-    let cloud_chats =
-        nocterm_cloud_chat::CloudChatInstallation::new(runtime.history_admission(cx), cx);
     let captured = runtime.clone();
     let registered = shutdown.register_capture(move |cx| captured.capture_shutdown(cx));
     (
         Installed {
-            cloud: None,
+            hubs,
             source: SourceBinding::fixed(runtime.clone()),
             inner: Rc::new(Installation {
                 agents,
-                cloud_chats,
                 settings,
                 metadata: services.metadata,
                 images,

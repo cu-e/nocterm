@@ -16,5 +16,5 @@ mod tests;
 
 pub use available::{AgentConfigWarning, AgentSource, AvailableAgent, AvailableAgents};
 pub use catalog::{AgentCatalog, CatalogError};
-pub use launch::{AgentLaunch, valid_id};
+pub use launch::{AgentLaunch, HUB_AGENT_PREFIX, HubAgentRef, valid_id};
 pub use profile::{AgentMark, AgentProfile, LaunchDefaults, UsageMeta, UsageProfile};

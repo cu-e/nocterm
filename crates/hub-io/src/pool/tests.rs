@@ -163,10 +163,10 @@ fn a_late_captured_revocation_cannot_erase_a_new_login_of_the_same_account() {
     let current = login.file.save_session(&replacement).unwrap();
     assert_ne!(current, login.login);
     sign_in(&login.accounts);
-    let key = login.slot.open().unwrap().keyset().public_key();
+    let keys = login.slot.open().unwrap();
     assert!(matches!(login.retire(true), Err(HubError::Stale)));
     assert_eq!(login.slot.status(), VaultStatus::Unlocked);
-    assert_eq!(login.slot.open().unwrap().keyset().public_key(), key);
+    assert!(Arc::ptr_eq(&login.slot.open().unwrap(), &keys));
     assert!(login.cached());
     let device = login.file.load().unwrap().unwrap();
     assert_eq!(device.login, Some(current));

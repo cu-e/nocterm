@@ -14,7 +14,7 @@ use gpui_kit::{
 use nocterm_hubs::{HubSummary, Hubs, HubsError};
 use nocterm_hubs_model::{HubColor, HubId};
 
-use crate::messages::{admin_key_problem, hubs_problem};
+use crate::messages::hubs_problem;
 
 /// Shows a notice titled `title` when `task` fails, once it has finished.
 pub(crate) fn report(
@@ -63,37 +63,6 @@ pub(crate) fn recolor(
 ) {
     let marking = hubs.update(cx, |hubs, cx| hubs.set_color(hub, color, cx));
     report(marking, "Could not change the colour", window, cx);
-}
-
-/// Confirms the key of the administrator `account_id` of `hub`, shown with `fingerprint`, after
-/// the person compared it with the administrator's own. The service reads the groups it unlocks
-/// again; a key that is no longer the one on offer is reported.
-pub(crate) fn confirm_admin_key(
-    hubs: &Entity<Hubs>,
-    offer: &nocterm_hubs_model::AdminKeyOffer,
-    fingerprint: &str,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let confirmed = hubs.update(cx, |hubs, cx| {
-        hubs.confirm_admin_key(offer, fingerprint, cx)
-    });
-    window
-        .spawn(cx, async move |cx| {
-            if let Err(error) = confirmed.await {
-                cx.update(|window, cx| {
-                    nocterm_ui::notice::error(
-                        window,
-                        cx,
-                        "hub-admin-key",
-                        "Could not confirm the key",
-                        admin_key_problem(error),
-                    );
-                })
-                .ok();
-            }
-        })
-        .detach();
 }
 
 /// Asks before removing a server: it leaves this device's list and its credentials are

@@ -128,12 +128,7 @@ pub(crate) fn decode_records(mut bytes: &[u8]) -> Result<Vec<Record>, VaultError
             serde_json::from_str(text(&mut bytes, 4096)?).map_err(|_| VaultError::Format)?;
         let secret = Secret::new(text(&mut bytes, 65536)?.to_owned());
         records.push(Record {
-            info: CredentialInfo {
-                id,
-                label,
-                binding,
-                group: None,
-            },
+            info: CredentialInfo { id, label, binding },
             secret,
         });
     }

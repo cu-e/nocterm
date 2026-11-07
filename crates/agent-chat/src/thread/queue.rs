@@ -1,4 +1,5 @@
-//! Prompt snapshots and FIFO dispatch. Cancellation completes before dispatch resumes.
+//! Prompt snapshots and FIFO dispatch. Cancellation completes before dispatch resumes, and a
+//! turn the agent runs for another device holds dispatch until it ends.
 use super::tools::unreachable;
 use super::{
     background_open::BackgroundOpen,
@@ -683,6 +684,36 @@ impl AgentThread {
         }
         cx.notify();
         Ok(true)
+    }
+
+    /// A turn the agent runs for another device: its prompt joins the transcript and the chat
+    /// shows the agent working until the turn ends; then the chat's own queue goes on.
+    pub(super) fn external_turn(
+        &mut self,
+        activity: &nocterm_ai::model::session::TurnActivity,
+        cx: &mut Context<Self>,
+    ) {
+        use nocterm_ai::model::session::TurnActivity;
+        match activity {
+            TurnActivity::Started { prompt } => {
+                if let Err(error) = self.state.append_prompt(prompt, self.deps.timestamp()) {
+                    return self.fail(&error.to_string(), cx);
+                }
+                if self.session.begin_external_turn() {
+                    self.notice.present("Working…".into());
+                }
+            }
+            TurnActivity::Ended => {
+                if !self.session.finish_external_turn() {
+                    return;
+                }
+                self.finalize_tool_displays();
+                self.notice.present("Ready".into());
+                self.persist(cx);
+                self.dispatch_next(cx);
+            }
+        }
+        cx.notify();
     }
 
     pub fn dispatch_next(&mut self, cx: &mut Context<Self>) {

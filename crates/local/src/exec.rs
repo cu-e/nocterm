@@ -66,13 +66,6 @@ impl HostExec for ScopedLocalExec {
         terminal(request, self.source.clone())
     }
 }
-pub(crate) fn execute_scoped(
-    request: ExecRequest,
-    source: nocterm_session::ConnectionSource,
-    executor: &LocalExec,
-) -> ExecFuture<ExecOutput> {
-    execute(request, source, executor.admission.clone())
-}
 fn execute(
     request: ExecRequest,
     source: nocterm_session::ConnectionSource,

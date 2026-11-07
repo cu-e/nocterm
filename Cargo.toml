@@ -47,8 +47,7 @@ nocterm-project-container-fs.workspace = true
 nocterm-directory-io.workspace = true
 nocterm-explorer.workspace = true
 nocterm-hub-io.workspace = true
-nocterm-cloud-agents.workspace = true
-nocterm-cloud-agents-model.workspace = true
+nocterm-hub-agents.workspace = true
 nocterm-hubs-model.workspace = true
 nocterm-hubs.workspace = true
 nocterm-hubs-ui.workspace = true
@@ -221,13 +220,6 @@ license-file = "LICENSE"
 nocterm-terminal-model = { path = "crates/terminal-model" }
 nocterm-explorer = { path = "crates/explorer" }
 nocterm-ai = { path = "crates/ai" }
-nocterm-cloud-model = { path = "crates/cloud-model" }
-nocterm-cloud-chat = { path = "crates/cloud-chat" }
-nocterm-agent-engine = { path = "crates/agent-engine" }
-rig-agent = { git = "https://github.com/0xPlaygrounds/rig", rev = "a0efbf9086f2bc6847f2d91494fe32a34e5a2159", default-features = false }
-rig-core = { git = "https://github.com/0xPlaygrounds/rig", rev = "a0efbf9086f2bc6847f2d91494fe32a34e5a2159", default-features = false }
-url = "2"
-nocterm-cloud-runner = { path = "crates/cloud-runner" }
 nocterm-project-model = { path = "crates/project-model" }
 nocterm-project-providers = { path = "crates/project-providers" }
 nocterm-project-runtime = { path = "crates/project-runtime" }
@@ -266,9 +258,8 @@ nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
 nocterm-hubs-model = { path = "crates/hubs-model" }
-nocterm-cloud-agents-model = { path = "crates/cloud-agents-model" }
-nocterm-cloud-conversation-model = { path = "crates/cloud-conversation-model" }
-nocterm-cloud-agents = { path = "crates/cloud-agents" }
+nocterm-hub-agents-model = { path = "crates/hub-agents-model" }
+nocterm-hub-agents = { path = "crates/hub-agents" }
 nocterm-hub-io = { path = "crates/hub-io" }
 nocterm-hubs = { path = "crates/hubs" }
 nocterm-hubs-ui = { path = "crates/hubs-ui" }
@@ -310,11 +301,10 @@ nocterm-vault = { path = "crates/vault" }
 nocterm-vault-store = { path = "crates/vault-store" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
 # The hub contract lives outside this workspace (ADR 0096); only nocterm-hub-io may use it.
-nocterm-hub-client = { git = "https://github.com/cu-e/nocterm-contract", rev = "edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81" }
-nocterm-cloud-device = { git = "https://github.com/cu-e/nocterm-contract", rev = "edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81" }
-nocterm-hub-model = { git = "https://github.com/cu-e/nocterm-contract", rev = "edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81" }
-nocterm-hub-proto = { git = "https://github.com/cu-e/nocterm-contract", rev = "edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81" }
-nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "edd7d0be7b87bbdbc6e7ecc9311684cc46b8fd81" }
+nocterm-hub-client = { git = "https://github.com/cu-e/nocterm-contract", rev = "8622a82a0eb345a7e2a7432b95f4016ccf289afc" }
+nocterm-hub-model = { git = "https://github.com/cu-e/nocterm-contract", rev = "8622a82a0eb345a7e2a7432b95f4016ccf289afc" }
+nocterm-hub-proto = { git = "https://github.com/cu-e/nocterm-contract", rev = "8622a82a0eb345a7e2a7432b95f4016ccf289afc" }
+nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "8622a82a0eb345a7e2a7432b95f4016ccf289afc" }
 
 agent-client-protocol = "=2.2.0"
 agent-client-protocol-schema = { version = "=1.9.1", features = ["unstable_session_fork", "unstable_end_turn_token_usage"] }
@@ -352,7 +342,6 @@ regex-syntax = "0.8"
 russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "3"
 # Pinned to the version `russh` resolves, so key text round-trips between the two (ADR 0102).
-signature = "3.0.0"
 ssh-key = { version = "=0.7.0-rc.11", default-features = false, features = ["ed25519", "p256", "p384", "p521", "rsa", "encryption"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

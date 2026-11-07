@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 
+use crate::account::Slot;
 use crate::account::operations::AccountOperations;
 use crate::account::source::LocalSourceProvider;
-use crate::account::{AdminKeys, Slot};
 use crate::pool::Pool;
 use crate::replica::HubProfileReplica;
 use crate::vault::{HubVault, credentials::CredentialCapture};
@@ -17,13 +17,10 @@ use nocterm_hubs_model::{HubError, source_identity::LocalAccountSource};
 pub struct HubAccount {
     handle: Handle,
     vault: Arc<HubVault>,
-    admin_keys: AdminKeys,
     source: LocalSourceProvider,
     credentials: CredentialCapture,
     relay: crate::relay::RelayCapture,
     operations: Arc<AccountOperations>,
-    cloud_material: crate::cloud::account_material::CloudMaterialCapture,
-    cloud_trust: crate::cloud::hub_trust::CloudTrustCapture,
 }
 
 impl HubAccount {
@@ -31,17 +28,6 @@ impl HubAccount {
         let relay = crate::relay::RelayCapture::new(handle.clone(), pool.clone());
         let source = LocalSourceProvider::new(Arc::clone(&slot), pool.clone());
         let operations = Arc::new(AccountOperations::new(source.clone(), &pool));
-        let cloud_material = crate::cloud::account_material::CloudMaterialCapture::new(
-            handle.clone(),
-            &pool,
-            operations.clone(),
-        );
-        let admin_keys = AdminKeys::new(operations.clone());
-        let cloud_trust = crate::cloud::hub_trust::CloudTrustCapture::new(
-            handle.clone(),
-            &pool,
-            operations.clone(),
-        );
         let vault = Arc::new(HubVault::new(
             handle.clone(),
             Arc::clone(&slot),
@@ -52,38 +38,11 @@ impl HubAccount {
         Self {
             handle,
             vault,
-            admin_keys,
             source,
             credentials,
             relay,
             operations,
-            cloud_material,
-            cloud_trust,
         }
-    }
-
-    /// Opens the original normal account trust owner before a Cloud pin is known.
-    /// Only explicit independently compared setup may create its encrypted record.
-    pub fn cloud_trust(
-        &self,
-        source: Arc<dyn LocalAccountSource>,
-        resident: nocterm_core::allocation::AllocationLease,
-    ) -> Result<crate::cloud::AccountCloudTrust, crate::cloud::CloudTrustError> {
-        self.cloud_trust.capture(source, resident)
-    }
-
-    /// Capture Cloud access under the independently retained hub authority pin.
-    /// The source is captured synchronously; later lock or sign-in cannot retarget it.
-    pub fn cloud_material(
-        &self,
-        source: Arc<dyn LocalAccountSource>,
-        authority: [u8; 32],
-        reservations: crate::cloud::AccountMaterialReservations,
-    ) -> futures::future::BoxFuture<
-        'static,
-        Result<crate::cloud::CloudAccountMaterial, crate::cloud::AccountMaterialError>,
-    > {
-        self.cloud_material.capture(source, authority, reservations)
     }
 
     /// The saved profiles of the account.
@@ -102,32 +61,13 @@ impl HubAccount {
         )))
     }
 
-    /// The administrators of the account's groups whose keys wait for a person to compare
-    /// their fingerprints.
-    pub fn admin_keys(&self) -> AdminKeys {
-        self.admin_keys.clone()
-    }
-
-    /// The account's operations bound to the captured `source`, holding its keys weakly.
-    pub(crate) fn bind(
-        &self,
-        source: Arc<dyn LocalAccountSource>,
-    ) -> Result<crate::account::operations::BoundOperations, HubError> {
-        self.operations.bind(source)
-    }
-
-    /// The encrypted store of the account, captured from its current signed-in membership.
-    pub(crate) fn work(&self) -> Result<crate::account::operations::OpenedWork, HubError> {
-        self.operations.opened()
-    }
-
     /// The vault of the account.
     pub fn vault(&self) -> Arc<HubVault> {
         Arc::clone(&self.vault)
     }
     /// Captures this configured hub's currently signed-in, unlocked account for
-    /// device-local history. Lock, sign-out or replacement login makes it stale;
-    /// ordinary token refresh does not. This is not a stable Cloud identity.
+    /// device-local history. Sign-out or replacement login makes it stale; lock and
+    /// ordinary token refresh do not.
     pub fn local_source(&self) -> Result<Arc<dyn LocalAccountSource>, HubError> {
         self.source.capture()
     }

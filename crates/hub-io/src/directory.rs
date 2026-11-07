@@ -1,7 +1,7 @@
 //! Account display values are checked against the original authenticated native subject.
 use crate::{account::key_admission::KeyAdmission, convert};
 use nocterm_hub_client::{ClientError, HubClient};
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::{Account, HubError};
 
 pub(crate) async fn who_am_i(
@@ -9,7 +9,7 @@ pub(crate) async fn who_am_i(
     owner: &KeyAdmission,
 ) -> Result<Account, HubError> {
     let response = owner
-        .during(client.directory().who_am_i(v1::Empty {}))
+        .during(client.account().who_am_i(v2::Empty {}))
         .await?
         .map_err(|status| owner.failure(ClientError::from(status)))?
         .into_inner();

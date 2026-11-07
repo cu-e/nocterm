@@ -193,7 +193,6 @@ impl VaultView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = record.id;
-        let read_only = is_read_only(record);
         h_flex()
             .w_full()
             .py_3()
@@ -225,12 +224,8 @@ impl VaultView {
                     .small()
                     .ghost()
                     .icon(IconName::Trash)
-                    .tooltip(if read_only {
-                        "Read-only group credential"
-                    } else {
-                        "Delete"
-                    })
-                    .disabled(self.busy || read_only)
+                    .tooltip("Delete")
+                    .disabled(self.busy)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.operation(this.service.delete(id), cx)
                     })),
@@ -398,9 +393,4 @@ impl VaultView {
         );
         form::section("Behavior", [lock, startup], cx)
     }
-}
-
-/// A group credential the member may only read cannot be deleted.
-fn is_read_only(record: &CredentialInfo) -> bool {
-    record.group.as_ref().is_some_and(|group| !group.writable)
 }

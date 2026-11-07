@@ -1,13 +1,6 @@
 //! Native local PTY, structured commands, detached external editors and the local wall clock.
 //! Owns: native launch, bounded I/O, exclusive pinned output logs, process ownership and
 //! reading the system time and time zone.
-//! Linux Cloud child containment uses an explicit bubblewrap/prlimit capability
-//! with a successful real namespace probe. It exposes the same contained host
-//! executor for PTY sessions; it mounts only a separate private work directory,
-//! read-only system tools and fresh proc/dev/tmp, with no inherited environment
-//! or network. Its interactive Bash mounts one read-only bundled script, held by
-//! the physical PTY worker through child exit; explicit command terminals stay literal.
-//! Account cgroups and supervisor isolation belong to the runner app.
 //! Does not own: session contracts, filesystem traversal, editor selection or views.
 //! Ports used: session channels. Ports provided: Transport, HostExec, ProgramOpener,
 //! recording::OutputLogFactory, nocterm_core::clock::WallClock (`SystemClock`). Output-log
@@ -36,7 +29,6 @@ use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
 mod clock;
 #[cfg(target_os = "linux")]
-mod containment;
 mod exec;
 mod integration;
 mod program_opener;
@@ -44,7 +36,6 @@ mod recording;
 
 pub use clock::SystemClock;
 #[cfg(target_os = "linux")]
-pub use containment::{ContainedLocal, ContainmentError, ContainmentLimits};
 pub use exec::LocalExec;
 pub use program_opener::{LocalProgramOpener, MAX_OPEN_PROGRAMS};
 pub use recording::LocalOutputLogFactory;
@@ -84,7 +75,6 @@ impl Transport for PreparedLocalTransport {
             request.term,
             request.size,
             options.source().clone(),
-            None,
             self.preparation.clone(),
         )
     }
@@ -143,18 +133,7 @@ fn open_scoped(
     pty: PtySize,
     source: nocterm_session::ConnectionSource,
 ) -> Session {
-    open_scoped_retained(launch, isolated, term, pty, source, None)
-}
-
-fn open_scoped_retained(
-    launch: ShellLaunch,
-    isolated: bool,
-    term: String,
-    pty: PtySize,
-    source: nocterm_session::ConnectionSource,
-    retention: Option<Arc<dyn Send + Sync>>,
-) -> Session {
-    open_prepared(launch, isolated, term, pty, source, retention, None)
+    open_prepared(launch, isolated, term, pty, source, None)
 }
 
 fn open_prepared(
@@ -163,7 +142,6 @@ fn open_prepared(
     term: String,
     pty: PtySize,
     source: nocterm_session::ConnectionSource,
-    retention: Option<Arc<dyn Send + Sync>>,
     preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
 ) -> Session {
     if let Err(error) = source.check() {
@@ -207,7 +185,6 @@ fn open_prepared(
             };
             block_on(driver.emit(Event::Closed(CloseReason::Failed(error))));
         }
-        drop(retention);
     });
     session
 }

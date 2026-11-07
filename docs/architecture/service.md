@@ -366,8 +366,8 @@ crates are in the [guardrails](guardrails.md#isolation-of-the-plugin-crates).
 ## Hubs
 
 `nocterm-hubs` owns what the application knows about hubs over time, without views or I/O. It
-reaches a hub only through the `HubTrust`, `HubSignIn` and `HubAdminKeys` ports of
-`nocterm-hubs-model`, passed in `Deps` by the composition, and reads and edits the `[hubs]`
+reaches a hub only through the `HubTrust`, `HubSignIn`, `AccountDevices` and `AccountKeyLock`
+ports of `nocterm-hubs-model`, passed in `Deps` by the composition, and reads and edits the `[hubs]`
 section through `SettingsHandle`. `install` registers the section and returns an `Installed`
 with the one `Hubs` entity every window shares ([ADR 0099](../adr/0099-windows-have-no-environments.md)).
 
@@ -410,24 +410,21 @@ providers recheck their retained source immediately before capability effects.
 
 ### Original recipients of account confirmations
 
-`nocterm-hubs` carries native administrator and recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. Registry and sign-in actions await the native publication receipt before reporting success, and retain the original source checks across that wait. See [ADR 0114](../adr/0114-native-captured-account-operations.md) and [ADR 0140](../adr/0140-offer-confirmation-publication.md).
+`nocterm-hubs` carries native recovery offers unchanged through registry and sign-in session actions. Confirmation consumes the displayed capability; it does not reconstruct authority from HubId, grantor account or fingerprint. Registry and sign-in actions await the native publication receipt before reporting success, and retain the original source checks across that wait. See [ADR 0114](../adr/0114-native-captured-account-operations.md) and [ADR 0140](../adr/0140-offer-confirmation-publication.md).
 
-## Cloud chats
+## Hub agents
 
-`nocterm-cloud-chat` owns one GPUI entity per open Cloud chat over the `CloudConversation`
-port of `nocterm-cloud-conversation-model`. The entity subscribes while a window shows the chat
-or a command of it is on its way, applies each delta to its `CloudTranscript`, follows it with
-the thread the renderer draws (only rows from the first changed one are rebuilt), shows the
-freshness the device core reports after its first round, and presents this device's pending
-prompts (ADR 0134): a prompt shows at once, follows its command's state, and a refused or
-unanswered one stays until it is sent again as a new prompt or dismissed. Actions captured for
-one run never act on a run that replaced it. `CloudChatInstallation` keeps the bounded registry
-of chats and window observers, sharing the Local installation's history admission
-([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)). A chat's source
-offers `ConversationServers`: the binding the verified history states, binding and unbinding
-through the port, and the server the next prompts run on, which is only ever a selectable bound
-server and is dropped once the server is no longer selectable
-([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+`nocterm-hub-agents` owns one `HubAgents` entity shared by every window: per tracked hub, the
+agents and agent servers as last listed (a failed listing keeps the last lists and reports its
+problem), the follow of the hub's chat list (re-subscribed with growing delays, ending when the
+hub is untracked) and the launches of its agents as ordinary `AgentLaunch`es, which the agent
+installation offers in that hub's windows only. It emits `Changed` when a hub's lists change and
+`ChatsChanged` on every chat hint, so a history of that hub reads its chats again. Agent access
+of a saved server is a transition of the same entity: `grant_access` writes the agent key's line
+through the user's open session (`AgentHosts` of `nocterm-ssh-keys`) and only then records the
+server on the hub with the host key this device recorded; `withdraw_access` removes the line
+while a session is open and the record always. The hub's answer replaces the server's row at
+once ([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)).
 
 ## Shared monitor collection
 

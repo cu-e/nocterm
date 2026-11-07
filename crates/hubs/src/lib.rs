@@ -7,12 +7,10 @@
 //! Does not own: any I/O or protocol (the injected hub ports do, see `nocterm-hubs-model`);
 //! the commands and dialog that show this state (`nocterm-hubs-ui`).
 //!
-//! Ports used: [`nocterm_hubs_model::HubTrust`], [`nocterm_hubs_model::HubSignIn`] and
-//! [`nocterm_hubs_model::HubAdminKeys`] (the administrator keys waiting for confirmation, read
-//! and confirmed through [`Hubs`]) and [`nocterm_hubs_model::AccountDevices`] (the devices of the
-//! account, listed and revoked through [`Hubs`]) and [`nocterm_hubs_model::AgentHostTrust`] /
-//! [`nocterm_hubs_model::AgentGrants`] (the agent SSH CA, its servers and chat accesses, reached
-//! through [`Hubs`]; a connected server is reconciled with [`Hubs::reconcile_agent_host`]), passed in [`Deps`]; `nocterm_store::SettingsHandle`.
+//! Ports used: [`nocterm_hubs_model::HubTrust`], [`nocterm_hubs_model::HubSignIn`],
+//! [`nocterm_hubs_model::AccountDevices`] (the devices of the account, listed and revoked
+//! through [`Hubs`]) and [`nocterm_hubs_model::AccountKeyLock`] (the account keys, opened and
+//! closed through [`Hubs`]), passed in [`Deps`]; `nocterm_store::SettingsHandle`.
 //! Provides: [`Installed`] with the [`Hubs`] entity.
 //!
 //! Settings: the `[hubs]` section ([`nocterm_hubs_model::HubsSettings`]), registered by
@@ -22,7 +20,7 @@
 //!
 //! Invariants: a certificate that is not the trusted one is never retried and never
 //! accepted; an unreachable hub is retried with growing delays; a server enters the settings
-//! displayed administrator and recovery offers pass unchanged to their original capabilities;
+//! displayed recovery offers pass unchanged to their original capabilities;
 //! only after a sign-in worked, in one edit, and credentials made for a server that could not
 //! be saved are erased again; every window shares one status and one connection per hub.
 

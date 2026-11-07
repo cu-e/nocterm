@@ -21,8 +21,7 @@ pub(super) async fn follow(work: OpenedWork, ticks: mpsc::Sender<()>) {
             () = ticks.closed() => return,
             changed = notice.changed() => {
                 if changed.is_err() || source.check().is_err() { return; }
-                // Administrator pins changed in the same original OpenKeys.
-                // Restart its original feed to include newly opened groups.
+                // The keys changed: restart the original feed with them.
             },
             result = source.during(once(&work, &ticks)) => {
                 if result.is_err() { return; }
@@ -33,13 +32,8 @@ pub(super) async fn follow(work: OpenedWork, ticks: mpsc::Sender<()>) {
 
 async fn once(work: &OpenedWork, ticks: &mpsc::Sender<()>) {
     let store = work.store();
-    let collections: Vec<String> = match store.layout(PROFILES_KIND).await {
-        Ok(layout) => layout
-            .personal
-            .iter()
-            .chain(layout.groups.iter().map(|group| &group.at))
-            .map(|at| at.id().to_owned())
-            .collect(),
+    let collections: Vec<String> = match store.find(PROFILES_KIND).await {
+        Ok(found) => found.iter().map(|at| at.id().to_owned()).collect(),
         Err(_) => Vec::new(),
     };
     if collections.is_empty() {

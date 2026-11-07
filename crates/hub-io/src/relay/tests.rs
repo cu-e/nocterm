@@ -31,7 +31,7 @@ fn a_hub_this_device_is_not_signed_in_to_is_not_dialled() {
         "not a hub address",
         "",
     ] {
-        let dialled = block_on(relay.dial(hub, None, &target()));
+        let dialled = block_on(relay.dial(hub, &target()));
         assert_eq!(
             dialled.unwrap_err(),
             RelayError::NotSignedIn { hub: hub.into() },
@@ -46,6 +46,6 @@ fn dialling_after_the_links_stopped_finds_the_relay_closed() {
     let links = links(&dir);
     let relay = HubRelay::new(&links);
     drop(links);
-    let dialled = block_on(relay.dial("hub.example", None, &target()));
+    let dialled = block_on(relay.dial("hub.example", &target()));
     assert_eq!(dialled.unwrap_err(), RelayError::Closed);
 }

@@ -37,6 +37,7 @@ fn connect(runtime: &Entity<Runtime>, cx: &mut TestAppContext) {
         args: Vec::new(),
         env: Default::default(),
         inherit_env: Vec::new(),
+        hub: None,
     };
     runtime.update(cx, |runtime, cx| {
         runtime

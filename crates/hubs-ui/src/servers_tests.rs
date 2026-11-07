@@ -9,8 +9,7 @@ use gpui_kit::{AppContext as _, TestAppContext, WindowOptions, test::TestWindowE
 use nocterm_hubs::{HubStatus, HubSummary};
 use nocterm_hubs_model::testing::{FakeCall, FakeHub, FakeOp, FakeServer};
 use nocterm_hubs_model::{
-    DeviceSummary, Environment, Fingerprint, HubAdminKeys as _, HubColor, HubError, HubRecord,
-    HubSignIn as _, PendingAdminKey, TrustPolicy,
+    DeviceSummary, Environment, Fingerprint, HubColor, HubError, HubRecord, TrustPolicy,
 };
 use nocterm_settings::SettingsDocument;
 use nocterm_store::{SettingsConfig, SnapshotWriter, StoreError};
@@ -359,138 +358,10 @@ fn the_offer_of_a_new_recovery_key_appears_as_soon_as_the_vault_is_unlocked(
     assert!(page.shows(item("server-recovery-issue", KEY), cx));
 }
 
-fn grace(fingerprint: &str, replaces: Option<&str>) -> PendingAdminKey {
-    PendingAdminKey {
-        organization: "Acme".to_owned(),
-        admin: "Grace Hopper".to_owned(),
-        account_id: "grace".to_owned(),
-        fingerprint: fingerprint.to_owned(),
-        replaces: replaces.map(str::to_owned),
-    }
-}
-
-const GRACE_KEY: &str = "AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-0000-1111-2222-3333";
-
-/// The page over a signed-in server, with Grace's key waiting for confirmation.
-fn page_with_pending_key(cx: &mut TestAppContext, replaces: Option<&str>) -> Fixture {
-    let page = page(cx, vec![pinned_record()]);
-    open_tab(&page, KEYS, cx);
-    page.admin_keys.offer(&hub_id(), grace(GRACE_KEY, replaces));
-    cx.run_until_parked();
-    page.render(cx);
-    page
-}
-
-#[gpui_kit::test]
-fn a_server_with_no_pending_administrator_key_shows_no_confirmation(cx: &mut TestAppContext) {
-    let page = page(cx, vec![pinned_record()]);
-    open_tab(&page, KEYS, cx);
-    assert!(!page.shows(item("server-admin-keys", KEY), cx));
-    assert!(page.shows(item("server-keys-settled", KEY), cx));
-}
-
-#[gpui_kit::test]
-fn a_pending_administrator_key_appears_with_its_fingerprint_as_soon_as_it_is_found(
-    cx: &mut TestAppContext,
-) {
-    let page = page(cx, vec![pinned_record()]);
-    open_tab(&page, KEYS, cx);
-    assert!(!page.shows(item("server-admin-keys", KEY), cx));
-
-    page.admin_keys.offer(&hub_id(), grace(GRACE_KEY, None));
-    cx.run_until_parked();
-    page.render(cx);
-
-    assert!(page.shows(item("server-admin-key-0", KEY), cx));
-    assert!(page.shows(item("server-admin-confirm-0", KEY), cx));
-    assert!(!page.shows(item("server-admin-changed-0", KEY), cx));
-}
-
-#[test]
-fn the_fingerprint_is_grouped_for_reading() {
-    assert_eq!(
-        super::tabs::admin_keys::grouped(GRACE_KEY),
-        "AAAA BBBB CCCC DDDD EEEE FFFF 0000 1111\n2222 3333"
-    );
-    assert_eq!(super::tabs::admin_keys::grouped("short"), "short");
-}
-
-#[gpui_kit::test]
-fn confirming_the_shown_key_removes_it_from_the_list_and_tells_the_account(
-    cx: &mut TestAppContext,
-) {
-    let page = page_with_pending_key(cx, None);
-    let seen = page.hub.keys_revision();
-
-    page.click(item("server-admin-confirm-0", KEY), cx);
-    cx.run_until_parked();
-    page.render(cx);
-
-    assert!(!page.shows(item("server-admin-keys", KEY), cx));
-    let confirmed = page.admin_keys.confirmed();
-    assert_eq!(confirmed.len(), 1);
-    assert_eq!(confirmed[0].1.account_id, "grace");
-    assert_eq!(confirmed[0].1.fingerprint, GRACE_KEY);
-    assert_ne!(
-        page.hub.keys_revision(),
-        seen,
-        "the replica is told to read again"
-    );
-}
-
-#[gpui_kit::test]
-fn a_changed_administrator_key_is_shown_with_a_warning_and_both_fingerprints(
-    cx: &mut TestAppContext,
-) {
-    let old = "9999-8888-7777-6666-5555-4444-3333-2222-1111-0000";
-    let page = page_with_pending_key(cx, Some(old));
-
-    assert!(page.shows(item("server-admin-changed-0", KEY), cx));
-    assert!(page.shows(item("server-admin-before-0", KEY), cx));
-    assert!(page.shows(item("server-admin-fingerprint-0", KEY), cx));
-    assert!(page.shows(item("server-admin-confirm-0", KEY), cx));
-
-    page.click(item("server-admin-confirm-0", KEY), cx);
-    cx.run_until_parked();
-    page.render(cx);
-    assert!(!page.shows(item("server-admin-keys", KEY), cx));
-}
-
-#[gpui_kit::test]
-fn a_key_the_account_no_longer_offers_is_reported_and_stays_unconfirmed(cx: &mut TestAppContext) {
-    let page = page_with_pending_key(cx, None);
-    let shown = page.admin_keys.pending_admin_keys(&hub_id())[0].clone();
-    // The key on offer changed after the person read the fingerprint of the old one.
-    page.admin_keys.offer(&hub_id(), grace("FFFF-FFFF", None));
-    let before = notices(&page, cx);
-    let hubs = page.installed.hubs().clone();
-
-    cx.update_window(page.window, |_, window, cx| {
-        crate::manage::confirm_admin_key(&hubs, &shown, GRACE_KEY, window, cx);
-    })
-    .unwrap();
-
-    cx.run_until_parked();
-    assert_eq!(notices(&page, cx), before + 1);
-    assert!(page.admin_keys.confirmed().is_empty());
-}
-
-#[gpui_kit::test]
-fn closed_account_keys_hide_the_pending_administrators(cx: &mut TestAppContext) {
-    let page = page_with_pending_key(cx, None);
-    assert!(page.shows(item("server-admin-keys", KEY), cx));
-
-    page.hub.lock_keys(&hub_id());
-    cx.run_until_parked();
-    page.render(cx);
-
-    assert!(!page.shows(item("server-admin-keys", KEY), cx));
-}
-
 fn two_servers() -> (FakeHub, Vec<HubRecord>) {
     let other = FakeServer::new(OTHER, 7)
         .named("Work hub")
-        .with_user("ada", "secret", "lab");
+        .with_user("ada", "secret");
     let records = vec![pinned_record(), other.pinned_record("Work")];
     (
         FakeHub::new().with_server(server()).with_server(other),
@@ -685,5 +556,40 @@ fn a_server_that_is_not_signed_in_offers_signing_in_instead_of_devices_and_keys(
     assert!(page.has_dialog(cx), "the sign-in dialog opens");
 }
 
-#[path = "servers_agent_access_tests.rs"]
-mod agent_access;
+/// The Keys tab of a server whose account keys are closed.
+fn locked_keys(cx: &mut TestAppContext) -> Fixture {
+    let page = page(cx, vec![pinned_record()]);
+    page.hub.lock_keys(&hub_id());
+    open_tab(&page, KEYS, cx);
+    page
+}
+
+fn submit_password(page: &Fixture, password: &str, cx: &mut TestAppContext) {
+    page.type_text(password, cx);
+    page.click("account-keys-unlock", cx);
+    cx.run_until_parked();
+    page.render(cx);
+}
+
+#[gpui_kit::test]
+fn the_right_password_opens_the_account_keys(cx: &mut TestAppContext) {
+    let page = locked_keys(cx);
+    assert!(page.shows("account-keys-locked", cx));
+
+    submit_password(&page, crate::test_support::PASSWORD, cx);
+
+    assert!(page.shows("account-keys-open", cx));
+    assert!(!page.shows("account-keys-locked", cx));
+    assert_eq!(page.account_keys.attempts(), vec![true]);
+}
+
+#[gpui_kit::test]
+fn a_wrong_password_is_refused_and_the_account_keys_stay_closed(cx: &mut TestAppContext) {
+    let page = locked_keys(cx);
+
+    submit_password(&page, "not it", cx);
+
+    assert!(page.shows("account-keys-refused", cx));
+    assert!(page.shows("account-keys-locked", cx));
+    assert_eq!(page.account_keys.attempts(), vec![false]);
+}

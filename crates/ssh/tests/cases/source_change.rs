@@ -36,7 +36,6 @@ async fn a_source_revoked_while_relay_open_is_pending_cannot_resume_the_worker()
     let mut request = sshd.request();
     request.proxy = nocterm_session::ProxyConfig::Hub {
         address: "hub.test".into(),
-        node: None,
     };
     let session = transport.open_with(
         request,
@@ -74,7 +73,6 @@ async fn a_scoped_hub_connection_cannot_acquire_an_ambient_relay_requester() {
     let mut request = sshd.request();
     request.proxy = nocterm_session::ProxyConfig::Hub {
         address: "another-hub".into(),
-        node: None,
     };
     let session = transport.open_with(request, ConnectionOpenOptions::new(source.source()));
     assert!(matches!(

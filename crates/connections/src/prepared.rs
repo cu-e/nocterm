@@ -1,5 +1,5 @@
 //! Prepared documents and injected collaborators, installed without foreground native acquisition.
-use crate::{Connections, FactsPrepared, ObservationDeps};
+use crate::{Connections, FactsPrepared, ObservationDeps, ServerAgentAccess};
 use nocterm_connections_model::{
     draft::EditorDefaults,
     facts::Known,
@@ -16,6 +16,7 @@ pub struct EditorInputs {
     defaults: EditorDefaults,
     ids: Arc<dyn ProfileIds>,
     keys: Arc<dyn VaultSshKeys>,
+    agent_access: Option<Arc<dyn ServerAgentAccess>>,
 }
 impl EditorInputs {
     /// Inputs of a window without a vault: its key choices report that.
@@ -24,6 +25,7 @@ impl EditorInputs {
             defaults,
             ids,
             keys: Arc::new(NoVaultSshKeys),
+            agent_access: None,
         }
     }
     /// The keys the editor offers are those of `keys`.
@@ -33,6 +35,14 @@ impl EditorInputs {
     }
     pub(crate) fn keys(&self) -> &Arc<dyn VaultSshKeys> {
         &self.keys
+    }
+    /// The editor offers Agent access of a saved server through `access`.
+    pub fn with_agent_access(mut self, access: Arc<dyn ServerAgentAccess>) -> Self {
+        self.agent_access = Some(access);
+        self
+    }
+    pub(crate) fn agent_access(&self) -> Option<&Arc<dyn ServerAgentAccess>> {
+        self.agent_access.as_ref()
     }
     pub fn defaults(&self) -> &EditorDefaults {
         &self.defaults
@@ -82,6 +92,11 @@ impl ConnectionInputs {
     /// The editor offers the keys of `keys` instead of reporting no vault.
     pub fn with_keys(mut self, keys: Arc<dyn VaultSshKeys>) -> Self {
         self.editor = self.editor.with_keys(keys);
+        self
+    }
+    /// The editor offers Agent access of a saved server through `access`.
+    pub fn with_agent_access(mut self, access: Arc<dyn ServerAgentAccess>) -> Self {
+        self.editor = self.editor.with_agent_access(access);
         self
     }
 }

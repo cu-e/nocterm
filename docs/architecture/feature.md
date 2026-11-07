@@ -450,6 +450,10 @@ vault in a small dialog without opening Settings and without depending on the
 vault feature. The credential list describes a key record by its fingerprint and never shows
 or saves the secret.
 
+In a hub window the connection editor also shows Agent access of a saved server, through the
+`ServerAgentAccess` port the application supplies with `EditorInputs::with_agent_access`; the
+switch acts at once, and a refusal is shown under it
+([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)).
 The connection editor chooses, creates and imports a vault key through the injected
 `VaultSshKeys` port (`EditorInputs::with_keys`); the terminal answers a private-key request
 only from the credential store and waits for the vault to unlock. See
@@ -596,41 +600,18 @@ file publication or destination directory preparation, including transfers that 
 or cancel. Empty-directory copies therefore refresh without being counted as completed files.
 
 Agent presentation receives immutable `Installed`: the actual RuntimeHandle, image
-capabilities, shared layout/settings handles, metadata and optional terminal auth. Private feature owners retain
+capabilities, shared layout/settings handles, metadata, optional terminal auth and, with
+hubs, the hub agents service. Private feature owners retain
 the actual controls and their subscriptions/tasks: MessageList, ComposerView,
-HistoryColumn, PanelLayout, MenuView and ConversationSurface. Original chat/input/search/catalog/list
-identities guard deferred completion. Transcript rows borrow `ConversationSource`
-into the same `EntryRenderer`, preserving original producer activity. Row actions
-offer fork only for a source that explicitly provides the Local operation.
-The weak `ConversationPanel` handle returned by `register_with_conversations`
-selects a caller-supplied captured source in its original window. Local and captured
-sources use the same transcript, footer, composer, send control and immutable approval
-cards; `ConversationView::composer` capabilities (attach, configure, usage) decide which
-controls show, and configuration, attachment and sign-in controls also require
-their actual Local thread. Prompts a source has not accepted (`pending_prompts`) follow the
-transcript as user rows marked on their way or failed, with Retry and Dismiss, until the
-accepted row replaces them
-([ADR 0134](../adr/0134-one-composer-for-every-conversation-and-pending-prompts.md)).
-Selection deselects the Local roster through its normal visibility transition.
-Detaching a captured observer never sends Stop. Original source identity and input
-tickets fence deferred action errors and successful composer clearing.
-The installation retains one `CloudChatInstallation`, sharing the runtime's
-history admission across captured environment handles and root windows.
-HistoryColumn owns `CloudHistory`, the Cloud chats of the window's hub; the history renders
-local and Cloud rows through one neutral row model in one order by last activity, a Cloud row
-shows its runner's title, time and state, and offers only opening
-([ADR 0133](../adr/0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md),
-[ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)).
-A refused or unanswered submission (`ConversationSubmission::refused`) releases the composer,
-so sending the same text again is a new prompt. A Cloud chat whose runner did not confirm its
-history (`ConversationView::freshness`) says so in its status line, and a sleeping seat offers
-Wake (`ConversationActions::wake`); while the chat is still opening nothing is said
-([ADR 0146](../adr/0146-device-transport-and-resumable-commands.md)). A source that binds
-servers (`ConversationSource::servers`) gets a Servers bar above the composer
-(`CloudServersControl`, owned by the conversation surface): the bound servers and where each
-stands, the server the next prompts run on, a form to bind CA-trusted servers for one to thirty
-days (seven by default) and Unbind. A Cloud history row names the servers its chat is bound to
-([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+HistoryColumn, PanelLayout and MenuView. Original chat/input/search/catalog/list
+identities guard deferred completion. Transcript rows borrow the chat's `AgentThread` into
+the same `EntryRenderer`, preserving original producer activity. A hub agent's chat is an
+ordinary agent chat over the hub connector, so its transcript, composer, approvals, model
+choice and history use the same owners as a local chat; the new-chat menu of a hub window adds
+that hub's agents (`AvailableAgents::offered_in`), the window of this computer offers none,
+and a `ChatsChanged` event of the hub reloads the history. A run started from another device
+shows as a neutral turn notice and keeps the composer waiting until it ends
+([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)).
 MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. Its 32-entry,
 64 MiB preview budget retains full immutable source identities and charges image/source
@@ -648,9 +629,6 @@ when a listed row changed. Attachment
 preparation preserves chat/lifecycle/composer revision checks and admits a complete
 validated candidate collection atomically. The feature never decodes image data. Live ACP transcript admission checks its 20,000-row
 and 64 MiB resident budgets before mutation, including mixed text/tool/control updates.
-Cloud candidate reduction runs in the background and updates raw per-row retained accounting
-only for changed/appended rows; encoded image clones share immutable bytes with unchanged wire
-format. Existing projection cursor and source checks still gate foreground delivery.
 See [ADR0142](../adr/0142-live-transcript-and-image-admission.md).
 Panel coordination retains fourteen private fields.
 ChatList binds selection and per-chat observation to the original entity; removal
@@ -788,7 +766,10 @@ window; the crate contributes no panel and no plugin.
   the application). Each known server has a name field (saved on Enter or blur), a colour
   chooser, the status, and a read-only view of the trusted and, after a change, the presented
   fingerprint; "Sign out" and "Remove…" (confirmed) call the service. Nothing on the page accepts
-  a certificate.
+  a certificate. With the hub agents service installed (`Installed::with_hub_agents`), the
+  Agents tab edits the account's agents and providers through `HubAgentDirectory` and the Agent
+  access tab shows the agent key and the agent servers with Check and Disconnect, through
+  `nocterm-hub-agents`; without it both tabs say the build offers no agents.
 - The palette commands `ManageServers` (opens that page, handled by the application),
   `SignInToServer` and `SignOutOfServer` (a picker over the signed-in servers) are actions of this
   crate.
@@ -808,4 +789,4 @@ for an existing terminal. See [ADR 0110](../adr/0110-local-history-environment-p
 
 ### Account confirmation cards
 
-`nocterm-hubs-ui` retains the administrator or recovery offer supplied with a displayed card in its callback. The service receives that same capability when the existing action is clicked; a replacement account receives no confirmation from an old card. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+`nocterm-hubs-ui` retains the recovery offer supplied with a displayed card in its callback. The service receives that same capability when the existing action is clicked; a replacement account receives no confirmation from an old card. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

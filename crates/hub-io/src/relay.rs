@@ -76,12 +76,7 @@ struct CapturedRelay {
     principal: String,
 }
 impl HubRelay {
-    fn captured(
-        &self,
-        name: &str,
-        node: Option<&str>,
-        target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+    fn captured(&self, name: &str, target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
         if self.pool.is_stopped() {
             return Err(RelayError::Closed);
         }
@@ -95,39 +90,27 @@ impl HubRelay {
             self.handle.clone(),
             Arc::new(client),
             name,
-            node,
             target,
         )))
     }
 }
 impl RelayDialer for HubRelay {
-    fn capture(
-        &self,
-        hub: &str,
-        node: Option<&str>,
-        target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
-        self.captured(hub, node, target)
+    fn capture(&self, hub: &str, target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        self.captured(hub, target)
     }
     fn dial(
         &self,
         hub: &str,
-        node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
-        match self.capture(hub, node, target) {
-            Ok(captured) => captured.dial(hub, node, target),
+        match self.capture(hub, target) {
+            Ok(captured) => captured.dial(hub, target),
             Err(error) => async move { Err(error) }.boxed(),
         }
     }
 }
 impl RelayDialer for AccountRelay {
-    fn capture(
-        &self,
-        hub: &str,
-        node: Option<&str>,
-        target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+    fn capture(&self, hub: &str, target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
         let valid =
             HubAddress::parse(hub).ok().map(HubId::from).as_ref() == Some(self.client.hub());
         if !valid {
@@ -142,30 +125,22 @@ impl RelayDialer for AccountRelay {
             self.handle.clone(),
             self.client.clone(),
             hub,
-            node,
             target,
         )))
     }
     fn dial(
         &self,
         hub: &str,
-        node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
-        match self.capture(hub, node, target) {
-            Ok(captured) => captured.dial(hub, node, target),
+        match self.capture(hub, target) {
+            Ok(captured) => captured.dial(hub, target),
             Err(error) => async move { Err(error) }.boxed(),
         }
     }
 }
 impl CapturedRelay {
-    fn new(
-        handle: Handle,
-        client: Arc<CapturedClient>,
-        hub: &str,
-        node: Option<&str>,
-        target: &Target,
-    ) -> Self {
+    fn new(handle: Handle, client: Arc<CapturedClient>, hub: &str, target: &Target) -> Self {
         Self {
             handle,
             client,
@@ -174,13 +149,11 @@ impl CapturedRelay {
             target: RelayTarget {
                 host: target.host.clone(),
                 port: target.port,
-                node: node.map(str::to_owned),
             },
         }
     }
-    fn matches(&self, hub: &str, node: Option<&str>, target: &Target) -> bool {
+    fn matches(&self, hub: &str, target: &Target) -> bool {
         self.hub == hub
-            && self.target.node.as_deref() == node
             && self.target.host == target.host
             && self.target.port == target.port
             && self.principal == target.user
@@ -200,9 +173,7 @@ impl CapturedRelay {
             .during(client.relay(&self.target))
             .await
             .map_err(|error| failure::without_client(&self.hub, error))?
-            .map_err(|error| {
-                failure::opening(&self.client, &self.hub, self.target.node.as_deref(), error)
-            })?;
+            .map_err(|error| failure::opening(&self.client, &self.hub, error))?;
         self.client
             .check()
             .map_err(|error| failure::without_client(&self.hub, error))?;
@@ -216,13 +187,8 @@ impl CapturedRelay {
     }
 }
 impl RelayDialer for CapturedRelay {
-    fn capture(
-        &self,
-        hub: &str,
-        node: Option<&str>,
-        target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
-        if !self.matches(hub, node, target) {
+    fn capture(&self, hub: &str, target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
+        if !self.matches(hub, target) {
             return Err(RelayError::CaptureUnsupported);
         }
         self.client
@@ -232,23 +198,21 @@ impl RelayDialer for CapturedRelay {
             self.handle.clone(),
             self.client.clone(),
             hub,
-            node,
             target,
         )))
     }
     fn dial(
         &self,
         hub: &str,
-        node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
-        let captured = match self.capture(hub, node, target) {
+        let captured = match self.capture(hub, target) {
             Ok(value) => value,
             Err(error) => return async move { Err(error) }.boxed(),
         };
         // Recreate only an immutable exact-route view; no account lookup occurs.
         drop(captured);
-        let opening = Self::new(self.handle.clone(), self.client.clone(), hub, node, target);
+        let opening = Self::new(self.handle.clone(), self.client.clone(), hub, target);
         // Dropping the dial aborts only opening; an issued stream owns its pump.
         crate::task::spawn(&self.handle, async move { opening.open().await })
             .map(|result| result.unwrap_or(Err(RelayError::Closed)))

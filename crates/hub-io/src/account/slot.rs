@@ -219,10 +219,6 @@ impl Slot {
         Ok(Some((state.authority.rotate(), committed)))
     }
 
-    pub(crate) fn noticed_keys(&self, mut keys: OpenKeys, cache: &AccountCache) -> Arc<OpenKeys> {
-        keys.admins = Mutex::new(super::admin_keys::AdminPins::new(cache.pinned()));
-        Arc::new(keys.noticed_by(&self.notice))
-    }
     pub(super) fn new(hub: HubId, file: CacheFile, notice: Arc<Notice>) -> Self {
         let cache = match file.load() {
             Ok(cache) => cache,
@@ -473,7 +469,7 @@ impl Slot {
                 tracing::warn!(%error, hub = %self.hub, "the account cache cannot be written");
             }
             state.cache = Some(Arc::new(cache));
-            state.keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
+            state.keys = KeyState::Open(Arc::new(keys));
             state.authority.rotate();
         }
         self.notice.raise();
@@ -484,7 +480,7 @@ impl Slot {
     pub(crate) fn unlocked(&self, keys: OpenKeys) {
         {
             let mut state = self.state();
-            state.keys = KeyState::Open(Arc::new(keys.noticed_by(&self.notice)));
+            state.keys = KeyState::Open(Arc::new(keys));
             state.authority.rotate();
         }
         self.notice.raise();

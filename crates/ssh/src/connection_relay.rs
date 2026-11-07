@@ -22,13 +22,13 @@ impl ConnectionRelay {
         }
         let port = options.relay().cloned().or(desktop);
         let port = match (&request.proxy, port) {
-            (ProxyConfig::Hub { address, node }, Some(port)) => {
+            (ProxyConfig::Hub { address }, Some(port)) => {
                 let target = request
                     .jumps
                     .first()
                     .map_or(&request.target, |jump| &jump.target);
                 Some(
-                    port.capture(address, node.as_deref(), target)
+                    port.capture(address, target)
                         .map_err(|source| SessionError::Relay {
                             hub: address.clone(),
                             source,

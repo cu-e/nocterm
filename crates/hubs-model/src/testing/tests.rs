@@ -1,7 +1,7 @@
 use futures::executor::block_on;
 
 use super::*;
-use crate::{AdminKeyError, Fingerprint, HubAdminKeys, PendingAdminKey};
+use crate::Fingerprint;
 
 const ADDRESS: &str = "hub.example:7443";
 
@@ -11,7 +11,7 @@ fn hub_id() -> HubId {
 
 fn server() -> FakeServer {
     FakeServer::new(ADDRESS, 7)
-        .with_user("ada", "secret", "lab")
+        .with_user("ada", "secret")
         .with_provider("corp", "Corporate SSO")
 }
 
@@ -113,7 +113,7 @@ fn password_sign_in_returns_the_account_and_remembers_the_device() {
     let signed_in =
         block_on(hub.password(endpoint(pinned()), "ada".into(), Secret::new("secret"))).unwrap();
     assert_eq!(signed_in.account.username, "ada");
-    assert_eq!(signed_in.account.orgs[0].id.as_str(), "lab");
+    assert!(!signed_in.account.admin);
     assert_eq!(signed_in.keys, KeyStatus::Open);
     assert!(hub.is_signed_in(&hub_id()));
 }
@@ -328,65 +328,6 @@ fn a_browser_sign_in_needs_the_vault_passphrase_to_open_or_make_the_keys() {
     assert_eq!(other.unwrap(), KeyStatus::RecoveryNeeded);
 }
 
-fn acme_key(fingerprint: &str) -> PendingAdminKey {
-    PendingAdminKey {
-        organization: "Acme".to_owned(),
-        admin: "Grace".to_owned(),
-        account_id: "grace".to_owned(),
-        fingerprint: fingerprint.to_owned(),
-        replaces: None,
-    }
-}
-
-#[test]
-fn a_confirmed_admin_key_leaves_the_pending_list_and_raises_the_keys_notice() {
-    let hub = FakeHub::new();
-    let keys = FakeAdminKeys::alongside(&hub);
-    keys.offer(&hub_id(), acme_key("aaaa bbbb"));
-    let seen = hub.keys_revision();
-    assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
-
-    block_on(keys.pending_admin_keys(&hub_id())[0].confirm("AAAA-BBBB")).unwrap();
-
-    assert!(keys.pending_admin_keys(&hub_id()).is_empty());
-    assert_ne!(hub.keys_revision(), seen);
-    assert_eq!(keys.confirmed()[0].1.account_id, "grace");
-}
-
-#[test]
-fn an_admin_key_is_refused_for_another_fingerprint_or_when_nothing_is_pending() {
-    let hub = FakeHub::new();
-    let keys = FakeAdminKeys::alongside(&hub);
-    keys.offer(&hub_id(), acme_key("aaaa"));
-
-    assert!(matches!(
-        block_on(keys.pending_admin_keys(&hub_id())[0].confirm("cccc")),
-        Err(AdminKeyError::Mismatch)
-    ));
-    let old = keys.pending_admin_keys(&hub_id())[0].clone();
-    block_on(old.confirm("aaaa")).unwrap();
-    assert!(matches!(
-        block_on(old.confirm("aaaa")),
-        Err(AdminKeyError::NotPending)
-    ));
-    keys.offer(&hub_id(), acme_key("aaaa"));
-    assert_eq!(keys.pending_admin_keys(&hub_id()).len(), 1);
-}
-
-#[test]
-fn closed_keys_list_and_confirm_no_admin_key() {
-    let hub = FakeHub::new();
-    let keys = FakeAdminKeys::alongside(&hub);
-    keys.offer(&hub_id(), acme_key("aaaa"));
-    let shown = keys.pending_admin_keys(&hub_id())[0].clone();
-    hub.lock_keys(&hub_id());
-    assert!(keys.pending_admin_keys(&hub_id()).is_empty());
-    assert!(matches!(
-        block_on(shown.confirm("aaaa")),
-        Err(AdminKeyError::Stale)
-    ));
-}
-
 #[test]
 fn an_old_recovery_acknowledgement_cannot_confirm_a_new_reissue() {
     let hub = keyed_hub();
@@ -398,26 +339,6 @@ fn an_old_recovery_acknowledgement_cannot_confirm_a_new_reissue() {
     assert!(hub.recovery_key_unconfirmed(&hub_id()));
     block_on(second.confirm()).unwrap();
     assert!(!hub.recovery_key_unconfirmed(&hub_id()));
-}
-
-#[test]
-fn an_administrator_offer_keeps_its_recipient_when_the_same_grantor_is_offered_again() {
-    let hub = FakeHub::new();
-    hub.sign_in_as(&hub_id(), "alice");
-    let keys = FakeAdminKeys::alongside(&hub);
-    keys.offer(&hub_id(), acme_key("aaaa"));
-    let old = keys.pending_admin_keys(&hub_id()).pop().unwrap();
-    hub.sign_in_as(&hub_id(), "bob");
-    keys.offer(&hub_id(), acme_key("aaaa"));
-    let current = keys.pending_admin_keys(&hub_id()).pop().unwrap();
-    assert_eq!(old.key(), current.key());
-    assert!(matches!(
-        block_on(old.confirm("aaaa")),
-        Err(AdminKeyError::Stale)
-    ));
-    assert!(keys.confirmed().is_empty());
-    block_on(current.confirm("aaaa")).unwrap();
-    assert_eq!(keys.confirmed().len(), 1);
 }
 
 #[test]

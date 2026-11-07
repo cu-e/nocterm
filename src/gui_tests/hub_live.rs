@@ -76,17 +76,10 @@ fn boot(links: &Arc<HubLinks>, cx: &mut TestAppContext) -> (Booted, Saved) {
         log.lock().unwrap().push(document);
         Box::pin(async { Ok(()) })
     });
-    let agent = Arc::new(nocterm_hub_io::agent_access::AgentAccess::new(
-        links.clone(),
-        Arc::new(nocterm_ssh_keys::testing::FakeAgentHosts::default()),
-    ));
     let deps = nocterm_hubs::Deps {
         trust: links.clone(),
         sign_in: links.clone(),
-        admin_keys: links.clone(),
         devices: links.clone(),
-        agent_trust: agent.clone(),
-        agent_grants: agent,
         account_keys: Arc::new(nocterm_hub_io::AccountKeys::new(links.clone())),
     };
     let booted = cx.update(|cx| {

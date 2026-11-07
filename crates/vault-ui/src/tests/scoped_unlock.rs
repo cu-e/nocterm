@@ -60,7 +60,12 @@ fn windows(cx: &mut TestAppContext) -> Windows {
             cx,
         );
         crate::install(crate::Deps::new(app.clone()), &ready, cx);
-        let installed = crate::install_scoped(crate::Deps::new(scoped_vault.clone()), &ready, cx);
+        let installed = crate::install_scoped(
+            crate::Deps::new(scoped_vault.clone()),
+            &ready,
+            crate::vault_auto_lock(&ready, cx),
+            cx,
+        );
         (
             open_workspace(Some(&installed), cx),
             open_workspace(None, cx),
@@ -146,7 +151,7 @@ fn unlock_in_a_scoped_window_without_keys_runs_the_remedy_instead_of_opening_the
         let counted = calls.clone();
         let deps = crate::Deps::new(vault.clone())
             .with_keys_missing(Rc::new(move |_, _| counted.set(counted.get() + 1)));
-        let installed = crate::install_scoped(deps, &ready, cx);
+        let installed = crate::install_scoped(deps, &ready, crate::vault_auto_lock(&ready, cx), cx);
         open_workspace(Some(&installed), cx)
     });
     cx.update_window(window, |_, window, cx| {

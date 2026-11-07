@@ -3,7 +3,7 @@ use crate::{
     account::{Accounts, testing::*},
     cache::UnlockMethod,
 };
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_keys::UnlockKey;
 
 struct Fixture {
@@ -11,7 +11,7 @@ struct Fixture {
     slot: Arc<Slot>,
     subjects: Arc<ScriptedSubjects>,
     provider: LocalSourceProvider,
-    record: v1::AccountKeyset,
+    record: v2::Keyset,
     unlock: UnlockKey,
 }
 impl Fixture {
@@ -46,29 +46,26 @@ impl Fixture {
 }
 
 #[test]
-fn local_partition_binds_configured_hub_actual_account_and_public_key_fingerprint() {
+fn local_partition_binds_the_configured_hub_and_the_account_but_not_its_keys() {
     let fixture = Fixture::new();
     let source = fixture.capture();
     let LocalAccountPartition::LegacyConfigured(partition) = source.partition() else {
-        panic!("old hubs have no stable Cloud authority")
+        panic!("a hub window's history is partitioned by hub and account")
     };
     assert_eq!(partition.hub(), &hub());
     assert_eq!(partition.account().as_str(), ACCOUNT_ID);
-    let printed = fixture
-        .slot
-        .open()
-        .unwrap()
-        .keyset()
-        .public_key()
-        .fingerprint()
-        .replace('-', "");
-    assert_eq!(
-        partition.key().as_bytes(),
-        nocterm_hubs_model::Fingerprint::parse(&printed)
-            .unwrap()
-            .as_bytes()
-    );
     assert_eq!(source.check_current(), Ok(()));
+    let membership = fixture.provider.membership().unwrap();
+    fixture.slot.lock();
+    assert_eq!(
+        LocalAccountSource::partition(membership.as_ref()),
+        source.partition(),
+        "a locked vault keeps the same chats"
+    );
+    assert_eq!(
+        LocalAccountSource::check_current(membership.as_ref()),
+        Ok(())
+    );
 }
 
 #[test]
@@ -184,7 +181,7 @@ fn ordinary_refresh_retains_the_capture_but_device_replacement_does_not() {
 }
 
 #[test]
-fn replacing_keys_invalidates_capture_and_changes_its_local_partition() {
+fn replacing_keys_invalidates_capture_but_keeps_its_local_partition() {
     let fixture = Fixture::new();
     let original = fixture.capture();
     let (replacement, _) = record(&fixture.unlock);
@@ -196,30 +193,7 @@ fn replacing_keys_invalidates_capture_and_changes_its_local_partition() {
         original.check_current(),
         Err(LocalAccountSourceError::Stale)
     );
-    assert_ne!(fixture.capture().partition(), original.partition());
-}
-
-#[test]
-fn unrelated_account_notice_changes_are_not_authentication_generations() {
-    let fixture = Fixture::new();
-    let original = fixture.capture();
-    let before = fixture.slot.notice().count();
-    let admin = Admin::acme();
-    fixture.slot.open().unwrap().note_pending(
-        "profile",
-        vec![(
-            nocterm_hubs_model::PendingAdminKey {
-                organization: "organization".into(),
-                admin: "administrator".into(),
-                account_id: admin.account_id().into(),
-                fingerprint: admin.fingerprint(),
-                replaces: None,
-            },
-            admin.public_key(),
-        )],
-    );
-    assert!(fixture.slot.notice().count() > before);
-    assert_eq!(original.check_current(), Ok(()));
+    assert_eq!(fixture.capture().partition(), original.partition());
 }
 
 #[test]
@@ -255,9 +229,7 @@ async fn locked_membership_admits_unlock_but_an_explicit_lock_retires_its_receip
     assert!(membership.check().is_ok());
     fixture.slot.lock();
     let next = cache(&fixture.record, UnlockMethod::Passphrase);
-    let keys = fixture
-        .slot
-        .noticed_keys(open(&fixture.record, &fixture.unlock), &next);
+    let keys = Arc::new(open(&fixture.record, &fixture.unlock));
     let draft = fixture
         .slot
         .stage_cache(fixture.slot.cache_snapshot(), next)
@@ -280,9 +252,7 @@ async fn a_late_unlock_never_installs_keys_after_another_login_is_published() {
     let subject = original.subject().unwrap();
     let receipt = fixture.slot.receipt(&subject).unwrap();
     let next = cache(&fixture.record, UnlockMethod::Passphrase);
-    let keys = fixture
-        .slot
-        .noticed_keys(open(&fixture.record, &fixture.unlock), &next);
+    let keys = Arc::new(open(&fixture.record, &fixture.unlock));
     let draft = fixture
         .slot
         .stage_cache(fixture.slot.cache_snapshot(), next)

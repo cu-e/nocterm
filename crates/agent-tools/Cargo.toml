@@ -11,20 +11,11 @@ layer = "adapter"
 
 [dependencies]
 nocterm-session.workspace = true
-nocterm-cloud-model.workspace = true
-nocterm-ai.workspace = true
-nocterm-vt.workspace = true
-nocterm-core.workspace = true
-nocterm-transfers.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
 futures.workspace = true
 async-channel.workspace = true
 
 [dev-dependencies]
-nocterm-cloud-model = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
-nocterm-transfers = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

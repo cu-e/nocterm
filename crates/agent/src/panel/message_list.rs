@@ -9,15 +9,14 @@ use super::{
     stream::StreamReveal,
 };
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, EntityId, Task,
+    App, AppContext as _, Context, Entity, EntityId, Task, WeakEntity,
     component::{
         message_scroller::{MessageScroller, MessageScrollerState},
         text::TextViewState,
     },
 };
-use nocterm_agent_chat::conversation::ConversationSource;
 use nocterm_ai::{images::ImageInspector, thread::Entry};
-use std::{collections::HashSet, rc::Rc, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub(super) struct ActiveListBinding {
@@ -43,7 +42,7 @@ pub(super) struct MessageList {
     navigation: MessageNavigation,
     expanded: HashSet<usize>,
     binding: Option<ActiveListBinding>,
-    source: Option<Rc<dyn ConversationSource>>,
+    thread: Option<WeakEntity<crate::thread::AgentThread>>,
     markdown: MessageMarkdown,
 }
 impl MessageList {
@@ -57,7 +56,7 @@ impl MessageList {
             navigation: MessageNavigation::default(),
             expanded: HashSet::new(),
             binding: None,
-            source: None,
+            thread: None,
             markdown: MessageMarkdown::default(),
         }
     }
@@ -78,25 +77,26 @@ impl MessageList {
     pub(super) fn binding(&self) -> Option<ActiveListBinding> {
         self.binding.clone()
     }
-    pub(super) fn bind_source(
+    pub(super) fn bind_thread(
         &mut self,
-        source: Rc<dyn ConversationSource>,
-        chat: EntityId,
+        thread: &Entity<crate::thread::AgentThread>,
         cx: &mut Context<AgentPanel>,
     ) {
-        if self.bound_to(chat) && self.source.is_some() {
+        let chat = thread.entity_id();
+        if self.bound_to(chat) && self.thread.is_some() {
             return;
         }
         self.bind_chat(chat, cx);
-        self.source = Some(source);
+        self.thread = Some(thread.downgrade());
     }
     pub(super) fn bound_to(&self, chat: EntityId) -> bool {
         self.binding
             .as_ref()
             .is_some_and(|binding| binding.chat == chat)
     }
-    pub(super) fn source(&self) -> Option<(EntityId, Rc<dyn ConversationSource>)> {
-        Some((self.binding.as_ref()?.chat, self.source.as_ref()?.clone()))
+    /// The chat the list shows, while it is open.
+    pub(super) fn thread(&self) -> Option<Entity<crate::thread::AgentThread>> {
+        self.thread.as_ref()?.upgrade()
     }
     fn current(&self, binding: &ActiveListBinding) -> bool {
         self.binding
@@ -112,23 +112,20 @@ impl MessageList {
         self.expanded.clear();
         self.pipeline.clear();
         self.binding = None;
-        self.source = None;
+        self.thread = None;
         self.markdown.clear();
     }
-    /// `pending` rows follow the entries: the prompts the source has not accepted yet. They
-    /// are few and their state changes in place, so they are always measured again.
     pub(super) fn observe_rows(
         &mut self,
         chat: EntityId,
         entries: &[Entry],
-        pending: usize,
         dirty: &[usize],
         live: bool,
         reduced: bool,
     ) -> MessageRows {
         self.markdown.invalidate(dirty);
         let previous = self.row_count;
-        self.row_count = entries.len() + pending;
+        self.row_count = entries.len();
         self.navigation.observe(chat, entries, dirty);
         let mut changed = dirty.to_vec();
         changed.extend(entries.len()..self.row_count.min(previous));

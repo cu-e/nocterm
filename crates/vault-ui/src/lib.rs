@@ -59,24 +59,35 @@ impl Installed {
 /// Installs the application's vault: its settings, and `UnlockVault` and
 /// `LockVault` for every window that has no vault of its own.
 pub fn install(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
-    let installed = install_scoped(deps, ready, cx);
+    let auto_lock = vault_auto_lock(ready, cx);
+    let installed = install_scoped(deps, ready, auto_lock, cx);
     unlock::bind_app(installed.service(), cx);
     installed
 }
 
+/// How long a vault stays open without use, read again whenever settings change; zero keeps
+/// it open.
+pub type AutoLock = std::rc::Rc<dyn Fn(&App) -> Duration>;
+
+/// The auto-lock policy of the `vault` settings.
+pub fn vault_auto_lock(ready: &UiReady, cx: &mut App) -> AutoLock {
+    ready.settings().register::<VaultSettings>(cx);
+    let policy = ready.settings().clone();
+    std::rc::Rc::new(move |cx| {
+        Duration::from_secs(u64::from(policy.setting::<VaultSettings>(cx).auto_lock_minutes) * 60)
+    })
+}
+
 /// Installs a vault that belongs to some windows only, such as the vault of a
 /// hub account. Nothing is bound to the application: a window opts in with
-/// [`register_scoped`]. The auto-lock policy of the `vault` settings still applies.
-pub fn install_scoped(deps: Deps, ready: &UiReady, cx: &mut App) -> Installed {
+/// [`register_scoped`]. `auto_lock` is the vault's own lock policy.
+pub fn install_scoped(deps: Deps, ready: &UiReady, auto_lock: AutoLock, cx: &mut App) -> Installed {
     ready.settings().register::<VaultSettings>(cx);
     let service = deps.service;
     let keys_missing = deps.keys_missing;
     let settings_service = service.clone();
-    let policy = ready.settings().clone();
     let settings = ready.settings().observe(cx, move |cx| {
-        settings_service.set_auto_lock(Duration::from_secs(
-            u64::from(policy.setting::<VaultSettings>(cx).auto_lock_minutes) * 60,
-        ));
+        settings_service.set_auto_lock(auto_lock(cx));
     });
     Installed {
         settings: ready.settings().clone(),

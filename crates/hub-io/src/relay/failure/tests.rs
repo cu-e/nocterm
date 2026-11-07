@@ -5,8 +5,8 @@ use tonic::{Code, Status};
 
 use super::*;
 
-fn open(node: Option<&str>, error: HubRelayError) -> RelayError {
-    classify_opening("hub.example", node, error, |error| {
+fn open(error: HubRelayError) -> RelayError {
+    classify_opening("hub.example", error, |error| {
         classify(&HubAddress::parse("hub.example").unwrap(), error)
     })
 }
@@ -21,13 +21,13 @@ fn closed(code: ErrorCode) -> HubRelayError {
 #[test]
 fn the_hubs_refusals_are_the_sessions_refusals() {
     assert_eq!(
-        open(None, closed(ErrorCode::RelayDenied)),
+        open(closed(ErrorCode::RelayDenied)),
         RelayError::Refused {
             reason: RelayRefusal::Policy
         }
     );
     assert_eq!(
-        open(None, closed(ErrorCode::RelayLimit)),
+        open(closed(ErrorCode::RelayLimit)),
         RelayError::Refused {
             reason: RelayRefusal::Limit
         }
@@ -42,7 +42,7 @@ fn a_refusal_in_a_status_is_a_refusal_too() {
         "ERROR_CODE_RELAY_DENIED".parse().unwrap(),
     );
     assert_eq!(
-        open(None, HubRelayError::from(status)),
+        open(HubRelayError::from(status)),
         RelayError::Refused {
             reason: RelayRefusal::Policy
         }
@@ -50,23 +50,8 @@ fn a_refusal_in_a_status_is_a_refusal_too() {
 }
 
 #[test]
-fn an_unavailable_node_names_the_node_that_was_asked_for() {
-    assert_eq!(
-        open(Some("build-1"), closed(ErrorCode::NodeUnavailable)),
-        RelayError::NodeUnavailable {
-            node: "build-1".into()
-        }
-    );
-    // Without a node the hub itself dialled, so no node is to blame.
-    assert!(matches!(
-        open(None, closed(ErrorCode::NodeUnavailable)),
-        RelayError::Unreachable(_)
-    ));
-}
-
-#[test]
 fn a_hub_without_relays_is_unreachable_and_keeps_its_cause() {
-    let RelayError::Unreachable(cause) = open(None, HubRelayError::Unsupported) else {
+    let RelayError::Unreachable(cause) = open(HubRelayError::Unsupported) else {
         panic!("expected Unreachable");
     };
     assert!(matches!(
@@ -83,7 +68,7 @@ fn a_broken_stream_is_unreachable() {
         HubRelayError::BadPeerAddress,
         closed(ErrorCode::Unspecified),
     ] {
-        assert!(matches!(open(None, error), RelayError::Unreachable(_)));
+        assert!(matches!(open(error), RelayError::Unreachable(_)));
     }
 }
 
@@ -91,13 +76,13 @@ fn a_broken_stream_is_unreachable() {
 fn tokens_the_hub_no_longer_accepts_mean_not_signed_in() {
     let rejected = HubRelayError::from(Status::new(Code::Unauthenticated, "expired"));
     assert_eq!(
-        open(None, rejected),
+        open(rejected),
         RelayError::NotSignedIn {
             hub: "hub.example".into()
         }
     );
     assert_eq!(
-        open(None, HubRelayError::Hub(ClientError::NotSignedIn)),
+        open(HubRelayError::Hub(ClientError::NotSignedIn)),
         RelayError::NotSignedIn {
             hub: "hub.example".into()
         }
@@ -107,7 +92,7 @@ fn tokens_the_hub_no_longer_accepts_mean_not_signed_in() {
 #[test]
 fn a_hub_that_does_not_answer_is_unreachable_and_keeps_its_cause() {
     let down = HubRelayError::from(Status::new(Code::Unavailable, "down"));
-    let RelayError::Unreachable(cause) = open(None, down) else {
+    let RelayError::Unreachable(cause) = open(down) else {
         panic!("expected Unreachable");
     };
     assert!(matches!(

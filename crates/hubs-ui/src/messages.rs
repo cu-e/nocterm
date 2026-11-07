@@ -1,8 +1,9 @@
 //! The words the views use for the failures of the hub service. The service reports typed
 //! errors; this is the only place that turns them into text.
 
+use nocterm_hub_agents_model::HubAgentsError;
 use nocterm_hubs::{HubsError, SignInError};
-use nocterm_hubs_model::{AdminKeyError, HubError};
+use nocterm_hubs_model::HubError;
 
 /// Why a sign-in step did not work, for the dialog.
 pub(crate) fn sign_in_problem(error: &SignInError) -> String {
@@ -34,20 +35,17 @@ pub(crate) fn hubs_problem(error: &HubsError) -> String {
     }
 }
 
-/// Why an administrator's key was not confirmed.
-pub(crate) fn admin_key_problem(error: AdminKeyError) -> String {
+/// What a failed call of the agents or servers of a hub means to the person.
+pub(crate) fn agents_problem(error: &HubAgentsError) -> String {
     match error {
-        AdminKeyError::Stale => "The account changed. Compare the key shown for the current account again.".to_owned(),
-        AdminKeyError::Persistence { .. } => "The confirmation could not be saved. Try again.".to_owned(),
-        AdminKeyError::Locked => {
-            "The account keys are closed on this device. Unlock the vault first.".to_owned()
-        }
-        AdminKeyError::NotPending => {
-            "That administrator's key is no longer waiting for confirmation.".to_owned()
-        }
-        AdminKeyError::Mismatch => {
-            "The server now offers another key than the one shown. Compare the new fingerprint with the administrator's before confirming."
+        HubAgentsError::Hub(error) => hub_problem(error),
+        HubAgentsError::Draft(error) => error.to_string(),
+        HubAgentsError::Malformed => {
+            "The server answered with something this version cannot read. Update Nocterm."
                 .to_owned()
+        }
+        HubAgentsError::LimitReached => {
+            "A limit set by the server's administrator is reached.".to_owned()
         }
     }
 }
@@ -121,37 +119,6 @@ pub(crate) fn account_key_problem(error: &nocterm_hubs_model::AccountKeyError) -
     }
 }
 
-/// Why an agent access change did not work.
-pub(crate) fn agent_problem(error: &nocterm_hubs_model::AgentAccessError) -> String {
-    use nocterm_hubs_model::AgentAccessError as Error;
-    match error {
-        Error::Hub(error) => hub_problem(error),
-        Error::NotConnected { connection } => format!(
-            "No session to {connection} is open. Connect to the server first, then try again."
-        ),
-        Error::HostChanged => {
-            "The server's authorized_keys changed while it was edited. Nothing was written; try again."
-                .to_owned()
-        }
-        Error::HostEditLocked { path } => format!(
-            "Another Nocterm edit may be running. Retry when it finishes. If an edit was interrupted, stop all Nocterm edits before removing the lock file {path}. You can also use Copy CA line to edit authorized_keys by hand."
-        ),
-        Error::HostEditUnsupported { .. } => {
-            "The server cannot safely publish this edit automatically. Use Copy CA line to add it by hand."
-                .to_owned()
-        }
-        Error::HostUnsupported => {
-            "The server's authorized_keys cannot be edited here. Add or remove the line by hand."
-                .to_owned()
-        }
-        Error::Host { .. } => "The server could not be edited.".to_owned(),
-        Error::Unknown { connection } => format!("No server is registered for {connection}."),
-        Error::Records { .. } => {
-            "The agent access records on this device are unusable.".to_owned()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,17 +136,5 @@ mod tests {
             hub_problem(&HubError::InvalidCredentials),
             "The user name or password was not accepted."
         );
-    }
-
-    #[test]
-    fn only_a_confirmed_edit_lock_shows_the_exact_manual_recovery_path() {
-        use nocterm_hubs_model::AgentAccessError;
-        let path = "/home/deploy/.ssh/.nocterm-authorized_keys.lock";
-        let message = agent_problem(&AgentAccessError::HostEditLocked { path: path.into() });
-        assert!(message.contains(path));
-        assert!(message.contains("stop all Nocterm edits"));
-        assert!(message.contains("Copy CA line"));
-        assert!(!agent_problem(&AgentAccessError::HostChanged).contains("lock file"));
-        assert!(!agent_problem(&AgentAccessError::HostUnsupported).contains("lock file"));
     }
 }

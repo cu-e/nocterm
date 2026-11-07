@@ -24,6 +24,33 @@ pub(crate) fn workspace_with_keys(
     cx: &mut TestAppContext,
     keys: std::sync::Arc<dyn nocterm_ssh_keys::VaultSshKeys>,
 ) -> (AnyWindowHandle, Entity<Workspace>, Opened, Installed) {
+    workspace_over(cx, memory(keys))
+}
+
+/// A workspace of a hub window, whose editor offers Agent access through `access`.
+pub(crate) fn workspace_with_agent_access(
+    cx: &mut TestAppContext,
+    access: std::sync::Arc<dyn crate::ServerAgentAccess>,
+) -> (AnyWindowHandle, Entity<Workspace>, Opened, Installed) {
+    let prepared = memory(std::sync::Arc::new(nocterm_ssh_keys::NoVaultSshKeys));
+    let inputs = prepared.inputs().with_agent_access(access);
+    workspace_over(cx, crate::PreparedConnections::volatile(inputs))
+}
+
+fn memory(keys: std::sync::Arc<dyn nocterm_ssh_keys::VaultSshKeys>) -> crate::PreparedConnections {
+    crate::PreparedConnections::memory_with_keys(
+        nocterm_connections_model::draft::EditorDefaults {
+            user: Some("tester".into()),
+            home: None,
+        },
+        keys,
+    )
+}
+
+fn workspace_over(
+    cx: &mut TestAppContext,
+    prepared: crate::PreparedConnections,
+) -> (AnyWindowHandle, Entity<Workspace>, Opened, Installed) {
     let opened = Opened::default();
     let calls = opened.clone();
     let (window, workspace, installed) = cx.update(|cx| {
@@ -36,13 +63,7 @@ pub(crate) fn workspace_with_keys(
             cx,
         );
         let installed = crate::install(
-            crate::PreparedConnections::memory_with_keys(
-                nocterm_connections_model::draft::EditorDefaults {
-                    user: Some("tester".into()),
-                    home: None,
-                },
-                keys,
-            ),
+            prepared,
             &ready,
             &nocterm_store::ShutdownCoordinator::default(),
             cx,

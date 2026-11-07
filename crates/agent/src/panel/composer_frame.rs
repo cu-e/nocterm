@@ -1,82 +1,66 @@
-//! What the composer of the open chat or conversation offers, read once per drawing from its
-//! source. Every source draws the same composer; its capabilities, not its kind, decide which
-//! controls show.
-use super::{composer_view::ComposerView, transcript::TranscriptView};
-use gpui_kit::{App, EntityId};
-use nocterm_agent_chat::conversation::ConversationSource;
+//! What the composer of the open chat offers, read once per drawing from its thread.
+use super::composer_view::ComposerView;
+use crate::thread::AgentThread;
+use gpui_kit::{App, Entity, EntityId, WeakEntity};
 use nocterm_ai::model::usage::ContextUsage;
+use nocterm_ai::session::Ticket;
 
 pub(super) struct ComposerFrame {
     origin: EntityId,
     can_prompt: bool,
     can_stop: bool,
-    can_allow: bool,
-    can_attach: bool,
-    can_configure: bool,
-    usage: Option<Option<ContextUsage>>,
-    status: Option<(String, bool)>,
-    can_wake: bool,
+    usage: Option<ContextUsage>,
 }
 impl ComposerFrame {
-    /// None when the source can no longer be read; the transcript names why.
-    pub(super) fn read(source: &dyn ConversationSource, cx: &App) -> Option<Self> {
-        let mut frame = None;
-        source
-            .with_view(cx, &mut |view| {
-                frame = Some(Self {
-                    origin: source.identity(),
-                    can_prompt: view.can_prompt,
-                    can_stop: view.can_stop,
-                    can_allow: view.can_allow,
-                    can_attach: view.composer.attach,
-                    can_configure: view.composer.configure,
-                    usage: view.composer.usage.then(|| view.transcript.usage.clone()),
-                    status: TranscriptView::conversation_status(&view),
-                    can_wake: view.freshness
-                        == nocterm_ai::conversation::ConversationFreshness::Unconfirmed {
-                            can_wake: true,
-                        },
-                });
-            })
-            .ok()?;
-        frame
+    pub(super) fn read(thread: &Entity<AgentThread>, cx: &App) -> Self {
+        let state = thread.read(cx);
+        Self {
+            origin: thread.entity_id(),
+            can_prompt: !state.session_sign_in_required(),
+            can_stop: state.session_generating() || state.queued_prompt_ids().len() != 0,
+            usage: state.transcript().usage.clone(),
+        }
     }
-    /// The source the composer sends to and its controls act on.
+    /// The chat the composer sends to and its controls act on.
     pub(super) fn origin(&self) -> EntityId {
         self.origin
     }
-    pub(super) fn can_prompt(&self) -> bool {
-        self.can_prompt
-    }
-    pub(super) fn can_allow(&self) -> bool {
-        self.can_allow
-    }
-    pub(super) fn can_attach(&self) -> bool {
-        self.can_attach
-    }
-    pub(super) fn can_configure(&self) -> bool {
-        self.can_configure
-    }
-    /// The context usage the usage ring shows, when the source reports one.
-    pub(super) fn usage(&self) -> Option<Option<&ContextUsage>> {
-        self.usage.as_ref().map(Option::as_ref)
-    }
-    /// Whether the source's producer sleeps and can be woken (a Cloud chat's seat).
-    pub(super) fn can_wake(&self) -> bool {
-        self.can_wake
-    }
-    /// The status line the source describes: its text and whether it is live.
-    pub(super) fn status(&self) -> Option<(String, bool)> {
-        self.status.clone()
+    /// The context usage the usage ring shows.
+    pub(super) fn usage(&self) -> Option<&ContextUsage> {
+        self.usage.as_ref()
     }
     /// Whether the send button stops the run instead: nothing is typed, attached or edited
     /// and there is a run to stop.
     pub(super) fn stops(&self, composer: &ComposerView, images: bool, cx: &App) -> bool {
         self.can_stop && composer.text(cx).trim().is_empty() && !images && !composer.editing()
     }
-    /// Whether sending is unavailable: the source takes no prompts now, images are being
-    /// prepared, or the composer's prompt is still on its way.
-    pub(super) fn send_disabled(&self, stops: bool, composer: &ComposerView, busy: bool) -> bool {
-        !stops && (!self.can_prompt || composer.preparing() || busy)
+    /// Whether sending is unavailable: the chat takes no prompts now or images are being
+    /// prepared.
+    pub(super) fn send_disabled(&self, stops: bool, composer: &ComposerView) -> bool {
+        !stops && (!self.can_prompt || composer.preparing())
+    }
+}
+
+/// The stop the send button shows: the chat and the session it was drawn for. A stop drawn
+/// for an earlier session of the chat stops nothing.
+#[derive(Clone)]
+pub(super) struct RenderedStop {
+    thread: WeakEntity<AgentThread>,
+    ticket: Ticket,
+}
+impl RenderedStop {
+    pub(super) fn capture(thread: &Entity<AgentThread>, cx: &App) -> Self {
+        Self {
+            thread: thread.downgrade(),
+            ticket: thread.read(cx).session_ticket(),
+        }
+    }
+    pub(super) fn activate(&self, cx: &mut App) {
+        let Some(thread) = self.thread.upgrade() else {
+            return;
+        };
+        if thread.read(cx).session_ticket() == self.ticket {
+            thread.update(cx, |thread, cx| thread.stop(cx));
+        }
     }
 }

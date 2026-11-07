@@ -14,7 +14,6 @@ use gpui_kit::{
 };
 use nocterm_ai::model::auth::AuthFlow;
 use nocterm_ui::IconName;
-use std::rc::Rc;
 
 use super::{
     AgentPanel, MenuKind,
@@ -227,51 +226,37 @@ impl ComposerRenderer {
         }
         controls.into_any_element()
     }
-    /// The attach controls, the session's options, usage, Allow and send: one footer for every
-    /// source, showing what the source's capabilities offer.
+    /// The attach controls, the session's options, usage and send.
     pub(super) fn render_footer(
         frame: &super::composer_frame::ComposerFrame,
         composer: &super::composer_view::ComposerView,
         menus: &super::menu_view::MenuView,
-        local: Option<&Entity<AgentThread>>,
-        stop: Option<Rc<super::conversation_surface::RenderedStop>>,
-        busy: bool,
+        thread: &Entity<AgentThread>,
+        stop: super::composer_frame::RenderedStop,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let attach = local.filter(|_| frame.can_attach());
-        let images = attach.is_some_and(|thread| !thread.read(cx).composer().images().is_empty());
+        let images = !thread.read(cx).composer().images().is_empty();
         let stops = frame.stops(composer, images, cx);
-        let attach = attach.map(|thread| Self::render_attach(composer, menus, thread, cx));
-        let options = match local.filter(|_| frame.can_configure()) {
-            Some(thread) => Some(Self::render_config_controls(composer, menus, thread, cx)),
-            None => (!frame.can_prompt()).then(|| {
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("New prompts unavailable")
-                    .into_any_element()
-            }),
-        };
-        let usage = frame.usage().map(|usage| {
-            super::usage::UsageCard::usage_button(menus.is_open(&MenuKind::Usage), usage, cx)
-        });
-        let allow = frame
-            .can_allow()
-            .then(|| Self::allow_button(frame.origin(), cx));
+        let attach = Self::render_attach(composer, menus, thread, cx);
+        let options = Self::render_config_controls(composer, menus, thread, cx);
+        let usage = super::usage::UsageCard::usage_button(
+            menus.is_open(&MenuKind::Usage),
+            frame.usage(),
+            cx,
+        );
         let send = Self::send_button(
             frame.origin(),
             stops,
-            frame.send_disabled(stops, composer, busy),
+            frame.send_disabled(stops, composer),
             stop,
             composer.input_ticket(cx).ok(),
             cx,
         );
         h_flex()
             .gap_1()
-            .children(attach.into_iter().flatten())
-            .child(div().flex_1().min_w_0().children(options))
-            .children(usage)
-            .children(allow)
+            .children(attach)
+            .child(div().flex_1().min_w_0().child(options))
+            .child(usage)
             .child(send)
             .into_any_element()
     }
@@ -316,22 +301,11 @@ impl ComposerRenderer {
                 .into_any_element(),
         ]
     }
-    /// Lets a waiting run use the model; shown only while the run waits for permission.
-    fn allow_button(origin: gpui_kit::EntityId, cx: &mut Context<AgentPanel>) -> AnyElement {
-        Button::new("agent-allow-run")
-            .small()
-            .label("Allow")
-            .accessibility_label("Allow this run to use the model")
-            .flex_shrink_0()
-            .tooltip("Allow this run to use the model")
-            .on_click(cx.listener(move |panel, _, _, cx| panel.allow_conversation_run(origin, cx)))
-            .into_any_element()
-    }
     fn send_button(
         origin: gpui_kit::EntityId,
         stop: bool,
         disabled: bool,
-        captured: Option<Rc<super::conversation_surface::RenderedStop>>,
+        captured: super::composer_frame::RenderedStop,
         input: Option<super::composer_view::InputTicket>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
@@ -351,7 +325,7 @@ impl ComposerRenderer {
             })
             .flex_shrink_0()
             .tooltip(if stop { "Stop" } else { "Send" })
-            .disabled(disabled || input.is_none() || (stop && captured.is_none()))
+            .disabled(disabled || input.is_none())
             .on_click(cx.listener(move |panel, _, window, cx| {
                 if input
                     .as_ref()
@@ -360,9 +334,7 @@ impl ComposerRenderer {
                     return;
                 }
                 if stop {
-                    if let Some(captured) = &captured {
-                        captured.activate(panel, cx);
-                    }
+                    captured.activate(cx);
                 } else {
                     panel.on_send_clicked(origin, window, cx);
                 }

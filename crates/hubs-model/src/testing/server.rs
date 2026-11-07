@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::address::HubAddress;
-use crate::records::{Account, AccountId, HubInfo, OidcProvider, OrgId, OrgSummary};
+use crate::records::{Account, AccountId, HubInfo, OidcProvider};
 use crate::settings::HubRecord;
 use crate::testing::CLIENT_PROTOCOL;
 use crate::trust::{Fingerprint, TrustPolicy};
@@ -117,9 +117,9 @@ impl FakeServer {
         self
     }
 
-    /// A user who belongs to the organization `org` (id and name are the same text).
+    /// A user of the hub.
     #[must_use]
-    pub fn with_user(mut self, username: &str, password: &str, org: &str) -> Self {
+    pub fn with_user(mut self, username: &str, password: &str) -> Self {
         self.users.push(FakeUser {
             username: username.into(),
             password: password.into(),
@@ -127,24 +127,18 @@ impl FakeServer {
                 id: AccountId::new(format!("account-{username}")),
                 username: username.into(),
                 display_name: username.to_uppercase(),
-                orgs: vec![OrgSummary {
-                    id: OrgId::new(org),
-                    name: org.into(),
-                }],
+                admin: false,
             },
         });
         self
     }
 
-    /// Makes the existing user `username` a member of one more organization `org` (id and name
-    /// are the same text); a user that does not exist is left alone.
+    /// Makes the existing user `username` an administrator of the hub; a user that does not
+    /// exist is left alone.
     #[must_use]
-    pub fn with_membership(mut self, username: &str, org: &str) -> Self {
+    pub fn with_admin(mut self, username: &str) -> Self {
         if let Some(user) = self.users.iter_mut().find(|user| user.username == username) {
-            user.account.orgs.push(OrgSummary {
-                id: OrgId::new(org),
-                name: org.into(),
-            });
+            user.account.admin = true;
         }
         self
     }

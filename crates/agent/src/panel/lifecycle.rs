@@ -4,29 +4,6 @@ use crate::roster::ChatStart;
 use std::collections::HashSet;
 
 impl AgentPanel {
-    /// Wakes the sleeping seat of the shown Cloud chat; the chat reads again once it answers.
-    pub(super) fn wake_conversation(&mut self, identity: EntityId, cx: &mut Context<Self>) {
-        let Some(selected) = self
-            .conversation
-            .as_ref()
-            .filter(|selected| selected.identity() == identity)
-        else {
-            return;
-        };
-        let work = match selected.source().capture_actions(cx) {
-            Ok(actions) => actions.wake(cx),
-            Err(error) => gpui_kit::Task::ready(Err(error)),
-        };
-        cx.spawn(async move |panel, cx| {
-            if let Err(error) = work.await {
-                let _ = panel.update(cx, |panel, cx| {
-                    panel.notices.set_error(Some(error.to_string()));
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
-    }
     pub(super) fn search_archives(&mut self, cx: &mut Context<Self>) {
         self.on_history_catalog_changed(cx);
     }
@@ -273,49 +250,6 @@ impl AgentPanel {
             self.open_thread(id, cx);
         }
     }
-    pub(super) fn on_cloud_history_listed(
-        &mut self,
-        ticket: &super::cloud_history::CloudListingTicket,
-        hub: nocterm_hubs_model::HubId,
-        result: Result<
-            Vec<std::sync::Arc<dyn nocterm_cloud_agents_model::ChatHistoryEntry>>,
-            nocterm_cloud_agents_model::CloudChatError,
-        >,
-        cx: &mut Context<Self>,
-    ) {
-        if self.history.cloud_mut().accept(ticket, hub, result) {
-            cx.notify();
-        }
-    }
-    /// A Cloud row of the history was chosen: its entry opens the chat, waking its seat.
-    pub(super) fn open_cloud_history(
-        &mut self,
-        key: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.history.renaming()
-            || self
-                .conversation
-                .as_ref()
-                .is_some_and(|open| open.origin() == Some(key))
-        {
-            return;
-        }
-        let Some(entry) = self.history.cloud().entry(key, cx) else {
-            return;
-        };
-        let opening = entry.open();
-        self.notices.set_error(None);
-        cx.spawn_in(window, async move |panel, cx| {
-            let result = opening.await;
-            let _ = panel.update_in(cx, |panel, window, cx| {
-                panel.finish_cloud_history_chat(result, window, cx);
-            });
-        })
-        .detach();
-        cx.notify();
-    }
     pub(super) fn on_history_rename_key(
         &mut self,
         event: &gpui_kit::KeyDownEvent,
@@ -338,10 +272,6 @@ impl AgentPanel {
         self.menus.reset();
     }
     pub(super) fn select_thread(&mut self, id: gpui_kit::EntityId, cx: &mut Context<Self>) {
-        if let Some(previous) = self.conversation.take() {
-            previous.detach(cx);
-            self.composer.clear();
-        }
         self.chats.select(id, cx);
         self.reset_chat_view(cx);
         if let Some(thread) = self
@@ -385,11 +315,6 @@ impl AgentPanel {
         cx.notify();
     }
     pub(super) fn clear_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(previous) = self.conversation.take() {
-            previous.detach(cx);
-            self.composer.clear();
-            self.composer.set_text("", window, cx);
-        }
         let draft = self.original_composer_text(cx);
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.set_draft(draft, cx));
@@ -571,17 +496,11 @@ impl AgentPanel {
             .current()
             .is_some_and(|current| current.entity_id() == loaded.entity_id())
         {
-            use nocterm_agent_chat::conversation::{ConversationSource as _, LocalConversation};
             // The usage card over the transcript shows the chat's usage.
             let rows = loaded.read(cx).has_changed_rows() || self.menus.is_open(&MenuKind::Usage);
-            let mut stamp = None;
-            let _ = LocalConversation::new(&loaded).with_view(cx, &mut |view| {
-                stamp = Some(super::parts::transcript_stamp(&view));
-            });
+            let stamp = super::parts::transcript_stamp(loaded.read(cx));
             let parts = self.layout.parts();
-            if let Some(stamp) = stamp {
-                parts.transcript_changed(rows, stamp, cx);
-            }
+            parts.transcript_changed(rows, stamp, cx);
             parts.notify(super::parts::PartKind::Footer, cx);
         }
         let Some(ticket) = self.notices.request_redraw() else {
@@ -602,9 +521,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if self.notices.finish_redraw(ticket) {
-            let open = self.conversation.as_ref().and_then(|view| view.origin());
-            let stamp =
-                super::history::HistoryProjection::stamp(&self.chats, &self.history, open, cx);
+            let stamp = super::history::HistoryProjection::stamp(&self.chats, &self.history, cx);
             self.layout.parts().history_changed(stamp, cx);
         }
     }

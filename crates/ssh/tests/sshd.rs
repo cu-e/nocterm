@@ -44,10 +44,6 @@ mod jump;
 
 #[path = "cases/hub_relay.rs"]
 mod hub_relay;
-#[path = "support/login.rs"]
-mod login_fixture;
-#[path = "cases/proof_login.rs"]
-mod proof_login;
 #[path = "cases/source_change.rs"]
 mod source_change;
 #[path = "cases/vault_key.rs"]
@@ -483,8 +479,3 @@ async fn rejected_write_batch_invalidates_its_prefix_and_cannot_publish_partial_
     session.close();
     closed(&session, no_prompts).await;
 }
-
-#[path = "cases/chat_certificate.rs"]
-mod chat_certificate;
-#[path = "cases/vault_certificate.rs"]
-mod vault_certificate;

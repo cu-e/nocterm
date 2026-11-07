@@ -21,6 +21,7 @@ fn settings_page_offers_to_sign_in_again_instead_of_creating_a_vault(cx: &mut Te
         let installed = crate::install_scoped(
             crate::Deps::new(service.clone()).with_keys_missing(remedy.clone()),
             &ready,
+            crate::vault_auto_lock(&ready, cx),
             cx,
         );
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {

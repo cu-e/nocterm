@@ -241,12 +241,7 @@ impl VaultState {
         }
         let mut records = clone_records(&self.state()?.records);
         let new = Record {
-            info: CredentialInfo {
-                id,
-                label,
-                binding,
-                group: None,
-            },
+            info: CredentialInfo { id, label, binding },
             secret,
         };
         if let Some(index) = records.iter().position(|record| record.info.id == id) {

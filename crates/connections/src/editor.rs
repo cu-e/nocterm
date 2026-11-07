@@ -1,8 +1,8 @@
 //! The form that creates and edits a saved connection.
 
 use gpui_kit::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString,
-    Subscription, WeakEntity, Window,
+    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription,
+    WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
@@ -51,20 +51,20 @@ impl EditorSection {
     ];
 }
 
+use agent_access::AgentAccessField;
 use appearance::AppearanceFields;
 use authentication::AuthenticationFields;
 use connection::ConnectionFields;
 use jump_hosts::JumpHostsFields;
 use launch::LaunchFields;
 use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField, expand_home};
-use space::SpaceField;
 use state::EditState;
 use vault_key::VaultKeyEvent;
+mod agent_access;
 mod authentication;
 mod connection;
 mod jump_hosts;
 mod launch;
-mod space;
 mod state;
 mod vault_key;
 
@@ -157,7 +157,7 @@ pub struct ConnectionEditor {
     appearance: AppearanceFields,
     jump_hosts: JumpHostsFields,
     options: Entity<nocterm_ui::SessionOptionsEditor>,
-    space: SpaceField,
+    agent_access: AgentAccessField,
     section: EditorSection,
     /// The page's scroll, to bring a row that just appeared into view.
     scroll: ScrollHandle,
@@ -220,7 +220,7 @@ impl ConnectionEditor {
             )
         });
         let subscription = cx.observe(installed.facts(), |_, _, cx| cx.notify());
-        let space = SpaceField::new(id, &installed, cx);
+        let agent_access = AgentAccessField::new(inputs.agent_access().cloned());
         let editor = Self {
             deps: installed,
             focus: cx.focus_handle(),
@@ -232,7 +232,7 @@ impl ConnectionEditor {
             appearance,
             jump_hosts,
             options,
-            space,
+            agent_access,
             section: EditorSection::Connection,
             scroll: ScrollHandle::new(),
             error: None,
@@ -280,20 +280,6 @@ impl ConnectionEditor {
         }
     }
 
-    /// The choice of space.
-    fn space_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let editor = cx.weak_entity();
-        self.space.row(
-            move |scope, _, cx| {
-                let _ = editor.update(cx, |this, cx| {
-                    this.space.select(scope);
-                    cx.notify();
-                });
-            },
-            cx,
-        )
-    }
-
     /// Saves the connection, and opens it when `and_connect` is set.
     fn save(&mut self, and_connect: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.edit.try_begin() {
@@ -310,14 +296,6 @@ impl ConnectionEditor {
             }
         };
 
-        // Part of the save: carried out once it succeeds, withdrawn if it fails.
-        let is_new = self.edit.original().is_none();
-        // Saving a change with the note about a shared secret shown beside the save is the
-        // user's word that the organization may have it. A save that changes nothing sends
-        // nothing, so it asks for nothing either.
-        let changed = self.edit.original() != Some(&profile);
-        let shares_secret = changed && self.authentication.shares_secret(cx);
-        self.space.stage(profile.id, is_new, shares_secret, cx);
         let saved = self.deps.connections().update(cx, |connections, cx| {
             connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
         });
@@ -326,7 +304,6 @@ impl ConnectionEditor {
         cx.spawn_in(window, async move |this, cx| {
             let result = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.space.settle(profile.id, result.is_ok(), cx);
                 if !this.edit.finish() {
                     return;
                 }
@@ -509,11 +486,7 @@ impl Render for EditorFooter {
 impl ConnectionEditor {
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let danger = cx.theme().danger;
-        let note = self
-            .space
-            .secret_note(self.authentication.shares_secret(cx), cx);
         v_flex().id("editor-footer").gap_2()
-            .children(note)
             .when_some(self.error.clone(), |form, error| {
                 form.child(div().text_sm().text_color(danger).child(error))
                     .when(self.edit.original().is_some(), |form| form.child(

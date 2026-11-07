@@ -434,8 +434,8 @@ impl AccountSubjects for Pool {
 }
 
 pub(crate) fn subject_of(client: &HubClient) -> Option<AccountSubject> {
-    let (account, device) = client.account_subject()?;
-    Some(AccountSubject::new(account, device))
+    let session = client.session()?;
+    Some(AccountSubject::new(session.account_id, session.device_id))
 }
 
 #[cfg(test)]

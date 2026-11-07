@@ -102,23 +102,6 @@ impl Sshd {
         }
     }
 
-    /// Real server protocol events, for proving rekey rather than assuming it.
-    pub(crate) fn unauthenticated_disconnects(&self) -> usize {
-        fs::read_to_string(self.root().join("sshd.log"))
-            .unwrap_or_default()
-            .lines()
-            .filter(|line| {
-                line.contains("[preauth]")
-                    && (line.contains("Connection closed") || line.contains("Disconnected from"))
-            })
-            .count()
-    }
-    pub(crate) fn completed_key_exchanges(&self) -> usize {
-        fs::read_to_string(self.root().join("sshd.log"))
-            .unwrap_or_default()
-            .matches("SSH2_MSG_NEWKEYS sent")
-            .count()
-    }
     pub(crate) fn port(&self) -> u16 {
         self.port
     }

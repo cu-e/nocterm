@@ -9,9 +9,7 @@ use gpui_kit::{
     AnyWindowHandle, AppContext as _, ElementId, Entity, Focusable as _, TestAppContext,
     WindowOptions, component::WindowExt as _, test::TestWindowExt as _,
 };
-use nocterm_hubs_model::testing::{
-    FakeAccountDevices, FakeAccountKeys, FakeAdminKeys, FakeAgentAccess, FakeHub, FakeServer,
-};
+use nocterm_hubs_model::testing::{FakeAccountDevices, FakeAccountKeys, FakeHub, FakeServer};
 use nocterm_hubs_model::{Environment, HubAddress, HubId, HubRecord, HubsSettings};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
@@ -28,11 +26,11 @@ pub(crate) fn hub_id() -> HubId {
     HubId::from(HubAddress::parse(ADDRESS).unwrap())
 }
 
-/// The server most tests talk to: certificate `[7; 32]`, user `ada` in organization `lab`.
+/// The server most tests talk to: certificate `[7; 32]`, user `ada`.
 pub(crate) fn server() -> FakeServer {
     FakeServer::new(ADDRESS, 7)
         .named("Home hub")
-        .with_user("ada", "secret", "lab")
+        .with_user("ada", "secret")
         .with_provider("corp", "Corporate SSO")
 }
 
@@ -70,9 +68,8 @@ pub(crate) struct Fixture {
     pub(crate) window: AnyWindowHandle,
     pub(crate) workspace: Entity<Workspace>,
     pub(crate) hub: FakeHub,
-    pub(crate) admin_keys: FakeAdminKeys,
     pub(crate) devices: FakeAccountDevices,
-    pub(crate) agent_access: FakeAgentAccess,
+    pub(crate) agents: nocterm_hub_agents_model::testing::FakeHubAgents,
     pub(crate) account_keys: FakeAccountKeys,
     pub(crate) installed: Installed,
     pub(crate) environments: Rc<RecordingEnvironments>,
@@ -103,28 +100,42 @@ pub(crate) fn fixture_over(
     if let Some(user) = signed_in {
         hub.sign_in_as(&hub_id(), user);
     }
-    let admin_keys = FakeAdminKeys::alongside(&hub);
     let devices = FakeAccountDevices::default();
-    let agent_access = FakeAgentAccess::alongside(&hub);
+    let agents = nocterm_hub_agents_model::testing::FakeHubAgents::new();
     let account_keys = FakeAccountKeys::alongside(&hub, PASSWORD);
     let environments = Rc::new(RecordingEnvironments::default());
     let (window, workspace, installed) = cx.update(|cx| {
         gpui_kit::init(cx);
-        let settings = config.with(HubsSettings { servers: known }).install(cx);
+        let settings = config
+            .with(HubsSettings {
+                servers: known,
+                ..HubsSettings::default()
+            })
+            .install(cx);
         nocterm_ui::init(DesignTokens::builtin(), settings.clone(), cx);
         let installed = install(nocterm_hubs::install(
             nocterm_hubs::Deps {
                 trust: Arc::new(hub.clone()),
                 sign_in: Arc::new(hub.clone()),
-                admin_keys: Arc::new(admin_keys.clone()),
                 devices: Arc::new(devices.clone()),
-                agent_trust: Arc::new(agent_access.clone()),
-                agent_grants: Arc::new(agent_access.clone()),
                 account_keys: Arc::new(account_keys.clone()),
             },
             settings,
             cx,
-        ));
+        ))
+        .with_hub_agents(
+            nocterm_hub_agents::install(
+                nocterm_hub_agents::Deps {
+                    directory: Arc::new(agents.clone()),
+                    servers: Arc::new(agents.clone()),
+                    chats: Arc::new(agents.clone()),
+                    hosts: Arc::new(nocterm_ssh_keys::testing::FakeAgentHosts::default()),
+                },
+                cx,
+            )
+            .agents()
+            .clone(),
+        );
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| Workspace::new(deps_for(&[], cx), window, cx))
@@ -137,9 +148,8 @@ pub(crate) fn fixture_over(
         window,
         workspace,
         hub,
-        admin_keys,
         devices,
-        agent_access,
+        agents,
         account_keys,
         installed,
         environments,

@@ -541,24 +541,6 @@ mod reissue {
     }
 
     #[tokio::test]
-    async fn a_record_of_another_key_pair_is_refused_and_not_written_over() {
-        let (device, hub_keys, _) = created().await;
-        hub_keys.edit_record(|record| {
-            record.public_key = nocterm_keys::AccountKeyPair::generate()
-                .unwrap()
-                .public_key()
-                .to_bytes()
-                .to_vec();
-        });
-        let before = hub_keys.stored().unwrap();
-
-        let result = reissue(&device, &hub_keys).await;
-
-        assert!(matches!(result, Err(HubError::KeysetDamaged { .. })));
-        assert_eq!(hub_keys.stored().unwrap(), before);
-    }
-
-    #[tokio::test]
     async fn typing_the_recovery_key_confirms_that_the_person_holds_it() {
         let (device, hub_keys, key) = created().await;
         let device = device.restarted();

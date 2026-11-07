@@ -2,11 +2,11 @@ use super::*;
 
 #[test]
 fn hub_info_keeps_what_a_sign_in_screen_needs() {
-    let wire = v1::HubInfo {
+    let wire = v2::HubInfo {
         name: "Team hub".into(),
-        bootstrapped: true,
+        needs_setup: false,
         password_login: true,
-        oidc_providers: vec![v1::OidcProvider {
+        oidc_providers: vec![v2::OidcProvider {
             id: "corp".into(),
             display_name: "Corporate".into(),
         }],
@@ -20,26 +20,15 @@ fn hub_info_keeps_what_a_sign_in_screen_needs() {
 }
 
 #[test]
-fn an_account_lists_the_organizations_it_belongs_to() {
-    let me = v1::Me {
+fn an_account_says_whether_it_administers_the_hub() {
+    let me = v2::Me {
         account_id: "a1".into(),
         username: "ada".into(),
         display_name: "Ada".into(),
-        memberships: vec![
-            v1::Membership {
-                org: Some(v1::Org {
-                    org_id: "o1".into(),
-                    name: "Lab".into(),
-                    created_at_ms: 0,
-                }),
-                ..Default::default()
-            },
-            v1::Membership::default(),
-        ],
+        admin: true,
         ..Default::default()
     };
     let account = account(me);
     assert_eq!(account.id.as_str(), "a1");
-    assert_eq!(account.orgs.len(), 1);
-    assert_eq!(account.orgs[0].name, "Lab");
+    assert!(account.admin);
 }

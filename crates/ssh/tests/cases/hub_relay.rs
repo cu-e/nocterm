@@ -50,7 +50,7 @@ async fn a_session_through_a_hub_relay_remembers_the_destination_key_and_not_the
     let Some(server) = Sshd::start() else { return };
     let hub = TcpRelay::new();
     let transport = server.transport("plain").with_relay(hub.clone());
-    let session = transport.open(through_hub(server.request(), Some("office")));
+    let session = transport.open(through_hub(server.request()));
     let mut asked = 0;
     connect(&session, |prompt| match prompt {
         Prompt::UnknownHostKey {
@@ -69,7 +69,6 @@ async fn a_session_through_a_hub_relay_remembers_the_destination_key_and_not_the
         hub.asked(),
         [RelayRequest {
             hub: HUB.into(),
-            node: Some("office".into()),
             target: target_of(&server),
         }]
     );
@@ -87,7 +86,7 @@ async fn a_session_through_a_hub_relay_remembers_the_destination_key_and_not_the
     hub.connection_ended().await;
 
     // A remembered key is trusted on the next connection without a prompt.
-    let again = transport.open(through_hub(server.request(), None));
+    let again = transport.open(through_hub(server.request()));
     connect(&again, no_prompts).await;
     again.close();
     closed(&again, no_prompts).await;
@@ -99,7 +98,7 @@ async fn a_relayed_destination_key_that_is_rejected_never_reaches_sign_in() {
     let Some(server) = Sshd::start() else { return };
     let hub = TcpRelay::new();
     let transport = server.transport("plain").with_relay(hub.clone());
-    let session = transport.open(through_hub(server.request(), None));
+    let session = transport.open(through_hub(server.request()));
     let mut prompts = 0;
     let reason = closed(&session, |prompt| {
         prompts += 1;
@@ -130,7 +129,7 @@ async fn a_revoked_destination_key_is_refused_over_a_relay() {
     .unwrap();
     let hub = TcpRelay::new();
     let transport = server.transport("plain").with_relay(hub.clone());
-    let session = transport.open(through_hub(server.request(), None));
+    let session = transport.open(through_hub(server.request()));
     let reason = closed(&session, no_prompts).await;
     assert!(
         matches!(reason, CloseReason::Failed(SessionError::Other(message)) if message.contains("revoked"))
@@ -147,7 +146,7 @@ async fn a_jump_host_route_continues_behind_the_relay_with_every_key_checked() {
     destination.authorize(&jump);
     let hub = TcpRelay::new();
     let transport = jump.transport("plain").with_relay(hub.clone());
-    let mut request = through_hub(destination.request(), None);
+    let mut request = through_hub(destination.request());
     request.jumps = vec![JumpHost {
         target: target_of(&jump),
         auth: Auth::Auto,
@@ -175,7 +174,6 @@ async fn a_jump_host_route_continues_behind_the_relay_with_every_key_checked() {
         hub.asked(),
         [RelayRequest {
             hub: HUB.into(),
-            node: None,
             target: target_of(&jump),
         }],
         "only the first hop is dialled through the hub; the destination is forwarded by the jump host"
@@ -196,7 +194,7 @@ async fn a_relay_refusal_fails_the_session_naming_the_hub() {
     };
     let hub = Arc::new(ScriptedRelay::refusing(refusal.clone()));
     let (_dir, transport) = offline_transport(Some(hub));
-    let session = transport.open(through_hub(offline_request(), None));
+    let session = transport.open(through_hub(offline_request()));
     assert_eq!(
         closed(&session, no_prompts).await,
         CloseReason::Failed(SessionError::Relay {
@@ -212,7 +210,7 @@ async fn a_relay_refusal_for_a_jump_host_is_reported_against_that_hop() {
         hub: HUB.into(),
     }));
     let (_dir, transport) = offline_transport(Some(hub));
-    let mut request = through_hub(offline_request(), None);
+    let mut request = through_hub(offline_request());
     request.jumps = vec![JumpHost {
         target: Target::new("jump", "10.0.0.1", 22),
         auth: Auth::Auto,
@@ -229,7 +227,7 @@ async fn a_relay_refusal_for_a_jump_host_is_reported_against_that_hop() {
 #[tokio::test]
 async fn a_hub_route_on_a_transport_without_a_relay_cannot_connect() {
     let (_dir, transport) = offline_transport(None);
-    let session = transport.open(through_hub(offline_request(), None));
+    let session = transport.open(through_hub(offline_request()));
     assert!(matches!(
         closed(&session, no_prompts).await,
         CloseReason::Failed(SessionError::Unreachable { host, .. }) if host == "10.0.0.7"
@@ -240,7 +238,7 @@ async fn a_hub_route_on_a_transport_without_a_relay_cannot_connect() {
 async fn cancelling_while_the_relay_is_silent_closes_both_directions() {
     let hub = ScriptedRelay::default();
     let (_dir, transport) = offline_transport(Some(Arc::new(hub.clone())));
-    let session = transport.open(through_hub(offline_request(), None));
+    let session = transport.open(through_hub(offline_request()));
     let (from_transport, to_transport) = timeout(Duration::from_secs(5), hub.next_peer())
         .await
         .unwrap()
@@ -278,7 +276,7 @@ async fn cancelling_while_the_relay_is_silent_closes_both_directions() {
 async fn the_relay_going_away_mid_handshake_ends_the_session_with_a_lost_connection() {
     let hub = ScriptedRelay::default();
     let (_dir, transport) = offline_transport(Some(Arc::new(hub.clone())));
-    let session = transport.open(through_hub(offline_request(), None));
+    let session = transport.open(through_hub(offline_request()));
     drop(
         timeout(Duration::from_secs(5), hub.next_peer())
             .await

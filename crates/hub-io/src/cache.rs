@@ -3,8 +3,7 @@
 //! One mode-0600 file per hub, `<host>_<port>.cache` beside the credential file. It holds only
 //! what the hub holds: the sealed keyset, the sealed key envelope of the vault collection and
 //! sealed objects, plus the non-secret facts needed to derive the unlock key again (the user
-//! name, the way the key is derived and the hub's own identifier) and the public keys of the
-//! administrators this device pinned, which are kept in the clear. Nothing secret in it opens
+//! name, the way the key is derived and the hub's own identifier). Nothing secret in it opens
 //! without the vault password, so it may sit on disk, and it lets the vault unlock while the hub
 //! is unreachable.
 //! Read and write share a 32 MiB byte limit. Personal-vault refresh publication
@@ -21,9 +20,8 @@ use nocterm_core::{
     bounded_io::BoundedBuffer,
     fs::{AtomicPublication, BoundedReadError, FileError, read_regular_bounded},
 };
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::HubAddress;
-use nocterm_keys::{PinnedKeys, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::credentials::{MAX_NAME_BYTES, file_stem, prepare_private_directory};
@@ -31,7 +29,7 @@ use crate::credentials::{MAX_NAME_BYTES, file_stem, prepare_private_directory};
 /// The cache holds sealed credentials of one account; anything larger is not ours.
 const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
 /// The format the file is written in. A newer file is left alone and not read.
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 
 /// Why the cache of a hub could not be read or kept.
 #[derive(Debug, thiserror::Error)]
@@ -91,38 +89,30 @@ pub(crate) struct KeysetCopy {
     #[serde(with = "bytes")]
     pub wrapped_account_key: Vec<u8>,
     #[serde(with = "bytes")]
-    pub public_key: Vec<u8>,
-    #[serde(with = "bytes")]
-    pub sealed_private_key: Vec<u8>,
-    #[serde(with = "bytes")]
     pub recovery_wrapped_account_key: Vec<u8>,
     /// Which password the unlock key comes from, as the hub's `UnlockKind` number.
     pub unlock_kind: i32,
 }
 
 impl KeysetCopy {
-    pub(crate) fn of(record: &v1::AccountKeyset) -> Self {
+    pub(crate) fn of(record: &v2::Keyset) -> Self {
         Self {
             version: record.version,
             kdf: record.kdf.clone(),
             salt: record.salt.clone(),
             wrapped_account_key: record.wrapped_account_key.clone(),
-            public_key: record.public_key.clone(),
-            sealed_private_key: record.sealed_private_key.clone(),
             recovery_wrapped_account_key: record.recovery_wrapped_account_key.clone(),
             unlock_kind: record.unlock_kind,
         }
     }
 
-    pub(crate) fn record(&self) -> v1::AccountKeyset {
-        v1::AccountKeyset {
+    pub(crate) fn record(&self) -> v2::Keyset {
+        v2::Keyset {
             version: self.version,
             kdf: self.kdf.clone(),
             salt: self.salt.clone(),
             wrapped_account_key: self.wrapped_account_key.clone(),
             updated_at_ms: 0,
-            public_key: self.public_key.clone(),
-            sealed_private_key: self.sealed_private_key.clone(),
             recovery_wrapped_account_key: self.recovery_wrapped_account_key.clone(),
             unlock_kind: self.unlock_kind,
         }
@@ -150,11 +140,6 @@ pub(crate) struct VaultCopy {
     pub objects: BTreeMap<String, ObjectCopy>,
 }
 
-/// The public key this device pinned for another account.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub(crate) struct PinCopy(#[serde(with = "bytes")] Vec<u8>);
-
 /// What the cache file holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct AccountCache {
@@ -175,11 +160,6 @@ pub(crate) struct AccountCache {
     /// open, a new recovery key is offered.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recovery_unconfirmed: bool,
-    /// The public keys of the administrators whose grants this device accepts, by account:
-    /// pinned after a person compared the fingerprint. Public data, so not secret, but only
-    /// kept while the account is signed in on this device.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pins: BTreeMap<String, PinCopy>,
 }
 
 impl AccountCache {
@@ -199,7 +179,7 @@ impl AccountCache {
         hub_uid: String,
         account_id: String,
         method: UnlockMethod,
-        record: &v1::AccountKeyset,
+        record: &v2::Keyset,
     ) -> Self {
         Self {
             v: FORMAT,
@@ -209,35 +189,6 @@ impl AccountCache {
             keyset: KeysetCopy::of(record),
             vault: None,
             recovery_unconfirmed: false,
-            pins: BTreeMap::new(),
-        }
-    }
-
-    /// The pinned keys. A pin that is not a public key is dropped: it is asked for again.
-    pub(crate) fn pinned(&self) -> PinnedKeys {
-        PinnedKeys::from_entries(self.pins.iter().filter_map(|(account, pin)| {
-            match PublicKey::from_bytes(&pin.0) {
-                Ok(key) => Some((account.clone(), key)),
-                Err(error) => {
-                    tracing::warn!(%error, account, "a pinned key in the cache is not valid");
-                    None
-                }
-            }
-        }))
-    }
-
-    /// Remembers `pinned` in place of the pins kept so far.
-    pub(crate) fn keep_pins(&mut self, pinned: &PinnedKeys) {
-        self.pins = pinned
-            .entries()
-            .map(|(account, key)| (account.to_owned(), PinCopy(key.to_bytes().to_vec())))
-            .collect();
-    }
-
-    /// The same pins as `earlier`, for a cache written anew for the same account.
-    pub(crate) fn inherit_pins(&mut self, earlier: &Self) {
-        if earlier.account_id == self.account_id {
-            self.pins.clone_from(&earlier.pins);
         }
     }
 }

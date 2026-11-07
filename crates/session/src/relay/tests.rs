@@ -73,17 +73,12 @@ fn dropping_a_whole_end_fails_the_other_ends_sends_and_reads() {
 fn a_dialer_without_an_answer_can_be_abandoned() {
     struct Pending;
     impl RelayDialer for Pending {
-        fn dial(
-            &self,
-            _: &str,
-            _: Option<&str>,
-            _: &Target,
-        ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
+        fn dial(&self, _: &str, _: &Target) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
             futures::future::pending().boxed()
         }
     }
     let target = Target::new("user", "host", 22);
-    let dial = Pending.dial("hub", None, &target);
+    let dial = Pending.dial("hub", &target);
     assert!(dial.now_or_never().is_none());
 }
 
@@ -114,10 +109,7 @@ fn relay_errors_compare_by_what_the_caller_can_react_to() {
         RelayError::Unreachable(cause("down")),
         RelayError::Unreachable(cause("slow"))
     );
-    assert_ne!(
-        RelayError::Closed,
-        RelayError::NodeUnavailable { node: "n".into() }
-    );
+    assert_ne!(RelayError::Closed, RelayError::CaptureUnsupported);
 }
 
 #[test]

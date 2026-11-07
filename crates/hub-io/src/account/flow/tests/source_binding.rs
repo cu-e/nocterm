@@ -61,7 +61,7 @@ async fn a_display_account_never_replaces_the_authenticated_native_recipient() {
         id: AccountId::new(id),
         username: "display".into(),
         display_name: "Display".into(),
-        orgs: Vec::new(),
+        admin: false,
     };
     assert!(crate::directory::checked_account(&owner, account(ACCOUNT_ID)).is_ok());
     assert!(matches!(

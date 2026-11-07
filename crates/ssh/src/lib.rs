@@ -10,8 +10,6 @@
 //!
 //! Owns: SSH authentication (including keys kept in the vault), entropy and file reads for new vault keys, host-key policy, proxy tunnels and the bridge from a relay's frame channels to a stream, jump-host routes, SFTP and remote execution.
 //! Also owns the edit of the user's `authorized_keys` through an open session's SFTP (`authorized_keys`).
-//! Also owns the certificate login path: `Auth::VaultCertificate` offers the vault key together with an OpenSSH user certificate (a certificate for another key is never sent); [ADR 0119](../../docs/adr/0119-agent-ssh-ca.md).
-//! `SshTransport::open_certificate` signs a runner in with a chat's in-memory key and its certificate, direct and host-pinned, with no fallback ([ADR 0145](../../docs/adr/0145-per-server-ca-principals-and-runner-certificate-sessions.md)).
 //! Does not own: profiles, credential storage, the rules of key text (`nocterm-ssh-keys`), terminal emulation or session views.
 //! Ports provided: `Transport`, `RemoteFs`, `HostExec` from `nocterm-session`.
 //! Ports used: `RelayDialer`, supplied by the application through `SshTransport::with_relay`.
@@ -21,16 +19,11 @@
 //! always the destination's, and each jump host is verified and authenticated before a
 //! forward is opened through it.
 
-//! Proof-mode login uses only one device-issued consent and a pinned host proof,
-//! direct curve25519-sha256/Ed25519, and no ambient authentication fallback. The
-//! device authorizer is released after authentication; live rekey needs no device.
 //! Captured source and independent closure guard the actual native stream polls,
 //! SFTP/exec workers and retained outputs. Already admitted effects cannot be undone.
 
 mod auth;
 pub mod authorized_keys;
-mod certificate_login;
-pub use certificate_login::{CertificateLogin, CertificateLoginError};
 mod connection;
 mod connection_relay;
 mod exec;
@@ -38,7 +31,6 @@ mod file;
 mod host_keys;
 pub mod keys;
 mod login;
-pub mod proof;
 mod proxy;
 mod route;
 mod sftp;
@@ -102,37 +94,10 @@ impl SshTransport {
         self.relay = Some(relay);
         self
     }
-    pub fn open_login(
-        &self,
-        request: ConnectRequest,
-        options: nocterm_session::ConnectionOpenOptions,
-        attempt: proof::SessionLoginAttempt,
-    ) -> Session {
-        let login = proof::PurposeLogin::Proof(attempt);
-        if let Err(error) = login.check(&request) {
-            return Session::failed(error);
-        }
-        self.start(request, options, Some(login))
-    }
-    /// Opens a session signed in with a chat's key and certificate (ADR 0145): direct,
-    /// against the pinned host key, with no other authentication method.
-    pub fn open_certificate(
-        &self,
-        request: ConnectRequest,
-        options: nocterm_session::ConnectionOpenOptions,
-        login: CertificateLogin,
-    ) -> Session {
-        let login = proof::PurposeLogin::Certificate(login);
-        if let Err(error) = login.check(&request) {
-            return Session::failed(error);
-        }
-        self.start(request, options, Some(login))
-    }
     fn start(
         &self,
         request: ConnectRequest,
         options: nocterm_session::ConnectionOpenOptions,
-        login: Option<proof::PurposeLogin>,
     ) -> Session {
         if let Err(error) = options.source().check() {
             return Session::failed(error.into());
@@ -169,7 +134,6 @@ impl SshTransport {
             driver,
             fs_requests,
             exec_requests,
-            login,
         ));
         session
     }
@@ -184,7 +148,7 @@ impl Transport for SshTransport {
         request: ConnectRequest,
         options: nocterm_session::ConnectionOpenOptions,
     ) -> Session {
-        self.start(request, options, None)
+        self.start(request, options)
     }
 }
 

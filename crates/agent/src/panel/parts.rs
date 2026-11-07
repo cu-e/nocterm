@@ -10,7 +10,6 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, Render, StyleRefinement, Styled,
     WeakEntity, Window, div,
 };
-use nocterm_ai::conversation::ConversationView;
 use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,21 +116,18 @@ impl PanelParts {
     }
 }
 
-/// What the transcript draws besides its changed rows: the rows' count and liveness,
-/// the fork action, the pending prompts and the plan.
-pub(super) fn transcript_stamp(view: &ConversationView<'_>) -> u64 {
+/// What the transcript draws besides its changed rows: the rows' count and liveness, and the
+/// plan.
+pub(super) fn transcript_stamp(thread: &crate::thread::AgentThread) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let transcript = thread.transcript();
     (
-        view.transcript.entries.len(),
-        view.generating,
-        view.accepts_updates,
-        view.can_fork,
+        transcript.entries.len(),
+        thread.session_generating(),
+        thread.session_accepts_updates(),
     )
         .hash(&mut hasher);
-    for prompt in view.pending_prompts {
-        (prompt.key, prompt.state).hash(&mut hasher);
-    }
-    if let Some(plan) = &view.transcript.plan {
+    if let Some(plan) = &transcript.plan {
         for entry in &plan.entries {
             entry.content.hash(&mut hasher);
             std::mem::discriminant(&entry.priority).hash(&mut hasher);

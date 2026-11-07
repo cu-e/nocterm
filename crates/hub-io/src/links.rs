@@ -9,9 +9,8 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use nocterm_hub_client::HubEndpoint;
 use nocterm_hubs_model::{
-    AccountDevices, DeviceSummary, Fingerprint, HubAddress, HubAdminKeys, HubEndpointSpec,
-    HubError, HubFuture, HubId, HubInfo, HubSignIn, HubTrust, KeyStatus, OidcSignIn, ProbedHub,
-    SignedIn,
+    AccountDevices, DeviceSummary, Fingerprint, HubAddress, HubEndpointSpec, HubError, HubFuture,
+    HubId, HubInfo, HubSignIn, HubTrust, KeyStatus, OidcSignIn, ProbedHub, SignedIn,
 };
 use nocterm_session::Secret;
 use tokio::runtime::{Builder, Handle, Runtime};
@@ -51,6 +50,7 @@ pub struct HubLinks {
     connector: Arc<Connector>,
     accounts: Arc<Accounts>,
     keys: Arc<KeyFlow>,
+    chat_hints: Arc<crate::chats::ChatHints>,
 }
 
 /// The adapter's threads have stopped.
@@ -87,6 +87,7 @@ impl HubLinks {
             pool,
             accounts,
             keys,
+            chat_hints: Arc::default(),
         }))
     }
 
@@ -121,7 +122,12 @@ impl HubLinks {
         (self.handle.clone(), Arc::clone(&self.pool))
     }
 
-    /// What the Cloud agents adapter needs of the links.
+    /// Hints that a chat list kept on this device changed.
+    pub(crate) fn chat_hints(&self) -> Arc<crate::chats::ChatHints> {
+        Arc::clone(&self.chat_hints)
+    }
+
+    /// What the agents and chats adapters need of the links.
     pub(crate) fn agent_parts(&self) -> (Handle, Arc<Pool>) {
         (self.handle.clone(), Arc::clone(&self.pool))
     }
@@ -256,14 +262,6 @@ impl HubSignIn for HubLinks {
 
     fn forget(&self, hub: &HubId) -> Result<(), HubError> {
         self.connector.forget(hub)
-    }
-}
-
-impl HubAdminKeys for HubLinks {
-    fn pending_admin_keys(&self, hub: &HubId) -> Vec<nocterm_hubs_model::AdminKeyOffer> {
-        self.open_account(hub)
-            .map(|account| account.admin_keys().pending())
-            .unwrap_or_default()
     }
 }
 

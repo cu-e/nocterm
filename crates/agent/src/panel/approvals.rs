@@ -19,8 +19,14 @@ use nocterm_workspace::UnlockVault;
 
 use super::{AgentPanel, widgets::menu_variant};
 use crate::thread::{AgentThread, PermissionCard};
-use nocterm_agent_chat::conversation::{ConversationToolApproval, ToolApprovalChoice};
-use std::rc::Rc;
+
+/// What a person answers a terminal tool call that waits for approval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ToolApprovalChoice {
+    Deny,
+    AllowOnce,
+    AllowForSession,
+}
 
 fn sign_in_text(wait: &crate::thread::SignInWait) -> (String, String) {
     let heading = if wait.vault() {
@@ -233,18 +239,23 @@ impl ApprovalCardsRenderer {
             .child(actions)
             .into_any_element()
     }
+    /// The card of tool call `token` of `thread`, while it waits for approval.
     pub(super) fn tool_card(
-        approval: Rc<dyn ConversationToolApproval>,
-        identity: gpui_kit::EntityId,
+        thread: &Entity<AgentThread>,
+        token: crate::thread::ApprovalToken,
         index: usize,
         cx: &mut Context<AgentPanel>,
     ) -> Option<AnyElement> {
-        let mut details = None;
-        approval
-            .with_view(cx, &mut |view| details = Some(Self::tool_details(view)))
-            .ok()?;
-        let (heading, exact, grant, reusable) = details?;
+        let call = thread.read(cx).tool_approval_call(token)?.clone();
+        let (target, reusable) = thread.update(cx, |thread, cx| {
+            (
+                thread.describe_target(&call, cx),
+                !thread.unsafe_live_input(&call, cx),
+            )
+        });
+        let (heading, exact, grant) = Self::tool_text(&call, &target);
         let exact = nocterm_ai::redact::redact(&exact);
+        let weak = thread.downgrade();
         Some(
             card(cx)
                 .child(div().min_w_0().truncate().text_sm().child(heading))
@@ -258,19 +269,24 @@ impl ApprovalCardsRenderer {
                         .into_iter()
                         .filter(|(_, grant, _)| !grant || reusable)
                         .map(|(choice, _, label)| {
-                            let approval = approval.clone();
+                            let thread = weak.clone();
                             Button::new((SharedString::from(format!("tool-{label}")), index))
                                 .custom(menu_variant(cx))
                                 .small()
                                 .max_w_full()
                                 .label(label)
-                                .on_click(cx.listener(move |panel, _, _, cx| {
-                                    panel.choose_conversation_tool(
-                                        identity,
-                                        approval.clone(),
-                                        choice,
-                                        cx,
-                                    );
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    let _ = thread.update(cx, |thread, cx| {
+                                        if thread.tool_approval_call(token).is_some() {
+                                            thread.approve_tool(
+                                                token,
+                                                choice != ToolApprovalChoice::Deny,
+                                                choice == ToolApprovalChoice::AllowForSession
+                                                    && reusable,
+                                                cx,
+                                            );
+                                        }
+                                    });
                                 }))
                         }),
                     ),
@@ -289,27 +305,6 @@ impl ApprovalCardsRenderer {
                 )
                 .into_any_element(),
         )
-    }
-    fn tool_details(
-        view: nocterm_agent_chat::conversation::ToolApprovalView<'_>,
-    ) -> (&'static str, String, &'static str, bool) {
-        let (heading, mut exact, grant) = Self::tool_text(view.call(), view.target());
-        if let Some(principal) = view.principal() {
-            exact.push_str(&format!("\nPrincipal: {principal}"));
-        }
-        if let Some(expires) = view.expires_ms() {
-            let date = i64::try_from(expires)
-                .ok()
-                .and_then(chrono::DateTime::from_timestamp_millis);
-            match date {
-                Some(date) => exact.push_str(&format!(
-                    "\nExpires: {}",
-                    date.format("%Y-%m-%d %H:%M:%S UTC")
-                )),
-                None => exact.push_str("\nExpiry cannot be displayed"),
-            }
-        }
-        (heading, exact, grant, view.reusable())
     }
     fn tool_text(call: &TerminalCall, target: &str) -> (&'static str, String, &'static str) {
         match call {

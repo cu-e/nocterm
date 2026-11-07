@@ -14,9 +14,8 @@ use russh::{
     MethodKind, MethodSet,
     client::{AuthResult, Handle, KeyboardInteractiveAuthResponse},
     keys::{
-        Algorithm, Certificate, HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey,
-        decode_secret_key,
-        ssh_key::{certificate::CertType, public::KeyData},
+        Algorithm, HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey, decode_secret_key,
+        ssh_key::public::KeyData,
     },
 };
 
@@ -86,15 +85,7 @@ impl<'a> Authenticator<'a> {
             Auth::VaultKey {
                 credential,
                 public_key,
-            } => self.try_vault_key(*credential, public_key, None).await?,
-            Auth::VaultCertificate {
-                credential,
-                public_key,
-                certificate,
-            } => {
-                self.try_vault_key(*credential, public_key, Some(certificate))
-                    .await?
-            }
+            } => self.try_vault_key(*credential, public_key).await?,
             Auth::Password => false,
         };
         if signed_in || self.try_typed_secrets().await? {
@@ -292,7 +283,6 @@ impl<'a> Authenticator<'a> {
         &mut self,
         credential: CredentialId,
         public_key: &str,
-        certificate: Option<&str>,
     ) -> Result<bool, SessionError> {
         if !self.may_offer_key() {
             return Ok(false);
@@ -329,39 +319,20 @@ impl<'a> Authenticator<'a> {
             },
             _ => None,
         };
-        self.offer_vault_key(named.key_data().clone(), key, hash, certificate)
+        self.offer_vault_key(named.key_data().clone(), key, hash)
             .await
     }
 
-    /// Offers `key`, with `certificate` when the profile has one. A certificate that does not
-    /// certify this very key is never sent, and the key is then not offered either.
+    /// Offers `key` the profile keeps in the vault.
     async fn offer_vault_key(
         &mut self,
         named: KeyData,
         key: PrivateKey,
         hash: Option<HashAlg>,
-        certificate: Option<&str>,
     ) -> Result<bool, SessionError> {
-        let certificate = match certificate.map(|text| certificate_for(text, &key)) {
-            Some(Err(reason)) => {
-                tracing::warn!(reason, "the certificate cannot be offered");
-                return Ok(false);
-            }
-            Some(Ok(certificate)) => Some(certificate),
-            None => None,
-        };
         self.offered.push(named);
-        let result = match certificate {
-            Some(certificate) => {
-                self.handle
-                    .authenticate_openssh_cert(self.user(), Arc::new(key), certificate)
-                    .await
-            }
-            None => {
-                let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
-                self.handle.authenticate_publickey(self.user(), key).await
-            }
-        };
+        let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
+        let result = self.handle.authenticate_publickey(self.user(), key).await;
         self.rejected_key |= matches!(
             &result,
             Ok(AuthResult::Failure {
@@ -506,7 +477,7 @@ fn key_required_message(
     if !public_key_only {
         return None;
     }
-    if matches!(auth, Auth::VaultKey { .. } | Auth::VaultCertificate { .. }) && !rejected_key {
+    if matches!(auth, Auth::VaultKey { .. }) && !rejected_key {
         Some(
             "requires an SSH key, but the vault key could not be offered. Unlock the vault and check that the key is still in it.",
         )
@@ -523,20 +494,6 @@ fn key_required_message(
             "requires an SSH key and does not allow password sign-in. Set Authentication to Key file and select a Private key, or load an authorized key into your SSH agent.",
         )
     }
-}
-
-/// The user certificate `text` for `key`: it must parse, be a user certificate and certify
-/// this very key, so a certificate for another key is never sent.
-fn certificate_for(text: &str, key: &PrivateKey) -> Result<Certificate, &'static str> {
-    let certificate =
-        Certificate::from_openssh(text).map_err(|_| "it is not an OpenSSH certificate")?;
-    if certificate.cert_type() != CertType::User {
-        return Err("it is not a user certificate");
-    }
-    if certificate.public_key() != key.public_key().key_data() {
-        return Err("it certifies another key");
-    }
-    Ok(certificate)
 }
 
 /// The signing hash for an RSA vault key from what the host announced.

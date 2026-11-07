@@ -1,13 +1,13 @@
 //! The state of the account keys on this device, with the password prompt that opens them and
 //! the button that closes them.
 //!
-//! The Agent access (SSH) tab reads encrypted records, so it needs open keys. A restart closes
-//! them until the user types the password. This view never decides what the password opens:
-//! it hands the typed secret to the service and reports the outcome. It tells its owner when
-//! the keys changed so the records are read again.
+//! The keys open the account's vault (saved servers and their credentials); chats and agents
+//! never need them. They follow their own lock policy (`[hubs] key_lock_minutes`), not the
+//! local vault's. This view never decides what the password opens: it hands the typed secret
+//! to the service and reports the outcome.
 
 use gpui_kit::{
-    ClickEvent, Context, Entity, EventEmitter, Focusable as _, Task, TestSupportExt as _, Window,
+    ClickEvent, Context, Entity, Focusable as _, Task, TestSupportExt as _, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -25,12 +25,6 @@ use nocterm_session::Secret;
 use crate::layout::{field, note, problem};
 use crate::messages::account_key_problem;
 
-/// What the owner of the view learns.
-pub(in crate::servers) enum AccountKeysEvent {
-    /// The keys were opened or closed by the user.
-    Changed,
-}
-
 /// The lock of the account keys of the server that is shown.
 pub(in crate::servers) struct AccountKeys {
     hubs: Entity<Hubs>,
@@ -41,8 +35,6 @@ pub(in crate::servers) struct AccountKeys {
     refusal: Option<String>,
     unlocking: Option<Task<()>>,
 }
-
-impl EventEmitter<AccountKeysEvent> for AccountKeys {}
 
 impl AccountKeys {
     pub(in crate::servers) fn new(hubs: Entity<Hubs>) -> Self {
@@ -70,7 +62,6 @@ impl AccountKeys {
             return;
         };
         self.hubs.read(cx).lock_account_keys(&hub);
-        cx.emit(AccountKeysEvent::Changed);
         cx.notify();
     }
 
@@ -89,7 +80,6 @@ impl AccountKeys {
             let result = unlocking.await;
             this.update(cx, |keys, cx| {
                 keys.refusal = result.err().map(|error| account_key_problem(&error));
-                cx.emit(AccountKeysEvent::Changed);
                 cx.notify();
             })
             .ok();

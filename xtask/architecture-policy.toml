@@ -1,7 +1,5 @@
 # Explicit plain-data exemptions only. Stateful entities are never DTOs.
 [dto]
-"nocterm_agent_chat::conversation::servers::BoundServerView" = "One bound server a remote conversation shows, copied by value to the window."
-"nocterm_agent_chat::conversation::servers::ServerOption" = "One server a remote conversation can be bound to, copied by value to the window."
 "nocterm_monitor_service::WatchPlan" = "Immutable metric set and cadence supplied by each monitor consumer."
 "nocterm_agent::AgentServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::RuntimeServices" = "Composition dependencies, copied into constructors."
@@ -9,9 +7,11 @@
 "nocterm_connections::os::Os" = "Detected operating-system facts value."
 "nocterm_files::local::LocalEntry" = "Filesystem listing row returned by the adapter."
 "nocterm_hubs::installed::Deps" = "Composition dependencies, copied into constructors."
-"nocterm_cloud_agents::installed::Deps" = "Composition dependencies, copied into constructors."
-"nocterm_hubs_ui::servers::tabs::cloud_agents::form::Prefill" = "Starting values of an agent edit, copied into the form."
+"nocterm_hub_agents::installed::Deps" = "Composition dependencies, copied into constructors."
 "nocterm_hubs::registry::HubSummary" = "One row of the hubs list, copied by value."
+"nocterm_hubs_ui::servers::detail::TabViews" = "The views of a server's tabs, borrowed for one render."
+"nocterm_hub_agents::access::AgentTarget" = "The saved server an Agent access change names, copied by value."
+"nocterm_connections::agent_access::AgentServer" = "The saved server the editor shows Agent access of, copied by value."
 "nocterm_layout_ui::user_facts::UserFacts" = "What the host knows of one installed user plugin, copied by value to the inspector."
 "nocterm_explorer::settings::ExplorerSettings" = "Serialized settings section."
 "nocterm_explorer::settings::IndexingSettings" = "Serialized settings values."

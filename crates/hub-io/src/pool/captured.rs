@@ -107,24 +107,6 @@ impl CapturedClient {
     ) -> Result<T, HubError> {
         crate::checked::during(|| self.check(), future).await
     }
-    /// No implicit network refresh. Ordinary native authentication owns refresh
-    /// of these shared credentials; this access cannot retarget another login.
-    pub(crate) fn captured_cloud(&self) -> Result<HubClient, HubError> {
-        self.check_cloud()?;
-        Ok(self.client.clone())
-    }
-    pub(crate) fn check_cloud(&self) -> Result<(), HubError> {
-        self.client
-            .require_cloud_metadata()
-            .map_err(|error| self.failure(error))?;
-        self.check()
-    }
-    pub(crate) async fn during_cloud<T>(
-        &self,
-        future: impl std::future::Future<Output = T>,
-    ) -> Result<T, HubError> {
-        crate::checked::during(|| self.check_cloud(), future).await
-    }
     pub(crate) async fn fresh(&self) -> Result<HubClient, HubError> {
         self.check()?;
         self.during(self.client.ensure_fresh())

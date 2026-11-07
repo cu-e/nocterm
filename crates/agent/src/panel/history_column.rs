@@ -1,6 +1,5 @@
-//! Search, rename and display-clock lifetimes of the history column, and the Cloud chats it
-//! lists beside local ones.
-use super::{AgentPanel, cloud_history::CloudHistory};
+//! Search, rename and display-clock lifetimes of the history column.
+use super::AgentPanel;
 use crate::runtime::HistoryReader;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EntityId, Focusable as _, Subscription, Task, Window,
@@ -115,15 +114,10 @@ pub(super) struct HistoryColumn {
     search: SearchState,
     rename: Option<RenameSession>,
     tick: Option<HistoryClock>,
-    cloud: CloudHistory,
     _bindings: Vec<Subscription>,
 }
 impl HistoryColumn {
-    pub(super) fn new(
-        cloud: Option<crate::cloud_access::CloudAgentsAccess>,
-        window: &mut Window,
-        cx: &mut Context<AgentPanel>,
-    ) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<AgentPanel>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats…"));
         let subscription = cx.subscribe(&input, |panel, _, event, cx| {
             if matches!(event, InputEvent::Change) {
@@ -135,15 +129,8 @@ impl HistoryColumn {
             search: SearchState::default(),
             rename: None,
             tick: None,
-            cloud: CloudHistory::new(cloud),
             _bindings: vec![subscription],
         }
-    }
-    pub(super) fn cloud(&self) -> &CloudHistory {
-        &self.cloud
-    }
-    pub(super) fn cloud_mut(&mut self) -> &mut CloudHistory {
-        &mut self.cloud
     }
     pub(super) fn switch_context(&mut self, window: &mut Window, cx: &mut Context<AgentPanel>) {
         self.rename = None;
@@ -300,8 +287,6 @@ impl HistoryColumn {
         if self.tick.is_some() {
             return;
         }
-        // The column was hidden: the hub may know chats made elsewhere meanwhile.
-        self.cloud.refresh(true, cx);
         let ticket = HistoryClockTicket(Arc::new(()));
         let completion = ticket.clone();
         let task = cx.spawn(async move |panel, cx| {

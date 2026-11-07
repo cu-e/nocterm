@@ -1,8 +1,8 @@
 //! Native login membership remains usable for explicit unlock while keys are locked.
-use super::{AccountSubject, AccountSubjects, CapturedAccount, key_fingerprint};
+use super::{AccountSubject, AccountSubjects, CapturedAccount, partition_of};
 use crate::account::Slot;
 use nocterm_hubs_model::source_identity::{
-    LegacyConfiguredAccount, LocalAccountPartition, NamespaceId,
+    LocalAccountPartition, LocalAccountSource, LocalAccountSourceError,
 };
 use nocterm_hubs_model::{HubError, HubId};
 use std::sync::{Arc, Weak};
@@ -12,6 +12,7 @@ pub(crate) struct CapturedMembership {
     subjects: Weak<dyn AccountSubjects>,
     subject: Weak<AccountSubject>,
     hub: HubId,
+    partition: LocalAccountPartition,
 }
 
 impl CapturedMembership {
@@ -33,6 +34,7 @@ impl CapturedMembership {
             subjects: Arc::downgrade(subjects),
             subject: Arc::downgrade(subject),
             hub: slot.hub().clone(),
+            partition: partition_of(slot.hub(), subject.account())?,
         });
         captured.check()?;
         Ok(captured)
@@ -59,13 +61,7 @@ impl CapturedMembership {
             let slot = self.slot()?;
             let subject = self.subject()?;
             let keys = slot.open_for(&subject)?;
-            let account =
-                NamespaceId::new(subject.account().to_owned()).map_err(crate::classify::remote)?;
-            let partition = LocalAccountPartition::LegacyConfigured(LegacyConfiguredAccount::new(
-                slot.hub().clone(),
-                account,
-                key_fingerprint(&keys)?,
-            ));
+            let partition = self.partition.clone();
             Ok(Arc::new(CapturedAccount {
                 slot: Arc::downgrade(&slot),
                 subjects: self.subjects.clone(),
@@ -99,5 +95,16 @@ impl CapturedMembership {
         future: impl std::future::Future<Output = T>,
     ) -> Result<T, HubError> {
         crate::checked::during(|| self.check(), future).await
+    }
+}
+
+/// The membership alone is the local history source of a hub window: a locked vault keeps its
+/// chats; sign-out or another login makes it stale.
+impl LocalAccountSource for CapturedMembership {
+    fn partition(&self) -> LocalAccountPartition {
+        self.partition.clone()
+    }
+    fn check_current(&self) -> Result<(), LocalAccountSourceError> {
+        self.check().map_err(|_| LocalAccountSourceError::Stale)
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     vault::{HubVault, credentials::CredentialCapture},
 };
 use nocterm_hub_client::Keyset;
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::{HubError, HubId, source_identity::LocalAccountSource};
 use nocterm_session::{CredentialId, CredentialStore, Secret, SecretRequest, Target};
 use std::sync::Arc;
@@ -26,7 +26,7 @@ pub(crate) struct NativeAccounts {
     operations: Arc<AccountOperations>,
     vault: Arc<HubVault>,
     hubs: [Arc<MemoryHub>; 2],
-    records: [v1::AccountKeyset; 2],
+    records: [v2::Keyset; 2],
     unlock: nocterm_keys::UnlockKey,
 }
 impl NativeAccounts {
@@ -44,7 +44,6 @@ impl NativeAccounts {
             &unlock,
             &testing::kdf(),
             &nocterm_keys::AccountKey::generate().unwrap(),
-            &nocterm_keys::AccountKeyPair::generate().unwrap(),
             &nocterm_keys::RecoveryKey::generate().unwrap(),
         );
         let subjects = Arc::new(ScriptedSubjects::for_slot(&slot));
@@ -119,10 +118,7 @@ impl NativeAccounts {
             .sign_in(self.slot.hub().clone(), account, "device");
         self.hubs[index].set_keyset(Some(self.records[index].clone()));
         self.slot.install(
-            OpenKeys::pinning(
-                Keyset::open(&self.records[index], account, &self.unlock).unwrap(),
-                nocterm_keys::PinnedKeys::new(),
-            ),
+            OpenKeys::new(Keyset::open(&self.records[index], account, &self.unlock).unwrap()),
             AccountCache::new(
                 testing::HUB_UID.into(),
                 account.into(),

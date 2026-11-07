@@ -1,9 +1,9 @@
-//! Prepares connected-server metadata off the GUI thread, then publishes only to its
-//! original current session before asking hubs to reconcile their SSH trust records.
-use gpui_kit::{App, BackgroundExecutor, Entity, Task};
+//! Prepares connected-server metadata off the GUI thread, then publishes it only while its
+//! original session is current, so Agent access edits the server's `authorized_keys` through
+//! the session the user opened.
+use gpui_kit::{App, BackgroundExecutor, Task};
 use nocterm_connections::HostObserver;
 use nocterm_connections_store::ProbeSourceLease;
-use nocterm_hubs::Hubs;
 use nocterm_session::RemoteFs;
 use nocterm_ssh_keys::authorized_keys::{ConnectedHost, ConnectedHosts};
 use std::{
@@ -13,7 +13,6 @@ use std::{
     sync::{Arc, Weak},
 };
 
-type Reconcile = Rc<dyn Fn(&str, &mut App)>;
 struct Announcement {
     host: ConnectedHost,
     source: ProbeSourceLease,
@@ -31,27 +30,21 @@ struct PreparationQueue {
     active: Option<Active>,
     serial: u64,
 }
-struct Reconciling {
+struct Announcing {
     sessions: Arc<dyn ConnectedHosts>,
-    reconcile: Reconcile,
     executor: BackgroundExecutor,
     queue: Rc<RefCell<PreparationQueue>>,
 }
-impl Reconciling {
-    fn new(
-        sessions: Arc<dyn ConnectedHosts>,
-        reconcile: Reconcile,
-        executor: BackgroundExecutor,
-    ) -> Self {
+impl Announcing {
+    fn new(sessions: Arc<dyn ConnectedHosts>, executor: BackgroundExecutor) -> Self {
         Self {
             sessions,
-            reconcile,
             executor,
             queue: Rc::default(),
         }
     }
 }
-impl HostObserver for Reconciling {
+impl HostObserver for Announcing {
     fn connected(&self, host: ConnectedHost, source: ProbeSourceLease, cx: &mut App) {
         if !source.is_current(cx) {
             return;
@@ -82,7 +75,6 @@ impl HostObserver for Reconciling {
         begin(
             &self.queue,
             self.sessions.clone(),
-            self.reconcile.clone(),
             self.executor.clone(),
             cx,
         );
@@ -136,7 +128,6 @@ impl PreparationQueue {
 fn begin(
     queue: &Rc<RefCell<PreparationQueue>>,
     sessions: Arc<dyn ConnectedHosts>,
-    reconcile: Reconcile,
     executor: BackgroundExecutor,
     cx: &mut App,
 ) {
@@ -162,11 +153,9 @@ fn begin(
             };
             let accepted = queue.borrow_mut().accept(&prepared, serial, &expected, cx);
             if accepted {
-                let connection = prepared.connection.clone();
                 sessions.connected(prepared);
-                reconcile(&connection, cx);
             }
-            begin(&queue, sessions, reconcile, next_executor, cx);
+            begin(&queue, sessions, next_executor, cx);
         });
     });
     queue.borrow_mut().active = Some(Active {
@@ -181,14 +170,10 @@ fn begin(
 /// The installation retains the observer and the original executor through its work.
 pub(crate) fn observe(
     sessions: Arc<dyn ConnectedHosts>,
-    hubs: Entity<Hubs>,
     connections: &nocterm_connections::Installed,
     executor: BackgroundExecutor,
 ) {
-    let reconcile = Rc::new(move |connection: &str, cx: &mut App| {
-        hubs.update(cx, |hubs, cx| hubs.reconcile_agent_host(connection, cx));
-    });
-    connections.bind_host_observer(Rc::new(Reconciling::new(sessions, reconcile, executor)));
+    connections.bind_host_observer(Rc::new(Announcing::new(sessions, executor)));
 }
 
 #[cfg(test)]

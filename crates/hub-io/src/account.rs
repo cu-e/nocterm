@@ -8,7 +8,6 @@
 //! a general factory still uses it. A new login promotes that cleared Slot;
 //! original captures remain bound to their retired membership and open keys.
 
-mod admin_keys;
 mod cache_publication;
 mod flow;
 pub(crate) mod key_admission;
@@ -29,16 +28,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use nocterm_hub_client::Keyset;
 use nocterm_hubs_model::{HubError, HubId};
-use nocterm_keys::{
-    CollectionKey, OpenError, PinError, PinnedKeys, PublicKey, TrustedKey, UnlockKdf, UnlockKey,
-};
+use nocterm_keys::{CollectionKey, OpenError, UnlockKdf, UnlockKey};
 use tokio::sync::watch;
 
-use self::admin_keys::{AdminPins, Admins};
 use crate::cache::{CacheFile, CacheWork, UnlockMethod};
 use crate::classify::{credentials, remote};
 
-pub use admin_keys::{AdminKeyError, AdminKeys, PendingAdminKey};
 pub(crate) use flow::KeyFlow;
 pub(crate) use lifecycle::SlotReceipt;
 
@@ -63,31 +58,18 @@ impl Notice {
     }
 }
 
-/// The opened keyset, the collection keys derived from it and the administrator keys this
-/// device trusts.
+/// The opened keyset and the collection keys opened with it.
 pub(crate) struct OpenKeys {
     keyset: Keyset,
     collections: Mutex<HashMap<String, Arc<CollectionKey>>>,
-    admins: Admins,
-    /// Raised when the pending administrators change; set once the slot keeps the keys.
-    notice: Option<Arc<Notice>>,
 }
 
 impl OpenKeys {
-    /// The keys, trusting the administrators pinned so far.
-    pub(crate) fn pinning(keyset: Keyset, pinned: PinnedKeys) -> Self {
+    pub(crate) fn new(keyset: Keyset) -> Self {
         Self {
             keyset,
             collections: Mutex::default(),
-            admins: Mutex::new(AdminPins::new(pinned)),
-            notice: None,
         }
-    }
-
-    /// The keys, telling `notice` when the administrators waiting for confirmation change.
-    fn noticed_by(mut self, notice: &Arc<Notice>) -> Self {
-        self.notice = Some(Arc::clone(notice));
-        self
     }
 
     fn collections(&self) -> MutexGuard<'_, HashMap<String, Arc<CollectionKey>>> {
@@ -96,40 +78,20 @@ impl OpenKeys {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn admins(&self) -> MutexGuard<'_, AdminPins> {
-        admin_keys::lock(&self.admins)
-    }
-
     /// The opened keyset.
     pub(crate) fn keyset(&self) -> &Keyset {
         &self.keyset
     }
 
-    /// The key of a collection of the account's own: the envelope the hub holds was sealed by
-    /// this account, for its personal collections and for any it created. An envelope that
-    /// does not open is [`OpenError`]: the hub altered it, or it is a grant, which the hub must
-    /// not pass off as the account's own.
+    /// The key of a collection of the account: the envelope the hub holds was sealed by the
+    /// account key. An envelope that does not open is [`OpenError`]: the hub altered it.
     pub(crate) fn own_collection(
         &self,
         collection_id: &str,
         envelope: &[u8],
     ) -> Result<Arc<CollectionKey>, OpenError> {
         self.remembered(collection_id, || {
-            self.keyset.open_own_collection_key(collection_id, envelope)
-        })
-    }
-
-    /// The key of a collection an administrator granted, opened only under the key of that
-    /// administrator as pinned on this device.
-    pub(crate) fn granted_collection(
-        &self,
-        collection_id: &str,
-        envelope: &[u8],
-        granter: &TrustedKey,
-    ) -> Result<Arc<CollectionKey>, OpenError> {
-        self.remembered(collection_id, || {
-            self.keyset
-                .open_granted_collection_key(collection_id, envelope, granter)
+            self.keyset.open_collection_key(collection_id, envelope)
         })
     }
 
@@ -145,25 +107,6 @@ impl OpenKeys {
         self.collections()
             .insert(collection_id.to_owned(), Arc::clone(&key));
         Ok(key)
-    }
-
-    /// The key the hub offers for `account_id`, if it is the one pinned for it.
-    pub(crate) fn trust(
-        &self,
-        account_id: &str,
-        offered: &PublicKey,
-    ) -> Result<TrustedKey, PinError> {
-        self.admins().trust(account_id, offered)
-    }
-
-    /// Notes the administrators met unpinned in collections of `kind`, in place of the ones
-    /// noted for that kind before. A change of the list raises the keys notice, so a view of
-    /// the list is redrawn; looking again finds the same list and raises nothing.
-    pub(crate) fn note_pending(&self, kind: &str, pending: Vec<(PendingAdminKey, PublicKey)>) {
-        let changed = self.admins().replace_pending(kind, pending);
-        if changed && let Some(notice) = &self.notice {
-            notice.raise();
-        }
     }
 
     /// A new collection key of its own, with the envelope the hub stores for this account.

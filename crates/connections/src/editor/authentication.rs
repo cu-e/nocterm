@@ -72,12 +72,6 @@ impl AuthenticationFields {
     pub(super) fn credential(&self) -> &Entity<InputState> {
         &self.credential
     }
-    /// Whether the connection signs in with a saved password or a vault key.
-    pub(super) fn shares_secret(&self, cx: &App) -> bool {
-        !text(&self.credential, cx).trim().is_empty()
-            || (self.kind == AuthKind::VaultKey && self.vault_key.read(cx).chosen().is_some())
-    }
-
     pub(super) fn snapshot(&self, cx: &App) -> AuthenticationDraft {
         AuthenticationDraft {
             kind: self.kind,

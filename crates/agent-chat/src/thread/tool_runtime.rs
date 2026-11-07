@@ -103,13 +103,62 @@ impl ToolRuntime {
     pub(super) fn take_ready_reconnect(&mut self, scope: DispatchScope) -> Option<DispatchEffect> {
         self.reconnect_dispatch.take_ready(scope)
     }
-    pub(super) fn revoke_replaced_executors(
+    /// Revokes the transfers, live terminals and command executors whose terminals detached or
+    /// changed session, given the attachments `resolved` now.
+    pub(super) fn revoke_replaced(
         &mut self,
-        current: &[(String, Option<Arc<dyn nocterm_session::HostExec>>)],
-        attached: &[String],
+        resolved: Vec<(
+            String,
+            nocterm_workspace_ports::TerminalEntry,
+            nocterm_ai::context::TerminalDescriptor,
+        )>,
+        cx: &gpui::App,
     ) {
-        self.live.revoke_detached(attached);
-        self.commands.revoke_replaced(current);
+        self.revoke_replaced_transfers(&resolved, cx);
+        let attached = resolved
+            .iter()
+            .map(|(id, _, _)| id.clone())
+            .collect::<Vec<_>>();
+        let current = resolved
+            .into_iter()
+            .map(|(id, entry, _)| {
+                let executor = entry.capabilities.state().info(cx).and_then(|info| {
+                    entry
+                        .capabilities
+                        .execution()?
+                        .executor(info.expected, cx)
+                        .ok()
+                });
+                (id, executor)
+            })
+            .collect::<Vec<_>>();
+        self.live.revoke_detached(&attached);
+        self.commands.revoke_replaced(&current);
+    }
+
+    /// Where a tool call runs, as its row names it: the attached terminal `entry`, else the
+    /// offline server the request names.
+    pub(super) fn destination(
+        &mut self,
+        request: &TerminalCall,
+        entry: Option<&nocterm_workspace_ports::TerminalEntry>,
+        input: &resolution::Resolution,
+        defaults: &[Attachment],
+        cx: &gpui::App,
+    ) -> Option<String> {
+        if let Some(entry) = entry {
+            let info = entry.capabilities.state().info(cx)?;
+            if info.local {
+                return Some("This computer".into());
+            }
+            let target = info.target?;
+            return Some(format!("{} · {target}", entry.title));
+        }
+        let server = request.server_id()?;
+        self.offline_servers(input, defaults, cx)
+            .into_iter()
+            .find(|(descriptor, _)| descriptor.server_id == server)
+            .map(|(descriptor, summary)| format!("{} · {}", descriptor.name, summary.target))
     }
 
     pub(super) fn prepare_open(
@@ -353,7 +402,7 @@ impl ToolRuntime {
         Ok(presentation::transfer_payload(&progress, redact))
     }
     /// Cancels transfers whose endpoint terminals detached or changed session.
-    pub(super) fn revoke_replaced_transfers(
+    fn revoke_replaced_transfers(
         &mut self,
         resolved: &[(
             String,

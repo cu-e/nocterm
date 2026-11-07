@@ -48,16 +48,10 @@ impl TcpRelay {
 }
 
 impl RelayDialer for TcpRelay {
-    fn capture(
-        &self,
-        _hub: &str,
-        _node: Option<&str>,
-        _target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+    fn capture(&self, _hub: &str, _target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
         Ok(nocterm_session::testing::capture_relay(
             Arc::new(self.clone()),
             _hub,
-            _node,
             _target,
         ))
     }
@@ -65,10 +59,9 @@ impl RelayDialer for TcpRelay {
     fn dial(
         &self,
         hub: &str,
-        node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>> {
-        let dial = self.script.dial(hub, node, target);
+        let dial = self.script.dial(hub, target);
         let script = self.script.clone();
         let ended = self.ended.clone();
         let port = target.port;
@@ -114,11 +107,10 @@ async fn carry(tcp: TcpStream, peer: RelayPeer, ended: Arc<Semaphore>) {
     ended.add_permits(1);
 }
 
-/// A request for `target` through the hub, naming the node `node`.
-pub(crate) fn through_hub(mut request: ConnectRequest, node: Option<&str>) -> ConnectRequest {
+/// A request for `target` through the hub.
+pub(crate) fn through_hub(mut request: ConnectRequest) -> ConnectRequest {
     request.proxy = nocterm_session::ProxyConfig::Hub {
         address: HUB.into(),
-        node: node.map(Into::into),
     };
     request
 }

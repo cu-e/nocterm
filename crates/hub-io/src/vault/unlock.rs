@@ -1,8 +1,10 @@
 //! Unlocking the vault: the typed password opens the keyset, from the hub's record when the
 //! hub answers and from the cached record when it does not.
 
+use std::sync::Arc;
+
 use nocterm_hub_client::{Keyset, KeysetError, UnlockMethod as KeysetUnlock};
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_keys::{LoginError, LoginSecrets, UnlockKey};
 use nocterm_session::Secret;
 use nocterm_vault::VaultError;
@@ -47,11 +49,10 @@ impl Unlocker {
         self.work.check().map_err(failure)?;
         let original = slot.cache_snapshot();
         if let Some(latest) = original.as_deref() {
-            cached.inherit_pins(latest);
             cached.vault = latest.vault.clone();
             cached.recovery_unconfirmed = latest.recovery_unconfirmed;
         }
-        let keys = slot.noticed_keys(OpenKeys::pinning(keyset, cached.pinned()), &cached);
+        let keys = Arc::new(OpenKeys::new(keyset));
         let draft = slot.stage_cache(original, cached).await.map_err(failure)?;
         let (receipt, committed) = member
             .with_current(|| slot.commit_install(&subject, self.work.receipt(), keys, draft))
@@ -63,7 +64,7 @@ impl Unlocker {
     }
 
     /// The keyset record to open: the hub's when it answers, else the cached copy.
-    async fn record(&self, cached: &AccountCache) -> Result<v1::AccountKeyset, VaultError> {
+    async fn record(&self, cached: &AccountCache) -> Result<v2::Keyset, VaultError> {
         match self.work.ops().keyset().await {
             Ok(Some(record)) => Ok(record),
             Ok(None) => Ok(cached.keyset.record()),
@@ -78,7 +79,7 @@ impl Unlocker {
 /// runs on a thread of its own.
 async fn derive(
     cached: &AccountCache,
-    record: &v1::AccountKeyset,
+    record: &v2::Keyset,
     password: Secret,
 ) -> Result<UnlockKey, VaultError> {
     let method = KeysetUnlock::of(record).map_err(|_| VaultError::Format)?;

@@ -4,7 +4,7 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
-`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-cloud-model`, `nocterm-cloud-conversation-model`, `nocterm-monitor`,
+`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-hub-agents-model`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
 `nocterm-vault`, `nocterm-ssh-keys`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
@@ -287,13 +287,6 @@ the `VaultSshKeys` port the connection editor uses to list, create and import va
 Its `ssh-key` version is the one `russh` resolves. See
 [ADR 0102](../adr/0102-ssh-keys-are-kept-in-the-vault.md).
 
-Bounded `InitialHostProof`, `UserauthLogin` and `LoginSignature` belong to this
-key-format domain. The complete Ed25519 userauth parser rejects other purposes,
-algorithms and suffixes; the pinned host must have signed the initial session ID.
-`LoginSigningKey` exposes only `sign_login` for this checked action, with no key
-getter or generic signing method. Native SSH observes initial KEX; consent policy
-belongs to cloud-model ([ADR 0112](../adr/0112-purpose-bound-ssh-login-and-captured-sources.md)).
-
 ## Vault
 
 `nocterm-vault` owns the versioned authenticated envelope, bounded codecs,
@@ -527,14 +520,16 @@ refused), `Fingerprint` and `TrustPolicy`, the pure trust decision `decide` for 
 certificate (pinned, public authority, first use that needs a confirmation, or a mismatch that
 can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints,
 labels and an optional `HubColor` from a closed set of six theme-relative names; a colour this
-version does not know leaves the server unmarked and never drops the record; never secrets) and the ports `HubTrust`, `HubSignIn` and `HubAdminKeys` (the administrator keys waiting for a person to compare their fingerprints). Port methods
+version does not know leaves the server unmarked and never drops the record; the lock policy
+of the account keys, `key_lock_minutes`; never secrets) and the ports `HubTrust`, `HubSignIn`,
+`AccountDevices` and `AccountKeyLock`. Port methods
 return runtime-agnostic futures and fail with the typed, cloneable `HubError`, which keeps the
 original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind the
 access ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
 0096](../adr/0096-hub-contract-outside-the-workspace.md)).
 
 `source_identity` separately owns captured `HubIdentity`, `AccountIdentity` and
-`AccountScope`, shared by Cloud and other domain consumers without a Cloud-to-AI
+`AccountScope`, shared with the local chat history of `nocterm-ai` without a dependency
 cycle. The supplied hub authority and account-key fingerprints participate in equality;
 namespace text is bounded and literal. These descriptive constructors authenticate
 nothing, perform no SDK/crypto work and define no wire serialization. They do not
@@ -543,124 +538,25 @@ replace the existing certificate fingerprint and address trust rules.
 A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-environments.md)), so the crate holds no record of open windows.
 
 
-## Cloud conversations
+## Hub agents
 
-`nocterm-cloud-conversation-model` is what a desktop window shows of one Cloud chat: the
-neutral `CloudTranscript` (rows, runs, approvals, this device's pending commands) changed only
-by `ConversationDelta`s (tool rows carry the core's title and typed `ToolOutcome`), the
-`Freshness` the device core reports (`Opening` before the first round, `Current`,
-`Unconfirmed` for a runner that did not answer, `Withheld`), the `ConversationAction`s a
-person sends (a prompt may name a bound server), the chat's `ServerBinding` (each
-`BoundServer` with its `ServerAccess` and whether a prompt may name it), the `ServerChoice`s it
-can be bound to with typed `ServerRefusal`s, and the
-`CloudConversation` port (with `servers`, `bind_servers` and `unbind_servers`) and its typed
-`CloudConversationError`. It holds no protocol types and
-does no I/O; `nocterm-hub-io` implements the port over the contract's device core and
-`nocterm-cloud-chat` presents it. Its `test-support` `FakeConversation` scripts deltas,
-freshness and command outcomes for consumers' tests
-([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md),
-[ADR 0146](../adr/0146-device-transport-and-resumable-commands.md),
-[ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
+`nocterm-hub-agents-model` owns what the client knows about the agents of a hub account
+without I/O: `HubAgent` (name, provider and model, instructions, `ApprovalMode`, default
+servers), `Provider` and its drafts with their validation, the account's `AgentKey` (with
+`is_line_of`, which finds the key's line in an `authorized_keys` file whatever its options),
+`HubServer` with its `ServerStatus`, `NewServer` and `ServerRemoval`, and the typed
+`HubAgentsError`. Its ports are `HubAgentDirectory` (agents and providers), `HubServers` (the
+agent key and the agent servers) and `HubChatChanges` (hints that the chat list changed);
+`nocterm-hub-io` implements them. The `test-support` `FakeHubAgents` is one in-memory account
+behind all three. A hub agent's chat uses the neutral agent ports of `nocterm-ai`, not a model
+of its own ([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)).
 
-## Cloud run contracts
-
-`LoginConsentLedger` retains at most 32 device-issued SSH login consents for at
-most 60 seconds, consumes the exact original binding before key loading and
-rechecks expiry/clock ordering after awaited work. Missing state after restart
-requires new consent. `SessionLoginAuthorizer` accepts only checked SSH proof
-values; `LoginConsentAuthority` checks actual captured source, run/target and
-credential revision. IDs and wire constructors do not authenticate a caller.
-
-`nocterm-cloud-model` owns pure finite grants, run effect ordering, uncertain-mutation
-fences and bounded account round-robin admission. Immutable authority retains the
-original hub/account source, runner/key epoch, run/epoch, target, selected SSH
-key/credential revision, session/epoch and grant/epoch. Grant origin records the
-original issuer and durable command/control revision. Supplied time rollback fences
-admission; read capability excludes terminal input, execution and connection creation.
-A dispatched uncertain mutation blocks new writes until explicit original-intent
-reconciliation, including after resume. The host preserves unresolved target effects
-across distinct runs; the pure run owner neither performs nor retries I/O.
-
-Its narrow host-controlled ports are `AgentEngine`/`AgentEngineFactory`,
-`ScopedToolExecutor`, `RunJournalWriter` and `JournalReader`. They reuse neutral AI
-content, tool-call and display records. Engine progress permits bounded text/thought
-and optional usage only. Engine `Usage` describes one completed HTTP call after
-its original observation is durably reconciled. `InferenceLedger::reported_usage`
-sums those original observations independently of conservative reservation charges:
-each missing field, including an unobserved call, makes only its cumulative field
-unknown; checked addition rejects overflow. An empty ledger is unknown. The host
-publishes normalized `CoordinatorEvent::Progress` usage in the same transaction
-as each real native Budget reserve/observation record. A reservation therefore
-publishes unknown totals without waiting for HTTP completion, and observation ACK
-already includes the updated cumulative fact. Later SDK Usage validates that
-original step's report and publishes no duplicate. Budget frames retain the full
-original ledger from which restoration derives the same optional cumulative fact;
-no synthetic native Progress body is created for this transition. At that consumer
-port each usage event is a complete optional cumulative run snapshot: it replaces prior values, including clearing known values to unknown.
-Consumers neither add snapshots nor combine fields from different snapshots. Zero
-is known only when all contributing observations report zero. New active runs reset
-usage; a queued prompt does not change the active run's totals. Host step/slot
-identities survive opaque checkpoint restore;
-provider call ids grant no authority. Checkpoints remain derived run/revision-bound
-state. Exact JSON admission reuses AI history's allocation-free sizing owner.
-
-Journal contracts bind expected transactional revision, writer epoch, admitted
-command, records, checkpoint and ciphertext outbox in one durable native transaction.
-`ChatIdentity` is account plus chat; runner authority in `StreamBinding` cannot create
-an alternate partition for that same identity. Run revision, journal stream revision,
-local record cursor, public event cursor and user-facing control revision are distinct.
-Progress/internal budget commits do not stale user commands; two new commands against
-one control revision conflict, while an identical retry returns its original receipt.
-Bounded readers reject wrong-source records and gaps. `OutboxDeliveryId` is the
-persisted transport deduplication identity; `OutboxEntry::id` remains the signed
-record identity. `ResidentPublication` shares one actual allocation generation.
-Public encoders reserve their output/native-envelope allowance through
-`PublicationWorkBudget`; ownership follows the actual native write/upload task.
-`JournalSnapshotPublication` separates stage, stored transport receipt and prefix
-activation. `SnapshotCandidate` contains bounded metadata; the independently
-charged native execution archive and actual signed public baseline remain separate.
-`ResidentSnapshot` retains the returned archive's permit until its last owner drops.
-No constructor authorizes dispatch, validates public cryptography or implies a hub
-has stored a record ([ADR 0116](../adr/0116-signed-cloud-baseline-publication.md)). Value construction does not
-prove persistence, authentication or native cleanup. See
-[ADR 0107](../adr/0107-cloud-run-authority-and-host-controlled-ports.md).
-
-Cloud engine context uses `EngineHistory`: bounded neutral user/assistant records
-and complete historical tool-intent/result pairs supplied by the authoritative
-journal. It excludes execution authority, provider SDK continuation types and
-trusted display metadata. `TerminalCall::arguments` supplies one semantic argument
-encoding from the AI catalog's DTOs; historical calls cannot dispatch themselves.
 `nocterm-ai::local_environment` separates device/account ownership from project or
 General membership. `ChatScope` combines those coordinates and `ChatKey` adds the
 chat ID. `hubs-model::source_identity` supplies authenticated-source consumer ports;
 its identity constructors validate shape, while native adapters authenticate and
 invalidate the retained owners. See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
 
-The Cloud journal's `JournalCatalogBinding` fixes one known account and runner
-identity/key epoch independently from any chat. `JournalCatalogCipher` binds that
-identity and a positive catalog revision to bounded purpose-specific encrypted
-catalog bytes. Composition must inject its implementation; DTO construction does
-not verify cryptography, source authority or durability. The native adapter owns
-complete physical row checks and explicit create/open lifecycle
-([ADR 0113](../adr/0113-account-bound-journal-catalog.md)).
-
-A chat summary is runner-derived display data. `ChatSummaryFacts` reduces journaled
-observations (first prompt line, latest model, unfinished run statuses, open approvals,
-deletion) to a `ChatActivity`; `ChatSummaryTracker` adds the revision ledger and the
-cadence (one attempt per chat per 5 s, longer after failures, a deletion at once and last).
-`ChatSummaryJournal` and `ChatSummaryDirectory` are the ports for its durable row and its
-signed publication; the contract format stays in the adapter
-([ADR 0143](../adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)). The facts also
-take a bound chat's `SummarySsh` (the binding's signed bytes and the runner's latest access
-report), from which the adapter derives the summary's servers.
-
-`ssh_access` holds the runner's rules for a chat's SSH binding (ADR 0145). Reach is selected:
-`SshReach` lists the endpoints this runner may reach, each with its host key, which must equal
-the binding's. Each `BoundTarget` carries the session access the adapter derived from the
-signed binding, and `ChatSshAccess::select` names the admitted server a run's destination
-selects by exact equality, with its credential while a certificate is active
-([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
-
 ### Displayed account confirmations
 
-`nocterm-hubs-model` owns `AdminKeyOffer`, `RecoveryKeyOffer` and `RecoveryKeyReissue`, opaque consumer capabilities supplied by adapters. Display DTOs remain descriptive. The offers preserve their original recipient and exact recovery action through deferred UI callbacks; typed stale errors cross the port. The domain performs no native source lookup or I/O. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+`nocterm-hubs-model` owns `RecoveryKeyOffer` and `RecoveryKeyReissue`, opaque consumer capabilities supplied by adapters. Display DTOs remain descriptive. The offers preserve their original recipient and exact recovery action through deferred UI callbacks; typed stale errors cross the port. The domain performs no native source lookup or I/O. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

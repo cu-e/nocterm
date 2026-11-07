@@ -3,15 +3,10 @@
 //! and auth collaborators. New hub-window actions capture fresh account sources;
 //! existing chats keep their original source and are withdrawn when it becomes stale.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
-//! disposable presentation transitions and their subscription/task lifetimes. HistoryColumn's
-//! CloudHistory lists the window hub's Cloud chats beside local ones through one row model.
-//! Transcript rows borrow ConversationSource into the existing EntryRenderer;
-//! original producer activity controls streaming and fork is explicitly source-bound.
-//! Installed retains one CloudChatInstallation with the runtime's shared history admission.
-//! ConversationPanel selects an already captured source in the same renderer;
-//! its weak handle and original window fence deferred UI actions. Detach never sends Stop.
-//! Every source draws one footer and composer; ComposerFrame reads the source's capabilities,
-//! and its pending prompts follow the transcript as marked user rows (ADR 0134).
+//! disposable presentation transitions and their subscription/task lifetimes. Transcript rows
+//! borrow the open AgentThread's transcript into the EntryRenderer. A hub window's chats are
+//! ordinary chats of its history (ADR 0148): its new-chat menu offers the hub's agents beside
+//! the local ones, and a change of the hub's chats reads the history again.
 //! SignInCards owns secret controls and prompt tokens. PanelNotices owns errors, approval
 //! identity and cancellable redraw work; PanelBindings retains installation subscriptions.
 //! Stateless renderers take immutable projections; finite presentation operations return
@@ -26,10 +21,8 @@
 //! admission, filesystem storage or image decoding.
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,
 //! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
-//! A Cloud chat's Servers bar shows its binding, binds and unbinds it and picks the server its
-//! prompts run on through the source's `ConversationServers` (ADR 0147).
-//! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel,
-//! its narrow ConversationPanel selector, and the TerminalAuthOpener composition callback.
+//! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel
+//! and the TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: none.
 //! Invariants: preview cache generations reject stale same-key delivery after clear or chat
@@ -40,10 +33,8 @@
 
 mod agent_icon;
 mod chat_host;
-mod cloud_access;
-pub use cloud_access::CloudAgentsAccess;
-mod conversation_panel;
-pub use conversation_panel::ConversationPanel;
+mod hub_access;
+pub use hub_access::HubAgentsAccess;
 mod image_deps;
 mod installation;
 pub use installation::Installed;
@@ -103,10 +94,11 @@ pub fn init(
     layout: nocterm_ui::LayoutHandle,
     ready: &nocterm_ui::UiReady,
     shutdown: &nocterm_store::ShutdownCoordinator,
+    hubs: Option<HubAgentsAccess>,
     cx: &mut App,
 ) -> (Installed, Result<(), nocterm_store::StoreError>) {
     panel::commands::init(cx);
-    installation::install(services, images, layout, ready, shutdown, cx)
+    installation::install(services, images, layout, ready, shutdown, hubs, cx)
 }
 
 gpui_kit::actions!(
@@ -131,23 +123,13 @@ pub fn register(
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
 ) -> Result<(), nocterm_workspace::RegistrationError> {
-    register_with_conversations(workspace, installed, window, cx).map(|_| ())
-}
-
-/// Registers the existing panel and returns its narrow captured-source selector.
-pub fn register_with_conversations(
-    workspace: &mut nocterm_workspace::Workspace,
-    installed: Installed,
-    window: &mut gpui_kit::Window,
-    cx: &mut gpui_kit::Context<nocterm_workspace::Workspace>,
-) -> Result<Option<ConversationPanel>, nocterm_workspace::RegistrationError> {
     let owner = cx.entity().downgrade();
     let source = workspace.context_source(cx);
     let host = match chat_host::ChatHost::new(owner, installed, source) {
         Ok(host) => host,
         Err(error) => {
             tracing::warn!(%error, "could not bind agent panel context");
-            return Ok(None);
+            return Ok(());
         }
     };
     let enabled = host
@@ -155,12 +137,11 @@ pub fn register_with_conversations(
         .setting::<nocterm_ai::AiSettings>(cx)
         .enabled;
     let panel = cx.new(|panel_cx| panel::AgentPanel::new(host, window, panel_cx));
-    let conversations = ConversationPanel::new(panel.downgrade(), window.window_handle());
     workspace.register_panel(
         nocterm_workspace::PanelRegistration::with_entity(&plugin::CHATS, panel).expandable(),
         window,
         cx,
     )?;
     workspace.set_panel_available(&plugin::CHATS.id, enabled, window, cx);
-    Ok(Some(conversations))
+    Ok(())
 }

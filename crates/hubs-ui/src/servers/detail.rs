@@ -16,8 +16,8 @@ use nocterm_hubs::{HubStatus, HubSummary, Hubs};
 use nocterm_ui::SettingsTextField;
 
 use super::tabs::{
-    agent_access::AgentAccess, cloud_agents::CloudAgentsTab, devices::Devices, overview::overview,
-    trust::trust,
+    account_keys::AccountKeys, agent_access::AgentAccessTab, agents::AgentsTab, devices::Devices,
+    overview::overview, trust::trust,
 };
 use super::{ServersPage, item};
 use crate::color::tint;
@@ -30,8 +30,8 @@ pub(super) enum Tab {
     Overview,
     Devices,
     Keys,
+    Agents,
     AgentAccess,
-    CloudAgents,
 }
 
 impl Tab {
@@ -39,19 +39,27 @@ impl Tab {
         Self::Overview,
         Self::Devices,
         Self::Keys,
+        Self::Agents,
         Self::AgentAccess,
-        Self::CloudAgents,
     ];
 
     fn title(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
             Self::Devices => "Devices",
-            Self::Keys => "Keys & trust",
-            Self::AgentAccess => "Agent access (SSH)",
-            Self::CloudAgents => "Cloud agents",
+            Self::Keys => "Keys",
+            Self::Agents => "Agents",
+            Self::AgentAccess => "Agent access",
         }
     }
+}
+
+/// The views of the tabs that keep their own state.
+pub(super) struct TabViews<'a> {
+    pub(super) devices: &'a Entity<Devices>,
+    pub(super) keys: &'a Entity<AccountKeys>,
+    pub(super) agents: Option<&'a Entity<AgentsTab>>,
+    pub(super) access: Option<&'a Entity<AgentAccessTab>>,
 }
 
 /// Whether the account of a server can be reached from this device.
@@ -80,9 +88,7 @@ pub(super) fn detail(
     summary: &HubSummary,
     name: &SettingsTextField,
     tab: Tab,
-    devices: &Entity<Devices>,
-    agents: &Entity<AgentAccess>,
-    cloud_agents: Option<&Entity<CloudAgentsTab>>,
+    views: TabViews<'_>,
     page: WeakEntity<ServersPage>,
     hubs: &Entity<Hubs>,
     cx: &App,
@@ -108,14 +114,15 @@ pub(super) fn detail(
         (Tab::Overview, _) => overview(summary, &record, name, hubs, cx),
         (_, Access::SignedOut) => signed_out(summary, hubs, &key, cx),
         (_, Access::Blocked) => blocked(&key, cx),
-        (Tab::Devices, Access::SignedIn) => devices.clone().into_any_element(),
-        (Tab::Keys, Access::SignedIn) => trust(summary, hubs, cx),
-        (Tab::AgentAccess, Access::SignedIn) => agents.clone().into_any_element(),
-        (Tab::CloudAgents, Access::SignedIn) => match cloud_agents {
+        (Tab::Devices, Access::SignedIn) => views.devices.clone().into_any_element(),
+        (Tab::Keys, Access::SignedIn) => trust(summary, hubs, views.keys, cx),
+        (Tab::Agents, Access::SignedIn) => match views.agents {
             Some(tab) => tab.clone().into_any_element(),
-            None => div()
-                .child(note("This build has no Cloud agents.", cx))
-                .into_any_element(),
+            None => without_agents(cx),
+        },
+        (Tab::AgentAccess, Access::SignedIn) => match views.access {
+            Some(tab) => tab.clone().into_any_element(),
+            None => without_agents(cx),
         },
     };
     v_flex()
@@ -168,6 +175,13 @@ fn signed_out(
                     crate::sign_in::start(&hubs, Some(&id), None, window, cx);
                 }),
         )
+        .into_any_element()
+}
+
+/// The agent tabs of an application composed without the agents service.
+fn without_agents(cx: &App) -> gpui_kit::AnyElement {
+    div()
+        .child(note("This build has no hub agents.", cx))
         .into_any_element()
 }
 

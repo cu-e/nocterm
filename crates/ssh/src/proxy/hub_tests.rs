@@ -11,25 +11,23 @@ fn target() -> Target {
     Target::new("user", "inner.example", 22)
 }
 
-fn hub_route(node: Option<&str>) -> ProxyConfig {
+fn hub_route() -> ProxyConfig {
     ProxyConfig::Hub {
         address: "hub.example:7443".into(),
-        node: node.map(Into::into),
     }
 }
 
 #[tokio::test]
-async fn the_relay_is_asked_for_the_hub_node_and_target_and_its_stream_carries_bytes() {
+async fn the_relay_is_asked_for_the_hub_and_target_and_its_stream_carries_bytes() {
     let hub = ScriptedRelay::default();
     let relay: Arc<dyn RelayDialer> = Arc::new(hub.clone());
-    let mut io = connect(&target(), &hub_route(Some("office")), Some(&relay))
+    let mut io = connect(&target(), &hub_route(), Some(&relay))
         .await
         .unwrap();
     assert_eq!(
         hub.asked(),
         [RelayRequest {
             hub: "hub.example:7443".into(),
-            node: Some("office".into()),
             target: target(),
         }]
     );
@@ -51,7 +49,7 @@ async fn a_refusal_surfaces_as_a_relay_error_of_the_named_hub() {
         reason: RelayRefusal::PrivateNetwork,
     };
     let relay: Arc<dyn RelayDialer> = Arc::new(ScriptedRelay::refusing(refusal.clone()));
-    let Err(error) = connect(&target(), &hub_route(None), Some(&relay)).await else {
+    let Err(error) = connect(&target(), &hub_route(), Some(&relay)).await else {
         panic!("a refused dial must fail");
     };
     assert_eq!(
@@ -65,7 +63,7 @@ async fn a_refusal_surfaces_as_a_relay_error_of_the_named_hub() {
 
 #[tokio::test]
 async fn a_hub_route_without_a_relay_fails_to_connect() {
-    let Err(error) = connect(&target(), &hub_route(None), None).await else {
+    let Err(error) = connect(&target(), &hub_route(), None).await else {
         panic!("a hub route needs a relay");
     };
     assert!(matches!(error, ConnectError::NoRelay));
@@ -82,7 +80,7 @@ async fn abandoning_the_connection_abandons_the_dial() {
     let relay: Arc<dyn RelayDialer> = Arc::new(hub.clone());
     let waited = timeout(
         Duration::from_millis(50),
-        connect(&target(), &hub_route(None), Some(&relay)),
+        connect(&target(), &hub_route(), Some(&relay)),
     )
     .await;
     assert!(waited.is_err(), "the dial never answers");
@@ -95,7 +93,7 @@ async fn the_target_host_is_validated_before_the_relay_is_asked() {
     let relay: Arc<dyn RelayDialer> = Arc::new(hub.clone());
     let hostile = Target::new("user", "host\r\nX: evil", 22);
     assert!(matches!(
-        connect(&hostile, &hub_route(None), Some(&relay)).await,
+        connect(&hostile, &hub_route(), Some(&relay)).await,
         Err(ConnectError::Io(_))
     ));
     assert!(hub.asked().is_empty());

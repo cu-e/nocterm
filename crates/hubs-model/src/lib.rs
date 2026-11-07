@@ -6,17 +6,15 @@
 //! the colour that marks a server
 //! (`HubColor`), the `[hubs]` settings section (`HubsSettings`), the hub access
 //! ports `HubTrust`, `HubSignIn` with their records and `HubError`,
-//! including the status of the account keys after sign-in (`KeyStatus`), and the administrator
-//! keys waiting for a person's confirmation (`HubAdminKeys`, `AdminKeyOffer`), and opaque
+//! including the status of the account keys after sign-in (`KeyStatus`), opaque
 //! recovery issue/acknowledgement capabilities (`RecoveryKeyReissue`, `RecoveryKeyOffer`),
 //! and `LoginReceipt` for original-login cleanup after delayed settings publication.
 //! Does not own: the hub wire protocol and its SDK types (the hub contract crates, reached
 //! only by `nocterm-hub-io`), device keys and tokens (private adapter files), connection
 //! state over time (`nocterm-hubs`), views.
-//! Ports provided: HubTrust, HubSignIn, HubAdminKeys, AccountDevices (the devices of an
-//! account, listed and revoked), AgentHostTrust (the servers that trust the agent CA) and
-//! AgentGrants (active chat accesses, listed and revoked). Ports used: nocterm-session
-//! `Secret`.
+//! Ports provided: HubTrust, HubSignIn, AccountKeyLock (the account keys and their lock policy)
+//! and AccountDevices (the devices of an account, listed and revoked). Ports used:
+//! nocterm-session `Secret`.
 //! Settings section: `hubs`. Globals: none.
 //! Invariants: no I/O; no protocol types; a hub is identified by its canonical address;
 //! captured source identities include hub authority and account-key fingerprints, never display
@@ -26,8 +24,8 @@
 //! a pinned fingerprint never changes silently: a different certificate is an error, not a
 //! prompt; plaintext addresses are refused; secrets never appear in `HubsSettings`.
 //!
-//! With the `test-support` feature, [`testing::FakeHub`] implements the two access ports and
-//! [`testing::FakeAdminKeys`] the administrator keys, in memory, for consumers' tests.
+//! With the `test-support` feature, [`testing::FakeHub`] implements the two access ports in
+//! memory for consumers' tests.
 
 //! LocalAccountSource/LocalAccountSourceFactory are consumer ports for captured native
 //! account owners. Identity constructors validate shape; adapters authenticate values, and
@@ -35,8 +33,6 @@
 
 pub mod account_keys;
 pub mod address;
-pub mod admin_keys;
-pub mod agent_access;
 pub mod color;
 pub mod devices;
 pub mod environment;
@@ -58,22 +54,13 @@ pub mod testing;
 
 pub use account_keys::{AccountKeyError, AccountKeyFuture, AccountKeyLock};
 pub use address::{DEFAULT_PORT, HubAddress, HubId};
-pub use admin_keys::{
-    AdminKeyConfirmation, AdminKeyError, AdminKeyFuture, AdminKeyOffer, HubAdminKeys,
-    PendingAdminKey,
-};
-pub use agent_access::{
-    AgentAccessError, AgentAccessFuture, AgentAccessGrant, AgentCa, AgentGrants, AgentHostTrust,
-    AgentTrustOverview, HostChoice, ServerTrust, TrustedServer,
-};
 pub use color::HubColor;
 pub use devices::{AccountDevices, DeviceSummary};
 pub use environment::Environment;
 pub use error::{FingerprintError, HubAddressError, HubError};
 pub use ports::{HubFuture, HubSignIn, HubTrust, OidcSignIn};
 pub use records::{
-    Account, AccountId, HubEndpointSpec, HubInfo, KeyStatus, OidcProvider, OrgId, OrgSummary,
-    SignedIn,
+    Account, AccountId, HubEndpointSpec, HubInfo, KeyStatus, OidcProvider, SignedIn,
 };
 pub use settings::{HubRecord, HubsSettings};
 pub use trust::{Fingerprint, ProbedHub, TrustDecision, TrustPolicy, decide};

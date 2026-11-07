@@ -27,6 +27,8 @@ pub(crate) struct PreparedApp {
     /// The Files transfer runtime, shared so agent transfers join the user's activity.
     agent_transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     local_fs: Arc<dyn nocterm_session::local_fs::LocalFs>,
+    /// Hub chats are listed beside the local history and run by the hub connector.
+    hub_links: Option<Arc<nocterm_hub_io::HubLinks>>,
     user_plugins: UserPluginMode,
 }
 impl PreparedApp {
@@ -54,13 +56,6 @@ impl PreparedApp {
             &ssh_config(&paths),
         ));
         let transport = ssh_transport(&paths, hub_links.as_deref())?;
-        let agent_access = agent_access(hub_links.as_ref(), &agent_hosts);
-        // One chat link serves the chat, own-runner and certificate ports: it owns the leases of
-        // the keys it hands to the own runner and reads the bound chats the agents service sweeps.
-        let chats_link = cloud_chats_link(hub_links.as_ref(), agent_access.clone(), &paths);
-        let cloud_agents = cloud_agents_dependencies(hub_links.clone(), chats_link.clone(), &paths);
-        let cloud_chats =
-            chats_link.map(|link| link as Arc<dyn nocterm_cloud_agents_model::CloudChatLauncher>);
         let local_fs = Arc::new(
             nocterm_localfs::LocalFilesystem::new().context("opening the local filesystem")?,
         );
@@ -102,16 +97,19 @@ impl PreparedApp {
                 container_actions: Arc::new(
                     nocterm_project_runtime::NativeWorkspaceContainerActions,
                 ),
-                cloud_agents,
-                cloud_chats,
-                hubs: hub_dependencies(hub_links.clone(), agent_access),
+                hubs: hub_links.clone().map(hub_dependencies),
+                hub_agents: hub_links
+                    .as_deref()
+                    .map(|links| hub_agents_dependencies(links, agent_hosts.clone())),
                 agent_hosts: hub_links.is_some().then_some(agent_hosts as _),
                 hub_accounts: hub_links
+                    .clone()
                     .map(|links| links as Arc<dyn crate::hub_sources::HubAccounts>),
             },
             files,
             agent_transfers,
             local_fs,
+            hub_links,
             user_plugins,
         })
     }
@@ -120,10 +118,19 @@ impl PreparedApp {
         let state = Arc::new(nocterm_agent_storage::FileAgentStateRepository::new(
             self.paths.state_dir().join("agents.toml"),
         ));
-        let chats = Arc::new(nocterm_agent_storage::FileChatRepository::new(
-            self.paths.state_dir().join("agent-chats"),
-            self.local_fs.clone(),
-        ));
+        let local_chats: Arc<dyn nocterm_ai::storage::ChatRepository> =
+            Arc::new(nocterm_agent_storage::FileChatRepository::new(
+                self.paths.state_dir().join("agent-chats"),
+                self.local_fs.clone(),
+            ));
+        let chats = match &self.hub_links {
+            Some(links) => Arc::new(nocterm_hub_io::HubChatRepository::new(
+                links,
+                local_chats,
+                self.paths.state_dir().join("hub-chats"),
+            )),
+            None => local_chats,
+        };
         let paths = self.paths.clone();
         let loading = cx.background_executor().spawn(async move {
             let connections = crate::connection_setup::native(&paths);
@@ -145,7 +152,14 @@ impl PreparedApp {
         projects: crate::project_setup::PreparedProjectSetup,
         cx: &mut App,
     ) {
-        let agent = agent_services(&self.paths, self.executable, self.agent_transfers, storage);
+        let connector = agent_connector(&self.executable, self.hub_links.as_deref());
+        let agent = agent_services(
+            &self.paths,
+            self.executable,
+            connector,
+            self.agent_transfers,
+            storage,
+        );
         let vault = Some(bootstrap::VaultSetup {
             file: self.paths.config_dir().join("vault.bin"),
             device_unlock: true,
@@ -248,83 +262,28 @@ fn hub_links(
     Some(links)
 }
 
-/// One agent access service: the hub's Agent access tab and the servers Cloud chats are bound
-/// to read the same registry (ADR 0147).
-fn agent_access(
-    links: Option<&Arc<nocterm_hub_io::HubLinks>>,
-    hosts: &Arc<nocterm_ssh::authorized_keys::HostDirectory>,
-) -> Option<Arc<nocterm_hub_io::agent_access::AgentAccess>> {
-    links.map(|links| {
-        Arc::new(nocterm_hub_io::agent_access::AgentAccess::new(
-            links.clone(),
-            hosts.clone(),
-        ))
-    })
+/// The hub access ports of the links.
+fn hub_dependencies(links: Arc<nocterm_hub_io::HubLinks>) -> nocterm_hubs::Deps {
+    nocterm_hubs::Deps {
+        trust: links.clone(),
+        sign_in: links.clone(),
+        devices: links.clone(),
+        account_keys: Arc::new(nocterm_hub_io::AccountKeys::new(links)),
+    }
 }
 
-/// The hub access ports of the links, if there are any.
-fn hub_dependencies(
-    links: Option<Arc<nocterm_hub_io::HubLinks>>,
-    agent_access: Option<Arc<nocterm_hub_io::agent_access::AgentAccess>>,
-) -> Option<nocterm_hubs::Deps> {
-    links
-        .zip(agent_access)
-        .map(|(links, agent_access)| nocterm_hubs::Deps {
-            trust: links.clone(),
-            sign_in: links.clone(),
-            admin_keys: links.clone(),
-            devices: links.clone(),
-            agent_trust: agent_access.clone(),
-            agent_grants: agent_access,
-            account_keys: Arc::new(nocterm_hub_io::AccountKeys::new(links)),
-        })
-}
-
-/// The Cloud agents ports of the links, if there are any. The pool keys the person trusted are
-/// pinned per hub in a private directory.
-fn cloud_agents_dependencies(
-    links: Option<Arc<nocterm_hub_io::HubLinks>>,
-    own_runner: Option<Arc<nocterm_hub_io::CloudChatsLink>>,
-    paths: &Paths,
-) -> Option<nocterm_cloud_agents::Deps> {
-    let (links, own_runner) = (links?, own_runner?);
-    let link = Arc::new(nocterm_hub_io::CloudAgentsLink::new(
-        links,
-        paths.state_dir().join("hub-pool-pins"),
-    ));
-    Some(nocterm_cloud_agents::Deps {
-        catalog: link.clone(),
-        launcher: link.clone(),
-        own_runner: own_runner.clone(),
-        certifier: own_runner,
-        seats: link.clone(),
-        usage: link.clone(),
-        personal: link.clone(),
-        pins: link,
-    })
-}
-
-/// The Cloud chat port of the links, if there are any. Its encrypted chat files live in the
-/// state directory.
-fn cloud_chats_link(
-    links: Option<&Arc<nocterm_hub_io::HubLinks>>,
-    agent_access: Option<Arc<nocterm_hub_io::agent_access::AgentAccess>>,
-    paths: &Paths,
-) -> Option<Arc<nocterm_hub_io::CloudChatsLink>> {
-    let links = links?;
-    let root = paths.state_dir().join("cloud-chats");
-    let link = nocterm_hub_io::ChatServices::native(links, root)
-        .map(|services| match agent_access {
-            Some(access) => services.with_trusted_servers(access),
-            None => services,
-        })
-        .and_then(|services| nocterm_hub_io::CloudChatsLink::new(links.clone(), services));
-    match link {
-        Ok(link) => Some(Arc::new(link)),
-        Err(error) => {
-            tracing::error!(?error, "Cloud chats are unavailable");
-            None
-        }
+/// The agents, agent servers and chat changes of the hubs, all read by one link, and the
+/// sessions of saved connections Agent access writes `authorized_keys` through.
+fn hub_agents_dependencies(
+    links: &nocterm_hub_io::HubLinks,
+    hosts: Arc<nocterm_ssh::authorized_keys::HostDirectory>,
+) -> nocterm_hub_agents::Deps {
+    let link = Arc::new(nocterm_hub_io::HubAgentsLink::new(links));
+    nocterm_hub_agents::Deps {
+        directory: link.clone(),
+        servers: link.clone(),
+        chats: link,
+        hosts,
     }
 }
 
@@ -366,9 +325,24 @@ fn local_sessions() -> nocterm_terminal::LocalSessions {
     )
 }
 
+/// Local agents run over ACP; hub agents run on their hub.
+fn agent_connector(
+    executable: &std::path::Path,
+    links: Option<&nocterm_hub_io::HubLinks>,
+) -> Arc<dyn nocterm_ai::AgentConnector> {
+    Arc::new(crate::agent_connector::AgentConnectors::new(
+        Arc::new(nocterm_acp::AcpConnector::managed(executable.to_owned())),
+        links.map(|links| {
+            Arc::new(nocterm_hub_io::HubAgentConnector::new(links))
+                as Arc<dyn nocterm_ai::AgentConnector>
+        }),
+    ))
+}
+
 fn agent_services(
     paths: &Paths,
     executable: std::path::PathBuf,
+    connector: Arc<dyn nocterm_ai::AgentConnector>,
     transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     storage: nocterm_agent_runtime::AgentStorage,
 ) -> nocterm_agent::AgentServices {
@@ -377,7 +351,7 @@ fn agent_services(
         transfers,
         catalog: nocterm_agent_providers::catalog(),
         metadata: Arc::new(nocterm_agent_storage::NativeChatMetadata),
-        connector: Arc::new(nocterm_acp::AcpConnector::managed(executable.clone())),
+        connector,
         terminal_auth: None,
         bridge: Arc::new(nocterm_acp::BridgeServer::new(
             paths.clone(),

@@ -54,17 +54,22 @@ impl Render for ConnectionEditor {
         let available =
             (window.viewport_size().height - rems(10.).to_pixels(window.rem_size())).max(px(0.));
         let nav_width = rems(layout.connection_nav_width);
-        let space = self.space_row(cx);
         let page = match self.section {
-            EditorSection::Connection => self.connection.page(
-                &self.launch,
-                &self.appearance,
-                self.edit.id(),
-                self.edit.editing(),
-                space,
-                &self.deps,
-                cx,
-            ),
+            EditorSection::Connection => {
+                let mut page = self.connection.page(
+                    &self.launch,
+                    &self.appearance,
+                    self.edit.id(),
+                    self.edit.editing(),
+                    &self.deps,
+                    cx,
+                );
+                let agents = self.agent_access.row(self.edit.original(), cx);
+                if let Some(row) = agents {
+                    page.insert(1, form::section("Agents", [row], cx));
+                }
+                page
+            }
             EditorSection::Authentication => self.authentication.page(cx),
             EditorSection::JumpHosts => {
                 let labels = self.jump_hosts.labels(&self.deps, cx);

@@ -5,7 +5,7 @@
 
 use nocterm_core::SharedCause;
 use nocterm_hub_client::{ClientError, RelayError as HubRelayError};
-use nocterm_hub_proto::v1::ErrorCode;
+use nocterm_hub_proto::v2::ErrorCode;
 use nocterm_hubs_model::HubError;
 use nocterm_session::{RelayError, RelayRefusal};
 
@@ -21,25 +21,19 @@ pub(super) fn without_client(name: &str, error: HubError) -> RelayError {
     }
 }
 
-/// Why the hub did not open a relay to a destination, through `node` if one was named.
+/// Why the hub did not open a relay to a destination.
 ///
 /// A device the hub revoked is forgotten on the spot, as for any other call.
-pub(super) fn opening(
-    client: &CapturedClient,
-    name: &str,
-    node: Option<&str>,
-    error: HubRelayError,
-) -> RelayError {
-    classify_opening(name, node, error, |error| client.failure(error))
+pub(super) fn opening(client: &CapturedClient, name: &str, error: HubRelayError) -> RelayError {
+    classify_opening(name, error, |error| client.failure(error))
 }
 fn classify_opening(
     name: &str,
-    node: Option<&str>,
     error: HubRelayError,
     failed: impl FnOnce(ClientError) -> HubError,
 ) -> RelayError {
     if let Some(code) = code_of(&error)
-        && let Some(refused) = coded(code, node)
+        && let Some(refused) = coded(code)
     {
         return refused;
     }
@@ -59,7 +53,7 @@ fn code_of(error: &HubRelayError) -> Option<ErrorCode> {
 }
 
 /// What a hub's code says about a relay, if it says anything.
-fn coded(code: ErrorCode, node: Option<&str>) -> Option<RelayError> {
+fn coded(code: ErrorCode) -> Option<RelayError> {
     match code {
         // The contract does not say which rule refused, only that one did.
         ErrorCode::RelayDenied => Some(RelayError::Refused {
@@ -67,9 +61,6 @@ fn coded(code: ErrorCode, node: Option<&str>) -> Option<RelayError> {
         }),
         ErrorCode::RelayLimit => Some(RelayError::Refused {
             reason: RelayRefusal::Limit,
-        }),
-        ErrorCode::NodeUnavailable => node.map(|node| RelayError::NodeUnavailable {
-            node: node.to_owned(),
         }),
         _ => None,
     }

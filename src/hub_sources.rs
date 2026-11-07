@@ -142,6 +142,8 @@ pub(crate) struct HubSources {
     /// The terminal capability of this device, which a hub's credentials are added to.
     terminal: nocterm_terminal::Installed,
     ready: nocterm_ui::UiReady,
+    /// The agents service, through which a window's editor offers Agent access of a server.
+    agents: Option<Entity<nocterm_hub_agents::HubAgents>>,
     _membership: gpui_kit::Subscription,
     sources: HashMap<HubId, HubSource>,
 }
@@ -170,9 +172,16 @@ impl HubSources {
             inputs,
             terminal,
             ready,
+            agents: None,
             _membership: membership,
             sources: HashMap::new(),
         }
+    }
+
+    /// The windows' editors offer Agent access of their saved servers through `agents`.
+    pub(crate) fn with_agents(mut self, agents: Entity<nocterm_hub_agents::HubAgents>) -> Self {
+        self.agents = Some(agents);
+        self
     }
 
     /// The registry of hubs the sources follow.
@@ -218,9 +227,8 @@ impl HubSources {
             relay: capture_relay,
         } = account;
         let agent_source = Arc::new(agent::AgentSourceAvailability::new(source));
-        let keys = crate::vault_keys::keys_of(&vault, cx);
         let prepared =
-            nocterm_connections::PreparedConnections::volatile(self.inputs.clone().with_keys(keys));
+            nocterm_connections::PreparedConnections::volatile(self.inputs_of(hub, &vault, cx));
         let connections = nocterm_connections::install_volatile(prepared, &self.ready, cx)
             .map_err(|error| HubError::Remote {
                 cause: SharedCause::new(error),
@@ -234,6 +242,7 @@ impl HubSources {
         let vault_ui = Rc::new(nocterm_vault_ui::install_scoped(
             nocterm_vault_ui::Deps::new(vault.clone()).with_keys_missing(sign_in_again),
             &self.ready,
+            hub_key_lock(&self.ready),
             cx,
         ));
         let credentials = crate::bootstrap::credential_provider(
@@ -286,6 +295,26 @@ impl HubSources {
         })
     }
 
+    /// The connection inputs of `hub`'s windows: the keys of its vault and, with the agents
+    /// service, Agent access of its saved servers.
+    fn inputs_of(
+        &self,
+        hub: &HubId,
+        vault: &Arc<dyn VaultAccess>,
+        cx: &gpui_kit::App,
+    ) -> nocterm_connections::ConnectionInputs {
+        let inputs = self
+            .inputs
+            .clone()
+            .with_keys(crate::vault_keys::keys_of(vault, cx));
+        match &self.agents {
+            Some(agents) => inputs.with_agent_access(Arc::new(
+                crate::hub_server_access::HubServerAccess::new(hub.clone(), agents.clone()),
+            )),
+            None => inputs,
+        }
+    }
+
     /// The replication of the mirror. What it agreed with the hub lives as long as the mirror
     /// does: a new run starts from an empty mirror and an empty agreement.
     fn replication(
@@ -299,4 +328,16 @@ impl HubSources {
         let store = connections.connections().clone();
         cx.new(|cx| ProfileReplication::new(store, document, cx))
     }
+}
+
+/// The account keys of a hub follow the hub key lock policy, not the local vault's; zero keeps
+/// them open until they are locked or the device signs out.
+fn hub_key_lock(ready: &nocterm_ui::UiReady) -> nocterm_vault_ui::AutoLock {
+    let settings = ready.settings().clone();
+    Rc::new(move |cx| {
+        settings
+            .setting::<nocterm_hubs_model::HubsSettings>(cx)
+            .key_lock()
+            .unwrap_or_default()
+    })
 }

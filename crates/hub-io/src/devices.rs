@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use nocterm_hub_client::{ClientError, HubClient};
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::{DeviceSummary, HubError, HubFuture, HubId};
 use tokio::runtime::Handle;
 
@@ -40,7 +40,7 @@ pub(crate) fn list(pool: Arc<Pool>, handle: &Handle, hub: &HubId) -> HubFuture<V
     run(Captured::new(pool, hub), handle, |captured| async move {
         let listed = captured
             .observed
-            .during(captured.client.directory().list_devices(v1::Empty {}))
+            .during(captured.client.account().list_devices(v2::Empty {}))
             .await?
             .map_err(|status| classify(captured.hub.address(), ClientError::from(status)))?
             .into_inner();
@@ -61,13 +61,13 @@ pub(crate) fn list(pool: Arc<Pool>, handle: &Handle, hub: &HubId) -> HubFuture<V
 }
 
 pub(crate) fn revoke(pool: Arc<Pool>, handle: &Handle, hub: &HubId, device: &str) -> HubFuture<()> {
-    let request = v1::RevokeDeviceRequest {
-        device_id: device.to_owned(),
+    let request = v2::IdRequest {
+        id: device.to_owned(),
     };
     run(Captured::new(pool, hub), handle, |captured| async move {
         captured
             .observed
-            .during(captured.client.directory().revoke_device(request))
+            .during(captured.client.account().revoke_device(request))
             .await?
             .map_err(|status| classify(captured.hub.address(), ClientError::from(status)))?;
         Ok(())

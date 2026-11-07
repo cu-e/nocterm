@@ -84,7 +84,6 @@ pub(crate) fn take_disconnect(observed: &Arc<Mutex<Observed>>) -> Option<String>
 /// The protocol callbacks of one connection.
 pub(crate) struct Client {
     host_keys: Option<HostKeys>,
-    pinned: Option<PublicKey>,
     host: String,
     port: u16,
     observed: Arc<Mutex<Observed>>,
@@ -107,9 +106,6 @@ impl client::Handler for Client {
             return Ok(false);
         };
 
-        if let Some(pinned) = &self.pinned {
-            return Ok(pinned.key_data() == key.key_data());
-        }
         let Some(host_keys) = &self.host_keys else {
             return Ok(false);
         };
@@ -174,7 +170,6 @@ where
     };
     let client = Client {
         host_keys: Some(host_keys.clone()),
-        pinned: None,
         host: host.clone(),
         port: *port,
         observed: observed.clone(),
@@ -185,50 +180,6 @@ where
         .map_err(|error| match lock(observed).host_key.take() {
             Some((_, Verdict::Revoked { known_hosts, line })) => revoked(host, &known_hosts, line),
             _ => SessionError::Other(error.to_string()),
-        })
-}
-
-/// Proof login uses only the consent's host pin and supported initial algorithms.
-/// It never consults files or asks a host-key prompt.
-pub(crate) async fn handshake_pinned<S>(
-    stream: S,
-    target: &Target,
-    pinned: PublicKey,
-    keepalive_interval: Option<Duration>,
-    observed: &Arc<Mutex<Observed>>,
-) -> Result<Handle<Client>, SessionError>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    let preferred = Preferred {
-        kex: Cow::Owned(vec![russh::kex::CURVE25519]),
-        key: Cow::Owned(vec![russh::keys::Algorithm::Ed25519]),
-        ..Preferred::default()
-    };
-    let config = client::Config {
-        preferred,
-        keepalive_interval,
-        keepalive_max: KEEPALIVE_MAX,
-        ..client::Config::default()
-    };
-    let handler = Client {
-        host_keys: None,
-        pinned: Some(pinned),
-        host: target.host.clone(),
-        port: target.port,
-        observed: observed.clone(),
-    };
-    client::connect_stream(Arc::new(config), stream, handler)
-        .await
-        .map_err(|error| match error {
-            error @ (russh::Error::NoCommonAlgo { .. } | russh::Error::UnknownAlgo) => {
-                nocterm_session::ConnectionFailure::new(
-                    nocterm_session::ConnectionFailureKind::Unsupported,
-                    error,
-                )
-                .into()
-            }
-            other => super::proof::native_error(other),
         })
 }
 

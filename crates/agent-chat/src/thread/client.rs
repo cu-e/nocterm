@@ -42,25 +42,7 @@ impl AgentThread {
             return;
         }
         let resolved = self.resolved(cx);
-        self.tools.revoke_replaced_transfers(&resolved, cx);
-        let attached = resolved
-            .iter()
-            .map(|(id, _, _)| id.clone())
-            .collect::<Vec<_>>();
-        let current = resolved
-            .into_iter()
-            .map(|(id, entry, _)| {
-                let executor = entry.capabilities.state().info(cx).and_then(|info| {
-                    entry
-                        .capabilities
-                        .execution()?
-                        .executor(info.expected, cx)
-                        .ok()
-                });
-                (id, executor)
-            })
-            .collect::<Vec<_>>();
-        self.tools.revoke_replaced_executors(&current, &attached);
+        self.tools.revoke_replaced(resolved, cx);
     }
 
     pub(super) fn on_execution_watch(&mut self, cx: &gpui::App) -> bool {
@@ -199,27 +181,6 @@ impl AgentThread {
         self.apply_tool_decision(decision, cx);
     }
 
-    fn tool_destination(
-        &mut self,
-        request: &TerminalCall,
-        entry: Option<&TerminalEntry>,
-        cx: &App,
-    ) -> Option<String> {
-        if let Some(entry) = entry {
-            let info = entry.capabilities.state().info(cx)?;
-            if info.local {
-                return Some("This computer".into());
-            }
-            let target = info.target?;
-            return Some(format!("{} · {target}", entry.title));
-        }
-        let server = request.server_id()?;
-        self.offline_servers(cx)
-            .into_iter()
-            .find(|(descriptor, _)| descriptor.server_id == server)
-            .map(|(descriptor, summary)| format!("{} · {}", descriptor.name, summary.target))
-    }
-
     fn normalize_tool_displays(&mut self) {
         let patches = self.tools.normalize_displays(self.state.entries());
         self.state.patch_tool_rows(patches, self.deps.timestamp());
@@ -269,7 +230,14 @@ impl AgentThread {
             .into_iter()
             .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
             .map(|(_, entry, _)| entry);
-        let destination = self.tool_destination(&call.call, provided_entry.or(entry.as_ref()), cx);
+        let input = super::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
+        let (entry, defaults) = (
+            provided_entry.or(entry.as_ref()),
+            self.composer.default_attachments(),
+        );
+        let destination = self
+            .tools
+            .destination(&call.call, entry, &input, defaults, cx);
         let mut display = ToolDisplay::requested(tool.into(), arguments.clone());
         display.destination = destination.map(|text| nocterm_ai::redact::redact(&text));
         if self.deps.ai(cx).approval.redact_secrets {
@@ -381,6 +349,12 @@ impl AgentThread {
         if self.session.opening() && self.session().is_none() {
             self.config
                 .keep_control(self.session.ticket(), notification);
+        }
+        if let SessionUpdate::Turn(activity) = &notification.update {
+            if self.session().as_ref() == Some(&notification.session) {
+                self.external_turn(activity, cx);
+            }
+            return;
         }
         if self.session().as_ref() != Some(&notification.session)
             || !self.session.accepts_updates()
@@ -542,7 +516,14 @@ impl AgentThread {
             self.session.retain_failed_restore(ticket, pending_restore);
         }
         match result {
-            Ok(response) => {
+            Ok(mut response) => {
+                let history = response.history.take().filter(|_| restored == Some(true));
+                if let Some(history) = history
+                    && let Err(error) = self.state.replace_history(history, self.deps.timestamp())
+                {
+                    self.fail(&error.to_string(), cx);
+                    return true;
+                }
                 let session = response.session;
                 if !self.session.accept_open(
                     ticket,
@@ -597,6 +578,8 @@ impl AgentThread {
             self.fail("Terminal bridge is unavailable.", cx);
             return;
         };
+        // An agent that keeps its sessions reopens one even when nothing of it was saved here.
+        let keeps_history = info.capabilities.keeps_history;
         if !self
             .session
             .begin_open(commands.clone(), info, workdir.clone())
@@ -610,7 +593,9 @@ impl AgentThread {
             .session
             .restore()
             .clone()
-            .filter(|restore| !self.state.entries().is_empty() && restore.workdir.is_absolute())
+            .filter(|restore| {
+                keeps_history || (!self.state.entries().is_empty() && restore.workdir.is_absolute())
+            })
             .map(|mut restore| {
                 restore.workdir = workdir.clone();
                 restore

@@ -1,34 +1,29 @@
 //! An in-memory hub store for tests: versions, conflicts, tombstones and change streams as the
 //! hub keeps them, and an offline switch.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use futures::StreamExt as _;
 use nocterm_core::SharedCause;
-use nocterm_hub_proto::v1;
+use nocterm_hub_proto::v2;
 use nocterm_hubs_model::HubError;
 use nocterm_session::testing::Gate;
 
 use super::{Call, OpError, StoreOps};
-use crate::account::testing::Admin;
 mod accounts;
-mod bounded;
 pub(crate) use accounts::MemoryAccountStores;
 
 #[derive(Default)]
 struct Held {
-    collections: Vec<v1::Collection>,
-    keys: HashMap<String, v1::CollectionKey>,
-    members: HashMap<String, Vec<v1::CollectionMember>>,
-    objects: HashMap<String, BTreeMap<String, v1::StoredObject>>,
+    collections: Vec<v2::Collection>,
+    keys: HashMap<String, v2::CollectionKey>,
+    objects: HashMap<String, BTreeMap<String, v2::StoredObject>>,
     heads: HashMap<String, u64>,
     clock: i64,
-    keyset: Option<v1::AccountKeyset>,
-    memberships: Vec<v1::Membership>,
-    read_only: HashSet<String>,
-    scripted_changes: VecDeque<v1::ChangeBatch>,
+    keyset: Option<v2::Keyset>,
+    scripted_changes: VecDeque<v2::ChangeBatch>,
     change_calls: usize,
 }
 
@@ -49,13 +44,12 @@ pub(crate) enum StoreBoundary {
     CreateCollection,
     CreateCollectionReady,
     ChangesReady,
-    ObjectReady,
     PutReady,
     Put,
 }
 
 impl MemoryHub {
-    pub(crate) fn script_changes(&self, pages: Vec<v1::ChangeBatch>) {
+    pub(crate) fn script_changes(&self, pages: Vec<v2::ChangeBatch>) {
         self.held().scripted_changes = pages.into();
     }
 
@@ -111,119 +105,17 @@ impl MemoryHub {
     }
 
     /// The keyset record the hub holds for the account.
-    pub(crate) fn set_keyset(&self, record: Option<v1::AccountKeyset>) {
+    pub(crate) fn set_keyset(&self, record: Option<v2::Keyset>) {
         self.held().keyset = record;
     }
 
-    /// The organizations the account belongs to, with its role in each.
-    pub(crate) fn set_memberships(&self, memberships: &[(&str, &str, v1::Role)]) {
-        self.held().memberships = memberships
-            .iter()
-            .map(|(org_id, name, role)| v1::Membership {
-                org: Some(v1::Org {
-                    org_id: (*org_id).to_owned(),
-                    name: (*name).to_owned(),
-                    created_at_ms: 0,
-                }),
-                role: *role as i32,
-                effective_permissions: Vec::new(),
-            })
-            .collect();
-    }
-
-    /// An organization's collection whose key `granter` granted to the account: `envelope` is
-    /// the key sealed to the account's public key for `collection_id`. The hub lists the granter
-    /// as a member with the public key it holds for them.
-    pub(crate) fn add_group(
-        &self,
-        kind: &str,
-        org_id: &str,
-        collection_id: &str,
-        envelope: Vec<u8>,
-        granter: &Admin,
-    ) {
-        let mut held = self.held();
-        held.clock += 1;
-        let collection = v1::Collection {
-            collection_id: collection_id.to_owned(),
-            org_id: org_id.to_owned(),
-            personal: false,
-            kind: kind.to_owned(),
-            sealed_name: vec![1],
-            head: 0,
-            created_at_ms: held.clock,
-            deleted: false,
-        };
-        held.collections.push(collection);
-        held.keys.insert(
-            collection_id.to_owned(),
-            v1::CollectionKey {
-                collection_id: collection_id.to_owned(),
-                key_version: 1,
-                wrapped_key: envelope,
-                granted_by: granter.account_id().to_owned(),
-            },
-        );
-        held.members
-            .insert(collection_id.to_owned(), vec![granter.as_member()]);
-    }
-
-    /// The hub names `account_id` as the granter of a collection's key and lists `key` as its
-    /// public key, as a hostile hub could to pass off a key of its own.
-    pub(crate) fn name_granter(&self, collection_id: &str, account_id: &str, key: &Admin) {
-        let mut held = self.held();
-        if let Some(record) = held.keys.get_mut(collection_id) {
-            record.granted_by = account_id.to_owned();
-        }
-        let mut member = key.as_member();
-        member.account_id = account_id.to_owned();
-        held.members.insert(collection_id.to_owned(), vec![member]);
-    }
-
-    /// Writes into the collection are refused for lack of permission, as for a guest.
-    pub(crate) fn refuse_writes_to(&self, collection_id: &str) {
-        self.held().read_only.insert(collection_id.to_owned());
-    }
-
-    /// Another member writes an object, whatever the account may do.
-    pub(crate) fn write_as_member(
-        &self,
-        collection_id: &str,
-        object_id: &str,
-        kind: &str,
-        ciphertext: Vec<u8>,
-    ) -> v1::ObjectVersion {
-        let current = self
-            .held()
-            .objects
-            .get(collection_id)
-            .and_then(|objects| objects.get(object_id))
-            .map_or(0, |object| object.version);
-        self.write(
-            collection_id,
-            object_id,
-            current,
-            Some((kind.to_owned(), ciphertext)),
-        )
-        .expect("the member's write is accepted")
-    }
-
-    fn permitted(&self, collection_id: &str) -> Result<(), OpError> {
-        if self.held().read_only.contains(collection_id) {
-            return Err(OpError::Hub(HubError::PermissionDenied));
-        }
-        Ok(())
-    }
-
-    /// A collection another client made: of any kind, personal or an organization's.
-    pub(crate) fn add_foreign(&self, kind: &str, org_id: &str) -> String {
+    /// A collection another client made, of any kind.
+    pub(crate) fn add_foreign(&self, kind: &str) -> String {
         let mut held = self.held();
         held.clock += 1;
         let id = format!("foreign-{}", held.collections.len());
-        let collection = v1::Collection {
+        let collection = v2::Collection {
             collection_id: id.clone(),
-            org_id: org_id.to_owned(),
-            personal: org_id.is_empty(),
             kind: kind.to_owned(),
             sealed_name: vec![1],
             head: 0,
@@ -245,7 +137,7 @@ impl MemoryHub {
     }
 
     /// Every stored object of a collection, tombstones included, as the hub holds them.
-    pub(crate) fn objects(&self, collection_id: &str) -> Vec<v1::StoredObject> {
+    pub(crate) fn objects(&self, collection_id: &str) -> Vec<v2::StoredObject> {
         let held = self.held();
         held.objects
             .get(collection_id)
@@ -278,7 +170,7 @@ impl MemoryHub {
         object_id: &str,
         expected: u64,
         content: Option<(String, Vec<u8>)>,
-    ) -> Result<v1::ObjectVersion, OpError> {
+    ) -> Result<v2::ObjectVersion, OpError> {
         let mut held = self.held();
         if !held
             .collections
@@ -317,7 +209,7 @@ impl MemoryHub {
             .or_default()
             .insert(
                 object_id.to_owned(),
-                v1::StoredObject {
+                v2::StoredObject {
                     collection_id: collection_id.to_owned(),
                     object_id: object_id.to_owned(),
                     version,
@@ -329,7 +221,7 @@ impl MemoryHub {
                     stream_version,
                 },
             );
-        Ok(v1::ObjectVersion {
+        Ok(v2::ObjectVersion {
             collection_id: collection_id.to_owned(),
             object_id: object_id.to_owned(),
             version,
@@ -339,7 +231,7 @@ impl MemoryHub {
 }
 
 impl StoreOps for MemoryHub {
-    fn keyset(&self) -> Call<'_, Option<v1::AccountKeyset>> {
+    fn keyset(&self) -> Call<'_, Option<v2::Keyset>> {
         Box::pin(async move {
             self.reach()?;
             let record = self.held().keyset.clone();
@@ -348,7 +240,7 @@ impl StoreOps for MemoryHub {
         })
     }
 
-    fn collections(&self, kind: &str) -> Call<'_, Vec<v1::Collection>> {
+    fn collections(&self, kind: &str) -> Call<'_, Vec<v2::Collection>> {
         let kind = kind.to_owned();
         Box::pin(async move {
             self.boundary(StoreBoundary::Collections).await?;
@@ -363,7 +255,7 @@ impl StoreOps for MemoryHub {
         })
     }
 
-    fn create_collection(&self, request: v1::CreateCollectionRequest) -> Call<'_, v1::Collection> {
+    fn create_collection(&self, request: v2::CreateCollectionRequest) -> Call<'_, v2::Collection> {
         Box::pin(async move {
             self.boundary(StoreBoundary::CreateCollection).await?;
             self.reach()?;
@@ -377,10 +269,8 @@ impl StoreOps for MemoryHub {
                     return Err(OpError::Conflict);
                 }
                 held.clock += 1;
-                let collection = v1::Collection {
+                let collection = v2::Collection {
                     collection_id: request.collection_id.clone(),
-                    org_id: request.org_id.clone(),
-                    personal: request.org_id.is_empty(),
                     kind: request.kind,
                     sealed_name: request.sealed_name,
                     head: 0,
@@ -389,11 +279,10 @@ impl StoreOps for MemoryHub {
                 };
                 held.keys.insert(
                     request.collection_id.clone(),
-                    v1::CollectionKey {
+                    v2::CollectionKey {
                         collection_id: request.collection_id,
                         key_version: 1,
                         wrapped_key: request.wrapped_key,
-                        granted_by: String::new(),
                     },
                 );
                 held.collections.push(collection.clone());
@@ -404,7 +293,7 @@ impl StoreOps for MemoryHub {
         })
     }
 
-    fn collection_key(&self, collection_id: &str) -> Call<'_, v1::CollectionKey> {
+    fn collection_key(&self, collection_id: &str) -> Call<'_, v2::CollectionKey> {
         let id = collection_id.to_owned();
         Box::pin(async move {
             self.reach()?;
@@ -416,42 +305,10 @@ impl StoreOps for MemoryHub {
         })
     }
 
-    fn members(&self, collection_id: &str) -> Call<'_, Vec<v1::CollectionMember>> {
-        let id = collection_id.to_owned();
-        Box::pin(async move {
-            self.reach()?;
-            Ok(self.held().members.get(&id).cloned().unwrap_or_default())
-        })
-    }
-
-    fn memberships(&self) -> Call<'_, Vec<v1::Membership>> {
-        Box::pin(async move {
-            self.reach()?;
-            Ok(self.held().memberships.clone())
-        })
-    }
-
-    fn object(&self, collection_id: &str, object_id: &str) -> Call<'_, Option<v1::StoredObject>> {
-        let collection_id = collection_id.to_owned();
-        let object_id = object_id.to_owned();
-        Box::pin(async move {
-            self.reach()?;
-            let object = self
-                .held()
-                .objects
-                .get(&collection_id)
-                .and_then(|objects| objects.get(&object_id))
-                .cloned();
-            self.boundary(StoreBoundary::ObjectReady).await?;
-            Ok(object)
-        })
-    }
-
-    fn put_object(&self, request: v1::PutObjectRequest) -> Call<'_, v1::ObjectVersion> {
+    fn put_object(&self, request: v2::PutObjectRequest) -> Call<'_, v2::ObjectVersion> {
         Box::pin(async move {
             self.boundary(StoreBoundary::Put).await?;
             self.reach()?;
-            self.permitted(&request.collection_id)?;
             let written = self.write(
                 &request.collection_id,
                 &request.object_id,
@@ -463,10 +320,9 @@ impl StoreOps for MemoryHub {
         })
     }
 
-    fn delete_object(&self, request: v1::DeleteObjectRequest) -> Call<'_, v1::ObjectVersion> {
+    fn delete_object(&self, request: v2::DeleteObjectRequest) -> Call<'_, v2::ObjectVersion> {
         Box::pin(async move {
             self.reach()?;
-            self.permitted(&request.collection_id)?;
             self.write(
                 &request.collection_id,
                 &request.object_id,
@@ -476,7 +332,7 @@ impl StoreOps for MemoryHub {
         })
     }
 
-    fn changes(&self, collection_id: &str, after: u64) -> Call<'_, v1::ChangeBatch> {
+    fn changes(&self, collection_id: &str, after: u64) -> Call<'_, v2::ChangeBatch> {
         let id = collection_id.to_owned();
         Box::pin(async move {
             self.reach()?;
@@ -498,8 +354,8 @@ impl StoreOps for MemoryHub {
                             .collect()
                     })
                     .unwrap_or_default();
-                changes.sort_by_key(|object: &v1::StoredObject| object.stream_version);
-                v1::ChangeBatch {
+                changes.sort_by_key(|object: &v2::StoredObject| object.stream_version);
+                v2::ChangeBatch {
                     changes,
                     head: held.heads.get(&id).copied().unwrap_or(0),
                     more: false,

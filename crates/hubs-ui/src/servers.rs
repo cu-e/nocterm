@@ -1,6 +1,7 @@
 //! The Servers page of the settings: the known servers in a list, and the selected one in
 //! tabs: its name, colour, status and certificate with the ways to sign out of it or remove it,
-//! the devices of the account, and the keys that wait for the person's confirmation.
+//! the devices of the account, its vault keys, its agents and providers, and the agent key
+//! with the servers connected to the agents.
 //!
 //! The page edits through the service and never decides who may be trusted: a certificate is
 //! shown, never accepted, and the only way out of a changed one is to remove the server. The
@@ -26,19 +27,20 @@ use nocterm_ui::{IconName, SettingsPage, SettingsPageSpec};
 
 use crate::installation::Installed;
 use crate::layout::note;
-use detail::{Access, Tab, detail};
+use detail::{Access, Tab, TabViews, detail};
 use list::server_list;
 use tabs::{
-    agent_access::AgentAccess, cloud_agents::CloudAgentsTab, devices::Devices, names::NameFields,
+    account_keys::AccountKeys, agent_access::AgentAccessTab, agents::AgentsTab, devices::Devices,
+    names::NameFields,
 };
 
 /// The Servers page of the settings, listed with the other pages by the application.
 pub fn settings_page(installed: &Installed) -> SettingsPageSpec {
     let hubs = installed.hubs().clone();
-    let cloud_agents = installed.cloud_agents().cloned();
+    let agents = installed.hub_agents().cloned();
     SettingsPageSpec::new("servers", "Servers", move |_, cx| {
-        let (hubs, cloud_agents) = (hubs.clone(), cloud_agents.clone());
-        cx.new(|cx| ServersPage::new(hubs, cloud_agents, cx))
+        let (hubs, agents) = (hubs.clone(), agents.clone());
+        cx.new(|cx| ServersPage::new(hubs, agents, cx))
     })
     .with_icon(IconName::Server)
 }
@@ -59,8 +61,9 @@ pub(crate) struct ServersPage {
     tab: Tab,
     names: NameFields,
     devices: Entity<Devices>,
-    agents: Entity<AgentAccess>,
-    cloud_agents: Option<Entity<CloudAgentsTab>>,
+    keys: Entity<AccountKeys>,
+    agents: Option<Entity<AgentsTab>>,
+    access: Option<Entity<AgentAccessTab>>,
     focus: FocusHandle,
     _redraw: Task<()>,
     _hubs: Subscription,
@@ -69,7 +72,7 @@ pub(crate) struct ServersPage {
 impl ServersPage {
     pub(crate) fn new(
         hubs: Entity<Hubs>,
-        cloud_agents: Option<Entity<nocterm_cloud_agents::CloudAgents>>,
+        agents: Option<Entity<nocterm_hub_agents::HubAgents>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let redraw = cx.spawn(async move |this, cx| {
@@ -90,8 +93,11 @@ impl ServersPage {
             tab: Tab::Overview,
             names: NameFields::new(hubs.clone()),
             devices: cx.new(|_| Devices::new(hubs.clone())),
-            agents: cx.new(|cx| AgentAccess::new(hubs.clone(), cx)),
-            cloud_agents: cloud_agents.map(|service| cx.new(|cx| CloudAgentsTab::new(service, cx))),
+            keys: cx.new(|_| AccountKeys::new(hubs.clone())),
+            access: agents
+                .clone()
+                .map(|service| cx.new(|cx| AgentAccessTab::new(service, cx))),
+            agents: agents.map(|service| cx.new(|cx| AgentsTab::new(service, cx))),
             focus: cx.focus_handle(),
             _redraw: redraw,
             _hubs: cx.observe(&hubs, |_, _, cx| cx.notify()),
@@ -158,15 +164,20 @@ impl Render for ServersPage {
                 Some(hub) => devices.show(hub, cx),
                 None => devices.hide(),
             });
-        let agents_on_show = on_show(shown, self.tab, Tab::AgentAccess);
-        self.agents.update(cx, |agents, cx| match &agents_on_show {
-            Some(hub) => agents.show(hub, cx),
-            None => agents.hide(),
-        });
-        // Likewise the Cloud agents of the server, which are tracked while the tab is on show.
-        let cloud_on_show = on_show(shown, self.tab, Tab::CloudAgents);
-        if let Some(tab) = &self.cloud_agents {
-            tab.update(cx, |tab, cx| match &cloud_on_show {
+        if let Some(hub) = on_show(shown, self.tab, Tab::Keys) {
+            self.keys.update(cx, |keys, cx| keys.show(&hub, cx));
+        }
+        // The agents and the agent servers are read again each time their tab is on show.
+        let agents_on_show = on_show(shown, self.tab, Tab::Agents);
+        if let Some(tab) = &self.agents {
+            tab.update(cx, |tab, cx| match &agents_on_show {
+                Some(hub) => tab.show(hub, cx),
+                None => tab.hide(),
+            });
+        }
+        let access_on_show = on_show(shown, self.tab, Tab::AgentAccess);
+        if let Some(tab) = &self.access {
+            tab.update(cx, |tab, cx| match &access_on_show {
                 Some(hub) => tab.show(hub, cx),
                 None => tab.hide(),
             });
@@ -177,9 +188,12 @@ impl Render for ServersPage {
                 summary,
                 &name,
                 self.tab,
-                &self.devices,
-                &self.agents,
-                self.cloud_agents.as_ref(),
+                TabViews {
+                    devices: &self.devices,
+                    keys: &self.keys,
+                    agents: self.agents.as_ref(),
+                    access: self.access.as_ref(),
+                },
                 cx.weak_entity(),
                 &self.hubs,
                 cx,
@@ -224,5 +238,5 @@ impl Render for ServersPage {
 mod tests;
 
 #[cfg(test)]
-#[path = "servers_cloud_agents_tests.rs"]
-mod cloud_agent_tests;
+#[path = "servers_agents_tests.rs"]
+mod agent_tests;

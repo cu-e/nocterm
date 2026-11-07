@@ -32,6 +32,10 @@ pub struct SessionOpened {
     pub session: SessionId,
     pub modes: Option<Modes>,
     pub configuration: Option<Vec<ConfigOption>>,
+    /// The agent's own record of a reopened session, oldest first, from an agent that keeps
+    /// its sessions ([`AgentCapabilitiesSummary::keeps_history`]). The chat shows it in place
+    /// of its saved transcript; `None` keeps the saved transcript.
+    pub history: Option<Vec<SessionUpdate>>,
 }
 impl SessionOpened {
     pub fn new(session: impl Into<SessionId>) -> Self {
@@ -39,6 +43,7 @@ impl SessionOpened {
             session: session.into(),
             modes: None,
             configuration: None,
+            history: None,
         }
     }
 }
@@ -50,6 +55,10 @@ impl SessionOpened {
     }
     pub fn configuration(mut self, options: Vec<ConfigOption>) -> Self {
         self.configuration = Some(options);
+        self
+    }
+    pub fn history(mut self, updates: Vec<SessionUpdate>) -> Self {
+        self.history = Some(updates);
         self
     }
 }
@@ -133,6 +142,17 @@ pub enum SessionUpdate {
     ConfigOptionUpdate(Vec<ConfigOption>),
     SessionInfoUpdate(SessionInfo),
     UsageUpdate(ContextUsage),
+    /// A turn no prompt of this client started, such as one sent from another device.
+    Turn(TurnActivity),
+}
+
+/// What an agent that runs elsewhere does on its own: it began a turn for a prompt sent from
+/// another device, or ended it. A chat shows the prompt and that the agent works, and offers
+/// Stop, until the turn ends.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TurnActivity {
+    Started { prompt: Vec<Content> },
+    Ended,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -165,4 +185,7 @@ impl std::fmt::Display for RemoteError {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentCapabilitiesSummary {
     pub image_prompts: bool,
+    /// The agent keeps its sessions itself (a hub agent): a chat reopens its session even
+    /// when it saved nothing of it, and shows the history the agent returns.
+    pub keeps_history: bool,
 }

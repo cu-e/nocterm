@@ -1,5 +1,5 @@
-//! The Keys & trust tab of a server: the account keys and the administrators whose keys wait
-//! for the person's confirmation.
+//! The Keys tab of a server: the account keys, opened and closed on this device, and a
+//! recovery key that was never confirmed as saved.
 
 use gpui_kit::{
     App, ClickEvent, Entity, TestSupportExt as _, Window,
@@ -8,38 +8,26 @@ use gpui_kit::{
 };
 use nocterm_hubs::{HubSummary, Hubs};
 
-use super::admin_keys::admin_keys;
+use super::account_keys::AccountKeys;
 use crate::layout::{field, note};
 use crate::servers::item;
 
-/// What a person confirms about the account of the server: a recovery key that was never
-/// saved, and the keys of organization administrators.
+/// The account keys of the server and, while one was never saved, the offer of a new recovery
+/// key.
 pub(in crate::servers) fn trust(
     summary: &HubSummary,
     hubs: &Entity<Hubs>,
+    keys: &Entity<AccountKeys>,
     cx: &App,
 ) -> gpui_kit::AnyElement {
     let key = summary.address.to_string();
     let recovery = recovery_key(summary, hubs, &key, cx);
-    let administrators = admin_keys(summary, hubs, &key, cx);
-    let nothing = recovery.is_none() && administrators.is_none();
     v_flex()
         .id(item("server-trust-tab", &key))
         .test_support()
         .gap_3()
+        .child(field("Vault keys", keys.clone()))
         .children(recovery)
-        .children(administrators)
-        .when(nothing, |tab| {
-            tab.child(
-                gpui_kit::div()
-                    .id(item("server-keys-settled", &key))
-                    .test_support()
-                    .child(note(
-                        "Nothing waits for you here. Account keys that are closed on this device show their offers once the vault is unlocked.",
-                        cx,
-                    )),
-            )
-        })
         .into_any_element()
 }
 

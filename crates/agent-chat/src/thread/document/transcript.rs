@@ -82,6 +82,18 @@ impl Transcript {
             _ => false,
         }
     }
+    /// A transcript of the same chat made of `updates` alone, oldest first.
+    pub(super) fn replaced(
+        &self,
+        updates: Vec<SessionUpdate>,
+        now: u64,
+    ) -> Result<Self, nocterm_ai::history::HistoryCodecError> {
+        let mut next = Self::restored(Vec::new(), Vec::new(), self.state.title.clone());
+        for update in updates {
+            next.apply(update, now)?;
+        }
+        Ok(next)
+    }
     pub(super) fn append_user(
         &mut self,
         content: Vec<Content>,

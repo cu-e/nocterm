@@ -1,140 +1,129 @@
-//! Hub listings as the model's agents.
+//! Agent, provider and server records of the hub protocol as the records of the model.
 
-use std::collections::HashMap;
-
-use nocterm_cloud_agents_model::{
-    AgentId, AgentLimits, AgentScope, AgentStatus, CloudAgent, PoolId, PoolLabel,
+use nocterm_hub_agents_model::{
+    AgentDraft, AgentId, AgentKey, ApprovalMode, HubAgent, HubAgentsError, HubServer, Provider,
+    ProviderDraft, ProviderId, ProviderKind, ProviderScope, ServerId, ServerStatus,
 };
-use nocterm_hub_model::agents::{AgentListing, AgentScope as WireScope, Availability};
+use nocterm_hub_proto::v2;
 
-/// What the heading of an organization the hub did not name says.
-const UNNAMED_ORG: &str = "Organization";
+fn malformed<T>(_: T) -> HubAgentsError {
+    HubAgentsError::Malformed
+}
 
-pub(super) fn agent(
-    listing: AgentListing,
-    org_name: Option<String>,
-    pool_names: &HashMap<String, String>,
-) -> Option<CloudAgent> {
-    let scope = match listing.scope {
-        WireScope::Account => AgentScope::Personal,
-        // The hub names the organization; without a name the person sees a plain label, never
-        // the identifier.
-        WireScope::Org(org) => AgentScope::Org {
-            id: org.to_string(),
-            name: org_name
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| UNNAMED_ORG.to_owned()),
-        },
-        WireScope::Instance => AgentScope::Server,
-    };
-    let pools = listing
-        .pools
-        .iter()
-        .filter_map(|pool| {
-            let id = pool.to_string();
-            let name = pool_names.get(&id).cloned().unwrap_or_else(|| id.clone());
-            Some(PoolLabel {
-                id: PoolId::new(id).ok()?,
-                name,
-            })
-        })
-        .collect();
-    Some(CloudAgent {
-        id: AgentId::new(listing.id.to_string()).ok()?,
-        scope,
-        version: listing.version,
-        name: listing.name,
-        description: listing.description,
-        icon: listing.icon,
-        provider: super::provider::canonical(&listing.provider_kind),
-        models: listing.models,
-        limits: AgentLimits {
-            cpu_milli: listing.resources.cpu_milli,
-            mem_mib: listing.resources.mem_mib,
-            disk_mib: listing.resources.disk_mib,
-            max_parallel_runs: listing.resources.max_parallel_runs,
-            idle_ttl_s: listing.idle_ttl_s,
-        },
-        status: if listing.enabled {
-            status(listing.availability)
-        } else {
-            AgentStatus::Disabled
-        },
-        pools,
+pub(super) fn approval(wire: i32) -> ApprovalMode {
+    match v2::ApprovalMode::try_from(wire) {
+        Ok(v2::ApprovalMode::Ask) => ApprovalMode::Ask,
+        _ => ApprovalMode::Auto,
+    }
+}
+
+pub(super) fn approval_to_wire(mode: ApprovalMode) -> i32 {
+    match mode {
+        ApprovalMode::Auto => v2::ApprovalMode::Auto,
+        ApprovalMode::Ask => v2::ApprovalMode::Ask,
+    }
+    .into()
+}
+
+fn server_ids(ids: Vec<String>) -> Result<Vec<ServerId>, HubAgentsError> {
+    ids.into_iter()
+        .map(|id| ServerId::new(id).map_err(malformed))
+        .collect()
+}
+
+pub(super) fn agent(wire: v2::Agent) -> Result<HubAgent, HubAgentsError> {
+    Ok(HubAgent {
+        id: AgentId::new(wire.id).map_err(malformed)?,
+        name: wire.name,
+        instructions: wire.instructions,
+        provider: ProviderId::new(wire.provider_id).map_err(malformed)?,
+        model: wire.model,
+        models: wire.models,
+        approval: approval(wire.approval),
+        servers: server_ids(wire.server_ids)?,
     })
 }
 
-fn status(availability: Availability) -> AgentStatus {
-    match availability {
-        Availability::Ready => AgentStatus::Ready,
-        Availability::Sleeping => AgentStatus::Sleeping,
-        Availability::Starting => AgentStatus::Starting,
-        Availability::NoCapacity => AgentStatus::NoCapacity,
-        Availability::NeedsKey => AgentStatus::NeedsKey,
-        Availability::NeedsPoolTrust => AgentStatus::NeedsPoolTrust,
-        Availability::Disabled => AgentStatus::Disabled,
+/// A validated draft as the hub takes it.
+pub(super) fn agent_input(draft: AgentDraft) -> v2::AgentInput {
+    v2::AgentInput {
+        name: draft.name,
+        instructions: draft.instructions,
+        provider_id: draft
+            .provider
+            .map(|provider| provider.to_string())
+            .unwrap_or_default(),
+        model: draft.model,
+        models: draft.models,
+        approval: approval_to_wire(draft.approval),
+        server_ids: draft.servers.iter().map(ToString::to_string).collect(),
+        max_steps: 0,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use nocterm_hub_model::OrgId;
-    use nocterm_hub_model::agents::{AgentAccess, ResourceRequest};
+pub(super) fn provider(wire: v2::Provider) -> Result<Provider, HubAgentsError> {
+    Ok(Provider {
+        id: ProviderId::new(wire.id).map_err(malformed)?,
+        scope: match v2::Scope::try_from(wire.scope) {
+            Ok(v2::Scope::Server) => ProviderScope::Hub,
+            _ => ProviderScope::Account,
+        },
+        kind: match v2::ProviderKind::try_from(wire.kind) {
+            Ok(v2::ProviderKind::Anthropic) => ProviderKind::Anthropic,
+            _ => ProviderKind::OpenAi,
+        },
+        name: wire.name,
+        base_url: wire.base_url,
+        models: wire.models,
+        has_key: wire.has_key,
+        editable: wire.editable,
+    })
+}
 
-    fn listing(scope: WireScope) -> AgentListing {
-        AgentListing {
-            id: nocterm_hub_model::AgentId::new(),
-            scope,
-            version: 1,
-            name: "Scribe".into(),
-            description: String::new(),
-            icon: String::new(),
-            color: String::new(),
-            provider_kind: "openai_chat".into(),
-            models: vec!["gpt".into()],
-            resources: ResourceRequest {
-                cpu_milli: 500,
-                mem_mib: 256,
-                disk_mib: 512,
-                max_parallel_runs: 1,
-            },
-            idle_ttl_s: 600,
-            access: AgentAccess::All,
-            allow_personal_on_pool: false,
-            enabled: true,
-            pools: Vec::new(),
-            availability: Availability::Ready,
+/// A provider of the account's own, as the hub takes it. The key goes once and is never read
+/// back.
+pub(super) fn provider_input(draft: ProviderDraft) -> v2::ProviderInput {
+    v2::ProviderInput {
+        scope: v2::Scope::Account.into(),
+        kind: match draft.kind {
+            ProviderKind::OpenAi => v2::ProviderKind::Openai,
+            ProviderKind::Anthropic => v2::ProviderKind::Anthropic,
         }
+        .into(),
+        name: draft.name,
+        base_url: draft.base_url,
+        models: draft.models,
+        api_key: draft
+            .api_key
+            .map(|key| key.expose().to_owned())
+            .unwrap_or_default(),
     }
+}
 
-    fn scope_name(listed: &CloudAgent) -> String {
-        match &listed.scope {
-            AgentScope::Org { name, .. } => name.clone(),
-            other => panic!("not an organization: {other:?}"),
-        }
+pub(super) fn agent_key(wire: v2::AgentKey) -> AgentKey {
+    AgentKey {
+        public_key: wire.public_key,
+        authorized_line: wire.authorized_line,
+        fingerprint: wire.fingerprint,
     }
+}
 
-    #[test]
-    fn an_organization_agent_shows_the_name_the_hub_sent() {
-        let org = OrgId::new();
-        let named = agent(
-            listing(WireScope::Org(org)),
-            Some("Acme".into()),
-            &HashMap::new(),
-        )
-        .expect("agent");
-        assert_eq!(scope_name(&named), "Acme");
-    }
-
-    #[test]
-    fn an_organization_without_a_name_shows_a_plain_label_not_its_identifier() {
-        let org = OrgId::new();
-        for missing in [None, Some("  ".to_owned())] {
-            let unnamed =
-                agent(listing(WireScope::Org(org)), missing, &HashMap::new()).expect("agent");
-            assert_eq!(scope_name(&unnamed), UNNAMED_ORG);
-            assert!(matches!(&unnamed.scope, AgentScope::Org { id, .. } if *id == org.to_string()));
-        }
-    }
+pub(super) fn server(wire: v2::Server) -> Result<HubServer, HubAgentsError> {
+    Ok(HubServer {
+        id: ServerId::new(wire.id).map_err(malformed)?,
+        name: wire.name,
+        host: wire.host,
+        port: u16::try_from(wire.port).map_err(malformed)?,
+        user: wire.user,
+        host_key_fingerprint: wire.host_key_fingerprint,
+        status: match v2::ServerStatus::try_from(wire.status) {
+            Ok(v2::ServerStatus::Ready) => ServerStatus::Ready,
+            Ok(v2::ServerStatus::NoAccess) => ServerStatus::NoAccess,
+            Ok(v2::ServerStatus::HostKeyChanged) => ServerStatus::HostKeyChanged,
+            Ok(v2::ServerStatus::Unreachable) => ServerStatus::Unreachable,
+            Ok(v2::ServerStatus::KeyRotated) => ServerStatus::KeyRotated,
+            _ => ServerStatus::Unchecked,
+        },
+        status_message: wire.status_message,
+    })
 }

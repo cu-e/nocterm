@@ -26,10 +26,6 @@ pub(crate) struct ExternalContract {
 
 pub(crate) const EXTERNAL_CONTRACTS: &[ExternalContract] = &[
     ExternalContract {
-        package: "nocterm-cloud-device",
-        consumer: HUB_ADAPTER,
-    },
-    ExternalContract {
         package: "nocterm-hub-client",
         consumer: HUB_ADAPTER,
     },
@@ -47,10 +43,6 @@ pub(crate) const EXTERNAL_CONTRACTS: &[ExternalContract] = &[
     },
     ExternalContract {
         package: "nocterm-keys",
-        consumer: HUB_ADAPTER,
-    },
-    ExternalContract {
-        package: "nocterm-link",
         consumer: HUB_ADAPTER,
     },
 ];
@@ -270,7 +262,7 @@ mod tests {
         let patched = "[[package]]\nname = \"nocterm-keys\"\nversion = \"0.1.0\"\n";
         assert!(check_lock_text(patched).is_err());
         let forked = format!(
-            "[[package]]\nname = \"nocterm-link\"\nversion = \"0.1.0\"\nsource = \"git+https://github.com/other/nocterm-contract?rev={COMMIT}#{COMMIT}\"\n"
+            "[[package]]\nname = \"nocterm-keys\"\nversion = \"0.1.0\"\nsource = \"git+https://github.com/other/nocterm-contract?rev={COMMIT}#{COMMIT}\"\n"
         );
         assert!(check_lock_text(&forked).is_err());
         assert!(check_lock_text("[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n").is_ok());

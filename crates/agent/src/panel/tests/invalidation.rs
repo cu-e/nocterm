@@ -230,6 +230,7 @@ fn refused_shutdown_registration_returns_a_usable_original_installation(cx: &mut
             f.installation.layout.clone(),
             &f.installation.ready,
             &refused,
+            None,
             cx,
         );
         assert!(matches!(

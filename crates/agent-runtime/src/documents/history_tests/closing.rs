@@ -131,6 +131,7 @@ fn connected_client(
                     args: Vec::new(),
                     env: Default::default(),
                     inherit_env: Vec::new(),
+                    hub: None,
                 },
                 cx,
             )

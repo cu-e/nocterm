@@ -221,6 +221,36 @@ impl ChatDocument {
         }
         Ok(change)
     }
+    /// Adds a prompt another device sent as user rows, marked for redraw.
+    pub(super) fn append_prompt(
+        &mut self,
+        prompt: &[Content],
+        now: u64,
+    ) -> Result<(), HistoryCodecError> {
+        let first = self.entries().len();
+        for part in prompt.iter().cloned() {
+            self.apply_transcript(SessionUpdate::UserMessageChunk(part), now)?;
+        }
+        for row in first..self.entries().len() {
+            self.mark_row(row);
+        }
+        Ok(())
+    }
+    /// Shows the agent's own record of the conversation in place of the saved transcript.
+    pub(super) fn replace_history(
+        &mut self,
+        updates: Vec<SessionUpdate>,
+        now: u64,
+    ) -> Result<(), HistoryCodecError> {
+        let next = self.transcript.replaced(updates, now)?;
+        let rows = self.entries().len().max(next.state().entries.len());
+        self.transcript = next;
+        for row in 0..rows {
+            self.mark_row(row);
+        }
+        self.changed(now, false);
+        Ok(())
+    }
     pub(super) fn append_user(
         &mut self,
         content: Vec<Content>,

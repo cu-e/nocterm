@@ -24,6 +24,7 @@ nocterm-workspace-ports.workspace = true
 futures.workspace = true
 gpui-kit.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 nocterm-workspace = { workspace = true, features = ["test-support"] }

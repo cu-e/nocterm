@@ -5,14 +5,10 @@
 //! `NOCTERM_HUB_USERNAME` and `NOCTERM_HUB_PASSWORD`. Without `NOCTERM_REQUIRE_HUB` the tests
 //! pass vacuously when the variables are missing; with it, missing variables fail the run, so
 //! CI cannot silently skip them.
-//! Cloud runner tests also require the independently retained public authority pin
-//! in `NOCTERM_CLOUD_AUTHORITY`; it is never adopted from an untrusted offer.
 //!
 //! The relay test that reaches a destination also needs `NOCTERM_HUB_RELAY_TARGET` (`host:port`
 //! of an SSH server the hub is allowed to reach, for example a container of the compose file);
-//! without it that test passes vacuously. The node tunnel test needs `NOCTERM_HUB_NODE` (the id of a
-//! node of the account's organization) and `NOCTERM_HUB_NODE_TARGET` (`host:port` of an SSH server only
-//! that node reaches, for example `sshd-lan` of the compose file); without them it passes vacuously.
+//! without it that test passes vacuously.
 
 use futures::executor::block_on;
 use nocterm_hub_io::{HubLinks, HubLinksConfig, HubRelay};
@@ -24,16 +20,6 @@ use nocterm_session::{RelayDialer as _, RelayError, RelayRefusal, Secret, Target
 
 #[path = "hub/account.rs"]
 mod account;
-#[path = "hub/account_cloud.rs"]
-mod account_cloud;
-#[path = "hub/chat_exchange.rs"]
-mod chat_exchange;
-#[path = "hub/cloud_runtime.rs"]
-mod cloud_runtime;
-#[path = "hub/groups.rs"]
-mod groups;
-#[path = "hub/managed_agents.rs"]
-mod managed_agents;
 #[path = "hub/revocation.rs"]
 mod revocation;
 
@@ -226,25 +212,7 @@ fn a_relay_reaches_a_server_carries_its_banner_and_ends_with_it() {
 
     // The address is found as the user may type it, not only as it was signed in with.
     let address = format!("https://{}/", hub.address);
-    let stream = within(relay.dial(&address, None, &target(&host, port))).unwrap();
-    expect_banner_then_end(stream);
-}
-
-#[test]
-fn a_relay_through_a_node_reaches_a_server_the_hub_cannot() {
-    let Some(hub) = hub() else { return };
-    let (Ok(node), Some((host, port))) = (
-        std::env::var("NOCTERM_HUB_NODE"),
-        destination("NOCTERM_HUB_NODE_TARGET"),
-    ) else {
-        return;
-    };
-    let dir = tempfile::tempdir().unwrap();
-    let (_links, relay) = signed_in_relay(&hub, &dir);
-    let address = hub.address.to_string();
-    let direct = within(relay.dial(&address, None, &target(&host, port)));
-    assert!(direct.is_err(), "the hub itself must not reach {host}");
-    let stream = within(relay.dial(&address, Some(node.as_str()), &target(&host, port))).unwrap();
+    let stream = within(relay.dial(&address, &target(&host, port))).unwrap();
     expect_banner_then_end(stream);
 }
 
@@ -254,7 +222,7 @@ fn a_relay_refuses_the_hubs_own_network_and_the_metadata_service() {
     let dir = tempfile::tempdir().unwrap();
     let (_links, relay) = signed_in_relay(&hub, &dir);
     for (host, port) in [("127.0.0.1", 22), ("169.254.169.254", 80)] {
-        let refused = within(relay.dial(&hub.address.to_string(), None, &target(host, port)));
+        let refused = within(relay.dial(&hub.address.to_string(), &target(host, port)));
         assert!(
             matches!(
                 refused,
@@ -268,25 +236,12 @@ fn a_relay_refuses_the_hubs_own_network_and_the_metadata_service() {
 }
 
 #[test]
-fn a_relay_for_an_unknown_node_is_not_opened() {
-    let Some(hub) = hub() else { return };
-    let dir = tempfile::tempdir().unwrap();
-    let (_links, relay) = signed_in_relay(&hub, &dir);
-    let opened = within(relay.dial(
-        &hub.address.to_string(),
-        Some("no-such-node"),
-        &target("example.com", 22),
-    ));
-    assert!(opened.is_err(), "{opened:?}");
-}
-
-#[test]
 fn a_relay_needs_a_hub_that_was_signed_in_to_on_this_device() {
     let Some(hub) = hub() else { return };
     let dir = tempfile::tempdir().unwrap();
     let links = links(&dir);
     let relay = HubRelay::new(&links);
-    let refused = within(relay.dial(&hub.address.to_string(), None, &target("example.com", 22)));
+    let refused = within(relay.dial(&hub.address.to_string(), &target("example.com", 22)));
     assert!(
         matches!(refused, Err(RelayError::NotSignedIn { .. })),
         "{refused:?}"

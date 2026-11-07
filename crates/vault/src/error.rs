@@ -31,8 +31,6 @@ pub enum VaultError {
     Offline,
     #[error("This vault does not support that operation.")]
     Unsupported,
-    #[error("This credential belongs to a group you may only read.")]
-    ReadOnly,
     #[error("Vault file operation failed: {0}")]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -47,10 +45,5 @@ mod tests {
     fn offline_and_unsupported_explain_themselves_to_the_user() {
         assert!(VaultError::Offline.to_string().contains("online"));
         assert!(VaultError::Unsupported.to_string().contains("not support"));
-    }
-
-    #[test]
-    fn a_read_only_group_credential_says_it_may_only_be_read() {
-        assert!(VaultError::ReadOnly.to_string().contains("only read"));
     }
 }

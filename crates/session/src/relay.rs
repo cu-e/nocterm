@@ -36,23 +36,17 @@ pub trait RelayDialer: Send + Sync {
     /// Captures the actual requester before a transport spawns background work.
     /// An implementation must retain that requester and exact route, never
     /// resolve a later account selection from the supplied strings.
-    fn capture(
-        &self,
-        _hub: &str,
-        _node: Option<&str>,
-        _target: &Target,
-    ) -> Result<Arc<dyn RelayDialer>, RelayError> {
+    fn capture(&self, _hub: &str, _target: &Target) -> Result<Arc<dyn RelayDialer>, RelayError> {
         Err(RelayError::CaptureUnsupported)
     }
 
-    /// Asks the hub known as `hub` (and its node `node`, if named) for a stream to `target`.
+    /// Asks the hub known as `hub` for a stream to `target`.
     ///
     /// Dropping the returned future abandons the request; a stream already opened
     /// closes when its ends are dropped.
     fn dial(
         &self,
         hub: &str,
-        node: Option<&str>,
         target: &Target,
     ) -> BoxFuture<'static, Result<RelayStream, RelayError>>;
 }
@@ -139,9 +133,6 @@ pub enum RelayError {
     NotSignedIn { hub: String },
     #[error("the hub refused the connection: {reason}")]
     Refused { reason: RelayRefusal },
-    /// The named node of the hub is not connected.
-    #[error("the hub node {node} is not available")]
-    NodeUnavailable { node: String },
     /// The relay could not reach the destination, or lost the hub on the way.
     #[error("the hub could not reach the host: {0}")]
     Unreachable(#[source] SharedCause),
@@ -155,7 +146,6 @@ impl PartialEq for RelayError {
         match (self, other) {
             (Self::NotSignedIn { hub: a }, Self::NotSignedIn { hub: b }) => a == b,
             (Self::Refused { reason: a }, Self::Refused { reason: b }) => a == b,
-            (Self::NodeUnavailable { node: a }, Self::NodeUnavailable { node: b }) => a == b,
             // A cause carries no identity of its own; its text is what the user sees.
             (Self::Unreachable(a), Self::Unreachable(b)) => a.to_string() == b.to_string(),
             (Self::Closed, Self::Closed) | (Self::CaptureUnsupported, Self::CaptureUnsupported) => {

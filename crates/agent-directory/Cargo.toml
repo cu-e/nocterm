@@ -15,6 +15,7 @@ nocterm-ai.workspace = true
 nocterm-store.workspace = true
 
 [dev-dependencies]
+nocterm-hubs-model.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 
 [lints]

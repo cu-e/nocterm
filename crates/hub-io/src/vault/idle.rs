@@ -27,8 +27,9 @@ impl Idle {
     fn state(&self) -> std::sync::MutexGuard<'_, IdleState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+    /// Locks after `duration` without use; zero keeps the keys open.
     pub(crate) fn set(&self, duration: Duration, original: Option<Arc<CapturedAccount>>) {
-        self.state().limit = Some(duration);
+        self.state().limit = (!duration.is_zero()).then_some(duration);
         if let Some(original) = original {
             self.touch(&original);
         }

@@ -40,22 +40,11 @@ impl CredentialBinding {
     }
 }
 
-/// The organization group a credential belongs to, as the signed-in member may use it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CredentialGroup {
-    /// What the user calls the organization.
-    pub name: String,
-    /// Whether the member may change or delete the credential; a guest only uses it.
-    pub writable: bool,
-}
-
 #[derive(Clone, Debug)]
 pub struct CredentialInfo {
     pub id: CredentialId,
     pub label: String,
     pub binding: CredentialBinding,
-    /// `None` for a credential in the user's own vault.
-    pub group: Option<CredentialGroup>,
 }
 
 #[cfg(test)]

@@ -12,15 +12,15 @@ use std::sync::Arc;
 /// The most the file may hold; a larger one is not touched.
 pub const MAX_AUTHORIZED_KEYS_BYTES: usize = 1024 * 1024;
 
-/// Who the user is on a server, as the trust registry records it.
+/// Who the user is on a server, and the server's host key as this device recorded it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostIdentity {
     /// The user whose `authorized_keys` is edited.
     pub user: String,
     /// The server host.
     pub host: String,
-    /// SHA-256 fingerprint of the server's host key as this device recorded it.
-    pub host_key_fingerprint: String,
+    /// The OpenSSH public host key this device recorded for the server; empty when none is.
+    pub host_key: String,
 }
 
 /// Why the file could not be read or replaced.
@@ -103,8 +103,8 @@ pub trait AgentHosts: Send + Sync {
 pub struct ConnectedHost {
     /// The id of the saved connection.
     pub connection: String,
-    /// Who the user is there. An empty host key fingerprint is filled in by the adapter from
-    /// the keys this device recorded for the host.
+    /// Who the user is there. An empty host key is filled in by the adapter from the keys
+    /// this device recorded for the host.
     pub identity: HostIdentity,
     /// The SSH port, which tells the recorded host keys apart.
     pub port: u16,
@@ -112,7 +112,7 @@ pub struct ConnectedHost {
     pub fs: Arc<dyn RemoteFs>,
 }
 
-/// Told about every connected saved connection, so the registry can be reconciled.
+/// Told about every connected saved connection, so its `authorized_keys` can be reached.
 pub trait ConnectedHosts: Send + Sync {
     /// Enriches immutable announcement metadata on a background executor. Does not
     /// publish session state; composition must recheck the original session before
@@ -138,4 +138,11 @@ pub fn with_line(file: &str, line: &str) -> String {
     updated.push_str(line);
     updated.push('\n');
     updated
+}
+
+/// `file` without the lines `is_line` picks; every other line stays byte for byte.
+pub fn without_lines(file: &str, is_line: impl Fn(&str) -> bool) -> String {
+    file.split_inclusive('\n')
+        .filter(|line| !is_line(line.trim_end_matches(['\n', '\r'])))
+        .collect()
 }

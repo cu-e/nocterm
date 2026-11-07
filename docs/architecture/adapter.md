@@ -77,18 +77,6 @@ for a missing remote source
 
 ## SSH and local sessions
 
-SSH `open_login` is separate from ordinary desktop authentication. It supports
-only direct curve25519-sha256 and Ed25519, verifies the consent's host pin and
-requests one exact device signature through `SessionLoginAuthorizer`. A bounded
-read-only observer stops at initial NEWKEYS. Unsupported routes fail explicitly;
-no runner password, agent or identity-file fallback exists. Device authorizers
-are dropped after authentication; established sessions and rekey use their own
-connection source. `SourceStream` checks native polls and registers independent
-producer closure; a cleanup owner closes pending handshakes on every exit.
-Local PTY/process startup and retained SSH SFTP/exec ports check captured sources
-at native admission. Cancellation cannot undo an already admitted effect.
-
-
 `nocterm-ssh` implements
 that contract using russh and lazily opened SFTP channels on a dedicated Tokio
 runtime. Authentication with a vault key reads the record through the credential store,
@@ -159,17 +147,6 @@ its process group is stopped, preventing reuse of the group ID; deliberately
 detached process groups are outside that ownership. Windows commands start
 suspended and are attached to a Job Object before execution. Dropping the
 output or startup future cancels the owned command.
-
-Linux `nocterm-local::ContainedLocal` requires a successful bubblewrap namespace
-probe and finite child limits before exposing its transport or host executor.
-Children see a separate private workspace, read-only system tools and fresh
-proc/dev/tmp, without host home, supervisor state, inherited environment or network.
-Interactive startup uses an explicit Bash with the existing bundled prompt script
-mounted as one read-only file; the native PTY worker retains that resource through
-actual child exit. Public terminal settings are validated and applied inside the
-namespace. Unsupported shell options fail explicitly; literal command terminals
-keep their original argv. Account cgroups and supervisor isolation are separate
-runner application responsibilities.
 
 ## External local programs
 
@@ -246,7 +223,7 @@ additive `RemoteDownload` method (sequential by default); the SFTP adapter keeps
 eight READs in flight and returns the in-order prefix up to the first short or
 end-of-file reply, and downloads use it too. `TransferRuntimeDeps::remote_only` builds a
 runtime without a `LocalFs`, which refuses upload and download requests with
-`LocalUnavailable` and still runs relays; the managed runner composes that runtime. The
+`LocalUnavailable` and still runs relays. The
 runtime also implements the narrow `TransferRequests` port for agents
 ([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
 
@@ -261,80 +238,6 @@ successful files. Native and SFTP limitations are described in
 Its drain port freezes admission synchronously and retains executor ownership
 through joined cleanup. Application composition bridges that future into the
 common shutdown coordinator; the adapter introduces no quit hook or separate budget.
-
-## Headless agent tools
-
-`nocterm-agent-tools::headless` implements the same eleven AI terminal tools for a
-captured Cloud run through injected `Session`/`HostExec` capabilities. Its bounded
-registry retains immutable target/authentication receipts and run-local opaque
-handles. Event workers feed the shared incremental codec, shell observer and VT
-emulator; reads preserve logical lines, hidden-cell handling, alternate screens
-and inclusive continuation cursors. Restore bytes never authorize shell input,
-and clipboard/title/bell effects have no native side effects. `run_command` needs
-a known empty prompt; output idle and timeout report incomplete observation with
-an unknown effect, without inventing an exit status.
-
-Native composition injects current authority checks, a millisecond timer, an exact
-receipt session opener, the background-command journal and a supervised task owner.
-Session retirement serializes with input admission and native future polling.
-Already admitted native work is cancellable under its transport's existing limits;
-a later revoke does not claim to undo earlier remote effects. A run-local once
-claim supplements the authoritative durable dispatch ledger, and never replaces
-its cross-worker fencing. Background Jobs retain their original dispatch in that
-same journal before first native poll. Starting/running results carry an explicit
-background effect classification; cancellation, timeout, missing exit and lost
-work retain unknown outcomes. The journal acknowledges an observed exit before its
-own target effect can resolve, independently of the foreground run state.
-`RetainedTerminals` owns one chat/runner generation's physical sessions, VT state
-and shared four-active/sixteen-retained job budget. Each native session has exactly
-one event reader. Immutable `SessionRegistry` run views attach fresh handles to an
-exact existing receipt; detaching or dropping a retained view fences only that
-view. Ordinary registries still close physical sessions on drop. Explicit
-supervisor close/removal ends retained physical lifetimes. `RetainedToolsFactory`
-implements the domain runtime factory without opening SSH or renewing a grant.
-
-The three transfer tools use a chat-scoped `OwnedTransfers` book that the factory
-shares with every run view through the injected `TransferRequests` port
-(`RetainedToolsFactory::with_transfers`). A physical terminal supplies its `RemoteFs`
-only when its exact receipt passes the current authority check, so a run admits a
-transfer only between terminals of its own session; a terminal without a filesystem
-(a contained local target) reports files unsupported and a run without the port
-reports transfers unavailable. Revoking the run or closing the chat cancels the book,
-and the runner's drain freezes the runtime before releasing sessions. Transfers are
-not durable across a runner restart and report an observed effect
-([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
-
-A background worker's first native poll requires its original strict dispatch
-admission. Later draining checks its original physical receipt and separately
-injected `BackgroundCommandAuthority`, independent of foreground completion.
-`BackgroundCommandCleanup` acknowledges only an actually retained original effect
-through current cleanup writer authority; it cannot manufacture a Retained record
-or a new execution. New run read/cancel needs its own exact grant and the same
-physical receipt; the job's original run, terminal, command and intent remain
-unchanged. Live observation cleanup matches its private acquisition token and cannot clear a
-newer command. See [ADR 0115](../adr/0115-retained-physical-terminals.md).
-
-## Cloud API engine
-
-`nocterm-agent-engine` implements cloud-model's host-driven engine contracts with
-pinned Rig Chat Completions and Anthropic Messages provider wires. Explicit
-account-bound configuration and an exact-destination HTTPS transport provide
-credentials without ambient discovery. The adapter returns validated completed
-model turns and terminal tool requests; the host owns durable effect ordering and
-execution. Progress is neutral and backpressured; SDK checkpoints are bounded,
-versioned derived state anchored by the authoritative journal
-([ADR 0108](../adr/0108-explicit-cloud-api-engine.md)). The headless host supplies a
-Tokio runtime. Each provider usage event follows the durable original per-call
-observation acknowledgement. The native coordinator aggregates reported usage from
-the preview run ledger and publishes the cumulative semantic event atomically
-with each native Budget reserve/observation record. A cancelled or failed HTTP
-call therefore cannot leave an earlier known total visible; a later SDK Usage
-callback validates the original observation without publishing another fact.
-Budget-frame restoration derives the same cumulative usage from its ledger.
-Missing provider fields stay unknown independently; reserved budget
-and estimated pricing never become displayed provider charges. Restored progress
-keeps the same cumulative snapshot semantics. No GUI, native tool executor or
-subscription usage reader is linked by this adapter.
 
 ## Agent history and preferences
 
@@ -453,31 +356,11 @@ only when the editor requests a new draft. See
 
 ## Hub connections
 
-`RunnerHubConnection` separates original runtime authority from temporary RPC
-readiness. Its one session owner retains actual accepted deadlines, sticky native
-clock state, the live SDK runner and the original pending durable session. Known
-refresh/persistence keeps admitted runtime work current; unknown/cancelled refresh,
-retirement, observed hard expiry and clock rollback refuse the original source.
-SDK source checks remain in force. Native inbox receive/ACK capture one ready
-transport generation, recheck it around waits and retry immutable delivery after
-ordinary rotation without treating readiness as authority. Private session disk
-publication has a separate mutex and conditionally clears only its own pending
-record, so slow writes do not hold the runtime authority lock.
-
-`nocterm-hub-io::cloud` owns explicit persistent runner identity and maps native
-journal catalog/head cipher ports to the public contract's purpose-specific
-cryptography. The original full account/R binding is checked before public
-coordinate mapping. Identity publication is private, no-clobber and confirmed
-through the opened descriptor and held parent; reopening never creates replacement
-keys. Encryption, transcript signing and Cloud token proof use independent seeds.
-Native identity files do not become public wire formats, and generic signing or
-private-key access is not an application port.
-
 `nocterm-hub-io` is the only crate that speaks the hub protocol. It uses the hub contract
-(`nocterm-hub-client`, `nocterm-hub-model`, `nocterm-hub-proto`, `nocterm-keys`,
-`nocterm-cloud-device`), a public repository outside this
-workspace that is pinned by commit, and implements the `HubTrust`, `HubSignIn` and
-`HubAdminKeys` ports of `nocterm-hubs-model` on its own small Tokio runtime, like `nocterm-ssh`. `tonic` and
+(`nocterm-hub-client`, `nocterm-hub-model`, `nocterm-hub-proto`, `nocterm-keys`), a public
+repository outside this workspace that is pinned by commit, and implements the `HubTrust`,
+`HubSignIn` and `AccountDevices` ports of `nocterm-hubs-model` on its own small Tokio runtime,
+like `nocterm-ssh`. `tonic` and
 `prost` values stop at its boundary. The device key and tokens of each hub are kept in one
 mode-0600 file in a mode-0700 directory the application supplies; the contract rotates tokens
 under an inter-process lock that the adapter takes on a sibling `.lock` file, so two processes
@@ -509,11 +392,10 @@ untouched, and reading one credential copies only its encrypted object and envel
 Account-cache encoding and acquisition share a 32 MiB file limit; a refused oversized
 publication preserves the previous readable file.
 
-`HubAccount::local_source` captures the configured hub, actual pooled account and
-the opened account public key's fingerprint for device-local history. Older hubs
-use `LegacyConfiguredAccount`; an address or leaf certificate does not establish
-a stable Cloud authority. The account handle keeps a small provider so capture
-can be retried after ordinary unlock. Each returned source keeps only weak key,
+`HubAccount::local_source` captures the configured hub and the actual pooled account for
+device-local history. The history partition is derived from the account id alone, so a locked
+vault never blocks chats; an address or leaf certificate does not establish a stable
+authority. The account handle keeps a small provider so capture can be retried. Each returned source keeps only weak key,
 pool membership and owner references. Lock, sign-out and replacement login make
 old captures stale, including an A→B→A round trip; ordinary refresh preserves the
 membership only for the same account, device and trust. Pool eviction invalidates
@@ -526,7 +408,7 @@ weak key owner. Refresh uses that client only. Retirement compares exact native
 membership; cache/key erase additionally requires the original open-key pointer.
 Without that key owner it may retire original membership but never erase another
 account's cache. `HubAccount::local_relay` adds the captured source and account
-partition. Capturing a relay binds hub, node and complete target before spawning;
+partition. Capturing a relay binds hub and complete target before spawning;
 workers and returned streams recheck the original owner after waits. A constrained
 hub open requires an explicit captured relay collaborator and never selects the
 ordinary desktop relay as a fallback.
@@ -540,6 +422,20 @@ keep a closed session alive, and each direction ends on its own: dropping the se
 file for the target, which may still answer. A refusal is told by the hub's code, never by its
 text.
 
+`HubAgentsLink` implements the `HubAgentDirectory`, `HubServers` and `HubChatChanges` ports of
+`nocterm-hub-agents-model` over the hub's agent and server services; its chat hints come from
+one `Watch` of the chat list per tracked hub. `HubAgentConnector` implements
+`nocterm_ai::AgentConnector` for agents whose launch names a hub
+([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)): a new
+session creates the hub chat, a restore reads its history and watches it, a prompt uploads its
+attachments, sends the message and resolves at the end of the first run that started after
+it, cancel stops the run, approvals answer the chat's pending approval, and the model option
+sets the chat's model. Runs started from another device become neutral turn notices. A
+`Watch` per open chat is the only stream; nothing polls. `HubChatRepository` decorates the
+local `ChatRepository`: in a hub environment it lists, renames, pins and deletes the hub's chats
+and keeps only which local documents started which hub chats in a private file; a hub chat's
+transcript is never written locally.
+
 ## Agent command execution
 
 `nocterm-agent-tools` supplies the session-domain `CommandJobsFactory` and `CommandJobs`
@@ -551,128 +447,15 @@ the held transport output and preserves a readable outcome with an unknown exit.
 The app injects the factory through the retained agent installation. Neither the
 chat service nor its views depend on the adapter ([ADR 0106](../adr/0106-shared-terminal-tool-ownership.md)).
 
-## Headless Cloud journal
+## Native hub account admission
 
-`nocterm-cloud-runner` implements Cloud journal and retained-effect ports with
-SQLite transactions and explicitly injected purpose-specific encryption. It
-acknowledges commands only after durable commit, fences old writers, and keeps
-records, checkpoint, original-effect indexes and encrypted outbox consistent.
-Bounded replay refuses gaps. `DurableSnapshotPublication` captures the actual
-signed public source and native execution archive under one SQL transaction;
-the public encoder signs a fresh Snapshot marker without deriving public fields
-from native frames. Stage purges nothing. The tracked FIFO uploader releases
-`WriteGate` during transport waits, retries the persisted delivery ID/ciphertext
-and records the actual stored receipt before retention. Activation removes only
-covered native records/outbox P after the matching Snapshot S was retained at its
-independent relay cursor T; public floor S, native exclusive floor P and relay
-purge T-1 remain distinct. Later records, the current writer, command receipts,
-tombstones and unresolved target effects survive. Native archives retain the
-original ModelAction checkpoint binding, independently from public Snapshot S;
-a genuinely absent action has no invented checkpoint anchor.
-`CoordinatorSsh` keeps each chat's SSH binding, certificate request, certificate and
-Ed25519 subject seed in one journal row sealed by the chat's journal cipher under the SSH access
-class (journal v9; the v8 to v9 upgrade deletes rows sealed as effects), stores a
-transition's row before it journals the command and events, restores the previous row when
-journaling fails, and lends the session broker the in-memory key and certificate
-(`ChatSshCredentials`, [ADR 0145](../adr/0145-per-server-ca-principals-and-runner-certificate-sessions.md),
-[ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
-The runner's session broker opens a run's bound-server destination (the session access
-hub-io derived from the signed binding) with a configured SSH target or a keyed managed boot
-v3 target of the same endpoint and host key, signing in only with the chat's certificate.
-`CoordinatorPublicationBudgets` shares the exact command receive owner for normal
-and urgent publication lanes. Immutable accepted Stop/Revoke/Delete kinds select
-the urgent reserve; subsequent status uses that actual durable receipt. Observed
-terminal job facts and explicit original-effect reconciliation have separate finite
-cleanup capacity. A new retained-job admission uses normal capacity. Snapshot work
-cannot borrow the urgent or terminal-fact reserves. The coordinator refuses a
-receive handle from a different actual allocation owner
-([ADR 0116](../adr/0116-signed-cloud-baseline-publication.md)). Background command
-handles are not terminal outcomes. The adapter uses a supervisor-provided private
-trusted directory and has no SSH, provider, hub SDK or GPUI dependency. Each physical
-journal is bound to one explicitly configured account and runner/key epoch.
-`create_new` exclusively creates its private database and durably initializes an
-authenticated empty catalog; `open_existing` requires that catalog and never
-rebuilds it from SQL routing columns. The mandatory `JournalCatalogCipher` is
-independent from chat keys. Its implementation must compare the complete native
-binding, including account public-key fingerprint, with configured verified
-account/runner pins before mapping contract coordinates. Coordinate construction
-alone proves no account or key ownership. First chat claim updates catalog membership and its
-head atomically. Target lookup verifies complete catalog/physical-row membership,
-routing metadata and required authenticated headers before active effects; missing
-or extra chats fail closed. Catalog data is bounded and a live owner's revision
-and ciphertext mark refuses root rollback. Coherent historical whole-state rollback
-after restart still requires an external trusted head to detect. See
-[ADR 0109](../adr/0109-native-cloud-journal-and-effect-recovery.md) and
-[ADR 0113](../adr/0113-account-bound-journal-catalog.md).
-
-The journal (v7, its sealed bound raised by v9) also keeps one `chat_summaries` row per chat:
-the newest staged and published summary revisions, creation and last-activity times and,
-while the hub has not confirmed the newest revision, its sealed bytes and chat key epoch. The
-row needs no chat key. Versions 5 to 8 are upgraded in order on open; other versions are
-refused. A bound chat's summary lists its servers (`summary::bound_servers`) and a runner that
-states egress sets the SSH binding feature bit.
-`CoordinatorSummaries` follows each chat's committed records through the coordinator's
-journal gate (the first call derives the whole journal, backfilling older chats) and
-publishes due revisions from the runner's delivery sweep. `RunnerChatDirectory` in
-`nocterm-hub-io` signs and seals them with the chat's current head and publishes them to the
-runner's directory stream while the hub negotiated bit 256
-([ADR 0143](../adr/0143-the-runner-publishes-chat-summaries-journal-v7.md)).
-
-A runner's command source also reports `CommandInput::ChatOpened { stream }` after it
-durably admits (or finds already installed) a chat key grant. It is not a command: it has no
-acceptance, acknowledgement or control position, and a retired generation reports nothing. The
-coordinator answers it with the memoized first-touch chat claim, which publishes writer 1, the
-empty head and the catalog row, so a chat the device just created becomes visible; a repeated
-grant changes nothing ([ADR 0122](../adr/0122-cloud-chat-creation-protocol.md)).
-
-A prompt the runner accepts only queues its run; the run starts when a signed inference grant
-for it installs. The device issues that grant: the device core's `OpenChat` asks for it once
-(`AllowRun`) when the runner accepts the person's own prompt, the conversation delivers it,
-and an Allow action issues it for any other waiting run. The core's prompt policy builds the
-payload, so the grant never exceeds the per-run limits
-([ADR 0129](../adr/0129-the-device-allows-a-queued-run-to-use-the-model.md)).
-
-### Cloud device side
-
-The device side of Cloud chats is the contract's sans-I/O `nocterm-cloud-device`, run by
-`nocterm-hub-io::cloud_device`. A `DeviceAccount` copies the unlocked account keys for the
-core, discovers the account's session with `Discover` (hub trust, the hub's capability proof,
-trusted runners) and drops it when the account's keys change. The `driver` runs a flow,
-starting every `Effect` it asks for through an `EffectRunner` and answering each with its
-input or its replay and Watch frames in arrival order; `effects` performs them with the hub
-client's device calls (`capabilities`, `probe_head`, `publish_one`, `replay`, `watch`,
-`runner_status`, under the client's own signer; the device key never leaves
-`nocterm-hub-client`), the hub's Store and agent services and `sign_cloud`. A seat is started
-exactly as the core names it (the enrolled seat's pool); an explicit Wake runs the core's
-`WakeSeat`. `DeviceConversation`
-implements the `CloudConversation` port with one task per open chat over `OpenChat` and the
-`Deliver` flows of its commands; it never polls (it probes on open, on Watch reconnect, after
-its own receipts and on Refresh), keeps the core's sealed `VerifiedChat` checkpoints and its
-commands' sealed `StoredCommand`s in private files under the chats root, and resumes a command
-left from an earlier run with `OpenChat::resume` (its pending row again, the same bytes and a
-receipt probe) ([ADR 0146](../adr/0146-device-transport-and-resumable-commands.md)). `cloud_chats` implements
-`CloudChatLauncher` with `ListChats` (runner directories confirmed by catalogs, kept as sealed
-`VerifiedDirectory` checkpoints), `CreateChat` and, for an own-agent chat, `ProviderLease`.
-Runner enrolment keeps writing the account's hub-trust and registry objects through the
-contract's record layouts
-([ADR 0144](../adr/0144-the-device-side-runs-on-the-contract-device-core.md)). A read chat binds
-and unbinds its servers with the core's `BindServers` and unbind (`server_flows`), maps the
-core's `ChatSsh` to the neutral `ServerBinding` (`servers`) and answers each certificate request
-with `SshAnswer` while the account is unlocked; the servers it offers are the account's trusted
-servers with the port this device last reached them on. `cloud_chats::answering` implements
-`ChatSshCertifier`: each sweep keeps every chat whose summary lists bound servers read.
-`agent_access` uses the contract's CA, CA document and per-server lines; reconcile rewrites a
-trusted server's shared-principal line to its own
-([ADR 0147](../adr/0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md)).
-
-### Native account admission
-
-`nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache, replica-space and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Native administrator and recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+`nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache, replica-space and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
 
 
-Automatic agent-CA host edits use the SFTP adapter's fixed no-clobber owner lock, with no
-expiry or automatic orphan recovery. Different Nocterm sessions/devices coordinate through
-that lock. Existing empty files use Replace; absence uses Create. Final comparison and checked
-lock cleanup remain best effort against arbitrary external editors. Busy and unsupported
-protocol failures retain typed causes and expose the existing manual Copy CA path.
+Agent access edits of `authorized_keys` use the SFTP adapter's fixed no-clobber owner lock,
+with no expiry or automatic orphan recovery. Different Nocterm sessions/devices coordinate
+through that lock. Existing empty files use Replace; absence uses Create. Final comparison and
+checked lock cleanup remain best effort against arbitrary external editors. Busy and
+unsupported protocol failures retain typed causes; the agent key's line can still be copied
+and added by hand.
 See [ADR0139](../adr/0139-cooperative-authorized-keys-edits.md).

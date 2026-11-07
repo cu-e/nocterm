@@ -18,12 +18,9 @@
 //! polling projections. Archive owns lazy hydration generations, typed pending intentions
 //! and delivery residency. BackgroundOpen owns the native-opening handoff and its original
 //! workspace receipt.
-//! Borrowed ConversationSource and captured tool cards preserve the original
-//! Local token/document/session; choices delegate the existing public admission.
-//! Opaque submissions retry their original command; Local Stop retains its actual session/turn ticket.
-//! Sources declare their composer capabilities and pending prompts; Local has none pending.
-//! A remote source may offer `ConversationServers` (the servers its agent may sign in to,
-//! ADR 0147); Local offers none.
+//! A hub agent's chat is an ordinary chat: an agent that keeps its sessions reopens them
+//! without a saved transcript and replaces it with the history it returns, and a turn the
+//! agent runs for another device shows as a turn of the chat (ADR 0148).
 //! The private Transcript admits live byte/row growth before mutation; capacity failure preserves accepted rows and queued prompts.
 //! Does not own: views, the workspace shell, ACP transport, connection admission,
 //! filesystem storage, native command execution or image decoding.
@@ -77,5 +74,3 @@ pub enum TerminalAuthError {
     #[error(transparent)]
     InvalidLaunch(#[from] nocterm_session::LaunchValidationError),
 }
-
-pub mod conversation;
