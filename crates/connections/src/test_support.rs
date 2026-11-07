@@ -195,6 +195,8 @@ pub(crate) struct ScriptedAgentAccess {
     pub(crate) session: std::sync::atomic::AtomicBool,
     pub(crate) changes: std::sync::Mutex<Vec<(crate::AgentServer, bool)>>,
     pub(crate) refusal: Option<&'static str>,
+    /// The hub's agent servers; the port lists those no saved connection points at.
+    pub(crate) servers: std::sync::Mutex<Vec<crate::UnsavedAgentServer>>,
 }
 
 impl ScriptedAgentAccess {
@@ -238,6 +240,24 @@ impl crate::ServerAgentAccess for ScriptedAgentAccess {
                 gpui_kit::Task::ready(Ok(()))
             }
         }
+    }
+
+    fn unsaved(
+        &self,
+        saved: &[crate::AgentServer],
+        _: &gpui_kit::App,
+    ) -> Vec<crate::UnsavedAgentServer> {
+        let servers = self.servers.lock().unwrap();
+        servers
+            .iter()
+            .filter(|server| {
+                !saved.iter().any(|saved| {
+                    (saved.host.as_str(), saved.port, saved.user.as_str())
+                        == (server.host.as_str(), server.port, server.user.as_str())
+                })
+            })
+            .cloned()
+            .collect()
     }
 
     fn observe(

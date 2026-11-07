@@ -19,7 +19,7 @@ use nocterm_connections_model::{jump_route::resolve_jump_route, profiles::Profil
 use nocterm_ui::ActiveDesign as _;
 use nocterm_workspace::Workspace;
 
-use crate::{Installed, session_intents::open_profile};
+use crate::{Installed, UnsavedAgentServer, session_intents::open_profile};
 
 /// Two rows of icon tiles: 28 px tiles with a 4 px gap.
 const ICON_ROWS_HEIGHT: f32 = 60.;
@@ -95,23 +95,52 @@ pub fn open_editor(
     if !crate::panel::account_state::AccountState::of(&installed, cx).editable() {
         return;
     }
-    let _ = open_editor_view(installed, profile, workspace, window, cx);
+    let _ = open_editor_view(installed, Start::of(profile), workspace, window, cx);
 }
+
+/// Opens the form for a new connection to `server`, a server the hub's agents use that this
+/// window has not saved: the address is filled in, the credentials are the person's.
+pub(crate) fn open_editor_for(
+    installed: Installed,
+    server: UnsavedAgentServer,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if !crate::panel::account_state::AccountState::of(&installed, cx).editable() {
+        return;
+    }
+    let _ = open_editor_view(installed, Start::Seeded(server), workspace, window, cx);
+}
+
+/// What the form starts from.
+enum Start {
+    Empty,
+    Seeded(UnsavedAgentServer),
+    Edit(Box<Profile>),
+}
+
+impl Start {
+    fn of(profile: Option<Profile>) -> Self {
+        profile.map_or(Self::Empty, |profile| Self::Edit(Box::new(profile)))
+    }
+}
+
 fn open_editor_view(
     installed: Installed,
-    profile: Option<Profile>,
+    start: Start,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ConnectionEditor> {
-    let title = if profile.is_some() {
+    let title = if matches!(start, Start::Edit(_)) {
         "Edit Connection"
     } else {
         "New Connection"
     };
     let width = rems(cx.design().layout.connection_editor_width).to_pixels(window.rem_size());
     let settings = installed.settings().clone();
-    let editor = cx.new(|cx| ConnectionEditor::new(installed, profile, workspace, window, cx));
+    let editor = cx.new(|cx| ConnectionEditor::new(installed, start, workspace, window, cx));
     let footer = cx.new(|cx| EditorFooter {
         editor: editor.clone(),
         _subscription: cx.observe(&editor, |_, _, cx| cx.notify()),
@@ -195,17 +224,23 @@ fn text(input: &Entity<InputState>, cx: &App) -> String {
 impl ConnectionEditor {
     fn new(
         installed: Installed,
-        profile: Option<Profile>,
+        start: Start,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let inputs = installed.inputs().clone();
+        let (profile, seed) = match start {
+            Start::Empty => (None, None),
+            Start::Seeded(server) => (None, Some(server)),
+            Start::Edit(profile) => (Some(*profile), None),
+        };
         let id = profile
             .as_ref()
             .map_or_else(|| inputs.next_id(), |profile| profile.id);
         let existing = profile.as_ref();
-        let connection = ConnectionFields::new(existing, inputs.defaults(), window, cx);
+        let connection =
+            ConnectionFields::new(existing, seed.as_ref(), inputs.defaults(), window, cx);
         let authentication = AuthenticationFields::new(existing, inputs.keys().clone(), window, cx);
         let launch = LaunchFields::new(existing, window, cx);
         let appearance = AppearanceFields::new(existing, &installed, window, cx);

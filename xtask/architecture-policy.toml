@@ -12,6 +12,7 @@
 "nocterm_hubs_ui::servers::detail::TabViews" = "The views of a server's tabs, borrowed for one render."
 "nocterm_hub_agents::access::AgentTarget" = "The saved server an Agent access change names, copied by value."
 "nocterm_connections::agent_access::AgentServer" = "The saved server the editor shows Agent access of, copied by value."
+"nocterm_connections::agent_access::UnsavedAgentServer" = "An agent server the hub lists that no saved connection points at, copied by value."
 "nocterm_layout_ui::user_facts::UserFacts" = "What the host knows of one installed user plugin, copied by value to the inspector."
 "nocterm_explorer::settings::ExplorerSettings" = "Serialized settings section."
 "nocterm_explorer::settings::IndexingSettings" = "Serialized settings values."

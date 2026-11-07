@@ -29,6 +29,7 @@ use crate::{
 use account_state::AccountState;
 
 pub(crate) mod account_state;
+mod agent_servers;
 mod folder;
 mod group_actions;
 mod row;
@@ -642,6 +643,7 @@ impl Render for ConnectionsPanel {
                 )
             })
             .child(div().flex_1().min_h_0().child(self.render_list(cx)))
+            .children(self.render_agent_servers(cx))
     }
 }
 

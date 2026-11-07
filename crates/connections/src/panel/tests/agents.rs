@@ -70,3 +70,42 @@ fn a_server_without_agent_access_and_the_window_of_this_computer_show_none(
     let (handle, profile) = panel_of(None, cx);
     assert_eq!(badge(handle, &profile, cx), None);
 }
+
+#[gpui_kit::test]
+fn an_agent_server_saved_elsewhere_is_saved_here_with_its_address_filled_in(
+    cx: &mut TestAppContext,
+) {
+    let access = Arc::new(ScriptedAgentAccess::default());
+    access
+        .servers
+        .lock()
+        .unwrap()
+        .push(crate::UnsavedAgentServer {
+            name: "prod".into(),
+            host: "prod.example".into(),
+            port: 2222,
+            user: "ops".into(),
+            state: AgentAccessState::Ready,
+        });
+    let (handle, _) = panel_of(Some(access), cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("agent-server", 0usize), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find(("agent-server", 0usize)).is_none(),
+            "a saved server is no longer offered"
+        );
+    })
+    .unwrap();
+}

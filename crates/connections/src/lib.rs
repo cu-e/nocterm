@@ -18,7 +18,7 @@
 //! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
 //! Ports provided: ConnectionDirectory, checked original-workspace parent
 //! SessionSpec resolution for app composition and the core `connections.servers`
-//! contribution (`plugin::CORE`); `HostObserver`, told once per freshly connected session (the application supplies it through `Installed::bind_host_observer`); `ServerAgentAccess`, supplied through `EditorInputs::with_agent_access` by a hub window. Settings section: none.
+//! contribution (`plugin::CORE`); `HostObserver`, told once per freshly connected session (the application supplies it through `Installed::bind_host_observer`); `ServerAgentAccess`, supplied through `EditorInputs::with_agent_access` by a hub window (the switch, the rows' agent state, and the agent servers not saved here). Settings section: none.
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
@@ -34,7 +34,9 @@
 mod agent_access;
 mod installed;
 mod session_intents;
-pub use agent_access::{AgentAccessRefused, AgentAccessState, AgentServer, ServerAgentAccess};
+pub use agent_access::{
+    AgentAccessRefused, AgentAccessState, AgentServer, ServerAgentAccess, UnsavedAgentServer,
+};
 pub use installed::{Installed, install, install_volatile};
 pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;

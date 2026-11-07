@@ -456,7 +456,10 @@ switch acts at once, and a refusal is shown under it. Without an open session it
 the connection without a tab through the workspace's session factory (the sidebar's path, with
 the saved credentials), shows it in its tab if it asks the user to sign in, waits for the port
 to report the session, and closes it afterwards unless shown. The sidebar rows of that window
-show the port's state of each server and re-render on its `observe`
+show the port's state of each server and re-render on its `observe`; under them the sidebar
+lists the agent servers no saved connection points at (`ServerAgentAccess::unsaved`: connected
+in the web panel or from another device), and choosing one opens a new connection with its
+address filled in, so saving it adds the credentials this device needs
 ([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md),
 [ADR 0149](../adr/0149-agent-access-connects-with-saved-credentials-and-profiles-have-one-space.md)).
 The connection editor chooses, creates and imports a vault key through the injected

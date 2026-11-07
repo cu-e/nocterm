@@ -2,7 +2,9 @@
 //! the connection editor's switch and the state on the servers' rows read and change the hub's
 //! agent servers through it.
 use gpui_kit::{App, Entity, Subscription, Task};
-use nocterm_connections::{AgentAccessRefused, AgentAccessState, AgentServer, ServerAgentAccess};
+use nocterm_connections::{
+    AgentAccessRefused, AgentAccessState, AgentServer, ServerAgentAccess, UnsavedAgentServer,
+};
 use nocterm_hub_agents::{AgentAccessError, AgentTarget, HubAgents, HubAgentsEvent};
 use nocterm_hub_agents_model::ServerStatus;
 use nocterm_hubs_model::HubId;
@@ -47,6 +49,26 @@ impl ServerAgentAccess for HubServerAccess {
         });
         cx.background_executor()
             .spawn(async move { change.await.map_err(|error| refusal(&error)) })
+    }
+
+    fn unsaved(&self, saved: &[AgentServer], cx: &App) -> Vec<UnsavedAgentServer> {
+        self.agents
+            .read(cx)
+            .servers(&self.hub)
+            .iter()
+            .filter(|server| {
+                !saved
+                    .iter()
+                    .any(|saved| server.is(&saved.host, saved.port, &saved.user))
+            })
+            .map(|server| UnsavedAgentServer {
+                name: server.name.clone(),
+                host: server.host.clone(),
+                port: server.port,
+                user: server.user.clone(),
+                state: state(server.status),
+            })
+            .collect()
     }
 
     fn observe(&self, changed: Box<dyn Fn(&mut App)>, cx: &mut App) -> Subscription {

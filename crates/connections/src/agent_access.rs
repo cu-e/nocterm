@@ -64,6 +64,18 @@ impl AgentAccessState {
     }
 }
 
+/// A server the hub's agents sign in to that no saved connection of the window points at: it
+/// was connected in the web panel or from another device. Saving it here adds the credentials
+/// this device needs to open it too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnsavedAgentServer {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub state: AgentAccessState,
+}
+
 /// Why agent access did not change, in words the editor shows.
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{reason}")]
@@ -97,6 +109,8 @@ pub trait ServerAgentAccess: Send + Sync {
         granted: bool,
         cx: &mut App,
     ) -> Task<Result<(), AgentAccessRefused>>;
+    /// The hub's agent servers none of `saved` points at, as last listed.
+    fn unsaved(&self, saved: &[AgentServer], cx: &App) -> Vec<UnsavedAgentServer>;
     /// Calls `changed` whenever the hub's agent servers may have changed.
     fn observe(&self, changed: Box<dyn Fn(&mut App)>, cx: &mut App) -> Subscription;
 }

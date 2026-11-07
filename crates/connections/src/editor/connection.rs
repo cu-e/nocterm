@@ -7,6 +7,8 @@ use gpui_kit::{
 use nocterm_connections_model::draft::{EndpointDraft, MetadataDraft};
 use nocterm_connections_model::profiles::Profile;
 use nocterm_session::DEFAULT_PORT;
+
+use crate::UnsavedAgentServer;
 pub(super) struct ConnectionFields {
     name: Entity<InputState>,
     description: Entity<TextareaState>,
@@ -17,21 +19,29 @@ pub(super) struct ConnectionFields {
     _subscriptions: Vec<Subscription>,
 }
 impl ConnectionFields {
+    /// The fields of `profile`, or of a new connection to `seed`, or empty.
     pub(super) fn new(
         profile: Option<&Profile>,
+        seed: Option<&UnsavedAgentServer>,
         defaults: &nocterm_connections_model::draft::EditorDefaults,
         window: &mut Window,
         cx: &mut Context<ConnectionEditor>,
     ) -> Self {
         let name = field(
             "Shown in the sidebar; the host if empty",
-            profile.map(|p| p.name.clone()).unwrap_or_default(),
+            profile
+                .map(|p| p.name.clone())
+                .or_else(|| seed.map(|s| s.name.clone()))
+                .unwrap_or_default(),
             window,
             cx,
         );
         let host = field(
             "example.com",
-            profile.map(|p| p.target.host.clone()).unwrap_or_default(),
+            profile
+                .map(|p| p.target.host.clone())
+                .or_else(|| seed.map(|s| s.host.clone()))
+                .unwrap_or_default(),
             window,
             cx,
         );
@@ -39,6 +49,7 @@ impl ConnectionFields {
             "22",
             profile
                 .map(|p| p.target.port)
+                .or_else(|| seed.map(|s| s.port))
                 .filter(|port| *port != DEFAULT_PORT)
                 .map(|port| port.to_string())
                 .unwrap_or_default(),
@@ -47,7 +58,10 @@ impl ConnectionFields {
         );
         let user = field(
             defaults.user.as_deref().unwrap_or_default(),
-            profile.map(|p| p.target.user.clone()).unwrap_or_default(),
+            profile
+                .map(|p| p.target.user.clone())
+                .or_else(|| seed.map(|s| s.user.clone()))
+                .unwrap_or_default(),
             window,
             cx,
         );
