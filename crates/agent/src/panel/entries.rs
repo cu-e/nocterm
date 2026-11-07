@@ -127,6 +127,8 @@ impl EntryRenderer {
             .bg(cx.theme().muted);
         let mut images = h_flex().flex_wrap().gap_2();
         let mut has_images = false;
+        let mut files = h_flex().flex_wrap().gap_1();
+        let mut has_files = false;
         for (part_index, part) in parts.iter().enumerate() {
             match part {
                 Content::Text(content) => {
@@ -143,11 +145,18 @@ impl EntryRenderer {
                     has_images = true;
                     images = images.child(Self::image(messages.preview_state(&key)));
                 }
+                Content::ResourceReference(link) => {
+                    has_files = true;
+                    files = files.child(Self::file(&link.name, cx));
+                }
                 _ => {}
             }
         }
         if has_images {
             bubble = bubble.child(images);
+        }
+        if has_files {
+            bubble = bubble.child(files);
         }
         row.child(bubble).child(
             super::message_actions::MessageRowActions::new(
@@ -159,6 +168,23 @@ impl EntryRenderer {
             )
             .render(cx),
         )
+    }
+    /// A file the message carried: its name beside a paperclip.
+    fn file(name: &str, cx: &Context<AgentPanel>) -> gpui_kit::Div {
+        h_flex()
+            .gap_1()
+            .px_1p5()
+            .py_0p5()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_xs()
+            .child(
+                gpui_kit::component::Icon::new(nocterm_ui::IconName::Paperclip)
+                    .size_3()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .child(name.to_owned())
     }
     fn agent(
         mut row: gpui_kit::Stateful<gpui_kit::Div>,

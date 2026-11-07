@@ -439,3 +439,32 @@ fn expanded_long_mcp_command_json_and_reasoning_stay_within_narrow_panel(cx: &mu
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_file_of_any_kind_goes_with_the_message_as_a_link_and_shows_as_a_chip(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    lazy_start(&f, cx);
+    new_chat(&f, cx);
+    let file = f._directory.path().join("report.pdf");
+    std::fs::write(&file, b"%PDF").unwrap();
+    cx.update(|cx| {
+        f.panel
+            .update(cx, |panel, cx| panel.attach_paths(vec![file.clone()], cx))
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("file-chip", 0usize)).is_some());
+    })
+    .unwrap();
+    exchange(&f, "read it", "ok", cx);
+    let prompt = f.commands.prompts.lock().unwrap()[0].clone();
+    assert!(prompt.content.iter().any(|part| matches!(
+        part,
+        Content::ResourceReference(link) if link.name == "report.pdf" && link.uri.starts_with("file://")
+    )));
+    cx.update(|cx| {
+        let thread = f.panel.read(cx).current().unwrap();
+        assert!(thread.read(cx).composer().files().is_empty());
+    });
+}

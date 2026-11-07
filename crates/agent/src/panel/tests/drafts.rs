@@ -333,7 +333,12 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
         // A second payload must fail without removing its composer draft.
         let next = "y".repeat(17 * 1024 * 1024);
         thread.set_draft(next.clone(), cx);
-        thread.begin_composer_edit(Vec::new(), vec![Attachment::Group("editing".into())], cx);
+        thread.begin_composer_edit(
+            Vec::new(),
+            Vec::new(),
+            vec![Attachment::Group("editing".into())],
+            cx,
+        );
         let next_id = thread.composer().next_queue_id();
         let queued = thread.composer().queue()[0].saved().clone();
         let entries = thread.history_entries().len();

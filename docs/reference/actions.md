@@ -6,7 +6,7 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 
 | Action | Description | Bindings |
 | --- | --- | --- |
-| `agent::AttachImage` |  |  |
+| `agent::AttachFiles` | Attach files to the next message; images among them are sent as images. |  |
 | `agent::NewThread` |  |  |
 | `agent::NewThreadWithLastAgent` | Start a new chat with the agent the last chat was started with. | `ctrl-n` (linux, windows; AgentPanel); `cmd-n` (macos; AgentPanel) |
 | `agent::ShowHistory` |  |  |

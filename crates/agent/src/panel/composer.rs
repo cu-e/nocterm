@@ -5,7 +5,7 @@ use super::{
     menu::{ConfigurationSelection, FavoriteSelection, ModeSelection},
 };
 use crate::thread::Attachment;
-use gpui_kit::{AnyElement, PathPromptOptions};
+use gpui_kit::AnyElement;
 use nocterm_ai::images::PromptImage;
 use nocterm_ai::model::ids::AuthMethodId;
 use std::path::PathBuf;
@@ -328,32 +328,18 @@ impl AgentPanel {
             cx,
         );
     }
-    pub(super) fn on_image_paths_picked(
-        &mut self,
-        operation: image_picker::ImagePickerOperation,
-        paths: Vec<PathBuf>,
-        cx: &mut Context<Self>,
-    ) {
-        if operation.current(
-            self.current().map(|thread| thread.entity_id()),
-            self.composer.revision(),
-        ) {
-            self.add_images(paths, cx);
-        }
-    }
     /// Whether the composer takes images and files: a chat is open.
     pub(super) fn composer_attaches(&self, _cx: &App) -> bool {
         self.current().is_some()
     }
-    pub(super) fn pick_images(&mut self, cx: &mut Context<Self>) {
+    /// The paperclip: files of any kind, picked for the open chat.
+    pub(super) fn pick_files(&mut self, cx: &mut Context<Self>) {
         if !self.composer_attaches(cx) {
             return;
         }
-        let operation = image_picker::ImagePickerOperation::new(
-            self.current().map(|thread| thread.entity_id()),
-            self.composer.revision(),
-        );
-        let picked = cx.prompt_for_paths(PathPromptOptions {
+        let chat = self.current().map(|thread| thread.entity_id());
+        let pick = attach_files::AttachPick::new(chat, self.composer.revision());
+        let picked = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
             files: true,
             directories: false,
             multiple: true,
@@ -362,9 +348,49 @@ impl AgentPanel {
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = picked.await {
                 let _ = this.update(cx, |this, cx| {
-                    this.on_image_paths_picked(operation, paths, cx)
+                    let chat = this.current().map(|thread| thread.entity_id());
+                    if pick.current(chat, this.composer.revision()) {
+                        this.attach_paths(paths, cx);
+                    }
                 });
             }
+        })
+        .detach();
+    }
+    /// Attaches `paths`: images the agent takes as images, every other file as a link.
+    pub(super) fn attach_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let images_taken = thread
+            .read(cx)
+            .agent_info()
+            .is_none_or(|info| info.capabilities.image_prompts);
+        let (images, files) = attach_files::split(paths, images_taken);
+        if !images.is_empty() {
+            self.add_images(images, cx);
+        }
+        if files.is_empty() {
+            return;
+        }
+        let chat = thread.entity_id();
+        let read = cx
+            .background_executor()
+            .spawn(async move { attach_files::link(&files) });
+        cx.spawn(async move |this, cx| {
+            let linked = read.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(thread) = this.chats.find(chat).cloned() else {
+                    return;
+                };
+                let added = linked.and_then(|files| {
+                    thread.update(cx, |thread, cx| thread.add_composer_files(files, cx))
+                });
+                if let Err(error) = added {
+                    this.notices.set_error(Some(error.to_string()));
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -534,13 +560,23 @@ impl AgentPanel {
             return;
         };
         let draft = self.original_composer_text(cx);
-        let ready = prompt.saved().images.is_empty();
+        let ready = !prompt
+            .saved()
+            .images
+            .iter()
+            .any(|content| matches!(content, nocterm_ai::model::content::Content::Image(_)));
+        let files = prompt
+            .saved()
+            .images
+            .iter()
+            .filter_map(nocterm_ai::prompt_files::PromptFile::of)
+            .collect();
         let binding = self
             .composer
             .begin_edit(thread.entity_id(), id, draft.clone(), ready);
         thread.update(cx, |thread, cx| {
             thread.set_draft(draft, cx);
-            thread.begin_composer_edit(Vec::new(), prompt.attachments().to_vec(), cx);
+            thread.begin_composer_edit(Vec::new(), files, prompt.attachments().to_vec(), cx);
             cx.notify();
         });
         if !ready {
@@ -659,6 +695,16 @@ impl AgentPanel {
                 thread.remove_composer_image(index, cx);
                 cx.notify();
             });
+        }
+    }
+    pub(super) fn on_file_removed(
+        &mut self,
+        chat: gpui_kit::EntityId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.chats.find(chat).cloned() {
+            thread.update(cx, |thread, cx| thread.remove_composer_file(index, cx));
         }
     }
     pub(super) fn on_send_clicked(

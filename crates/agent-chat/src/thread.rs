@@ -48,13 +48,14 @@ mod document;
 pub(crate) mod local_payloads;
 mod saved;
 mod sign_in_wait;
+mod title;
 pub use sign_in_wait::SignInWait;
 mod session;
 mod tools;
 /// A chat's title from its name and transcript, as the history shows it.
 #[cfg(any(test, feature = "test-support"))]
 pub fn chat_title(name: Option<&str>, state: &ThreadState) -> String {
-    saved::chat_title(name, state)
+    title::chat_title(name, state)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -260,7 +260,12 @@ fn assert_unaccepted_prompts_leave_no_history(
     assert!(thread.history_entries().is_empty());
     thread.send("  ".into(), cx);
     assert!(thread.history_entries().is_empty());
-    thread.begin_composer_edit(Vec::new(), thread.composer().attachments().to_vec(), cx);
+    thread.begin_composer_edit(
+        Vec::new(),
+        Vec::new(),
+        thread.composer().attachments().to_vec(),
+        cx,
+    );
     thread.send("Queued before the session is ready".into(), cx);
     assert_eq!(thread.composer().queue().len(), 1);
     let ids = thread.queued_prompt_ids().collect::<Vec<_>>();

@@ -41,6 +41,7 @@ pub mod images;
 pub mod local_environment;
 pub mod mcp;
 pub mod metadata;
+pub mod prompt_files;
 pub mod redact;
 pub mod sandbox;
 pub mod session;

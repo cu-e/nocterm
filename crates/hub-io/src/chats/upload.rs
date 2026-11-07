@@ -1,4 +1,5 @@
-//! Images and files of a prompt, uploaded to the chat in parts before the message is sent.
+//! Images and files of a prompt, uploaded to the chat in parts before the message is sent. A
+//! file is a link to where it is on this device; its bytes are read when the message goes.
 
 use base64::Engine as _;
 use nocterm_ai::model::content::Content;
@@ -35,11 +36,48 @@ pub(super) async fn prepare(
                 let name = format!("image-{}.{extension}", index + 1);
                 attachments.push(upload(client, chat, &name, &image.mime_type, &bytes).await?);
             }
-            // Audio and resources are not something a hub agent reads.
+            // A file attached on this device: the hub agent gets its bytes.
+            Content::ResourceReference(link) => {
+                let Some(path) = nocterm_ai::prompt_files::path_of(&link.uri) else {
+                    continue;
+                };
+                let bytes = read_file(path).await?;
+                let mime = link
+                    .mime_type
+                    .clone()
+                    .unwrap_or_else(|| "application/octet-stream".to_owned());
+                attachments.push(upload(client, chat, &link.name, &mime, &bytes).await?);
+            }
+            // Audio and embedded resources are not something a hub agent reads.
             _ => {}
         }
     }
     Ok((text, attachments))
+}
+
+/// The most bytes of one attached file this device reads; the hub's own limit, usually lower,
+/// refuses a larger upload with its reason.
+const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The bytes of an attached file, read off the adapter's async threads.
+async fn read_file(path: std::path::PathBuf) -> Result<Vec<u8>, CallFailure> {
+    let shown = path.display().to_string();
+    let read = tokio::task::spawn_blocking(move || {
+        use std::io::Read as _;
+        let file = std::fs::File::open(&path)?;
+        let mut bytes = Vec::new();
+        file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+        Ok::<_, std::io::Error>(bytes)
+    })
+    .await;
+    match read {
+        Ok(Ok(bytes)) if bytes.len() as u64 <= MAX_FILE_BYTES => Ok(bytes),
+        Ok(Ok(_)) => Err(CallFailure::Refused(format!(
+            "{shown} is larger than {} MiB.",
+            MAX_FILE_BYTES / (1024 * 1024)
+        ))),
+        Ok(Err(_)) | Err(_) => Err(CallFailure::Refused(format!("{shown} could not be read."))),
+    }
 }
 
 async fn upload(

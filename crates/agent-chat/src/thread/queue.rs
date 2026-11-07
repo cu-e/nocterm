@@ -656,7 +656,10 @@ impl AgentThread {
         if !self.deps.enabled(cx) || self.session.sign_in_required() {
             return Ok(false);
         }
-        if text.trim().is_empty() && self.composer.images().is_empty() {
+        if text.trim().is_empty()
+            && self.composer.images().is_empty()
+            && self.composer.files().is_empty()
+        {
             return Ok(false);
         }
         let candidate = self.composer.prepare_submission(

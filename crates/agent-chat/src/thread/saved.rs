@@ -1,9 +1,7 @@
 //! A chat as saved in the history: restoring, forking, naming and saving.
 use gpui::{App, Context};
-use nocterm_ai::model::content::Content;
 use nocterm_ai::model::controls::ConfigSetting;
 use nocterm_ai::model::ids::{ConfigId, ModeId, SessionId};
-use nocterm_ai::thread::ThreadState;
 use nocterm_ai::{history::SharedChat, storage::AgentStorageError};
 use std::{sync::Arc, time::Duration};
 
@@ -62,10 +60,11 @@ impl AgentThread {
     pub fn begin_composer_edit(
         &mut self,
         images: Vec<nocterm_ai::images::PromptImage>,
+        files: Vec<nocterm_ai::prompt_files::PromptFile>,
         attachments: Vec<Attachment>,
         cx: &mut Context<Self>,
     ) {
-        self.composer.begin_edit(images, attachments);
+        self.composer.begin_edit(images, files, attachments);
         cx.notify();
     }
 
@@ -83,6 +82,23 @@ impl AgentThread {
         self.composer.replace_images(images)?;
         cx.notify();
         Ok(())
+    }
+
+    /// Adds files to the next prompt; files it holds already are not added twice.
+    pub fn add_composer_files(
+        &mut self,
+        files: Vec<nocterm_ai::prompt_files::PromptFile>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), nocterm_ai::prompt_files::PromptFileError> {
+        self.composer.add_files(files)?;
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn remove_composer_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.composer.remove_file(index) {
+            cx.notify();
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -623,7 +639,7 @@ impl AgentThread {
     /// the first message.
     pub fn title(&self) -> String {
         self.archive.summary().map_or_else(
-            || chat_title(self.state.name(), self.state.transcript()),
+            || super::title::chat_title(self.state.name(), self.state.transcript()),
             |summary| summary.title().to_owned(),
         )
     }
@@ -762,34 +778,4 @@ impl AgentThread {
             }
         });
     }
-}
-
-/// A chat's title: `name`, else the agent's title, else the start of the
-/// first message. A chat with nothing in it is a new one.
-pub(super) fn chat_title(name: Option<&str>, state: &ThreadState) -> String {
-    if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
-        return name.to_owned();
-    }
-    if state.entries.is_empty() {
-        return "New Agent".into();
-    }
-    state
-        .title
-        .as_ref()
-        .filter(|title| !title.trim().is_empty())
-        .cloned()
-        .or_else(|| {
-            state.entries.iter().find_map(|entry| match entry {
-                nocterm_ai::thread::Entry::User(parts) => {
-                    parts.iter().find_map(|part| match part {
-                        Content::Text(text) if !text.text.trim().is_empty() => {
-                            Some(text.text.trim().chars().take(60).collect())
-                        }
-                        _ => None,
-                    })
-                }
-                _ => None,
-            })
-        })
-        .unwrap_or_else(|| "New Agent".into())
 }

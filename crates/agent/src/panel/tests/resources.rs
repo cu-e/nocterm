@@ -109,7 +109,12 @@ async fn idle_guards_and_paused_queue_release_independently_of_terminal_ownershi
     cx.update(|cx| assert!(thread.read(cx).is_leased()));
     drop(guard);
     thread.update(cx, |thread, cx| {
-        thread.begin_composer_edit(Vec::new(), thread.composer().attachments().to_vec(), cx);
+        thread.begin_composer_edit(
+            Vec::new(),
+            Vec::new(),
+            thread.composer().attachments().to_vec(),
+            cx,
+        );
         thread.submit("paused".into(), None, cx).unwrap();
         thread.pause_queue(cx);
         thread.end_composer_edit(false, cx);

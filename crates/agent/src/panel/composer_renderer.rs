@@ -55,7 +55,7 @@ pub(super) fn paste(
         .flatten()
         .collect::<Vec<_>>();
     if !paths.is_empty() {
-        let _ = panel.update(cx, |panel, cx| panel.add_images(paths, cx));
+        let _ = panel.update(cx, |panel, cx| panel.attach_paths(paths, cx));
         return true;
     }
     let image = clipboard.entries().iter().find_map(|entry| match entry {
@@ -71,13 +71,14 @@ pub(super) fn paste(
 
 pub(super) struct ComposerRenderer;
 impl ComposerRenderer {
-    /// Removable chips for the attached terminals and servers.
+    /// Removable chips for the attached terminals, servers and files.
     pub(super) fn render_attachment_chips(
         thread: &Entity<AgentThread>,
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<AgentPanel>,
     ) -> Option<AnyElement> {
-        if thread.read(cx).composer().attachments().is_empty() {
+        let composer = thread.read(cx).composer();
+        if composer.attachments().is_empty() && composer.files().is_empty() {
             return None;
         }
         let origin = thread.entity_id();
@@ -107,6 +108,22 @@ impl ComposerRenderer {
                     .child(gpui_kit::component::Icon::new(IconName::X).xsmall())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.on_attachment_selected(origin, value.clone(), cx);
+                    })),
+            );
+        }
+        for (index, file) in thread.read(cx).composer().files().iter().enumerate() {
+            let name = file.name().to_owned();
+            chips = chips.child(
+                Button::new(("file-chip", index))
+                    .custom(menu_variant(cx))
+                    .small()
+                    .icon(IconName::Paperclip)
+                    .max_w_full()
+                    .label(name.clone())
+                    .tooltip(format!("Remove {name}"))
+                    .child(gpui_kit::component::Icon::new(IconName::X).xsmall())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.on_file_removed(origin, index, cx);
                     })),
             );
         }
@@ -273,10 +290,6 @@ impl ComposerRenderer {
             thread.read(cx).context_bytes(),
             thread.read(cx).tool_bytes()
         );
-        let images_supported = thread
-            .read(cx)
-            .agent_info()
-            .is_some_and(|info| info.capabilities.image_prompts);
         [
             super::menu::ConfigMenuRenderer::popover(
                 menus,
@@ -291,13 +304,13 @@ impl ComposerRenderer {
                 cx,
             )
             .into_any_element(),
-            Button::new("agent-attach-image")
+            Button::new("agent-attach-files")
                 .ghost()
                 .small()
-                .icon(IconName::ImagePlus)
-                .tooltip("Attach image")
-                .disabled(composer.preparing() || !images_supported)
-                .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx)))
+                .icon(IconName::Paperclip)
+                .tooltip("Attach files")
+                .disabled(composer.preparing())
+                .on_click(cx.listener(|this, _, _, cx| this.pick_files(cx)))
                 .into_any_element(),
         ]
     }

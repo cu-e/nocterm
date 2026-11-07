@@ -110,7 +110,8 @@ gpui_kit::actions!(
         ShowHistory,
         StopGeneration,
         ToggleModelPicker,
-        AttachImage
+        /// Attach files to the next message; images among them are sent as images.
+        AttachFiles
     ]
 );
 
