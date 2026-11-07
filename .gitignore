@@ -72,3 +72,20 @@ mcp.db
 
 # Playwright MCP session logs and snapshots
 .playwright-mcp/
+
+# Local data, dumps and transcripts that must never be published
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.p12
+*.pfx
+id_rsa*
+id_ecdsa*
+id_ed25519*
+!crates/ssh-keys/src/tests/fixtures/**
+.claude/*.local.*
+.claude/reviews/
+CLAUDE.local.md
+.aider*
+.cursor/
