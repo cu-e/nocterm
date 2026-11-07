@@ -46,3 +46,35 @@ fn text_that_is_not_a_record_is_unrecognized() {
     assert!(matches!(decode(b"not json"), Decoded::Unrecognized));
     assert!(matches!(decode(br#"{"v":1}"#), Decoded::Unrecognized));
 }
+
+#[test]
+fn a_password_the_web_panel_keeps_reads_here_bound_to_its_address() {
+    // Exactly what the web panel writes (`credentialPlaintext`): the port only when it is not 22.
+    for (target, port) in [
+        (
+            serde_json::json!({"host": "prod.example.com", "user": "ops"}),
+            22,
+        ),
+        (
+            serde_json::json!({"host": "prod.example.com", "port": 2222, "user": "ops"}),
+            2222,
+        ),
+    ] {
+        let plain = serde_json::json!({
+            "v": 1,
+            "label": "ops@prod.example.com",
+            "binding": {"kind": "password", "target": target},
+            "secret": "s3cret",
+        });
+        let Decoded::Known(record) = decode(plain.to_string().as_bytes()) else {
+            panic!("the web panel's record reads here");
+        };
+        assert_eq!(
+            record.binding,
+            CredentialBinding::Password {
+                target: Target::new("ops", "prod.example.com", port),
+            }
+        );
+        assert_eq!(record.secret.expose(), "s3cret");
+    }
+}

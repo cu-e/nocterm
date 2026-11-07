@@ -114,6 +114,12 @@ agent; only where the agent runs differs.
   of this chat) and **Deny**. Any of your devices can answer it.
 - **The model.** The model chooser of the composer lists the models of the agent's provider;
   choosing one changes the model of the chat on the hub.
+- **Servers of the chat.** The agent signs in only to the servers attached to its chat. The
+  attach menu (**+** beside the message field) lists the servers of the account with a check
+  beside the attached ones; the attached servers also show as chips above the message field,
+  and a chip's cross detaches its server. Servers attached before the first message are
+  attached to the chat it creates. The choice is stored with the chat on the hub, so the web
+  panel and your other computers show the same servers.
 - **History.** The chat history of a hub window lists the hub's chats after the local ones;
   renaming, pinning and deleting a hub chat change it on the hub. Opening one reads its history
   from the hub, so the same chat continues on any of your computers.
@@ -147,6 +153,13 @@ is open to them once its `authorized_keys` holds the key's line and the hub know
 - The **Agent access** tab of the Servers page lists the servers with their status (*Agents ✓*,
   *No access — reconnect*, *Host key changed*, *Unreachable*, *Reconnect needed*), **Check** to
   try the agent key again and **Disconnect** to remove one.
+- A server connected in the hub's web panel with **Keep the password in the vault** is saved
+  to the account like a connection saved here, with its password sealed in the vault: once the
+  account is unlocked, it is an ordinary saved server on every computer and opens without
+  asking. A server connected there without it is listed under *Agent servers not saved here*;
+  choosing it opens a new connection with its address filled in. That list waits until the
+  account's connections have arrived (and the account is unlocked), so a server saved on
+  another computer never shows there.
 
 ## Status
 

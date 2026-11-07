@@ -1,13 +1,19 @@
 //! The servers the hub's agents sign in to that this window has not saved: connected in the web
-//! panel or from another device. Choosing one opens a new connection to it with the address
-//! filled in; once saved it is an ordinary saved server whose row shows what agents found.
+//! panel or from another device without saving it to the account. Choosing one opens a new
+//! connection to it with the address filled in; once saved it is an ordinary saved server whose
+//! row shows what agents found, on every device of the account.
 use super::*;
 use crate::{AgentServer, UnsavedAgentServer, editor::open_editor_for};
 
 impl ConnectionsPanel {
     /// The section under the saved servers, or nothing when every agent server is saved here.
+    /// While the account's list is locked or still arriving it says nothing: a server saved
+    /// with its credentials on another device would look unsaved and ask for them again.
     pub(super) fn render_agent_servers(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let access = self.installed.inputs().agent_access()?;
+        if !super::account_state::AccountState::of(&self.installed, cx).complete() {
+            return None;
+        }
         let saved: Vec<AgentServer> = self
             .installed
             .connections()

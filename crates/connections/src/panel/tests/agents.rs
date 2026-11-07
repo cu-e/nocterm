@@ -109,3 +109,47 @@ fn an_agent_server_saved_elsewhere_is_saved_here_with_its_address_filled_in(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn agent_servers_are_offered_only_once_the_accounts_list_has_arrived(cx: &mut TestAppContext) {
+    use crate::test_support::replicate;
+    use nocterm_connections_model::test_support::MemoryReplica;
+    let access = Arc::new(ScriptedAgentAccess::default());
+    access
+        .servers
+        .lock()
+        .unwrap()
+        .push(crate::UnsavedAgentServer {
+            name: "prod".into(),
+            host: "prod.example".into(),
+            port: 22,
+            user: "ops".into(),
+            state: AgentAccessState::Ready,
+        });
+    for (locked, offered) in [(true, false), (false, true)] {
+        let (handle, workspace, _, installed) =
+            crate::test_support::workspace_with_agent_access(cx, access.clone());
+        let replica = Arc::new(MemoryReplica::new());
+        replica.set_locked(locked);
+        replicate(&installed, replica, cx);
+        cx.update_window(handle, |_, window, cx| {
+            let panel = cx.new(|cx| {
+                ConnectionsPanel::new(installed.clone(), workspace.downgrade(), window, cx)
+            });
+            workspace.update(cx, |workspace, cx| {
+                add_servers(workspace, panel, window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                window.try_find(("agent-server", 0usize)).is_some(),
+                offered,
+                "locked: {locked}"
+            );
+        })
+        .unwrap();
+    }
+}

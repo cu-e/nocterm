@@ -27,6 +27,15 @@ impl AccountState {
         self.0.as_ref().is_none_or(editable)
     }
 
+    /// Whether the list holds every connection the account keeps: always without an account,
+    /// and with one only once the copy is in step. Until then a server saved on another device
+    /// is not here yet.
+    pub(crate) fn complete(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|status| matches!(status, ReplicationStatus::Synced))
+    }
+
     /// What to tell the user about the account above the list.
     pub(crate) fn notice(&self) -> Option<AccountNotice> {
         self.0.as_ref().and_then(notice)

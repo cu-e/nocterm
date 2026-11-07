@@ -131,3 +131,35 @@ fn positions_round_trip_and_an_unreadable_cursor_starts_over() {
     );
     assert_eq!(Positions::parse(None).get("a"), 0);
 }
+
+#[test]
+fn a_profile_the_web_panel_keeps_reads_as_a_server_that_signs_in_with_its_password() {
+    // Exactly what the web panel writes for a server connected there (`profilePlaintext`).
+    let id = profile_id_for("prod");
+    let credential = "ab".repeat(16);
+    let plain = serde_json::json!({
+        "v": 1,
+        "profile": {
+            "id": id,
+            "name": "prod",
+            "host": "prod.example.com",
+            "port": 2222,
+            "user": "ops",
+            "auth": {"method": "password"},
+            "credential": credential,
+        }
+    });
+    let RemoteBody::Present(profile) = body_of(id, plain.to_string().as_bytes()) else {
+        panic!("the web panel's profile reads here");
+    };
+    assert_eq!(profile.name, "prod");
+    assert_eq!(
+        profile.target,
+        nocterm_session::Target::new("ops", "prod.example.com", 2222)
+    );
+    assert_eq!(profile.auth, nocterm_session::Auth::Password);
+    assert_eq!(
+        profile.credential.map(|id| id.to_string()),
+        Some(credential)
+    );
+}
