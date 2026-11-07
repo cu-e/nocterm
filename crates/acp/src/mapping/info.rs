@@ -9,6 +9,7 @@ pub(crate) fn capabilities(value: &wire::AgentCapabilities) -> AgentCapabilities
     AgentCapabilitiesSummary {
         image_prompts: value.prompt_capabilities.image,
         keeps_history: false,
+        own_tools: false,
     }
 }
 /// Authentication methods of an unknown future shape are not offered.

@@ -113,15 +113,7 @@ impl HubChatRepository {
     fn hub_chat(&self, scope: &ChatScope, hub: &HubId, id: &str) -> Option<SavedChat> {
         let list = self.list(hub);
         let list = lock(&list);
-        let row = list.row_for(id)?;
-        let agent =
-            AgentLaunch::hub_agent(hub.clone(), row.agent_id.clone(), row.agent_name.clone());
-        let mut chat =
-            SavedChat::for_environment(agent.id, id.to_owned(), row.updated(), scope.clone());
-        chat.header.title = Some(row.title.clone()).filter(|title| !title.is_empty());
-        chat.header.pinned = row.pinned;
-        chat.session_id = Some(row.id.clone());
-        Some(chat)
+        saved_chat(&list, scope, hub, id)
     }
 
     /// Sends what changed of a hub chat's name or pin to the hub.
@@ -201,11 +193,14 @@ impl ChatRepository for HubChatRepository {
             return local;
         };
         self.refresh(&hub);
-        let hub_chats: Vec<ChatSummary> = lock(&self.list(&hub))
-            .local_ids()
-            .filter_map(|id| self.hub_chat(&scope, &hub, &id))
-            .map(|chat| ChatSummary::from_chat(&chat))
-            .collect();
+        let hub_chats: Vec<ChatSummary> = {
+            let list = self.list(&hub);
+            let list = lock(&list);
+            list.local_ids()
+                .filter_map(|id| saved_chat(&list, &scope, &hub, &id))
+                .map(|chat| ChatSummary::from_chat(&chat))
+                .collect()
+        };
         Box::pin(async move {
             let mut rows = local.await?;
             rows.retain(|row| !hub_chats.iter().any(|hub_row| hub_row.id == row.id));
@@ -264,7 +259,7 @@ impl ChatRepository for HubChatRepository {
     fn save(&self, chat: Arc<SharedChat>) -> StorageFuture<()> {
         let scope = chat.metadata.header.chat_scope();
         match hub_of(&scope) {
-            Some(hub) if is_hub_agent(&chat.metadata.header.agent_id) => {
+            Some(hub) if nocterm_ai::agents::is_hub_agent(&chat.metadata.header.agent_id) => {
                 self.publish(&hub, &chat);
                 Box::pin(async { Ok(()) })
             }
@@ -277,9 +272,17 @@ impl ChatRepository for HubChatRepository {
     }
 }
 
-/// Whether a chat's agent is a hub agent: its transcript lives on the hub, not here.
-fn is_hub_agent(agent_id: &str) -> bool {
-    agent_id.starts_with(nocterm_ai::agents::HUB_AGENT_PREFIX)
+/// The row `id` of `list` as a saved chat without transcript: the session reopens on the hub.
+/// Takes the locked list, so listing every row locks it once.
+fn saved_chat(list: &ChatList, scope: &ChatScope, hub: &HubId, id: &str) -> Option<SavedChat> {
+    let row = list.row_for(id)?;
+    let agent = AgentLaunch::hub_agent(hub.clone(), row.agent_id.clone(), row.agent_name.clone());
+    let mut chat =
+        SavedChat::for_environment(agent.id, id.to_owned(), row.updated(), scope.clone());
+    chat.header.title = Some(row.title.clone()).filter(|title| !title.is_empty());
+    chat.header.pinned = row.pinned;
+    chat.session_id = Some(row.id.clone());
+    Some(chat)
 }
 
 #[cfg(test)]

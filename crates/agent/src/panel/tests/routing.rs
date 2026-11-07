@@ -171,6 +171,17 @@ fn prompts_tell_the_agent_to_report_unreachable_servers(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
+fn an_agent_with_tools_of_its_own_gets_only_what_the_person_wrote(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    f.connector.info.lock().unwrap().capabilities.own_tools = true;
+    new_chat(&f, cx);
+    exchange(&f, "check the server", "ok", cx);
+    let prompt = f.commands.prompts.lock().unwrap()[0].clone();
+    assert_eq!(prompt.content.len(), 1, "{:?}", prompt.content);
+    assert!(matches!(&prompt.content[0], Content::Text(text) if text.text == "check the server"));
+}
+
+#[gpui_kit::test]
 fn an_unreachable_terminal_asks_the_agent_to_tell_the_user(cx: &mut TestAppContext) {
     let f = fixture(cx);
     new_chat(&f, cx);

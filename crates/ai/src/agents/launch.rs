@@ -50,6 +50,16 @@ impl AgentLaunch {
 /// How the ids of hub agents begin.
 pub const HUB_AGENT_PREFIX: &str = "hub-";
 
+/// Whether `id` names a hub agent ([`AgentLaunch::hub_agent`]): its chats run on the hub.
+pub fn is_hub_agent(id: &str) -> bool {
+    id.strip_prefix(HUB_AGENT_PREFIX).is_some_and(|hash| {
+        hash.len() == 24
+            && hash
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
 /// [`HUB_AGENT_PREFIX`] and 24 hex digits of a hash of the pair: a valid agent id of at most
 /// 64 characters.
 fn hub_agent_id(hub: &HubId, agent: &str) -> String {

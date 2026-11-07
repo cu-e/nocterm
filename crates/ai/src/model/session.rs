@@ -188,4 +188,8 @@ pub struct AgentCapabilitiesSummary {
     /// The agent keeps its sessions itself (a hub agent): a chat reopens its session even
     /// when it saved nothing of it, and shows the history the agent returns.
     pub keeps_history: bool,
+    /// The agent runs elsewhere with tools of its own (a hub agent on its servers): a prompt
+    /// carries only what the person wrote, not the context and rules of this device's
+    /// terminals.
+    pub own_tools: bool,
 }

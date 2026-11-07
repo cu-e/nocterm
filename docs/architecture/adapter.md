@@ -419,12 +419,14 @@ keep a closed session alive, and each direction ends on its own: dropping the se
 file for the target, which may still answer. A refusal is told by the hub's code, never by its
 text.
 
-`HubAgentsLink` implements the `HubAgentDirectory`, `HubServers` and `HubChatChanges` ports of
-`nocterm-hub-agents-model` over the hub's agent and server services; its chat hints come from
-one `Watch` of the chat list per tracked hub. `HubAgentConnector` implements
+`HubAgentsLink` implements the `HubAgentDirectory`, `HubServers` and `HubChanges` ports of
+`nocterm-hub-agents-model` over the hub's agent and server services; its hints come from
+one `Watch` of the account per tracked hub (chat changes, and `AccountChanged` for agents,
+providers and servers). `HubAgentConnector` implements
 `nocterm_ai::AgentConnector` for agents whose launch names a hub
 ([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)): a new
-session creates the hub chat, a restore reads its history and watches it, a prompt uploads its
+session is shown with the agent's model and mode and its first message creates the hub chat
+under the id the session already has, a restore reads its history and watches it, a prompt uploads its
 attachments, sends the message and resolves at the end of the first run that started after
 it, cancel stops the run, approvals answer the chat's pending approval, and the model option
 sets the chat's model. Runs started from another device become neutral turn notices. A

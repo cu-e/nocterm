@@ -228,3 +228,16 @@ fn exec_accepted_before_replacement_is_denied_before_its_first_native_poll(
     );
     assert!(f.access.sent().borrow().is_empty());
 }
+#[gpui_kit::test]
+fn a_message_in_a_hub_account_chat_reaches_the_agent(cx: &mut TestAppContext) {
+    let factory = Arc::new(ScriptedLocalAccountFactory::default());
+    factory.sign_in(account("alice"));
+    let f = account_fixture(factory.clone(), cx);
+    refresh_sources(&f, cx);
+    new_chat(&f, cx);
+    let thread = current(&f, cx);
+    cx.update(|cx| thread.update(cx, |thread, cx| thread.send("hello".into(), cx)));
+    cx.run_until_parked();
+    assert!(f.commands.pending.lock().unwrap().is_some());
+    cx.update(|cx| assert!(!thread.read(cx).queue_dispatchable()));
+}

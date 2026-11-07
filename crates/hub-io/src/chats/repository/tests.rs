@@ -60,3 +60,26 @@ fn a_rename_shows_before_the_hub_confirms_it_and_the_list_survives_a_restart() {
         ChatList::default()
     );
 }
+
+#[test]
+fn every_listed_hub_chat_reads_as_a_saved_chat_of_its_hub_agent() {
+    use nocterm_ai::local_environment::ChatScope;
+    let mut list = ChatList::default();
+    list.replace(vec![row("h1", "one"), row("h2", "")]);
+    list.remember("local-1", "h1");
+    let scope = ChatScope::this_computer(nocterm_ai::history::ContextId::General);
+    let chats: Vec<_> = list
+        .local_ids()
+        .filter_map(|id| super::saved_chat(&list, &scope, &hub(), &id))
+        .collect();
+    assert_eq!(chats.len(), 2);
+    assert_eq!(chats[0].header.title.as_deref(), Some("one"));
+    assert_eq!(chats[0].session_id.as_deref(), Some("h1"));
+    assert!(chats[1].header.title.is_none());
+    assert!(
+        chats[0]
+            .header
+            .agent_id
+            .starts_with(nocterm_ai::agents::HUB_AGENT_PREFIX)
+    );
+}

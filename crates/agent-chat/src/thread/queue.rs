@@ -543,7 +543,11 @@ impl AgentThread {
         // ACP adapters inspect the first block for slash commands; local
         // administrative commands may require a single text block.
         let is_command = nocterm_ai::commands::invocation(&text, self.config.commands()).is_some();
-        let context = (!is_command).then(|| self.context(cx));
+        // An agent with tools of its own gets only what the person wrote.
+        let own_tools = self
+            .agent_info()
+            .is_some_and(|info| info.capabilities.own_tools);
+        let context = (!is_command && !own_tools).then(|| self.context(cx));
         let history = (self.state.pending_history() && !is_command)
             .then(|| super::session::history_context(self.state.entries()));
         let prepared = super::composer::prompt_preparation::PromptPreparation::new(

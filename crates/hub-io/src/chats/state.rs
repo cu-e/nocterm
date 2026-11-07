@@ -66,11 +66,6 @@ impl ChatState {
         self.last_seq
     }
 
-    /// A new chat: what it holds up to `seq` is not shown.
-    pub(super) fn skip_to(&mut self, seq: u64) {
-        self.last_seq = seq;
-    }
-
     /// Whether a run is under way: the chat shows that the agent works.
     pub(super) fn running(&self) -> bool {
         !self.active.is_empty()

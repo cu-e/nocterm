@@ -171,6 +171,7 @@ impl AgentConnector for HubAgentConnector {
                     capabilities: AgentCapabilitiesSummary {
                         image_prompts: true,
                         keeps_history: true,
+                        own_tools: true,
                     },
                     auth_methods: Vec::new(),
                 },
@@ -189,16 +190,19 @@ pub(super) struct Inner {
     chats: Mutex<HashMap<String, OpenChat>>,
 }
 
-/// A chat this connection follows.
+/// A chat this connection shows. A new chat exists only here until its first message creates
+/// it on the hub with the same id; then its `Watch` is followed.
 struct OpenChat {
     state: Arc<Mutex<ChatState>>,
     options: Arc<Mutex<ChatOptions>>,
-    follow: tokio::task::AbortHandle,
+    follow: Option<tokio::task::AbortHandle>,
 }
 
 impl Drop for OpenChat {
     fn drop(&mut self) {
-        self.follow.abort();
+        if let Some(follow) = &self.follow {
+            follow.abort();
+        }
     }
 }
 
@@ -218,32 +222,94 @@ impl Inner {
         items::options(&self.agent.models, &chat.model, chat.approval)
     }
 
-    /// Follows `chat` from `state` on, telling the person what `state` left open.
-    fn open(self: &Arc<Self>, chat: &v2::Chat, state: ChatState) {
-        let opening = state.open_approvals();
-        let running = state.running();
-        let state = Arc::new(Mutex::new(state));
-        let options = Arc::new(Mutex::new(ChatOptions::of(chat, &self.agent.models)));
-        let follow = Follow {
-            inner: Arc::downgrade(self),
-            chat: chat.id.clone(),
-            state: state.clone(),
-            options: options.clone(),
-        };
-        let task = self.handle.spawn(follow.run(opening, running));
+    /// Shows `chat` from `state` on; it is followed once [`Self::follow`] is called.
+    fn track(&self, chat: &v2::Chat, state: ChatState) {
         self.chats().insert(
             chat.id.clone(),
             OpenChat {
-                state,
-                options,
-                follow: task.abort_handle(),
+                state: Arc::new(Mutex::new(state)),
+                options: Arc::new(Mutex::new(ChatOptions::of(chat, &self.agent.models))),
+                follow: None,
             },
         );
     }
 
-    fn state_of(&self, chat: &str) -> Option<Arc<Mutex<ChatState>>> {
-        self.chats().get(chat).map(|open| open.state.clone())
+    /// Follows the hub's chat `id`, telling the person what its state left open. Following
+    /// twice is harmless.
+    fn follow(self: &Arc<Self>, id: &str) {
+        let mut chats = self.chats();
+        let Some(open) = chats.get_mut(id).filter(|open| open.follow.is_none()) else {
+            return;
+        };
+        let (opening, running) = {
+            let state = lock(&open.state);
+            (state.open_approvals(), state.running())
+        };
+        let follow = Follow {
+            inner: Arc::downgrade(self),
+            chat: id.to_owned(),
+            state: open.state.clone(),
+            options: open.options.clone(),
+        };
+        open.follow = Some(
+            self.handle
+                .spawn(follow.run(opening, running))
+                .abort_handle(),
+        );
     }
+
+    /// The chat's state, its options, and whether it exists on the hub yet.
+    fn open_chat(
+        &self,
+        chat: &str,
+    ) -> Option<(Arc<Mutex<ChatState>>, Arc<Mutex<ChatOptions>>, bool)> {
+        self.chats().get(chat).map(|open| {
+            (
+                open.state.clone(),
+                open.options.clone(),
+                open.follow.is_some(),
+            )
+        })
+    }
+}
+
+impl Inner {
+    /// Follows `id` once its first message created it on the hub.
+    fn follow_if_created(self: &Arc<Self>, id: &str, created: bool) {
+        if created {
+            self.follow(id);
+        }
+    }
+}
+
+/// Creates the chat `id` of `agent` on the hub with the model and mode it was shown with.
+/// Creating it again (a retried first message) returns it.
+async fn create(
+    client: &HubClient,
+    agent: String,
+    id: &str,
+    model: String,
+    approval: i32,
+) -> Result<(), CallFailure> {
+    let chat = client
+        .chats()
+        .create_chat(v2::CreateChatRequest {
+            agent_id: agent,
+            chat_id: id.to_owned(),
+            model: model.clone(),
+            ..Default::default()
+        })
+        .await?
+        .into_inner();
+    if chat.approval != approval {
+        let request = v2::SetChatModelRequest {
+            id: id.to_owned(),
+            model,
+            approval,
+        };
+        client.chats().set_chat_model(request).await?;
+    }
+    Ok(())
 }
 
 /// Reads the chat's history, oldest first, up to [`MAX_HISTORY`] items.
@@ -274,27 +340,23 @@ async fn history(client: &HubClient, chat: &str) -> Result<Vec<v2::ChatItem>, Ca
 }
 
 impl AgentCommands for HubChatCommands {
+    /// A new chat is shown with the agent's model and mode at once; its first message creates
+    /// it on the hub under the same id, so opening a chat leaves nothing on the hub.
     fn new_session(
         &self,
         _request: SessionOpen,
     ) -> BoxFuture<'static, Result<SessionOpened, AgentError>> {
-        let inner = self.0.clone();
-        let agent = inner.agent.id.clone();
-        let created = call(&inner.handle, &inner.captured, |client| async move {
-            let request = v2::CreateChatRequest {
-                agent_id: agent,
-                ..Default::default()
-            };
-            Ok(client.chats().create_chat(request).await?.into_inner())
-        });
-        Box::pin(async move {
-            let chat = created.await?;
-            let options = inner.options(&chat);
-            let mut state = ChatState::default();
-            state.skip_to(chat.last_seq);
-            inner.open(&chat, state);
-            Ok(SessionOpened::new(chat.id).configuration(options))
-        })
+        let inner = &self.0;
+        let chat = v2::Chat {
+            id: uuid::Uuid::new_v4().to_string(),
+            agent_id: inner.agent.id.clone(),
+            model: inner.agent.model.clone(),
+            approval: inner.agent.approval,
+            ..Default::default()
+        };
+        let options = inner.options(&chat);
+        inner.track(&chat, ChatState::default());
+        Box::pin(async move { Ok(SessionOpened::new(chat.id).configuration(options)) })
     }
 
     fn restore_session(
@@ -324,7 +386,8 @@ impl AgentCommands for HubChatCommands {
             let mut state = ChatState::default();
             let updates = items.iter().flat_map(|item| state.replay(item)).collect();
             let options = inner.options(&chat);
-            inner.open(&chat, state);
+            inner.track(&chat, state);
+            inner.follow(&chat.id);
             Ok(SessionOpened::new(chat.id)
                 .configuration(options)
                 .history(updates))
@@ -337,13 +400,18 @@ impl AgentCommands for HubChatCommands {
     ) -> BoxFuture<'static, Result<PromptOutcome, AgentError>> {
         let inner = self.0.clone();
         let chat = request.session.to_string();
-        let Some(state) = inner.state_of(&chat) else {
+        let Some((state, options, created)) = inner.open_chat(&chat) else {
             return Box::pin(async { Err(AgentError::Io("The chat is not open.".into())) });
         };
         let client_message = uuid::Uuid::new_v4().to_string();
         let (done, answer) = futures::channel::oneshot::channel();
         lock(&state).expect(client_message.clone(), done);
+        let creation = (!created).then(|| (inner.agent.id.clone(), lock(&options).wire()));
+        let id = chat.clone();
         let sent = call(&inner.handle, &inner.captured, move |client| async move {
+            if let Some((agent, (model, approval))) = creation {
+                create(&client, agent, &chat, model, approval).await?;
+            }
             let (text, attachment_ids) =
                 super::upload::prepare(&client, &chat, request.content).await?;
             let request = v2::SendRequest {
@@ -356,7 +424,10 @@ impl AgentCommands for HubChatCommands {
             Ok(())
         });
         Box::pin(async move {
-            if let Err(error) = sent.await {
+            let outcome = sent.await;
+            // Once created, the chat is followed even when the message did not go.
+            inner.follow_if_created(&id, created || outcome.is_ok());
+            if let Err(error) = outcome {
                 lock(&state).abandon();
                 return Err(error);
             }
@@ -405,6 +476,10 @@ impl AgentCommands for HubChatCommands {
                 )))
             });
         };
+        let created = inner
+            .chats()
+            .get(&chat)
+            .is_some_and(|open| open.follow.is_some());
         let (mut model, mut approval) = lock(&current).wire();
         match request.config.as_str() {
             items::MODEL => model = choice.to_string(),
@@ -423,6 +498,18 @@ impl AgentCommands for HubChatCommands {
                     )))
                 });
             }
+        }
+        if !created {
+            // Not on the hub yet: its first message creates it with these.
+            let shown = v2::Chat {
+                id: chat,
+                model,
+                approval,
+                ..Default::default()
+            };
+            *lock(&current) = ChatOptions::of(&shown, &inner.agent.models);
+            let options = inner.options(&shown);
+            return Box::pin(async move { Ok(options) });
         }
         let saved = call(&inner.handle, &inner.captured, move |client| async move {
             let request = v2::SetChatModelRequest {
