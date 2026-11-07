@@ -13,41 +13,7 @@ pub use state::{ReplicaState, SyncedEntry};
 use crate::profiles::{Profile, ProfileId};
 use futures::{future::BoxFuture, stream::BoxStream};
 use nocterm_core::SharedCause;
-use nocterm_session::CredentialId;
 use serde::{Deserialize, Serialize};
-
-/// Where a replicated profile lives: the user's own space or an organization's.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ReplicaScope {
-    Personal,
-    Organization(String),
-}
-
-/// A secret that was copied, and the id the copy goes by in the space it was copied to.
-/// The profile that follows the copy refers to `to`; the original keeps `from`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CredentialCopy {
-    pub from: CredentialId,
-    pub to: CredentialId,
-}
-
-/// How the account may use a space of the replica.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReplicaAccess {
-    /// Profiles of the space are shown and used; the replica refuses changes to them.
-    Read,
-    /// Profiles of the space may be created, changed, moved out of it and deleted.
-    Write,
-}
-
-/// A place the replica keeps profiles in, as the account can use it now.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReplicaSpace {
-    pub scope: ReplicaScope,
-    /// What the user calls it: "Personal", or the name of the organization.
-    pub name: String,
-    pub access: ReplicaAccess,
-}
 
 /// An opaque position in the replica's change feed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,7 +58,6 @@ pub enum RemoteBody {
 /// One entry of the change feed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteProfile {
-    pub scope: ReplicaScope,
     pub id: ProfileId,
     pub version: ReplicaVersion,
     pub body: RemoteBody,
@@ -125,8 +90,8 @@ pub enum ReplicaError {
     /// The expected version is no longer the replica's current one.
     #[error("Profile {id} changed on the replica.")]
     Conflict { id: ProfileId },
-    /// The caller may not change this profile in its scope.
-    #[error("Profile {id} cannot be changed in its scope.")]
+    /// The account may not change this profile.
+    #[error("Profile {id} cannot be changed on the replica.")]
     Forbidden { id: ProfileId },
     #[error("The profile replica failed: {0}")]
     Other(#[source] SharedCause),
@@ -144,7 +109,6 @@ pub trait ProfileReplica: Send + Sync {
     /// to create; a replica holding another version answers `Conflict`.
     fn put(
         &self,
-        scope: ReplicaScope,
         profile: Profile,
         expected: Option<ReplicaVersion>,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>>;
@@ -152,50 +116,12 @@ pub trait ProfileReplica: Send + Sync {
     /// Replaces the profile with a tombstone under the same expectation rules.
     fn delete(
         &self,
-        scope: ReplicaScope,
         id: ProfileId,
         expected: ReplicaVersion,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>>;
 
-    /// Moves the secrets of profile `id` that are kept in the `from` space to the `to`
-    /// space, sealed with its key, and answers the ones that moved. A secret not kept in
-    /// `from` stays where it is. A space the account may not write is `Forbidden`, and
-    /// nothing has moved then. A replica that keeps no secrets moves none.
-    fn carry(
-        &self,
-        id: ProfileId,
-        from: ReplicaScope,
-        to: ReplicaScope,
-        credentials: Vec<CredentialId>,
-    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
-        let _ = (id, from, to, credentials);
-        Box::pin(std::future::ready(Ok(Vec::new())))
-    }
-
-    /// Like [`carry`](Self::carry), but the secrets also stay in `from`: another profile that
-    /// stays there still uses them. Each copy goes by a new id, so that the two spaces never
-    /// hold one id; answers the ids of the ones that were copied. The profile must refer to
-    /// the new ids ([`Profile::rekeyed`]) before it is written to `to`. A refused copy
-    /// leaves nothing behind in `to`.
-    fn copy(
-        &self,
-        id: ProfileId,
-        from: ReplicaScope,
-        to: ReplicaScope,
-        credentials: Vec<CredentialId>,
-    ) -> BoxFuture<'static, Result<Vec<CredentialCopy>, ReplicaError>> {
-        let _ = (id, from, to, credentials);
-        Box::pin(std::future::ready(Ok(Vec::new())))
-    }
-
     /// Yields once whenever the replica may have new changes.
     fn watch(&self) -> BoxStream<'static, ()>;
-
-    /// The spaces the replica serves and what the account may do in each, as last learned.
-    /// A replica with a single, writable space of its own reports none.
-    fn spaces(&self) -> Vec<ReplicaSpace> {
-        Vec::new()
-    }
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use super::{Hub, hub, links, sign_in};
 use futures::executor::block_on;
 use nocterm_connections_model::{
     profiles::Profile,
-    replica::{ProfileReplica as _, RemoteBody, ReplicaScope},
+    replica::{ProfileReplica as _, RemoteBody},
     test_support::profile_id_for,
 };
 use nocterm_hub_io::HubLinks;
@@ -248,11 +248,13 @@ fn a_profile_saved_on_one_device_is_read_on_another() {
         jump_hosts: Vec::new(),
     };
 
-    let written = block_on(first.account(&hub).replica().unwrap().put(
-        ReplicaScope::Personal,
-        profile.clone(),
-        None,
-    ))
+    let written = block_on(
+        first
+            .account(&hub)
+            .replica()
+            .unwrap()
+            .put(profile.clone(), None),
+    )
     .unwrap();
     let page = block_on(second.account(&hub).replica().unwrap().changes(None)).unwrap();
     let seen = page
@@ -262,11 +264,13 @@ fn a_profile_saved_on_one_device_is_read_on_another() {
         .expect("the other device sees the profile");
     assert_eq!(seen.body, RemoteBody::Present(Box::new(profile.clone())));
 
-    block_on(first.account(&hub).replica().unwrap().delete(
-        ReplicaScope::Personal,
-        profile.id,
-        written,
-    ))
+    block_on(
+        first
+            .account(&hub)
+            .replica()
+            .unwrap()
+            .delete(profile.id, written),
+    )
     .unwrap();
 }
 

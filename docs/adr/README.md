@@ -97,7 +97,7 @@ acceptance; a later record supersedes an earlier one.
 | [0098](0098-windows-and-their-environments-are-restored-after-a-restart.md) | Windows and their environments are restored after a restart (superseded by 0099) |
 | [0099](0099-windows-have-no-environments.md) | Windows have no environments: hub sessions live in the ordinary window (supersedes 0097 and 0098; superseded by 0104) |
 | [0100](0100-the-hub-is-a-route-step.md) | The hub is a route step: the first connection of an SSH route can be a relay (relay node superseded by 0148) |
-| [0101](0101-profiles-synchronize-through-a-replica-beside-the-local-document.md) | Profiles synchronize through a replica beside the local document |
+| [0101](0101-profiles-synchronize-through-a-replica-beside-the-local-document.md) | Profiles synchronize through a replica beside the local document (scopes superseded by 0149) |
 | [0102](0102-ssh-keys-are-kept-in-the-vault.md) | SSH keys are kept in the vault; the editor receives them through `VaultSshKeys` |
 | [0103](0103-account-data-is-sealed-on-the-device.md) | Account data is sealed on the device: the hub keeps ciphertext, and one chosen server keeps the vault and the profiles |
 | [0104](0104-a-window-shows-one-environment.md) | A window shows one environment: this computer or the account of one hub (supersedes 0099) |
@@ -143,4 +143,5 @@ acceptance; a later record supersedes an earlier one.
 | [0145](0145-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 (superseded by 0148; earlier: SSH row class, boot host-key rule and journal version superseded by 0147) |
 | [0146](0146-device-transport-and-resumable-commands.md) | Cloud effects go through the hub client; commands resume after a restart (superseded by 0148) |
 | [0147](0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md) | The desktop binds chats to servers and answers their certificate requests; prompts run on bound servers; journal v9 (superseded by 0148) |
-| [0148](0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md) | Hub chats run on the hub and use the agent chat UI; the Cloud runner, organizations and administrator keys are removed |
+| [0148](0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md) | Hub chats run on the hub and use the agent chat UI; the Cloud runner, organizations and administrator keys are removed (Agent access without an open session superseded by 0149) |
+| [0149](0149-agent-access-connects-with-saved-credentials-and-profiles-have-one-space.md) | Agent access connects with the saved credentials, rows show the agents' state, and profiles have one space (supersedes parts of 0101 and 0148) |

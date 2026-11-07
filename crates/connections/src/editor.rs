@@ -92,7 +92,7 @@ pub fn open_editor(
     cx: &mut App,
 ) {
     // A change the account does not receive would be lost.
-    if !crate::spaces::Spaces::of(&installed, cx).editable() {
+    if !crate::panel::account_state::AccountState::of(&installed, cx).editable() {
         return;
     }
     let _ = open_editor_view(installed, profile, workspace, window, cx);
@@ -219,8 +219,9 @@ impl ConnectionEditor {
                 cx,
             )
         });
-        let subscription = cx.observe(installed.facts(), |_, _, cx| cx.notify());
         let agent_access = AgentAccessField::new(inputs.agent_access().cloned());
+        let mut subscriptions = vec![cx.observe(installed.facts(), |_, _, cx| cx.notify())];
+        subscriptions.extend(agent_access.observe(cx));
         let editor = Self {
             deps: installed,
             focus: cx.focus_handle(),
@@ -236,7 +237,7 @@ impl ConnectionEditor {
             section: EditorSection::Connection,
             scroll: ScrollHandle::new(),
             error: None,
-            _subscriptions: vec![subscription],
+            _subscriptions: subscriptions,
         };
         if editor.authentication.kind() == AuthKind::VaultKey {
             editor.refresh_vault_keys(window, cx);

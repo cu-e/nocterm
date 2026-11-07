@@ -4,7 +4,6 @@ pub use crate::recents::{MAX_RECENTS, Recent, Recents};
 pub use mutation::{ProfileError, ProfileExpectation, ProfileMutation};
 use std::fmt;
 
-use crate::replica::CredentialCopy;
 use crate::{credential_scope::CredentialScope, jump_route::JumpHostEntry};
 use nocterm_session::{Auth, CredentialId, ShellLaunch, Target};
 use serde::{Deserialize, Serialize};
@@ -305,35 +304,6 @@ impl Profiles {
 }
 
 impl Profile {
-    /// The vault credentials the connection signs in with: its saved credential and its
-    /// vault key, each once. They are the secrets that travel with it between spaces.
-    pub fn credentials(&self) -> Vec<CredentialId> {
-        let key = match &self.auth {
-            Auth::VaultKey { credential, .. } => Some(*credential),
-            _ => None,
-        };
-        let mut found: Vec<CredentialId> = self.credential.into_iter().chain(key).collect();
-        found.dedup();
-        found
-    }
-
-    /// The profile with its saved credential and vault key replaced by the ids of their
-    /// copies; a credential that was not copied keeps its id.
-    #[must_use]
-    pub fn rekeyed(mut self, copies: &[CredentialCopy]) -> Self {
-        let renamed = |id: CredentialId| {
-            copies
-                .iter()
-                .find(|copy| copy.from == id)
-                .map_or(id, |copy| copy.to)
-        };
-        self.credential = self.credential.map(renamed);
-        if let Auth::VaultKey { credential, .. } = &mut self.auth {
-            *credential = renamed(*credential);
-        }
-        self
-    }
-
     /// Whether `filter` occurs, ignoring case, in the name, the destination or
     /// the folder. An empty filter matches everything.
     pub fn matches(&self, filter: &str) -> bool {

@@ -49,15 +49,12 @@ pub(crate) async fn run(work: Work, sender: mpsc::Sender<QueuedJob>) {
         }
         Request::Download(request) => {
             let destination = request.local_destination;
-            let opened = match work.state().local().cloned() {
-                Ok(local) => {
-                    work.state()
-                        .blocking()
-                        .call(work.cancel(), move || local.open_directory(&destination))
-                        .await
-                }
-                Err(cause) => Err(cause),
-            };
+            let local = work.state().local().clone();
+            let opened = work
+                .state()
+                .blocking()
+                .call(work.cancel(), move || local.open_directory(&destination))
+                .await;
             match opened {
                 Ok(directory) => {
                     remote_discovery::run(
@@ -104,7 +101,7 @@ impl UploadDiscovery {
         }
     }
     async fn root(&mut self, source: PathBuf, destination: String) -> Result<(), TransferCause> {
-        let local = self.work.state().local()?.clone();
+        let local = self.work.state().local().clone();
         let (directory, name) = self
             .work
             .state()

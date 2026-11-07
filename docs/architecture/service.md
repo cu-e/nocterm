@@ -223,6 +223,8 @@ of `nocterm-connections-model::replica` and applies the result: remote changes t
 `Persisted<ReplicaState>` supplied and registered for shutdown by the application. A remote
 change never echoes back, an unreachable replica is a status, concurrent changes repeat the
 pass at most three times and an unreadable remote object never alters the local profile.
+The account has one space: changes carry no scope, and of several changes to one profile in a
+feed the later one stands ([ADR 0149](../adr/0149-agent-access-connects-with-saved-credentials-and-profiles-have-one-space.md)).
 Feed acquisition runs off the foreground before planning, capped at 256 pages, 16,384 changes,
 16 MiB of encoded payload plus metadata and a two-minute deadline. Non-progress, repeated or
 oversized cursors fail without advancing the agreed cursor or applying a partial plan.
@@ -420,8 +422,9 @@ problem), the follow of the hub's chat list (re-subscribed with growing delays, 
 hub is untracked) and the launches of its agents as ordinary `AgentLaunch`es, which the agent
 installation offers in that hub's windows only. It emits `Changed` when a hub's lists change and
 `ChatsChanged` on every chat hint, so a history of that hub reads its chats again. Agent access
-of a saved server is a transition of the same entity: `grant_access` writes the agent key's line
-through the user's open session (`AgentHosts` of `nocterm-ssh-keys`) and only then records the
+of a saved server is a transition of the same entity: `session_open` says whether a session to
+it is open, `grant_access` writes the agent key's line through that session (`AgentHosts` of
+`nocterm-ssh-keys`) and only then records the
 server on the hub with the host key this device recorded; `withdraw_access` removes the line
 while a session is open and the record always. The hub's answer replaces the server's row at
 once ([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)).

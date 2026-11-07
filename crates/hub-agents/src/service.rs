@@ -142,6 +142,12 @@ impl HubAgents {
             .find(|server| server.is(&target.host, target.port, &target.user))
     }
 
+    /// Whether a session to the saved connection `connection` is open, so the agent key's line
+    /// can be written through it now.
+    pub fn session_open(&self, connection: &str) -> bool {
+        self.deps.hosts.access(connection).is_ok()
+    }
+
     /// Lets the agents of `hub` work on `target`: the agent key's line is written through the
     /// session the user opened and the server is recorded on the hub, then in the list.
     pub fn grant_access(

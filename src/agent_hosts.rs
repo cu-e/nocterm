@@ -1,6 +1,6 @@
 //! Prepares connected-server metadata off the GUI thread, then publishes it only while its
-//! original session is current, so Agent access edits the server's `authorized_keys` through
-//! the session the user opened.
+//! original session is current, so Agent access of a hub window edits the server's
+//! `authorized_keys` through the session the user opened.
 use gpui_kit::{App, BackgroundExecutor, Task};
 use nocterm_connections::HostObserver;
 use nocterm_connections_store::ProbeSourceLease;

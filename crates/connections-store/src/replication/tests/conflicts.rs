@@ -17,7 +17,7 @@ async fn a_write_that_lost_a_race_is_reconciled_against_the_change_it_missed(
     let remote_edit = at_host(&original, "remote.example");
     fixture
         .replica
-        .write_concurrently_before_next_write(ReplicaScope::Personal, remote_edit.clone());
+        .write_concurrently_before_next_write(remote_edit.clone());
     let local_edit = at_host(&original, "local.example");
     fixture.save(cx, local_edit.clone()).await;
     assert_eq!(fixture.local(cx, &original), Some(remote_edit));
@@ -52,9 +52,7 @@ async fn an_unreadable_remote_profile_never_changes_the_local_one(cx: &mut gpui:
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    fixture
-        .replica
-        .write_unrecognized(ReplicaScope::Personal, original.id);
+    fixture.replica.write_unrecognized(original.id);
     cx.run_until_parked();
     assert_eq!(fixture.local(cx, &original), Some(original.clone()));
     assert!(matches!(
@@ -74,9 +72,7 @@ async fn an_unreadable_profile_stays_unreadable_across_a_restart_and_clears_when
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    fixture
-        .replica
-        .write_unrecognized(ReplicaScope::Personal, original.id);
+    fixture.replica.write_unrecognized(original.id);
     cx.run_until_parked();
     let restarted = Fixture::resumed(
         cx,
@@ -90,9 +86,7 @@ async fn an_unreadable_profile_stays_unreadable_across_a_restart_and_clears_when
         ReplicationStatus::NeedsNewerClient
     ));
     let readable = at_host(&original, "newer.example");
-    restarted
-        .replica
-        .write_remote(ReplicaScope::Personal, readable.clone());
+    restarted.replica.write_remote(readable.clone());
     cx.run_until_parked();
     assert!(matches!(restarted.status(cx), ReplicationStatus::Synced));
     assert_eq!(restarted.local(cx, &original), Some(readable));
@@ -169,7 +163,7 @@ async fn a_forbidden_profile_is_reported_without_blocking_the_others(
     assert_eq!(fixture.local(cx, &shared), Some(shared.clone()));
     assert!(matches!(
         fixture.events().as_slice(),
-        [ReplicationEvent::Refused { profile, scope: ReplicaScope::Personal, restored: false }]
+        [ReplicationEvent::Refused { profile, restored: false }]
             if profile.id == shared.id
     ));
 }
@@ -182,12 +176,8 @@ async fn a_remote_profile_the_local_document_refuses_is_reported_and_skipped(
     let mut oversized = profile("big");
     oversized.description = "x".repeat(70 * 1024);
     let fine = profile("fine");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, oversized.clone());
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, fine.clone());
+    fixture.replica.write_remote(oversized.clone());
+    fixture.replica.write_remote(fine.clone());
     fixture.attach(cx);
     assert_eq!(fixture.local(cx, &oversized), None);
     assert_eq!(fixture.local(cx, &fine), Some(fine));
@@ -223,16 +213,12 @@ async fn a_remote_change_the_local_document_refuses_keeps_the_cursor_behind_it_a
     fixture.attach(cx);
     let before = fixture.persisted_state().cursor().cloned();
     assert!(before.is_some(), "the first pass recorded a position");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, oversized_edit(&original));
+    fixture.replica.write_remote(oversized_edit(&original));
     cx.run_until_parked();
     assert_eq!(rejected_ids(&fixture.events()), [original.id]);
     assert_eq!(fixture.persisted_state().cursor().cloned(), before);
     let other = profile("b");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, other.clone());
+    fixture.replica.write_remote(other.clone());
     cx.run_until_parked();
     assert_eq!(fixture.local(cx, &other), Some(other));
     assert_eq!(fixture.local(cx, &original), Some(original.clone()));
@@ -251,9 +237,7 @@ async fn a_local_edit_after_a_refused_remote_change_does_not_end_in_conflicts(
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, oversized_edit(&original));
+    fixture.replica.write_remote(oversized_edit(&original));
     cx.run_until_parked();
     let puts = fixture.put_count();
     let edited = at_host(&original, "local.example");

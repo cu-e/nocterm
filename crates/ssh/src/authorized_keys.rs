@@ -16,7 +16,7 @@ use nocterm_session::{
 };
 use nocterm_ssh_keys::authorized_keys::{
     AgentHosts, AuthorizedKeysFile, ConnectedHost, ConnectedHosts, HostAccess, HostAccessError,
-    HostIdentity, HostSession, MAX_AUTHORIZED_KEYS_BYTES,
+    HostIdentity, MAX_AUTHORIZED_KEYS_BYTES,
 };
 use std::{
     collections::HashMap,
@@ -153,7 +153,6 @@ impl AuthorizedKeysFile for SftpAuthorizedKeys {
 
 struct Live {
     identity: HostIdentity,
-    port: u16,
     fs: Weak<dyn RemoteFs>,
     edits: Arc<futures::lock::Mutex<()>>,
 }
@@ -206,7 +205,6 @@ impl ConnectedHosts for HostDirectory {
             host.connection,
             Live {
                 identity: host.identity,
-                port: host.port,
                 fs: source,
                 edits,
             },
@@ -215,29 +213,6 @@ impl ConnectedHosts for HostDirectory {
 }
 
 impl AgentHosts for HostDirectory {
-    /// Kept after the session ends, until the application quits.
-    fn port(&self, connection: &str) -> Option<u16> {
-        self.hosts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(connection)
-            .map(|live| live.port)
-    }
-    fn sessions(&self) -> Vec<HostSession> {
-        let hosts = self.hosts.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut sessions: Vec<_> = hosts
-            .iter()
-            .filter(|(_, live)| live.fs.strong_count() > 0)
-            .map(|(connection, live)| HostSession {
-                connection: connection.clone(),
-                user: live.identity.user.clone(),
-                host: live.identity.host.clone(),
-            })
-            .collect();
-        sessions.sort_by(|a, b| a.connection.cmp(&b.connection));
-        sessions
-    }
-
     fn access(&self, connection: &str) -> Result<HostAccess, HostAccessError> {
         let mut hosts = self.hosts.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(live) = hosts.get(connection) else {

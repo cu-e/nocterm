@@ -12,17 +12,13 @@ use gpui::{AsyncApp, Entity, WeakEntity};
 use nocterm_connections_model::{
     profiles::{Profile, ProfileError, ProfileId, Profiles},
     replica::{
-        CredentialCopy, ProfileReplica, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaScope,
-        ReplicaState, ReplicaVersion, SyncedEntry,
+        ProfileReplica, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaState, ReplicaVersion,
+        SyncedEntry,
         rules::{self, ReplicaAction},
     },
 };
-use nocterm_session::CredentialId;
 use nocterm_store::Persisted;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::{collections::HashSet, sync::Arc};
 
 /// Passes tried before a profile that keeps changing under us is reported.
 pub(super) const MAX_ATTEMPTS: usize = 3;
@@ -51,45 +47,6 @@ enum Stop {
     Halt(Outcome),
     /// The application or the owning entity is gone.
     Gone,
-}
-
-/// Where a profile that leaves its scope arrives, and the secrets that go with it.
-struct Arrival {
-    scope: ReplicaScope,
-    credentials: Vec<CredentialId>,
-    /// The secrets that were copied for it, once they were: the profile follows the copies.
-    copies: Mutex<Vec<CredentialCopy>>,
-}
-
-impl Arrival {
-    fn copied(&self, copies: &[CredentialCopy]) {
-        self.copies
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend_from_slice(copies);
-    }
-
-    fn copies(&self) -> Vec<CredentialCopy> {
-        self.copies
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-}
-
-/// The secrets that went along with a profile into a space.
-#[derive(Default)]
-struct Carried {
-    moved: Vec<CredentialId>,
-    copies: Vec<CredentialCopy>,
-}
-
-impl Carried {
-    /// The ids the secrets go by in the space they arrived in.
-    fn arrived(&self) -> Vec<CredentialId> {
-        let copied = self.copies.iter().map(|copy| copy.to);
-        self.moved.iter().copied().chain(copied).collect()
-    }
 }
 
 /// Why one action did not finish.
@@ -143,32 +100,6 @@ fn local_flow(id: ProfileId, error: ConnectionsError) -> Flow {
         }
         _ => halt(ReplicationFailure::Local(error)).into(),
     }
-}
-
-/// The profiles that leave a scope in this pass and where they arrive: a profile that is
-/// deleted in one scope and created in another moves.
-fn arrivals(actions: &[ReplicaAction]) -> HashMap<ProfileId, Arrival> {
-    let leaving: HashSet<ProfileId> = actions
-        .iter()
-        .filter_map(|action| match action {
-            ReplicaAction::PushDelete { id, .. } => Some(*id),
-            _ => None,
-        })
-        .collect();
-    actions
-        .iter()
-        .filter_map(|action| match action {
-            ReplicaAction::Push { scope, profile, .. } if leaving.contains(&profile.id) => Some((
-                profile.id,
-                Arrival {
-                    scope: scope.clone(),
-                    credentials: profile.credentials(),
-                    copies: Mutex::default(),
-                },
-            )),
-            _ => None,
-        })
-        .collect()
 }
 
 /// The action brings a remote change into the local document.
@@ -290,14 +221,13 @@ impl Round {
         let mut skipped = HashSet::new();
         let mut applied = Applied::Done;
         let mut refused = false;
-        let arrivals = arrivals(&actions);
         for action in actions {
             let id = action.id();
             if skipped.contains(&id) {
                 continue;
             }
             let from_remote = writes_remote_change(&action);
-            match self.execute(action, &arrivals, cx).await {
+            match self.execute(action, cx).await {
                 Ok(()) => {}
                 Err(Flow::Conflict) => {
                     applied = Applied::Retry;
@@ -323,48 +253,24 @@ impl Round {
         })
     }
 
-    async fn execute(
-        &self,
-        action: ReplicaAction,
-        arrivals: &HashMap<ProfileId, Arrival>,
-        cx: &mut AsyncApp,
-    ) -> Result<(), Flow> {
+    async fn execute(&self, action: ReplicaAction, cx: &mut AsyncApp) -> Result<(), Flow> {
         match action {
             ReplicaAction::SaveLocal {
-                scope,
                 version,
                 profile,
                 expected,
             } => {
-                self.save_local(scope, version, *profile, expected.map(|p| *p), cx)
+                self.save_local(version, *profile, expected.map(|p| *p), cx)
                     .await
             }
             ReplicaAction::DeleteLocal { id, expected } => {
                 self.delete_local(id, *expected, cx).await
             }
-            ReplicaAction::Push {
-                scope,
-                profile,
-                expected,
-            } => {
-                let arrival = arrivals.get(&profile.id);
-                let renamed = arrival.map(Arrival::copies).unwrap_or_default();
-                self.push(scope, *profile, expected, arrival.is_some(), renamed, cx)
-                    .await
+            ReplicaAction::Push { profile, expected } => self.push(*profile, expected, cx).await,
+            ReplicaAction::PushDelete { id, expected } => self.push_delete(id, expected, cx).await,
+            ReplicaAction::MarkSynced { version, profile } => {
+                Ok(self.agree(version, *profile, cx)?)
             }
-            ReplicaAction::PushDelete {
-                scope,
-                id,
-                expected,
-            } => {
-                self.push_delete(scope, id, expected, arrivals.get(&id), cx)
-                    .await
-            }
-            ReplicaAction::MarkSynced {
-                scope,
-                version,
-                profile,
-            } => Ok(self.adopt(scope, version, *profile, cx)?),
             ReplicaAction::Forget { id } => Ok(self.record(cx, move |state| state.forget(id))?),
             ReplicaAction::Overwritten { id, discarded } => {
                 Ok(self.emit(ReplicationEvent::Overwritten { id, discarded }, cx)?)
@@ -377,7 +283,6 @@ impl Round {
 
     async fn save_local(
         &self,
-        scope: ReplicaScope,
         version: ReplicaVersion,
         profile: Profile,
         expected: Option<Profile>,
@@ -389,7 +294,7 @@ impl Round {
             store.save_profile_checked(profile, expected, cx)
         });
         saving.await.map_err(|error| local_flow(id, error))?;
-        Ok(self.adopt(scope, version, agreed, cx)?)
+        Ok(self.agree(version, agreed, cx)?)
     }
 
     /// The comparison and the deletion happen in one synchronous step, so an edit
@@ -412,226 +317,32 @@ impl Round {
 
     async fn push(
         &self,
-        scope: ReplicaScope,
         profile: Profile,
         expected: Option<ReplicaVersion>,
-        moved: bool,
-        renamed: Vec<CredentialCopy>,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
         let id = profile.id;
-        // A profile the user placed in a group brings along the secrets it keeps personally;
-        // one that moved there already carried its own before it left the old space. A plain
-        // edit of a profile already in the group takes nothing: a secret reaches a group only
-        // when the user chose that space for the profile.
-        let requested = self
-            .state
-            .read_with(cx, |state, _| state.visible().placement(id) == Some(&scope));
-        let carried = match scope {
-            ReplicaScope::Personal => Carried::default(),
-            _ if moved || !requested => Carried::default(),
-            _ => {
-                self.carry(
-                    &profile,
-                    profile.credentials(),
-                    ReplicaScope::Personal,
-                    &scope,
-                    cx,
-                )
-                .await?
-            }
-        };
-        // A secret that was copied goes by a new id there: the profile follows it.
-        let copies = if moved {
-            renamed
-        } else {
-            carried.copies.clone()
-        };
-        let original = profile;
-        let profile = original.clone().rekeyed(&copies);
-        let sent = self
-            .replica
-            .put(scope.clone(), profile.clone(), expected)
-            .await;
-        match sent {
-            Ok(version) => {
-                self.agree(scope, version, profile.clone(), cx)?;
-                self.follow_copies(original, profile, cx).await
-            }
-            Err(error) => {
-                self.carry_back(id, &scope, ReplicaScope::Personal, carried.arrived())
-                    .await;
-                match error {
-                    ReplicaError::Forbidden { .. } => self.refused(id, profile, scope, cx).await,
-                    error => Err(remote_flow(error)),
-                }
-            }
-        }
-    }
-
-    /// The local profile follows the secrets that were copied for it, like the profile that
-    /// was sent does.
-    async fn follow_copies(
-        &self,
-        original: Profile,
-        rekeyed: Profile,
-        cx: &mut AsyncApp,
-    ) -> Result<(), Flow> {
-        if original == rekeyed {
-            return Ok(());
-        }
-        let id = original.id;
-        let saving = self.store.update(cx, |store, cx| {
-            store.save_profile_checked(rekeyed, Some(original), cx)
-        });
-        saving.await.map_err(|error| local_flow(id, error))
-    }
-
-    /// Moves the `credentials` of `shown` that are kept in `from` into `to`, and answers the
-    /// ones that arrived. A secret another profile staying in `from` still uses is copied
-    /// instead, so that profile keeps it. A space that refuses them is handled like a refusal
-    /// of the profile itself, before anything moved.
-    async fn carry(
-        &self,
-        shown: &Profile,
-        credentials: Vec<CredentialId>,
-        from: ReplicaScope,
-        to: &ReplicaScope,
-        cx: &mut AsyncApp,
-    ) -> Result<Carried, Flow> {
-        if credentials.is_empty() || from == *to {
-            return Ok(Carried::default());
-        }
-        let id = shown.id;
-        let shared = self.shared_secrets(id, &credentials, &from, cx);
-        let (copies, moves): (Vec<_>, Vec<_>) = credentials
-            .into_iter()
-            .partition(|credential| shared.contains(credential));
-        let mut arrived = Carried::default();
-        if !moves.is_empty() {
-            match self
-                .replica
-                .carry(id, from.clone(), to.clone(), moves)
-                .await
-            {
-                Ok(done) => arrived.moved = done,
-                Err(error) => {
-                    return self
-                        .carry_failed(error, shown, &from, to, arrived, cx)
-                        .await;
-                }
-            }
-        }
-        if !copies.is_empty() {
-            match self
-                .replica
-                .copy(id, from.clone(), to.clone(), copies)
-                .await
-            {
-                Ok(done) => arrived.copies = done,
-                Err(error) => {
-                    return self
-                        .carry_failed(error, shown, &from, to, arrived, cx)
-                        .await;
-                }
-            }
-        }
-        Ok(arrived)
-    }
-
-    /// A space that refuses the secrets is handled like a refusal of the profile itself;
-    /// the secrets that already arrived go back.
-    async fn carry_failed(
-        &self,
-        error: ReplicaError,
-        shown: &Profile,
-        from: &ReplicaScope,
-        to: &ReplicaScope,
-        arrived: Carried,
-        cx: &mut AsyncApp,
-    ) -> Result<Carried, Flow> {
-        self.carry_back(shown.id, to, from.clone(), arrived.arrived())
-            .await;
-        match error {
-            ReplicaError::Forbidden { .. } => {
-                self.refused(shown.id, shown.clone(), to.clone(), cx)
-                    .await?;
-                Ok(Carried::default())
-            }
-            error => Err(remote_flow(error)),
-        }
-    }
-
-    /// The `credentials` another profile that stays in `from` still uses.
-    fn shared_secrets(
-        &self,
-        id: ProfileId,
-        credentials: &[CredentialId],
-        from: &ReplicaScope,
-        cx: &mut AsyncApp,
-    ) -> Vec<CredentialId> {
-        let local = self
-            .store
-            .read_with(cx, |store, cx| store.profiles(cx).clone());
-        let state = self.state.read_with(cx, |state, _| state.visible().clone());
-        rules::shared_secrets(&local, &state, id, credentials, from)
-    }
-
-    /// Puts secrets that moved from `from` back into `to`, after the profile did not
-    /// follow. Best effort: a secret that cannot go back is still readable where it is.
-    async fn carry_back(
-        &self,
-        id: ProfileId,
-        from: &ReplicaScope,
-        to: ReplicaScope,
-        moved: Vec<CredentialId>,
-    ) {
-        if !moved.is_empty() {
-            let _ = self.replica.carry(id, from.clone(), to, moved).await;
+        match self.replica.put(profile.clone(), expected).await {
+            Ok(version) => Ok(self.agree(version, profile, cx)?),
+            Err(ReplicaError::Forbidden { .. }) => self.refused(id, profile, cx).await,
+            Err(error) => Err(remote_flow(error)),
         }
     }
 
     async fn push_delete(
         &self,
-        scope: ReplicaScope,
         id: ProfileId,
         expected: ReplicaVersion,
-        arrival: Option<&Arrival>,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
-        let agreed = self
-            .state
-            .read_with(cx, |state, _| state.visible().entry(id).cloned());
-        // The secrets of a profile that moves go first, so a space that refuses them is
-        // found before the profile leaves the one it is in.
-        let mut carried = Carried::default();
-        if let (Some(arrival), Some(entry)) = (arrival, &agreed) {
-            carried = self
-                .carry(
-                    &entry.profile,
-                    arrival.credentials.clone(),
-                    scope.clone(),
-                    &arrival.scope,
-                    cx,
-                )
-                .await?;
-            arrival.copied(&carried.copies);
-        }
-        match self.replica.delete(scope.clone(), id, expected).await {
-            Ok(_) => {
-                let arrival = arrival.map(|arrival| arrival.scope.clone());
-                Ok(self.record(cx, move |state| match arrival {
-                    Some(arrival) => state.leave_for(id, arrival),
-                    None => state.forget(id),
-                })?)
-            }
+        match self.replica.delete(id, expected).await {
+            Ok(_) => Ok(self.record(cx, move |state| state.forget(id))?),
             Err(ReplicaError::Forbidden { .. }) => {
-                if let Some(arrival) = arrival {
-                    self.carry_back(id, &arrival.scope, scope.clone(), carried.arrived())
-                        .await;
-                }
+                let agreed = self
+                    .state
+                    .read_with(cx, |state, _| state.visible().entry(id).cloned());
                 match agreed {
-                    Some(entry) => self.refused(id, entry.profile, scope, cx).await,
+                    Some(entry) => self.refused(id, entry.profile, cx).await,
                     None => Err(Flow::Refused),
                 }
             }
@@ -639,21 +350,18 @@ impl Round {
         }
     }
 
-    /// The account may not write `profile` in `scope`. The user is told once, and the
-    /// local profile goes back to what was last agreed, so nothing is sent again.
-    /// A profile never agreed stays local and, without a requested scope, is sent to
-    /// the personal one on the next attempt.
+    /// The account may not write `profile`. The user is told once, and the local profile
+    /// goes back to what was last agreed, so nothing is sent again. A profile never agreed
+    /// stays local.
     async fn refused(
         &self,
         id: ProfileId,
         profile: Profile,
-        scope: ReplicaScope,
         cx: &mut AsyncApp,
     ) -> Result<(), Flow> {
         let agreed = self
             .state
             .read_with(cx, |state, _| state.visible().entry(id).cloned());
-        self.record(cx, move |state| state.unplace(id))?;
         let restored = agreed.is_some();
         if let Some(entry) = agreed {
             let current = self
@@ -666,54 +374,27 @@ impl Round {
                 restoring.await.map_err(|error| local_flow(id, error))?;
             }
         }
-        let personal = scope == ReplicaScope::Personal;
         let event = ReplicationEvent::Refused {
             profile: Box::new(profile),
-            scope,
             restored,
         };
         self.events
             .update(cx, |this, cx| this.announce_refusal(id, event, cx))
             .map_err(gone)?;
-        if restored || personal {
-            Err(Flow::Refused)
-        } else {
-            Err(Flow::Conflict)
-        }
+        Err(Flow::Refused)
     }
 
-    /// The replica took what this client sent.
+    /// The replica's version stands, whether this client sent it, wrote it here or both
+    /// already held it.
     fn agree(
         &self,
-        scope: ReplicaScope,
         version: ReplicaVersion,
         profile: Profile,
         cx: &mut AsyncApp,
     ) -> Result<(), Stop> {
         let id = profile.id;
-        let entry = SyncedEntry {
-            scope,
-            version,
-            profile,
-        };
+        let entry = SyncedEntry { version, profile };
         self.record(cx, move |state| state.agree(id, entry))
-    }
-
-    /// The replica's version stands, whether it was written here or already matched.
-    fn adopt(
-        &self,
-        scope: ReplicaScope,
-        version: ReplicaVersion,
-        profile: Profile,
-        cx: &mut AsyncApp,
-    ) -> Result<(), Stop> {
-        let id = profile.id;
-        let entry = SyncedEntry {
-            scope,
-            version,
-            profile,
-        };
-        self.record(cx, move |state| state.adopt(id, entry))
     }
 
     fn record(

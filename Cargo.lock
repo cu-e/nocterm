@@ -5050,6 +5050,7 @@ dependencies = [
  "nocterm-explorer",
  "nocterm-files",
  "nocterm-hub-agents",
+ "nocterm-hub-agents-model",
  "nocterm-hub-io",
  "nocterm-hubs",
  "nocterm-hubs-model",

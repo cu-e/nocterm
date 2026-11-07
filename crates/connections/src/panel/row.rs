@@ -1,5 +1,6 @@
 //! The same passive server row supplies sidebar content and its drag appearance.
 use super::*;
+use crate::agent_access::{AgentAccessState, AgentServer};
 use gpui_kit::{Div, ObjectFit, base::ElementExt as _};
 use nocterm_ui::{DragSource, IconName};
 
@@ -14,6 +15,8 @@ pub(super) struct RowVisual {
     flag: Option<(String, Arc<Image>)>,
     group: Option<String>,
     tooltip: Option<String>,
+    /// What the hub's agents found on the server, in a hub window that lets them sign in to it.
+    agents: Option<AgentAccessState>,
 }
 
 impl RowVisual {
@@ -32,7 +35,32 @@ impl RowVisual {
             flag: installed
                 .shown_country(profile, cx)
                 .and_then(|code| Some((code.to_uppercase(), installed.flag(&code, cx)?))),
+            agents: installed
+                .inputs()
+                .agent_access()
+                .and_then(|access| access.state(&AgentServer::of(profile), cx)),
         }
+    }
+
+    /// The agent access state beside the name: quiet while agents sign in, a warning otherwise.
+    fn agents_badge(&self, cx: &App) -> Option<impl IntoElement + use<>> {
+        let state = self.agents?;
+        let theme = cx.theme();
+        let color = if state.is_ready() {
+            theme.muted_foreground
+        } else {
+            theme.warning
+        };
+        Some(
+            div()
+                .id(SharedString::from(format!("connection-agents-{}", self.id)))
+                .test_support()
+                .aria_label(state.label())
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(color)
+                .child(state.label()),
+        )
     }
 
     fn buttons(&self) -> (Button, Button) {
@@ -126,7 +154,8 @@ impl RowVisual {
                                             })
                                         }),
                                 )
-                            }),
+                            })
+                            .children(self.agents_badge(cx)),
                     )
                     .child(
                         div()

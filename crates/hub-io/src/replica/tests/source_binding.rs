@@ -14,8 +14,8 @@ async fn queued_replica_mutations_never_choose_the_replacement_account() {
     let fixture = NativeAccounts::new();
     let replica = captured(&fixture);
     let item = profile("A");
-    let put = replica.put(ReplicaScope::Personal, item.clone(), None);
-    let delete = replica.delete(ReplicaScope::Personal, item.id, ReplicaVersion::new(1));
+    let put = replica.put(item.clone(), None);
+    let delete = replica.delete(item.id, ReplicaVersion::new(1));
     fixture.login(1);
     assert!(matches!(put.await, Err(ReplicaError::Stale)));
     assert!(matches!(delete.await, Err(ReplicaError::Stale)));
@@ -41,9 +41,7 @@ async fn queued_replica_mutations_never_choose_the_replacement_account() {
 async fn late_replica_changes_publish_no_page_for_b() {
     let fixture = NativeAccounts::new();
     let a = captured(&fixture);
-    a.put(ReplicaScope::Personal, profile("A"), None)
-        .await
-        .unwrap();
+    a.put(profile("A"), None).await.unwrap();
     let (entered, release) = fixture.hub(0).pause_next(StoreBoundary::ChangesReady);
     let old = a.changes(None);
     entered.wait().await;
@@ -58,10 +56,7 @@ async fn late_replica_changes_publish_no_page_for_b() {
 async fn a_finished_replica_page_is_rechecked_when_its_caller_first_polls() {
     let fixture = NativeAccounts::new();
     let replica = captured(&fixture);
-    replica
-        .put(ReplicaScope::Personal, profile("A"), None)
-        .await
-        .unwrap();
+    replica.put(profile("A"), None).await.unwrap();
     let calls = fixture.hub(0).change_calls();
     let old = replica.changes(None);
     while fixture.hub(0).change_calls() == calls {
@@ -81,7 +76,7 @@ async fn an_old_replica_stays_stale_after_same_account_login_and_a_b_a() {
     fixture.login(1);
     fixture.login(0);
     assert!(matches!(
-        next.put(ReplicaScope::Personal, profile("old"), None).await,
+        next.put(profile("old"), None).await,
         Err(ReplicaError::Stale)
     ));
     assert!(
@@ -98,10 +93,7 @@ async fn an_old_replica_stays_stale_after_same_account_login_and_a_b_a() {
 async fn a_queued_watch_tick_cannot_outlive_its_original_account_capture() {
     let fixture = NativeAccounts::new();
     let replica = captured(&fixture);
-    replica
-        .put(ReplicaScope::Personal, profile("A"), None)
-        .await
-        .unwrap();
+    replica.put(profile("A"), None).await.unwrap();
     let (entered, release) = fixture.hub(0).pause_next(StoreBoundary::WatchReady);
     let mut old = replica.watch();
     entered.wait().await;
@@ -121,9 +113,6 @@ async fn a_valid_source_from_another_hub_cannot_select_this_accounts_ports() {
         a.operations().bind(b.source()),
         Err(HubError::Stale)
     ));
-    captured(&a)
-        .put(ReplicaScope::Personal, profile("A"), None)
-        .await
-        .unwrap();
+    captured(&a).put(profile("A"), None).await.unwrap();
     assert!(captured(&b).changes(None).await.unwrap().changes.is_empty());
 }

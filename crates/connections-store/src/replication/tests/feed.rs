@@ -9,7 +9,6 @@ fn page(cursor: &str, profiles: Vec<Profile>, more: bool) -> ReplicaPage {
             .into_iter()
             .map(|profile| RemoteProfile {
                 id: profile.id,
-                scope: ReplicaScope::Personal,
                 version: ReplicaVersion::new(1),
                 body: RemoteBody::Present(Box::new(profile)),
             })
@@ -84,7 +83,6 @@ fn excessive_change_counts_are_refused_before_planning(cx: &mut gpui::TestAppCon
     let candidate = profile("not-applied");
     let fixture = Fixture::new(cx, &[]);
     let change = RemoteProfile {
-        scope: ReplicaScope::Personal,
         id: candidate.id,
         version: ReplicaVersion::new(1),
         body: RemoteBody::Deleted,

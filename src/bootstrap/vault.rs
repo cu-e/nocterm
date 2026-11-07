@@ -47,10 +47,9 @@ pub(super) fn install_vault(
     vault: Arc<dyn VaultAccess>,
     ready: &nocterm_ui::UiReady,
     connections: Option<gpui_kit::Entity<nocterm_connections::Connections>>,
-    spaces: nocterm_connections::CredentialSpaces,
     cx: &mut App,
 ) -> OpenedVault {
-    let credentials = credential_provider(vault.clone(), connections, spaces);
+    let credentials = credential_provider(vault.clone(), connections);
     OpenedVault {
         installed: Rc::new(nocterm_vault_ui::install(
             nocterm_vault_ui::Deps::new(vault),
@@ -67,7 +66,6 @@ pub(super) fn install_vault(
 pub(crate) fn credential_provider(
     vault: Arc<dyn VaultAccess>,
     connections: Option<gpui_kit::Entity<nocterm_connections::Connections>>,
-    spaces: nocterm_connections::CredentialSpaces,
 ) -> nocterm_terminal::CredentialProvider {
     nocterm_terminal::CredentialProvider::new(
         Arc::new(nocterm_vault_ui::VaultCredentials::new(vault)),
@@ -93,9 +91,6 @@ pub(crate) fn credential_provider(
             else {
                 return gpui_kit::Task::ready(Ok(()));
             };
-            // The password belongs to the space of the connection it was typed for: a
-            // connection of another space that shares the address is left as it is.
-            let scope = spaces.within_space_of(scope, profile, cx);
             let association = connections.update(cx, |connections, cx| {
                 connections.associate_credential(scope, id, cx)
             });

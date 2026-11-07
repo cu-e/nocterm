@@ -90,8 +90,6 @@ pub enum TransferError {
     Runtime(#[source] SharedCause),
     #[error("Invalid transfer limit: {0}")]
     InvalidLimit(&'static str),
-    #[error("This host has no local filesystem for transfers.")]
-    LocalUnavailable,
     #[error("Source and destination are both this computer.")]
     SameLocalEndpoints,
     #[error("The destination is inside a source folder.")]

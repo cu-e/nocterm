@@ -25,8 +25,8 @@ use crate::{
     Connections, Installed, open_editor,
     os::{self, Os},
     session_intents::open_profile,
-    spaces::Spaces,
 };
+use account_state::AccountState;
 
 pub(crate) mod account_state;
 mod folder;
@@ -144,12 +144,20 @@ impl ConnectionsPanel {
                 _ => {}
             }),
         ];
-        // Where connections live changes with the account, not only with the profiles.
+        // Whether the list may be changed follows the account, not only the profiles.
         if let Some(replication) = installed.replication() {
             subscriptions.push(cx.observe(replication, |this, _, cx| {
                 this.listing.invalidate();
                 cx.notify();
             }));
+        }
+        // The rows show what the hub's agents found on each server.
+        if let Some(access) = installed.inputs().agent_access() {
+            let panel = cx.weak_entity();
+            let changed = move |cx: &mut App| {
+                let _ = panel.update(cx, |_, cx| cx.notify());
+            };
+            subscriptions.push(access.observe(Box::new(changed), cx));
         }
         Self {
             installed,
@@ -165,7 +173,7 @@ impl ConnectionsPanel {
 
     /// Whether the list may be changed now: see [`account_state`].
     fn editable(&self, cx: &App) -> bool {
-        Spaces::of(&self.installed, cx).editable()
+        AccountState::of(&self.installed, cx).editable()
     }
 
     fn filter_text(&self, cx: &App) -> String {
@@ -203,7 +211,7 @@ impl ConnectionsPanel {
     }
 
     fn edit(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
-        if !Spaces::of(&self.installed, cx).writable(id, cx) {
+        if !self.editable(cx) {
             return;
         }
         let profile = self
@@ -225,7 +233,7 @@ impl ConnectionsPanel {
     }
 
     fn confirm_delete(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
-        if !Spaces::of(&self.installed, cx).writable(id, cx) {
+        if !self.editable(cx) {
             return;
         }
         let Some(name) = self
@@ -269,10 +277,14 @@ impl ConnectionsPanel {
         });
     }
 
-    /// The user's own connections in folder `group`.
+    /// The connections in folder `group`.
     fn folder_members(&self, group: &str, cx: &App) -> Vec<ProfileId> {
         let profiles = self.installed.connections().read(cx).profiles(cx);
-        Spaces::of(&self.installed, cx).folder_members(profiles, group, cx)
+        profiles
+            .in_group(Some(group), "")
+            .iter()
+            .map(|profile| profile.id)
+            .collect()
     }
 
     fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -477,7 +489,7 @@ impl ConnectionsPanel {
 
     fn render_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let filter = self.filter_text(cx);
-        let spaces = Spaces::of(&self.installed, cx);
+        let editable = self.editable(cx);
         let profiles = self.installed.connections().read(cx).profiles(cx);
         let rename = self.renaming.as_ref().map(|rename| {
             (
@@ -486,7 +498,7 @@ impl ConnectionsPanel {
             )
         });
         self.listing
-            .prepare(profiles, &spaces, &filter, &self.collapsed, rename, cx);
+            .prepare(profiles, editable, &filter, &self.collapsed, rename);
         if self.listing.empty() {
             return self.render_empty(cx).into_any_element();
         }
@@ -572,9 +584,9 @@ impl Render for ConnectionsPanel {
                     .persistence_error(cx)
                     .map(|error| error.to_string())
             });
-        let spaces = Spaces::of(&self.installed, cx);
-        let editable = spaces.editable();
-        let notice = spaces.notice();
+        let account = AccountState::of(&self.installed, cx);
+        let editable = account.editable();
+        let notice = account.notice();
         let theme = cx.theme();
         let danger = theme.danger;
 

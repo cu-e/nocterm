@@ -221,10 +221,7 @@ write batch is acknowledged, so a worker holds at most two batches of buffers. S
 reservation, collision policy and publication are shared with uploads. `read_batch` is an
 additive `RemoteDownload` method (sequential by default); the SFTP adapter keeps up to
 eight READs in flight and returns the in-order prefix up to the first short or
-end-of-file reply, and downloads use it too. `TransferRuntimeDeps::remote_only` builds a
-runtime without a `LocalFs`, which refuses upload and download requests with
-`LocalUnavailable` and still runs relays. The
-runtime also implements the narrow `TransferRequests` port for agents
+end-of-file reply, and downloads use it too. The runtime also implements the narrow `TransferRequests` port for agents
 ([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
 
 Sources open relative to held directories. Local destination reservations combine
@@ -449,7 +446,7 @@ chat service nor its views depend on the adapter ([ADR 0106](../adr/0106-shared-
 
 ## Native hub account admission
 
-`nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache, replica-space and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+`nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
 
 
 Agent access edits of `authorized_keys` use the SFTP adapter's fixed no-clobber owner lock,

@@ -65,8 +65,8 @@ pub enum ProfileMutation {
         expected: Vec<ProfileId>,
     },
     /// Moves the listed `members` of folder `from` to folder `to` (`None`: the top level).
-    /// Connections of the folder that are not listed, such as those another space holds,
-    /// stay where they are.
+    /// Connections of the folder that are not listed, such as one that joined it after it
+    /// was shown, stay where they are.
     Regroup {
         members: Vec<ProfileId>,
         from: String,

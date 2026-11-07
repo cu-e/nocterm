@@ -91,19 +91,6 @@ pub(crate) struct PendingHubs {
     agent_hosts: Option<Arc<dyn nocterm_ssh_keys::authorized_keys::ConnectedHosts>>,
 }
 
-/// Lets Agent access reach the sessions of saved connections once both are installed.
-fn observe_agent_hosts(
-    pending: Option<&PendingHubs>,
-    connections: Option<&nocterm_connections::Installed>,
-    cx: &App,
-) {
-    if let (Some(pending), Some(connections)) = (pending, connections)
-        && let Some(sessions) = pending.agent_hosts.clone()
-    {
-        crate::agent_hosts::observe(sessions, connections, cx.background_executor().clone());
-    }
-}
-
 fn start_hubs(
     pending: Option<PendingHubs>,
     inputs: nocterm_connections::ConnectionInputs,
@@ -115,7 +102,7 @@ fn start_hubs(
         hubs,
         accounts,
         agents,
-        ..
+        agent_hosts,
     } = pending?;
     let sources = accounts.map(|accounts| {
         let (hubs, terminal) = (hubs.hubs().clone(), terminal.clone());
@@ -124,9 +111,9 @@ fn start_hubs(
         cx.new(|cx| {
             let sources =
                 crate::hub_sources::HubSources::new(accounts, hubs, inputs, terminal, ready, cx);
-            match agents {
-                Some(agents) => sources.with_agents(agents),
-                None => sources,
+            match (agents, agent_hosts) {
+                (Some(agents), Some(hosts)) => sources.with_agents(agents, hosts),
+                _ => sources,
             }
         })
     });
@@ -364,7 +351,6 @@ pub(crate) fn bootstrap(services: Services, cx: &mut App) -> Result<Booted, Boot
     let connections = offer_keys(connections, vault.as_ref(), cx);
     let connection_inputs = connections.inputs();
     let connections = install_connections(connections, &ui, &shutdown, cx);
-    observe_agent_hosts(hubs.as_ref(), connections.as_ref(), cx);
     let (terminal, vault) = install_terminal(terminal_deps, vault, &ui, connections.as_ref(), cx);
     let hubs = start_hubs(hubs, connection_inputs, &terminal, &ui, cx);
     let projects = install_projects(
@@ -514,10 +500,7 @@ fn install_terminal(
     Option<Rc<nocterm_vault_ui::Installed>>,
 ) {
     let association_owner = connections.map(|installed| installed.connections().clone());
-    let spaces = connections
-        .map(nocterm_connections::Installed::credential_spaces)
-        .unwrap_or_default();
-    let vault = vault.map(|vault| install_vault(vault, ready, association_owner, spaces, cx));
+    let vault = vault.map(|vault| install_vault(vault, ready, association_owner, cx));
     let (terminal, vault) = match vault {
         Some(opened) => (
             terminal.with_credentials(opened.credentials),

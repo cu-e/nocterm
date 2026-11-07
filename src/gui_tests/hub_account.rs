@@ -6,7 +6,6 @@ use crate::hub_sources::{AccountAccess, HubAccounts};
 use crate::shell_setup::UserPluginMode;
 use nocterm_connections_model::{
     profiles::Profile,
-    replica::ReplicaScope,
     test_support::{MemoryReplica, profile_id_for},
 };
 use nocterm_hubs_model::{
@@ -260,9 +259,7 @@ fn a_hub_window_shows_the_profiles_of_its_account_and_the_local_window_shows_its
 ) {
     let account = Account::new();
     let remote = profile("remote");
-    account
-        .replica
-        .write_remote(ReplicaScope::Personal, remote.clone());
+    account.replica.write_remote(remote.clone());
     let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
     let local = profile("local-box");
     save(
@@ -336,9 +333,7 @@ fn a_hub_window_of_an_unreachable_account_cannot_be_composed(cx: &mut TestAppCon
 #[gpui_kit::test]
 fn signing_out_empties_the_hub_window_and_locks_its_vault(cx: &mut TestAppContext) {
     let account = Account::new();
-    account
-        .replica
-        .write_remote(ReplicaScope::Personal, profile("remote"));
+    account.replica.write_remote(profile("remote"));
     let vault_of_account = account.vault.clone();
     let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
     world.open(&home(), cx);
@@ -364,9 +359,7 @@ fn a_secret_typed_in_a_hub_window_is_kept_in_the_hub_vault_for_the_hub_connectio
     cx.executor().allow_parking();
     let account = Account::new();
     let remote = profile("remote");
-    account
-        .replica
-        .write_remote(ReplicaScope::Personal, remote.clone());
+    account.replica.write_remote(remote.clone());
     let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
     world.open(&home(), cx);
     let sources = cx
@@ -438,9 +431,7 @@ fn a_locked_account_asks_for_its_vault_in_the_window_and_lists_after_the_unlock(
     cx: &mut TestAppContext,
 ) {
     let account = Account::new();
-    account
-        .replica
-        .write_remote(ReplicaScope::Personal, profile("remote"));
+    account.replica.write_remote(profile("remote"));
     account.vault.lock();
     account.replica.set_locked(true);
     let (replica, vault_of_account) = (account.replica.clone(), account.vault.clone());
@@ -475,40 +466,23 @@ fn a_locked_account_asks_for_its_vault_in_the_window_and_lists_after_the_unlock(
 }
 
 #[gpui_kit::test]
-fn a_refused_change_to_a_shared_connection_is_undone_and_announced_once(cx: &mut TestAppContext) {
-    use nocterm_connections_model::replica::{ReplicaAccess, ReplicaSpace};
+fn a_refused_change_to_a_connection_is_undone_and_announced_once(cx: &mut TestAppContext) {
     let account = Account::new();
-    let acme = ReplicaScope::Organization("acme".into());
-    let shared = profile("shared");
-    account.replica.set_spaces(vec![
-        ReplicaSpace {
-            scope: ReplicaScope::Personal,
-            name: "Personal".into(),
-            access: ReplicaAccess::Write,
-        },
-        ReplicaSpace {
-            scope: acme.clone(),
-            name: "Acme".into(),
-            access: ReplicaAccess::Read,
-        },
-    ]);
-    account.replica.write_remote(acme.clone(), shared.clone());
-    account.replica.refuse_writes_in(acme);
+    let saved = profile("saved");
+    account.replica.write_remote(saved.clone());
+    account.replica.refuse_writes();
     let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
     let (handle, _workspace) = world.open(&home(), cx);
-    assert_eq!(
-        world.profiles_of(&home(), cx),
-        std::slice::from_ref(&shared)
-    );
+    assert_eq!(world.profiles_of(&home(), cx), std::slice::from_ref(&saved));
 
-    let mut edited = shared.clone();
+    let mut edited = saved.clone();
     edited.name = "renamed".into();
     save(&world.store_of(&home(), cx), edited, cx);
 
     assert_eq!(
         world.profiles_of(&home(), cx),
-        [shared],
-        "the shared version is back"
+        [saved],
+        "the synchronized version is back"
     );
     let notices = cx
         .update_window(handle, |_, window, cx| {
@@ -556,9 +530,7 @@ fn removing_and_readding_a_hub_builds_a_fresh_mirror_and_keeps_the_old_window_re
     cx: &mut TestAppContext,
 ) {
     let account = Account::new();
-    account
-        .replica
-        .write_remote(ReplicaScope::Personal, profile("remote"));
+    account.replica.write_remote(profile("remote"));
     let world = world(FakeAccounts::of(vec![(hub_id(ADDRESS), account)]), cx);
     let (_window, _workspace) = world.open(&home(), cx);
     let old = world.store_of(&home(), cx);

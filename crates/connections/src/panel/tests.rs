@@ -19,11 +19,11 @@ fn add_servers(
 }
 
 mod account_state;
+mod agents;
 mod drag;
 mod list;
 mod rename;
 mod reorder;
-mod spaces;
 
 #[test]
 fn description_preview_and_tooltip_are_bounded_without_losing_unicode() {

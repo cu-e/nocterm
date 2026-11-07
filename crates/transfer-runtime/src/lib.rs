@@ -2,7 +2,7 @@
 //!
 //! Owns: bounded scheduling, entropy, cancellation, reservations and cleanup.
 //! Does not own: native filesystem syscalls, UI, request rules or progress rules.
-//! Ports used: optional `LocalFs` (absent in remote-only runtimes), `LocalDirectory`, `LocalSource`, `LocalStage`, `RemoteFs`.
+//! Ports used: `LocalFs`, `LocalDirectory`, `LocalSource`, `LocalStage`, `RemoteFs`.
 //! Ports provided: `TransferService`, `TransferRequests`. Settings section: none. Globals: none.
 //! Remote sources share one bounded DFS with destination-specific names and held capabilities.
 //! Downloads and relays share a two-batch pipeline that joins pending writes before cleanup.

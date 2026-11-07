@@ -10,7 +10,7 @@ use nocterm_hubs_model::{HubId, source_identity::LocalAccountSourceFactory as _}
 use nocterm_vault::VaultAccess;
 use std::sync::Arc;
 
-use super::notices::{notify, refusal_message, space_name};
+use super::notices::{notify, refusal_message};
 
 pub(super) struct FollowInputs {
     replica: super::AccountReplicas,
@@ -65,15 +65,9 @@ impl Follow {
             runtime,
         } = inputs;
         let observed = cx.observe(&hubs, |this, _, cx| this.follow(cx));
-        let refusals = cx.subscribe(&replication, |_, replication, event, cx| {
-            if let ReplicationEvent::Refused {
-                profile,
-                scope,
-                restored,
-            } = event
-            {
-                let space = space_name(&replication.read(cx).spaces(), scope);
-                let message = refusal_message(profile, &space, scope, *restored);
+        let refusals = cx.subscribe(&replication, |_, _, event, cx| {
+            if let ReplicationEvent::Refused { profile, restored } = event {
+                let message = refusal_message(profile, *restored);
                 gpui_kit::App::defer(cx, move |cx| notify(message, cx));
             }
         });

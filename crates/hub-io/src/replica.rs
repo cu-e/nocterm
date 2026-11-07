@@ -3,8 +3,6 @@
 //! [`HubProfileReplica`] implements the replica port of the connection store over the
 //! account's `profiles` collection. It works only while the vault is unlocked, because the keys
 //! that seal profiles are the vault's; locked or unreachable is "unavailable", never an error.
-//! The account has one space, its own: a write to any other scope is
-//! [`ReplicaError::Forbidden`].
 
 mod watch;
 mod wire;
@@ -14,7 +12,7 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use nocterm_connections_model::profiles::{Profile, ProfileId};
 use nocterm_connections_model::replica::{
-    ProfileReplica, ReplicaCursor, ReplicaError, ReplicaPage, ReplicaScope, ReplicaVersion,
+    ProfileReplica, ReplicaCursor, ReplicaError, ReplicaPage, ReplicaVersion,
 };
 use nocterm_core::SharedCause;
 use nocterm_hubs_model::HubError;
@@ -112,7 +110,7 @@ async fn changes(
     let mut position = from;
     for object in &batch.changes {
         position = position.max(object.stream_version);
-        if let Some(profile) = wire::read(ReplicaScope::Personal, at.id(), at.key(), object)? {
+        if let Some(profile) = wire::read(at.id(), at.key(), object)? {
             seen.push(profile);
         }
     }
@@ -128,15 +126,7 @@ async fn changes(
 }
 
 /// The collection a write goes to: the account's own, created by the first write.
-async fn target(
-    store: &Store,
-    scope: &ReplicaScope,
-    id: ProfileId,
-    create: bool,
-) -> Result<Located, ReplicaError> {
-    if *scope != ReplicaScope::Personal {
-        return Err(ReplicaError::Forbidden { id });
-    }
+async fn target(store: &Store, id: ProfileId, create: bool) -> Result<Located, ReplicaError> {
     let located = if create {
         store.ensure(PROFILES_KIND).await.map(Some)
     } else {
@@ -148,7 +138,6 @@ async fn target(
 
 async fn put(
     work: OpenedWork,
-    scope: ReplicaScope,
     profile: Profile,
     expected: Option<ReplicaVersion>,
 ) -> Result<ReplicaVersion, ReplicaError> {
@@ -156,7 +145,7 @@ async fn put(
     let store = work.store();
     let plaintext =
         wire::encode(&profile).map_err(|error| ReplicaError::Other(SharedCause::new(error)))?;
-    let at = target(&store, &scope, id, true).await?;
+    let at = target(&store, id, true).await?;
     let stored = store
         .put(
             &at,
@@ -172,12 +161,11 @@ async fn put(
 
 async fn delete(
     work: OpenedWork,
-    scope: ReplicaScope,
     id: ProfileId,
     expected: ReplicaVersion,
 ) -> Result<ReplicaVersion, ReplicaError> {
     let store = work.store();
-    let at = target(&store, &scope, id, false).await?;
+    let at = target(&store, id, false).await?;
     let stored = store
         .remove(&at, &id.to_string(), expected.get())
         .await
@@ -195,20 +183,18 @@ impl ProfileReplica for HubProfileReplica {
 
     fn put(
         &self,
-        scope: ReplicaScope,
         profile: Profile,
         expected: Option<ReplicaVersion>,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
-        self.run(move |work| put(work, scope, profile, expected))
+        self.run(move |work| put(work, profile, expected))
     }
 
     fn delete(
         &self,
-        scope: ReplicaScope,
         id: ProfileId,
         expected: ReplicaVersion,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
-        self.run(move |work| delete(work, scope, id, expected))
+        self.run(move |work| delete(work, id, expected))
     }
 
     fn watch(&self) -> BoxStream<'static, ()> {

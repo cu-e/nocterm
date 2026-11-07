@@ -1,7 +1,7 @@
 //! Ordered connection publication and bounded raw server-fact acquisition.
 //! Owns: checked profiles/recents, committed publication carrier, raw Known/flag
 //! state, original-source tickets, policy history, physical reservations and capture,
-//! and the synchronization of profiles with a replica (ProfileReplication), including a move between scopes (delete in the old, write in the new) and the rollback of a refused change.
+//! and the synchronization of profiles with a replica (ProfileReplication), including the rollback of a refused change.
 //! Does not own: native I/O, views/images, session providers, settings storage,
 //! credentials, terminal implementation or observation composition.
 //! Ports used: supplied writers/clock, DNS/country/flag/OS observation contracts,

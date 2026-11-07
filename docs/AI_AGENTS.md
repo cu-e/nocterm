@@ -417,13 +417,10 @@ reconnect: if an endpoint is offline the call fails and the agent should open th
 terminal again and retry. Quitting Nocterm freezes and drains the shared transfer
 queue like Files transfers.
 
-Cloud agents on a managed or own runner can use the same tools when their agent
-definition's tool policy allows them (`all`, or the names listed). A Cloud run's
-authority covers exactly one session, so on the runner a transfer works only within
-that session's server: source and destination terminal must both be that session.
-The runner has no local filesystem, so local endpoints are unavailable there.
-Transfers are not durable across a runner restart. A device that has not been
-updated to understand these tools cannot read a Cloud event stream that contains one.
+Hub agents ([ADR 0148](adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md))
+run on the hub, not on this computer: they reach the servers given Agent access with
+the account's agent key and use the hub's own server tools, never these terminal and
+transfer tools. See [Hubs](HUBS.md#agents-of-a-hub).
 
 Agents also have their own permission prompts (for example before running a tool
 of their own or accessing files). **Agent permissions → Ask before an agent uses

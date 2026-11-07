@@ -1,8 +1,10 @@
 //! Agent access of the saved servers of a hub window, over the hub agents service (ADR 0148):
-//! the connection editor's switch reads and changes the hub's agent servers through it.
-use gpui_kit::{App, Entity, Task};
-use nocterm_connections::{AgentAccessRefused, AgentServer, ServerAgentAccess};
-use nocterm_hub_agents::{AgentAccessError, AgentTarget, HubAgents};
+//! the connection editor's switch and the state on the servers' rows read and change the hub's
+//! agent servers through it.
+use gpui_kit::{App, Entity, Subscription, Task};
+use nocterm_connections::{AgentAccessRefused, AgentAccessState, AgentServer, ServerAgentAccess};
+use nocterm_hub_agents::{AgentAccessError, AgentTarget, HubAgents, HubAgentsEvent};
+use nocterm_hub_agents_model::ServerStatus;
 use nocterm_hubs_model::HubId;
 use nocterm_ssh_keys::authorized_keys::HostAccessError;
 
@@ -18,11 +20,13 @@ impl HubServerAccess {
 }
 
 impl ServerAgentAccess for HubServerAccess {
-    fn granted(&self, server: &AgentServer, cx: &App) -> bool {
-        self.agents
-            .read(cx)
-            .server_of(&self.hub, &target(server))
-            .is_some()
+    fn state(&self, server: &AgentServer, cx: &App) -> Option<AgentAccessState> {
+        let record = self.agents.read(cx).server_of(&self.hub, &target(server))?;
+        Some(state(record.status))
+    }
+
+    fn session_open(&self, server: &AgentServer, cx: &App) -> bool {
+        self.agents.read(cx).session_open(&server.connection)
     }
 
     fn set(
@@ -44,6 +48,27 @@ impl ServerAgentAccess for HubServerAccess {
         cx.background_executor()
             .spawn(async move { change.await.map_err(|error| refusal(&error)) })
     }
+
+    fn observe(&self, changed: Box<dyn Fn(&mut App)>, cx: &mut App) -> Subscription {
+        let hub = self.hub.clone();
+        cx.subscribe(&self.agents, move |_, event: &HubAgentsEvent, cx| {
+            if matches!(event, HubAgentsEvent::Changed(changed_hub) if *changed_hub == hub) {
+                changed(cx);
+            }
+        })
+    }
+}
+
+/// What the row of a server says about what the agents last found there.
+fn state(status: ServerStatus) -> AgentAccessState {
+    match status {
+        ServerStatus::Unchecked => AgentAccessState::Unchecked,
+        ServerStatus::Ready => AgentAccessState::Ready,
+        ServerStatus::NoAccess => AgentAccessState::NoAccess,
+        ServerStatus::HostKeyChanged => AgentAccessState::HostKeyChanged,
+        ServerStatus::Unreachable => AgentAccessState::Unreachable,
+        ServerStatus::KeyRotated => AgentAccessState::Reconnect,
+    }
 }
 
 fn target(server: &AgentServer) -> AgentTarget {
@@ -60,7 +85,7 @@ fn target(server: &AgentServer) -> AgentTarget {
 fn refusal(error: &AgentAccessError) -> AgentAccessRefused {
     AgentAccessRefused::new(match error {
         AgentAccessError::NotConnected => {
-            "Connect to the server first: its key is written through your open session.".to_owned()
+            "The session to the server closed before the key was written. Try again.".to_owned()
         }
         AgentAccessError::UnknownHostKey => {
             "This device has no recorded host key for the server. Connect to it once, then try again."
@@ -85,7 +110,7 @@ mod tests {
     #[test]
     fn a_refusal_names_what_to_do_next() {
         let missing = refusal(&AgentAccessError::NotConnected);
-        assert!(missing.reason().contains("Connect to the server first"));
+        assert!(missing.reason().contains("Try again"));
         let locked = refusal(&AgentAccessError::Host(HostAccessError::EditLocked {
             path: "/home/u/.ssh/.lock".into(),
         }));

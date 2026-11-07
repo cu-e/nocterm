@@ -3,7 +3,6 @@
 use super::hub_account::{ADDRESS, Account, FakeAccounts, PASSPHRASE, World, home, hub_id, world};
 use super::*;
 use crate::windows::AppEnvironmentOpener;
-use nocterm_connections_model::replica::ReplicaScope;
 use nocterm_hubs_model::Environment;
 use nocterm_hubs_ui::{EnvironmentOpener as _, Placement};
 use nocterm_vault::{VaultAccess as _, VaultStatus};
@@ -13,10 +12,9 @@ fn locked_account(
     cx: &mut TestAppContext,
 ) -> (World, Arc<nocterm_vault::testing::ScriptedVaultAccess>) {
     let account = Account::new();
-    account.replica.write_remote(
-        ReplicaScope::Personal,
-        super::hub_account::profile("remote"),
-    );
+    account
+        .replica
+        .write_remote(super::hub_account::profile("remote"));
     account.vault.lock();
     account.replica.set_locked(true);
     let vault = account.vault.clone();

@@ -54,11 +54,7 @@ async fn a_profile_put_on_one_device_arrives_on_another() {
     let hub = Arc::new(MemoryHub::default());
     let (first, record) = device(&hub);
     let web = profile("web");
-    let version = first
-        .replica
-        .put(ReplicaScope::Personal, web.clone(), None)
-        .await
-        .unwrap();
+    let version = first.replica.put(web.clone(), None).await.unwrap();
     assert_eq!(version, ReplicaVersion::new(1));
 
     let dir = tempfile::tempdir().unwrap();
@@ -80,26 +76,11 @@ async fn a_stale_write_conflicts_and_a_delete_is_a_tombstone() {
     let hub = Arc::new(MemoryHub::default());
     let (device, _) = device(&hub);
     let web = profile("web");
-    let v1 = device
-        .replica
-        .put(ReplicaScope::Personal, web.clone(), None)
-        .await
-        .unwrap();
-    let again = device
-        .replica
-        .put(ReplicaScope::Personal, web.clone(), None)
-        .await;
+    let v1 = device.replica.put(web.clone(), None).await.unwrap();
+    let again = device.replica.put(web.clone(), None).await;
     assert!(matches!(again, Err(ReplicaError::Conflict { id }) if id == web.id));
-    let v2 = device
-        .replica
-        .put(ReplicaScope::Personal, web.clone(), Some(v1))
-        .await
-        .unwrap();
-    let v3 = device
-        .replica
-        .delete(ReplicaScope::Personal, web.id, v2)
-        .await
-        .unwrap();
+    let v2 = device.replica.put(web.clone(), Some(v1)).await.unwrap();
+    let v3 = device.replica.delete(web.id, v2).await.unwrap();
     assert!(v3 > v2);
     let page = device.replica.changes(None).await.unwrap();
     assert_eq!(page.changes.len(), 1);
@@ -127,10 +108,7 @@ async fn closing_account_keys_makes_the_original_replica_stale() {
         Err(ReplicaError::Stale)
     ));
     assert!(matches!(
-        device
-            .replica
-            .put(ReplicaScope::Personal, profile("web"), None)
-            .await,
+        device.replica.put(profile("web"), None).await,
         Err(ReplicaError::Stale)
     ));
 }
@@ -140,11 +118,7 @@ async fn a_profile_the_hub_altered_stops_the_feed_with_an_error() {
     let hub = Arc::new(MemoryHub::default());
     let (device, _) = device(&hub);
     let web = profile("web");
-    device
-        .replica
-        .put(ReplicaScope::Personal, web.clone(), None)
-        .await
-        .unwrap();
+    device.replica.put(web.clone(), None).await.unwrap();
     let collection = hub.collections(PROFILES_KIND).await.unwrap().remove(0);
     hub.tamper(&collection.collection_id, &web.id.to_string(), vec![5; 64]);
     assert!(matches!(
@@ -175,20 +149,4 @@ async fn an_old_watch_ends_after_lock_and_a_fresh_capture_watches_after_unlock()
             .unwrap(),
         Some(())
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_write_to_another_space_than_the_accounts_own_is_forbidden() {
-    let hub = Arc::new(MemoryHub::default());
-    let (device, _) = device(&hub);
-    let result = device
-        .replica
-        .put(
-            ReplicaScope::Organization("acme".into()),
-            profile("web"),
-            None,
-        )
-        .await;
-    assert!(matches!(result, Err(ReplicaError::Forbidden { .. })));
-    assert!(hub.collections(PROFILES_KIND).await.unwrap().is_empty());
 }

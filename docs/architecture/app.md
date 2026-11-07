@@ -85,7 +85,10 @@ A window shows one environment ([ADR 0104](../adr/0104-a-window-shows-one-enviro
 `src/hub_sources.rs` builds one `HubSource` per hub on first use and shares it between that
 hub's windows: an in-memory connection mirror replicated by `ProfileReplication` (the only
 writer to the hub), a `VaultService` over the account's vault and the terminal installation
-carrying that vault's credentials. `hub_sources/follow.rs` attaches the replication while the
+carrying that vault's credentials. With the hub agents service, each hub installation tells the
+directory of live hosts (`src/agent_hosts.rs`) about the sessions of its saved servers, so
+Agent access (`src/hub_server_access.rs`) can write their `authorized_keys`.
+`hub_sources/follow.rs` attaches the replication while the
 hub is reachable and, when the device signs out, is revoked or the hub is removed, empties the
 mirror and locks the vault. `Booted::window_sources(environment)` returns the `WindowSources`
 (connections, terminal, vault, settings pages) that `build_workspace` registers; the local set

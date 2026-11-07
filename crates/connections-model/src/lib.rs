@@ -1,6 +1,6 @@
 //! Pure saved-connection formats, drafts, transitions and native capability ports.
 //!
-//! Owns: profile/recent/facts formats, jump-host references and route resolution, checked mutations, live-profile authority stamps, recent-use intents, drafts, checked OS identities/release policy, observation values, bounded immutable flag bytes, the replica reconciliation rules with the agreed-state document, and the scope a profile lives in (the user's own or an organization's, with the requested one until it is carried out).
+//! Owns: profile/recent/facts formats, jump-host references and route resolution, checked mutations, live-profile authority stamps, recent-use intents, drafts, checked OS identities/release policy, observation values, bounded immutable flag bytes, and the replica reconciliation rules with the agreed-state document.
 //! Does not own: DNS, HTTP, files, clocks, GPUI or observation lifecycle.
 //! Ports provided: ConnectionRepository, ProfileIds, ConnectionClock, ProfileReplica and country/flag/RemoteOsDetector observation ports.
 //! Ports used: session value types. Settings section: none. Globals: none.

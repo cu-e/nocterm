@@ -1,7 +1,7 @@
 //! The connections, vault and terminal capability of each hub account, built once per hub.
 //!
-//! A hub window shows the account of one hub: its own and its organizations' connections, kept
-//! in an in-memory mirror that replicates with the hub, and the account's vault. Everything of
+//! A hub window shows the account of one hub: its connections, kept in an in-memory mirror that
+//! replicates with the hub, and the account's vault. Everything of
 //! one hub is built once and shared by all of its windows ([`HubSource`]); closing a window
 //! never takes it away. Removing a hub evicts its retained installation; existing windows
 //! retain a retired, empty source until their workspace is released. This module is the only place that names the encrypted account data
@@ -20,6 +20,7 @@ use nocterm_connections_store::ProfileReplication;
 use nocterm_core::error::SharedCause;
 use nocterm_hubs::Hubs;
 use nocterm_hubs_model::{HubError, HubId, source_identity::LocalAccountSourceFactory as _};
+use nocterm_ssh_keys::authorized_keys::ConnectedHosts;
 use nocterm_store::SnapshotWriter;
 use nocterm_vault::VaultAccess;
 
@@ -135,6 +136,13 @@ impl HubSource {
 }
 
 /// The sources of the hubs the windows of this run showed, one per hub.
+/// The agents service and the directory told about every session of a hub window's saved
+/// servers, through which Agent access writes a server's `authorized_keys`.
+struct AgentAccess {
+    agents: Entity<nocterm_hub_agents::HubAgents>,
+    hosts: Arc<dyn ConnectedHosts>,
+}
+
 pub(crate) struct HubSources {
     accounts: Arc<dyn HubAccounts>,
     hubs: Entity<Hubs>,
@@ -142,8 +150,8 @@ pub(crate) struct HubSources {
     /// The terminal capability of this device, which a hub's credentials are added to.
     terminal: nocterm_terminal::Installed,
     ready: nocterm_ui::UiReady,
-    /// The agents service, through which a window's editor offers Agent access of a server.
-    agents: Option<Entity<nocterm_hub_agents::HubAgents>>,
+    /// What the windows' Agent access of their saved servers goes through.
+    agents: Option<AgentAccess>,
     _membership: gpui_kit::Subscription,
     sources: HashMap<HubId, HubSource>,
 }
@@ -178,9 +186,14 @@ impl HubSources {
         }
     }
 
-    /// The windows' editors offer Agent access of their saved servers through `agents`.
-    pub(crate) fn with_agents(mut self, agents: Entity<nocterm_hub_agents::HubAgents>) -> Self {
-        self.agents = Some(agents);
+    /// The windows' editors offer Agent access of their saved servers through `agents`, which
+    /// reaches a server through the sessions `hosts` is told about.
+    pub(crate) fn with_agents(
+        mut self,
+        agents: Entity<nocterm_hub_agents::HubAgents>,
+        hosts: Arc<dyn ConnectedHosts>,
+    ) -> Self {
+        self.agents = Some(AgentAccess { agents, hosts });
         self
     }
 
@@ -235,6 +248,10 @@ impl HubSources {
             })?;
         let replication = self.replication(&connections, cx);
         connections.bind_replication(replication.clone());
+        if let Some(access) = &self.agents {
+            let executor = cx.background_executor().clone();
+            crate::agent_hosts::observe(access.hosts.clone(), &connections, executor);
+        }
         let sign_in_again: nocterm_vault_ui::KeysMissingRemedy = {
             let (hubs, hub) = (self.hubs.clone(), hub.clone());
             Rc::new(move |window, cx| nocterm_hubs_ui::sign_in_again(&hubs, &hub, window, cx))
@@ -248,7 +265,6 @@ impl HubSources {
         let credentials = crate::bootstrap::credential_provider(
             vault.clone(),
             Some(connections.connections().clone()),
-            connections.credential_spaces(),
         );
         let source = agent_source.clone();
         let credentials = credentials.with_capture(move || {
@@ -308,8 +324,8 @@ impl HubSources {
             .clone()
             .with_keys(crate::vault_keys::keys_of(vault, cx));
         match &self.agents {
-            Some(agents) => inputs.with_agent_access(Arc::new(
-                crate::hub_server_access::HubServerAccess::new(hub.clone(), agents.clone()),
+            Some(access) => inputs.with_agent_access(Arc::new(
+                crate::hub_server_access::HubServerAccess::new(hub.clone(), access.agents.clone()),
             )),
             None => inputs,
         }

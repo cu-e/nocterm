@@ -10,7 +10,7 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: views (the panel's sections per organization and the strip for the account's state, from the bound replication; the list may be changed only while the copy is in step with the account; in a hub window, the editor's Agent access switch of a saved server), editor inputs and their shared `ConnectionInputs`, the in-memory installation `install_volatile` (no settings, key bindings or shutdown registration), session-intent conversion and detected-server image presentation and weak source projection.
+//! Owns: views (the panel and the strip for the account's state, from the bound replication; the list may be changed only while the copy is in step with the account; in a hub window, the editor's Agent access switch of a saved server, which first opens a session without a tab with the connection's saved credentials when none is open, and the agent access state on each server's row), editor inputs and their shared `ConnectionInputs`, the in-memory installation `install_volatile` (no settings, key bindings or shutdown registration), session-intent conversion and detected-server image presentation and weak source projection.
 //! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
 //! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
@@ -23,7 +23,7 @@
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
 //! Connections aliases the actual service entity; windows/actions use supplied installation.
-//! Sidebar projections retain positions/section metadata until profile, replication or filter
+//! Sidebar projections retain positions until profile, replication or filter
 //! changes; only visible rows own short presentation and drag captures. OS/flag images
 //! have installation-scoped bounded caches keyed by rendering inputs and retained raw source.
 //! Raw facts/jobs belong to the supplied actual service entity. Original Item
@@ -34,12 +34,10 @@
 mod agent_access;
 mod installed;
 mod session_intents;
-pub use agent_access::{AgentAccessRefused, AgentServer, ServerAgentAccess};
-pub use credential_spaces::CredentialSpaces;
+pub use agent_access::{AgentAccessRefused, AgentAccessState, AgentServer, ServerAgentAccess};
 pub use installed::{Installed, install, install_volatile};
 pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;
-mod credential_spaces;
 mod directory;
 mod editor;
 mod facts_presentation;
@@ -50,9 +48,8 @@ mod panel;
 pub mod plugin;
 mod prepared;
 mod probe_sources;
-pub use probe_sources::HostObserver;
-mod spaces;
 pub use prepared::{ConnectionInputs, ConnectionWriters, EditorInputs, PreparedConnections};
+pub use probe_sources::HostObserver;
 
 #[cfg(test)]
 mod test_support;

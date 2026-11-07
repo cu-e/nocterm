@@ -13,9 +13,7 @@ async fn a_restart_continues_from_the_persisted_state_without_resending(
     let saved = fixture.persisted_state();
     let cursor = saved.cursor().cloned().expect("a cursor was kept");
     let added = profile("added");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, added.clone());
+    fixture.replica.write_remote(added.clone());
     let restarted = Fixture::resumed(
         cx,
         std::slice::from_ref(&original),
@@ -50,18 +48,12 @@ async fn detaching_stops_synchronizing_and_forgets_the_agreement(cx: &mut gpui::
     assert!(matches!(fixture.status(cx), ReplicationStatus::Detached));
     let local = profile("local");
     fixture.save(cx, local.clone()).await;
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, profile("remote"));
+    fixture.replica.write_remote(profile("remote"));
     cx.run_until_parked();
     assert_eq!(fixture.put_count(), 1);
     assert_eq!(fixture.local(cx, &profile("remote")), None);
     assert!(fixture.replica.profile(local.id).is_none());
     assert!(fixture.persisted_state().entry(original.id).is_none());
-    let scope = fixture
-        .replication
-        .read_with(cx, |replication, cx| replication.scope_of(original.id, cx));
-    assert_eq!(scope, None);
 }
 
 #[gpui::test]
@@ -109,30 +101,11 @@ async fn attaching_another_replica_moves_synchronization_to_it(cx: &mut gpui::Te
 }
 
 #[gpui::test]
-async fn a_profile_applied_from_an_organization_remembers_its_scope(cx: &mut gpui::TestAppContext) {
-    let fixture = Fixture::new(cx, &[]);
-    let shared = profile("shared");
-    let scope = ReplicaScope::Organization("acme".into());
-    fixture.replica.write_remote(scope.clone(), shared.clone());
-    fixture.attach(cx);
-    let found = fixture
-        .replication
-        .read_with(cx, |replication, cx| replication.scope_of(shared.id, cx));
-    assert_eq!(found, Some(scope.clone()));
-    let edited = at_host(&shared, "edited.example");
-    fixture.save(cx, edited).await;
-    let stored = fixture.replica.stored(shared.id).unwrap();
-    assert_eq!(stored.0, scope);
-}
-
-#[gpui::test]
 async fn changes_are_read_page_by_page_until_none_remain(cx: &mut gpui::TestAppContext) {
     let fixture = Fixture::new(cx, &[]);
     let remote: Vec<Profile> = ["a", "b", "c"].iter().map(|name| profile(name)).collect();
     for profile in &remote {
-        fixture
-            .replica
-            .write_remote(ReplicaScope::Personal, profile.clone());
+        fixture.replica.write_remote(profile.clone());
     }
     fixture.replica.page_size(1);
     fixture.attach(cx);
@@ -151,14 +124,13 @@ async fn nothing_is_synchronized_while_the_local_document_failed_to_load(
     state.agree(
         kept.id,
         SyncedEntry {
-            scope: ReplicaScope::Personal,
             version: ReplicaVersion::new(1),
             profile: kept.clone(),
         },
     );
     state.advance(ReplicaCursor::new("1"));
     let replica = Arc::new(MemoryReplica::new());
-    replica.write_remote(ReplicaScope::Personal, kept.clone());
+    replica.write_remote(kept.clone());
     let unreadable = ConnectionStore::prepared(
         Profiles::default(),
         Recents::default(),

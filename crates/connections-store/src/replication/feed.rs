@@ -3,7 +3,6 @@ use nocterm_connections_model::{
     profiles::Profile,
     replica::{
         ProfileReplica, RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaPage,
-        ReplicaScope,
     },
 };
 use nocterm_core::{SharedError, bounded_io::CountingWriter};
@@ -79,9 +78,6 @@ impl Feed {
         }
         for change in &page.changes {
             self.charge(std::mem::size_of::<RemoteProfile>())?;
-            if let ReplicaScope::Organization(scope) = &change.scope {
-                self.charge(scope.len())?;
-            }
             if let RemoteBody::Present(profile) = &change.body {
                 self.charge(std::mem::size_of::<Profile>())?;
                 let bytes = profile_bytes(profile, MAX_BYTES - self.bytes)?;

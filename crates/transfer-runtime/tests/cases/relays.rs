@@ -4,7 +4,7 @@ use nocterm_session::{
     testing::{FsOperation, Gate},
 };
 use nocterm_transfers::{
-    CollisionPolicy, Request, TransferDirection, TransferError, TransferOperation, TransferPath,
+    CollisionPolicy, TransferDirection, TransferError, TransferOperation, TransferPath,
     TransferRequests, TransferState,
 };
 
@@ -203,22 +203,6 @@ fn a_source_that_grows_past_its_declared_size_fails_the_relay() {
     let progress = fixture.finished(fixture.relay(vec!["/in/file"], CollisionPolicy::Skip));
     assert_eq!(progress.state, TransferState::Failed);
     assert!(fixture.destination.bytes("/dest/file").is_err());
-}
-
-#[test]
-fn a_remote_only_runtime_refuses_requests_that_need_local_files() {
-    let fixture = RelayFixture::new();
-    let upload = Request::Upload(nocterm_transfers::UploadRequest {
-        sources: vec![native("input/file")],
-        host: nocterm_session::HostAddress::direct(nocterm_session::Target::new("u", "h", 22)),
-        destination: "/dest".into(),
-        fs: fixture.destination.clone(),
-        collisions: CollisionPolicy::Skip,
-    });
-    assert!(matches!(
-        fixture.runtime.submit(upload),
-        Err(TransferError::LocalUnavailable)
-    ));
 }
 
 #[test]

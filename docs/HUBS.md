@@ -127,14 +127,23 @@ is open to them once its `authorized_keys` holds the key's line and the hub know
 
 - In the window of a hub, open a saved server in the connection editor and turn on **Agent
   access** (under **Agents**). Nocterm adds the agent key's line to the `authorized_keys` of
-  the user you connect as, through the session you have open, and records the server on the hub
-  with the host key this computer recorded for it; agents refuse a server that presents another
-  key. Connect to the server first: without an open session the switch says so and changes
-  nothing. Other lines of the file are kept byte for byte.
+  the user you connect as and records the server on the hub with the host key this computer
+  recorded for it; agents refuse a server that presents another key. Other lines of the file
+  are kept byte for byte.
+- The line is written through the session you have open to the server. Without one, Nocterm
+  connects in the background with the connection's saved credentials, as opening it from the
+  sidebar would, and closes that session again when it is done. If the server asks you to sign
+  in, confirm its host key or unlock the vault, its tab opens: finish there and access is added.
+  A server that cannot be reached, or a sign-in that does not finish within a few minutes, is
+  said under the switch and changes nothing.
 - Turning **Agent access** off removes the server's record on the hub, so agents stop using it
   at once, and removes the line while a session to the server is open. Without a session the
   line stays in `authorized_keys`: connect and remove it by hand if the key should no longer
   sign in there.
+- In the sidebar of a hub window, each saved server agents may use shows what they last found
+  there beside its name: *Agents* (not checked yet), *Agents ✓*, *No access*, *Host key
+  changed*, *Unreachable* or *Reconnect* (the agent key was replaced; turn Agent access off and
+  on again).
 - The **Agent access** tab of the Servers page lists the servers with their status (*Agents ✓*,
   *No access — reconnect*, *Host key changed*, *Unreachable*, *Reconnect needed*), **Check** to
   try the agent key again and **Disconnect** to remove one.

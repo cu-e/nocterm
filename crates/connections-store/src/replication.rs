@@ -15,10 +15,10 @@ mod status;
 
 use crate::ConnectionStore;
 use futures::StreamExt as _;
-use gpui::{App, Context, Entity, EventEmitter, Subscription, Task};
+use gpui::{Context, Entity, EventEmitter, Subscription, Task};
 use nocterm_connections_model::{
     profiles::ProfileId,
-    replica::{ProfileReplica, ReplicaScope, ReplicaSpace, ReplicaState},
+    replica::{ProfileReplica, ReplicaState},
 };
 use nocterm_store::{Persisted, Publication, SnapshotWriter};
 use round::{Outcome, Round};
@@ -142,106 +142,6 @@ impl ProfileReplication {
 
     pub fn status(&self) -> &ReplicationStatus {
         &self.status
-    }
-
-    /// Where the profile was last agreed to live, when it is replicated.
-    pub fn scope_of(&self, id: ProfileId, cx: &App) -> Option<ReplicaScope> {
-        let state = self.state.read(cx).visible();
-        state.entry(id).map(|entry| entry.scope.clone())
-    }
-
-    /// Where the profile lives for the user: the scope they asked for if it is not yet
-    /// carried out, else the one it was agreed in, else their own space.
-    pub fn space_of(&self, id: ProfileId, cx: &App) -> ReplicaScope {
-        let state = self.state.read(cx).visible();
-        state
-            .placement(id)
-            .or_else(|| state.entry(id).map(|entry| &entry.scope))
-            .cloned()
-            .unwrap_or(ReplicaScope::Personal)
-    }
-
-    /// The profiles that live in the space `id` lives in, itself included; the personal space
-    /// when `id` is none or not a saved profile. A secret typed for one of them is attached to
-    /// these and to no profile of another space.
-    pub fn in_space_of(&self, id: Option<ProfileId>, cx: &App) -> HashSet<ProfileId> {
-        let space = id.map_or(ReplicaScope::Personal, |id| self.space_of(id, cx));
-        self.store
-            .read(cx)
-            .profiles(cx)
-            .iter()
-            .map(|profile| profile.id)
-            .filter(|id| self.space_of(*id, cx) == space)
-            .collect()
-    }
-
-    /// The spaces the attached replica serves, with the account's access to each.
-    pub fn spaces(&self) -> Vec<ReplicaSpace> {
-        self.replica
-            .as_ref()
-            .map(|replica| replica.spaces())
-            .unwrap_or_default()
-    }
-
-    /// Asks for the profile to live in `scope` and synchronizes. A request for the
-    /// scope it already lives in withdraws an earlier one.
-    pub fn place(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) {
-        if self.stage(id, scope, cx) {
-            self.request_sync(cx);
-        }
-    }
-
-    /// Records the request of [`Self::place`] without synchronizing, for a caller that saves
-    /// the profile next: the save's own publication then carries the move. Returns whether
-    /// the request was kept.
-    pub fn stage(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) -> bool {
-        let withdraw = self.scope_of(id, cx).as_ref() == Some(&scope);
-        let result = self.state.update(cx, |state, cx| {
-            state.update_latest(
-                move |state| {
-                    if withdraw {
-                        state.unplace(id);
-                    } else {
-                        state.place(id, scope);
-                    }
-                },
-                cx,
-            )
-        });
-        if let Err(error) = result {
-            tracing::error!(%error, "could not keep the requested scope of a profile");
-            return false;
-        }
-        true
-    }
-
-    /// Asks for the profile's personal secrets to go with it to `scope`, the space it lives
-    /// in, on its next push: the user agreed to share them there. Like [`Self::stage`], the
-    /// save that follows carries it out; [`Self::unstage`] withdraws it. A request already
-    /// pending for the profile, such as an unfinished move, is left as it is. Returns whether
-    /// this request was recorded, so only its own caller withdraws it.
-    pub fn share(&mut self, id: ProfileId, scope: ReplicaScope, cx: &mut Context<Self>) -> bool {
-        if self.state.read(cx).visible().placement(id).is_some() {
-            return false;
-        }
-        let result = self.state.update(cx, |state, cx| {
-            state.update_latest(move |state| state.place(id, scope), cx)
-        });
-        if let Err(error) = result {
-            tracing::error!(%error, "could not keep the request to share a profile's secrets");
-            return false;
-        }
-        true
-    }
-
-    /// Withdraws a request without synchronizing: the save it belonged to failed.
-    pub fn unstage(&mut self, id: ProfileId, cx: &mut Context<Self>) {
-        let result = self.state.update(cx, |state, cx| {
-            state.update_latest(move |state| state.unplace(id), cx)
-        });
-        if let Err(error) = result {
-            tracing::error!(%error, "could not withdraw the requested scope of a profile");
-        }
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {

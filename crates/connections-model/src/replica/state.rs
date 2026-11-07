@@ -1,5 +1,5 @@
 //! The last state both sides agreed on, which tells a local change from a remote one.
-use super::{ReplicaCursor, ReplicaScope, ReplicaVersion};
+use super::{ReplicaCursor, ReplicaVersion};
 use crate::profiles::{Profile, ProfileId};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -7,7 +7,6 @@ use std::collections::{HashMap, HashSet};
 /// A profile as it was when the local copy and the replica last agreed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SyncedEntry {
-    pub scope: ReplicaScope,
     pub version: ReplicaVersion,
     pub profile: Profile,
 }
@@ -22,11 +21,6 @@ pub struct ReplicaState {
     entries: HashMap<ProfileId, SyncedEntry>,
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     unrecognized: HashSet<ProfileId>,
-    /// Where the user wants a profile to live when that differs from where it was
-    /// agreed to live (or it has not been sent yet), or the space it stays in when its
-    /// personal secrets are to go with it there. Cleared once the profile is sent.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    placements: HashMap<ProfileId, ReplicaScope>,
 }
 
 impl ReplicaState {
@@ -51,62 +45,21 @@ impl ReplicaState {
         !self.unrecognized.is_empty()
     }
 
-    /// The scope the user asked the profile to be moved or created in, until it is sent.
-    pub fn placement(&self, id: ProfileId) -> Option<&ReplicaScope> {
-        self.placements.get(&id)
-    }
-
-    pub fn placements(&self) -> impl Iterator<Item = (ProfileId, &ReplicaScope)> {
-        self.placements.iter().map(|(id, scope)| (*id, scope))
-    }
-
-    /// Asks for the profile to live in `scope` from the next synchronization on.
-    pub fn place(&mut self, id: ProfileId, scope: ReplicaScope) {
-        self.placements.insert(id, scope);
-    }
-
-    /// The request was carried out, refused, or no longer matters.
-    pub fn unplace(&mut self, id: ProfileId) {
-        self.placements.remove(&id);
-    }
-
     pub fn advance(&mut self, cursor: ReplicaCursor) {
         self.cursor = Some(cursor);
     }
 
-    /// Records agreement on `entry` after this client sent it; the replica's version is
-    /// readable again. A request for another scope than the one agreed is kept: the user
-    /// asked for it after the version that was just sent was planned, and the next
-    /// synchronization carries it out.
+    /// Records agreement on `entry`, whether this client sent it or took the replica's
+    /// version; the replica's version is readable again.
     pub fn agree(&mut self, id: ProfileId, entry: SyncedEntry) {
         self.unrecognized.remove(&id);
-        if self.placements.get(&id) == Some(&entry.scope) {
-            self.placements.remove(&id);
-        }
         self.entries.insert(id, entry);
     }
 
-    /// Records agreement on `entry` the replica's version won: a request to move the
-    /// profile no longer applies, since the remote change outranks a move.
-    pub fn adopt(&mut self, id: ProfileId, entry: SyncedEntry) {
-        self.unrecognized.remove(&id);
-        self.placements.remove(&id);
-        self.entries.insert(id, entry);
-    }
-
-    /// Neither side holds the profile any more: the agreement and any request for it go.
+    /// Neither side holds the profile any more: the agreement goes.
     pub fn forget(&mut self, id: ProfileId) {
         self.unrecognized.remove(&id);
-        self.placements.remove(&id);
         self.entries.remove(&id);
-    }
-
-    /// The profile left the scope it was agreed in on its way to `arrival`: the agreement
-    /// goes and the request for `arrival` stays, so a pass that ends before the profile is
-    /// created there creates it there, never back in the scope it left.
-    pub fn leave_for(&mut self, id: ProfileId, arrival: ReplicaScope) {
-        self.forget(id);
-        self.placements.insert(id, arrival);
     }
 
     pub fn mark_unrecognized(&mut self, id: ProfileId) {

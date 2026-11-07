@@ -108,6 +108,7 @@ fn granting_access_writes_the_agent_key_line_and_records_the_server(cx: &mut Tes
         .clone();
     agents.update(cx, |agents, cx| agents.track(&hub(), cx));
     cx.run_until_parked();
+    agents.read_with(cx, |agents, _| assert!(agents.session_open("web")));
 
     let granted = agents.update(cx, |agents, cx| agents.grant_access(&hub(), web(), cx));
     cx.run_until_parked();
@@ -130,6 +131,7 @@ fn access_needs_an_open_session_and_records_nothing_without_one(cx: &mut TestApp
     let agents = cx.update(|cx| install(deps(&fake), cx)).agents().clone();
     agents.update(cx, |agents, cx| agents.track(&hub(), cx));
     cx.run_until_parked();
+    agents.read_with(cx, |agents, _| assert!(!agents.session_open("web")));
 
     let granted = agents.update(cx, |agents, cx| agents.grant_access(&hub(), web(), cx));
     cx.run_until_parked();

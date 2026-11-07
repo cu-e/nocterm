@@ -227,8 +227,8 @@ impl ConnectionStore {
     ) -> Task<Result<(), ConnectionsError>> {
         self.enqueue(Mutation::DeleteGroup { group, expected }, cx)
     }
-    /// Renames the folder `from` for the listed `members` only (`to` empty: error); other
-    /// connections that use the folder name, such as those of another space, keep it.
+    /// Renames the folder `from` for the listed `members` only (`to` empty: error); a
+    /// connection that joined the folder after it was listed keeps the old name.
     pub fn rename_group_of(
         &mut self,
         members: Vec<ProfileId>,

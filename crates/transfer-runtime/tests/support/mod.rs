@@ -104,7 +104,7 @@ pub(super) fn wait(mut condition: impl FnMut() -> bool) {
     }
 }
 
-/// A remote-only runtime with two independent remote filesystems for relays.
+/// A runtime with two independent remote filesystems for relays.
 pub(super) struct RelayFixture {
     pub(super) runtime: Arc<TransferRuntime>,
     pub(super) source: Arc<InMemoryFs>,
@@ -118,7 +118,8 @@ impl RelayFixture {
         let source = Arc::new(InMemoryFs::default());
         let destination = Arc::new(InMemoryFs::default());
         futures::executor::block_on(destination.create_dir("/dest")).unwrap();
-        let runtime = TransferRuntime::start(TransferRuntimeDeps::remote_only(limits)).unwrap();
+        let local = Arc::new(InMemoryFs::default());
+        let runtime = TransferRuntime::start(TransferRuntimeDeps::new(local, limits)).unwrap();
         Self {
             runtime,
             source,

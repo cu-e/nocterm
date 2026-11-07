@@ -8,6 +8,31 @@ use super::*;
 use nocterm_connections_store::{ReplicationFailure, ReplicationStatus};
 use nocterm_workspace::{UnlockVault, request_sign_in};
 
+/// Where the copy of the account's list stands, read from the bound replication; none
+/// without an account.
+pub(crate) struct AccountState(Option<ReplicationStatus>);
+
+impl AccountState {
+    pub(crate) fn of(installed: &Installed, cx: &App) -> Self {
+        Self(
+            installed
+                .replication()
+                .map(|replication| replication.read(cx).status().clone()),
+        )
+    }
+
+    /// Whether the list may be changed: always without an account, and with one only while
+    /// the copy is in step with it, because a change that stays here is lost.
+    pub(crate) fn editable(&self) -> bool {
+        self.0.as_ref().is_none_or(editable)
+    }
+
+    /// What to tell the user about the account above the list.
+    pub(crate) fn notice(&self) -> Option<AccountNotice> {
+        self.0.as_ref().and_then(notice)
+    }
+}
+
 /// Whether the list may be changed while the copy is in the state `status`.
 pub(crate) fn editable(status: &ReplicationStatus) -> bool {
     matches!(

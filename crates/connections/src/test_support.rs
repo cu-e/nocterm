@@ -154,29 +154,6 @@ fn model_inputs(connections: &Connections, cx: &gpui_kit::App) -> crate::EditorI
     )
 }
 
-/// A space of the replica: `scope` named `name`, which the account `writes` to or only reads.
-pub(crate) fn space(
-    scope: nocterm_connections_model::replica::ReplicaScope,
-    name: &str,
-    writes: bool,
-) -> nocterm_connections_model::replica::ReplicaSpace {
-    use nocterm_connections_model::replica::ReplicaAccess;
-    nocterm_connections_model::replica::ReplicaSpace {
-        scope,
-        name: name.to_owned(),
-        access: if writes {
-            ReplicaAccess::Write
-        } else {
-            ReplicaAccess::Read
-        },
-    }
-}
-
-/// An organization's scope.
-pub(crate) fn organization(id: &str) -> nocterm_connections_model::replica::ReplicaScope {
-    nocterm_connections_model::replica::ReplicaScope::Organization(id.to_owned())
-}
-
 /// Binds a replication to `installed` that no replica is attached to: the state of an
 /// account that is signed out.
 pub(crate) fn unattached(
@@ -208,4 +185,66 @@ pub(crate) fn replicate(
     replication.update(cx, |replication, cx| replication.attach(replica, cx));
     cx.run_until_parked();
     replication
+}
+
+/// An Agent access port that records each change and grants it, or refuses it with `refusal`.
+/// `session` tells whether a session to the server is open; `state` is what the hub records.
+#[derive(Default)]
+pub(crate) struct ScriptedAgentAccess {
+    pub(crate) state: std::sync::Mutex<Option<crate::AgentAccessState>>,
+    pub(crate) session: std::sync::atomic::AtomicBool,
+    pub(crate) changes: std::sync::Mutex<Vec<(crate::AgentServer, bool)>>,
+    pub(crate) refusal: Option<&'static str>,
+}
+
+impl ScriptedAgentAccess {
+    pub(crate) fn with_session() -> Self {
+        let access = Self::default();
+        access.open_session();
+        access
+    }
+
+    pub(crate) fn open_session(&self) {
+        self.session
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn granted(&self) -> Vec<bool> {
+        let changes = self.changes.lock().unwrap();
+        changes.iter().map(|(_, granted)| *granted).collect()
+    }
+}
+
+impl crate::ServerAgentAccess for ScriptedAgentAccess {
+    fn state(&self, _: &crate::AgentServer, _: &gpui_kit::App) -> Option<crate::AgentAccessState> {
+        *self.state.lock().unwrap()
+    }
+
+    fn session_open(&self, _: &crate::AgentServer, _: &gpui_kit::App) -> bool {
+        self.session.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn set(
+        &self,
+        server: crate::AgentServer,
+        granted: bool,
+        _: &mut gpui_kit::App,
+    ) -> gpui_kit::Task<Result<(), crate::AgentAccessRefused>> {
+        self.changes.lock().unwrap().push((server, granted));
+        match self.refusal {
+            Some(reason) => gpui_kit::Task::ready(Err(crate::AgentAccessRefused::new(reason))),
+            None => {
+                *self.state.lock().unwrap() = granted.then_some(crate::AgentAccessState::Unchecked);
+                gpui_kit::Task::ready(Ok(()))
+            }
+        }
+    }
+
+    fn observe(
+        &self,
+        _: Box<dyn Fn(&mut gpui_kit::App)>,
+        _: &mut gpui_kit::App,
+    ) -> gpui_kit::Subscription {
+        gpui_kit::Subscription::new(|| {})
+    }
 }

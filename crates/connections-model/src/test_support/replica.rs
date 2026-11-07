@@ -2,8 +2,8 @@
 use crate::{
     profiles::{Profile, ProfileId},
     replica::{
-        CredentialCopy, ProfileReplica, RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError,
-        ReplicaPage, ReplicaScope, ReplicaSpace, ReplicaVersion,
+        ProfileReplica, RemoteBody, RemoteProfile, ReplicaCursor, ReplicaError, ReplicaPage,
+        ReplicaVersion,
     },
 };
 use futures::{
@@ -12,7 +12,6 @@ use futures::{
     future::BoxFuture,
     stream::BoxStream,
 };
-use nocterm_session::CredentialId;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Mutex,
@@ -30,18 +29,6 @@ pub enum ReplicaCall {
         id: ProfileId,
         expected: ReplicaVersion,
     },
-    Carry {
-        id: ProfileId,
-        from: ReplicaScope,
-        to: ReplicaScope,
-        credentials: Vec<CredentialId>,
-    },
-    Copy {
-        id: ProfileId,
-        from: ReplicaScope,
-        to: ReplicaScope,
-        credentials: Vec<CredentialId>,
-    },
 }
 
 struct Stored {
@@ -49,18 +36,18 @@ struct Stored {
     version: u64,
 }
 
-/// What writes are refused: single connections and whole spaces.
+/// What writes are refused: single connections, or all of them.
 #[derive(Default)]
 struct Forbidden {
     profiles: HashSet<ProfileId>,
-    scopes: HashSet<ReplicaScope>,
+    all: bool,
 }
 
 #[derive(Default)]
 struct Inner {
     sequence: u64,
-    objects: HashMap<(ReplicaScope, ProfileId), Stored>,
-    feed: Vec<(u64, ReplicaScope, ProfileId)>,
+    objects: HashMap<ProfileId, Stored>,
+    feed: Vec<(u64, ProfileId)>,
     offline: bool,
     /// The account keys are closed: the server is reachable but every call is refused.
     locked: bool,
@@ -69,13 +56,10 @@ struct Inner {
     /// The answer of the next write waits for this signal.
     held: Option<oneshot::Receiver<()>>,
     forbidden: Forbidden,
-    spaces: Vec<ReplicaSpace>,
     forced_conflicts: usize,
-    concurrent: Option<(ReplicaScope, Profile)>,
+    concurrent: Option<Profile>,
     page_size: Option<usize>,
     calls: Vec<ReplicaCall>,
-    secrets: HashMap<CredentialId, HashSet<ReplicaScope>>,
-    copies: u64,
 }
 
 /// Versions and cursors come from one counter, so a cursor is "after write N".
@@ -99,11 +83,11 @@ impl Inner {
         }
     }
 
-    fn store(&mut self, id: ProfileId, scope: ReplicaScope, body: RemoteBody) -> ReplicaVersion {
+    fn store(&mut self, id: ProfileId, body: RemoteBody) -> ReplicaVersion {
         self.sequence += 1;
-        self.feed.push((self.sequence, scope.clone(), id));
+        self.feed.push((self.sequence, id));
         self.objects.insert(
-            (scope, id),
+            id,
             Stored {
                 body,
                 version: self.sequence,
@@ -114,18 +98,17 @@ impl Inner {
 
     fn check_write(
         &mut self,
-        scope: &ReplicaScope,
         id: ProfileId,
         expected: Option<ReplicaVersion>,
     ) -> Result<(), ReplicaError> {
         if let Some(error) = self.unserved() {
             return Err(error);
         }
-        if let Some((scope, profile)) = self.concurrent.take() {
+        if let Some(profile) = self.concurrent.take() {
             let body = RemoteBody::Present(Box::new(profile.clone()));
-            self.store(profile.id, scope, body);
+            self.store(profile.id, body);
         }
-        if self.forbidden.profiles.contains(&id) || self.forbidden.scopes.contains(scope) {
+        if self.forbidden.all || self.forbidden.profiles.contains(&id) {
             return Err(ReplicaError::Forbidden { id });
         }
         if self.forced_conflicts > 0 {
@@ -134,7 +117,7 @@ impl Inner {
         }
         let current = self
             .objects
-            .get(&(scope.clone(), id))
+            .get(&id)
             .map(|stored| ReplicaVersion::new(stored.version));
         if current == expected {
             Ok(())
@@ -150,21 +133,20 @@ impl Inner {
         let mut ids = Vec::new();
         let mut last = from;
         let mut more = false;
-        for (sequence, scope, id) in self.feed.iter().filter(|(sequence, ..)| *sequence > from) {
+        for (sequence, id) in self.feed.iter().filter(|(sequence, _)| *sequence > from) {
             if self.page_size.is_some_and(|size| ids.len() >= size) {
                 more = true;
                 break;
             }
             last = *sequence;
-            ids.retain(|(seen_scope, seen)| seen != id || seen_scope != scope);
-            ids.push((scope.clone(), *id));
+            ids.retain(|seen| seen != id);
+            ids.push(*id);
         }
         let changes = ids
             .into_iter()
-            .filter_map(|(scope, id)| {
-                let stored = self.objects.get(&(scope.clone(), id))?;
+            .filter_map(|id| {
+                let stored = self.objects.get(&id)?;
                 Some(RemoteProfile {
-                    scope,
                     id,
                     version: ReplicaVersion::new(stored.version),
                     body: stored.body.clone(),
@@ -196,24 +178,23 @@ impl MemoryReplica {
     }
 
     /// Another device writes `profile`; watchers are told.
-    pub fn write_remote(&self, scope: ReplicaScope, profile: Profile) -> ReplicaVersion {
+    pub fn write_remote(&self, profile: Profile) -> ReplicaVersion {
         let id = profile.id;
-        let version =
-            self.with(|inner| inner.store(id, scope, RemoteBody::Present(Box::new(profile))));
+        let version = self.with(|inner| inner.store(id, RemoteBody::Present(Box::new(profile))));
         self.notify();
         version
     }
 
     /// Another device deletes the profile, leaving a tombstone.
-    pub fn delete_remote(&self, scope: ReplicaScope, id: ProfileId) -> ReplicaVersion {
-        let version = self.with(|inner| inner.store(id, scope, RemoteBody::Deleted));
+    pub fn delete_remote(&self, id: ProfileId) -> ReplicaVersion {
+        let version = self.with(|inner| inner.store(id, RemoteBody::Deleted));
         self.notify();
         version
     }
 
     /// A newer client wrote something this client cannot read.
-    pub fn write_unrecognized(&self, scope: ReplicaScope, id: ProfileId) -> ReplicaVersion {
-        let version = self.with(|inner| inner.store(id, scope, RemoteBody::Unrecognized));
+    pub fn write_unrecognized(&self, id: ProfileId) -> ReplicaVersion {
+        let version = self.with(|inner| inner.store(id, RemoteBody::Unrecognized));
         self.notify();
         version
     }
@@ -254,32 +235,9 @@ impl MemoryReplica {
         self.with(|inner| inner.forbidden.profiles.insert(id));
     }
 
-    /// Writes into this scope are refused as `Forbidden`, as for a read-only member.
-    pub fn refuse_writes_in(&self, scope: ReplicaScope) {
-        self.with(|inner| inner.forbidden.scopes.insert(scope));
-    }
-
-    /// A secret is kept in `scope`, as the vault of that space would hold it.
-    pub fn keep_secret(&self, scope: ReplicaScope, credential: CredentialId) {
-        self.with(|inner| {
-            inner.secrets.entry(credential).or_default().insert(scope);
-        });
-    }
-
-    /// The space that keeps a secret, when it is kept in one only.
-    pub fn secret_scope(&self, credential: CredentialId) -> Option<ReplicaScope> {
-        let mut scopes = self.secret_scopes(credential).into_iter();
-        scopes.next().filter(|_| scopes.next().is_none())
-    }
-
-    /// Every space that keeps a secret now.
-    pub fn secret_scopes(&self, credential: CredentialId) -> HashSet<ReplicaScope> {
-        self.with(|inner| inner.secrets.get(&credential).cloned().unwrap_or_default())
-    }
-
-    /// The spaces the replica reports to the application.
-    pub fn set_spaces(&self, spaces: Vec<ReplicaSpace>) {
-        self.with(|inner| inner.spaces = spaces);
+    /// Every write is refused as `Forbidden`.
+    pub fn refuse_writes(&self) {
+        self.with(|inner| inner.forbidden.all = true);
     }
 
     /// The next `count` writes lose a race regardless of their expectation.
@@ -288,8 +246,8 @@ impl MemoryReplica {
     }
 
     /// Another device writes `profile` just before the next write is checked.
-    pub fn write_concurrently_before_next_write(&self, scope: ReplicaScope, profile: Profile) {
-        self.with(|inner| inner.concurrent = Some((scope, profile)));
+    pub fn write_concurrently_before_next_write(&self, profile: Profile) {
+        self.with(|inner| inner.concurrent = Some(profile));
     }
 
     /// Changes come in pages of at most `size` writes.
@@ -327,89 +285,20 @@ impl MemoryReplica {
             .collect()
     }
 
-    /// The scope, version and body of the latest write of a profile, in any scope.
-    pub fn stored(&self, id: ProfileId) -> Option<(ReplicaScope, ReplicaVersion, RemoteBody)> {
+    /// The version and body of the latest write of a profile.
+    pub fn stored(&self, id: ProfileId) -> Option<(ReplicaVersion, RemoteBody)> {
         self.with(|inner| {
-            let (_, scope, _) = inner.feed.iter().rev().find(|(_, _, seen)| *seen == id)?;
-            let stored = inner.objects.get(&(scope.clone(), id))?;
-            Some((
-                scope.clone(),
-                ReplicaVersion::new(stored.version),
-                stored.body.clone(),
-            ))
-        })
-    }
-
-    /// The version and body of a profile in one scope.
-    pub fn stored_in(
-        &self,
-        scope: &ReplicaScope,
-        id: ProfileId,
-    ) -> Option<(ReplicaVersion, RemoteBody)> {
-        self.with(|inner| {
-            let stored = inner.objects.get(&(scope.clone(), id))?;
+            let stored = inner.objects.get(&id)?;
             Some((ReplicaVersion::new(stored.version), stored.body.clone()))
         })
     }
 
     /// The live profile stored under `id`, if any.
     pub fn profile(&self, id: ProfileId) -> Option<Profile> {
-        match self.stored(id)?.2 {
+        match self.stored(id)?.1 {
             RemoteBody::Present(profile) => Some(*profile),
             RemoteBody::Deleted | RemoteBody::Unrecognized => None,
         }
-    }
-
-    /// Puts the secrets kept in `from` into `to`, and answers the id each goes by there.
-    /// A secret leaves `from` when `leave` is set; otherwise it is copied under a new id.
-    fn relocate(
-        &self,
-        id: ProfileId,
-        call: ReplicaCall,
-        from: ReplicaScope,
-        to: ReplicaScope,
-        credentials: Vec<CredentialId>,
-        leave: bool,
-    ) -> Result<Vec<CredentialCopy>, ReplicaError> {
-        self.with(|inner| {
-            inner.calls.push(call);
-            if let Some(error) = inner.unserved() {
-                return Err(error);
-            }
-            if inner.forbidden.profiles.contains(&id)
-                || inner.forbidden.scopes.contains(&from)
-                || inner.forbidden.scopes.contains(&to)
-            {
-                return Err(ReplicaError::Forbidden { id });
-            }
-            let mut moved = Vec::new();
-            for credential in credentials {
-                let Some(kept) = inner.secrets.get_mut(&credential) else {
-                    continue;
-                };
-                if !kept.contains(&from) {
-                    continue;
-                }
-                if leave {
-                    kept.remove(&from);
-                    kept.insert(to.clone());
-                    moved.push(CredentialCopy {
-                        from: credential,
-                        to: credential,
-                    });
-                    continue;
-                }
-                inner.copies += 1;
-                let copy =
-                    CredentialId::from_bytes((u128::MAX - u128::from(inner.copies)).to_be_bytes());
-                inner.secrets.insert(copy, HashSet::from([to.clone()]));
-                moved.push(CredentialCopy {
-                    from: credential,
-                    to: copy,
-                });
-            }
-            Ok(moved)
-        })
     }
 
     fn write(
@@ -417,13 +306,12 @@ impl MemoryReplica {
         id: ProfileId,
         call: ReplicaCall,
         expected: Option<ReplicaVersion>,
-        scope: ReplicaScope,
         body: RemoteBody,
     ) -> Result<ReplicaVersion, ReplicaError> {
         let result = self.with(|inner| {
             inner.calls.push(call);
-            inner.check_write(&scope, id, expected)?;
-            let version = inner.store(id, scope, body);
+            inner.check_write(id, expected)?;
+            let version = inner.store(id, body);
             if let Some(left) = inner.offline_after.as_mut() {
                 *left = left.saturating_sub(1);
                 if *left == 0 {
@@ -490,7 +378,6 @@ impl ProfileReplica for MemoryReplica {
 
     fn put(
         &self,
-        scope: ReplicaScope,
         profile: Profile,
         expected: Option<ReplicaVersion>,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
@@ -502,7 +389,6 @@ impl ProfileReplica for MemoryReplica {
             profile.id,
             call,
             expected,
-            scope,
             RemoteBody::Present(Box::new(profile)),
         );
         self.answered(result)
@@ -510,52 +396,12 @@ impl ProfileReplica for MemoryReplica {
 
     fn delete(
         &self,
-        scope: ReplicaScope,
         id: ProfileId,
         expected: ReplicaVersion,
     ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>> {
         let call = ReplicaCall::Delete { id, expected };
-        let result = self.write(id, call, Some(expected), scope, RemoteBody::Deleted);
+        let result = self.write(id, call, Some(expected), RemoteBody::Deleted);
         self.answered(result)
-    }
-
-    fn carry(
-        &self,
-        id: ProfileId,
-        from: ReplicaScope,
-        to: ReplicaScope,
-        credentials: Vec<CredentialId>,
-    ) -> BoxFuture<'static, Result<Vec<CredentialId>, ReplicaError>> {
-        let call = ReplicaCall::Carry {
-            id,
-            from: from.clone(),
-            to: to.clone(),
-            credentials: credentials.clone(),
-        };
-        let moved = self
-            .relocate(id, call, from, to, credentials, true)
-            .map(|moved| moved.into_iter().map(|copy| copy.from).collect());
-        futures::future::ready(moved).boxed()
-    }
-
-    fn copy(
-        &self,
-        id: ProfileId,
-        from: ReplicaScope,
-        to: ReplicaScope,
-        credentials: Vec<CredentialId>,
-    ) -> BoxFuture<'static, Result<Vec<CredentialCopy>, ReplicaError>> {
-        let call = ReplicaCall::Copy {
-            id,
-            from: from.clone(),
-            to: to.clone(),
-            credentials: credentials.clone(),
-        };
-        futures::future::ready(self.relocate(id, call, from, to, credentials, false)).boxed()
-    }
-
-    fn spaces(&self) -> Vec<ReplicaSpace> {
-        self.with(|inner| inner.spaces.clone())
     }
 
     fn watch(&self) -> BoxStream<'static, ()> {

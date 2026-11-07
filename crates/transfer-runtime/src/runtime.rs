@@ -1,11 +1,8 @@
 use crate::{batch::Batch, blocking::BlockingDispatcher, scheduler};
 use futures::future::BoxFuture;
-use nocterm_session::{
-    RemoteFs,
-    local_fs::{LocalFs, LocalFsError},
-};
+use nocterm_session::{RemoteFs, local_fs::LocalFs};
 use nocterm_transfers::{
-    DownloadRequest, Progress, Request, TransferCause, TransferError, TransferId, TransferLimits,
+    DownloadRequest, Progress, Request, TransferError, TransferId, TransferLimits,
     TransferRequests, TransferService, UploadRequest,
 };
 use parking_lot::Mutex;
@@ -22,23 +19,12 @@ use tokio::{
 };
 
 pub struct TransferRuntimeDeps {
-    local: Option<Arc<dyn LocalFs>>,
+    local: Arc<dyn LocalFs>,
     limits: TransferLimits,
 }
 impl TransferRuntimeDeps {
     pub fn new(local: Arc<dyn LocalFs>, limits: TransferLimits) -> Self {
-        Self {
-            local: Some(local),
-            limits,
-        }
-    }
-    /// No local filesystem: Upload and Download requests are refused with
-    /// `TransferError::LocalUnavailable`; relays between remote hosts still run.
-    pub fn remote_only(limits: TransferLimits) -> Self {
-        Self {
-            local: None,
-            limits,
-        }
+        Self { local, limits }
     }
 }
 #[derive(Debug, thiserror::Error)]
@@ -63,7 +49,7 @@ struct Admission {
 pub(crate) struct RuntimeState {
     batches: Mutex<BTreeMap<TransferId, Arc<Batch>>>,
     revision: Arc<crate::changes::Changes>,
-    local: Option<Arc<dyn LocalFs>>,
+    local: Arc<dyn LocalFs>,
     limits: TransferLimits,
     blocking: BlockingDispatcher,
     file_slots: Arc<tokio::sync::Semaphore>,
@@ -75,12 +61,8 @@ struct Completion {
     changed: Notify,
 }
 impl RuntimeState {
-    pub(crate) fn local(&self) -> Result<&Arc<dyn LocalFs>, TransferCause> {
-        self.local
-            .as_ref()
-            .ok_or(TransferCause::Local(LocalFsError::Unsupported(
-                "local filesystem",
-            )))
+    pub(crate) fn local(&self) -> &Arc<dyn LocalFs> {
+        &self.local
     }
     pub(crate) fn limits(&self) -> TransferLimits {
         self.limits
@@ -167,9 +149,6 @@ impl TransferRuntime {
     }
     fn admit(&self, request: Request) -> Result<TransferId, TransferError> {
         request.validate(self.state.limits.discovery())?;
-        if self.state.local.is_none() && !matches!(request, Request::Relay(_)) {
-            return Err(TransferError::LocalUnavailable);
-        }
         let mut admission = self.admission.lock();
         if admission.sender.is_none() {
             return Err(TransferError::ShuttingDown);

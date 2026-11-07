@@ -12,7 +12,6 @@ use std::sync::Mutex;
 mod conflicts;
 mod feed;
 mod lifecycle;
-mod spaces;
 
 fn profile(name: &str) -> Profile {
     Profile {
@@ -157,27 +156,6 @@ impl Fixture {
             .unwrap_or_default()
     }
 
-    fn place(&self, cx: &mut gpui::TestAppContext, profile: &Profile, scope: ReplicaScope) {
-        let id = profile.id;
-        self.replication
-            .update(cx, |replication, cx| replication.place(id, scope, cx));
-        cx.run_until_parked();
-    }
-
-    /// Requests a scope for a profile about to be saved, without synchronizing.
-    fn stage(&self, cx: &mut gpui::TestAppContext, profile: &Profile, scope: ReplicaScope) {
-        let id = profile.id;
-        self.replication.update(cx, |replication, cx| {
-            replication.stage(id, scope, cx);
-        });
-    }
-
-    fn space_of(&self, cx: &gpui::TestAppContext, profile: &Profile) -> ReplicaScope {
-        let id = profile.id;
-        self.replication
-            .read_with(cx, |replication, cx| replication.space_of(id, cx))
-    }
-
     fn put_count(&self) -> usize {
         self.replica
             .writes()
@@ -193,9 +171,7 @@ async fn a_new_remote_profile_is_applied_locally_without_echoing_it_back(
 ) {
     let fixture = Fixture::new(cx, &[]);
     let remote = profile("remote");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, remote.clone());
+    fixture.replica.write_remote(remote.clone());
     fixture.attach(cx);
     assert_eq!(fixture.local(cx, &remote), Some(remote.clone()));
     assert_eq!(fixture.replica.writes(), []);
@@ -215,10 +191,8 @@ async fn a_new_local_profile_is_sent_once_and_its_echo_is_ignored(cx: &mut gpui:
         }]
     );
     assert_eq!(fixture.replica.profile(local.id), Some(local.clone()));
-    let created = fixture.replica.stored(local.id).unwrap().1;
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, profile("other"));
+    let created = fixture.replica.stored(local.id).unwrap().0;
+    fixture.replica.write_remote(profile("other"));
     cx.run_until_parked();
     assert_eq!(fixture.put_count(), 1);
     assert_eq!(
@@ -233,9 +207,7 @@ async fn a_remote_edit_replaces_an_unchanged_local_profile(cx: &mut gpui::TestAp
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
     let edited = at_host(&original, "moved.example");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, edited.clone());
+    fixture.replica.write_remote(edited.clone());
     cx.run_until_parked();
     assert_eq!(fixture.local(cx, &original), Some(edited));
     assert_eq!(fixture.put_count(), 1);
@@ -247,7 +219,7 @@ async fn a_local_edit_is_sent_against_the_agreed_version(cx: &mut gpui::TestAppC
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    let agreed = fixture.replica.stored(original.id).unwrap().1;
+    let agreed = fixture.replica.stored(original.id).unwrap().0;
     let edited = at_host(&original, "moved.example");
     fixture.save(cx, edited.clone()).await;
     assert_eq!(
@@ -272,9 +244,7 @@ async fn the_remote_wins_when_both_sides_changed_and_the_loss_is_reported(
     let local_edit = at_host(&original, "local.example");
     fixture.save(cx, local_edit.clone()).await;
     let remote_edit = at_host(&original, "remote.example");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, remote_edit.clone());
+    fixture.replica.write_remote(remote_edit.clone());
     fixture.replica.set_offline(false);
     cx.run_until_parked();
     assert_eq!(fixture.local(cx, &original), Some(remote_edit));
@@ -296,7 +266,7 @@ async fn equal_edits_on_both_sides_are_agreed_without_a_write_or_an_event(
     fixture.replica.set_offline(true);
     let edited = at_host(&original, "same.example");
     fixture.save(cx, edited.clone()).await;
-    let version = fixture.replica.write_remote(ReplicaScope::Personal, edited);
+    let version = fixture.replica.write_remote(edited);
     fixture.replica.set_offline(false);
     cx.run_until_parked();
     assert_eq!(fixture.put_count(), 1);
@@ -315,7 +285,7 @@ async fn a_local_deletion_leaves_a_tombstone_on_the_replica(cx: &mut gpui::TestA
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    let agreed = fixture.replica.stored(original.id).unwrap().1;
+    let agreed = fixture.replica.stored(original.id).unwrap().0;
     fixture.delete(cx, &original).await;
     assert_eq!(
         fixture.replica.writes().last(),
@@ -325,7 +295,7 @@ async fn a_local_deletion_leaves_a_tombstone_on_the_replica(cx: &mut gpui::TestA
         })
     );
     assert!(matches!(
-        fixture.replica.stored(original.id).map(|s| s.2),
+        fixture.replica.stored(original.id).map(|s| s.1),
         Some(RemoteBody::Deleted)
     ));
     assert!(fixture.persisted_state().entry(original.id).is_none());
@@ -336,9 +306,7 @@ async fn a_remote_tombstone_deletes_the_unchanged_local_profile(cx: &mut gpui::T
     let original = profile("a");
     let fixture = Fixture::new(cx, std::slice::from_ref(&original));
     fixture.attach(cx);
-    fixture
-        .replica
-        .delete_remote(ReplicaScope::Personal, original.id);
+    fixture.replica.delete_remote(original.id);
     cx.run_until_parked();
     assert_eq!(fixture.local(cx, &original), None);
     assert_eq!(fixture.put_count(), 1);
@@ -355,9 +323,7 @@ async fn a_remote_edit_restores_a_profile_deleted_locally_while_offline(
     fixture.replica.set_offline(true);
     fixture.delete(cx, &original).await;
     let edited = at_host(&original, "remote.example");
-    fixture
-        .replica
-        .write_remote(ReplicaScope::Personal, edited.clone());
+    fixture.replica.write_remote(edited.clone());
     fixture.replica.set_offline(false);
     cx.run_until_parked();
     assert_eq!(fixture.local(cx, &original), Some(edited));
@@ -378,9 +344,7 @@ async fn a_local_edit_is_sent_over_a_remote_tombstone(cx: &mut gpui::TestAppCont
     fixture.replica.set_offline(true);
     let edited = at_host(&original, "local.example");
     fixture.save(cx, edited.clone()).await;
-    let tombstone = fixture
-        .replica
-        .delete_remote(ReplicaScope::Personal, original.id);
+    let tombstone = fixture.replica.delete_remote(original.id);
     fixture.replica.set_offline(false);
     cx.run_until_parked();
     assert_eq!(
