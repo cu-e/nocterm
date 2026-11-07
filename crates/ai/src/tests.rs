@@ -196,7 +196,7 @@ fn explicit_descriptor_payload_filters_user_metadata_and_has_no_credentials() {
             description: "password=marker-description sk-ant-secretmarker123".into(),
             host: "example.org".into(),
             port: 22,
-            user: "egor".into(),
+            user: "alice".into(),
         }),
     };
     let payload = context_block(&[terminal], &[]);
