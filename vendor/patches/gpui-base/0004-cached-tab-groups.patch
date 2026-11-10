@@ -1,0 +1,49 @@
+diff --git a/NOCTERM.md b/NOCTERM.md
+index e41d8ebcb0046b89995873cf6975198bb643641d..87aa5652b9b6aaa24a9dfe96d0b26421f45e6673 100644
+GIT binary patch
+delta 432
+zcmXw#F>b>!3`KWOMNja74(Z^!d$wMnQ;{{MW!4hviUuj!$do(uB;9(wLW;8p!UxI!
+z{{O+>)9>TMwdqH3U$5mklQMN`Jw~O?z~np<4VYB&0x}RBInN{3z*`HGqIilEBSc8#
+z+i2TZcD^ixWFVKq%2+7!d@x8(OHS?Xag7|3XGQW1slV!Gh*HI%6=5K?uKDnc0$I*%
+z@os&irFpJ)`#Mb&VuxG0M8mo2HJuE`y0R6|Yg3{a<g*e~$bt<o^H?TS^5pR@F0p<e
+z4E<ZYoC0sh<9?<u(F^^`aTMjT>8B-!mqod6F|ea-T**q61L?ipmGy$>do3xXnOlVD
+Q<~)WtA;i5niELf-52PHMDF6Tf
+
+delta 7
+Ocmdn4JV{}LkN^M+cmiJl
+
+diff --git a/src/dock/dock_area.rs b/src/dock/dock_area.rs
+index f1c17c7e5d4cce5a39a31ffbbbd1fed2faeb93a7..7ff4c7839c01916899f0101559bfee02b74db57b 100644
+GIT binary patch
+delta 559
+zcmYk3ze^lJ6vr76S&k5tL&%RJuhERKS<Apljx;6^!9oj3h%Dpm+uOmpnPX@6_BIF>
+zfi$VY6kF+O{sM_bs?;_q@+W9(X^}eYk6iM~d2hb&`}w|$pWg3Z-o=}_{tm`M;SiPe
+zVb>NCBVYzXA9k|?!&5P`LMy)m0I-Mba8p@f3m^7`igfN@=5zg}<EmNJ`Z{cDZZRG9
+zz$OTTRA(atEJcV?ma9scGoD}sV}ZHZsHa$p?5P2rE8q!JgJ#&&D_d2Y;1Jk=2^Gwq
+z`6SQ>2GcPvga&0y%P*8Xd=l%l*$YC|(m~@Q7&DonDakvs>`o6CR<I@svQfk=Qa<tF
+zDD;6(jw)rPt%wV{=3ZVsDsL(2ctM1g@q}J}>wf)w{6A?!<b%<`{t^fUTD1Yx>;|-w
+z1=xhy#@+@nRm@;o&X!-tvtZiKO#o81`0na_(d|#)x}B5d^2aOkz@2T*m)>i#RK5?%
+zy=Ot=iPi`Gci~<y!kA^!(zU>d4;aRol(f8gOuChTTb*`Y=j?uYy+!8Ti|5|QyXp74
+IDd~Uu1JD4xga7~l
+
+delta 98
+zcmV-o0G<E#&<L>12(U^5Eo2~Jb0A+VAX9Z>b7OL8aCB*JZY&^IWnpVYZggpMc`P7T
+zX>Me1cPt7ZARx1d0zMJ5@)Vzolc1y!lTgbDlP{r4lSp?DlRcs#laOr$gD|4EFrooQ
+Eh9P_<I{*Lx
+
+diff --git a/src/dock/tab_group.rs b/src/dock/tab_group.rs
+index fec1332964c814a3e643aec935ac2867ce218455..899349c16544775b58c8936cf58a6b945a076e92 100644
+GIT binary patch
+delta 394
+zcmZvX!Ab&A6owIvD6OPYVTd>on9|_5GlrBP+O`qe4tK669ngFA&UI7}+Vlc(mTh`~
+z5Mv&pO^X6wpjIwg^a?>ZEh=hx&iT&w^IyNkpWoxtX)IOmyFOQ5S9?;>BxWR50U&&g
+z<ujK60G4IJndBN(#|GU(U<w&D6dU-_*i^FL1?B?-&UgzO5O_E+fr&<R*USZ%sjrWP
+zIx=E_Y6M*-u)Xht_H-Lf@Fg(uz2zq@CYty+tI0f3id0TyaCijzHk>0r`q`&u(s5-c
+zT*;;5yNl?5c-s~@C=_Y7mJ9R7ZFc=PLpOU>`sk&oez!@lg#(&iEz!hX-YQAgM-^a!
+z4^8OE0AWn`jzQI8Htm?ehhyNwl91ZF7*UU9NW5%NZI-0+JVA%^Z89p!@Tq+I@Cji!
+BiG~0G
+
+delta 41
+zcmV+^0M`G_>;sYL1F*0GlfD5Mv)TbB6|=(^D+7~h9u%`G8<`f94<Zb+4l_T)WwH+=
+
+# End of generated Nocterm binary patch.
