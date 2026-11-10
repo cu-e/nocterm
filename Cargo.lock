@@ -5754,6 +5754,7 @@ dependencies = [
  "nocterm-session",
  "rustix 1.1.5",
  "tempfile",
+ "winapi-util",
  "windows-sys 0.61.2",
 ]
 
