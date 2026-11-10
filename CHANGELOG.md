@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.1](https://github.com/cu-e/nocterm/compare/v4.1.0...v4.1.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* save new chats, find npx and hide agent consoles on Windows ([#59](https://github.com/cu-e/nocterm/issues/59)) ([a1d4e62](https://github.com/cu-e/nocterm/commit/a1d4e62ef2f314ef61c02755fd9e2613a95120c6))
+
 ## [4.1.0](https://github.com/cu-e/nocterm/compare/v4.0.0...v4.1.0) (2026-11-10)
 
 
