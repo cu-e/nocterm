@@ -30,7 +30,6 @@ use nocterm_session::{
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
 mod clock;
-#[cfg(target_os = "linux")]
 mod exec;
 mod integration;
 mod program_opener;
@@ -39,7 +38,6 @@ mod readiness;
 mod recording;
 
 pub use clock::SystemClock;
-#[cfg(target_os = "linux")]
 pub use exec::LocalExec;
 pub use program_opener::{LocalProgramOpener, MAX_OPEN_PROGRAMS};
 pub use recording::LocalOutputLogFactory;
@@ -208,8 +206,10 @@ enum LaunchError {
     Source(#[from] nocterm_session::ConnectionSourceError),
     #[error("native PTY error: {0}")]
     Pty(String),
+    #[cfg(unix)]
     #[error("native PTY has no file descriptor")]
     MissingFd,
+    #[cfg(unix)]
     #[error("file descriptor control error: {0}")]
     Fcntl(String),
     #[error("I/O error: {0}")]
