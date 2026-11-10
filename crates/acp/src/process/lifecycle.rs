@@ -156,10 +156,12 @@ fn stop_group(pid: u32, force: bool) -> Result<(), CleanupError> {
     #[cfg(windows)]
     {
         let _ = force;
+        use std::os::windows::process::CommandExt as _;
         let status = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            .creation_flags(super::CREATE_NO_WINDOW)
             .status();
         confirm_taskkill(status)?;
     }

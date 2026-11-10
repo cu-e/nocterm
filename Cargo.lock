@@ -5125,6 +5125,7 @@ dependencies = [
  "async-channel",
  "async-io",
  "async-process",
+ "dunce",
  "futures",
  "getrandom 0.4.3",
  "nix 0.28.0",
