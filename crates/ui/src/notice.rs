@@ -10,13 +10,46 @@ use std::{collections::HashMap, rc::Rc, time::Duration};
 use gpui_kit::{App, Global, SharedString, Window, WindowId};
 
 mod bar;
+#[cfg(feature = "user-plugins")]
+mod plugin;
 
 pub use bar::NoticeBar;
+#[cfg(feature = "user-plugins")]
+pub use plugin::PluginNotices;
 
 /// How long a notice without an action stays on the footer line.
 const TRANSIENT: Duration = Duration::from_secs(8);
-/// Notices kept per window; the oldest go first.
+/// Notices of the application kept per window; the oldest go first.
 const LIMIT: usize = 50;
+/// Notices one user plugin keeps in a window, and all user plugins together. They are a separate
+/// class: they evict only each other, never a notice of the application.
+const PLUGIN_LIMIT: usize = 3;
+const PLUGIN_TOTAL: usize = 16;
+
+/// A plugin's own name for one of its notices; repeating it replaces the earlier notice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalKey(String);
+
+impl LocalKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+}
+
+/// Who a notice belongs to and what it is called. The key is what repeating replaces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoticeKey {
+    /// A notice of the application.
+    Host(&'static str),
+    /// A notice a user plugin posted.
+    Plugin(nocterm_plugin_model::PluginId, LocalKey),
+}
+
+impl NoticeKey {
+    fn is_host(&self) -> bool {
+        matches!(self, Self::Host(_))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
@@ -31,7 +64,7 @@ type Action = Rc<dyn Fn(&mut Window, &mut App)>;
 #[derive(Clone)]
 struct Notice {
     id: u64,
-    key: &'static str,
+    key: NoticeKey,
     level: Level,
     title: SharedString,
     message: SharedString,
@@ -45,6 +78,40 @@ struct WindowNotices {
     /// Oldest first.
     notices: Vec<Notice>,
     expanded: bool,
+}
+
+impl WindowNotices {
+    /// Adds `notice` in place of any earlier notice of its key, then evicts the oldest notices of
+    /// its own class beyond that class's quota.
+    fn insert(&mut self, notice: Notice) {
+        self.notices.retain(|earlier| earlier.key != notice.key);
+        let key = notice.key.clone();
+        self.notices.push(notice);
+        match key {
+            NoticeKey::Host(_) => self.evict(LIMIT, |key| key.is_host()),
+            NoticeKey::Plugin(plugin, _) => {
+                self.evict(
+                    PLUGIN_LIMIT,
+                    |key| matches!(key, NoticeKey::Plugin(owner, _) if *owner == plugin),
+                );
+                self.evict(PLUGIN_TOTAL, |key| !key.is_host());
+            }
+        }
+    }
+
+    fn evict(&mut self, limit: usize, class: impl Fn(&NoticeKey) -> bool) {
+        let members = self.notices.iter().filter(|notice| class(&notice.key));
+        let excess = members.clone().count().saturating_sub(limit);
+        let doomed: Vec<u64> = members.take(excess).map(|notice| notice.id).collect();
+        self.notices.retain(|notice| !doomed.contains(&notice.id));
+    }
+
+    /// Whether an action of the application waits on the footer line.
+    fn host_action_live(&self) -> bool {
+        self.notices
+            .iter()
+            .any(|notice| notice.live && notice.key.is_host() && notice.action.is_some())
+    }
 }
 
 #[derive(Default)]
@@ -81,26 +148,41 @@ fn post(
     message: impl Into<SharedString>,
     action: Option<(&'static str, Action)>,
 ) {
+    post_keyed(
+        window,
+        cx,
+        NoticeKey::Host(key),
+        level,
+        title.into(),
+        message.into(),
+        action,
+    );
+}
+
+fn post_keyed(
+    window: &mut Window,
+    cx: &mut App,
+    key: NoticeKey,
+    level: Level,
+    title: SharedString,
+    message: SharedString,
+    action: Option<(&'static str, Action)>,
+) {
     let id = {
         let store = cx.default_global::<Notices>();
         store.next += 1;
         store.next
     };
     let transient = action.is_none();
-    let list = notices(window, cx);
-    list.notices.retain(|notice| notice.key != key);
-    list.notices.push(Notice {
+    notices(window, cx).insert(Notice {
         id,
         key,
         level,
-        title: title.into(),
+        title,
         message: bounded(message),
         action,
         live: true,
     });
-    if list.notices.len() > LIMIT {
-        list.notices.remove(0);
-    }
     window.refresh();
     if transient {
         window
@@ -156,7 +238,8 @@ fn set_expanded(window: &mut Window, cx: &mut App, expanded: bool) {
 pub fn remove(window: &mut Window, cx: &mut App, key: &'static str) {
     let list = notices(window, cx);
     let before = list.notices.len();
-    list.notices.retain(|notice| notice.key != key);
+    list.notices
+        .retain(|notice| notice.key != NoticeKey::Host(key));
     if list.notices.is_empty() {
         list.expanded = false;
     }
@@ -188,7 +271,7 @@ pub fn run_action(window: &mut Window, cx: &mut App, key: &'static str) -> bool 
     let id = notices(window, cx)
         .notices
         .iter()
-        .find(|notice| notice.key == key && notice.action.is_some())
+        .find(|notice| notice.key == NoticeKey::Host(key) && notice.action.is_some())
         .map(|notice| notice.id);
     if let Some(id) = id {
         act(window, cx, id);

@@ -1,0 +1,24 @@
+[package]
+name = "focus-timer"
+description = "An example code plugin for nocterm: a focus timer in the status bar with a panel."
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A separate workspace: the example targets wasm32 and builds a cdylib, which the application's
+# workspace and Cargo.lock must not carry.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nocterm-plugin-sdk = { path = "../../../crates/plugin-sdk" }
+
+[dev-dependencies]
+nocterm-plugin-sdk = { path = "../../../crates/plugin-sdk", features = ["testing"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

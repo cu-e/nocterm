@@ -1,29 +1,41 @@
 //! Explorer navigation, file dialogs and transfer presentation.
-//! Browser generations, scan results and completion cursors remain private transition owners.
+//! Browser generations, shared row selections, scan results and completion cursors remain private transition owners.
 //!
-//! Owns: independent pane views, path editors, selection and pinned operation dialogs.
+//! Owns: independent pane views, acknowledged browser navigation, selection and pinned dialogs.
+//! Shared path editors and navigation controls belong to nocterm-ui.
 //! Does not own: native filesystem traversal/mutations, transfer execution or process spawning.
-//! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `TransferService`, `ProgramOpener`,
+//! Ports used: `LocalFs`, `LocalMutations`, `RemoteFs`, `DirectoryReaders`, `TransferService`, `ProgramOpener`,
 //! workspace `LocalTerminal` and the retained settings service handle.
-//! Ports provided: `Panel`, `SettingsPageSpec`. Settings section: explorer. Globals: none.
+//! Ports provided: `Panel`, `SettingsPageSpec` and the core `files.explorer` and
+//! `files.transfers` contributions (`plugin::CORE`) and, behind `user-plugins`, the
+//! `TransferCounts` provider of `transfers.counts` for user plugins. Settings section: explorer. Globals: none.
+//! ExplorerSource supplies ordinary session files or a local folder for the
+//! injected LocalFs. The folder is an initial location; navigation stays ordinary.
 //! Invariants: native paths keep their original names; each pane rejects stale navigation;
 //! accepted operations retain their original capability while later navigation proceeds.
 mod activity;
 mod dialogs;
+#[cfg(feature = "user-plugins")]
+mod host_capabilities;
 mod local;
 mod local_pane;
 mod open;
 mod operations;
-mod path_input;
+pub mod plugin;
+mod projection;
+use nocterm_ui::directory as path_input;
 mod registration;
 mod remote;
 mod remote_pane;
 mod row;
+mod selection;
 mod settings;
 mod settings_page;
 mod statistics;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use nocterm_workspace::SessionContext;
 mod transfers;
 
 use gpui_kit::{
@@ -46,12 +58,15 @@ use nocterm_session::{EntryKind, RemoteFs, fs::path};
 use nocterm_transfers::{CollisionPolicy, DownloadRequest, UploadRequest};
 use nocterm_ui::{ActiveDesign as _, IconName};
 use nocterm_workspace::{
-    FileDrag, Panel, RemoteFileDrag as RemotePaths, SessionContext, Workspace, WorkspaceEvent,
+    ExplorerSource, FileDrag, Panel, RemoteFileDrag as RemotePaths, Workspace, WorkspaceEvent,
 };
 use operations::FileTarget;
 use remote::{Browser, listing};
-use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use selection::RowSelection;
+use std::{path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
+#[cfg(feature = "user-plugins")]
+pub use host_capabilities::TransferCounts;
 pub use registration::{
     Installed, OpenExplorerSettings, ShowTransfers, ToggleExplorer, install, register,
 };
@@ -68,19 +83,25 @@ pub struct Deps {
     mutations: Arc<dyn nocterm_session::local_fs::LocalMutations>,
     transfers: Arc<dyn nocterm_transfers::TransferService>,
     opener: Arc<dyn nocterm_session::ProgramOpener>,
+    directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
 }
 impl Deps {
+    pub fn directory_readers(&self) -> Arc<dyn nocterm_explorer::directory::DirectoryReaders> {
+        self.directories.clone()
+    }
     pub fn new(
         local: Arc<dyn nocterm_session::local_fs::LocalFs>,
         mutations: Arc<dyn nocterm_session::local_fs::LocalMutations>,
         transfers: Arc<dyn nocterm_transfers::TransferService>,
         opener: Arc<dyn nocterm_session::ProgramOpener>,
+        directories: Arc<dyn nocterm_explorer::directory::DirectoryReaders>,
     ) -> Self {
         Self {
             local,
             mutations,
             transfers,
             opener,
+            directories,
         }
     }
 }
@@ -106,6 +127,7 @@ enum PaneIntent {
     Upload {
         sources: Vec<PathBuf>,
         destination: Option<String>,
+        source: Option<ExplorerSource>,
     },
     Download {
         files: RemotePaths,
@@ -195,7 +217,7 @@ impl FilesPanel {
     fn new(
         installed: Installed,
         workspace: Entity<Workspace>,
-        session: Option<SessionContext>,
+        source: Option<ExplorerSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -205,24 +227,47 @@ impl FilesPanel {
             window: window.window_handle(),
         };
         let local = cx.new(|cx| LocalPane::new(&installed, host.clone(), window, cx));
-        let remote =
-            cx.new(|cx| RemotePane::new(installed.local().clone(), host, session, window, cx));
+        if let Some(directory) = source
+            .as_ref()
+            .filter(|source| source.is_local())
+            .and_then(ExplorerSource::initial_directory)
+        {
+            local.update(cx, |local, cx| local.load_local(directory.into(), cx));
+        }
+        let remote = cx.new(|cx| RemotePane::new(host, source, window, cx));
         let local_events = cx.subscribe(&local, |this, _, event, cx| this.intent(event, cx));
         let remote_events = cx.subscribe(&remote, |this, _, event, cx| this.intent(event, cx));
         let workspace_events = cx.subscribe(&workspace, |this, workspace, event, cx| {
-            if *event == WorkspaceEvent::ActiveSessionChanged {
+            if matches!(
+                event,
+                WorkspaceEvent::ActiveSessionChanged
+                    | WorkspaceEvent::ContextChanged
+                    | WorkspaceEvent::SurfaceItemsChanged(_)
+            ) {
                 let workspace = workspace.clone();
                 let panel = cx.entity().downgrade();
                 cx.defer(move |cx| {
-                    let session = workspace.read(cx).active_session(cx);
+                    let source = workspace.read(cx).explorer_source(cx);
                     let _ = panel.update(cx, |this, cx| {
-                        this.remote
-                            .update(cx, |remote, cx| remote.follow(session, cx))
+                        if let Some(directory) = this
+                            .remote
+                            .update(cx, |remote, cx| remote.follow(source, cx))
+                        {
+                            this.local
+                                .update(cx, |local, cx| local.load_local(directory, cx));
+                        }
                     });
                 });
             } else if *event == WorkspaceEvent::LocalDirectoryChanged {
                 this.local.update(cx, |_, cx| cx.notify());
             }
+        });
+        let transfer_events = cx.observe(installed.projection(), |this, _, cx| {
+            this.transfers_changed(cx)
+        });
+        let weak = cx.entity().downgrade();
+        cx.defer(move |cx| {
+            let _ = weak.update(cx, |this, cx| this.transfers_changed(cx));
         });
         let tick = cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -246,7 +291,12 @@ impl FilesPanel {
             collisions: CollisionPolicy::Skip,
             window: window.window_handle(),
             _observers: PanelObservers {
-                _subscriptions: vec![local_events, remote_events, workspace_events],
+                _subscriptions: vec![
+                    local_events,
+                    remote_events,
+                    workspace_events,
+                    transfer_events,
+                ],
                 _tick: tick,
             },
             installed,
@@ -262,11 +312,17 @@ impl FilesPanel {
             PaneIntent::Upload {
                 sources,
                 destination,
+                source,
             } => {
-                let result = self
-                    .remote
-                    .read(cx)
-                    .transfer_target(destination.clone())
+                let result = source
+                    .as_ref()
+                    .and_then(|source| {
+                        Some((
+                            source.filesystem()?,
+                            source.address()?,
+                            destination.clone()?,
+                        ))
+                    })
                     .map(|(fs, host, destination)| {
                         self.installed.transfers().enqueue(UploadRequest {
                             sources: sources.clone(),
@@ -340,7 +396,7 @@ impl FilesPanel {
         });
     }
     fn synchronize(&mut self, finished: &[nocterm_transfers::Progress], cx: &mut Context<Self>) {
-        let jobs = self.installed.transfers().snapshot();
+        let jobs = self.installed.projection().read(cx).entries().to_vec();
         self.local.update(cx, |local, cx| {
             local.transfers(
                 jobs.iter()
@@ -359,9 +415,14 @@ impl FilesPanel {
             remote.transfers(jobs, finished, ready, self.collisions, cx)
         });
     }
+    fn transfers_changed(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.installed.projection().read(cx).entries().to_vec();
+        let (changed, finished) = self.activity.update(snapshot);
+        if changed {
+            self.synchronize(&finished, cx);
+        }
+    }
     fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (_, finished) = self.activity.update(self.installed.transfers().snapshot());
-        self.synchronize(&finished, cx);
         self.local
             .update(cx, |local, cx| local.poll_statistics(window, cx));
         self.remote

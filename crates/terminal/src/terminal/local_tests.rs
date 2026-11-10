@@ -138,7 +138,7 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
             cx,
         );
         let local = crate::LocalSessions::new(
-            Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
+            Arc::new(move |_, _| Arc::new(FakeTransport(captured.clone()))),
             "/bin/bash".into(),
         );
         let installed = crate::install(
@@ -161,10 +161,10 @@ fn directory_bridge_rejects_busy_input_and_uses_running_shell_snapshot(cx: &mut 
                 })
             );
             terminal.handle_event(
-                Event::Output(b"\x1b]7;file://localhost/home/egor\x07\x1b]133;A\x07".to_vec()),
+                Event::Output(b"\x1b]7;file://localhost/home/alice\x07\x1b]133;A\x07".to_vec()),
                 cx,
             );
-            assert_eq!(terminal.cwd(), Some(PathBuf::from("/home/egor")));
+            assert_eq!(terminal.cwd(), Some(PathBuf::from("/home/alice")));
             terminal
                 .installed()
                 .settings()
@@ -227,7 +227,7 @@ fn directory_terminal(
             cx,
         );
         let local = crate::LocalSessions::new(
-            Arc::new(move |_| Arc::new(FakeTransport(captured.clone()))),
+            Arc::new(move |_, _| Arc::new(FakeTransport(captured.clone()))),
             "/bin/bash".into(),
         );
         let installed = crate::install(

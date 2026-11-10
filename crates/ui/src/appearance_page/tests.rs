@@ -95,6 +95,52 @@ fn opening_is_offline_and_browse_requires_an_explicit_action(cx: &mut TestAppCon
     click(handle, "install-theme-fake", cx);
     assert_eq!(backend.installs(), 1);
 }
+
+#[gpui_kit::test]
+fn repeated_browse_while_the_registry_is_blocked_coalesces_one_latest_request(
+    cx: &mut TestAppContext,
+) {
+    let backend = backend();
+    let (started, receiving) = std::sync::mpsc::channel();
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let blocked = gate.clone();
+    backend.before_search(Some(Arc::new(move || {
+        started.send(()).unwrap();
+        let (state, changed) = blocked.as_ref();
+        let mut open = state.lock().unwrap();
+        while !*open {
+            open = changed.wait(open).unwrap();
+        }
+    })));
+    let (handle, _, _) = setup(cx, backend.clone());
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("browse-zed-themes", cx);
+    })
+    .unwrap();
+    let dispatcher = cx.executor().dispatcher().clone();
+    let worker = std::thread::spawn(move || assert!(dispatcher.as_test().unwrap().tick(true)));
+    receiving
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    for _ in 0..3 {
+        // Dispatch real controls while native work is held, without polling the foreground
+        // waiter on a deterministic scheduler from a different physical thread.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("browse-zed-themes", cx);
+        })
+        .unwrap();
+    }
+    let before_release = backend.searches();
+    *gate.0.lock().unwrap() = true;
+    gate.1.notify_all();
+    worker.join().unwrap();
+    cx.run_until_parked();
+    assert_eq!(before_release, 1);
+    assert_eq!(backend.searches(), 2);
+}
 #[gpui_kit::test]
 async fn uninstall_rebases_current_selection_and_retains_surviving_duplicates(
     cx: &mut TestAppContext,

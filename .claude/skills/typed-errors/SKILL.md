@@ -45,4 +45,4 @@ count may only shrink.
 - [ ] causes retained with `#[source]`/`#[from]`/`SharedError`
 - [ ] variants carry data, not formatted text
 
-End with the Result block.
+Report the relevant changes, evidence and remaining work concisely.

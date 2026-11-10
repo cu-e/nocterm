@@ -1,0 +1,128 @@
+//! The port a remote copy of the saved profiles implements, and the reconciliation rules.
+//!
+//! The local document stays the source the application reads. A replica is a second
+//! copy, kept by another party (a hub), that changes independently. The rules in
+//! [`rules`] decide, per profile, what to do when the local copy, the replica and the
+//! last agreed state differ; they never perform I/O.
+mod state;
+
+pub mod rules;
+
+pub use state::{ReplicaState, SyncedEntry};
+
+use crate::profiles::{Profile, ProfileId};
+use futures::{future::BoxFuture, stream::BoxStream};
+use nocterm_core::SharedCause;
+use serde::{Deserialize, Serialize};
+
+/// An opaque position in the replica's change feed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ReplicaCursor(String);
+
+impl ReplicaCursor {
+    pub fn new(token: impl Into<String>) -> Self {
+        Self(token.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The replica's revision of one profile, used as the expectation of the next write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ReplicaVersion(u64);
+
+impl ReplicaVersion {
+    pub fn new(version: u64) -> Self {
+        Self(version)
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// What the replica holds for a profile.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RemoteBody {
+    Present(Box<Profile>),
+    /// A tombstone: the profile was deleted and the deletion is itself a version.
+    Deleted,
+    /// An object this client cannot decode, usually written by a newer client.
+    Unrecognized,
+}
+
+/// One entry of the change feed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemoteProfile {
+    pub id: ProfileId,
+    pub version: ReplicaVersion,
+    pub body: RemoteBody,
+}
+
+/// Changes after a cursor, in the order the replica made them. A profile's versions
+/// grow along the feed, but the rules do not rely on it: a change older than the
+/// version already agreed is ignored.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicaPage {
+    pub changes: Vec<RemoteProfile>,
+    /// Where to continue reading after these changes.
+    pub cursor: ReplicaCursor,
+    /// More changes are available immediately after `cursor`.
+    pub more: bool,
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ReplicaError {
+    /// The original account capture no longer belongs to the current login.
+    #[error("The original profile replica is no longer current.")]
+    Stale,
+    /// The replica cannot be reached now; local work continues.
+    #[error("The profile replica is not reachable.")]
+    Unavailable,
+    /// The keys that open the replica are closed, so nothing can be read or written until
+    /// they are opened again. The server may well be reachable.
+    #[error("The profile replica is locked.")]
+    Locked,
+    /// The expected version is no longer the replica's current one.
+    #[error("Profile {id} changed on the replica.")]
+    Conflict { id: ProfileId },
+    /// The account may not change this profile.
+    #[error("Profile {id} cannot be changed on the replica.")]
+    Forbidden { id: ProfileId },
+    #[error("The profile replica failed: {0}")]
+    Other(#[source] SharedCause),
+}
+
+/// A remote copy of the saved profiles, one sealed object per profile.
+pub trait ProfileReplica: Send + Sync {
+    /// Changes after `after`; `None` reads from the beginning.
+    fn changes(
+        &self,
+        after: Option<ReplicaCursor>,
+    ) -> BoxFuture<'static, Result<ReplicaPage, ReplicaError>>;
+
+    /// Writes `profile`. `expected` is the version this client last saw, or `None`
+    /// to create; a replica holding another version answers `Conflict`.
+    fn put(
+        &self,
+        profile: Profile,
+        expected: Option<ReplicaVersion>,
+    ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>>;
+
+    /// Replaces the profile with a tombstone under the same expectation rules.
+    fn delete(
+        &self,
+        id: ProfileId,
+        expected: ReplicaVersion,
+    ) -> BoxFuture<'static, Result<ReplicaVersion, ReplicaError>>;
+
+    /// Yields once whenever the replica may have new changes.
+    fn watch(&self) -> BoxStream<'static, ()>;
+}
+
+#[cfg(test)]
+mod tests;

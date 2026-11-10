@@ -1,7 +1,8 @@
 //! The form that creates and edits a saved connection.
 
 use gpui_kit::{
-    App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription, WeakEntity, Window,
+    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription,
+    WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
@@ -18,7 +19,9 @@ use nocterm_connections_model::{jump_route::resolve_jump_route, profiles::Profil
 use nocterm_ui::ActiveDesign as _;
 use nocterm_workspace::Workspace;
 
-use crate::{Installed, session_intents::open_profile};
+use crate::{Installed, PasswordNotKept, session_intents::open_profile};
+use futures::future::BoxFuture;
+use nocterm_session::{Auth, CredentialId};
 
 /// Two rows of icon tiles: 28 px tiles with a 4 px gap.
 const ICON_ROWS_HEIGHT: f32 = 60.;
@@ -50,18 +53,23 @@ impl EditorSection {
     ];
 }
 
+use agent_access::AgentAccessField;
 use appearance::AppearanceFields;
 use authentication::AuthenticationFields;
 use connection::ConnectionFields;
 use jump_hosts::JumpHostsFields;
 use launch::LaunchFields;
-use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField};
+use nocterm_connections_model::draft::{AuthKind, ProfileDraft, ValidationField, expand_home};
 use state::EditState;
+use vault_key::VaultKeyEvent;
+mod agent_access;
 mod authentication;
 mod connection;
 mod jump_hosts;
 mod launch;
+mod password;
 mod state;
+mod vault_key;
 
 #[derive(Debug)]
 struct FormError {
@@ -86,6 +94,10 @@ pub fn open_editor(
     window: &mut Window,
     cx: &mut App,
 ) {
+    // A change the account does not receive would be lost.
+    if !crate::panel::account_state::AccountState::of(&installed, cx).editable() {
+        return;
+    }
     let _ = open_editor_view(installed, profile, workspace, window, cx);
 }
 fn open_editor_view(
@@ -148,7 +160,10 @@ pub struct ConnectionEditor {
     appearance: AppearanceFields,
     jump_hosts: JumpHostsFields,
     options: Entity<nocterm_ui::SessionOptionsEditor>,
+    agent_access: AgentAccessField,
     section: EditorSection,
+    /// The page's scroll, to bring a row that just appeared into view.
+    scroll: ScrollHandle,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -194,7 +209,13 @@ impl ConnectionEditor {
             .map_or_else(|| inputs.next_id(), |profile| profile.id);
         let existing = profile.as_ref();
         let connection = ConnectionFields::new(existing, inputs.defaults(), window, cx);
-        let authentication = AuthenticationFields::new(existing, window, cx);
+        let authentication = AuthenticationFields::new(
+            existing,
+            inputs.keys().clone(),
+            inputs.passwords().clone(),
+            window,
+            cx,
+        );
         let launch = LaunchFields::new(existing, window, cx);
         let appearance = AppearanceFields::new(existing, &installed, window, cx);
         let choices = JumpHostsFields::choices(id, &installed, cx);
@@ -207,8 +228,10 @@ impl ConnectionEditor {
                 cx,
             )
         });
-        let subscription = cx.observe(installed.facts(), |_, _, cx| cx.notify());
-        Self {
+        let agent_access = AgentAccessField::new(inputs.agent_access().cloned());
+        let mut subscriptions = vec![cx.observe(installed.facts(), |_, _, cx| cx.notify())];
+        subscriptions.extend(agent_access.observe(cx));
+        let editor = Self {
             deps: installed,
             focus: cx.focus_handle(),
             edit: EditState::new(id, profile),
@@ -219,10 +242,16 @@ impl ConnectionEditor {
             appearance,
             jump_hosts,
             options,
+            agent_access,
             section: EditorSection::Connection,
+            scroll: ScrollHandle::new(),
             error: None,
-            _subscriptions: vec![subscription],
+            _subscriptions: subscriptions,
+        };
+        if editor.authentication.kind() == AuthKind::VaultKey {
+            editor.refresh_vault_keys(window, cx);
         }
+        editor
     }
     fn fields(&self, cx: &App) -> ProfileDraft {
         let (metadata, endpoint) = self.connection.snapshot(cx);
@@ -261,12 +290,13 @@ impl ConnectionEditor {
         }
     }
 
-    /// Saves the connection, and opens it when `and_connect` is set.
+    /// Saves the connection, and opens it when `and_connect` is set. A typed password is kept
+    /// in the window's vault first, and the connection names the record it went to.
     fn save(&mut self, and_connect: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.edit.try_begin() {
             return;
         }
-        let profile = match self.validated_profile(cx) {
+        let mut profile = match self.validated_profile(cx) {
             Ok(profile) => profile,
             Err(error) => {
                 if self.edit.finish() {
@@ -276,13 +306,32 @@ impl ConnectionEditor {
                 return;
             }
         };
-
-        let saved = self.deps.connections().update(cx, |connections, cx| {
-            connections.save_profile_checked(profile.clone(), self.edit.original().cloned(), cx)
-        });
+        let original = self.edit.original().cloned();
+        let kept = self.kept_password(&profile, original.as_ref(), cx);
         self.error = None;
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
+            if let Some(kept) = kept {
+                match kept.await {
+                    Ok(credential) => profile.credential = Some(credential),
+                    Err(error) => {
+                        let _ = this.update(cx, |this, cx| {
+                            if this.edit.finish() {
+                                this.error = Some(error.to_string().into());
+                                cx.notify();
+                            }
+                        });
+                        return;
+                    }
+                }
+            }
+            let Ok(saved) = this.update(cx, |this, cx| {
+                this.deps.connections().update(cx, |connections, cx| {
+                    connections.save_profile_checked(profile.clone(), original, cx)
+                })
+            }) else {
+                return;
+            };
             let result = saved.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if !this.edit.finish() {
@@ -305,6 +354,33 @@ impl ConnectionEditor {
             });
         })
         .detach();
+    }
+
+    /// What the vault does with the connection's password before it is saved: a typed one
+    /// becomes the new password of the chosen record (every server it signs in to takes it)
+    /// or of a new one; a chosen saved password gains the address when the connection is new
+    /// to it. Resolves to the record the connection names; none when nothing changes.
+    fn kept_password(
+        &self,
+        profile: &Profile,
+        original: Option<&Profile>,
+        cx: &App,
+    ) -> Option<BoxFuture<'static, Result<CredentialId, PasswordNotKept>>> {
+        let passwords = self.deps.inputs().passwords();
+        let target = profile.target.clone();
+        if let Some(password) = self.authentication.typed_password(cx) {
+            let kept = passwords.keep(profile.credential, profile.name.clone(), target, password);
+            return Some(kept);
+        }
+        let chosen = profile.credential?;
+        let unchanged = original.is_some_and(|original| {
+            original.credential == Some(chosen) && original.target == profile.target
+        });
+        if unchanged || !matches!(profile.auth, Auth::Auto | Auth::Password) {
+            return None;
+        }
+        let attached = passwords.attach(chosen, target);
+        Some(Box::pin(async move { attached.await.map(|()| chosen) }))
     }
 
     fn validated_profile(&self, cx: &App) -> Result<Profile, FormError> {
@@ -330,17 +406,84 @@ impl ConnectionEditor {
     fn set_auth(&mut self, auth: AuthKind, window: &mut Window, cx: &mut Context<Self>) {
         self.authentication.select(auth);
         self.error = None;
-        if auth == AuthKind::Key {
-            self.authentication
+        match auth {
+            AuthKind::Key => self
+                .authentication
                 .key_path()
-                .update(cx, |input, cx| input.focus(window, cx));
+                .update(cx, |input, cx| input.focus(window, cx)),
+            AuthKind::VaultKey => self.refresh_vault_keys(window, cx),
+            AuthKind::Auto | AuthKind::Password => {}
         }
+        cx.notify();
+    }
+
+    fn refresh_vault_keys(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.authentication
+            .vault_key()
+            .update(cx, |field, cx| field.refresh(window, cx));
+    }
+
+    /// What a vault key operation came to: a chosen key signs the connection
+    /// in, a failure is the error the editor shows.
+    fn on_vault_key(&mut self, event: &VaultKeyEvent, cx: &mut Context<Self>) {
+        match event {
+            VaultKeyEvent::Chosen => {
+                self.authentication.select(AuthKind::VaultKey);
+                self.error = None;
+            }
+            VaultKeyEvent::PassphraseAsked => self.scroll.scroll_to_bottom(),
+            VaultKeyEvent::Failed(message) => self.error = Some(message.clone().into()),
+        }
+        cx.notify();
+    }
+
+    /// The name a key created or imported here gets when none is typed.
+    fn key_label(&self, cx: &App) -> String {
+        let (metadata, endpoint) = self.connection.snapshot(cx);
+        [metadata.name, endpoint.host]
+            .into_iter()
+            .map(|text| text.trim().to_owned())
+            .find(|text| !text.is_empty())
+            .unwrap_or_else(|| "SSH key".to_owned())
+    }
+
+    fn create_vault_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let label = self.key_label(cx);
+        self.error = None;
+        self.authentication
+            .vault_key()
+            .update(cx, |field, cx| field.create(&label, window, cx));
+        cx.notify();
+    }
+
+    /// Stores the key file named in the editor in the vault. Both "Import"
+    /// and "Move to vault" end with the connection using the stored copy.
+    fn import_vault_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.authentication.snapshot(cx).key_path;
+        let typed = typed.trim();
+        if typed.is_empty() {
+            self.show_validation(
+                FormError::new(
+                    ValidationField::Key,
+                    "Enter the path of the key file to import.",
+                ),
+                window,
+                cx,
+            );
+            return;
+        }
+        let path = expand_home(typed, self.deps.inputs().defaults().home.as_deref());
+        let label = self.key_label(cx);
+        self.error = None;
+        self.authentication
+            .vault_key()
+            .update(cx, |field, cx| field.import(&label, path, window, cx));
         cx.notify();
     }
 
     fn show_validation(&mut self, error: FormError, window: &mut Window, cx: &mut Context<Self>) {
         let section = match error.field {
-            ValidationField::Key | ValidationField::Credential => EditorSection::Authentication,
+            ValidationField::Key => EditorSection::Authentication,
             ValidationField::Arguments | ValidationField::Environment | ValidationField::Launch => {
                 EditorSection::Launch
             }
@@ -354,7 +497,6 @@ impl ConnectionEditor {
             ValidationField::Port => Some(self.connection.port()),
             ValidationField::User => Some(self.connection.user()),
             ValidationField::Key => Some(self.authentication.key_path()),
-            ValidationField::Credential => Some(self.authentication.credential()),
             ValidationField::Arguments => Some(&self.launch.inputs()[1]),
             ValidationField::Environment => Some(&self.launch.inputs()[3]),
             ValidationField::Launch => Some(&self.launch.inputs()[0]),
@@ -465,9 +607,10 @@ impl ConnectionEditor {
         self.section = section;
         let focus = match section {
             EditorSection::Connection => self.focus_handle(cx),
-            EditorSection::Authentication => {
-                self.authentication.credential().read(cx).focus_handle(cx)
-            }
+            EditorSection::Authentication => self.authentication.first_input(cx).map_or_else(
+                || self.focus.clone(),
+                |input| input.read(cx).focus_handle(cx),
+            ),
             EditorSection::JumpHosts => self.jump_hosts.address().read(cx).focus_handle(cx),
             EditorSection::Session => self.options.read(cx).focus_handle(cx),
             EditorSection::Launch if self.launch.overridden() => {

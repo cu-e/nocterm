@@ -149,3 +149,27 @@ fn a_missing_session_or_a_failed_fork_starts_over() {
         "a transient error keeps the chat's own session for the next try"
     );
 }
+
+#[test]
+fn a_turn_the_agent_runs_for_another_device_shows_and_ends_on_its_own() {
+    let mut state = SessionState::default();
+    assert!(!state.start_external_turn(), "a detached chat runs nothing");
+    state.queue();
+    state.leased();
+    state.opened();
+    assert!(state.start_external_turn());
+    assert!(state.generating() && state.external_turn());
+    assert!(
+        state.start_turn().is_none(),
+        "a prompt waits for the agent's own turn"
+    );
+    assert!(state.finish_external_turn());
+    assert!(!state.generating());
+    assert!(!state.finish_external_turn());
+    let ticket = state.start_turn().unwrap();
+    assert!(
+        !state.finish_external_turn(),
+        "a prompt's turn is not the agent's own"
+    );
+    assert!(state.finish_turn(ticket, true));
+}

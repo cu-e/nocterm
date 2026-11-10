@@ -45,6 +45,7 @@ for line in sys.stdin:
                         ],
                         env: Default::default(),
                         inherit_env: Vec::new(),
+                        hub: None,
                     },
                     working_directory: dir.path().to_owned(),
                     terminal_auth: false,

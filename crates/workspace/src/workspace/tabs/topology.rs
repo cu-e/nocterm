@@ -3,27 +3,17 @@ use super::super::docking::{DockPane, TAB_PLACEMENTS};
 use super::super::*;
 use gpui_kit::component::dock::{DockAreaState, InsertTarget, NodeId};
 
-pub(super) struct DockTopology {
+pub(in crate::workspace) struct DockTopology {
     dock: Entity<DockArea>,
     _events: Subscription,
     _observer: Subscription,
 }
 impl DockTopology {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
-        let (dock, skin) = DockSkin::dock_area("workspace", None, window, cx);
-        skin.set_panel_style(PanelStyle::TabBar, cx);
-        skin.set_close_button_visible(false, cx);
-        skin.set_toggle_button_visible(false, cx);
-        dock.update(cx, |dock, cx| {
-            dock.set_closed_bottom_strip_visible(false, cx);
-            dock.set_last_panel_drag_between_regions(true, window, cx);
-        });
-        let events = cx.subscribe_in(&dock, window, |this, _, _: &DockEvent, window, cx| {
-            this.native_dock_changed(window, cx)
-        });
-        let observer = cx.observe_in(&dock, window, |this, _, window, cx| {
-            this.native_dock_visibility_changed(window, cx)
-        });
+    pub(in crate::workspace) fn new(
+        dock: Entity<DockArea>,
+        events: Subscription,
+        observer: Subscription,
+    ) -> Self {
         Self {
             dock,
             _events: events,

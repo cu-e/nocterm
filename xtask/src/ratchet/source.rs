@@ -7,20 +7,21 @@ use std::{
 };
 use syn::{Attribute, Item, Meta, Token, UseTree, punctuated::Punctuated};
 
-pub(super) struct Module {
-    pub(super) name: String,
-    pub(super) package: String,
-    pub(super) layer: String,
-    pub(super) file: PathBuf,
-    pub(super) items: Vec<Item>,
-    pub(super) imports: BTreeMap<String, Vec<String>>,
-    pub(super) io_crates: BTreeMap<String, String>,
+pub(crate) struct Module {
+    pub(crate) name: String,
+    pub(crate) package: String,
+    pub(crate) layer: String,
+    pub(crate) file: PathBuf,
+    pub(crate) items: Vec<Item>,
+    pub(crate) imports: BTreeMap<String, Vec<String>>,
+    pub(crate) io_crates: BTreeMap<String, String>,
+    /// Inner attributes of the file (`#![no_std]`); empty for inline modules.
+    pub(crate) inner_attributes: Vec<Attribute>,
 }
 
-pub(super) fn load(root: &Path) -> anyhow::Result<Vec<Module>> {
-    let metadata = crate::metadata(root)?;
+pub(super) fn load_metadata(metadata: &crate::Metadata) -> anyhow::Result<Vec<Module>> {
     let mut modules = Vec::new();
-    for package in metadata.packages {
+    for package in &metadata.packages {
         let layer = package
             .metadata
             .pointer("/nocterm/layer")
@@ -101,6 +102,7 @@ impl Loader<'_> {
             super::bindings::check(&parsed.items)?;
             self.items(
                 parsed.items,
+                parsed.attrs,
                 file,
                 directory,
                 file.parent().context("source directory")?,
@@ -113,6 +115,7 @@ impl Loader<'_> {
     fn items(
         &mut self,
         items: Vec<Item>,
+        inner_attributes: Vec<Attribute>,
         file: &Path,
         directory: &Path,
         attribute_directory: &Path,
@@ -135,6 +138,7 @@ impl Loader<'_> {
                 let inline_directory = directory.join(module.ident.to_string());
                 self.items(
                     items.clone(),
+                    Vec::new(),
                     file,
                     &inline_directory,
                     &inline_directory,
@@ -158,6 +162,7 @@ impl Loader<'_> {
             items,
             imports,
             io_crates: self.io_crates.clone(),
+            inner_attributes,
         });
         Ok(())
     }
@@ -190,7 +195,7 @@ fn module_path(
     }
 }
 
-pub(super) fn attributes(item: &Item) -> &[Attribute] {
+pub(crate) fn attributes(item: &Item) -> &[Attribute] {
     match item {
         Item::Const(i) => &i.attrs,
         Item::Enum(i) => &i.attrs,
@@ -207,6 +212,27 @@ pub(super) fn attributes(item: &Item) -> &[Attribute] {
         Item::Type(i) => &i.attrs,
         Item::Union(i) => &i.attrs,
         Item::Use(i) => &i.attrs,
+        _ => &[],
+    }
+}
+
+/// Attributes on associated items; opaque future syntax is still traversed.
+pub(super) fn impl_attributes(item: &syn::ImplItem) -> &[Attribute] {
+    match item {
+        syn::ImplItem::Fn(item) => &item.attrs,
+        syn::ImplItem::Const(item) => &item.attrs,
+        syn::ImplItem::Type(item) => &item.attrs,
+        syn::ImplItem::Macro(item) => &item.attrs,
+        _ => &[],
+    }
+}
+
+pub(super) fn trait_attributes(item: &syn::TraitItem) -> &[Attribute] {
+    match item {
+        syn::TraitItem::Fn(item) => &item.attrs,
+        syn::TraitItem::Const(item) => &item.attrs,
+        syn::TraitItem::Type(item) => &item.attrs,
+        syn::TraitItem::Macro(item) => &item.attrs,
         _ => &[],
     }
 }
@@ -245,7 +271,7 @@ fn requires_test(meta: &Meta) -> bool {
     }
 }
 
-pub(super) fn imports(items: &[Item]) -> BTreeMap<String, Vec<String>> {
+pub(crate) fn imports(items: &[Item]) -> BTreeMap<String, Vec<String>> {
     let mut names = BTreeMap::new();
     for item in items {
         if test_only(attributes(item)) {
@@ -270,7 +296,7 @@ pub(super) fn imports(items: &[Item]) -> BTreeMap<String, Vec<String>> {
     names
 }
 
-pub(super) fn flatten(
+pub(crate) fn flatten(
     tree: &UseTree,
     prefix: &[String],
     names: &mut BTreeMap<String, Vec<String>>,

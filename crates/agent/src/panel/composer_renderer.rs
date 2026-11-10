@@ -13,7 +13,6 @@ use gpui_kit::{
     px, rems,
 };
 use nocterm_ai::model::auth::AuthFlow;
-use nocterm_ai::model::usage::ContextUsage;
 use nocterm_ui::IconName;
 
 use super::{
@@ -33,12 +32,19 @@ fn remove_image(origin: gpui_kit::EntityId, index: usize, cx: &mut Context<Agent
         }))
 }
 
-/// Pasted files and images become attachments; anything else is text.
+/// Pasted files and images become attachments where the composer takes them; anything else
+/// is text.
 pub(super) fn paste(
     panel: &WeakEntity<AgentPanel>,
     clipboard: &ClipboardItem,
     cx: &mut App,
 ) -> bool {
+    if !panel
+        .upgrade()
+        .is_some_and(|panel| panel.read(cx).composer_attaches(cx))
+    {
+        return false;
+    }
     let paths = clipboard
         .entries()
         .iter()
@@ -49,7 +55,7 @@ pub(super) fn paste(
         .flatten()
         .collect::<Vec<_>>();
     if !paths.is_empty() {
-        let _ = panel.update(cx, |panel, cx| panel.add_images(paths, cx));
+        let _ = panel.update(cx, |panel, cx| panel.attach_paths(paths, cx));
         return true;
     }
     let image = clipboard.entries().iter().find_map(|entry| match entry {
@@ -65,13 +71,15 @@ pub(super) fn paste(
 
 pub(super) struct ComposerRenderer;
 impl ComposerRenderer {
-    /// Removable chips for the attached terminals and servers.
+    /// Removable chips for the attached terminals, servers and files.
     pub(super) fn render_attachment_chips(
         thread: &Entity<AgentThread>,
         labels: &super::attachments::AttachmentLabels,
         cx: &mut Context<AgentPanel>,
     ) -> Option<AnyElement> {
-        if thread.read(cx).composer().attachments().is_empty() {
+        let servers = super::chat_servers::ChatServersRenderer::chips(thread, cx);
+        let composer = thread.read(cx).composer();
+        if composer.attachments().is_empty() && composer.files().is_empty() && servers.is_empty() {
             return None;
         }
         let origin = thread.entity_id();
@@ -81,7 +89,8 @@ impl ComposerRenderer {
             .min_w_0()
             .gap_1()
             .flex_wrap()
-            .items_start();
+            .items_start()
+            .children(servers);
         for attachment in thread.read(cx).composer().attachments() {
             let value = attachment.clone();
             let label = labels.label(attachment);
@@ -101,6 +110,22 @@ impl ComposerRenderer {
                     .child(gpui_kit::component::Icon::new(IconName::X).xsmall())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.on_attachment_selected(origin, value.clone(), cx);
+                    })),
+            );
+        }
+        for (index, file) in thread.read(cx).composer().files().iter().enumerate() {
+            let name = file.name().to_owned();
+            chips = chips.child(
+                Button::new(("file-chip", index))
+                    .custom(menu_variant(cx))
+                    .small()
+                    .icon(IconName::Paperclip)
+                    .max_w_full()
+                    .label(name.clone())
+                    .tooltip(format!("Remove {name}"))
+                    .child(gpui_kit::component::Icon::new(IconName::X).xsmall())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.on_file_removed(origin, index, cx);
                     })),
             );
         }
@@ -182,7 +207,12 @@ impl ComposerRenderer {
     ) -> AnyElement {
         let generating = thread.read(cx).session_generating();
         let mut controls = h_flex().w_full().min_w_0().gap_1().flex_wrap();
-        for option in &thread.read(cx).config_options() {
+        let options = thread.read(cx).config_options();
+        // Servers are attached from the attach menu, not configured here.
+        for option in options
+            .iter()
+            .filter(|option| !super::chat_servers::is_server(option))
+        {
             let id = option.id.to_string();
             controls = controls.child(super::menu::ConfigMenuRenderer::popover(
                 menus,
@@ -220,28 +250,60 @@ impl ComposerRenderer {
         }
         controls.into_any_element()
     }
-    /// Attach buttons, session controls, usage and send.
+    /// The attach controls, the session's options, usage and send.
     pub(super) fn render_footer(
+        frame: &super::composer_frame::ComposerFrame,
         composer: &super::composer_view::ComposerView,
         menus: &super::menu_view::MenuView,
         thread: &Entity<AgentThread>,
-        usage: Option<&ContextUsage>,
+        stop: super::composer_frame::RenderedStop,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let context_tooltip = format!(
-            "{} attached terminals · sent metadata {} B · terminal output {} B",
-            thread.read(cx).composer().attachments().len(),
-            thread.read(cx).context_bytes(),
-            thread.read(cx).tool_bytes()
+        let images = !thread.read(cx).composer().images().is_empty();
+        let stops = frame.stops(composer, images, cx);
+        let attach = Self::render_attach(composer, menus, thread, cx);
+        let options = Self::render_config_controls(composer, menus, thread, cx);
+        let usage = super::usage::UsageCard::usage_button(
+            menus.is_open(&MenuKind::Usage),
+            frame.usage(),
+            cx,
         );
-        let images_supported = thread
-            .read(cx)
-            .agent_info()
-            .is_some_and(|info| info.capabilities.image_prompts);
-        let controls = Self::render_config_controls(composer, menus, thread, cx);
+        let send = Self::send_button(
+            frame.origin(),
+            stops,
+            frame.send_disabled(stops, composer),
+            stop,
+            composer.input_ticket(cx).ok(),
+            cx,
+        );
         h_flex()
             .gap_1()
-            .child(super::menu::ConfigMenuRenderer::popover(
+            .children(attach)
+            .child(div().flex_1().min_w_0().child(options))
+            .child(usage)
+            .child(send)
+            .into_any_element()
+    }
+    /// Attach a terminal or server, and an image.
+    fn render_attach(
+        composer: &super::composer_view::ComposerView,
+        menus: &super::menu_view::MenuView,
+        thread: &Entity<AgentThread>,
+        cx: &mut Context<AgentPanel>,
+    ) -> [AnyElement; 2] {
+        let context_tooltip = if super::chat_servers::takes_servers(thread.read(cx)) {
+            "Attach servers the agent may sign in to".to_owned()
+        } else {
+            format!(
+                "Attach terminal or server\n{} attached terminals · sent metadata {} B · terminal \
+                 output {} B",
+                thread.read(cx).composer().attachments().len(),
+                thread.read(cx).context_bytes(),
+                thread.read(cx).tool_bytes()
+            )
+        };
+        [
+            super::menu::ConfigMenuRenderer::popover(
                 menus,
                 "context-popover",
                 MenuKind::Context,
@@ -249,46 +311,29 @@ impl ComposerRenderer {
                     .ghost()
                     .small()
                     .icon(IconName::Plus)
-                    .tooltip(format!("Attach terminal or server\n{context_tooltip}")),
+                    .tooltip(context_tooltip),
                 Anchor::BottomLeft,
                 cx,
-            ))
-            .child(
-                Button::new("agent-attach-image")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ImagePlus)
-                    .tooltip("Attach image")
-                    .disabled(composer.preparing() || !images_supported)
-                    .on_click(cx.listener(|this, _, _, cx| this.pick_images(cx))),
             )
-            .child(div().flex_1().min_w_0().child(controls))
-            .child(super::usage::UsageCard::usage_button(
-                menus.is_open(&MenuKind::Usage),
-                usage,
-                cx,
-            ))
-            .child(Self::render_send(composer, thread, cx))
-            .into_any_element()
+            .into_any_element(),
+            Button::new("agent-attach-files")
+                .ghost()
+                .small()
+                .icon(IconName::Paperclip)
+                .tooltip("Attach files")
+                .disabled(composer.preparing())
+                .on_click(cx.listener(|this, _, _, cx| this.pick_files(cx)))
+                .into_any_element(),
+        ]
     }
-    /// Whether the send button stops the running turn instead.
-    pub(super) fn stops(
-        composer: &super::composer_view::ComposerView,
-        thread: &Entity<AgentThread>,
-        cx: &App,
-    ) -> bool {
-        thread.read(cx).session_generating()
-            && composer.text(cx).trim().is_empty()
-            && thread.read(cx).composer().images().is_empty()
-            && !composer.editing()
-    }
-    pub(super) fn render_send(
-        composer: &super::composer_view::ComposerView,
-        thread: &Entity<AgentThread>,
+    fn send_button(
+        origin: gpui_kit::EntityId,
+        stop: bool,
+        disabled: bool,
+        captured: super::composer_frame::RenderedStop,
+        input: Option<super::composer_view::InputTicket>,
         cx: &mut Context<AgentPanel>,
     ) -> AnyElement {
-        let origin = thread.entity_id();
-        let stop = Self::stops(composer, thread, cx);
         Button::new("agent-send")
             .primary()
             .small()
@@ -305,10 +350,20 @@ impl ComposerRenderer {
             })
             .flex_shrink_0()
             .tooltip(if stop { "Stop" } else { "Send" })
-            .disabled(thread.read(cx).session_sign_in_required() || composer.preparing())
-            .on_click(
-                cx.listener(move |panel, _, window, cx| panel.on_send_clicked(origin, window, cx)),
-            )
+            .disabled(disabled || input.is_none())
+            .on_click(cx.listener(move |panel, _, window, cx| {
+                if input
+                    .as_ref()
+                    .is_none_or(|input| !panel.composer.input_current(input, cx))
+                {
+                    return;
+                }
+                if stop {
+                    captured.activate(cx);
+                } else {
+                    panel.on_send_clicked(origin, window, cx);
+                }
+            }))
             .into_any_element()
     }
     /// Image preparation, restart and sign-in rows under the controls.

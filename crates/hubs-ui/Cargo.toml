@@ -1,0 +1,36 @@
+[package]
+name = "nocterm-hubs-ui"
+description = "The environment menu, the sign-in dialog and the Servers page of nocterm hubs."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "feature"
+
+[dependencies]
+nocterm-core.workspace = true
+nocterm-hubs.workspace = true
+nocterm-hub-agents.workspace = true
+nocterm-hub-agents-model.workspace = true
+nocterm-hubs-model.workspace = true
+nocterm-session.workspace = true
+nocterm-ui.workspace = true
+nocterm-workspace.workspace = true
+gpui-kit.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+nocterm-hub-agents-model = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-ssh-keys = { workspace = true, features = ["test-support"] }
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
+nocterm-settings.workspace = true
+nocterm-store.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
+nocterm-workspace = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

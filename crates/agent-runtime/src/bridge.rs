@@ -61,7 +61,13 @@ impl BridgeRegistry {
                     _ => unreachable!(),
                 };
                 let client = runtime
-                    .read_with(cx, |runtime, _| runtime.bridge.target(registration))
+                    .read_with(cx, |runtime, cx| {
+                        runtime.bridge.target(registration).filter(|client| {
+                            client.state(cx).is_some_and(|state| {
+                                runtime.chats.source_current(state.origin().key())
+                            })
+                        })
+                    })
                     .ok()
                     .flatten();
                 if let Some(client) = client {

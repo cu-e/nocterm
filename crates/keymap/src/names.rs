@@ -10,6 +10,7 @@ pub const OFFERED_NAMESPACES: &[&str] = &[
     "files",
     "agent",
     "vault",
+    "hubs",
 ];
 
 /// Whether `name` is a command a person runs: in nocterm's namespaces, and
@@ -64,6 +65,7 @@ mod tests {
         assert!(offered("terminal::Copy"));
         assert!(offered("snippets::ToggleSnippets"));
         assert!(offered("snippets::NewSnippet"));
+        assert!(offered("hubs::SignInToServer"));
         assert!(!offered("input::Backspace"));
         assert!(!offered("workspace::ToggleCommandPalette"));
     }

@@ -17,7 +17,7 @@ branch and verification scope to every subagent
 If no entry is given, list candidates from `xtask/baseline.toml` and
 `xtask/oversized-files.toml` with `cargo xtask survey <package>` facts and
 propose the cheapest one with the most value (small counts first). Record the
-entry, its current value and the target value in `00-task.md`; branch
+entry, its current value and the target value in the compact plan (or `00-task.md`); branch
 `refactor/<slug>`.
 
 ## 1. Route by kind
@@ -31,8 +31,10 @@ entry, its current value and the target value in `00-task.md`; branch
 | `domain_io`, `domain_dependencies` | `port-design` (contract in the domain, implementation in an adapter) |
 | `complexity_expects` | split the function by the decisions it makes, or extract an owner; never move the `#[expect]` |
 
-Follow the chosen workflow's design approval, build, verify and review
-stages.
+Follow the relevant procedures under AGENTS.md's Workflow and input-based
+Definition of done. Use one compact plan or structured handoffs as useful;
+record the entry and goal without requiring every stage or output file.
+Changing a baseline entry does not by itself require another full pipeline.
 
 ## 2. Lower the record
 

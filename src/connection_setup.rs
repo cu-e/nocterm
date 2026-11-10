@@ -1,5 +1,7 @@
 //! Application wiring for preloaded connection documents and native ports.
-use nocterm_connections::{ConnectionWriters, EditorInputs, ObservationDeps, PreparedConnections};
+use nocterm_connections::{
+    ConnectionInputs, ConnectionWriters, EditorInputs, ObservationDeps, PreparedConnections,
+};
 use nocterm_connections_io::{FileConnectionRepository, NativeObservations, NativeValues};
 use nocterm_connections_model::repository::ConnectionRepository;
 use nocterm_core::Paths;
@@ -48,14 +50,16 @@ pub(crate) fn native(paths: &Paths) -> PreparedConnections {
     PreparedConnections::new(
         documents,
         writers,
-        EditorInputs::new(defaults, values.clone()),
-        values,
-        ObservationDeps::new(
-            observations.resolver(),
-            observations.locator(),
-            observations.flags(),
-            true,
-            Arc::new(nocterm_connections_io::NativeOsDetector),
+        ConnectionInputs::new(
+            EditorInputs::new(defaults, values.clone()),
+            values,
+            ObservationDeps::new(
+                observations.resolver(),
+                observations.locator(),
+                observations.flags(),
+                true,
+                Arc::new(nocterm_connections_io::NativeOsDetector),
+            ),
         ),
     )
 }

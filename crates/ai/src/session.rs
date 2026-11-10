@@ -67,6 +67,8 @@ pub struct SessionState {
     closing: bool,
     /// Failures since the last completed turn.
     failures: u32,
+    /// The running turn was started by the agent for another device.
+    external: bool,
 }
 
 impl SessionState {
@@ -196,6 +198,28 @@ impl SessionState {
         self.turn += 1;
         Some(self.ticket())
     }
+    /// The agent began a turn no prompt of this chat started (one sent from another device):
+    /// the chat shows it as running. `false` unless the session is ready.
+    pub fn start_external_turn(&mut self) -> bool {
+        if self.start_turn().is_none() {
+            return false;
+        }
+        self.external = true;
+        true
+    }
+    /// The agent's own turn ended. Returns whether one was running.
+    pub fn finish_external_turn(&mut self) -> bool {
+        if !self.external || !self.generating() {
+            return false;
+        }
+        self.external = false;
+        self.phase = SessionPhase::Ready;
+        true
+    }
+    /// The running turn is the agent's own, not one of this chat's prompts.
+    pub fn external_turn(&self) -> bool {
+        self.external && self.generating()
+    }
     /// The user stops the chat. Returns whether a running turn must be
     /// cancelled.
     pub fn stop(&mut self) -> bool {
@@ -213,6 +237,7 @@ impl SessionState {
         if !self.turn_current(ticket) || !self.generating() {
             return false;
         }
+        self.external = false;
         self.phase = SessionPhase::Ready;
         if completed {
             self.failures = 0;
@@ -245,6 +270,7 @@ impl SessionState {
     }
     /// The session ended with an error. Results of its requests are dropped.
     pub fn fail(&mut self) {
+        self.external = false;
         self.phase = SessionPhase::Failed;
         self.epoch += 1;
         self.stopped = false;

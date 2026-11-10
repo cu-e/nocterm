@@ -1,4 +1,5 @@
-//! The history split retains its shared layout and reversible widening amount.
+//! The history split retains its shared layout and reversible widening amount; the
+//! panel's regions are views it keeps.
 use super::AgentPanel;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, Pixels, Subscription, TestSupportExt as _,
@@ -87,6 +88,7 @@ pub(super) struct PanelLayout {
     layout: LayoutHandle,
     _bindings: Vec<Subscription>,
     refresh: [SplitRefresh; 2],
+    parts: super::parts::PanelParts,
 }
 impl PanelLayout {
     pub(super) fn new(layout: LayoutHandle, cx: &mut Context<AgentPanel>) -> Self {
@@ -119,10 +121,18 @@ impl PanelLayout {
             layout,
             _bindings: bindings,
             refresh: std::array::from_fn(|_| SplitRefresh::Idle),
+            parts: super::parts::PanelParts::new(cx),
         }
     }
     pub(super) fn history(&self) -> bool {
         self.history
+    }
+    /// The regions the panel draws as views of their own.
+    pub(super) fn parts(&self) -> &super::parts::PanelParts {
+        &self.parts
+    }
+    pub(super) fn parts_mut(&mut self) -> &mut super::parts::PanelParts {
+        &mut self.parts
     }
     pub(super) fn maximized(&self) -> bool {
         self.maximized

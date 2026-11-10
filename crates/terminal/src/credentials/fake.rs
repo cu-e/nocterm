@@ -25,6 +25,10 @@ fn same_question(saved: &SecretRequest, asked: &SecretRequest) -> bool {
             SecretRequest::KeyPassphrase { path: a, .. },
             SecretRequest::KeyPassphrase { path: b, .. },
         ) => a == b,
+        (
+            SecretRequest::PrivateKey { public_key: a, .. },
+            SecretRequest::PrivateKey { public_key: b, .. },
+        ) => a == b,
         _ => false,
     }
 }
@@ -42,6 +46,18 @@ impl FakeStore {
         for waiter in inner.waiters.drain(..) {
             let _ = waiter.send(());
         }
+    }
+
+    /// Seeds the vault key a profile names, which a prompt can never save.
+    pub(crate) fn insert_key(&self, public_key: &str, secret: &str) -> CredentialId {
+        let mut inner = self.0.lock().unwrap();
+        let id = CredentialId::from_bytes((inner.records.len() as u128 + 1).to_be_bytes());
+        let request = SecretRequest::PrivateKey {
+            credential: id,
+            public_key: public_key.to_owned(),
+        };
+        inner.records.push((id, request, Secret::new(secret)));
+        id
     }
 
     /// Saves directly, as another device or an earlier session would have.

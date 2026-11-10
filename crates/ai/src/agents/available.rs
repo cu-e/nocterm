@@ -9,6 +9,8 @@ pub enum AgentSource {
     Builtin,
     /// A command the user added in settings.
     Custom,
+    /// An agent of a hub the user is signed in to; it runs there.
+    Hub,
 }
 
 /// An agent configuration that was skipped; the agent is not offered.
@@ -44,6 +46,10 @@ impl AvailableAgent {
     /// The known agent this launch runs, if any.
     pub fn profile(&self) -> Option<&AgentProfile> {
         self.profile.as_ref()
+    }
+    /// The hub whose agent this is; `None` for an agent of this computer.
+    pub fn hub(&self) -> Option<&nocterm_hubs_model::HubId> {
+        self.launch.hub.as_ref().map(|agent| &agent.hub)
     }
 }
 
@@ -88,8 +94,33 @@ impl AvailableAgents {
         Self { agents, warnings }
     }
 
+    /// These agents and the hub agents of `launches` (launches without a hub are ignored).
+    /// A hub agent never replaces an agent of this computer.
+    #[must_use]
+    pub fn with_hub_agents(mut self, launches: impl IntoIterator<Item = AgentLaunch>) -> Self {
+        for launch in launches.into_iter().filter(|launch| launch.hub.is_some()) {
+            self.agents
+                .entry(launch.id.clone())
+                .or_insert(AvailableAgent {
+                    launch,
+                    source: AgentSource::Hub,
+                    profile: None,
+                });
+        }
+        self
+    }
+
     pub fn get(&self, id: &str) -> Option<&AvailableAgent> {
         self.agents.get(id)
+    }
+
+    /// The agents a window offers in its new-chat menu: every agent of this computer, and
+    /// the agents of the window's `hub` only. A window of this computer offers no hub agent.
+    #[must_use]
+    pub fn offered_in(mut self, hub: Option<&nocterm_hubs_model::HubId>) -> Self {
+        self.agents
+            .retain(|_, agent| agent.hub().is_none() || agent.hub() == hub);
+        self
     }
 
     /// Agents in id order.
@@ -139,6 +170,7 @@ fn apply(
             args: Vec::new(),
             env: BTreeMap::new(),
             inherit_env: Vec::new(),
+            hub: None,
         };
         (launch, AgentSource::Custom)
     });

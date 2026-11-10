@@ -1,0 +1,439 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nocterm user plugin manifest",
+  "description": "The TOML a user plugin package carries. Unknown keys are refused by the host.",
+  "$ref": "#/$defs/manifest",
+  "$defs": {
+    "contribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "edge": {
+          "enum": [
+            "top",
+            "bottom",
+            "left",
+            "right"
+          ]
+        },
+        "icon": {
+          "enum": [
+            "box",
+            "gem",
+            "hexagon",
+            "plug",
+            "puzzle",
+            "shapes"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "widget",
+            "panel",
+            "toolbar"
+          ]
+        },
+        "local": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "shown": {
+          "type": "boolean"
+        },
+        "tabs": {
+          "enum": [
+            "own",
+            "all"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "view": {
+          "$ref": "#/$defs/contribution.view"
+        },
+        "zone": {
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "local",
+        "title"
+      ]
+    },
+    "contribution.view": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contribution.view.nodes"
+          }
+        },
+        "refresh": {}
+      },
+      "required": [
+        "nodes"
+      ]
+    },
+    "contribution.view.nodes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "each": {
+          "type": "string"
+        },
+        "folded": {
+          "type": "boolean"
+        },
+        "icon": {
+          "enum": [
+            "box",
+            "gem",
+            "hexagon",
+            "plug",
+            "puzzle",
+            "shapes",
+            "activity",
+            "arrow-down",
+            "arrow-left",
+            "arrow-up",
+            "bell",
+            "cable",
+            "calendar",
+            "check",
+            "chevron-down",
+            "chevron-left",
+            "chevron-right",
+            "circle-alert",
+            "circle-check",
+            "circle-x",
+            "clock",
+            "container",
+            "copy",
+            "cpu",
+            "ellipsis",
+            "external-link",
+            "eye",
+            "file",
+            "file-text",
+            "folder",
+            "folder-open",
+            "gauge",
+            "globe",
+            "hard-drive",
+            "inbox",
+            "info",
+            "key",
+            "loader",
+            "lock",
+            "memory",
+            "network",
+            "pause",
+            "pencil",
+            "play",
+            "plus",
+            "minus",
+            "refresh",
+            "rotate",
+            "search",
+            "send",
+            "server",
+            "server-off",
+            "settings",
+            "square",
+            "stop",
+            "star",
+            "terminal",
+            "thermometer",
+            "trash",
+            "triangle-alert",
+            "upload",
+            "user",
+            "wrench",
+            "x",
+            "zap"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "row",
+            "column",
+            "text",
+            "icon",
+            "meter",
+            "badge",
+            "button",
+            "toggle",
+            "list",
+            "divider",
+            "spacer",
+            "code",
+            "section",
+            "item",
+            "icon-button",
+            "caption",
+            "field",
+            "chart"
+          ]
+        },
+        "parent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "text": {
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "default",
+            "muted",
+            "success",
+            "caution"
+          ]
+        },
+        "tone_when": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contribution": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contribution"
+          }
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "network": {
+          "$ref": "#/$defs/network"
+        },
+        "optional_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "reasons": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "runtime": {
+          "enum": [
+            "declarative",
+            "wasm"
+          ]
+        },
+        "settings": {
+          "$ref": "#/$defs/settings"
+        }
+      },
+      "required": [
+        "api",
+        "id",
+        "name",
+        "publisher"
+      ]
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "credential_header": {
+          "type": "string"
+        },
+        "credential_prefix": {
+          "type": "string"
+        },
+        "credential_setting": {
+          "type": "string"
+        },
+        "origin_setting": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "origin_setting"
+      ]
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/settings.group"
+          }
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    },
+    "settings.group": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contribution": {
+          "type": "string"
+        },
+        "field": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/settings.group.field"
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "settings.group.field": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {},
+        "help": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "toggle",
+            "choice",
+            "multi-choice",
+            "number",
+            "text",
+            "secret"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "max_chosen": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "max_len": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "min": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/settings.group.field.options"
+          }
+        },
+        "ordered": {
+          "type": "boolean"
+        },
+        "placeholder": {
+          "type": "string"
+        },
+        "renamed_from": {
+          "type": "string"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "label"
+      ]
+    },
+    "settings.group.field.options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "help": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label"
+      ]
+    }
+  }
+}

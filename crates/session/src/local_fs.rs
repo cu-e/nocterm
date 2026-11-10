@@ -68,6 +68,9 @@ pub trait LocalDirectory: Send + Sync + 'static {
     fn create_child(&self, name: &OsStr) -> LocalResult<Arc<dyn LocalDirectory>>;
     /// Open relative to this held directory, preserving its identity after rename.
     fn open_source(&self, name: &OsStr) -> LocalResult<Box<dyn LocalSource>>;
+    /// Unlink one leaf relative to this directory. Refuse directories; a final
+    /// symlink is removed itself and never followed to its target.
+    fn remove_file(&self, name: &OsStr) -> LocalResult<()>;
     fn stage(&self) -> LocalResult<Box<dyn LocalStage>>;
 }
 pub trait LocalCursor: Send + 'static {

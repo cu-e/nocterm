@@ -8,8 +8,12 @@ use std::sync::Arc;
 pub struct Installed {
     settings: SettingsHandle,
     local: Option<Arc<dyn HostExec>>,
+    collectors: nocterm_monitor_service::MonitorWatches,
 }
 impl Installed {
+    pub(crate) fn collectors(&self) -> &nocterm_monitor_service::MonitorWatches {
+        &self.collectors
+    }
     pub(crate) fn settings(&self) -> &SettingsHandle {
         &self.settings
     }
@@ -26,5 +30,6 @@ pub fn install(
     Installed {
         settings: ready.settings().clone(),
         local,
+        collectors: Default::default(),
     }
 }

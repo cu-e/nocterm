@@ -15,7 +15,7 @@ pub struct ScriptedTransport {
 
 #[derive(Default)]
 struct TransportScript {
-    pending: VecDeque<Session>,
+    pending: VecDeque<(Session, crate::ConnectionSource)>,
     requests: VecDeque<ConnectRequest>,
 }
 
@@ -26,17 +26,29 @@ impl ScriptedTransport {
         fs: Option<Arc<dyn RemoteFs>>,
         exec: Option<Arc<dyn HostExec>>,
     ) -> SessionDriver {
-        let (mut session, driver) = crate::channel(fs);
+        self.queue_with_source(fs, exec, Default::default())
+    }
+    /// The caller clones the same immutable source into open options. A live
+    /// queued session is never rebound to a source chosen by a later open.
+    pub fn queue_with_source(
+        &self,
+        fs: Option<Arc<dyn RemoteFs>>,
+        exec: Option<Arc<dyn HostExec>>,
+        source: crate::ConnectionSource,
+    ) -> SessionDriver {
+        let (mut session, driver) = crate::channel_with_source(fs, source.clone());
         if let Some(exec) = exec {
             session = session.with_exec(exec);
         }
-        lock(&self.state).pending.push_back(session);
+        lock(&self.state).pending.push_back((session, source));
         driver
     }
 
     /// Queue an already prepared channel, retaining its original driver identity.
     pub fn enqueue_session(&self, session: Session) {
-        lock(&self.state).pending.push_back(session);
+        lock(&self.state)
+            .pending
+            .push_back((session, Default::default()));
     }
 
     /// The last 4096 open requests, oldest first.
@@ -47,14 +59,26 @@ impl ScriptedTransport {
 
 impl Transport for ScriptedTransport {
     fn open(&self, request: ConnectRequest) -> Session {
+        self.open_with(request, Default::default())
+    }
+    fn open_with(&self, request: ConnectRequest, options: crate::ConnectionOpenOptions) -> Session {
+        if let Err(error) = options.source().check() {
+            return Session::failed(error.into());
+        }
+
         let mut script = lock(&self.state);
         if script.requests.len() == 4096 {
             script.requests.pop_front();
         }
         script.requests.push_back(request);
-        script
-            .pending
-            .pop_front()
-            .unwrap_or_else(|| Session::failed(SessionError::Cancelled))
+        match script.pending.pop_front() {
+            Some((session, source))
+                if !options.source().is_restricted() || options.source().same_owner(&source) =>
+            {
+                session
+            }
+            Some(_) => Session::failed(crate::ConnectionSourceError::Unsupported.into()),
+            None => Session::failed(SessionError::Cancelled),
+        }
     }
 }

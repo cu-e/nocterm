@@ -190,6 +190,7 @@ impl TerminalElement {
         self.terminal
             .update(cx, |terminal, cx| terminal.resize(size, cx));
         self.refresh_frame(cx);
+        self.view.update(cx, |view, cx| view.sync_cursor_clock(cx));
 
         self.cache.update_highlights(
             self.terminal.read(cx).emulator().generation(),

@@ -83,6 +83,31 @@ impl nocterm_workspace::ConnectionDirectory for OpeningDirectory {
     }
 }
 
+impl nocterm_workspace::ChatConnectionOpen for OpeningDirectory {
+    fn open(
+        &self,
+        profile: &str,
+        source: nocterm_workspace::ProjectSurfaceReceipt,
+        workspace: &gpui_kit::WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<gpui_kit::EntityId, nocterm_workspace::ChatConnectionOpenError> {
+        let item = workspace
+            .update(cx, |workspace, cx| {
+                workspace.validate_context_source(source, window, cx)?;
+                let item = self.terminal(profile, cx);
+                workspace.add_context_background_from(source, item, window, cx)
+            })
+            .map_err(|_| nocterm_workspace_ports::ContextSelectionError::StaleWindow)??;
+        self.background.borrow_mut().push(item);
+        let after_open = self.after_background_open.borrow_mut().take();
+        if let Some(after_open) = after_open {
+            after_open(window, cx);
+        }
+        Ok(item)
+    }
+}
+
 fn install(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
     let directory = Rc::new(OpeningDirectory {
         after_background_open: RefCell::default(),
@@ -94,7 +119,8 @@ fn install(f: &Fixture, cx: &mut TestAppContext) -> Rc<OpeningDirectory> {
     });
     cx.update(|cx| {
         f.workspace.update(cx, |workspace, _| {
-            workspace.set_connection_directory(directory.clone())
+            workspace.set_connection_directory(directory.clone());
+            workspace.set_chat_connection_opener(directory.clone());
         })
     });
     directory
@@ -121,7 +147,7 @@ fn open_in_the_attach_menu_opens_a_tab(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(directory.opened.get(), 1);
-        assert_eq!(f.workspace.read(cx).items().count(), 2);
+        assert_eq!(f.workspace.read(cx).items(cx).count(), 2);
     });
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
@@ -185,8 +211,8 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
     let background = directory.background.borrow()[0];
     cx.update(|cx| {
         let workspace = f.workspace.read(cx);
-        assert!(workspace.is_background(background));
-        assert_eq!(workspace.items().count(), 1, "no tab was opened");
+        assert!(workspace.is_background(background, cx));
+        assert_eq!(workspace.items(cx).count(), 1, "no tab was opened");
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.background_items(), vec![background]);
             assert!(thread.resolved(cx).iter().any(|(id, _, _)| *id == terminal));
@@ -196,7 +222,7 @@ fn agents_open_attached_offline_servers_in_the_background(cx: &mut TestAppContex
         });
     });
     cx.run_until_parked();
-    cx.update(|cx| assert!(!f.workspace.read(cx).is_background(background)));
+    cx.update(|cx| assert!(!f.workspace.read(cx).is_background(background, cx)));
 }
 
 #[gpui_kit::test]
@@ -221,8 +247,8 @@ fn a_background_session_can_be_shown_in_a_tab(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update(|cx| {
         let workspace = f.workspace.read(cx);
-        assert!(!workspace.is_background(item));
-        assert!(workspace.items().any(|open| open.item_id() == item));
+        assert!(!workspace.is_background(item, cx));
+        assert!(workspace.items(cx).any(|open| open.item_id() == item));
     });
 }
 
@@ -272,7 +298,11 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     cx.update_window(f.handle, |_, window, cx| {
         assert_eq!(thread.read(cx).sign_in_waits().len(), 1);
         assert!(thread.read(cx).sign_in_waits()[0].vault());
-        assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
+        assert_eq!(
+            f.workspace.read(cx).items(cx).count(),
+            1,
+            "no tab was opened"
+        );
         window.render_frame(cx);
         assert!(window.try_find("agent-approvals").is_some());
 
@@ -302,7 +332,7 @@ fn a_locked_vault_is_unlocked_from_the_chat_without_a_tab(cx: &mut TestAppContex
     assert!(answer["terminal"]["id"].is_string());
     cx.update(|cx| {
         assert!(thread.read(cx).sign_in_waits().is_empty());
-        assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
+        assert_eq!(f.workspace.read(cx).items(cx).count(), 1, "still no tab");
     });
 }
 
@@ -349,7 +379,11 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     assert!(response.try_recv().unwrap().is_none(), "still signing in");
     cx.update_window(f.handle, |_, window, cx| {
         assert!(!thread.read(cx).sign_in_waits()[0].vault());
-        assert_eq!(f.workspace.read(cx).items().count(), 1, "no tab was opened");
+        assert_eq!(
+            f.workspace.read(cx).items(cx).count(),
+            1,
+            "no tab was opened"
+        );
         window.render_frame(cx);
         assert!(window.try_find(("vault-unlock", 0usize)).is_none());
         window.click(("sign-in-input", 0usize), cx);
@@ -372,7 +406,7 @@ fn a_password_is_typed_in_the_chat_without_a_tab(cx: &mut TestAppContext) {
     assert!(answer["terminal"]["id"].is_string());
     cx.update(|cx| {
         assert!(thread.read(cx).sign_in_waits().is_empty());
-        assert_eq!(f.workspace.read(cx).items().count(), 1, "still no tab");
+        assert_eq!(f.workspace.read(cx).items(cx).count(), 1, "still no tab");
     });
 }
 
@@ -429,8 +463,11 @@ fn rows_attached_through_a_folder_do_not_toggle_on_their_own(cx: &mut TestAppCon
 fn a_folder_without_servers_says_so(cx: &mut TestAppContext) {
     let f = fixture(cx);
     install(&f, cx);
+    new_chat(&f, cx);
     cx.update(|cx| {
-        let labels = super::super::attachments::AttachmentLabels::new(&f.workspace.downgrade(), cx);
+        let thread = f.panel.read(cx).current().unwrap();
+        let labels =
+            super::super::attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx);
         assert_eq!(
             labels.label(&Attachment::Group("prod".into())),
             "Group prod"
@@ -447,13 +484,13 @@ fn a_folder_without_servers_says_so(cx: &mut TestAppContext) {
     });
 }
 
-fn open_server(
+fn queue_server_open(
     f: &Fixture,
     thread: &Entity<crate::thread::AgentThread>,
     server: &str,
     cx: &mut TestAppContext,
-) -> serde_json::Value {
-    let (respond, mut response) = oneshot::channel();
+) -> oneshot::Receiver<Result<serde_json::Value, nocterm_ai::ToolFailure>> {
+    let (respond, response) = oneshot::channel();
     cx.update(|cx| {
         thread.update(cx, |thread, _| {
             let registration = thread.registration().as_ref().unwrap().id;
@@ -471,6 +508,16 @@ fn open_server(
         })
     });
     cx.run_until_parked();
+    response
+}
+
+fn open_server(
+    f: &Fixture,
+    thread: &Entity<crate::thread::AgentThread>,
+    server: &str,
+    cx: &mut TestAppContext,
+) -> serde_json::Value {
+    let mut response = queue_server_open(f, thread, server, cx);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         if thread.read(cx).has_pending_approvals() {
@@ -478,6 +525,7 @@ fn open_server(
         }
     })
     .unwrap();
+    cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     response.try_recv().unwrap().expect("answered").unwrap()
@@ -627,7 +675,7 @@ fn stale_background_opening_cannot_close_a_replacement_session(cx: &mut TestAppC
     cx.run_until_parked();
     cx.update(|cx| {
         let workspace = f.workspace.read(cx);
-        assert!(workspace.is_background(item));
+        assert!(workspace.is_background(item, cx));
         let current = workspace
             .terminals(cx)
             .into_iter()
@@ -644,3 +692,4 @@ fn stale_background_opening_cannot_close_a_replacement_session(cx: &mut TestAppC
 }
 
 mod background_opening;
+mod workspaces;

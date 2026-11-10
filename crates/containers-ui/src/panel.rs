@@ -18,7 +18,7 @@ use gpui_kit::{
     div,
     prelude::*,
 };
-use nocterm_containers::{Action, ContainersError};
+use nocterm_containers::{Action, ContainersError, Engine};
 use nocterm_ui::IconName;
 use nocterm_workspace::{Panel, ShellSyntax, Workspace};
 
@@ -119,14 +119,12 @@ impl ContainersPanel {
             Op::Logs => ("Logs", None),
             Op::Act(_) => return,
         };
-        let Some(mut spec) =
-            self.model
-                .read(cx)
-                .program(format!("{label}: {}", subject.name), |engine| match op {
-                    Op::Shell => engine.shell(id),
-                    _ => engine.logs(id),
-                })
-        else {
+        let title = format!("{label}: {}", subject.name);
+        let program = |engine: Engine| match op {
+            Op::Shell => engine.shell(id),
+            _ => engine.logs(id),
+        };
+        let Some(mut spec) = self.model.read(cx).program(title, program, cx) else {
             return;
         };
         spec.shell_syntax = shell_syntax;
@@ -143,7 +141,7 @@ impl ContainersPanel {
         cx: &mut Context<Self>,
     ) {
         let Subject { kind, name, ids } = subject;
-        let Some(intent) = self.model.read(cx).intent(action, ids) else {
+        let Some(intent) = self.model.read(cx).intent(action, ids, cx) else {
             return;
         };
         let panel = cx.entity().downgrade();
@@ -224,7 +222,7 @@ impl ContainersPanel {
         let host = model
             .host()
             .map_or_else(|| "No host".to_owned(), |host| host.key.label());
-        let engine = model.engine().map(|engine| engine.name());
+        let engine = model.engine(cx).map(|engine| engine.name());
         let theme = cx.theme();
         h_flex()
             .gap_1()
@@ -250,8 +248,8 @@ impl ContainersPanel {
     /// A line on why there is nothing, or nothing current, to show.
     fn render_status(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let model = self.model.read(cx);
-        let found = model.engine().is_some();
-        let (text, danger) = match model.status() {
+        let found = model.engine(cx).is_some();
+        let (text, danger) = match model.status(cx) {
             Status::Ready => return None,
             Status::Loading if found => return None,
             Status::Loading => ("Looking for Docker or Podman…".to_owned(), false),
@@ -292,7 +290,7 @@ impl Panel for ContainersPanel {
 
     /// How many containers run; none shows no count.
     fn badge(&self, cx: &App) -> Option<SharedString> {
-        let running = self.model.read(cx).snapshot().running();
+        let running = self.model.read(cx).snapshot(cx).running();
         (running > 0).then(|| running.to_string().into())
     }
 }
@@ -305,7 +303,7 @@ impl Focusable for ContainersPanel {
 
 impl Render for ContainersPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let shown = self.model.read(cx).engine().is_some();
+        let shown = self.model.read(cx).engine(cx).is_some();
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()

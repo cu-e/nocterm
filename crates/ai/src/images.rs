@@ -28,6 +28,38 @@ pub enum PromptImageError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("At most 8 images and 20 MiB total")]
 pub struct ImageCollectionError;
+/// Remaining admission for one image operation, captured before native reads/decodes.
+#[derive(Clone, Copy, Debug)]
+pub struct ImageCollectionBudget {
+    count: usize,
+    bytes: usize,
+}
+impl ImageCollectionBudget {
+    pub fn remaining(images: &[PromptImage]) -> Result<Self, ImageCollectionError> {
+        validate_collection(images)?;
+        Ok(Self {
+            count: images.len(),
+            bytes: images.iter().map(|image| image.bytes().len()).sum(),
+        })
+    }
+    pub fn check_count(self, incoming: usize) -> Result<(), ImageCollectionError> {
+        if incoming > MAX_IMAGES.saturating_sub(self.count) {
+            Err(ImageCollectionError)
+        } else {
+            Ok(())
+        }
+    }
+    /// Refuses before decoding or encoding the incoming image.
+    pub fn admit(&mut self, bytes: usize) -> Result<(), ImageCollectionError> {
+        self.check_count(1)?;
+        if bytes > MAX_TOTAL_IMAGE_BYTES.saturating_sub(self.bytes) {
+            return Err(ImageCollectionError);
+        }
+        self.count += 1;
+        self.bytes += bytes;
+        Ok(())
+    }
+}
 #[derive(Clone, Debug)]
 pub struct PromptImage {
     mime_type: String,
@@ -67,6 +99,10 @@ impl PromptImage {
     }
     pub fn bytes(&self) -> &[u8] {
         &self.data
+    }
+    /// Shared immutable source for retained background decoding and preview identity.
+    pub fn shared_bytes(&self) -> std::sync::Arc<[u8]> {
+        self.data.clone()
     }
     pub fn mime_type(&self) -> &str {
         &self.mime_type

@@ -208,16 +208,38 @@ impl Library {
         group: Option<&str>,
         query: &str,
     ) -> (Vec<&Snippet>, Vec<&Snippet>) {
+        let (current, other) = self.partition_indices(profile, group, query);
+        let records = |indices: Vec<usize>| {
+            indices
+                .into_iter()
+                .map(|index| &self.snippets[index])
+                .collect()
+        };
+        (records(current), records(other))
+    }
+    /// Ordered positions for presentation without copying saved content. Positions remain
+    /// valid only until this library changes; consumers invalidate on publication.
+    pub fn partition_indices(
+        &self,
+        profile: Option<&str>,
+        group: Option<&str>,
+        query: &str,
+    ) -> (Vec<usize>, Vec<usize>) {
         let query = query.trim().to_lowercase();
-        self.snippets
+        let (current, other): (Vec<_>, Vec<_>) = self
+            .snippets
             .iter()
-            .filter(|snippet| {
+            .enumerate()
+            .filter(|(_, snippet)| {
                 query.is_empty()
                     || snippet.name.to_lowercase().contains(&query)
                     || snippet.description.to_lowercase().contains(&query)
                     || snippet.content.to_lowercase().contains(&query)
             })
-            .partition(|snippet| snippet.matches(profile, group))
+            .partition(|(_, snippet)| snippet.matches(profile, group));
+        let indices =
+            |records: Vec<(usize, &Snippet)>| records.into_iter().map(|(index, _)| index).collect();
+        (indices(current), indices(other))
     }
 }
 #[cfg(test)]

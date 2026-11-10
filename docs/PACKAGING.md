@@ -86,6 +86,12 @@ On Windows both files are installed beside `nocterm.exe` (`LICENSE.txt` and
 `THIRD_PARTY_NOTICES.txt`). Linux packages and AppImage place them under
 `usr/share/doc/nocterm/` (inside the AppImage for that format).
 
+`THIRD_PARTY_NOTICES.txt` is generated for the default feature set, so it does not list the
+third-party crates that only the cargo feature `nocterm/user-plugins` brings in (compare
+`cargo tree -p nocterm -e normal,build` with and without it): `wasmi`, `wasmi_core`, `wasmi_ir`, `wasmi_collections`, `wasmparser`, `postcard` and `cobs`. No packaging or release workflow builds that feature. A release that does must
+regenerate the notices with it before packaging
+([ADR 0093](adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)).
+
 Keep these files with redistributed binaries. Changes to `Cargo.lock`, vendored
 forks, native dependencies or bundled assets require a notice review before a
 release. A release Rust toolchain change also requires updating the matching

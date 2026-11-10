@@ -1,0 +1,140 @@
+//! The words the views use for the failures of the hub service. The service reports typed
+//! errors; this is the only place that turns them into text.
+
+use nocterm_hub_agents_model::HubAgentsError;
+use nocterm_hubs::{HubsError, SignInError};
+use nocterm_hubs_model::HubError;
+
+/// Why a sign-in step did not work, for the dialog.
+pub(crate) fn sign_in_problem(error: &SignInError) -> String {
+    match error {
+        SignInError::Address(error) => capitalize(&error.to_string()),
+        SignInError::Fingerprint(error) => capitalize(&error.to_string()),
+        SignInError::Hub(error) => hub_problem(error),
+        SignInError::AlreadyKnown(hub) => format!(
+            "{hub} is in the list already. Use its row to sign in again, or remove it first."
+        ),
+        SignInError::NotInitialized => {
+            "This server has no owner yet. Set it up first, then sign in here.".to_owned()
+        }
+        SignInError::Save(_) => {
+            "The server could not be saved to the settings, so this device was signed out of it again."
+                .to_owned()
+        }
+    }
+}
+
+/// Why forgetting a server or signing out of it did not work.
+pub(crate) fn hubs_problem(error: &HubsError) -> String {
+    match error {
+        HubsError::Unknown(hub) => format!("{hub} is not in the list."),
+        HubsError::Hub(error) => hub_problem(error),
+        HubsError::Save(_) => {
+            "The settings could not be saved, so the server stays listed.".to_owned()
+        }
+    }
+}
+
+/// What a failed call of the agents or servers of a hub means to the person.
+pub(crate) fn agents_problem(error: &HubAgentsError) -> String {
+    match error {
+        HubAgentsError::Hub(error) => hub_problem(error),
+        HubAgentsError::Draft(error) => error.to_string(),
+        HubAgentsError::Malformed => {
+            "The server answered with something this version cannot read. Update Nocterm."
+                .to_owned()
+        }
+        HubAgentsError::LimitReached => {
+            "A limit set by the server's administrator is reached.".to_owned()
+        }
+    }
+}
+
+/// What a failed call on a hub means to the person using it.
+pub(crate) fn hub_problem(error: &HubError) -> String {
+    match error {
+        HubError::Unreachable { address, .. } => {
+            format!("Cannot reach {address}. Check the address and your network.")
+        }
+        HubError::CertificateChanged { address, .. } => {
+            format!("The certificate of {address} is not the one that was pinned.")
+        }
+        HubError::CertificateUntrusted { address, .. } => {
+            format!("The certificate of {address} is not trusted.")
+        }
+        HubError::UpgradeRequired { hub, client } => format!(
+            "This server speaks protocol {hub} and Nocterm speaks {client}. Update the older one."
+        ),
+        HubError::InvalidCredentials => "The user name or password was not accepted.".to_owned(),
+        HubError::Stale => "The account changed. Start this action again for the current account.".to_owned(),
+        HubError::RecoveryKeyInvalid => {
+            "That is not the recovery key of this account. Check it and try again.".to_owned()
+        }
+        HubError::InvalidVaultPassphrase => {
+            "The vault passphrase is too short. Use at least eight characters.".to_owned()
+        }
+        HubError::KeysLocked => {
+            "The account keys are closed on this device. Unlock the vault or sign in with your password first."
+                .to_owned()
+        }
+        HubError::UnlockSourceMismatch {
+            needs_login_password: true,
+        } => "These account keys are opened with your login password, not with a vault passphrase. Sign in with the password instead."
+            .to_owned(),
+        HubError::UnlockSourceMismatch {
+            needs_login_password: false,
+        } => "These account keys are opened with a vault passphrase, not with your login password. Type the passphrase."
+            .to_owned(),
+        HubError::KeysetDamaged { .. } => {
+            "The account keys on the server do not verify. The server may have been tampered with; nothing was changed."
+                .to_owned()
+        }
+        other => capitalize(&other.to_string()),
+    }
+}
+
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect::<String>() + ".",
+        None => String::new(),
+    }
+}
+
+/// The sentence for a failed attempt to open the account keys.
+pub(crate) fn account_key_problem(error: &nocterm_hubs_model::AccountKeyError) -> String {
+    use nocterm_hubs_model::AccountKeyError as Error;
+    match error {
+        Error::WrongPassword => {
+            "That password does not open the account keys. Check it and try again.".to_owned()
+        }
+        Error::Offline => {
+            "The server cannot be reached, and this device keeps no copy of the keys to open offline."
+                .to_owned()
+        }
+        Error::NotSignedIn => {
+            "This device is not signed in to the server. Sign in first.".to_owned()
+        }
+        Error::Failed { .. } => "The account keys could not be opened.".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nocterm_hubs_model::HubAddressError;
+
+    #[test]
+    fn a_refused_address_reads_as_a_sentence() {
+        let error = SignInError::Address(HubAddressError::Empty);
+        assert_eq!(sign_in_problem(&error), "The hub address is empty.");
+    }
+
+    #[test]
+    fn refused_credentials_name_the_user_name_and_password() {
+        assert_eq!(
+            hub_problem(&HubError::InvalidCredentials),
+            "The user name or password was not accepted."
+        );
+    }
+}

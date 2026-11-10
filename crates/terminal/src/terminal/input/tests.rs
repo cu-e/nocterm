@@ -39,7 +39,7 @@ fn fixture_with_transport(
         );
         let local_transport = transport.clone();
         let local_sessions = crate::LocalSessions::new(
-            Arc::new(move |_| local_transport.clone()),
+            Arc::new(move |_, _| local_transport.clone()),
             "/bin/bash".into(),
         );
         let installed =

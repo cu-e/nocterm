@@ -6,8 +6,7 @@ use std::collections::HashSet;
 
 use crate::{
     Installed,
-    session_intents::{open_profile, report_route_error},
-    spec_for_profile,
+    session_intents::{open_background, open_profile},
 };
 
 pub(crate) struct Directory {
@@ -78,20 +77,7 @@ impl ConnectionDirectory for Directory {
         cx: &mut App,
     ) -> Option<EntityId> {
         let profile = self.profile(id, cx)?;
-        let spec = spec_for_profile(&profile, self.installed.connections().read(cx).profiles(cx));
-        let spec = match spec {
-            Ok(spec) => spec,
-            Err(error) => {
-                report_route_error(&error, window, cx);
-                return None;
-            }
-        };
-        workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_background_session(spec, window, cx)
-            })
-            .ok()
-            .flatten()
+        open_background(&self.installed, workspace, &profile, window, cx)
     }
 }
 

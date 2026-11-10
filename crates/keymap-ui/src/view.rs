@@ -35,6 +35,8 @@ pub struct KeymapView {
     _subscription: Subscription,
     keymap: KeymapHandle,
     _keymap_subscription: Subscription,
+    rows: std::rc::Rc<Vec<crate::rows::Row>>,
+    rows_revision: u64,
 }
 
 impl KeymapView {
@@ -51,6 +53,8 @@ impl KeymapView {
         let keymap_subscription = keymap.observe(cx, move |cx| {
             let _ = view.update(cx, |_, cx| cx.notify());
         });
+        let rows = std::rc::Rc::new(crate::rows::rows(&keymap, cx));
+        let rows_revision = keymap.revision(cx);
         Self {
             keymap,
             _keymap_subscription: keymap_subscription,
@@ -60,6 +64,8 @@ impl KeymapView {
             message: None,
             interceptor: None,
             _subscription: subscription,
+            rows,
+            rows_revision,
         }
     }
 

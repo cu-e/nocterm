@@ -282,7 +282,7 @@ impl VaultAccess for ScriptedVaultAccess {
                 .iter()
                 .find(|(info, _)| info.id == id)
                 .ok_or(VaultError::NotFound)?;
-            if info.binding != binding {
+            if !info.binding.answers(&binding) {
                 return Err(VaultError::Binding);
             }
             Ok(secret.clone())
@@ -306,6 +306,29 @@ impl VaultAccess for ScriptedVaultAccess {
                 .records
                 .push((CredentialInfo { id, label, binding }, secret));
             Ok(id)
+        })
+    }
+    fn update(
+        &self,
+        id: CredentialId,
+        label: String,
+        binding: CredentialBinding,
+    ) -> VaultFuture<()> {
+        self.request(move |memory| {
+            if memory.status != VaultStatus::Unlocked {
+                return Err(VaultError::Locked);
+            }
+            let (info, _) = memory
+                .records
+                .iter_mut()
+                .find(|(info, _)| info.id == id)
+                .ok_or(VaultError::NotFound)?;
+            if !info.binding.may_become(&binding) {
+                return Err(VaultError::Binding);
+            }
+            info.label = label;
+            info.binding = binding;
+            Ok(())
         })
     }
     fn delete(&self, id: CredentialId) -> VaultFuture<()> {

@@ -85,9 +85,12 @@ fn check_provider(provider: &str, cx: &mut TestAppContext) {
         update(&f, &session, SessionUpdate::ToolCall(Box::new(row)), cx);
         if id == "mcp-rejection" {
             let mut mcp = nocterm_ai::mcp::McpSession::default();
-            mcp.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+            mcp.handle(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+                Default::default(),
+            );
             let nocterm_ai::mcp::McpStep::Rejected { tool, arguments, error, .. } =
-                mcp.handle(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":args}}).to_string())
+                mcp.handle(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":args}}).to_string(), Default::default())
             else { panic!("rejected"); };
             f.rejections
                 .try_send(nocterm_ai::BridgeRejection {

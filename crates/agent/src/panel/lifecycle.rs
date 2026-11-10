@@ -23,13 +23,15 @@ impl AgentPanel {
             .filter(|thread| thread.read(cx).is_archived())
             .map(|thread| thread.read(cx).document().chat_id().to_owned())
             .collect();
-        let reader = self.host.runtime().history_reader(cx);
+        let reader = self.chats.host().runtime().history_reader(cx);
         let catalog = self
             .chats
             .iter()
             .map(|thread| (thread.entity_id(), thread.read(cx).is_archived()))
             .collect();
-        self.history.start_search(ids, reader, catalog, cx);
+        let admission = self.chats.host().runtime().history_admission(cx);
+        self.history
+            .start_search(ids, reader, admission, catalog, cx);
         cx.notify();
     }
     pub(super) fn on_archive_search_completed(
@@ -61,7 +63,6 @@ impl AgentPanel {
         {
             self.leave_composer_with(true, cx);
         }
-        self.composer.removed_chats(&removed);
         self.chats.remove(&removed);
         if active.is_some_and(|id| removed.contains(&id)) {
             self.reset_chat_view(cx);
@@ -138,12 +139,27 @@ impl AgentPanel {
             });
             return;
         }
-        let thread = self.chats.fork(&source, last, cx);
+        let thread = match self.chats.fork(&source, last, cx) {
+            Ok(thread) => thread,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        };
         let slot = self.track(&thread, window, cx);
         let id = thread.entity_id();
-        self.chats.append(slot);
-        self.on_history_catalog_changed(cx);
-        self.open_thread(id, cx);
+        match self.chats.append_origin(slot, cx) {
+            Ok(true) => {
+                self.on_history_catalog_changed(cx);
+                self.open_thread(id, cx);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+            }
+        }
     }
     pub(crate) fn fork_loaded_archive(
         &mut self,
@@ -152,8 +168,30 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.chats.contains(source) {
-            self.fork_thread_at(source, last, window, cx);
+        let Some(original) = self
+            .chats
+            .find_any(source)
+            .cloned()
+            .filter(|thread| !thread.read(cx).is_archived())
+        else {
+            return;
+        };
+        let thread = match self.chats.fork(&original, last, cx) {
+            Ok(thread) => thread,
+            Err(error) => {
+                tracing::warn!(%error,"could not finish original archived fork");
+                return;
+            }
+        };
+        let id = thread.entity_id();
+        let slot = self.track(&thread, window, cx);
+        match self.chats.append_origin(slot, cx) {
+            Ok(true) => {
+                self.on_history_catalog_changed(cx);
+                self.open_thread(id, cx);
+            }
+            Ok(false) => {}
+            Err(error) => tracing::warn!(%error,"original fork destination is closed"),
         }
     }
     pub(super) fn set_pinned(&mut self, id: EntityId, pinned: bool, cx: &mut Context<Self>) {
@@ -280,8 +318,14 @@ impl AgentPanel {
         if let Some(thread) = self.current() {
             thread.update(cx, |thread, cx| thread.set_draft(draft, cx));
         }
-        self.retain_threads(|_, _| false, cx);
-        if !self.chats.is_empty() {
+        if self.composer.editing_chat().is_some() {
+            self.leave_composer_with(true, cx);
+        }
+        let retained = self.chats.clear_all(cx);
+        if let Some(error) = retained.into_error() {
+            self.notices.set_error(Some(error.to_string()));
+        }
+        if self.chats.has_retained_chats() {
             return;
         }
         self.composer.clear();
@@ -293,11 +337,15 @@ impl AgentPanel {
         self.sync_approval_attention(window, cx);
     }
     pub(super) fn new_thread(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let terminal = self
-            .host
-            .workspace()
-            .upgrade()
-            .and_then(|workspace| workspace.read(cx).active_terminal(cx));
+        // The new chat is listed on its own side of a hub window's history.
+        self.history
+            .show_side(super::history_column::HistorySide::of(&id));
+        let terminal = self.chats.host().seat().terminals(cx).and_then(|entries| {
+            entries
+                .into_iter()
+                .find(|entry| entry.active)
+                .map(|entry| entry.item)
+        });
         self.open_started(
             ChatStart::New {
                 agent: id,
@@ -311,17 +359,23 @@ impl AgentPanel {
         // An unknown agent leaves the composer and drafts alone.
         let agent = match &start {
             ChatStart::New { agent, .. } => agent.as_str(),
-            ChatStart::Restart(data) => data.agent_id(),
+            ChatStart::Restart { data, .. } => data.agent_id(),
         };
         if self.host.agents().get(agent, cx).is_none() {
             return;
         }
+        let thread = match self.chats.start(start, cx) {
+            Ok(Some(thread)) => thread,
+            Ok(None) => return,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        };
         self.leave_composer(cx);
         // An empty chat left behind is not history.
         self.discard_drafts(None, cx);
-        let Some(thread) = self.chats.start(start, cx) else {
-            return;
-        };
         let id = thread.entity_id();
         let slot = self.track(&thread, window, cx);
         self.chats.append(slot);
@@ -342,24 +396,34 @@ impl AgentPanel {
         // Release ACP even if another observer still holds the old document entity.
         old.update(cx, |thread, cx| thread.release_resources(cx));
         // Edits and provider tool statuses are final before taking the restart snapshot.
-        let data = old.read(cx).restart_data();
-        self.open_started(ChatStart::Restart(Box::new(data)), window, cx);
+        let data = match old.update(cx, |thread, cx| thread.restart_data(cx)) {
+            Ok(data) => data,
+            Err(error) => {
+                self.notices.set_error(Some(error.to_string()));
+                cx.notify();
+                return;
+            }
+        };
+        self.open_started(
+            ChatStart::Restart {
+                data: Box::new(data),
+                expected_owner: old.entity_id(),
+            },
+            window,
+            cx,
+        );
         let Some(thread) = self
             .current()
             .filter(|thread| thread.entity_id() != old.entity_id())
         else {
             return;
         };
-        self.host
-            .runtime()
-            .register_document(crate::thread::client(&thread), cx);
         thread.update(cx, |thread, cx| {
             thread.save(cx);
             cx.notify();
         });
         self.load_composer(cx);
         let old = old.entity_id();
-        self.host.runtime().unregister_document(old, cx);
         self.retain_threads(|thread, _| thread.entity_id() != old, cx);
     }
     /// Shows the chats saved in earlier runs, oldest first, before the
@@ -413,6 +477,7 @@ impl AgentPanel {
     ) {
         if !self.chats.contains(loaded.entity_id()) {
             loaded.update(cx, |thread, _| thread.release_history_delivery());
+            self.chats.release_quiet_hidden(cx);
             return;
         }
         self.trim_resident_history(cx);
@@ -425,6 +490,24 @@ impl AgentPanel {
         window.defer(cx, move |window, cx| {
             let _ = panel.update(cx, |panel, cx| panel.sync_approval_attention(window, cx));
         });
+        // The chat on screen draws its change at once: the transcript only when what it
+        // shows changed, so typing a draft leaves it. The history waits for the coalesced
+        // redraw.
+        if self
+            .current()
+            .is_some_and(|current| current.entity_id() == loaded.entity_id())
+        {
+            // The usage card over the transcript shows the chat's usage.
+            let rows = loaded.read(cx).has_changed_rows() || self.menus.is_open(&MenuKind::Usage);
+            let stamp = super::parts::transcript_stamp(loaded.read(cx));
+            let parts = self.layout.parts();
+            parts.transcript_changed(rows, stamp, cx);
+            parts.notify(super::parts::PartKind::Footer, cx);
+        }
+        self.schedule_history_redraw(cx);
+    }
+    /// Redraws the history once the changes of the next frames have arrived.
+    fn schedule_history_redraw(&mut self, cx: &mut Context<Self>) {
         let Some(ticket) = self.notices.request_redraw() else {
             return;
         };
@@ -437,13 +520,90 @@ impl AgentPanel {
         });
         self.notices.install_redraw(&ticket, task);
     }
+    /// What the runtime tells every window about the chats windows hold.
+    pub(super) fn on_holder_event(
+        &mut self,
+        event: nocterm_agent_runtime::HolderEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use nocterm_agent_runtime::HolderEvent;
+        match event {
+            HolderEvent::Changed => {
+                if self.history.others_mut().mark_stale() {
+                    cx.defer_in(window, |panel, _, cx| panel.refresh_other_windows(cx));
+                }
+            }
+            HolderEvent::Reveal { chat } if self.chats.contains(chat) => {
+                self.reveal_chat(chat, window, cx);
+            }
+            HolderEvent::Moved { chat } if self.chats.contains(chat) => {
+                self.retain_threads(|thread, _| thread.entity_id() != chat, cx);
+                self.refresh_other_windows(cx);
+            }
+            HolderEvent::Reveal { .. } | HolderEvent::Moved { .. } => {}
+        }
+    }
+    /// Lists the chats other windows hold anew.
+    pub(super) fn refresh_other_windows(&mut self, cx: &mut Context<Self>) {
+        let chats = self.chats.held_elsewhere(cx);
+        if self.history.others_mut().set(chats, cx) {
+            self.schedule_history_redraw(cx);
+        }
+    }
+    /// A chat another window holds changed: its row follows on the coalesced redraw.
+    pub(super) fn on_other_window_chat_changed(&mut self, cx: &mut Context<Self>) {
+        self.schedule_history_redraw(cx);
+    }
+    /// Opens chat `id`, which another window holds: here when it neither works nor shows
+    /// there, otherwise in that window, which comes forward.
+    pub(super) fn open_from_other_window(
+        &mut self,
+        id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(chat) = self.history.others().find(id) else {
+            return;
+        };
+        match self.chats.take_over(&chat, cx) {
+            Ok(Some(thread)) => {
+                let opened = thread.entity_id();
+                let slot = self.track(&thread, window, cx);
+                self.chats.append(slot);
+                self.refresh_other_windows(cx);
+                self.on_history_catalog_changed(cx);
+                self.open_thread(opened, cx);
+            }
+            Ok(None) => self.host.runtime().reveal_chat(id, cx),
+            Err(error) => self.notices.set_error(Some(error.to_string())),
+        }
+        cx.notify();
+    }
+    /// Shows chat `chat`, which another window asked for, and brings this window forward.
+    fn reveal_chat(&mut self, chat: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .current()
+            .is_none_or(|current| current.entity_id() != chat)
+        {
+            self.open_thread(chat, cx);
+        }
+        if let Some(workspace) = self.host.workspace().upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_panel(&crate::plugin::CHATS.id, window, cx)
+            });
+        }
+        window.activate_window();
+        cx.notify();
+    }
     pub(super) fn on_coalesced_redraw(
         &mut self,
         ticket: &std::sync::Arc<()>,
         cx: &mut Context<Self>,
     ) {
         if self.notices.finish_redraw(ticket) {
-            cx.notify();
+            let stamp = super::history::HistoryProjection::stamp(&self.chats, &self.history, cx);
+            self.layout.parts().history_changed(stamp, cx);
         }
     }
 }

@@ -10,6 +10,7 @@ pub(super) struct ImagePreparation {
     thread: WeakEntity<AgentThread>,
     ticket: Ticket,
     work: BoxFuture<'static, Result<Vec<PromptImage>, ImageAttachError>>,
+    permit: crate::image_deps::ImageWorkPermit,
 }
 impl ImagePreparation {
     pub(super) fn new(
@@ -17,12 +18,14 @@ impl ImagePreparation {
         thread: WeakEntity<AgentThread>,
         ticket: Ticket,
         work: BoxFuture<'static, Result<Vec<PromptImage>, ImageAttachError>>,
+        permit: crate::image_deps::ImageWorkPermit,
     ) -> Self {
         Self {
             binding,
             thread,
             ticket,
             work,
+            permit,
         }
     }
     pub(super) fn launch(self, cx: &mut Context<AgentPanel>) {
@@ -31,8 +34,12 @@ impl ImagePreparation {
             thread,
             ticket,
             work,
+            permit,
         } = self;
-        let future = cx.background_executor().spawn(work);
+        let future = cx.background_executor().spawn(async move {
+            let _permit = permit;
+            work.await
+        });
         cx.spawn(async move |panel, cx| {
             let result = future.await;
             let _ = panel.update(cx, |panel, cx| {

@@ -19,12 +19,20 @@ futures.workspace = true
 tracing.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["signal", "fs", "event"] }
+nix = { version = "0.28", features = ["signal", "fs", "event", "poll"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+filedescriptor = "0.8.3"
+rustix = { version = "1.1.5", features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
 process-wrap = { version = "9.1.0", default-features = false, features = ["std", "job-object", "creation-flags"] }
+
+[dev-dependencies]
+nocterm-session = {workspace=true,features=["test-support"]}
 
 [lints]
 workspace = true

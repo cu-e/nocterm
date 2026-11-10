@@ -9,15 +9,22 @@ use std::{
 };
 
 use anyhow::{Context as _, bail};
-use proc_macro2::TokenTree;
 use schemars::{JsonSchema, schema_for};
 use serde::Deserialize;
 use serde_json::Value;
 
+mod actions_reference;
 mod crate_cards;
+mod external_contracts;
 mod file_size;
+mod isolation;
 mod lint_policy;
 mod manifest_lints;
+mod plugin_abi;
+mod plugin_docs;
+mod plugin_guide;
+mod plugin_reference;
+mod plugin_schema;
 mod ratchet;
 mod settings_reference;
 mod survey;
@@ -57,19 +64,13 @@ struct Dependency {
     features: Vec<String>,
     #[serde(default)]
     uses_default_features: bool,
-}
-#[derive(Deserialize)]
-struct Keymap {
-    section: Vec<Section>,
-}
-#[derive(Deserialize)]
-struct Section {
-    context: Option<String>,
+    /// `git+<url>?rev=<commit>` or `registry+<url>`; absent for a path dependency.
     #[serde(default)]
-    os: Vec<String>,
-    bindings: BTreeMap<String, String>,
+    source: Option<String>,
+    /// Set for a path dependency.
+    #[serde(default)]
+    path: Option<PathBuf>,
 }
-
 fn main() -> anyhow::Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -86,7 +87,8 @@ fn main() -> anyhow::Result<()> {
             architecture(root)?;
             lint_policy::check(root)?;
             settings_reference::check(root)?;
-            ratchet::check(root)?;
+            let (modules, symbols) = ratchet::check(root)?;
+            isolation::check(root, &modules, &symbols)?;
             file_size::check(root)?;
             crate_cards::check(root)?;
             report_early_warnings(root)
@@ -174,11 +176,32 @@ fn check_dependency(
 }
 
 /// Agent protocol SDK types stay in the protocol adapter; other crates use
-/// neutral AI records (ADR 0058).
+/// neutral AI records (ADR 0058). The hub protocol SDK (`tonic`, `prost`) stays in the hub
+/// adapter the same way (ADR 0096).
 fn check_protocol_dependency(package: &str, dependency: &Dependency) -> anyhow::Result<()> {
     let name = dependency.name.as_str();
     if name.starts_with("agent-client-protocol") && package != "nocterm-acp" {
         bail!("{package} depends on agent protocol SDK {name}");
+    }
+    if external_contracts::is_protocol_sdk(name) && package != external_contracts::HUB_ADAPTER {
+        bail!("{package} depends on hub protocol SDK {name}");
+    }
+    Ok(())
+}
+
+/// Layer rules for workspace crates; the external hub contract has its own closed rule.
+fn check_package_dependencies(
+    package: &Package,
+    source: &str,
+    layers: &BTreeMap<&str, &str>,
+) -> anyhow::Result<()> {
+    for dependency in &package.dependencies {
+        if external_contracts::is_contract(&dependency.name) {
+            external_contracts::check_dependency(&package.name, dependency)?;
+        } else {
+            check_dependency(source, dependency, layers)?;
+        }
+        check_protocol_dependency(&package.name, dependency)?;
     }
     Ok(())
 }
@@ -187,6 +210,8 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
     let mut metadata = metadata(root)?;
     manifest_lints::check(root, &metadata)?;
     test_support_policy::check(&metadata)?;
+    external_contracts::check_members(&metadata.packages)?;
+    external_contracts::check_lock(root)?;
     metadata
         .packages
         .sort_by(|left, right| left.name.cmp(&right.name));
@@ -221,12 +246,8 @@ fn architecture(root: &Path) -> anyhow::Result<String> {
     let mut edges = String::new();
     for package in &metadata.packages {
         let source = layers[package.name.as_str()];
-        for dependency in &package.dependencies {
-            check_dependency(source, dependency, &layers)
-                .with_context(|| format!("architecture violation in {}", package.name))?;
-            check_protocol_dependency(&package.name, dependency)
-                .with_context(|| format!("architecture violation in {}", package.name))?;
-        }
+        check_package_dependencies(package, source, &layers)
+            .with_context(|| format!("architecture violation in {}", package.name))?;
         let mut dependencies: Vec<_> = package
             .dependencies
             .iter()
@@ -351,11 +372,17 @@ pub(crate) fn schema_rows(
         if let (Some(minimum), Some(maximum)) = (schema.get("minimum"), schema.get("maximum")) {
             write!(kind, "; {minimum}–{maximum}")?;
         }
+        // A value the file leaves out while it is the default (`skip_serializing_if`) is not in
+        // `defaults`; the schema then names it.
+        let shown = match (defaults, schema.get("default")) {
+            (Value::Null, Some(declared)) => declared,
+            _ => defaults,
+        };
         writeln!(
             text,
             "| `{prefix}` | {} | `{}` | {} |",
             escape(&kind),
-            escape(&defaults.to_string()),
+            escape(&shown.to_string()),
             escape(description)
         )?;
     }
@@ -376,109 +403,31 @@ pub(crate) fn reference_header(title: &str) -> String {
 }
 
 pub(crate) fn source_files(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
-    for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            source_files(&path, files)?;
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            files.push(path);
-        }
-    }
+    collect_source_files(directory, files)?;
     files.sort();
     Ok(())
 }
 
-fn action_declarations(source: &str) -> anyhow::Result<BTreeMap<String, String>> {
-    let mut actions = BTreeMap::new();
-    for item in syn::parse_file(source)?.items {
-        let syn::Item::Macro(item) = item else {
-            continue;
-        };
-        if !item
-            .mac
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "actions")
-        {
-            continue;
+fn collect_source_files(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let kind = entry.file_type()?;
+        if kind.is_symlink() && path.is_dir() {
+            bail!(
+                "source directories must not be symlinks: {}",
+                path.display()
+            );
         }
-        let mut tokens = item.mac.tokens.into_iter();
-        let Some(TokenTree::Ident(namespace)) = tokens.next() else {
-            bail!("action namespace must be an identifier");
-        };
-        let Some(TokenTree::Punct(_)) = tokens.next() else {
-            bail!("expected action namespace separator");
-        };
-        let Some(TokenTree::Group(group)) = tokens.next() else {
-            bail!("expected actions list");
-        };
-        let mut description = Vec::new();
-        for token in group.stream() {
-            match token {
-                TokenTree::Group(group) if group.delimiter() == proc_macro2::Delimiter::Bracket => {
-                    let attribute = group.stream().to_string();
-                    if let Some(literal) = attribute.strip_prefix("doc = ") {
-                        description.push(
-                            syn::parse_str::<syn::LitStr>(literal)?
-                                .value()
-                                .trim()
-                                .to_owned(),
-                        );
-                    }
-                }
-                TokenTree::Ident(name) => {
-                    actions.insert(format!("{namespace}::{name}"), description.join(" "));
-                    description.clear();
-                }
-                _ => {}
+        if kind.is_dir() {
+            if !matches!(entry.file_name().to_str(), Some("target" | ".git")) {
+                collect_source_files(&path, files)?;
             }
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
         }
     }
-    Ok(actions)
-}
-
-fn actions(root: &Path) -> anyhow::Result<String> {
-    let mut files = Vec::new();
-    source_files(&root.join("crates"), &mut files)?;
-    let mut declarations = BTreeMap::new();
-    for file in files {
-        for (name, description) in action_declarations(&fs::read_to_string(file)?)? {
-            if declarations.insert(name.clone(), description).is_some() {
-                bail!("duplicate action {name}");
-            }
-        }
-    }
-    let keymap: Keymap = toml::from_str(&fs::read_to_string(root.join("assets/keymap.toml"))?)?;
-    let mut bindings: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for section in keymap.section {
-        for (keys, action) in section.bindings {
-            if !declarations.contains_key(&action) {
-                bail!("keymap references undeclared action {action}");
-            }
-            let platform = if section.os.is_empty() {
-                "all".into()
-            } else {
-                section.os.join(", ")
-            };
-            bindings.entry(action).or_default().push(format!(
-                "`{keys}` ({platform}; {})",
-                section.context.as_deref().unwrap_or("global")
-            ));
-        }
-    }
-    let mut text = format!(
-        "{GENERATED}# Actions and default key bindings\n\nDerived from `actions!` declarations and `assets/keymap.toml`.\n\n| Action | Description | Bindings |\n| --- | --- | --- |\n"
-    );
-    for (name, description) in declarations {
-        writeln!(
-            text,
-            "| `{name}` | {} | {} |",
-            escape(&description),
-            escape(&bindings.remove(&name).unwrap_or_default().join("; "))
-        )?;
-    }
-    Ok(text)
+    Ok(())
 }
 
 fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
@@ -491,8 +440,15 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
                 serde_json::to_value(nocterm_design::DesignTokens::builtin())?,
             )?,
         ),
-        ("docs/reference/actions.md", actions(root)?),
+        (
+            "docs/reference/actions.md",
+            actions_reference::render(root)?,
+        ),
         ("docs/architecture/dependencies.md", architecture(root)?),
+        (plugin_abi::PATH, plugin_abi::render(root)?),
+        (plugin_reference::PATH, plugin_reference::render()?),
+        (plugin_docs::PATH, plugin_docs::render()?),
+        (plugin_schema::PATH, plugin_schema::render()?),
     ];
     let mut stale = Vec::new();
     for (name, text) in documents {
@@ -512,7 +468,7 @@ fn write_docs(root: &Path, check: bool) -> anyhow::Result<()> {
             stale.join(", ")
         );
     }
-    Ok(())
+    plugin_guide::check_documents(root)
 }
 
 #[cfg(test)]
@@ -529,6 +485,8 @@ mod tests {
                     rename: None,
                     features: Vec::new(),
                     uses_default_features: true,
+                    source: None,
+                    path: None,
                 };
                 assert!(check_dependency(source, &dependency, &layers).is_err());
             }
@@ -539,6 +497,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("domain", &test_support, &layers).is_ok());
         let runtime = Dependency {
@@ -547,6 +507,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("ui", &runtime, &layers).is_ok());
         assert!(check_dependency("service", &runtime, &layers).is_err());
@@ -556,6 +518,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("service", &gpui, &layers).is_ok());
         let missing = Dependency {
@@ -564,6 +528,8 @@ mod tests {
             rename: None,
             features: Vec::new(),
             uses_default_features: true,
+            source: None,
+            path: None,
         };
         assert!(check_dependency("app", &missing, &layers).is_err());
     }
@@ -577,6 +543,8 @@ mod tests {
                     rename: Some("renamed".into()),
                     features: Vec::new(),
                     uses_default_features: true,
+                    source: None,
+                    path: None,
                 };
                 assert!(check_protocol_dependency("nocterm-acp", &dependency).is_ok());
                 for package in [
@@ -586,6 +554,37 @@ mod tests {
                     "nocterm-agent-chat",
                     "nocterm-agent",
                     "nocterm",
+                ] {
+                    assert!(check_protocol_dependency(package, &dependency).is_err());
+                }
+            }
+        }
+    }
+    #[test]
+    fn hub_protocol_sdk_is_limited_to_the_hub_adapter() {
+        for name in [
+            "tonic",
+            "tonic-prost",
+            "tonic-build",
+            "prost",
+            "prost-types",
+        ] {
+            for kind in [None, Some("dev"), Some("build")] {
+                let dependency = Dependency {
+                    name: name.into(),
+                    kind: kind.map(str::to_owned),
+                    rename: None,
+                    features: Vec::new(),
+                    uses_default_features: true,
+                    source: None,
+                    path: None,
+                };
+                assert!(check_protocol_dependency("nocterm-hub-io", &dependency).is_ok());
+                for package in [
+                    "nocterm",
+                    "nocterm-hubs",
+                    "nocterm-hubs-model",
+                    "nocterm-ssh",
                 ] {
                     assert!(check_protocol_dependency(package, &dependency).is_err());
                 }
@@ -605,11 +604,5 @@ mod tests {
         assert!(allowed("app", "feature"));
         assert!(allowed("tooling", "feature"));
         assert!(!allowed("tooling", "app"));
-    }
-    #[test]
-    fn action_parser_reads_namespaces_and_doc_attributes() {
-        let actions = action_declarations("gpui_kit::actions!(example, [ /// First command.\n First, /// Second command.\n Second, ]);").unwrap();
-        assert_eq!(actions.get("example::First").unwrap(), "First command.");
-        assert_eq!(actions.get("example::Second").unwrap(), "Second command.");
     }
 }

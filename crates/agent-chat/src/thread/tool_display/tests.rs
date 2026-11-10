@@ -7,9 +7,9 @@ fn normalize(displays: &mut ToolDisplays, entries: &mut Vec<Entry>) -> Vec<usize
         nocterm_ai::history::SavedChat::for_identity("fixture".into(), "document".into(), 0);
     saved.entries = std::mem::take(entries);
     let mut document = super::super::document::ChatDocument::new(
-        saved.agent_id.clone(),
-        saved.id.clone(),
-        saved.updated,
+        saved.header.agent_id.clone(),
+        nocterm_ai::execution_origin::ChatKey::new(saved.header.scope, saved.header.id.clone()),
+        saved.header.updated,
     );
     document.imported_clean(&mut saved, false);
     let patches = displays.normalize(document.entries());

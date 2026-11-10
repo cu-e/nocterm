@@ -3,6 +3,9 @@
 use super::extensions::Extensions;
 use serde::{Deserialize, Serialize};
 use serde_with::{DefaultOnError, VecSkipError, serde_as, skip_serializing_none};
+#[path = "image_data.rs"]
+mod image_data;
+pub use image_data::ImageData;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -61,7 +64,7 @@ pub struct Image {
     #[serde_as(deserialize_as = "DefaultOnError")]
     #[serde(default)]
     pub annotations: Option<Annotations>,
-    pub data: String,
+    pub data: ImageData,
     pub mime_type: String,
     #[serde_as(deserialize_as = "DefaultOnError")]
     #[serde(default)]
@@ -74,7 +77,7 @@ impl Image {
     pub fn new(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
         Self {
             annotations: None,
-            data: data.into(),
+            data: data.into().into(),
             mime_type: mime_type.into(),
             uri: None,
             meta: None,

@@ -91,6 +91,7 @@ pub struct FactsService {
     probes: admission::ProbeLedger,
     locations: location::LocationAdmission,
     flags: flags::RawFlags,
+    flag_retry: Option<(std::time::Instant, gpui::Task<()>)>,
     jobs: jobs::ObservationJobs,
     policy: policy::DetectionPolicy,
 }
@@ -347,6 +348,7 @@ impl FactsService {
         if self.closing(cx) {
             return;
         }
+        self.flags.retry_due(cx.background_executor().now());
         while let Some(code) = self.flags.pending() {
             let Some(job) = self.jobs.reserve_flag() else {
                 break;
@@ -363,7 +365,33 @@ impl FactsService {
             })
             .detach();
         }
+        self.schedule_flag_retry(cx);
     }
+
+    fn schedule_flag_retry(&mut self, cx: &mut Context<Self>) {
+        let deadline = self.flags.retry_deadline();
+        if self.flag_retry.as_ref().map(|(deadline, _)| *deadline) == deadline {
+            return;
+        }
+        self.flag_retry = deadline.map(|deadline| {
+            let timer = cx
+                .background_executor()
+                .timer(deadline.saturating_duration_since(cx.background_executor().now()));
+            (
+                deadline,
+                cx.spawn(async move |this, cx| {
+                    timer.await;
+                    this.update(cx, |this, cx| {
+                        this.flag_retry = None;
+                        this.drain_flags(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                }),
+            )
+        });
+    }
+
     fn finish_flag(
         &mut self,
         code: CountryCode,
@@ -376,7 +404,8 @@ impl FactsService {
         if !released || self.closing(cx) {
             return;
         }
-        self.flags.finish(code, &job, result);
+        self.flags
+            .finish(code, &job, result, cx.background_executor().now());
         self.progress(cx);
     }
     fn progress(&mut self, cx: &mut Context<Self>) {

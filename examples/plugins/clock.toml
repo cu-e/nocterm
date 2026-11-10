@@ -1,0 +1,39 @@
+# A clock for the status bar. It needs one capability, `clock.now`, and one setting.
+api = "0.1"
+publisher = "example"
+id = "clock"
+name = "Example Clock"
+description = "Shows the local time in the status bar."
+capabilities = ["clock.now"]
+
+[reasons]
+"clock.now" = "To show the time"
+
+[[contribution]]
+local = "face"
+kind = "widget"
+title = "Time"
+icon = "puzzle"
+zone = "right"
+
+[contribution.view]
+refresh = "next-minute"
+nodes = [
+  { kind = "row" },
+  { kind = "icon", parent = 0, icon = "puzzle" },
+  { kind = "text", parent = 0, text = "{settings.label} {clock.now|hh-mm}" },
+]
+
+[settings]
+version = 1
+
+[[settings.group]]
+title = "Clock"
+
+[[settings.group.field]]
+key = "label"
+label = "Label"
+help = "Text shown before the time."
+kind = "text"
+default = "Time"
+max_len = 12

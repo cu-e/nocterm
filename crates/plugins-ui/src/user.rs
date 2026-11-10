@@ -1,0 +1,30 @@
+//! The User section of the Plugins page: the switch that allows user plugins at the next start,
+//! why a run holds them, the installed user plugins, the install and update consent, enabling,
+//! placement, removal and the audit log.
+//!
+//! The section owns what the user sees and decides. What a package is, how it is checked,
+//! stored and run belongs to the application behind [`UserPlugins`].
+
+mod consent;
+mod consent_view;
+mod folder;
+mod part_view;
+mod port;
+mod removal;
+mod section;
+mod section_view;
+mod session;
+mod switch_view;
+
+pub use folder::{FolderError, MAX_LISTED, PluginsFolder};
+pub use part_view::UserPartView;
+pub use port::{
+    AuditLine, Candidate, CapabilityLine, FieldLine, InstallRequest, Replaced, RowState,
+    UserPluginError, UserPluginRow, UserPlugins,
+};
+pub use section::{UserPluginsSection, UserSelected};
+pub use section_view::UserPart;
+pub use session::{HeldBy, UserPluginsSwitch, UserSession};
+
+#[cfg(test)]
+mod tests;

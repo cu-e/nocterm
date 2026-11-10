@@ -4,7 +4,8 @@
 //! Does not own: palettes, catalog rules, scheduling, selection or views.
 //! Ports provided: ThemeRegistry, ThemeLibrary. Ports used: none.
 //! Settings section: none. Globals: none.
-//! Invariants: validate before publication; rollback preserves the previous pack.
+//! Invariants: validate before publication; rollback and restart recovery preserve the previous
+//! pack; discovery caps aggregate entries/read bytes as well as each individual file.
 mod archive;
 mod discovery;
 mod publication;
@@ -33,6 +34,10 @@ impl LocalThemeLibrary {
 }
 impl ThemeLibrary for LocalThemeLibrary {
     fn scan(&self) -> ThemeCatalog {
+        let _guard = self
+            .mutation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         discovery::scan(&self.dirs)
     }
     fn install(&self, extension: &ExtensionInfo) -> Result<ThemeChange, ThemeOperationError> {
@@ -42,15 +47,15 @@ impl ThemeLibrary for LocalThemeLibrary {
         archive::install_archive(&self.dirs.installed, extension, &bytes)?;
         Ok(ThemeChange {
             operation: ThemeMutation::Install(extension.id.clone()),
-            catalog: self.scan(),
+            catalog: discovery::scan(&self.dirs),
             removed: Vec::new(),
         })
     }
     fn uninstall(&self, id: &str) -> Result<ThemeChange, ThemeOperationError> {
         let _guard = self.mutation.lock().unwrap_or_else(|e| e.into_inner());
-        let before = self.scan();
+        let before = discovery::scan(&self.dirs);
         archive::uninstall(&self.dirs.installed, id)?;
-        let catalog = self.scan();
+        let catalog = discovery::scan(&self.dirs);
         let removed = before
             .entries()
             .iter()

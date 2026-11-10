@@ -43,9 +43,12 @@ fn native_fixture(
         let installed = native_installation(paths, ids, cx);
         let (handle, workspace) = gpui_kit::open_window(Default::default(), cx, |window, cx| {
             cx.new(|cx| {
-                let deps = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
+                let deps = nocterm_workspace::test_support::deps_for(
+                    &[&nocterm_snippets_ui::plugin::PLUGIN],
+                    cx,
+                );
                 let mut workspace = Workspace::new(deps, window, cx);
-                nocterm_snippets_ui::register(&mut workspace, &installed, window, cx);
+                nocterm_snippets_ui::register(&mut workspace, &installed, window, cx).unwrap();
                 workspace
             })
         })

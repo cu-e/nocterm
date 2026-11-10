@@ -65,7 +65,7 @@ pub(super) fn escape_markdown(text: &str) -> String {
 }
 
 pub(super) struct MessageRowActions {
-    thread: EntityId,
+    thread: Option<EntityId>,
     index: usize,
     text: String,
     time: Option<u64>,
@@ -73,7 +73,7 @@ pub(super) struct MessageRowActions {
 }
 impl MessageRowActions {
     pub(super) fn new(
-        thread: EntityId,
+        thread: Option<EntityId>,
         index: usize,
         text: String,
         time: Option<u64>,
@@ -113,16 +113,18 @@ impl MessageRowActions {
                         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
                     }),
             )
-            .child(
-                Button::new(("fork-message", index))
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::GitFork)
-                    .tooltip("Fork chat from here")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.fork_thread_at(thread, Some(index), window, cx)
-                    })),
-            )
+            .when_some(thread, |row, thread| {
+                row.child(
+                    Button::new(("fork-message", index))
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::GitFork)
+                        .tooltip("Fork chat from here")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.fork_thread_at(thread, Some(index), window, cx)
+                        })),
+                )
+            })
             .when_some(time, |row, time| {
                 row.child(
                     div()

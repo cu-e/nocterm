@@ -4,6 +4,42 @@ use std::{ffi::OsStr, path::Path};
 #[cfg(unix)]
 use std::{io::Write, time::Duration};
 
+#[cfg(unix)]
+#[test]
+fn held_file_removal_refuses_directories_and_unlinks_a_link_without_following_it() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let selected = root.path().join("selected");
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::create_dir(selected.join("directory")).unwrap();
+    std::fs::write(selected.join("owned"), b"owned").unwrap();
+    std::fs::write(outside.path().join("secret"), b"secret").unwrap();
+    std::os::unix::fs::symlink(outside.path().join("secret"), selected.join("link")).unwrap();
+    let fs = LocalFilesystem::with_base(root.path().to_owned()).unwrap();
+    let directory = fs.open_directory(&selected).unwrap();
+    assert!(directory.remove_file(OsStr::new("directory")).is_err());
+    for name in ["", ".", "..", "../secret", "a/b"] {
+        assert!(matches!(
+            directory.remove_file(OsStr::new(name)),
+            Err(LocalFsError::InvalidName)
+        ));
+    }
+    directory.remove_file(OsStr::new("link")).unwrap();
+    assert_eq!(
+        std::fs::read(outside.path().join("secret")).unwrap(),
+        b"secret"
+    );
+    std::fs::rename(&selected, root.path().join("moved")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &selected).unwrap();
+    directory.remove_file(OsStr::new("owned")).unwrap();
+    assert!(!root.path().join("moved/owned").exists());
+    assert!(root.path().join("moved/directory").is_dir());
+    assert_eq!(
+        std::fs::read(outside.path().join("secret")).unwrap(),
+        b"secret"
+    );
+}
+
 #[test]
 fn listing_and_sources_preserve_names_bounds_and_same_opened_metadata() {
     let root = tempfile::tempdir().unwrap();

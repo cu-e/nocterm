@@ -4,9 +4,6 @@ use super::lease::ReleasedLease;
 use super::*;
 use std::time::Duration;
 impl Runtime {
-    pub fn register_document(&mut self, client: Client, cx: &mut Context<Self>) {
-        self.chats.register(client, cx);
-    }
     fn start_session_maintenance(&mut self, cx: &mut Context<Self>) {
         if !self.admission.running() {
             self.admission.install(cx.spawn(async move |this, cx| {
@@ -33,16 +30,64 @@ impl Runtime {
     pub fn unregister_document(&mut self, id: EntityId, cx: &mut Context<Self>) {
         self.chats.retire(id, cx);
         self.admission.withdraw(id);
+        cx.notify();
+    }
+    pub(crate) fn unregister_scoped_document(
+        &mut self,
+        scope: nocterm_ai::local_environment::ChatScope,
+        id: EntityId,
+        cx: &mut Context<Self>,
+    ) -> Result<(), nocterm_ai::storage::AgentStorageError> {
+        self.chats.require_owner_scope(scope, id, cx)?;
+        self.unregister_document(id, cx);
+        Ok(())
+    }
+    pub(crate) fn request_scoped_activation(
+        &mut self,
+        scope: nocterm_ai::local_environment::ChatScope,
+        client: Client,
+        cx: &mut Context<Self>,
+    ) -> Result<(), crate::AgentActivationError> {
+        let state = client
+            .state(cx)
+            .ok_or(crate::AgentActivationError::ClientClosed)?;
+        state.origin().require_chat_scope(&scope)?;
+        documents::ChatStore::require_client_scope(scope.clone(), &client, cx)?;
+        self.request_activation(client, cx);
+        Ok(())
     }
     pub fn request_activation(&mut self, client: Client, cx: &mut Context<Self>) {
         if self.shutting_down || !self.ai_enabled(cx) {
+            return;
+        }
+        if !client
+            .state(cx)
+            .is_some_and(|state| self.chats.current(state.origin().key(), client.id()))
+        {
             return;
         }
         self.admission.request(client);
         self.start_session_maintenance(cx);
         self.maintain_sessions(cx);
     }
+    pub(crate) fn refresh_environment_sources(&mut self, cx: &mut Context<Self>) {
+        self.revalidate_sources(cx);
+        // An explicit native notification can make fresh source captures available.
+        cx.notify();
+    }
+    fn revalidate_sources(&mut self, cx: &mut Context<Self>) -> bool {
+        let revoked = self.chats.revoke_stale_sources();
+        let changed = !revoked.is_empty();
+        for client in revoked {
+            self.admission.withdraw(client.id());
+            client.emit(SessionEvent::Shutdown, cx);
+        }
+        changed
+    }
     fn maintain_sessions(&mut self, cx: &mut Context<Self>) {
+        if self.revalidate_sources(cx) {
+            cx.notify();
+        }
         if self.shutting_down || !self.ai_enabled(cx) {
             self.admission.clear();
             return;
@@ -66,8 +111,8 @@ impl Runtime {
                     .collect::<Vec<_>>();
                 ConnectionObservation::new(
                     *key,
-                    states.iter().any(|state| state.busy),
-                    states.iter().any(|state| state.shown),
+                    states.iter().any(|state| state.busy()),
+                    states.iter().any(|state| state.shown()),
                 )
             })
             .collect::<Vec<_>>();
@@ -78,7 +123,7 @@ impl Runtime {
             .filter(|client| {
                 client
                     .state(cx)
-                    .is_some_and(|state| state.activation_pending && !state.leased)
+                    .is_some_and(|state| state.activation_pending() && !state.leased())
             })
             .count();
         for key in self
@@ -107,24 +152,37 @@ impl Runtime {
             let Some(state) = client.state(cx) else {
                 continue;
             };
-            if !self.chats.current(&state.chat_id, client.id())
-                || state.leased
-                || !state.activation_pending
+            if !self.chats.current(state.origin().key(), client.id())
+                || state.leased()
+                || !state.activation_pending()
             {
                 continue;
             }
-            if state.closing || self.connections.same_chat(&state.chat_id) {
+            if state.closing() || self.connections.same_chat(state.origin().key()) {
                 self.admission.defer(client);
                 continue;
             }
-            if let Some(agent) = self.services.agents.get(&state.agent_id, cx) {
-                self.connect(client, state.chat_id, agent.launch().clone(), cx);
+            if let Some(agent) = self.services.agents.get(state.agent_id(), cx) {
+                if let Err(error) = self.connect_scoped(
+                    state.origin().key().chat_scope(),
+                    client.clone(),
+                    state.origin().key().id().to_owned(),
+                    agent.launch().clone(),
+                    cx,
+                ) {
+                    client.emit(SessionEvent::Failed(error.to_string()), cx);
+                }
             } else {
                 client.emit(SessionEvent::AgentRemoved, cx);
             }
         }
     }
-    fn cleanup_failed(&mut self, chat_id: &str, error: &str, cx: &mut Context<Self>) {
+    fn cleanup_failed(
+        &mut self,
+        chat_id: &nocterm_ai::execution_origin::ChatKey,
+        error: &str,
+        cx: &mut Context<Self>,
+    ) {
         tracing::warn!(%error, "agent process cleanup could not be confirmed");
         let clients: Vec<_> = self
             .chats
@@ -133,7 +191,7 @@ impl Runtime {
             .filter(|client| {
                 client
                     .state(cx)
-                    .is_some_and(|state| state.chat_id == chat_id)
+                    .is_some_and(|state| state.origin().key() == chat_id)
             })
             .collect();
         for client in clients {
@@ -153,7 +211,7 @@ impl Runtime {
         else {
             return;
         };
-        let chat_id = connection.chat_id.clone();
+        let chat_id = connection.identity.key().clone();
         let connecting = connection._connecting.take();
         let startup_completion = connection.startup_completion.take();
         cx.spawn(async move |this, cx| {
@@ -231,7 +289,6 @@ impl Runtime {
         let cleanup = self.connections.take_cleanup();
         self.bridge.stop();
         self.services.bridge.stop();
-        self.usage.stop();
         let executor = cx.background_executor().clone();
         Box::pin(async move {
             // Independent process cleanup cannot be serialized behind synchronous file I/O.
@@ -287,7 +344,7 @@ impl Runtime {
                             session.is_none_or(|session| {
                                 connection.users.values().any(|client| {
                                     client.state(cx).is_some_and(|state| {
-                                        state.session.as_ref() == Some(session)
+                                        state.session().as_ref() == Some(session)
                                     })
                                 })
                             })

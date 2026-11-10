@@ -87,10 +87,13 @@ Pick the type by what the *user of the software* sees, not by which files change
 ## Code size
 
 A Rust source file may have at most 800 lines, tests included. `cargo xtask architecture`
-(run in CI) enforces it. When a file approaches the limit, split it by responsibility into
-child modules (`foo.rs` + `foo/part.rs`); move a large `mod tests` into `foo/tests.rs`.
-For production code, an extracted module owns a responsibility and its own type;
-moving more methods of the same growing type into another file is not an extraction.
+(run in CI) enforces this ceiling; it is not a target size. Keep files focused on
+one coherent responsibility. Separate independent responsibilities as they emerge,
+even below warning thresholds, into named child modules; move a large `mod tests`
+into `foo/tests.rs`. Stateful extractions own their state and transitions; pure
+logic can be a cohesive module of functions without an artificial owner type.
+Moving more methods of the same growing type into another file is not an extraction.
+Do not fragment a coherent module just to meet an arbitrary preferred line count.
 The legacy exception list `xtask/oversized-files.toml` is empty; never add an entry to make
 a check pass.
 
@@ -110,6 +113,51 @@ per package may only decrease. The exact inventory in `xtask/baseline.toml` also
 constrains large structs, implementation spread, public state, globals, shutdown
 hooks, string errors and domain I/O. Lower or remove entries when code improves;
 never regenerate or raise the inventory. See [architecture guardrails](docs/architecture/guardrails.md).
+
+## Verification
+
+During development, choose the smallest check that answers the current question:
+one regression test, one test target, a library or an affected package. Batch a
+coherent edit before checking it. Do not run a fixed build/lint/test/architecture
+bundle after every edit or extraction. A test compiles its target; running both
+`cargo check` and `cargo build` first is usually redundant.
+
+At completion, follow the input-based [completion matrix](.claude/skills/gate/SKILL.md#definition-of-done).
+Scoped changes use affected targets and consumers; broad shared changes or
+uncertain workspace impact need full workspace verification. Required CI is
+independent. Reuse valid results and rerun a failing check first; keep evidence
+tied to its source/configuration. The [gate procedure](.claude/skills/gate/SKILL.md)
+provides examples. Documentation and script-only work use relevant links,
+script tests and configuration validators unless they affect Rust/generator inputs.
+
+For changed hot paths, account for work per event, frequency and retained memory.
+Rendering and input callbacks consume prepared state; expensive work has bounded
+background execution. Cache repeated work only with clear keys, invalidation,
+bounds and lifecycle. Verify affected interaction and measure optimization claims
+with representative before/after workloads; see the [performance procedure](.claude/skills/performance/SKILL.md).
+
+### Cargo resources
+
+Cargo keeps the caller's `CARGO_BUILD_JOBS`, Cargo configuration and normal
+defaults. Choose a local budget for the machine; no fixed job count is required.
+When parallel builds need coordination, the optional helper serializes commands:
+
+```sh
+.claude/hooks/cargo-serial.sh cargo test -p nocterm-ssh
+```
+
+Its default lock lives in the Git common directory, so linked worktrees share it
+and independent clones do not. `NOCTERM_CARGO_LOCK=<path>` selects another lock
+(use an absolute path to coordinate different working directories or repositories).
+`NOCTERM_CARGO_LOCK=off` runs without the helper lock. The helper needs `flock`
+when locking; if unavailable it fails promptly with instructions. Direct Cargo
+is supported on every platform and keeps Cargo's own target-directory locking.
+
+For shared verification, coordinate one executor and avoid duplicate checks on
+the same inputs. Keep a stable target directory per worktree; do not touch all
+sources or clean caches to start another check. Investigate a concrete stale
+artifact first. Local resource settings may be supplied in the shell or personal
+configuration and do not belong in committed product rules.
 
 ## Pull requests
 

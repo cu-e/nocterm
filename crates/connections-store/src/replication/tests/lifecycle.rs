@@ -1,0 +1,155 @@
+use super::*;
+use nocterm_connections_model::repository::{
+    ConnectionDocument, ConnectionStorageError, StorageOperation,
+};
+
+#[gpui::test]
+async fn a_restart_continues_from_the_persisted_state_without_resending(
+    cx: &mut gpui::TestAppContext,
+) {
+    let original = profile("a");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&original));
+    fixture.attach(cx);
+    let saved = fixture.persisted_state();
+    let cursor = saved.cursor().cloned().expect("a cursor was kept");
+    let added = profile("added");
+    fixture.replica.write_remote(added.clone());
+    let restarted = Fixture::resumed(
+        cx,
+        std::slice::from_ref(&original),
+        saved,
+        fixture.replica.clone(),
+    );
+    restarted.attach(cx);
+    assert_eq!(restarted.local(cx, &added), Some(added));
+    assert_eq!(restarted.put_count(), 1);
+    assert!(
+        restarted
+            .replica
+            .calls()
+            .contains(&ReplicaCall::Changes(Some(cursor.as_str().to_owned())))
+    );
+}
+
+impl Fixture {
+    fn detach(&self, cx: &mut gpui::TestAppContext) {
+        self.replication
+            .update(cx, |replication, cx| replication.detach(cx));
+        cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+async fn detaching_stops_synchronizing_and_forgets_the_agreement(cx: &mut gpui::TestAppContext) {
+    let original = profile("a");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&original));
+    fixture.attach(cx);
+    fixture.detach(cx);
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Detached));
+    let local = profile("local");
+    fixture.save(cx, local.clone()).await;
+    fixture.replica.write_remote(profile("remote"));
+    cx.run_until_parked();
+    assert_eq!(fixture.put_count(), 1);
+    assert_eq!(fixture.local(cx, &profile("remote")), None);
+    assert!(fixture.replica.profile(local.id).is_none());
+    assert!(fixture.persisted_state().entry(original.id).is_none());
+}
+
+#[gpui::test]
+async fn detaching_empties_the_mirror_but_not_the_replica(cx: &mut gpui::TestAppContext) {
+    let (agreed, edited) = (profile("agreed"), profile("edited"));
+    let fixture = Fixture::new(cx, &[agreed.clone(), edited.clone()]);
+    fixture.attach(cx);
+    fixture.replica.set_offline(true);
+    fixture.save(cx, at_host(&edited, "unsent.example")).await;
+    fixture.detach(cx);
+    assert_eq!(fixture.local(cx, &agreed), None);
+    assert_eq!(fixture.local(cx, &edited), None);
+    assert_eq!(fixture.replica.profile(agreed.id), Some(agreed));
+}
+
+#[gpui::test]
+async fn attaching_again_after_detaching_shows_the_account_afresh(cx: &mut gpui::TestAppContext) {
+    let agreed = profile("agreed");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&agreed));
+    fixture.attach(cx);
+    fixture.detach(cx);
+    assert_eq!(fixture.local(cx, &agreed), None);
+    fixture.attach(cx);
+    assert_eq!(fixture.local(cx, &agreed), Some(agreed));
+}
+
+#[gpui::test]
+async fn attaching_another_replica_moves_synchronization_to_it(cx: &mut gpui::TestAppContext) {
+    let original = profile("a");
+    let fixture = Fixture::new(cx, std::slice::from_ref(&original));
+    fixture.attach(cx);
+    fixture.detach(cx);
+    let second = Arc::new(MemoryReplica::new());
+    fixture
+        .replication
+        .update(cx, |replication, cx| replication.attach(second.clone(), cx));
+    cx.run_until_parked();
+    // What was agreed with the first replica belongs to it, not to the second.
+    assert_eq!(second.profile(original.id), None);
+    assert_eq!(fixture.local(cx, &original), None);
+    let added = profile("added");
+    fixture.save(cx, added.clone()).await;
+    assert_eq!(second.profile(added.id), Some(added));
+    assert_eq!(fixture.put_count(), 1);
+}
+
+#[gpui::test]
+async fn changes_are_read_page_by_page_until_none_remain(cx: &mut gpui::TestAppContext) {
+    let fixture = Fixture::new(cx, &[]);
+    let remote: Vec<Profile> = ["a", "b", "c"].iter().map(|name| profile(name)).collect();
+    for profile in &remote {
+        fixture.replica.write_remote(profile.clone());
+    }
+    fixture.replica.page_size(1);
+    fixture.attach(cx);
+    for profile in &remote {
+        assert_eq!(fixture.local(cx, profile), Some(profile.clone()));
+    }
+    assert!(matches!(fixture.status(cx), ReplicationStatus::Synced));
+}
+
+#[gpui::test]
+async fn nothing_is_synchronized_while_the_local_document_failed_to_load(
+    cx: &mut gpui::TestAppContext,
+) {
+    let kept = profile("kept");
+    let mut state = ReplicaState::default();
+    state.agree(
+        kept.id,
+        SyncedEntry {
+            version: ReplicaVersion::new(1),
+            profile: kept.clone(),
+        },
+    );
+    state.advance(ReplicaCursor::new("1"));
+    let replica = Arc::new(MemoryReplica::new());
+    replica.write_remote(kept.clone());
+    let unreadable = ConnectionStore::prepared(
+        Profiles::default(),
+        Recents::default(),
+        Arc::new(|_| Box::pin(async { Ok(()) })),
+        Arc::new(|_| Box::pin(async { Ok(()) })),
+        Some(Arc::new(ConnectionStorageError::new(
+            ConnectionDocument::Profiles,
+            StorageOperation::Read,
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        ))),
+        Arc::new(nocterm_connections_model::value_ports::SuppliedValues::new(
+            1, 0,
+        )),
+    );
+    let fixture = Fixture::over(cx, unreadable, state, replica);
+    fixture.attach(cx);
+    assert_eq!(fixture.replica.writes(), []);
+    assert!(matches!(
+        fixture.status(cx),
+        ReplicationStatus::Failed(ReplicationFailure::LocalUnavailable)
+    ));
+}

@@ -34,6 +34,11 @@ enum Identity {
     Portable(PathBuf),
 }
 impl DirectoryIdentity {
+    /// Whether this supplied identity denotes retained native-directory semantics.
+    /// Portable location identities do not prove held-ancestor safety.
+    pub fn is_held(&self) -> bool {
+        matches!(self.0, Identity::Native(..))
+    }
     pub fn native(device: u64, inode: u64) -> Self {
         Self(Identity::Native(device, inode))
     }

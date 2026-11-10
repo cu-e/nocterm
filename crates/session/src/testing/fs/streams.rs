@@ -222,44 +222,58 @@ impl Reader {
         }
     }
 }
+async fn read_chunk(handle: Arc<ReadHandle>, max_bytes: usize) -> Result<Vec<u8>, FsError> {
+    {
+        let mut activity = lock(&handle.shared.activity);
+        activity.max_read_request = activity.max_read_request.max(max_bytes);
+    }
+    handle
+        .shared
+        .before(FsOperation::Read, &handle.path)
+        .await?;
+    if max_bytes == 0 {
+        return Err(FsError::Unsupported("zero read bound".into()));
+    }
+    let response = {
+        let mut reads = lock(&handle.shared.scripted_reads);
+        reads
+            .iter()
+            .position(|(path, _)| path == &handle.path)
+            .and_then(|index| reads.remove(index))
+            .map(|(_, bytes)| bytes)
+    };
+    if let Some(bytes) = response {
+        return Ok(bytes);
+    }
+    let mut position = lock(&handle.position);
+    if position.closed {
+        return Err(FsError::NotConnected);
+    }
+    let bound = max_bytes.min(lock(&handle.shared.limits).chunk);
+    let end = position
+        .offset
+        .saturating_add(bound)
+        .min(handle.bytes.len());
+    let bytes = handle.bytes[position.offset..end].to_vec();
+    position.offset = end;
+    Ok(bytes)
+}
 impl RemoteDownload for Reader {
     fn read(&mut self, max_bytes: usize) -> FsFuture<Vec<u8>> {
+        Box::pin(read_chunk(self.handle.clone(), max_bytes))
+    }
+    fn read_batch(&mut self, max_bytes: usize, count: usize) -> FsFuture<Vec<Vec<u8>>> {
         let handle = self.handle.clone();
         Box::pin(async move {
-            {
-                let mut activity = lock(&handle.shared.activity);
-                activity.max_read_request = activity.max_read_request.max(max_bytes);
+            let mut chunks = Vec::new();
+            for _ in 0..count {
+                let chunk = read_chunk(handle.clone(), max_bytes).await?;
+                if chunk.is_empty() {
+                    break;
+                }
+                chunks.push(chunk);
             }
-            handle
-                .shared
-                .before(FsOperation::Read, &handle.path)
-                .await?;
-            if max_bytes == 0 {
-                return Err(FsError::Unsupported("zero read bound".into()));
-            }
-            let response = {
-                let mut reads = lock(&handle.shared.scripted_reads);
-                reads
-                    .iter()
-                    .position(|(path, _)| path == &handle.path)
-                    .and_then(|index| reads.remove(index))
-                    .map(|(_, bytes)| bytes)
-            };
-            if let Some(bytes) = response {
-                return Ok(bytes);
-            }
-            let mut position = lock(&handle.position);
-            if position.closed {
-                return Err(FsError::NotConnected);
-            }
-            let bound = max_bytes.min(lock(&handle.shared.limits).chunk);
-            let end = position
-                .offset
-                .saturating_add(bound)
-                .min(handle.bytes.len());
-            let bytes = handle.bytes[position.offset..end].to_vec();
-            position.offset = end;
-            Ok(bytes)
+            Ok(chunks)
         })
     }
     fn close(self: Box<Self>) -> FsFuture<()> {

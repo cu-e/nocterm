@@ -1,0 +1,32 @@
+{
+  "project": "Devicon",
+  "revision": "54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08",
+  "license": "MIT",
+  "assets": [
+    {
+      "file": "python.svg",
+      "source": "https://raw.githubusercontent.com/devicons/devicon/54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08/icons/python/python-original.svg",
+      "sha256": "71493b4a732f0532b3a03a7a95da3ee11a65766367c8303b901ffbe7bf91a3a2"
+    },
+    {
+      "file": "rust.svg",
+      "source": "https://raw.githubusercontent.com/devicons/devicon/54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08/icons/rust/rust-original.svg",
+      "sha256": "16c6c6a98e990944fc5e1cc64cc8fc7b8be3a662ec4ee7951b7995d2e52f5e12"
+    },
+    {
+      "file": "bun.svg",
+      "source": "https://raw.githubusercontent.com/devicons/devicon/54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08/icons/bun/bun-original.svg",
+      "sha256": "54664655dec93da013d1fe8f8e1bf3311054708a17b445fdde319e0d7011f93c"
+    },
+    {
+      "file": "nodejs.svg",
+      "source": "https://raw.githubusercontent.com/devicons/devicon/54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08/icons/nodejs/nodejs-original.svg",
+      "sha256": "3218687c5ea24a4d4c0a33dc5c287da38c33a72dcfe9382469d7ce4e0bf661fb"
+    },
+    {
+      "file": "java.svg",
+      "source": "https://raw.githubusercontent.com/devicons/devicon/54cfe13ac10eaa1ef817a343ab0a9437eb3c2e08/icons/java/java-original.svg",
+      "sha256": "7582e518a9c02425f97155e5a3bd39d1a3a7d421b78caf9c8df7443dad3edc5d"
+    }
+  ]
+}

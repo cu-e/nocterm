@@ -214,6 +214,7 @@ mod tests {
 
         assert_eq!(config.radius, Some(6));
         assert_eq!(config.font_size, Some(16.0));
-        assert_eq!(config.colors.background, None);
+        // The Noct palette leaves the accordion colour to the standard theme.
+        assert_eq!(config.colors.accordion, None);
     }
 }

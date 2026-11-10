@@ -2,12 +2,57 @@
 mod commands;
 use super::{AgentPanel, commands::CommandState};
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable as _, Pixels,
-    SharedString, Subscription, Task, Window,
+    App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable as _, SharedString,
+    Subscription, Task, Window,
     component::input::{InputEvent, Textarea, TextareaState},
-    px,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+#[derive(Clone)]
+pub(super) struct InputTicket {
+    revision: u64,
+    reset: Rc<()>,
+}
+impl PartialEq for InputTicket {
+    fn eq(&self, other: &Self) -> bool {
+        self.revision == other.revision && Rc::ptr_eq(&self.reset, &other.reset)
+    }
+}
+impl Eq for InputTicket {}
+struct InputGeneration {
+    observed: u64,
+    reset: Rc<()>,
+    fenced: bool,
+}
+impl Default for InputGeneration {
+    fn default() -> Self {
+        Self {
+            observed: 0,
+            reset: Rc::new(()),
+            fenced: false,
+        }
+    }
+}
+/// The composer's input was replaced since its text was read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("The composer changed meanwhile.")]
+pub(super) struct StaleInput;
+
+impl InputGeneration {
+    fn ticket(&mut self, revision: u64) -> Result<InputTicket, StaleInput> {
+        // The native counter wraps. Once an observed generation regresses,
+        // only a new input instance can restore this fence.
+        self.fenced |= revision < self.observed;
+        self.observed = self.observed.max(revision);
+        if self.fenced {
+            return Err(StaleInput);
+        }
+        Ok(InputTicket {
+            revision,
+            reset: self.reset.clone(),
+        })
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct ComposerBinding {
@@ -33,11 +78,6 @@ struct QueueEdit {
     ready: bool,
     preparation: Option<Task<()>>,
 }
-#[derive(Default)]
-struct QueueView {
-    open: bool,
-    heights: HashMap<EntityId, Pixels>,
-}
 pub(super) struct EditRestoration {
     chat: EntityId,
     draft: String,
@@ -49,11 +89,12 @@ impl EditRestoration {
 }
 pub(super) struct ComposerView {
     input: Entity<TextareaState>,
-    queue: QueueView,
+    queue_open: bool,
     state: ComposerState,
     commands: CommandState,
     _bindings: Vec<Subscription>,
     binding: Option<ComposerBinding>,
+    input_generation: RefCell<InputGeneration>,
 }
 impl ComposerView {
     pub(super) fn new(window: &mut Window, cx: &mut Context<AgentPanel>) -> Self {
@@ -73,11 +114,12 @@ impl ComposerView {
         });
         Self {
             input,
-            queue: QueueView::default(),
+            queue_open: false,
             state: ComposerState::default(),
             commands: CommandState::default(),
             _bindings: vec![submit, observe],
             binding: None,
+            input_generation: RefCell::new(InputGeneration::default()),
         }
     }
     pub(super) fn text(&self, cx: &App) -> SharedString {
@@ -100,6 +142,14 @@ impl ComposerView {
     }
     pub(super) fn revision(&self) -> u64 {
         self.state.revision
+    }
+    pub(super) fn input_ticket(&self, cx: &App) -> Result<InputTicket, StaleInput> {
+        let revision = self.input.read(cx).document_revision();
+        self.input_generation.borrow_mut().ticket(revision)
+    }
+    pub(super) fn input_current(&self, ticket: &InputTicket, cx: &App) -> bool {
+        self.input_ticket(cx)
+            .is_ok_and(|current| &current == ticket)
     }
     pub(super) fn editing(&self) -> bool {
         self.state.edit.is_some()
@@ -140,15 +190,16 @@ impl ComposerView {
         }
     }
     pub(super) fn clear(&mut self) {
+        self.input_generation.borrow_mut().reset = Rc::new(());
         self.commands.reset();
         self.state = ComposerState::default();
-        self.queue = QueueView::default();
+        self.queue_open = false;
         self.binding = None;
     }
     pub(super) fn leave(&mut self) {
         self.commands.reset();
         self.invalidate();
-        self.queue.open = false;
+        self.queue_open = false;
     }
     pub(super) fn take_edit(&mut self) -> Option<EditRestoration> {
         let edit = self.state.edit.take()?;
@@ -273,31 +324,13 @@ impl ComposerView {
         true
     }
     pub(super) fn queue_open(&self) -> bool {
-        self.queue.open
+        self.queue_open
     }
     pub(super) fn open_queue(&mut self) {
-        self.queue.open = true;
+        self.queue_open = true;
     }
     pub(super) fn toggle_queue(&mut self) {
-        self.queue.open = !self.queue.open;
-    }
-    pub(super) fn queue_height(&self, chat: EntityId) -> Pixels {
-        self.queue.heights.get(&chat).copied().unwrap_or(px(0.))
-    }
-    pub(super) fn observe_queue_height(&mut self, chat: EntityId, height: Pixels) -> bool {
-        if self
-            .queue
-            .heights
-            .get(&chat)
-            .is_some_and(|old| (*old - height).abs() <= px(0.5))
-        {
-            return false;
-        }
-        self.queue.heights.insert(chat, height);
-        true
-    }
-    pub(super) fn removed_chats(&mut self, chats: &[EntityId]) {
-        self.queue.heights.retain(|id, _| !chats.contains(id));
+        self.queue_open = !self.queue_open;
     }
 }
 

@@ -49,6 +49,62 @@ fn missing_libraries_are_empty_and_bad_roots_are_nonfatal_diagnostics() {
     assert!(catalog.entries().is_empty());
     assert!(catalog.problems()[0].error.source().is_some());
 }
+
+#[test]
+fn catalog_limits_report_partial_discovery_instead_of_retaining_every_variant() {
+    let root = tempfile::tempdir().unwrap();
+    let dirs = ThemeDirs {
+        user: root.path().join("user"),
+        installed: root.path().join("installed"),
+    };
+    fs::create_dir(&dirs.user).unwrap();
+    let themes: Vec<_> = (0..2_100)
+        .map(|n| format!(r#"{{"name":"Theme {n}","appearance":"dark","style":{{}}}}"#))
+        .collect();
+    fs::write(
+        dirs.user.join("many.json"),
+        format!(r#"{{"themes":[{}]}}"#, themes.join(",")),
+    )
+    .unwrap();
+    let catalog = scan(&dirs);
+    assert_eq!(catalog.entries().len(), 2_048);
+    assert!(
+        catalog
+            .problems()
+            .iter()
+            .any(|problem| problem.error.to_string().contains("variants"))
+    );
+}
+
+#[test]
+fn reload_restores_the_previous_pack_after_an_interrupted_directory_switch() {
+    let root = tempfile::tempdir().unwrap();
+    let dirs = ThemeDirs {
+        user: root.path().join("user"),
+        installed: root.path().join("installed"),
+    };
+    let pack = dirs.installed.join("old");
+    fs::create_dir_all(pack.join("themes")).unwrap();
+    fs::write(
+        pack.join("extension.toml"),
+        "id='old'\nname='Old'\nversion='1'\n",
+    )
+    .unwrap();
+    fs::write(
+        pack.join("themes/a.json"),
+        r#"{"themes":[{"name":"Restored","appearance":"dark","style":{}}]}"#,
+    )
+    .unwrap();
+    let backup = dirs.installed.join(".backup-interrupted");
+    fs::create_dir(&backup).unwrap();
+    fs::write(backup.join("destination"), b"old").unwrap();
+    fs::rename(&pack, backup.join("previous")).unwrap();
+    let catalog = scan(&dirs);
+    assert!(catalog.find("Restored", Appearance::Dark).is_some());
+    assert!(pack.is_dir());
+    assert!(!backup.exists());
+    assert!(scan(&dirs).find("Restored", Appearance::Dark).is_some());
+}
 #[test]
 fn oversized_originals_are_rejected_with_a_typed_problem() {
     let root = tempfile::tempdir().unwrap();
@@ -86,4 +142,38 @@ fn linked_originals_and_linked_pack_directories_are_not_followed() {
     let catalog = scan(&dirs);
     assert!(catalog.entries().is_empty());
     assert!(catalog.packs().is_empty());
+}
+#[cfg(unix)]
+#[test]
+fn linked_and_piped_pack_manifests_are_reported_without_being_read() {
+    let root = tempfile::tempdir().unwrap();
+    let dirs = ThemeDirs {
+        user: root.path().join("user"),
+        installed: root.path().join("installed"),
+    };
+    fs::create_dir(&dirs.user).unwrap();
+    fs::write(
+        root.path().join("manifest.toml"),
+        "id = 'linked'\nname = 'Pack'\nversion = '1'\n",
+    )
+    .unwrap();
+    let linked = dirs.installed.join("linked");
+    fs::create_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink(
+        root.path().join("manifest.toml"),
+        linked.join("extension.toml"),
+    )
+    .unwrap();
+    let piped = dirs.installed.join("piped");
+    fs::create_dir_all(&piped).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(piped.join("extension.toml"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let catalog = scan(&dirs);
+    assert!(catalog.packs().is_empty());
+    assert_eq!(catalog.problems().len(), 2);
 }

@@ -17,7 +17,7 @@ use nocterm_keymap::Source;
 use nocterm_ui::{IconName, form};
 
 use crate::{
-    rows::{Row, matches, rows},
+    rows::{Query, Row},
     view::{KeymapView, Recording},
 };
 
@@ -230,13 +230,26 @@ impl KeymapView {
 
 impl Render for KeymapView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.search.read(cx).value().to_string();
-        let listed: Vec<Row> = rows(&self.keymap, cx)
-            .into_iter()
-            .filter(|row| matches(row, &query))
+        // Local actions may render before deferred owner observations are delivered.
+        // Read the semantic key here; unchanged frames still reuse all prepared rows.
+        let revision = self.keymap.revision(cx);
+        if revision != self.rows_revision {
+            self.rows = std::rc::Rc::new(crate::rows::rows(&self.keymap, cx));
+            self.rows_revision = revision;
+        }
+        let query = Query::new(&self.search.read(cx).value());
+        let listed: Vec<Row> = self
+            .rows
+            .iter()
+            .filter(|row| query.matches(row))
+            .cloned()
             .collect();
         let count = listed.len();
-        let file_error = self.keymap.error(cx).map(ToString::to_string);
+        let file_error = self
+            .keymap
+            .error(cx)
+            .map(ToString::to_string)
+            .or_else(|| self.keymap.publication_error(cx).map(ToString::to_string));
         let mut table = v_flex().id("keymap-table").test_support().w_full();
         table = table.child(Self::column_titles(cx));
         for (index, row) in listed.into_iter().enumerate() {

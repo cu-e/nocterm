@@ -10,6 +10,7 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub host: Option<HostInfo>,
+    pub container: Option<crate::ContainerSnapshot>,
     /// Total processor load, in percent.
     pub cpu: Option<f32>,
     /// Load of every core, in percent.
@@ -80,6 +81,7 @@ pub struct Sampler {
     snapshot: Snapshot,
     history: History,
     cpu: Option<CpuTimes>,
+    container: crate::container::ContainerSampler,
     cores: Option<Vec<CpuTimes>>,
     network: Option<(f64, NetworkCounters)>,
     disk_io: Option<(f64, DiskCounters)>,
@@ -132,6 +134,12 @@ impl Sampler {
             .zip(self.cpu)
             .and_then(|(now, before)| now.load_since(before));
         self.cpu = reading.cpu;
+        if let Some(container) = self.container.sample(clock, reading.container) {
+            snapshot.cpu = container.cpu;
+            snapshot.memory = container.memory;
+            snapshot.container = Some(container.facts);
+        }
+
         snapshot.cores = match (&reading.cores, &self.cores) {
             (Some(now), Some(before)) if now.len() == before.len() => Some(
                 now.iter()

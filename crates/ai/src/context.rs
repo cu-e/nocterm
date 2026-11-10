@@ -21,6 +21,9 @@ pub struct TerminalDescriptor {
     pub connection: Option<ConnectionDescriptor>,
     pub cwd: Option<String>,
     pub status: String,
+    /// The terminal serves files but runs no programs: the file tools reach its files.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file_tools: bool,
 }
 /// A saved server attached to a chat that has no open session. An agent
 /// opens one in the background with the `open_terminal` tool.
@@ -112,14 +115,23 @@ pub fn context_block(terminals: &[TerminalDescriptor], servers: &[ServerDescript
             server
         })
         .collect();
-    let json = if servers.is_empty() {
+    let files = safe.iter().any(|terminal| terminal.file_tools);
+    let json = if servers.is_empty() && !files {
         serde_json::to_string(&safe)
     } else {
-        serde_json::to_string(&serde_json::json!({
-            "terminals": safe,
-            "offline_servers": servers,
-            "note": "Offline servers have no session yet. Call open_terminal with a server_id to connect in the background, then use the returned terminal_id.",
-        }))
+        let mut context = serde_json::json!({ "terminals": safe });
+        if !servers.is_empty() {
+            context["offline_servers"] = serde_json::json!(servers);
+            context["note"] = serde_json::json!(
+                "Offline servers have no session yet. Call open_terminal with a server_id to connect in the background, then use the returned terminal_id."
+            );
+        }
+        if files {
+            context["file_tools_note"] = serde_json::json!(
+                "Terminals with file_tools: true serve files but run no programs. Read and change their files with list_files, read_file, edit_file, write_file, make_directory, move_path and delete_path; those tools reach no other terminal."
+            );
+        }
+        serde_json::to_string(&context)
     }
     .expect("descriptors serialize");
     // Preserve JSON while escaping delimiters embedded in user-editable metadata.

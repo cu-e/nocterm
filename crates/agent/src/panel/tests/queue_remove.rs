@@ -114,7 +114,7 @@ fn removing_the_only_content_of_a_saved_chat_clears_it_on_disk(cx: &mut TestAppC
         images: Vec::new(),
         attachments: Vec::new(),
     });
-    let id = saved.id.clone();
+    let id = saved.header.id.clone();
     f.repository.seed_chat(&saved).unwrap();
     reinstall_history(&mut f, vec![saved], cx);
     cx.update_window(f.handle, |_, window, cx| {

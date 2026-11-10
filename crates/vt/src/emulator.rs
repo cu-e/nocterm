@@ -388,6 +388,27 @@ impl Emulator {
         }
     }
 
+    /// Forgets everything the program drew: screen, history, modes, selection,
+    /// search and any pending queries. Size, options and palette stay.
+    ///
+    /// The change counters keep counting forward, so a cache keyed by
+    /// [`Self::generation`] never mistakes the cleared emulator for an earlier
+    /// state of the same one.
+    pub fn reset(&mut self) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        self.term = Term::new(
+            self.options.to_config(),
+            &self.size,
+            Listener(events.clone()),
+        );
+        self.parser = Processor::new();
+        self.osc_guard = crate::osc_guard::OscGuard::default();
+        self.events = events;
+        self.generation = self.generation.wrapping_add(1);
+        self.mouse_tracking_epoch = self.mouse_tracking_epoch.wrapping_add(1);
+        self.search_match = None;
+    }
+
     /// Feeds bytes printed by the program and returns what the host must do
     /// about them, in order.
     pub fn advance(&mut self, bytes: &[u8]) -> Vec<Effect> {

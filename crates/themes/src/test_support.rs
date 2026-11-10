@@ -17,6 +17,7 @@ pub struct InMemoryThemes {
     searches: AtomicUsize,
     installs: AtomicUsize,
     before_install: Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
+    before_search: Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 #[derive(Default)]
 struct Memory {
@@ -26,6 +27,9 @@ struct Memory {
     failures: BTreeMap<String, bool>,
 }
 impl InMemoryThemes {
+    pub fn before_search(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        *self.before_search.lock().unwrap() = hook;
+    }
     pub fn before_install(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
         *self.before_install.lock().unwrap() = hook;
     }
@@ -66,6 +70,10 @@ fn catalog(state: &Memory) -> ThemeCatalog {
 impl ThemeRegistry for InMemoryThemes {
     fn search(&self, _: &str) -> Result<Vec<ExtensionInfo>, ThemeOperationError> {
         self.searches.fetch_add(1, Ordering::SeqCst);
+        let hook = self.before_search.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(self
             .state
             .lock()

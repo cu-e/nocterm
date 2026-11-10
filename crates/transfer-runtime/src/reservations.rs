@@ -143,7 +143,7 @@ pub(crate) async fn local(
         }
     }
 }
-fn next_number(work: &Work, number: u32) -> Result<u32, TransferCause> {
+pub(crate) fn next_number(work: &Work, number: u32) -> Result<u32, TransferCause> {
     let next = number
         .checked_add(1)
         .ok_or(TransferCause::Limit(LimitKind::RenameAttempts))?;

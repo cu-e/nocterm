@@ -369,7 +369,7 @@ fn hidden_invalid_session_options_open_the_session_section(cx: &mut TestAppConte
     .unwrap();
 }
 #[gpui_kit::test]
-fn hidden_invalid_credential_focuses_credential_and_keeps_draft(cx: &mut TestAppContext) {
+fn a_password_with_no_vault_to_keep_it_keeps_the_draft_open(cx: &mut TestAppContext) {
     let (handle, workspace, _, installed) = crate::test_support::workspace(cx);
     cx.update_window(handle, |_, window, cx| {
         open_editor(installed.clone(), None, workspace.downgrade(), window, cx);
@@ -381,28 +381,20 @@ fn hidden_invalid_credential_focuses_credential_and_keeps_draft(cx: &mut TestApp
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.input("not-an-id", cx);
-        window.click("editor-section-connection", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
+        // The section opens on its password field.
+        window.input("s3cret", cx);
         window.click("editor-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("editor-field-Credential ID").is_some());
-        assert_eq!(
-            window.focused_input(cx).unwrap().value(cx).as_ref(),
-            "not-an-id"
-        );
+        assert!(window.try_find("dialog").is_some());
         assert_eq!(
             installed.connections().read(cx).profiles(cx).iter().count(),
             0
         );
+        window.click("editor-field-Password", cx);
         window.press("ctrl-a", cx);
         window.press("backspace", cx);
         window.click("editor-save", cx);
@@ -512,11 +504,11 @@ fn every_field_is_used() {
     assert_eq!(profile.group.as_deref(), Some("Work"));
 }
 #[test]
-fn launch_override_and_credential_id_validate_and_preserve_arguments() {
+fn launch_override_and_the_saved_password_validate_and_preserve_arguments() {
     let mut draft = fields("example.com");
     assert!(build(&draft, AuthKind::Auto).unwrap().launch.is_none());
     let id = nocterm_session::CredentialId::from_bytes([42; 16]);
-    draft.authentication.credential = id.to_string();
+    draft.authentication.credential = Some(id);
     draft.launch.override_launch = true;
     draft.launch.program = "/bin/bash".into();
     draft.launch.args = r#"["-c","printf '%s' \"a b\""]"#.into();
@@ -529,9 +521,6 @@ fn launch_override_and_credential_id_validate_and_preserve_arguments() {
     assert_eq!(launch.args, vec!["-c", "printf '%s' \"a b\""]);
     assert!(!launch.integration);
     draft.launch.env = r#"{"INVALID;KEY":"value"}"#.into();
-    assert!(build(&draft, AuthKind::Auto).is_err());
-    draft.launch.override_launch = false;
-    draft.authentication.credential = "plain password".into();
     assert!(build(&draft, AuthKind::Auto).is_err());
 }
 #[test]
@@ -753,7 +742,7 @@ fn unsaved_country_input_loads_flag_when_detection_is_off_and_no_session_exists(
             installed.connections().read(cx).profiles(cx).iter().count(),
             0
         );
-        assert_eq!(workspace.read(cx).items().count(), 0);
+        assert_eq!(workspace.read(cx).items(cx).count(), 0);
     })
     .unwrap();
     assert_eq!(
@@ -762,5 +751,8 @@ fn unsaved_country_input_loads_flag_when_detection_is_off_and_no_session_exists(
     );
 }
 
+mod agent_access;
 mod appearance;
 mod jump_hosts;
+mod passwords;
+mod vault_keys;

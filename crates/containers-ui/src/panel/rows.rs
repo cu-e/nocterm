@@ -27,7 +27,7 @@ const PROJECT_GROUP: &str = "container-project";
 
 impl ContainersPanel {
     pub(super) fn render_tree(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let snapshot = self.model.read(cx).snapshot().clone();
+        let snapshot = self.model.read(cx).snapshot(cx).clone();
         let mut tree = v_flex().gap_px().pb_1();
 
         let containers = !self.folded.contains(&Fold::Containers);

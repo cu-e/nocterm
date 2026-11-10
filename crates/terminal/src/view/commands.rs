@@ -143,20 +143,9 @@ impl TerminalView {
 impl Item for TerminalView {
     fn terminal_capabilities(
         &self,
-        owner: gpui_kit::WeakEntity<Self>,
+        _owner: gpui_kit::WeakEntity<Self>,
     ) -> Option<nocterm_workspace::TerminalCapabilities> {
-        let access = std::rc::Rc::new(crate::access::Access::new(owner, self.terminal.downgrade()));
-        Some(
-            nocterm_workspace::TerminalCapabilities::new(access.clone())
-                .with_fact_session(access.clone())
-                .with_text(access.clone())
-                .with_input(access.clone())
-                .with_live(access.clone())
-                .with_execution(access.clone())
-                .with_prompts(access.clone())
-                .with_reconnect(access.clone())
-                .with_paste(access),
-        )
+        Some(self.capabilities.clone())
     }
 
     fn tab_title(&self, cx: &App) -> SharedString {

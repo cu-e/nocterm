@@ -3,7 +3,7 @@ use futures::{FutureExt as _, TryFutureExt as _, future::BoxFuture};
 use nocterm_session::{
     CredentialFuture, CredentialId, CredentialStore, CredentialStoreError, Secret, SecretRequest,
 };
-use nocterm_vault::{CredentialBinding, VaultAccess};
+use nocterm_vault::{CredentialBinding, VaultAccess, VaultError};
 use std::sync::Arc;
 
 pub struct VaultCredentials(Arc<dyn VaultAccess>);
@@ -14,25 +14,17 @@ impl VaultCredentials {
     }
 }
 
-/// The vault key a request's answer is stored under. One-time answers have
-/// none, so the vault can never hold them.
-fn binding(request: &SecretRequest) -> Option<CredentialBinding> {
-    match request {
-        SecretRequest::Password { target, .. } => Some(CredentialBinding::Password {
-            target: target.clone(),
-        }),
-        SecretRequest::KeyPassphrase { path, .. } => {
-            Some(CredentialBinding::KeyPassphrase { path: path.clone() })
-        }
-        SecretRequest::Interactive { .. } => None,
+fn failure(error: VaultError) -> CredentialStoreError {
+    match error {
+        VaultError::NotFound => CredentialStoreError::NotFound,
+        VaultError::Locked => CredentialStoreError::Locked,
+        VaultError::Stale => CredentialStoreError::Stale,
+        other => CredentialStoreError::backend(other),
     }
 }
 
 fn not_storable<T: Send + 'static>() -> CredentialFuture<T> {
-    futures::future::ready(Err(CredentialStoreError::Failed(
-        "One-time answers are never saved.".to_owned(),
-    )))
-    .boxed()
+    futures::future::ready(Err(CredentialStoreError::NotStorable)).boxed()
 }
 
 impl CredentialStore for VaultCredentials {
@@ -45,13 +37,10 @@ impl CredentialStore for VaultCredentials {
     }
 
     fn get(&self, id: CredentialId, request: &SecretRequest) -> CredentialFuture<Secret> {
-        let Some(binding) = binding(request) else {
+        let Some(binding) = CredentialBinding::for_request(request) else {
             return not_storable();
         };
-        self.0
-            .get(id, binding)
-            .map_err(|error| CredentialStoreError::Failed(error.to_string()))
-            .boxed()
+        self.0.get(id, binding).map_err(failure).boxed()
     }
 
     fn save(
@@ -60,14 +49,16 @@ impl CredentialStore for VaultCredentials {
         request: &SecretRequest,
         secret: Secret,
     ) -> CredentialFuture<CredentialId> {
-        let Some(binding) = binding(request) else {
+        let Some(binding) =
+            CredentialBinding::for_request(request).filter(|_| request.is_storable())
+        else {
             return not_storable();
         };
         // A new ID avoids replacing a different binding referenced by an
         // edited profile.
         self.0
             .put(None, label, binding, secret)
-            .map_err(|error| CredentialStoreError::Failed(error.to_string()))
+            .map_err(failure)
             .boxed()
     }
 }

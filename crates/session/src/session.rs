@@ -9,14 +9,16 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 use futures::channel::oneshot;
 
-use crate::{Auth, HostExec, JumpHost, PromptHop, RemoteFs, Secret, ShellLaunch, Target};
+use crate::{
+    Auth, CredentialId, HostExec, JumpHost, PromptHop, RemoteFs, Secret, ShellLaunch, Target,
+};
 
 /// Events a transport may queue before it has to wait for the owner.
 ///
@@ -85,6 +87,10 @@ pub enum Event {
     Connected,
     /// Bytes the remote program printed.
     Output(Vec<u8>),
+    /// The screen as the host holds it right now, sent when a session is
+    /// attached again. The owner discards what it drew, paints these bytes and
+    /// treats them as a picture, not as output of the program.
+    Restore(Vec<u8>),
     /// The session cannot go on without an answer from the user.
     Prompt(Prompt),
     /// The session is over. Nothing follows.
@@ -115,6 +121,10 @@ pub enum CloseReason {
 /// What went wrong with a session, in terms a user can act on.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SessionError {
+    #[error(transparent)]
+    Connection(#[from] crate::ConnectionFailure),
+    #[error(transparent)]
+    Source(#[from] crate::ConnectionSourceError),
     #[error(transparent)]
     InvalidLaunch(#[from] crate::LaunchValidationError),
     #[error(transparent)]
@@ -150,6 +160,13 @@ pub enum SessionError {
         host: String,
         #[source]
         source: Box<SessionError>,
+    },
+    /// The hub relaying the first connection could not provide the stream.
+    #[error("hub {hub}: {source}")]
+    Relay {
+        hub: String,
+        #[source]
+        source: crate::RelayError,
     },
     #[error("{count} jump hosts exceed the limit of {limit}")]
     TooManyJumpHosts { count: usize, limit: usize },
@@ -214,6 +231,13 @@ pub enum SecretRequest {
     Password { target: Target, retry: bool },
     /// The passphrase protecting a private key file.
     KeyPassphrase { path: PathBuf, retry: bool },
+    /// The private key a profile keeps in the vault, named by the profile itself:
+    /// it is answered from the credential store and never typed or saved here.
+    PrivateKey {
+        credential: CredentialId,
+        /// The canonical public text the key must have.
+        public_key: String,
+    },
     /// A question the server asks in its own words (one-time codes and such).
     Interactive {
         /// The server's prompt text.
@@ -259,6 +283,8 @@ pub struct Session {
     events: async_channel::Receiver<Event>,
     fs: Option<Arc<dyn RemoteFs>>,
     exec: Option<Arc<dyn HostExec>>,
+    source: crate::ConnectionSource,
+    source_closed: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -266,6 +292,10 @@ impl Session {
     pub fn input(&self, bytes: impl Into<Vec<u8>>) -> bool {
         let bytes = bytes.into();
         let length = bytes.len();
+        if self.source.check().is_err() {
+            self.close();
+            return false;
+        }
         if length > MAX_INPUT
             || self.closing.is_closed()
             || self
@@ -287,6 +317,10 @@ impl Session {
     }
 
     pub fn resize(&self, size: PtySize) {
+        if self.source.check().is_err() {
+            self.close();
+            return;
+        }
         // Only the latest geometry matters. Resizes must not consume input
         // capacity or disappear behind a full input backlog.
         let mut newest = size;
@@ -312,21 +346,37 @@ impl Session {
     ///
     /// A session has one event stream; give it one reader.
     pub async fn next_event(&self) -> Option<Event> {
-        self.events.recv().await.ok()
+        if let Some(event) = self.source_failure() {
+            return event;
+        }
+        let event = self.events.recv().await.ok();
+        self.source_failure().unwrap_or(event)
     }
 
     /// An event that has already arrived, without waiting for one.
     pub fn try_next_event(&self) -> Option<Event> {
-        self.events.try_recv().ok()
+        self.source_failure()
+            .unwrap_or_else(|| self.events.try_recv().ok())
+    }
+    fn source_failure(&self) -> Option<Option<Event>> {
+        let error = self.source.check().err()?;
+        self.close();
+        self.events.close();
+        Some(
+            (!self.source_closed.swap(true, Ordering::AcqRel))
+                .then_some(Event::Closed(CloseReason::Failed(error.into()))),
+        )
     }
 
     /// The remote file system, when the transport has one.
     pub fn fs(&self) -> Option<Arc<dyn RemoteFs>> {
+        self.source.check().ok()?;
         self.fs.clone()
     }
 
     /// Runs programs on the session's host, when the transport can.
     pub fn exec(&self) -> Option<Arc<dyn HostExec>> {
+        self.source.check().ok()?;
         self.exec.clone()
     }
 
@@ -371,10 +421,29 @@ pub struct SessionDriver {
     pending_bytes: Arc<AtomicUsize>,
     sizes: async_channel::Receiver<PtySize>,
     closing: async_channel::Receiver<()>,
+    io_closing: async_channel::Sender<()>,
+    io_closed: async_channel::Receiver<()>,
     events: async_channel::Sender<Event>,
+    source: crate::ConnectionSource,
 }
 
 impl SessionDriver {
+    /// Ends producer-owned I/O, including workers that outlive a cancelled open.
+    /// Closing this independent channel wakes every retained native waiter.
+    pub fn close(&self) {
+        self.closing.close();
+        self.io_closing.close();
+    }
+    /// Native I/O stops after producer cleanup, independently from a user's
+    /// close request. The producer may finish bounded original-resource cleanup
+    /// before calling close; a dropped producer guard calls it immediately.
+    pub async fn io_closed(&self) {
+        let _ = self.io_closed.recv().await;
+    }
+
+    pub fn source(&self) -> &crate::ConnectionSource {
+        &self.source
+    }
     /// Broadcast close signal, independent of command processing/back-pressure.
     /// Also resolves when the last owner is dropped. Multiple observers may wait.
     pub async fn closed(&self) {
@@ -382,6 +451,9 @@ impl SessionDriver {
     }
     /// The next command, or `None` once every [`Session`] handle is dropped.
     pub async fn next_command(&self) -> Option<Command> {
+        if self.source.check().is_err() {
+            return Some(Command::Close);
+        }
         use futures::FutureExt;
         let command = futures::select_biased! {
             size = self.sizes.recv().fuse() => match size {
@@ -393,12 +465,24 @@ impl SessionDriver {
         if let Some(Command::Input(bytes)) = &command {
             self.pending_bytes.fetch_sub(bytes.len(), Ordering::AcqRel);
         }
-        command
+        if self.source.check().is_err() {
+            Some(Command::Close)
+        } else {
+            command
+        }
     }
 
     /// Reports an event. Returns `false` once nobody is listening, which is
     /// the transport's cue to stop.
     pub async fn emit(&self, event: Event) -> bool {
+        if let Err(error) = self.source.check() {
+            let _ = self
+                .events
+                .send(Event::Closed(CloseReason::Failed(error.into())))
+                .await;
+            self.events.close();
+            return false;
+        }
         self.events.send(event).await.is_ok()
     }
 
@@ -417,10 +501,18 @@ impl SessionDriver {
 ///
 /// Transports call this; everything else receives a [`Session`].
 pub fn channel(fs: Option<Arc<dyn RemoteFs>>) -> (Session, SessionDriver) {
+    channel_with_source(fs, crate::ConnectionSource::default())
+}
+/// Creates one immutable native connection authority shared by its two ends.
+pub fn channel_with_source(
+    fs: Option<Arc<dyn RemoteFs>>,
+    source: crate::ConnectionSource,
+) -> (Session, SessionDriver) {
     let (command_sender, command_receiver) = async_channel::bounded(COMMAND_BACKLOG);
     let pending_bytes = Arc::new(AtomicUsize::new(0));
     let (size_sender, size_receiver) = async_channel::bounded(1);
     let (close_sender, close_receiver) = async_channel::bounded(1);
+    let (io_closing, io_closed) = async_channel::bounded(1);
     let (event_sender, event_receiver) = async_channel::bounded(EVENT_BACKLOG);
     (
         Session {
@@ -432,13 +524,18 @@ pub fn channel(fs: Option<Arc<dyn RemoteFs>>) -> (Session, SessionDriver) {
             events: event_receiver,
             fs,
             exec: None,
+            source: source.clone(),
+            source_closed: Arc::new(AtomicBool::new(false)),
         },
         SessionDriver {
             commands: command_receiver,
             pending_bytes,
             sizes: size_receiver,
             closing: close_receiver,
+            io_closing,
+            io_closed,
             events: event_sender,
+            source,
         },
     )
 }
@@ -449,6 +546,14 @@ pub trait Transport: Send + Sync + 'static {
     /// Starts connecting and returns at once. Progress, prompts and failure
     /// all arrive as [`Event`]s on the returned session.
     fn open(&self, request: ConnectRequest) -> Session;
+    /// Constrained opens must reach a producer that enforces the same source
+    /// inside its workers. A legacy producer cannot silently discard it.
+    fn open_with(&self, request: ConnectRequest, options: crate::ConnectionOpenOptions) -> Session {
+        match options.require_unrestricted() {
+            Ok(()) => self.open(request),
+            Err(error) => Session::failed(error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -478,6 +583,22 @@ mod tests {
 
             assert!(driver.emit(Event::Connected).await);
             assert!(matches!(session.next_event().await, Some(Event::Connected)));
+        });
+    }
+
+    #[test]
+    fn restored_screens_arrive_in_order_between_output() {
+        let (session, driver) = channel(None);
+        block_on(async {
+            assert!(driver.emit(Event::Output(b"before".to_vec())).await);
+            assert!(driver.emit(Event::Restore(b"screen".to_vec())).await);
+            assert!(driver.emit(Event::Output(b"after".to_vec())).await);
+
+            assert!(matches!(session.next_event().await, Some(Event::Output(b)) if b == b"before"));
+            assert!(
+                matches!(session.next_event().await, Some(Event::Restore(b)) if b == b"screen")
+            );
+            assert!(matches!(session.next_event().await, Some(Event::Output(b)) if b == b"after"));
         });
     }
 

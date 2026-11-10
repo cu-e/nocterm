@@ -10,24 +10,37 @@
 //! Opening a connection asks the workspace for a session
 //! ([`Workspace::open_session`]); this crate never names the terminal.
 //!
-//! Owns: views, editor inputs, session-intent conversion and detected-server image presentation and weak source projection.
+//! Owns: views (the panel and the strip for the account's state, from the bound replication; the list may be changed only while the copy is in step with the account; in a hub window, the editor's Agent access switch of a saved server, which first opens a session without a tab with the connection's saved credentials when none is open, and the agent access state on each server's row), editor inputs and their shared `ConnectionInputs`, the in-memory installation `install_volatile` (no settings, key bindings or shutdown registration), session-intent conversion and detected-server image presentation and weak source projection.
 //! Does not own: profile/recent publication, committed authority, profile formats/rules, files, native defaults/IDs/clock, session transport,
 //! credentials, remote OS acquisition, DNS, HTTP, flag files or
 //! persistence worker lifecycle.
 //! Ports used: SettingsHandle, RemoteFs, SnapshotWriter, ShutdownCoordinator,
 //! ProfileIds, ConnectionClock, FactsService and original terminal capability receipts.
-//! Ports provided: ConnectionDirectory. Settings section: none.
+//! Ports provided: ConnectionDirectory, checked original-workspace parent
+//! SessionSpec resolution for app composition and the core `connections.servers`
+//! contribution (`plugin::CORE`); `HostObserver`, told once per freshly connected session (the application supplies it through `Installed::bind_host_observer`); `ServerAgentAccess`, supplied through `EditorInputs::with_agent_access` by a hub window; `SavedPasswords`, the window's vault the editor keeps a typed password in (`EditorInputs::with_passwords`). Settings section: none.
 //! Globals: none. Installed retains exact owners/settings and observer lifetimes.
 //! Invariants: profiles publish after physical success; independent recents survive
 //! profile failure; derived recent effects require a successful profile projection.
 //! Connections aliases the actual service entity; windows/actions use supplied installation.
+//! Sidebar projections retain positions until profile, replication or filter
+//! changes; only visible rows own short presentation and drag captures. OS/flag images
+//! have installation-scoped bounded caches keyed by rendering inputs and retained raw source.
 //! Raw facts/jobs belong to the supplied actual service entity. Original Item
 //! capability receipts retain session authority independently of window projection.
+//! Workspace recovery compares original profile, destination and ordered resolved
+//! route before opening; it never supplies authentication from project metadata.
 
+mod agent_access;
 mod installed;
 mod session_intents;
-pub use installed::{Installed, install};
-pub use session_intents::{connect, spec_for_profile};
+pub use agent_access::{AgentAccessRefused, AgentAccessState, AgentServer, ServerAgentAccess};
+mod saved_password;
+pub use installed::{Installed, install, install_volatile};
+pub use saved_password::{
+    NoSavedPasswords, PasswordNotKept, SavedPassword, SavedPasswords, VaultPlace,
+};
+pub use session_intents::{connect, resolve_parent_spec, spec_for_profile};
 mod country_policy;
 mod directory;
 mod editor;
@@ -36,15 +49,19 @@ mod geo;
 mod menu;
 pub mod os;
 mod panel;
+pub mod plugin;
 mod prepared;
 mod probe_sources;
-pub use prepared::{ConnectionWriters, EditorInputs, PreparedConnections};
+pub use prepared::{ConnectionInputs, ConnectionWriters, EditorInputs, PreparedConnections};
+pub use probe_sources::HostObserver;
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod volatile_tests;
 
 use gpui_kit::{Context, Window, prelude::*};
-use nocterm_workspace::Workspace;
+use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};
 
 pub use editor::{ConnectionEditor, open_editor};
 pub use menu::NewTabMenu;
@@ -65,12 +82,14 @@ gpui_kit::actions!(
 
 /// Adds the connections panel, the new-tab menu and the commands to a
 /// workspace.
+///
+/// The menu and the commands are registered even when the workspace refuses the panel.
 pub fn register(
     installed: &Installed,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Result<(), RegistrationError> {
     workspace.set_connection_directory(std::rc::Rc::new(directory::Directory::new(
         installed.clone(),
     )));
@@ -84,7 +103,7 @@ pub fn register(
     // Facts feed cached panels and the recent servers on the empty screen.
     cx.observe(installed.facts(), |workspace, _, cx| {
         cx.emit(nocterm_workspace::WorkspaceEvent::ConnectionsChanged);
-        if workspace.items().next().is_none() && !workspace.local_terminal_is_visible(cx) {
+        if workspace.items(cx).next().is_none() && !workspace.local_terminal_is_visible(cx) {
             cx.notify();
         }
     })
@@ -112,17 +131,24 @@ pub fn register(
     .detach();
     let handle = cx.entity().downgrade();
 
-    let panel = cx.new(|cx| ConnectionsPanel::new(installed.clone(), handle.clone(), window, cx));
-    workspace.add_panel(panel, cx);
-
     let menu = cx.new(|cx| NewTabMenu::new(installed.clone(), handle, window, cx));
     workspace.set_new_tab_menu(menu, cx);
 
     workspace.register_action(|workspace, _: &ToggleServers, window, cx| {
-        workspace.toggle_panel_of::<ConnectionsPanel>(window, cx);
+        workspace.toggle_panel(&plugin::SERVERS.id, window, cx);
     });
     let editors = installed.clone();
     workspace.register_action(move |_, _: &NewConnection, window, cx| {
         open_editor(editors.clone(), None, cx.entity().downgrade(), window, cx);
     });
+
+    let installed = installed.clone();
+    workspace.register_panel(
+        PanelRegistration::new(&plugin::SERVERS, move |_, window, cx| {
+            let owner = cx.entity().downgrade();
+            cx.new(|cx| ConnectionsPanel::new(installed.clone(), owner, window, cx))
+        }),
+        window,
+        cx,
+    )
 }

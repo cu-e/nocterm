@@ -30,6 +30,24 @@ mod screen {
     }
 
     #[test]
+    fn reset_clears_the_screen_history_and_modes_but_keeps_counting_forward() {
+        let mut terminal = emulator(10, 3);
+        terminal.advance(b"1\r\n2\r\n3\r\n4\r\n5\x1b[?1002h\x1b]2;title\x07");
+        terminal.set_palette(Palette::default());
+        let (generation, epoch) = (terminal.generation(), terminal.modes().mouse_tracking_epoch);
+        assert!(terminal.modes().mouse_drag);
+
+        terminal.reset();
+
+        assert!(terminal.generation() > generation);
+        assert!(terminal.modes().mouse_tracking_epoch > epoch);
+        assert!(!terminal.modes().mouse_drag);
+        assert_eq!(terminal.size(), TermSize::new(10, 3, 8, 16));
+        assert!(!terminal.scroll(Scroll::Top), "no history survives a reset");
+        assert!(frame(&terminal).cells.iter().all(|cell| cell.ch == ' '));
+    }
+
+    #[test]
     fn prints_text_and_moves_the_cursor() {
         let mut emulator = emulator(20, 4);
         emulator.advance(b"hello\r\nworld");

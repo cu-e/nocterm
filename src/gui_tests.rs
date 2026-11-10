@@ -16,20 +16,37 @@ use nocterm_workspace::{SessionSpec, Workspace};
 
 mod agent_installation;
 mod chat_history;
+mod default_shell_geometry;
+mod hub_account;
+mod hub_live;
+mod hub_ports;
+use hub_ports::HubPorts;
+mod hub_windows;
 mod keymap;
+mod menu_layouts;
 mod menu_tabs;
+mod plugin_enablement;
+mod plugin_registration;
 mod program_opening;
+mod project_workspaces;
 mod secret_prompts;
 mod shortcuts;
 mod snippets;
 mod terminal_events;
 mod titlebar;
+#[cfg(feature = "user-plugins")]
+mod user_plugins;
 mod vault;
+mod workspace_preferences;
 
 #[derive(Default)]
 struct MockTransport {
     drivers: Mutex<Vec<Arc<SessionDriver>>>,
 }
+
+/// The local host the fixture gives the application, so a test can read what ran on it.
+struct FixtureLocalHost(nocterm_session::testing::FakeExec);
+impl gpui_kit::Global for FixtureLocalHost {}
 
 struct FixtureDirectory {
     _directory: tempfile::TempDir,
@@ -41,6 +58,18 @@ impl Transport for MockTransport {
         let (session, driver) = nocterm_session::channel(None);
         self.drivers.lock().unwrap().push(Arc::new(driver));
         session
+    }
+    /// A hub window opens with its account's captured source. Like a real
+    /// producer, the mock enforces that source instead of discarding it.
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        match options.source().check() {
+            Ok(()) => self.open(request),
+            Err(error) => Session::failed(error.into()),
+        }
     }
 }
 
@@ -169,7 +198,7 @@ fn fixture_with_settings(
                 if with_local {
                     let local = transport.clone();
                     nocterm_terminal::LocalSessions::new(
-                        Arc::new(move |_| local.clone()),
+                        Arc::new(move |_, _| local.clone()),
                         "/bin/bash".into(),
                     )
                 } else {
@@ -198,7 +227,7 @@ fn fixture_with_settings(
                 workspace.update(cx, |workspace, cx| {
                     workspace.open_session(spec("first.test"), window, cx)
                 });
-                workspace.read(cx).find_item::<TerminalView>().unwrap()
+                workspace.read(cx).find_item::<TerminalView>(cx).unwrap()
             })
             .unwrap();
         (
@@ -206,7 +235,7 @@ fn fixture_with_settings(
             workspace,
             terminal,
             booted.keymap(),
-            booted.settings_deps().settings().clone(),
+            booted.settings_deps(),
         )
     });
     emit(cx, &transport, 0, Event::Connected);
@@ -276,12 +305,50 @@ fn boot_with_ports(
         vault,
         files,
         themes,
-        Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
-            nocterm_ai::sandbox::Availability::Unsupported,
-        )),
+        unsupported_sandbox(),
+        crate::shell_setup::UserPluginMode::default(),
+        None,
         cx,
     )
 }
+
+/// A host without a sandbox, which is what the fixtures compose over unless a test says otherwise.
+fn unsupported_sandbox() -> Arc<dyn nocterm_ai::sandbox::SandboxProbe> {
+    Arc::new(nocterm_ai::testing::ScriptedSandboxProbe::new(
+        nocterm_ai::sandbox::Availability::Unsupported,
+    ))
+}
+fn fixture_hosts(
+    transport: Arc<MockTransport>,
+    local: nocterm_terminal::LocalSessions,
+    local_host: Option<Arc<dyn nocterm_session::HostExec>>,
+) -> crate::bootstrap::HostServices {
+    let activation = Arc::new(nocterm_project_environment::NativeWorkspaceSessions);
+    let environment =
+        Arc::new(nocterm_project_providers::testing::FakeWorkspaceEnvironment::default());
+    crate::bootstrap::HostServices {
+        transport,
+        local,
+        local_host,
+        image_search: Arc::new(nocterm_project_providers::testing::FakeImageSearch::default()),
+        container_actions: Arc::new(
+            nocterm_project_providers::testing::FakeWorkspaceContainerActions::default(),
+        ),
+        environment: environment.clone(),
+        preparation: Arc::new(nocterm_project_runtime::NativeProjectPreparation::new(
+            environment,
+        )),
+        container_sessions: Arc::new(nocterm_project_container_fs::NativeContainerSessions::new(
+            activation.clone(),
+        )),
+        workspace_sessions: activation,
+        hubs: None,
+        hub_agents: None,
+        hub_accounts: None,
+        agent_hosts: None,
+    }
+}
+
 fn boot_with_ports_and_probe(
     directory: tempfile::TempDir,
     settings: nocterm_store::SettingsConfig,
@@ -290,12 +357,16 @@ fn boot_with_ports_and_probe(
     files: Option<nocterm_files::Deps>,
     themes: Option<crate::bootstrap::Themes>,
     probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
+    user_plugins: crate::shell_setup::UserPluginMode,
+    hubs: impl Into<HubPorts>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
+    let hubs = hubs.into();
     let (transport, local) = terminal;
     let local_host = local.is_available().then(|| {
-        Arc::new(nocterm_session::testing::FakeExec::default())
-            as Arc<dyn nocterm_session::HostExec>
+        let exec = nocterm_session::testing::FakeExec::default();
+        cx.set_global(FixtureLocalHost(exec.clone()));
+        Arc::new(exec) as Arc<dyn nocterm_session::HostExec>
     });
     let paths = nocterm_core::Paths::rooted_at(directory.path());
     let vault = vault.then(|| crate::bootstrap::VaultSetup {
@@ -306,6 +377,7 @@ fn boot_with_ports_and_probe(
     cx.set_global(FixtureDirectory {
         _directory: directory,
     });
+    let (connector, chats, live_hosts) = hubs.agents(&paths);
     let booted = crate::bootstrap::bootstrap(
         crate::bootstrap::Services {
             images: {
@@ -316,17 +388,28 @@ fn boot_with_ports_and_probe(
             settings,
             persist: false,
             connections: crate::connection_setup::memory(),
-            transport,
-            local,
-            local_host,
+            projects: crate::project_setup::PreparedProjectSetup::memory(),
+            hosts: crate::bootstrap::HostServices {
+                hubs: hubs.deps,
+                hub_accounts: hubs.accounts,
+                hub_agents: hubs
+                    .live
+                    .as_ref()
+                    .zip(live_hosts.clone())
+                    .map(|(links, hosts)| crate::startup::hub_agents_dependencies(links, hosts)),
+                agent_hosts: live_hosts.map(|hosts| hosts as _),
+                ..fixture_hosts(transport, local, local_host)
+            },
             terminal_auth_factory: None,
             files,
             themes,
             sandbox_probe: probe,
             agent: nocterm_agent::AgentServices {
+                command_jobs: Arc::new(nocterm_agent_tools::JobsFactory),
+                transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
                 catalog: nocterm_agent_providers::catalog(),
                 metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
-                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
+                connector,
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(
                     paths.clone(),
                     nocterm_acp::RelayCommand {
@@ -338,12 +421,9 @@ fn boot_with_ports_and_probe(
                     Arc::new(nocterm_agent_storage::FileAgentStateRepository::new(
                         paths.state_dir().join("agents.toml"),
                     )),
-                    Arc::new(nocterm_agent_storage::FileChatRepository::new(
-                        paths.state_dir().join("agent-chats"),
-                    )),
+                    chats,
                 )),
                 workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
-                usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
                 workdir: paths.state_dir().join("agent-workspace"),
                 terminal_auth: None,
                 private_dirs: Vec::new(),
@@ -351,6 +431,7 @@ fn boot_with_ports_and_probe(
             },
             paths,
             vault,
+            user_plugins,
         },
         cx,
     )
@@ -366,11 +447,13 @@ fn fixture_files(directory: &std::path::Path) -> nocterm_files::Deps {
         nocterm_transfer_runtime::TransferRuntimeDeps::new(local.clone(), Default::default()),
     )
     .unwrap();
+    let directories = Arc::new(nocterm_directory_io::DirectoryReaders::new(local.clone()));
     nocterm_files::Deps::new(
         local.clone(),
         local,
         transfers,
         Arc::new(nocterm_session::testing::FakeExec::default()),
+        directories,
     )
 }
 fn seed_native_ancestors(fs: &nocterm_session::testing::InMemoryFs, directory: &std::path::Path) {
@@ -389,11 +472,52 @@ fn open_workspace(
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
-            crate::bootstrap::build_workspace(&mut workspace, booted, window, cx);
+            crate::bootstrap::build_workspace(
+                &mut workspace,
+                booted,
+                &booted.local_sources(),
+                window,
+                cx,
+            );
             workspace
         })
     })
     .unwrap()
+}
+
+/// Opens a window that shows `environment`, composed as the application composes it.
+fn open_environment(
+    booted: &crate::bootstrap::Booted,
+    environment: &nocterm_hubs_model::Environment,
+    cx: &mut gpui_kit::App,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    let sources = booted
+        .window_sources(environment, cx)
+        .expect("the window's sources");
+    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        crate::windows::compose(booted, &sources, window, cx)
+    })
+    .unwrap()
+}
+
+/// Delivers `count` frames to the window: its next-frame callbacks run and it is drawn, as the
+/// platform does, which tests do not.
+fn deliver_frames(handle: AnyWindowHandle, count: usize, cx: &mut TestAppContext) {
+    for _ in 0..count {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+}
+
+/// Whether the host offers the agent panel of `workspace`.
+fn agent_panel_is_available(workspace: &Entity<Workspace>, cx: &gpui_kit::App) -> bool {
+    workspace
+        .read(cx)
+        .panel_is_available(&nocterm_agent::plugin::CHATS.id)
 }
 
 fn emit(cx: &mut TestAppContext, transport: &MockTransport, index: usize, event: Event) {
@@ -447,7 +571,7 @@ fn transfers_action_uses_installed_queue_before_explorer_opens(cx: &mut TestAppC
         assert_eq!(
             workspace
                 .read(cx)
-                .active_item()
+                .active_item(cx)
                 .unwrap()
                 .tab_title(cx)
                 .as_ref(),
@@ -460,7 +584,7 @@ fn transfers_action_uses_installed_queue_before_explorer_opens(cx: &mut TestAppC
     workspace.read_with(cx, |workspace, cx| {
         assert_eq!(
             workspace
-                .items()
+                .items(cx)
                 .filter(|item| item.tab_title(cx).as_ref() == "Transfers")
                 .count(),
             1
@@ -479,7 +603,7 @@ fn reconnect_button_works_when_file_sidebar_has_focus(cx: &mut TestAppContext) {
     );
     cx.update_window(handle, |_, window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.activate_panel_of::<nocterm_files::FilesPanel>(window, cx)
+            workspace.open_panel(&nocterm_files::plugin::EXPLORER.id, window, cx)
         });
         window.render_frame(cx);
         assert!(!terminal.read(cx).focus_handle(cx).is_focused(window));
@@ -506,13 +630,17 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     let (window, workspace, _, _, _, policy) = fixture_with_settings(cx, false, None, false, None);
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
-        assert!(workspace.read(cx).right_panel_is_available());
+        assert!(agent_panel_is_available(&workspace, cx));
         window.dispatch_action(Box::new(nocterm_workspace::ToggleRightPanel), cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
-        assert!(workspace.read(cx).right_panel_is_open());
+        assert!(
+            workspace
+                .read(cx)
+                .panel_is_open(&nocterm_agent::plugin::CHATS.id)
+        );
         window.render_frame(cx);
         window.dispatch_action(Box::new(nocterm_workspace::OpenAiSettings), cx);
     })
@@ -521,7 +649,7 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     cx.update_window(window, |_, window, cx| {
         let settings = workspace
             .read(cx)
-            .find_item::<nocterm_settings_ui::SettingsView>()
+            .find_item::<nocterm_settings_ui::SettingsView>(cx)
             .unwrap();
         assert_eq!(settings.read(cx).selected_page_id(), "ai");
         policy
@@ -532,8 +660,12 @@ fn ai_panel_and_settings_actions_are_available_and_master_switch_hides_toggle(
     .unwrap();
     cx.run_until_parked();
     cx.update_window(window, |_, _, cx| {
-        assert!(!workspace.read(cx).right_panel_is_available());
-        assert!(!workspace.read(cx).right_panel_is_open());
+        assert!(!agent_panel_is_available(&workspace, cx));
+        assert!(
+            !workspace
+                .read(cx)
+                .panel_is_open(&nocterm_agent::plugin::CHATS.id)
+        );
     })
     .unwrap();
 }
@@ -579,6 +711,7 @@ fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_ma
                     local: info.local,
                     cwd: info.cwd.map(|p| p.to_string_lossy().into_owned()),
                     status: format!("{:?}", info.status),
+                    file_tools: false,
                     connection: info.target.map(|target| ConnectionDescriptor {
                         id: String::new(),
                         name: info.title.to_string(),

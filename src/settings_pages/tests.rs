@@ -28,6 +28,16 @@ fn spec(id: &'static str, called: Rc<Cell<usize>>) -> SettingsPageSpec {
         })
     })
 }
+fn guests(specs: Vec<SettingsPageSpec>) -> GuestPages {
+    let plugins = Arc::new(crate::shell_setup::plugin_catalog().unwrap());
+    GuestPages::new(
+        specs
+            .into_iter()
+            .map(SettingsPageRegistration::lazy)
+            .collect(),
+        plugins,
+    )
+}
 fn builtins(called: Rc<Cell<usize>>) -> [SettingsPageSpec; 5] {
     ["appearance", "terminal", "local-shell", "ssh", "ai"].map(|id| spec(id, called.clone()))
 }
@@ -37,12 +47,12 @@ fn actual_root_catalog_builder_propagates_typed_registration_errors_without_fact
 ) {
     cx.update(|cx| {
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
-        let installed = Installed::new(settings);
+        let installed = settings;
         let called = Rc::new(Cell::new(0));
         let duplicate = SettingsPages::new(
             installed.clone(),
             builtins(called.clone()),
-            vec![spec("terminal", called.clone())],
+            guests(vec![spec("terminal", called.clone())]),
             None,
         );
         assert_eq!(
@@ -52,7 +62,7 @@ fn actual_root_catalog_builder_propagates_typed_registration_errors_without_fact
         let mut invalid = builtins(called.clone());
         invalid[0] = spec("other", called.clone());
         assert_eq!(
-            SettingsPages::new(installed, invalid, vec![], None).err(),
+            SettingsPages::new(installed, invalid, guests(vec![]), None).err(),
             Some(SettingsCatalogError::MissingDefault { id: "appearance" })
         );
         assert_eq!(called.get(), 0);
@@ -67,14 +77,16 @@ fn ordinary_and_startup_catalogs_keep_their_distinct_guests_and_per_item_instanc
         gpui_kit::init(cx);
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
         nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
-        let installed = Installed::new(settings);
+        let installed = settings;
         let pages = SettingsPages::new(
             installed.clone(),
             builtins(called.clone()),
-            ["keymap", "monitor", "explorer", "vault"]
-                .into_iter()
-                .map(|id| spec(id, called.clone()))
-                .collect(),
+            guests(
+                ["keymap", "monitor", "explorer", "workspaces"]
+                    .into_iter()
+                    .map(|id| spec(id, called.clone()))
+                    .collect(),
+            ),
             Some(spec("vault", called.clone())),
         )
         .unwrap();
@@ -96,8 +108,8 @@ fn ordinary_and_startup_catalogs_keep_their_distinct_guests_and_per_item_instanc
     cx.update_window(ordinary_window, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(ordinary.read(cx).selected_page_id(), "appearance");
-        assert!(window.within("settings-pages").try_find(8usize).is_some());
-        assert!(window.within("settings-pages").try_find(9usize).is_none());
+        assert!(window.within("settings-pages").try_find(9usize).is_some());
+        assert!(window.within("settings-pages").try_find(10usize).is_none());
     })
     .unwrap();
     cx.update_window(startup_window, |_, window, cx| {
@@ -111,6 +123,53 @@ fn ordinary_and_startup_catalogs_keep_their_distinct_guests_and_per_item_instanc
 }
 
 #[gpui_kit::test]
+fn only_the_ordinary_appearance_hosts_the_sections_the_application_supplies(
+    cx: &mut TestAppContext,
+) {
+    let called = Rc::new(Cell::new(0));
+    let (ordinary_window, startup_window) = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
+        let installed = settings;
+        let section =
+            nocterm_ui::EmbeddedPageSpec::new("layout", "Status bar and panels", |_, cx| {
+                cx.new(|cx| Page {
+                    focus: cx.focus_handle(),
+                })
+            });
+        let pages = SettingsPages::new(
+            installed.clone(),
+            builtins(called.clone()),
+            guests(vec![]).with_appearance_sections(vec![section]),
+            Some(spec("vault", called.clone())),
+        )
+        .unwrap();
+        let open = |catalog, cx: &mut App| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| SettingsView::with_pages(catalog, installed.clone(), window, cx))
+            })
+            .unwrap()
+            .0
+        };
+        (
+            open(pages.ordinary().clone(), cx),
+            open(pages.startup().unwrap().clone(), cx),
+        )
+    });
+    cx.update_window(ordinary_window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("settings-section:layout").is_some());
+    })
+    .unwrap();
+    cx.update_window(startup_window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("settings-section:layout").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn catalog_keeps_the_real_keymap_page_alive_without_a_booted_fixture_handle(
     cx: &mut TestAppContext,
 ) {
@@ -118,13 +177,13 @@ fn catalog_keeps_the_real_keymap_page_alive_without_a_booted_fixture_handle(
         gpui_kit::init(cx);
         let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
         nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), settings.clone(), cx);
-        let installed = Installed::new(settings);
+        let installed = settings;
         let pages = {
             let keymap = crate::keymap::load(None, cx);
             SettingsPages::new(
                 installed.clone(),
                 builtins(Rc::new(Cell::new(0))),
-                vec![nocterm_keymap_ui::settings_page(keymap)],
+                guests(vec![nocterm_keymap_ui::settings_page(keymap)]),
                 None,
             )
             .unwrap()
@@ -146,4 +205,64 @@ fn catalog_keeps_the_real_keymap_page_alive_without_a_booted_fixture_handle(
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn another_vault_page_replaces_the_vault_page_and_keeps_every_other_page(cx: &mut TestAppContext) {
+    let called = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        let settings = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
+        let ids = |catalog: &SettingsCatalog| {
+            catalog
+                .pages()
+                .iter()
+                .map(SettingsPageRegistration::id)
+                .collect::<Vec<_>>()
+        };
+        let with_vault = SettingsPages::new(
+            settings.clone(),
+            builtins(called.clone()),
+            guests(vec![spec("keymap", called.clone())]),
+            Some(spec("vault", called.clone())),
+        )
+        .unwrap();
+        let without_vault = SettingsPages::new(
+            settings,
+            builtins(called.clone()),
+            guests(vec![spec("keymap", called.clone())]),
+            None,
+        )
+        .unwrap();
+        assert!(without_vault.startup().is_none());
+
+        for pages in [&with_vault, &without_vault] {
+            let replaced = pages.with_vault(spec("vault", called.clone())).unwrap();
+            assert_eq!(
+                ids(replaced.ordinary()),
+                [
+                    "appearance",
+                    "terminal",
+                    "local-shell",
+                    "ssh",
+                    "ai",
+                    "keymap",
+                    "vault"
+                ]
+            );
+            assert_eq!(
+                ids(replaced
+                    .startup()
+                    .expect("a vault window offers the vault at startup")),
+                [
+                    "appearance",
+                    "terminal",
+                    "local-shell",
+                    "ssh",
+                    "ai",
+                    "vault"
+                ]
+            );
+        }
+        assert_eq!(called.get(), 0, "no page is built by replacing one");
+    });
 }

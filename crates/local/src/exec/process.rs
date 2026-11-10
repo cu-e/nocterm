@@ -19,7 +19,10 @@ pub(super) struct Process {
 }
 
 impl Process {
-    pub(super) fn spawn(request: &ExecRequest) -> Result<Self, ExecError> {
+    pub(super) fn spawn(
+        request: &ExecRequest,
+        source: &nocterm_session::ConnectionSource,
+    ) -> Result<Self, ExecError> {
         let mut command = Command::new(&request.program);
         command
             .args(&request.args)
@@ -30,6 +33,7 @@ impl Process {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        source.check()?;
         #[cfg(unix)]
         let spawned = {
             use std::os::unix::process::CommandExt as _;

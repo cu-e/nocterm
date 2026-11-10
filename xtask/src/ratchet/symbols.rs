@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use syn::{Item, Path, Type};
 
 #[derive(Clone)]
-pub(super) struct Symbols {
+pub(crate) struct Symbols {
     names: BTreeSet<String>,
     module_scopes: BTreeSet<String>,
     structs: BTreeMap<String, Vec<syn::ItemStruct>>,
@@ -21,7 +21,7 @@ pub(super) struct Alias {
 }
 
 impl Symbols {
-    pub(super) fn new(modules: &[Module]) -> Self {
+    pub(crate) fn new(modules: &[Module]) -> Self {
         let mut symbols = Self {
             names: BTreeSet::new(),
             structs: BTreeMap::new(),
@@ -296,7 +296,7 @@ impl Symbols {
         self.members.insert(name, members);
     }
 
-    pub(super) fn resolve_candidates(
+    pub(crate) fn resolve_candidates(
         &self,
         module: &str,
         path: &Path,
@@ -391,13 +391,16 @@ impl Symbols {
             let expanded: Vec<_> = alias.iter().chain(&path[1..]).cloned().collect();
             return self.resolve_segments(module, &expanded, imports, depth + 1, visited);
         }
-        let rust_module = self
-            .module_scopes
-            .iter()
-            .filter(|scope| module == scope.as_str() || module.starts_with(&format!("{scope}::")))
-            .max_by_key(|scope| scope.len())
-            .map(String::as_str)
-            .unwrap_or(module);
+        let mut rust_module = module;
+        while !self.module_scopes.contains(rust_module) {
+            match rust_module.rsplit_once("::") {
+                Some((parent, _)) => rust_module = parent,
+                None => {
+                    rust_module = module;
+                    break;
+                }
+            }
+        }
         let context = if matches!(first.as_str(), "self" | "super" | "crate") {
             rust_module
         } else {
