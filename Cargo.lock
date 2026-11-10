@@ -5325,7 +5325,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.21",
  "tracing",
  "uuid",
 ]
@@ -5573,7 +5572,6 @@ dependencies = [
  "nocterm-keys",
  "nocterm-session",
  "nocterm-vault",
- "prost",
  "serde",
  "serde_json",
  "sha2 0.10.9",
