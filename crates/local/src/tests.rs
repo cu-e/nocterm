@@ -387,21 +387,32 @@ fn close_interrupts_full_input_and_kills_shell_process_group() {
     // The direct child is reaped by this adapter. A killed grandchild is
     // adopted/reaped by init; Linux containers can leave an init-owned
     // zombie or a dead (X) task briefly, but no descendant may remain executing.
-    let descendant_alive =
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(descendant), None).is_ok();
-    #[cfg(target_os = "linux")]
-    if descendant_alive {
-        let stat = std::fs::read_to_string(format!("/proc/{descendant}/stat")).unwrap_or_default();
-        assert!(
-            stat.is_empty()
+    // Close sends SIGKILL to the whole group; on a loaded machine the grandchild
+    // may not be scheduled to die yet, so it gets a bounded moment to do so.
+    let executing = || -> Option<String> {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(descendant), None).ok()?;
+        #[cfg(target_os = "linux")]
+        {
+            let stat =
+                std::fs::read_to_string(format!("/proc/{descendant}/stat")).unwrap_or_default();
+            let ended = stat.is_empty()
                 || stat.rsplit_once(") ").is_some_and(|(_, fields)| {
                     matches!(fields.split_ascii_whitespace().next(), Some("Z" | "X"))
-                }),
-            "descendant still running: {stat}"
-        );
+                });
+            (!ended).then_some(stat)
+        }
+        #[cfg(not(target_os = "linux"))]
+        Some(String::new())
+    };
+    let settle = Instant::now() + Duration::from_secs(2);
+    let mut running = executing();
+    while running.is_some() && Instant::now() < settle {
+        thread::sleep(Duration::from_millis(10));
+        running = executing();
     }
-    #[cfg(not(target_os = "linux"))]
-    assert!(!descendant_alive);
+    if let Some(stat) = running {
+        panic!("descendant still running: {stat}");
+    }
 }
 
 #[cfg(unix)]
