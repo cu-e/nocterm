@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.1.0](https://github.com/cu-e/nocterm/compare/v4.0.0...v4.1.0) (2026-11-10)
+
+
+### Features
+
+* ship user plugins in every build ([#54](https://github.com/cu-e/nocterm/issues/54)) ([83ec876](https://github.com/cu-e/nocterm/commit/83ec876bc7c7cc07634ac8a9e2c319f3751e19f5))
+
+
+### Documentation
+
+* **plugins-ui:** stop linking public docs to the private describe ([#57](https://github.com/cu-e/nocterm/issues/57)) ([067e067](https://github.com/cu-e/nocterm/commit/067e067944a7aa5d16e80d183f1bbdb3bd3064b4))
+
 ## [4.0.0](https://github.com/cu-e/nocterm/compare/v3.3.0...v4.0.0) (2026-11-10)
 
 
