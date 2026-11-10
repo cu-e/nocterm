@@ -5,9 +5,8 @@ module that carries the manifest. Both are drawn by the host inside the status b
 and the toolbars around the tabs, and neither can reach more than the capabilities the user
 agreed to.
 
-User plugins are compiled in with the cargo feature `nocterm/user-plugins`; release builds are
-made without it. A build with the feature loads no plugin until the user allows it, and
-`nocterm --safe-mode` loads none whatever the setting says.
+User plugins are part of every build, releases included ([ADR 0161](../adr/0161-user-plugins-ship-in-every-build.md)). A run loads no
+plugin until the user allows it, and `nocterm --safe-mode` loads none whatever the setting says.
 
 | Document | What it is |
 | --- | --- |

@@ -15,7 +15,6 @@
 //! accepted operations retain their original capability while later navigation proceeds.
 mod activity;
 mod dialogs;
-#[cfg(feature = "user-plugins")]
 mod host_capabilities;
 mod local;
 mod local_pane;
@@ -65,7 +64,6 @@ use remote::{Browser, listing};
 use selection::RowSelection;
 use std::{path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
-#[cfg(feature = "user-plugins")]
 pub use host_capabilities::TransferCounts;
 pub use registration::{
     Installed, OpenExplorerSettings, ShowTransfers, ToggleExplorer, install, register,

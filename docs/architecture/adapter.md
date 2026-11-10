@@ -117,8 +117,7 @@ builds each call from the plugin's settings: the origin the user typed and, from
 the credential header. The adapter parses the address again and refuses one that is not at that
 origin, follows no redirect, keeps no cookies, sends JSON with a plugin user agent, waits at most
 15 seconds and reads at most 256 KiB of the answer. A failure is a status-0 answer, not an error.
-Calls block, so the host runs them on a background thread; the crate is compiled only with
-`user-plugins` ([ADR 0153](../adr/0153-toolbars-and-user-plugin-requests-timers-and-terminals.md)).
+Calls block, so the host runs them on a background thread ([ADR 0153](../adr/0153-toolbars-and-user-plugin-requests-timers-and-terminals.md)).
 
 ## Bounded I/O
 

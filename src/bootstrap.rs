@@ -294,7 +294,7 @@ impl Booted {
     pub(crate) fn keymap(&self) -> nocterm_keymap::KeymapHandle {
         self.keymap.clone()
     }
-    #[cfg(all(test, feature = "user-plugins"))]
+    #[cfg(test)]
     pub(crate) fn user_plugins(&self) -> &crate::shell_setup::UserShell {
         &self.user_plugins
     }

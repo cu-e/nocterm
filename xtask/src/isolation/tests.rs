@@ -70,9 +70,7 @@ notify = "Fixture: repaint request."
 [isolation.providers]
 allowed = ["nocterm", "nocterm-plugin-host", "nocterm-ui"]
 
-[isolation.compile_out]
-crates = ["nocterm-plugin-api", "nocterm-plugin-packages"]
-features = { nocterm-plugins-ui = "user" }
+[isolation.features]
 test_features = { nocterm-plugin-api = "test-support" }
 banned_features = { wasmi = "auto-dispatch" }
 
@@ -322,36 +320,9 @@ fn only_listed_crates_may_depend_on_the_ports() {
 }
 
 #[test]
-fn the_default_build_cannot_reach_user_only_crates_or_features() {
-    let mut app = package("nocterm", &[("nocterm-ui", "")]);
-    app.member = true;
-    let mut packages = with(base(), app);
-    packages.push(package("nocterm-ui", &[]));
-    assert!(graph::compile_out_problems(&policy(), &graph(packages)).is_empty());
-
-    let mut app = package("nocterm", &[("nocterm-ui", "")]);
-    app.member = true;
-    let mut packages = with(base(), app);
-    packages.push(package("nocterm-ui", &[("nocterm-plugin-api", "")]));
-    let problems = graph::compile_out_problems(&policy(), &graph(packages));
-    assert!(
-        problems
-            .iter()
-            .next()
-            .unwrap()
-            .contains("reaches nocterm-plugin-api")
-    );
-
-    let mut ui = package("nocterm-plugins-ui", &[]);
-    ui.features = vec!["user"];
-    let problems = graph::compile_out_problems(&policy(), &graph(with(base(), ui)));
-    assert!(problems.iter().next().unwrap().contains("feature user"));
-}
-
-#[test]
 fn a_test_only_feature_in_the_normal_closure_is_refused() {
     let tree = "\
-nocterm v0.1.0 (/work/nocterm)|user-plugins
+nocterm v0.1.0 (/work/nocterm)|
 nocterm-plugin-api v0.0.0 (/work/nocterm/crates/plugin-api)|
 nocterm-plugin-host v0.0.0 (/work/nocterm/crates/plugin-host)|test-support
 ";

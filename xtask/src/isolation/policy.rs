@@ -36,12 +36,9 @@ pub(super) struct Providers {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct CompileOut {
-    pub(super) crates: Vec<String>,
-    #[serde(default)]
-    pub(super) features: BTreeMap<String, String>,
+pub(super) struct FeaturePolicy {
     /// Packages whose named feature may be enabled by tests only: it must be absent from the
-    /// normal (non-dev) closure of the app with the user-plugins feature.
+    /// normal (non-dev) closure of the app.
     #[serde(default)]
     pub(super) test_features: BTreeMap<String, String>,
     /// Packages whose named feature no build of the workspace may switch on, whoever asks for
@@ -62,7 +59,7 @@ pub(super) struct Identifiers {
 pub(super) struct Policy {
     pub(super) gpui: String,
     pub(super) app: String,
-    /// Crates the application never reaches, with or without the user-plugins feature.
+    /// Crates the application never reaches.
     #[serde(default)]
     pub(super) guest_only: Vec<String>,
     #[serde(default)]
@@ -76,7 +73,7 @@ pub(super) struct Policy {
     #[serde(default)]
     pub(super) gpui_allowed: BTreeMap<String, String>,
     pub(super) providers: Providers,
-    pub(super) compile_out: CompileOut,
+    pub(super) features: FeaturePolicy,
     #[serde(default)]
     pub(super) identifiers: BTreeMap<String, Identifiers>,
 }

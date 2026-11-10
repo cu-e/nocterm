@@ -24,7 +24,6 @@ mod details;
 mod installed;
 pub use installed::{Installed, install};
 mod graph;
-#[cfg(feature = "user-plugins")]
 mod host_capabilities;
 mod model;
 mod page;
@@ -38,7 +37,6 @@ use gpui_kit::{AppContext as _, Context, Entity, Window};
 use nocterm_ui::SettingsPageSpec;
 use nocterm_workspace::{RegistrationError, WidgetRegistration, Workspace};
 
-#[cfg(feature = "user-plugins")]
 pub use host_capabilities::{MonitorUsage, register_observed};
 pub use page::MonitorPage;
 pub use settings::{

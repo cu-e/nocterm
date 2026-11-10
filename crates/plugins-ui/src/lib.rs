@@ -5,7 +5,7 @@
 //!
 //! Owns: the page layout and selection, the enable switch with its refusal text, the plugin
 //! settings form per selected plugin, and revealing a plugin by id.
-//! With the cargo feature `user` it also owns the User section: the switch that allows user
+//! It also owns the User section: the switch that allows user
 //! plugins at the next start and the text that says why a run holds them, the user plugin list,
 //! the install and update consent (inert for 750 ms, Deny by default), enabling, placement,
 //! removal (one small button that asks in a dialog what goes) and the audit log, with long
@@ -32,7 +32,6 @@
 
 mod page;
 mod toggles;
-#[cfg(feature = "user")]
 mod user;
 mod view;
 
@@ -44,7 +43,6 @@ use nocterm_ui::{IconName, PluginSettingsDirectory, SettingsPageSpec};
 
 pub use page::PluginsPage;
 pub use toggles::{EnablementError, PluginToggles};
-#[cfg(feature = "user")]
 pub use user::{
     AuditLine, Candidate, CapabilityLine, FieldLine, FolderError, HeldBy, InstallRequest,
     MAX_LISTED, PluginsFolder, Replaced, RowState, UserPart, UserPartView, UserPluginError,
@@ -72,7 +70,6 @@ pub fn settings_page(
 }
 
 /// The lazy Plugins page with a User section below the system plugins, which stay unchanged.
-#[cfg(feature = "user")]
 pub fn settings_page_with_user_plugins(
     catalog: Arc<PluginCatalog>,
     toggles: Rc<dyn PluginToggles>,

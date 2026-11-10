@@ -34,7 +34,6 @@ mod shortcuts;
 mod snippets;
 mod terminal_events;
 mod titlebar;
-#[cfg(feature = "user-plugins")]
 mod user_plugins;
 mod vault;
 mod workspace_preferences;

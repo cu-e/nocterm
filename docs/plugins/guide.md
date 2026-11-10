@@ -1,14 +1,13 @@
 # Writing a user plugin (preview)
 
-Preview. User plugins exist only in a build made with `cargo build --features user-plugins`;
-release builds are made without it. Until the first release that contains
+Preview. User plugins are part of every build, releases included. Until the first release that contains
 `crates/plugin-api/api-surface.json` the contract may still change; from that release on a change
 that breaks a published plugin needs a new API
 version ([compatibility](README.md#compatibility)). The [reference](reference.md) lists every
 name and limit this guide uses; it is generated from the code and always current. Editors can
 check a manifest against [`manifest.schema.json`](manifest.schema.json).
 
-A build with the feature still starts without user plugins. The user allows them in Settings >
+Nocterm still starts without user plugins. The user allows them in Settings >
 Plugins > User plugins ("Allow user plugins") or with `user_plugins = true` in the `[plugins]`
 section of `settings.toml`, and the choice applies at the next start. `nocterm --safe-mode`
 starts without any user plugin, whatever the switch says.

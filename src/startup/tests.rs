@@ -77,7 +77,6 @@ fn an_installation_saves_a_layout_edit_which_makes_the_control_meaningful(cx: &m
     );
 }
 
-#[cfg(feature = "user-plugins")]
 #[gpui_kit::test]
 fn a_developer_session_keeps_a_layout_edit_in_memory_and_leaves_the_saved_layouts_alone(
     cx: &mut TestAppContext,
