@@ -93,24 +93,6 @@ assert.equal(compat.steps[0].with['fetch-depth'], 0, 'the release tags are neede
 for (const name of Object.keys(ci.jobs).filter(name => name !== 'ci-passed')) {
   assert.ok(ci.jobs['ci-passed'].needs.includes(name), `CI passed must wait for ${name}`);
 }
-// User plugins stay out of release builds until the external security review is done. A feature
-// can be switched on by name, by `--all-features`, or by a value the step passes through `env` or
-// `with`; the default features are checked by the xtask isolation rule (compile-out).
-const FEATURE_ON = /user-plugins|--all-features/;
-const settings = holder => Object.values(holder ?? {}).map(String).join('\n');
-for (const [name, file] of [['package', pkg], ['release', release]]) {
-  assert.doesNotMatch(settings(file.env), FEATURE_ON, `${name}.yml env must not enable user plugins`);
-  for (const [jobName, job] of Object.entries(file.jobs)) {
-    assert.doesNotMatch(settings(job.env), FEATURE_ON, `${name}.yml ${jobName} env must not enable user plugins`);
-    for (const step of job.steps ?? []) {
-      const text = [step.run ?? '', settings(step.env), settings(step.with)].join('\n');
-      assert.doesNotMatch(text, FEATURE_ON, `${name}.yml ${jobName} must not build user plugins`);
-    }
-  }
-}
-for (const script of ['package-linux.sh', 'prepare-release-pr.sh']) {
-  assert.doesNotMatch(read(`scripts/${script}`), FEATURE_ON, `${script} must not build user plugins`);
-}
 const prHistory = ci.jobs.conventions.steps.find(step => step.name === 'Check architectural baseline and vendor commit separation');
 assert.equal(prHistory.env.HEAD, '${{ inputs.ref || github.event.pull_request.head.sha }}');
 assert.deepEqual(release.jobs['release-validation'].needs,

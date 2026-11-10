@@ -81,9 +81,7 @@ pub use context_ports::{ChatConnectionOpen, ChatConnectionOpenError};
 mod dock_item;
 mod file_drag;
 pub mod host;
-#[cfg(feature = "user-plugins")]
 mod host_capabilities;
-#[cfg(feature = "user-plugins")]
 pub use host_capabilities::{ShellCapabilities, WithdrawRefused};
 mod item;
 mod local_terminal;

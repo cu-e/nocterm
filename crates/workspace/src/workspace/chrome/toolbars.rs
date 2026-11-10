@@ -67,7 +67,6 @@ impl Toolbars {
     }
 
     /// Forgets a toolbar, so its plugin's uninstall or replacement leaves no view behind.
-    #[cfg(feature = "user-plugins")]
     pub(in crate::workspace) fn remove(&mut self, id: &ContributionId) {
         self.entries.retain(|entry| entry.id != *id);
     }

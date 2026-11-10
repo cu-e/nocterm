@@ -346,5 +346,4 @@ fn a_user_group_and_a_pending_approval_leave_the_assistant_toggle_in_the_bar(
     assert!(drawn, "the approval toggle stays in the bar");
 }
 
-#[cfg(feature = "user-plugins")]
 mod provider;

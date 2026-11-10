@@ -664,7 +664,6 @@ impl PanelSlot {
 }
 
 /// Why a plugin may not show its panel now.
-#[cfg(feature = "user-plugins")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum OpeningRefused {
     /// Another member of the panel's group shows, and showing this one would replace it.
@@ -674,7 +673,6 @@ pub(super) enum OpeningRefused {
 }
 
 /// What a user plugin may do to the panels, under the rules that protect what the user is doing.
-#[cfg(feature = "user-plugins")]
 impl PanelGroups {
     /// Shows the registered panel without taking focus. It refuses when that would replace a
     /// panel that shows (the group is shown with another member selected) or while any panel

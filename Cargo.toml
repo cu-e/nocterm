@@ -72,13 +72,13 @@ nocterm-vault.workspace = true
 nocterm-vault-store.workspace = true
 nocterm-plugin-enablement.workspace = true
 nocterm-plugin-model.workspace = true
-nocterm-plugin-api = { workspace = true, optional = true }
-nocterm-plugin-host = { workspace = true, optional = true }
-nocterm-plugin-packages = { workspace = true, optional = true }
-nocterm-plugin-net = { workspace = true, optional = true }
-nocterm-plugin-ports = { workspace = true, optional = true }
-nocterm-plugin-view = { workspace = true, optional = true }
-nocterm-plugin-wasm = { workspace = true, optional = true }
+nocterm-plugin-api.workspace = true
+nocterm-plugin-host.workspace = true
+nocterm-plugin-packages.workspace = true
+nocterm-plugin-net.workspace = true
+nocterm-plugin-ports.workspace = true
+nocterm-plugin-view.workspace = true
+nocterm-plugin-wasm.workspace = true
 nocterm-plugins-ui.workspace = true
 nocterm-ui.workspace = true
 nocterm-workspace.workspace = true
@@ -91,24 +91,6 @@ thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-
-[features]
-# The user-plugin track: compiled out of default and release builds until it ships
-# (docs/architecture/guardrails.md, "Isolation of plugin crates").
-user-plugins = [
-    "dep:nocterm-plugin-api",
-    "dep:nocterm-plugin-host",
-    "dep:nocterm-plugin-packages",
-    "dep:nocterm-plugin-net",
-    "dep:nocterm-plugin-ports",
-    "dep:nocterm-plugin-view",
-    "dep:nocterm-plugin-wasm",
-    "nocterm-plugins-ui/user",
-    "nocterm-workspace/user-plugins",
-    "nocterm-monitor-ui/user-plugins",
-    "nocterm-files/user-plugins",
-    "nocterm-ui/user-plugins",
-]
 
 [lints]
 workspace = true
@@ -197,7 +179,7 @@ nocterm-themes = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-# Writes the guest modules that the plugin check tests run (user-plugins builds only).
+# Writes the guest modules that the plugin check tests run.
 wat.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
 

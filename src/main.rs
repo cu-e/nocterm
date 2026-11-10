@@ -19,7 +19,6 @@ mod hub_agents_wiring;
 mod hub_server_access;
 mod hub_sources;
 mod keymap;
-#[cfg(feature = "user-plugins")]
 mod plugin_command;
 mod project_setup;
 mod settings_pages;
@@ -48,7 +47,6 @@ const AGENT_BRIDGE: &str = "agent-bridge";
 
 /// Which user plugins this run opens. `nocterm plugin check` leaves the process here;
 /// `nocterm plugin dev <file>` starts a developer session and `nocterm --safe-mode` loads none.
-#[cfg(feature = "user-plugins")]
 fn user_plugin_mode() -> shell_setup::UserPluginMode {
     match plugin_command::from_args(std::env::args_os().skip(1)) {
         plugin_command::Command::Exit(status) => std::process::exit(status),
@@ -58,11 +56,6 @@ fn user_plugin_mode() -> shell_setup::UserPluginMode {
             shell_setup::UserPluginMode::Installed
         }
     }
-}
-
-#[cfg(not(feature = "user-plugins"))]
-fn user_plugin_mode() -> shell_setup::UserPluginMode {
-    shell_setup::UserPluginMode::default()
 }
 
 fn main() -> anyhow::Result<()> {

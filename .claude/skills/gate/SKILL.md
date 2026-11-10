@@ -88,8 +88,7 @@ Additional checks follow actual changed inputs:
 - SSH/SFTP changes run the required SSH fixture; hub adapter changes run the
   hub end-to-end test (see Commands).
 - User-plugin code (`nocterm-plugin-*`, `plugins-ui`,
-  `src/shell_setup/user_plugin*`) also runs workspace clippy and tests with
-  `--features nocterm/user-plugins`; the default build compiles it out.
+  `src/shell_setup/user_plugin*`) is part of the default build and its workspace checks.
   Plugin SDK/example changes also build/test the example and run the gated
   WASM guest test. Preserve API/ABI compatibility checks for contract changes.
 - Dependencies/manifests require applicable unused-dependency and notice checks;
@@ -108,11 +107,9 @@ cargo fmt --all --check
 cargo build --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings
-cargo test --workspace --features nocterm/user-plugins
 cargo test --locked --manifest-path examples/plugins/focus-timer/Cargo.toml
 cargo build --locked --release --target wasm32-unknown-unknown --manifest-path examples/plugins/focus-timer/Cargo.toml
-NOCTERM_GUEST_WASM=$PWD/examples/plugins/focus-timer/target/wasm32-unknown-unknown/release/focus_timer.wasm NOCTERM_REQUIRE_WASM_GUEST=1 cargo test -p nocterm --features nocterm/user-plugins user_plugin
+NOCTERM_GUEST_WASM=$PWD/examples/plugins/focus-timer/target/wasm32-unknown-unknown/release/focus_timer.wasm NOCTERM_REQUIRE_WASM_GUEST=1 cargo test -p nocterm user_plugin
 NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
 NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm-hub-io --test hub
 NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm hub_live

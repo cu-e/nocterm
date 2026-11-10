@@ -448,8 +448,8 @@ switched off. The list is sanitized (valid ids once each, at most 64; ids this b
 know are kept, so a returning plugin finds its state) and `effective_disabled` returns
 the ids that are really off, never a required plugin and never a core contribution.
 `read_error` reports a table that does not read, so a writer can refuse instead of
-replacing it. The section also holds the `user_plugins` switch: whether a build with the
-`user-plugins` feature loads user plugins at the start (off by default, left out of the file
+replacing it. The section also holds the `user_plugins` switch: whether the
+application loads user plugins at the start (off by default, left out of the file
 while off; [ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)). It
 reads `nocterm-plugin-model` and `nocterm-settings`, has no GPUI types and no I/O
 ([ADR 0086](../adr/0086-plugin-enablement-and-the-plugins-page.md)).

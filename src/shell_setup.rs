@@ -13,21 +13,14 @@ mod plugins;
 #[cfg(test)]
 mod reference;
 mod settings;
-#[cfg(all(test, feature = "user-plugins"))]
+#[cfg(test)]
 mod user_plugin_contract;
-#[cfg(feature = "user-plugins")]
 mod user_plugin_panel;
-// The default build has no user plugins and composes nothing in their place.
-#[cfg(feature = "user-plugins")]
-mod user_plugins;
-#[cfg(not(feature = "user-plugins"))]
-#[path = "shell_setup/no_user_plugins.rs"]
 mod user_plugins;
 
 pub(crate) use plugins::AppPluginToggles;
 pub(crate) use settings::{GuestInputs, install_guest_pages};
 pub(crate) use user_plugins::UserShell;
-#[cfg(feature = "user-plugins")]
 pub(crate) use user_plugins::check_directory;
 
 /// Every system plugin of the application. A plugin appears here once, beside the others,
@@ -62,11 +55,9 @@ pub(crate) enum UserPluginMode {
     Installed,
     /// `--safe-mode`: no user plugin loads, whatever the setting says. The settings still save,
     /// so the switch can be changed for the next start.
-    #[cfg(feature = "user-plugins")]
     SafeMode,
     /// Load this file for consent in a session that loads no installed plugin, keeps the
     /// plugins' records, data and packages in memory, and does not write `settings.toml`.
-    #[cfg(feature = "user-plugins")]
     Dev(std::path::PathBuf),
 }
 
@@ -77,16 +68,14 @@ impl UserPluginMode {
     pub(crate) fn saves_settings(&self) -> bool {
         match self {
             Self::Installed => true,
-            #[cfg(feature = "user-plugins")]
             Self::SafeMode => true,
-            #[cfg(feature = "user-plugins")]
             Self::Dev(_) => false,
         }
     }
 }
 
 /// The plugins of the installation: the system catalog, what the windows read the installed
-/// plugins from, and the user plugins behind the `user-plugins` feature.
+/// plugins from, and the user plugins.
 #[derive(Clone)]
 pub(crate) struct Plugins {
     catalog: Arc<PluginCatalog>,
