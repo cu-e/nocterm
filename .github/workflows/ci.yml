@@ -357,8 +357,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test --manifest-path vendor/gpui-component/Cargo.toml --locked --features test-support --lib menu::app_menu_bar
 
+  # Installers ship for Windows, so a pull request also checks that the whole application
+  # builds there; release validation would otherwise be the first to compile it.
   device-unlock-native:
-    name: Device unlock on ${{ matrix.os }}
+    name: Native build on ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -383,6 +385,9 @@ jobs:
         run: cargo clippy --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock --all-targets -- -D warnings
       - name: Test portable envelope and native metadata without authentication prompts
         run: cargo test --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock
+      - name: Check the application builds for Windows
+        if: runner.os == 'Windows'
+        run: cargo check --locked -p nocterm
 
   # The one check to require in branch protection: it passes only when every
   # job above passed or was skipped by design, so adding a job never needs a
