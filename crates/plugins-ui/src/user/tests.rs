@@ -282,6 +282,9 @@ fn open_session(
     cx: &mut TestAppContext,
 ) -> Fixture {
     cx.update(|cx| {
+        // The removal dialog slides in over wall-clock time; reduced motion settles it on its
+        // first frame, so a click lands on the button whatever the machine's speed.
+        cx.set_reduce_motion(true);
         gpui_kit::init(cx);
         let store = nocterm_store::SettingsConfig::in_memory(Default::default()).install(cx);
         nocterm_ui::init(nocterm_ui::DesignTokens::builtin(), store, cx);
