@@ -1,7 +1,7 @@
 //! The editor lays itself out inside the width it is given: the bar stays one line inside its
 //! box and the tray stays below it, at a Settings page's width and at a narrow one.
 
-use gpui_kit::{Bounds, Pixels, TestAppContext, test::TestWindowExt as _};
+use gpui_kit::{Bounds, Pixels, TestAppContext};
 
 use super::{Fixture, open};
 
@@ -28,13 +28,7 @@ fn inside(inner: Bounds<Pixels>, outer: Bounds<Pixels>) -> bool {
 }
 
 fn bounds(fixture: &Fixture, id: &str, cx: &mut TestAppContext) -> Bounds<Pixels> {
-    let mut found = None;
-    fixture.frame(cx, |window, _| {
-        found = window
-            .try_find(id.to_owned())
-            .map(|element| element.bounds());
-    });
-    found.unwrap_or_else(|| panic!("{id} is not in the frame"))
+    fixture.bounds(id, cx)
 }
 
 /// The chips of the bar preview that the default layout places.

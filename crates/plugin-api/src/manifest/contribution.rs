@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use super::{HostContext, ManifestError, Runtime, declare::Declaration, is_plain, is_reserved};
 use crate::{
-    Kind, LimitError, LocalId, PluginIcon, Zone,
+    Edge, Kind, LimitError, LocalId, PluginIcon, Tabs, Zone,
     template::{ViewDto, ViewTemplate, ViewTemplateError},
 };
 
@@ -31,6 +31,17 @@ pub struct ContributionDto {
     pub zone: Option<Zone>,
     #[serde(default)]
     pub order: u16,
+    /// The edge of the tab area a toolbar suggests. Default: top. Toolbars only.
+    #[serde(default)]
+    pub edge: Option<Edge>,
+    /// Whether a toolbar is shown along its `edge` once the plugin is turned on, before the user
+    /// hides or moves it. Default: it waits until the user shows it. Toolbars only.
+    #[serde(default)]
+    pub shown: bool,
+    /// Which tabs a toolbar runs along: `own`, the tabs the plugin opened (the default), or
+    /// `all`. Toolbars only.
+    #[serde(default)]
+    pub tabs: Option<Tabs>,
     /// The template of a declarative contribution. A code package draws in code and has none.
     #[serde(default)]
     pub view: Option<ViewDto>,
@@ -43,8 +54,16 @@ pub enum ContributionError {
     Local(#[from] LimitError),
     #[error("invalid id")]
     Id(#[from] IdError),
-    #[error("it needs a `kind` of widget or panel")]
+    #[error("it needs a `kind` of widget, panel or toolbar")]
     NoKind,
+    #[error("only a toolbar runs along an `edge`")]
+    EdgeNotToolbar,
+    #[error("only a toolbar can be `shown` from the start; panels and widgets wait in the tray")]
+    ShownNotToolbar,
+    #[error("only a toolbar runs along `tabs`")]
+    TabsNotToolbar,
+    #[error("a plugin has one toolbar for its own tabs")]
+    SecondOwnTabsToolbar,
     #[error(
         "its title must be 1 to 48 letters, digits, spaces, `.`, `_` or `-`, and not a name the app reserves"
     )]
@@ -76,6 +95,7 @@ pub(super) fn build(
     let mut contributions = Vec::with_capacity(dtos.len());
     let mut views = BTreeMap::new();
     let mut locals = BTreeSet::new();
+    let mut own_tabs = BTreeSet::new();
     for dto in dtos {
         let fail = |source: ContributionError| ManifestError::Contribution {
             local: dto.local.chars().take(32).collect(),
@@ -83,6 +103,19 @@ pub(super) fn build(
         };
         let local = LocalId::parse(&dto.local).map_err(|e| fail(e.into()))?;
         let kind = dto.kind.ok_or_else(|| fail(ContributionError::NoKind))?;
+        if dto.edge.is_some() && kind != Kind::Toolbar {
+            return Err(fail(ContributionError::EdgeNotToolbar));
+        }
+        if dto.shown && kind != Kind::Toolbar {
+            return Err(fail(ContributionError::ShownNotToolbar));
+        }
+        if dto.tabs.is_some() && kind != Kind::Toolbar {
+            return Err(fail(ContributionError::TabsNotToolbar));
+        }
+        let tabs = dto.tabs.unwrap_or_default();
+        if kind == Kind::Toolbar && tabs == Tabs::Own && !own_tabs.insert(()) {
+            return Err(fail(ContributionError::SecondOwnTabsToolbar));
+        }
         if !is_plain(&dto.title) {
             return Err(fail(ContributionError::Title));
         }
@@ -103,7 +136,10 @@ pub(super) fn build(
             dto.icon.unwrap_or(PluginIcon::Plug).to_icon(),
             dto.zone.unwrap_or(Zone::Right).to_model(),
             dto.order,
-        )?;
+        )?
+        .along(dto.edge.unwrap_or(Edge::Top).to_model())
+        .shown_at_first(dto.shown)
+        .on_tabs(tabs.to_model());
         // The check that matters runs on the title the shell will show.
         if is_reserved(clamped.title(), host) {
             return Err(fail(ContributionError::Title));

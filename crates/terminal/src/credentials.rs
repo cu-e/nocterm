@@ -1,6 +1,7 @@
 //! Prompts answered from, and remembered in, a [`nocterm_session::CredentialStore`].
 use gpui_kit::Task;
 use nocterm_session::{CredentialId, PromptHop, Secret, SecretRequest};
+use nocterm_ssh_keys::PublicKeyText;
 use nocterm_workspace::SessionSpec;
 
 /// The credential is saved, but attaching its ID to connection history failed.
@@ -85,6 +86,21 @@ pub(crate) fn credential_for(spec: &SessionSpec, hop: Option<&PromptHop>) -> Opt
         .and_then(|jump| jump.credential)
 }
 
+/// The vault record that answers a request. A vault key names its own record,
+/// from the same hop's authentication; the others use the profile's saved
+/// secret. One-time answers have none.
+pub(crate) fn answering_credential(
+    spec: &SessionSpec,
+    hop: Option<&PromptHop>,
+    request: &SecretRequest,
+) -> Option<CredentialId> {
+    match request {
+        SecretRequest::PrivateKey { credential, .. } => Some(*credential),
+        request if request.is_storable() => credential_for(spec, hop),
+        _ => None,
+    }
+}
+
 /// Names the jump host a prompt belongs to.
 pub(crate) fn describe_hop(hop: &PromptHop) -> String {
     format!("Jump host {} ({})", hop.index + 1, hop.target)
@@ -109,6 +125,14 @@ fn describe_request(request: &SecretRequest) -> (String, bool, bool) {
         SecretRequest::KeyPassphrase { path, retry } => {
             (format!("Passphrase for {}", path.display()), *retry, true)
         }
+        SecretRequest::PrivateKey { public_key, .. } => (
+            match PublicKeyText::parse(public_key) {
+                Ok(public) => format!("Sign in with the vault key {}", public.fingerprint()),
+                Err(_) => "Sign in with a vault key".to_owned(),
+            },
+            false,
+            false,
+        ),
         SecretRequest::Interactive { prompt, echo } => {
             let prompt = prompt.trim();
             let title = if prompt.is_empty() {

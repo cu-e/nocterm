@@ -1,6 +1,6 @@
 //! The arrangement the shell draws: a preset checked against the catalog.
 
-use nocterm_plugin_model::{ContributionId, GroupId, Side, WidthClass, Zone};
+use nocterm_plugin_model::{ContributionId, Edge, GroupId, Side, WidthClass, Zone};
 
 /// A preset resolved against the catalog.
 ///
@@ -16,6 +16,8 @@ pub struct ResolvedLayout {
     pub(crate) tray: Vec<(ContributionId, GroupId)>,
     /// The contributions of disabled plugins that the bar names.
     pub(crate) disabled: Vec<ContributionId>,
+    /// The toolbars shown along each edge, in [`Edge::ALL`] order.
+    pub(crate) toolbars: [Vec<ContributionId>; 4],
 }
 
 /// One entry of a resolved zone.
@@ -95,8 +97,26 @@ impl ResolvedLayout {
         })
     }
 
-    /// Whether the bar places the contribution, as a widget or a group member.
+    /// The toolbars shown along `edge`, in order.
+    pub fn toolbars(&self, edge: Edge) -> &[ContributionId] {
+        &self.toolbars[edge_index(edge)]
+    }
+
+    /// The edge a shown toolbar runs along.
+    pub fn toolbar_edge(&self, id: &ContributionId) -> Option<Edge> {
+        Edge::ALL
+            .into_iter()
+            .find(|edge| self.toolbars(*edge).contains(id))
+    }
+
+    /// Whether the arrangement places the contribution: as a widget or a group member of the
+    /// bar, or as a toolbar along an edge.
     pub fn is_placed(&self, id: &ContributionId) -> bool {
+        self.toolbar_edge(id).is_some() || self.in_bar(id)
+    }
+
+    /// Whether the bar places the contribution, as a widget or a group member.
+    fn in_bar(&self, id: &ContributionId) -> bool {
         [Zone::Left, Zone::Center, Zone::Right]
             .into_iter()
             .flat_map(|zone| self.zone(zone))
@@ -139,7 +159,18 @@ impl ResolvedLayout {
             open: self.open.clone(),
             tray: self.tray.clone(),
             disabled: self.disabled.clone(),
+            toolbars: self.toolbars.clone(),
         }
+    }
+}
+
+/// The position of an edge in [`Edge::ALL`].
+pub(crate) fn edge_index(edge: Edge) -> usize {
+    match edge {
+        Edge::Top => 0,
+        Edge::Bottom => 1,
+        Edge::Left => 2,
+        Edge::Right => 3,
     }
 }
 

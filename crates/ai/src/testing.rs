@@ -40,9 +40,6 @@ impl AgentConnector for ScriptedConnector {
 mod storage;
 pub use storage::{InMemoryAgentRepository, StorageOperation};
 
-mod usage;
-pub use usage::ScriptedUsageSource;
-
 mod sandbox;
 mod workspace;
 pub use sandbox::ScriptedSandboxProbe;

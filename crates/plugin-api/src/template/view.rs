@@ -12,8 +12,8 @@ use thiserror::Error;
 
 use super::{Context, MAX_PLACEHOLDERS, Output, Placeholder, Scope, Template, TemplateError};
 use crate::{
-    LimitError, MAX_BADGE, MAX_BUTTON, MAX_DEPTH, MAX_LIST_ITEMS, MAX_NODE_KEY, MAX_NODES,
-    MAX_TEXT, MIN_REFRESH_MS, Node, NodeKind, PluginIcon, Refresh, Snapshot, Tone, View, ViewError,
+    Glyph, LimitError, MAX_BADGE, MAX_BUTTON, MAX_DEPTH, MAX_LIST_ITEMS, MAX_NODE_KEY, MAX_NODES,
+    MAX_TEXT, MIN_REFRESH_MS, Node, NodeKind, Refresh, Snapshot, Tone, View, ViewError,
     capability::Capability, capability::notifications::Own, error::key_syntax, sanitize_display,
 };
 
@@ -32,6 +32,16 @@ pub enum NodeKindName {
     List,
     Divider,
     Spacer,
+    /// A titled group: `text` is the title, `detail` an optional count, `folded` how it starts.
+    Section,
+    /// A row of a list: `text` is the title, `detail` the muted line, `icon` leads it.
+    Item,
+    /// A small button with an `icon`; `text` names its action in a tooltip. Needs a key.
+    IconButton,
+    /// A line of small muted `text`.
+    Caption,
+    /// A `text` label and its `detail` value on one line.
+    Field,
 }
 
 /// A node as written in a package.
@@ -49,11 +59,18 @@ pub struct NodeDto {
     /// An expression ending in `threshold(low, high)` that sets the tone.
     #[serde(default)]
     pub tone_when: Option<String>,
-    /// A template, for text, badge and button.
+    /// A template: the text of a text, badge, button or caption, the title of a section or an
+    /// item, the label of an icon button or a field.
     #[serde(default)]
     pub text: Option<String>,
+    /// A template: the count of a section, the detail line of an item, the value of a field.
     #[serde(default)]
-    pub icon: Option<PluginIcon>,
+    pub detail: Option<String>,
+    /// Whether a section starts folded; a section folds only when it has a key.
+    #[serde(default)]
+    pub folded: Option<bool>,
+    #[serde(default)]
+    pub icon: Option<Glyph>,
     /// An expression: a number for a meter, a switch value for a toggle.
     #[serde(default)]
     pub value: Option<String>,
@@ -128,14 +145,35 @@ enum Content {
     Row,
     Column,
     Text(Template),
-    Icon(PluginIcon),
+    Icon(Glyph),
     Meter(Placeholder),
     Badge(Template),
     Button(Template),
     Toggle(Placeholder),
-    List { each: bool },
+    List {
+        each: bool,
+    },
     Divider,
     Spacer,
+    Section {
+        title: Template,
+        count: Option<Template>,
+        folded: bool,
+    },
+    Item {
+        title: Template,
+        detail: Option<Template>,
+        icon: Option<Glyph>,
+    },
+    IconButton {
+        icon: Glyph,
+        label: Template,
+    },
+    Caption(Template),
+    Field {
+        label: Template,
+        value: Template,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -277,7 +315,25 @@ impl ViewTemplate {
 
 impl Content {
     fn holds(&self) -> bool {
-        matches!(self, Self::Row | Self::Column | Self::List { .. })
+        matches!(
+            self,
+            Self::Row | Self::Column | Self::List { .. } | Self::Section { .. } | Self::Item { .. }
+        )
+    }
+
+    /// The templates the node renders, for the placeholder budget.
+    fn templates(&self) -> [Option<&Template>; 2] {
+        match self {
+            Self::Text(template)
+            | Self::Badge(template)
+            | Self::Button(template)
+            | Self::Caption(template) => [Some(template), None],
+            Self::Section { title, count, .. } => [Some(title), count.as_ref()],
+            Self::Item { title, detail, .. } => [Some(title), detail.as_ref()],
+            Self::IconButton { label, .. } => [Some(label), None],
+            Self::Field { label, value } => [Some(label), Some(value)],
+            _ => [None, None],
+        }
     }
 
     fn repeats(&self) -> bool {
@@ -288,11 +344,13 @@ impl Content {
 impl Entry {
     fn holes(&self) -> usize {
         let own = match &self.content {
-            Content::Text(template) | Content::Badge(template) | Content::Button(template) => {
-                template.placeholders().count()
-            }
             Content::Meter(_) | Content::Toggle(_) => 1,
-            _ => 0,
+            content => content
+                .templates()
+                .into_iter()
+                .flatten()
+                .map(|template| template.placeholders().count())
+                .sum(),
         };
         own + usize::from(self.tone_when.is_some())
     }
@@ -319,6 +377,40 @@ impl Entry {
             Content::List { .. } => NodeKind::List,
             Content::Divider => NodeKind::Divider,
             Content::Spacer => NodeKind::Spacer,
+            Content::Section {
+                title,
+                count,
+                folded,
+            } => NodeKind::Section {
+                title: sanitize_display(&title.render(cx), MAX_BUTTON),
+                count: count
+                    .as_ref()
+                    .map(|count| sanitize_display(&count.render(cx), MAX_BADGE)),
+                folded: *folded,
+            },
+            Content::Item {
+                title,
+                detail,
+                icon,
+            } => NodeKind::Item {
+                title: sanitize_display(&title.render(cx), MAX_TEXT),
+                detail: detail
+                    .as_ref()
+                    .map(|detail| sanitize_display(&detail.render(cx), MAX_TEXT)),
+                icon: *icon,
+                selected: false,
+            },
+            Content::IconButton { icon, label } => NodeKind::IconButton {
+                icon: *icon,
+                label: sanitize_display(&label.render(cx), MAX_BUTTON),
+            },
+            Content::Caption(text) => {
+                NodeKind::Caption(sanitize_display(&text.render(cx), MAX_TEXT))
+            }
+            Content::Field { label, value } => NodeKind::Field {
+                label: sanitize_display(&label.render(cx), MAX_BUTTON),
+                value: sanitize_display(&value.render(cx), MAX_TEXT),
+            },
         };
         let tone = match &self.tone_when {
             Some(expression) => expression.tone(cx).unwrap_or(Tone::Muted),
@@ -340,69 +432,28 @@ fn compile_node(
     repeated: bool,
 ) -> Result<Entry, ViewTemplateError> {
     let kind = node.kind.ok_or(ViewTemplateError::NoKind { index })?;
-    let template = |text: &Option<String>| -> Result<Template, ViewTemplateError> {
-        let text = text.as_deref().ok_or(ViewTemplateError::Missing {
-            index,
-            field: "text",
-        })?;
-        let template = Template::parse(text)
-            .map_err(|source| ViewTemplateError::Template { index, source })?;
-        template
-            .check(scope)
-            .map_err(|source| ViewTemplateError::Template { index, source })?;
-        Ok(template)
-    };
-    let expression = |text: &Option<String>, wanted| -> Result<Placeholder, ViewTemplateError> {
-        let text = text.as_deref().ok_or(ViewTemplateError::Missing {
-            index,
-            field: "value",
-        })?;
-        let hole = Placeholder::parse(text)
-            .map_err(|source| ViewTemplateError::Template { index, source })?;
-        hole.expect(scope, wanted)
-            .map_err(|source| ViewTemplateError::Template { index, source })?;
-        Ok(hole)
-    };
     check_fields(index, node, kind)?;
     if repeated
-        && (node.key.is_some() || matches!(kind, NodeKindName::Button | NodeKindName::Toggle))
+        && (node.key.is_some()
+            || matches!(
+                kind,
+                NodeKindName::Button | NodeKindName::Toggle | NodeKindName::IconButton
+            ))
     {
         return Err(ViewTemplateError::RepeatedKey { index });
     }
-    let content = match kind {
-        NodeKindName::Row => Content::Row,
-        NodeKindName::Column => Content::Column,
-        NodeKindName::Text => Content::Text(template(&node.text)?),
-        NodeKindName::Badge => Content::Badge(template(&node.text)?),
-        NodeKindName::Button => Content::Button(template(&node.text)?),
-        NodeKindName::Icon => Content::Icon(node.icon.ok_or(ViewTemplateError::Missing {
-            index,
-            field: "icon",
-        })?),
-        NodeKindName::Meter => Content::Meter(expression(&node.value, Output::Number)?),
-        NodeKindName::Toggle => Content::Toggle(expression(&node.value, Output::Bool)?),
-        NodeKindName::List => Content::List {
-            each: each(index, node, scope)?,
-        },
-        NodeKindName::Divider => Content::Divider,
-        NodeKindName::Spacer => Content::Spacer,
-    };
-    let tone_when = node
-        .tone_when
-        .as_deref()
-        .map(|text| {
-            let hole = Placeholder::parse(text)
-                .map_err(|source| ViewTemplateError::Template { index, source })?;
-            hole.expect(scope, Output::Tone)
-                .map_err(|source| ViewTemplateError::Template { index, source })?;
-            Ok(hole)
-        })
-        .transpose()?;
+    let reader = Reader { index, node, scope };
+    let content = reader.content(kind)?;
+    let tone_when = reader.tone_when()?;
     if let Some(key) = &node.key {
         key_syntax(key, MAX_NODE_KEY, "key")
             .map_err(|source| ViewTemplateError::Key { index, source })?;
     }
-    if matches!(content, Content::Button(_) | Content::Toggle(_)) && node.key.is_none() {
+    if matches!(
+        content,
+        Content::Button(_) | Content::Toggle(_) | Content::IconButton { .. }
+    ) && node.key.is_none()
+    {
         return Err(ViewTemplateError::Missing {
             index,
             field: "key",
@@ -415,6 +466,111 @@ fn compile_node(
         tone_when,
         content,
     })
+}
+
+/// Reads the fields of one written node against the package's declarations.
+struct Reader<'a> {
+    index: usize,
+    node: &'a NodeDto,
+    scope: &'a Scope<'a>,
+}
+
+impl Reader<'_> {
+    fn missing(&self, field: &'static str) -> ViewTemplateError {
+        ViewTemplateError::Missing {
+            index: self.index,
+            field,
+        }
+    }
+
+    fn parse(&self, text: &str) -> Result<Template, ViewTemplateError> {
+        let index = self.index;
+        let template = Template::parse(text)
+            .map_err(|source| ViewTemplateError::Template { index, source })?;
+        template
+            .check(self.scope)
+            .map_err(|source| ViewTemplateError::Template { index, source })?;
+        Ok(template)
+    }
+
+    /// The `text` template, which the kind needs.
+    fn text(&self) -> Result<Template, ViewTemplateError> {
+        let text = self.node.text.as_deref().ok_or(self.missing("text"))?;
+        self.parse(text)
+    }
+
+    /// The `detail` template, if the node has one.
+    fn detail(&self) -> Result<Option<Template>, ViewTemplateError> {
+        self.node
+            .detail
+            .as_deref()
+            .map(|text| self.parse(text))
+            .transpose()
+    }
+
+    fn icon(&self) -> Result<crate::Glyph, ViewTemplateError> {
+        self.node.icon.ok_or(self.missing("icon"))
+    }
+
+    fn hole(&self, text: &str, wanted: Output) -> Result<Placeholder, ViewTemplateError> {
+        let index = self.index;
+        let hole = Placeholder::parse(text)
+            .map_err(|source| ViewTemplateError::Template { index, source })?;
+        hole.expect(self.scope, wanted)
+            .map_err(|source| ViewTemplateError::Template { index, source })?;
+        Ok(hole)
+    }
+
+    /// The `value` expression, which a meter or a toggle needs.
+    fn value(&self, wanted: Output) -> Result<Placeholder, ViewTemplateError> {
+        let text = self.node.value.as_deref().ok_or(self.missing("value"))?;
+        self.hole(text, wanted)
+    }
+
+    fn tone_when(&self) -> Result<Option<Placeholder>, ViewTemplateError> {
+        self.node
+            .tone_when
+            .as_deref()
+            .map(|text| self.hole(text, Output::Tone))
+            .transpose()
+    }
+
+    fn content(&self, kind: NodeKindName) -> Result<Content, ViewTemplateError> {
+        Ok(match kind {
+            NodeKindName::Row => Content::Row,
+            NodeKindName::Column => Content::Column,
+            NodeKindName::Text => Content::Text(self.text()?),
+            NodeKindName::Badge => Content::Badge(self.text()?),
+            NodeKindName::Button => Content::Button(self.text()?),
+            NodeKindName::Icon => Content::Icon(self.icon()?),
+            NodeKindName::Meter => Content::Meter(self.value(Output::Number)?),
+            NodeKindName::Toggle => Content::Toggle(self.value(Output::Bool)?),
+            NodeKindName::List => Content::List {
+                each: each(self.index, self.node, self.scope)?,
+            },
+            NodeKindName::Divider => Content::Divider,
+            NodeKindName::Spacer => Content::Spacer,
+            NodeKindName::Section => Content::Section {
+                title: self.text()?,
+                count: self.detail()?,
+                folded: self.node.folded.unwrap_or(false),
+            },
+            NodeKindName::Item => Content::Item {
+                title: self.text()?,
+                detail: self.detail()?,
+                icon: self.node.icon,
+            },
+            NodeKindName::IconButton => Content::IconButton {
+                icon: self.icon()?,
+                label: self.text()?,
+            },
+            NodeKindName::Caption => Content::Caption(self.text()?),
+            NodeKindName::Field => Content::Field {
+                label: self.text()?,
+                value: self.detail()?.ok_or(self.missing("detail"))?,
+            },
+        })
+    }
 }
 
 fn each(index: usize, node: &NodeDto, scope: &Scope<'_>) -> Result<bool, ViewTemplateError> {
@@ -438,15 +594,40 @@ fn check_fields(index: usize, node: &NodeDto, kind: NodeKindName) -> Result<(), 
         NodeKindName::List => "list",
         NodeKindName::Divider => "divider",
         NodeKindName::Spacer => "spacer",
+        NodeKindName::Section => "section",
+        NodeKindName::Item => "item",
+        NodeKindName::IconButton => "icon-button",
+        NodeKindName::Caption => "caption",
+        NodeKindName::Field => "field",
     };
     let text = matches!(
         kind,
-        NodeKindName::Text | NodeKindName::Badge | NodeKindName::Button
+        NodeKindName::Text
+            | NodeKindName::Badge
+            | NodeKindName::Button
+            | NodeKindName::Section
+            | NodeKindName::Item
+            | NodeKindName::IconButton
+            | NodeKindName::Caption
+            | NodeKindName::Field
+    );
+    let detail = matches!(
+        kind,
+        NodeKindName::Section | NodeKindName::Item | NodeKindName::Field
+    );
+    let icon = matches!(
+        kind,
+        NodeKindName::Icon | NodeKindName::Item | NodeKindName::IconButton
     );
     let value = matches!(kind, NodeKindName::Meter | NodeKindName::Toggle);
     let stray = [
         ("text", node.text.is_some() && !text),
-        ("icon", node.icon.is_some() && kind != NodeKindName::Icon),
+        ("detail", node.detail.is_some() && !detail),
+        (
+            "folded",
+            node.folded.is_some() && kind != NodeKindName::Section,
+        ),
+        ("icon", node.icon.is_some() && !icon),
         ("value", node.value.is_some() && !value),
         ("each", node.each.is_some() && kind != NodeKindName::List),
     ];

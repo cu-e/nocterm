@@ -1,7 +1,6 @@
 //! A refused connection history write keeps the authenticated vault credential.
 use super::*;
 use futures::executor::block_on;
-use gpui_kit::AppContext as _;
 use nocterm_session::{
     Auth, CredentialStore as _, Event, Prompt, Reply, Secret, SecretRequest, Target,
     testing::ScriptedTransport,
@@ -60,16 +59,16 @@ fn association_fixture(
                 Arc::new(|_| Box::pin(async { Ok(()) })),
             )
         });
-        let opened = open_vault(
+        let vault: Arc<dyn VaultAccess> = open_vault(
             VaultSetup {
                 file,
                 device_unlock: false,
             },
             &ready,
-            Some(connections.clone()),
             cx,
         )
         .unwrap();
+        let opened = install_vault(vault, &ready, Some(connections.clone()), cx);
         let service = opened.installed.service().clone();
         let installed = nocterm_terminal::install(
             nocterm_terminal::Deps::new(

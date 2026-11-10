@@ -7,9 +7,11 @@ use nocterm_plugin_api::{
     Capability, Effect, HostError, LocalId, Observed,
     capability::{
         clock::Now,
+        files::ServeFiles,
         monitor::UsageNow,
         notifications::{Own, PostNotice},
         panels::{SetPanelBadge, SetPanelOpen},
+        terminals::{OpenTerminal, ShowTerminalBar, WriteTerminal},
         transfers::CountsNow,
         workspace::Kind,
     },
@@ -32,6 +34,10 @@ pub struct PluginProviders {
     post: Sink<PostNotice>,
     open: Sink<SetPanelOpen>,
     badge: Sink<SetPanelBadge>,
+    open_terminal: Sink<OpenTerminal>,
+    write_terminal: Sink<WriteTerminal>,
+    serve_files: Sink<ServeFiles>,
+    terminal_bar: Sink<ShowTerminalBar>,
     surface: Option<Rc<dyn Surface>>,
 }
 
@@ -80,14 +86,42 @@ impl PluginProviders {
         self
     }
 
+    pub fn with_open_terminal(mut self, provider: Rc<impl Apply<OpenTerminal> + 'static>) -> Self {
+        self.open_terminal = Some(provider);
+        self
+    }
+
+    pub fn with_write_terminal(
+        mut self,
+        provider: Rc<impl Apply<WriteTerminal> + 'static>,
+    ) -> Self {
+        self.write_terminal = Some(provider);
+        self
+    }
+
+    /// The answers of the plugin to file requests of its terminals.
+    pub fn with_serve_files(mut self, provider: Rc<impl Apply<ServeFiles> + 'static>) -> Self {
+        self.serve_files = Some(provider);
+        self
+    }
+
+    /// The bars of the plugin's terminal tabs.
+    pub fn with_terminal_bar(
+        mut self,
+        provider: Rc<impl Apply<ShowTerminalBar> + 'static>,
+    ) -> Self {
+        self.terminal_bar = Some(provider);
+        self
+    }
+
     pub fn with_surface(mut self, provider: Rc<impl Surface + 'static>) -> Self {
         self.surface = Some(provider);
         self
     }
 
-    /// Whether this record has a provider for the capability `id`. The storage effects are not
-    /// provider effects (the host handles them), so they are never provided here. An unknown id
-    /// is not provided.
+    /// Whether this record has a provider for the capability `id`. The storage, request and
+    /// timer effects are not provider effects (the host handles them), so they are never
+    /// provided here. An unknown id is not provided.
     pub fn provides(&self, id: &str) -> bool {
         match id {
             Now::ID => self.clock.is_some(),
@@ -98,6 +132,10 @@ impl PluginProviders {
             PostNotice::ID => self.post.is_some(),
             SetPanelOpen::ID => self.open.is_some(),
             SetPanelBadge::ID => self.badge.is_some(),
+            OpenTerminal::ID => self.open_terminal.is_some(),
+            WriteTerminal::ID => self.write_terminal.is_some(),
+            ServeFiles::ID => self.serve_files.is_some(),
+            ShowTerminalBar::ID => self.terminal_bar.is_some(),
             _ => false,
         }
     }
@@ -121,8 +159,8 @@ impl PluginProviders {
         }
     }
 
-    /// Performs an effect that a provider performs. The storage effects are not provider
-    /// effects: the host handles them itself, so they are `denied` here.
+    /// Performs an effect that a provider performs. The storage, request and timer effects are
+    /// not provider effects: the host handles them itself, so they are `denied` here.
     pub fn perform(
         &self,
         plugin: &PluginId,
@@ -133,7 +171,14 @@ impl PluginProviders {
             Effect::NotificationsPost(request) => deliver(&self.post, plugin, request, cx),
             Effect::PanelsSetOpen(request) => deliver(&self.open, plugin, request, cx),
             Effect::PanelsSetBadge(request) => deliver(&self.badge, plugin, request, cx),
-            Effect::StorageSet(_) | Effect::StorageRemove(_) => Err(HostError::Denied),
+            Effect::TerminalsOpen(request) => deliver(&self.open_terminal, plugin, request, cx),
+            Effect::TerminalsWrite(request) => deliver(&self.write_terminal, plugin, request, cx),
+            Effect::TerminalsFiles(request) => deliver(&self.serve_files, plugin, request, cx),
+            Effect::TerminalsBar(request) => deliver(&self.terminal_bar, plugin, request, cx),
+            Effect::StorageSet(_)
+            | Effect::StorageRemove(_)
+            | Effect::NetRequest(_)
+            | Effect::TimersSet(_) => Err(HostError::Denied),
         }
     }
 

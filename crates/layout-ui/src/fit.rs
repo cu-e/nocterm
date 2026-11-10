@@ -5,13 +5,20 @@
 //! that fits; then with its zones packed side by side; and compact chips scroll sideways when
 //! even those do not fit.
 
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
 
 use gpui_kit::{Pixels, px};
 use nocterm_plugin_model::{PluginSet, Zone};
 use nocterm_window_layout::{ResolvedItem, ResolvedMember};
 
-use crate::{dnd, snapshot::Snapshot};
+use crate::{
+    face::{GAP_WIDTH, PILL_PADDING},
+    snapshot::Snapshot,
+};
 
 /// What a chip shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,12 +61,21 @@ impl Plan {
     }
 }
 
-/// The width the preview's box was drawn with last time.
+/// The width the preview's box was drawn with last time, and the plan made for it.
 ///
 /// The estimate of a chip is generous, so that a bar that is said to fit does.
 #[derive(Clone, Default)]
 pub(crate) struct Fit {
     width: Rc<Cell<Option<Pixels>>>,
+    /// The last plan, which holds while the layout, the plugins and the width are the same.
+    planned: Rc<RefCell<Option<Planned>>>,
+}
+
+struct Planned {
+    snapshot: Rc<Snapshot>,
+    catalog: Arc<PluginSet>,
+    width: Option<Pixels>,
+    plan: Plan,
 }
 
 /// An average advance of the small text of a chip.
@@ -70,8 +86,6 @@ const ICON: f32 = 16.;
 const CHIP_FRAME: f32 = 14.;
 /// The gap between the icon and the text of a chip.
 const INNER_GAP: f32 = 4.;
-/// The padding of a group around its panels, border included, and the gap between them.
-pub(crate) const PILL_PADDING: f32 = 2.;
 /// A separator and the room on both sides of it.
 const SEPARATOR: f32 = 5.;
 /// The gap between zones.
@@ -95,30 +109,49 @@ impl Fit {
     }
 
     /// How to draw the bar in a box as wide as the last one seen. Before any is seen, in full.
-    pub(crate) fn plan(&self, snapshot: &Snapshot, catalog: &PluginSet) -> Plan {
-        let Some(width) = self.width.get() else {
-            return Plan {
-                density: Density::Full,
-                spread: Spread::Centred,
-                scroll: None,
-            };
-        };
-        let room = f32::from(width);
-        let fits = |density, spread| needed(snapshot, catalog, density, spread) <= room;
-        let (density, spread) = [
-            (Density::Full, Spread::Centred),
-            (Density::Compact, Spread::Centred),
-            (Density::Compact, Spread::Packed),
-        ]
-        .into_iter()
-        .find(|(density, spread)| fits(*density, *spread))
-        .unwrap_or((Density::Compact, Spread::Packed));
-        let need = needed(snapshot, catalog, density, spread);
-        Plan {
-            density,
-            spread,
-            scroll: (need > room).then(|| px(need)),
+    pub(crate) fn plan(&self, snapshot: &Rc<Snapshot>, catalog: &Arc<PluginSet>) -> Plan {
+        let width = self.width.get();
+        if let Some(planned) = self.planned.borrow().as_ref()
+            && Rc::ptr_eq(&planned.snapshot, snapshot)
+            && Arc::ptr_eq(&planned.catalog, catalog)
+            && planned.width == width
+        {
+            return planned.plan;
         }
+        let plan = plan_for(width, snapshot, catalog);
+        self.planned.replace(Some(Planned {
+            snapshot: snapshot.clone(),
+            catalog: catalog.clone(),
+            width,
+            plan,
+        }));
+        plan
+    }
+}
+
+fn plan_for(width: Option<Pixels>, snapshot: &Snapshot, catalog: &PluginSet) -> Plan {
+    let Some(width) = width else {
+        return Plan {
+            density: Density::Full,
+            spread: Spread::Centred,
+            scroll: None,
+        };
+    };
+    let room = f32::from(width);
+    let fits = |density, spread| needed(snapshot, catalog, density, spread) <= room;
+    let (density, spread) = [
+        (Density::Full, Spread::Centred),
+        (Density::Compact, Spread::Centred),
+        (Density::Compact, Spread::Packed),
+    ]
+    .into_iter()
+    .find(|(density, spread)| fits(*density, *spread))
+    .unwrap_or((Density::Compact, Spread::Packed));
+    let need = needed(snapshot, catalog, density, spread);
+    Plan {
+        density,
+        spread,
+        scroll: (need > room).then(|| px(need)),
     }
 }
 
@@ -160,13 +193,13 @@ fn zone_width(snapshot: &Snapshot, catalog: &PluginSet, zone: Zone, density: Den
                     let title = snapshot.group_title(group).chars().count() as f32 * CHAR;
                     2. * PILL_PADDING + title + CHIP_FRAME
                 } else {
-                    // The border, and a gap that takes a drop around every member.
-                    2. + members.iter().sum::<f32>() + (members.len() + 1) as f32 * dnd::GAP_WIDTH
+                    // The border, and a gap around every member.
+                    2. + members.iter().sum::<f32>() + (members.len() + 1) as f32 * GAP_WIDTH
                 }
             }
         })
         .sum();
-    let gaps = (items.len() + 1) as f32 * dnd::GAP_WIDTH;
+    let gaps = (items.len() + 1) as f32 * GAP_WIDTH;
     (ZONE_BORDER + entries + gaps).max(EMPTY)
 }
 

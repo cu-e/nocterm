@@ -14,12 +14,19 @@ fn x_of(fixture: &Fixture, id: &'static str, cx: &mut TestAppContext) -> f32 {
     x.unwrap_or_else(|| panic!("{id} is not in the frame"))
 }
 
+/// How far across a chip its left half and its right half are.
+const LEFT_HALF: f32 = 0.25;
+const RIGHT_HALF: f32 = 0.75;
+
 #[gpui_kit::test]
-fn a_chip_dropped_on_another_chip_takes_the_place_in_front_of_it(cx: &mut TestAppContext) {
+fn a_chip_dropped_on_the_left_half_of_another_takes_the_place_in_front_of_it(
+    cx: &mut TestAppContext,
+) {
     let fixture = open(cx);
-    fixture.drag(
+    fixture.drag_across(
         "layout-preview:shell.terminal",
         "layout-preview:shell.transfers",
+        LEFT_HALF,
         cx,
     );
 
@@ -37,6 +44,27 @@ fn a_chip_dropped_on_another_chip_takes_the_place_in_front_of_it(cx: &mut TestAp
         stored.presets.len(),
         1,
         "the first edit saved a custom layout"
+    );
+}
+
+#[gpui_kit::test]
+fn a_chip_dropped_on_the_right_half_of_another_takes_the_place_after_it(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    fixture.drag_across(
+        "layout-preview:shell.terminal",
+        "layout-preview:shell.notices",
+        RIGHT_HALF,
+        cx,
+    );
+
+    assert_eq!(
+        fixture.left_to_right(&RIGHT, cx),
+        [
+            "shell.notices",
+            "shell.terminal",
+            "shell.transfers",
+            "tools.clock"
+        ]
     );
 }
 
@@ -97,11 +125,14 @@ fn a_panel_dropped_on_another_group_joins_it_at_the_end(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
-fn a_panel_dropped_on_a_panel_of_another_group_lands_in_front_of_it(cx: &mut TestAppContext) {
+fn a_panel_dropped_on_the_left_half_of_a_panel_of_another_group_lands_in_front_of_it(
+    cx: &mut TestAppContext,
+) {
     let fixture = open(cx);
-    fixture.drag(
+    fixture.drag_across(
         "layout-preview:shell.files",
         "layout-preview:shell.agent",
+        LEFT_HALF,
         cx,
     );
 
@@ -113,6 +144,58 @@ fn a_panel_dropped_on_a_panel_of_another_group_lands_in_front_of_it(cx: &mut Tes
         x_of(&fixture, "layout-preview:shell.files", cx)
             > x_of(&fixture, "layout-preview-group:assistant", cx),
         "it is in the assistant's group"
+    );
+}
+
+#[gpui_kit::test]
+fn a_panel_dropped_at_the_start_or_the_end_edge_of_a_group_is_its_first_or_last_member(
+    cx: &mut TestAppContext,
+) {
+    let fixture = open(cx);
+    let members = ["shell.servers", "shell.files", "shell.agent"];
+    let in_sidebar = |fixture: &Fixture, cx: &mut TestAppContext| {
+        let pill = fixture.bounds("layout-preview-group:navigation", cx);
+        let chip = fixture.bounds("layout-preview:shell.agent", cx);
+        chip.left() >= pill.left() && chip.right() <= pill.right()
+    };
+    // The outer half of the first member, then of the last one.
+    for (edge, across, order) in [
+        (
+            "shell.servers",
+            LEFT_HALF,
+            ["shell.agent", "shell.servers", "shell.files"],
+        ),
+        (
+            "shell.files",
+            RIGHT_HALF,
+            ["shell.servers", "shell.files", "shell.agent"],
+        ),
+    ] {
+        let edge = format!("layout-preview:{edge}");
+        fixture.drag_across("layout-preview:shell.agent", &edge, across, cx);
+
+        assert_eq!(fixture.left_to_right(&members, cx), order, "{edge}");
+        assert!(in_sidebar(&fixture, cx), "{edge}: inside the group");
+    }
+}
+
+#[gpui_kit::test]
+fn a_panel_moved_inside_its_group_leaves_the_group_unselected(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    fixture.drag_across(
+        "layout-preview:shell.servers",
+        "layout-preview:shell.files",
+        RIGHT_HALF,
+        cx,
+    );
+
+    assert_eq!(
+        fixture.left_to_right(&["shell.servers", "shell.files"], cx),
+        ["shell.files", "shell.servers"]
+    );
+    assert!(
+        !fixture.is_selected("group:navigation", cx),
+        "the release over the group was the drop, not a click on it"
     );
 }
 
@@ -149,9 +232,10 @@ fn an_item_dragged_out_of_the_tray_returns_in_front_of_the_chip_it_is_dropped_on
 ) {
     let fixture = open(cx);
     fixture.drag("layout-preview:tools.clock", "layout-tray", cx);
-    fixture.drag(
+    fixture.drag_across(
         "layout-tray:tools.clock",
         "layout-preview:shell.notices",
+        LEFT_HALF,
         cx,
     );
 
@@ -193,9 +277,10 @@ fn the_pinned_notice_cannot_be_dropped_in_the_tray_and_the_editor_says_why(
 #[gpui_kit::test]
 fn a_drop_is_one_step_of_the_history(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.drag(
+    fixture.drag_across(
         "layout-preview:shell.terminal",
         "layout-preview:shell.transfers",
+        LEFT_HALF,
         cx,
     );
     fixture.click("layout-undo", cx);
@@ -206,16 +291,13 @@ fn a_drop_is_one_step_of_the_history(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn nothing_is_written_when_an_item_is_dropped_where_it_already_is(cx: &mut TestAppContext) {
     let fixture = open(cx);
-    fixture.drag(
-        "layout-preview:shell.transfers",
-        "layout-preview:shell.transfers",
-        cx,
-    );
-    fixture.drag(
-        "layout-preview:shell.transfers",
-        "layout-preview:tools.clock",
-        cx,
-    );
+    for (to, across) in [
+        ("layout-preview:shell.transfers", LEFT_HALF),
+        ("layout-preview:shell.transfers", RIGHT_HALF),
+        ("layout-preview:tools.clock", LEFT_HALF),
+    ] {
+        fixture.drag_across("layout-preview:shell.transfers", to, across, cx);
+    }
 
     assert_eq!(fixture.stored(cx), LayoutSettings::default());
 }

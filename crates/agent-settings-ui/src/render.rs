@@ -29,6 +29,7 @@ pub(super) fn render(
 ) -> AnyElement {
     let ai = view.settings().setting::<AiSettings>(cx).clone();
     let off = !ai.enabled;
+    let available = view.agents().available(cx);
     let mut page = v_flex()
         .w_full()
         .child(form::page_header(
@@ -43,7 +44,7 @@ pub(super) fn render(
         .when_some(view.ai.error.clone(), |page, error| page.child(form::error_text(error, cx)));
     let mut agents: Vec<AnyElement> = Vec::new();
     for id in view.ai.agents.clone() {
-        agents.push(agent(view, &id, &ai, off, cx));
+        agents.push(agent(view, &id, &ai, &available, off, cx));
     }
     agents.push(add_agent(view, off, cx));
     page = page.child(form::section("Agents", agents, cx));
@@ -252,12 +253,13 @@ fn agent(
     view: &AgentSettingsPage,
     id: &str,
     ai: &AiSettings,
+    available: &nocterm_ai::AvailableAgents,
     off: bool,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
     let mut block = v_flex()
         .w_full()
-        .child(agent_heading(view, id, ai, off, cx));
+        .child(agent_heading(view, id, ai, available, off, cx));
     if view.ai.expanded.contains(id) {
         block = block.child(agent_details(view, id, cx));
     }
@@ -281,6 +283,7 @@ fn agent_heading(
     view: &AgentSettingsPage,
     id: &str,
     ai: &AiSettings,
+    available: &nocterm_ai::AvailableAgents,
     off: bool,
     cx: &mut Context<AgentSettingsPage>,
 ) -> AnyElement {
@@ -309,7 +312,7 @@ fn agent_heading(
                     .small()
                     .text_color(cx.theme().muted_foreground),
                 )
-                .child(agent_icon(view.agents().profile(id, cx)).small())
+                .child(agent_icon(view.agents().profile_in(available, id)).small())
                 .child(div().text_sm().font_medium().child(name))
                 .child(
                     div()

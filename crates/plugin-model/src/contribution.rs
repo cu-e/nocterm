@@ -13,6 +13,9 @@ pub enum ContributionKind {
     Panel,
     /// A view in the status bar.
     Widget,
+    /// A bar along one edge of the tab area: under the tab bars, above the status bar or beside
+    /// the tabs.
+    Toolbar,
 }
 
 /// A zone of the status bar.
@@ -22,6 +25,48 @@ pub enum Zone {
     Left,
     Center,
     Right,
+}
+
+/// The edge of the tab area a toolbar runs along.
+///
+/// `Top` is under the tab bars, `Bottom` above the status bar, `Left` and `Right` beside the
+/// tabs, inside any panel columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl Edge {
+    /// Every edge, in declaration order.
+    pub const ALL: [Self; 4] = [Self::Top, Self::Bottom, Self::Left, Self::Right];
+
+    /// A toolbar on this edge is a row; on the others it is a column.
+    pub const fn is_horizontal(self) -> bool {
+        matches!(self, Self::Top | Self::Bottom)
+    }
+
+    /// The word for the edge in documents and menus.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+/// Which tabs a toolbar runs along.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ToolbarTabs {
+    /// Only the tabs its plugin opened, inside each of them.
+    Own,
+    /// Every tab: along the window's tab area.
+    All,
 }
 
 /// Which side of the content a panel group opens on.
@@ -162,8 +207,10 @@ pub struct GroupSpec {
 /// Where the default arrangement puts a contribution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
+    /// The status bar zone of a widget or of a panel's toggle. A toolbar takes its edge from
+    /// [`SystemContribution::edge`] and its zone is not read.
     pub zone: Zone,
-    /// Sorts contributions within a zone; unique within it.
+    /// Sorts contributions within a zone (or the toolbars along an edge); unique within it.
     pub order: u16,
     /// The group a panel opens in. Widgets have none.
     pub group: Option<&'static str>,
@@ -181,8 +228,11 @@ pub struct SystemContribution {
     pub placement: Placement,
     /// Present exactly for panels.
     pub panel: Option<PanelTraits>,
+    /// The edge a toolbar runs along by default. Present exactly for toolbars.
+    pub edge: Option<Edge>,
     /// Sample text for editor previews.
     pub preview: Option<&'static str>,
-    /// A pinned contribution can move but not leave the bar.
+    /// A pinned contribution can move but not leave the bar. Pinning has no effect on a panel or
+    /// a toolbar.
     pub pinned: bool,
 }

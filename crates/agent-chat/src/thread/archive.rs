@@ -172,15 +172,28 @@ impl Archive {
         self.draft_overlay = Some(DraftOverlay::new(text, updated));
         true
     }
+    pub(super) fn draft_capacity(&self) -> usize {
+        self.draft_overlay
+            .as_ref()
+            .map_or(0, |overlay| overlay.text.len().saturating_mul(2))
+            .saturating_add(self.summary().map_or(0, |summary| {
+                summary
+                    .id
+                    .len()
+                    .saturating_add(summary.agent_id.len())
+                    .saturating_mul(2)
+            }))
+            .saturating_add(64 * 1024)
+    }
     pub(super) fn draft_patch(&self) -> Option<SavedChat> {
         let summary = self.summary()?;
         self.draft_overlay.as_ref().map(|overlay| {
-            let mut chat = SavedChat::archive_draft_in_scope(
+            let mut chat = SavedChat::archive_draft_in_environment(
                 summary.id.clone(),
                 summary.agent_id.clone(),
                 overlay.text.clone(),
                 overlay.updated,
-                summary.scope,
+                summary.chat_scope(),
             );
             chat.version = summary.transcript_version().wire();
             chat
@@ -191,7 +204,7 @@ impl Archive {
         load_id: LoadId,
         current: bool,
         result: Result<SavedChat, AgentStorageError>,
-        permit: HistoryPermit,
+        permit: Option<HistoryPermit>,
     ) -> LoadOutcome {
         let ArchivePhase::Archived { loading, .. } = &mut self.phase else {
             return LoadOutcome::Stale;
@@ -202,7 +215,7 @@ impl Archive {
         *loading = None;
         match result {
             Ok(chat) => {
-                self.permit = Some(permit);
+                self.permit = permit;
                 LoadOutcome::Hydrate {
                     chat: Box::new(chat),
                     overlay: self.draft_overlay.take(),

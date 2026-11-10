@@ -4,7 +4,7 @@ use gpui_kit::{
     Action, AnyView, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Menu, Pixels, SharedString, Subscription, Window,
     component::dock::{
-        DockArea, DockEvent, DockPlacement, DockSkin, PaneRef, PanelId, PanelStyle, panel_handle,
+        DockArea, DockEvent, DockPlacement, PaneRef, PanelId, PanelStyle, panel_handle,
     },
     div,
     prelude::*,
@@ -45,8 +45,8 @@ use panel_groups::GroupKey;
 mod ports;
 mod registration;
 pub use registration::{
-    ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, WidgetRegistration,
-    ZoneAware,
+    ExpandablePanel, PanelRegistration, PanelRequest, RegistrationError, ToolbarRegistration,
+    WidgetRegistration, ZoneAware,
 };
 mod layout_edit;
 mod layout_switch;
@@ -120,6 +120,9 @@ pub enum WorkspaceEvent {
     ConnectionsChanged,
     /// A panel group was shown or hidden.
     PanelVisibilityChanged,
+    /// A toolbar was shown, hidden or moved to another edge; [`Workspace::toolbar_edge`] tells
+    /// where each is now.
+    ToolbarsChanged,
 }
 
 /// Close commands use the clicked tab's pane and its current visual order.
@@ -266,10 +269,12 @@ impl Workspace {
                 let _ = workspace.update(cx, |this, cx| this.layout_settings_changed(window, cx));
             });
         });
+        let surfaces = surfaces::WindowSurfaces::new(window, cx);
+        let top_toolbars = surfaces.window().top_toolbars();
         let mut this = Self {
             focus_handle: cx.focus_handle(),
-            surfaces: surfaces::WindowSurfaces::new(window, cx),
-            chrome: chrome::Chrome::new(cx.focus_handle()),
+            surfaces,
+            chrome: chrome::Chrome::new(cx.focus_handle(), top_toolbars),
             panels: panel_groups::PanelGroups::new(),
             body: layout::Body::new(deps.layout.clone()),
             shell,
@@ -277,6 +282,15 @@ impl Workspace {
             actions: actions::ActionRegistry::default(),
             registrations: registration::Registrations::new(),
         };
+        // The tabs and the status bar's widgets are drawn as cached views: a change of
+        // the workspace's own state draws them again, a redraw for a sidebar panel's
+        // change reuses them.
+        cx.observe_self(|this, cx| {
+            this.surfaces.outer().update(cx, |_, cx| cx.notify());
+            this.chrome.status_bar().redraw_widgets(cx);
+            this.chrome.toolbars().redraw(cx);
+        })
+        .detach();
         if let Some(clock) = deps.clock
             && let Err(error) = crate::clock::register(clock, settings, &mut this, window, cx)
         {
@@ -310,6 +324,14 @@ impl Workspace {
     ) {
         let focus = menu.read(cx).focus_handle(cx);
         self.chrome.install_new_tab(menu.into(), focus);
+        cx.notify();
+    }
+
+    /// The view shown in the title bar after the application menu: the
+    /// environment this window belongs to. The view owns its own popover and
+    /// focus; the workspace only gives it the place.
+    pub fn set_environment_menu<V: Render>(&mut self, menu: Entity<V>, cx: &mut Context<Self>) {
+        self.chrome.install_environment(menu.into());
         cx.notify();
     }
 

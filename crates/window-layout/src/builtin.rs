@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use nocterm_plugin_model::{PluginId, PluginSet};
 
-use crate::{Bar, LayoutPreset, PresetId, ResolvedLayout, resolve};
+use crate::{Bar, LayoutPreset, PresetId, ResolvedLayout, Toolbars, resolve};
 
 /// A built-in layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -48,6 +48,7 @@ impl BuiltIn {
             bar: Bar::default(),
             tray: Vec::new(),
             open: Vec::new(),
+            toolbars: Toolbars::default(),
         }
     }
 

@@ -13,11 +13,12 @@ layer = "adapter"
 nocterm-ai.workspace = true
 nocterm-core.workspace = true
 nocterm-session.workspace = true
-serde_json.workspace = true
 toml.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+nocterm-ai = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 tempfile.workspace = true
 

@@ -165,9 +165,139 @@
       "session_derived": false,
       "since": "0.1",
       "target": "own-data"
+    },
+    {
+      "consent": "Send requests to the web address you enter in its settings, with the key you give it.",
+      "deprecated": null,
+      "doc": "Sends a request to the web address the user entered in the setting the `[network]` table names, with the credential the user entered, and answers with a `response` event under the request's key.",
+      "excluded": "Other addresses, cookies, redirects and reading the key.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "net.request",
+      "live_cap": 4,
+      "rate": {
+        "per_ms": 1000,
+        "uses": 8
+      },
+      "session_derived": false,
+      "since": "0.1",
+      "target": "user-origin"
+    },
+    {
+      "consent": "Wake itself up after a delay to refresh what it shows.",
+      "deprecated": null,
+      "doc": "Wakes the plugin with a `timer` event under the effect's key after one second to one hour; setting a key that waits replaces it.",
+      "excluded": "Delays shorter than a second.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "timers.set",
+      "live_cap": 8,
+      "rate": {
+        "per_ms": 1000,
+        "uses": 8
+      },
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-timer"
+    },
+    {
+      "consent": "Open terminal tabs that show what it writes and pass on what you type.",
+      "deprecated": null,
+      "doc": "Opens a terminal tab, or shows it, after a click. Lines typed into it, by the user or an AI chat it is attached to, arrive as `terminal-line` events.",
+      "excluded": "Your other terminals and running anything on this computer.",
+      "family": "effect",
+      "fields": null,
+      "gesture": true,
+      "id": "terminals.open",
+      "live_cap": 4,
+      "rate": null,
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-terminal"
+    },
+    {
+      "consent": "Write text to the terminal tabs it opened.",
+      "deprecated": null,
+      "doc": "Writes text with colours to one of the plugin's open terminal tabs.",
+      "excluded": "Other terminals, and control sequences other than colours.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "terminals.write",
+      "live_cap": null,
+      "rate": {
+        "per_ms": 1000,
+        "uses": 50
+      },
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-terminal"
+    },
+    {
+      "consent": "Show the files of the servers it opens as terminal tabs in your file browser, and let AI chats you attach those tabs to read and change them.",
+      "deprecated": null,
+      "doc": "Serves the files of a terminal tab the plugin opened with `files`: the file browser shows them while the tab is active and an AI chat it is attached to reads and changes them with its file tools. The host asks with `file-request` events and the plugin answers with this effect under the request's number.",
+      "excluded": "Files on this computer, and the files of your other terminals.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "terminals.files",
+      "live_cap": null,
+      "rate": {
+        "per_ms": 1000,
+        "uses": 50
+      },
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-terminal"
+    },
+    {
+      "consent": "Take its toolbar off one of the terminal tabs it opened, or put it back.",
+      "deprecated": null,
+      "doc": "Takes the plugin's toolbar for its own tabs off one terminal tab it opened, or puts it back. The window's layout places the toolbar (the manifest suggests, the user moves or hides it), so the edge named is not read.",
+      "excluded": "Other tabs, and anything outside the tabs it opened.",
+      "family": "effect",
+      "fields": null,
+      "gesture": false,
+      "id": "terminals.bar",
+      "live_cap": null,
+      "rate": {
+        "per_ms": 1000,
+        "uses": 10
+      },
+      "session_derived": false,
+      "since": "0.1",
+      "target": "own-terminal"
     }
   ],
+  "edges": [
+    "top",
+    "bottom",
+    "left",
+    "right"
+  ],
   "effect_requests": {
+    "net.request": {
+      "body": {
+        "required": false,
+        "type": "text"
+      },
+      "bytes": {
+        "required": false,
+        "type": "bool"
+      },
+      "method": {
+        "required": true,
+        "type": "choice",
+        "vocabulary": "http_methods"
+      },
+      "path": {
+        "required": true,
+        "type": "text"
+      }
+    },
     "notifications.post": {
       "notice_key": {
         "required": false,
@@ -220,13 +350,81 @@
         "required": true,
         "type": "text"
       }
+    },
+    "terminals.bar": {
+      "edge": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "edges"
+      },
+      "terminal": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "terminals.files": {
+      "answer": {
+        "required": true,
+        "type": "any"
+      },
+      "request": {
+        "max": 4294967295,
+        "min": 0,
+        "required": true,
+        "type": "integer"
+      },
+      "terminal": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "terminals.open": {
+      "files": {
+        "required": false,
+        "type": "bool"
+      },
+      "local": {
+        "required": true,
+        "type": "text"
+      },
+      "terminal": {
+        "required": true,
+        "type": "text"
+      },
+      "title": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "terminals.write": {
+      "terminal": {
+        "required": true,
+        "type": "text"
+      },
+      "text": {
+        "required": true,
+        "type": "text"
+      }
+    },
+    "timers.set": {
+      "after_ms": {
+        "max": 4294967295,
+        "min": 0,
+        "required": true,
+        "type": "integer"
+      }
     }
   },
   "events": [
     "activated",
     "toggled",
     "visibility-changed",
-    "settings-changed"
+    "settings-changed",
+    "response",
+    "timer",
+    "terminal-line",
+    "terminal-closed",
+    "file-request"
   ],
   "filters": [
     "round(n)",
@@ -234,11 +432,84 @@
     "hh-mm",
     "threshold(low, high)"
   ],
+  "glyphs": [
+    "box",
+    "gem",
+    "hexagon",
+    "plug",
+    "puzzle",
+    "shapes",
+    "activity",
+    "arrow-down",
+    "arrow-left",
+    "arrow-up",
+    "bell",
+    "cable",
+    "calendar",
+    "check",
+    "chevron-down",
+    "chevron-left",
+    "chevron-right",
+    "circle-alert",
+    "circle-check",
+    "circle-x",
+    "clock",
+    "container",
+    "copy",
+    "cpu",
+    "ellipsis",
+    "external-link",
+    "eye",
+    "file",
+    "file-text",
+    "folder",
+    "folder-open",
+    "gauge",
+    "globe",
+    "hard-drive",
+    "inbox",
+    "info",
+    "key",
+    "loader",
+    "lock",
+    "memory",
+    "network",
+    "pause",
+    "pencil",
+    "play",
+    "plus",
+    "minus",
+    "refresh",
+    "rotate",
+    "search",
+    "send",
+    "server",
+    "server-off",
+    "settings",
+    "square",
+    "stop",
+    "star",
+    "terminal",
+    "thermometer",
+    "trash",
+    "triangle-alert",
+    "upload",
+    "user",
+    "wrench",
+    "x",
+    "zap"
+  ],
   "host_errors": [
     "not-granted",
     "denied",
     "rate-limited",
     "unavailable"
+  ],
+  "http_methods": [
+    "get",
+    "post",
+    "put",
+    "delete"
   ],
   "icons": [
     "box",
@@ -250,19 +521,31 @@
   ],
   "kinds": [
     "widget",
-    "panel"
+    "panel",
+    "toolbar"
   ],
   "limits": {
     "badge-chars": 8,
     "button-chars": 48,
     "capabilities-per-package": 16,
+    "chart-points": 120,
+    "chart-series": 2,
+    "code-chars": 16384,
     "contributions-per-package": 8,
     "description-chars": 160,
     "effect-key-chars": 32,
     "effects-per-call": 8,
+    "file-bytes": 163840,
+    "file-entries": 1000,
+    "file-name-bytes": 255,
+    "file-path-bytes": 1024,
+    "file-reason-chars": 200,
+    "file-requests-waiting": 8,
+    "file-timeout-ms": 30000,
     "list-items": 100,
     "live-notices": 3,
     "min-refresh-ms": 250,
+    "min-timer-ms": 1000,
     "name-chars": 48,
     "node-key-chars": 32,
     "nodes-per-view": 256,
@@ -270,6 +553,12 @@
     "package-bytes": 262144,
     "placeholders-per-view": 64,
     "reason-chars": 160,
+    "request-body-bytes": 229376,
+    "request-path-bytes": 2048,
+    "request-timeout-ms": 15000,
+    "requests-in-flight": 4,
+    "response-body-bytes": 262144,
+    "response-bytes-mode-bytes": 163840,
     "round-decimals": 2,
     "setting-fields": 32,
     "setting-groups": 8,
@@ -282,11 +571,23 @@
     "storage-total-bytes": 65536,
     "storage-value-bytes": 4096,
     "template-chars": 512,
+    "terminal-key-chars": 32,
+    "terminal-line-chars": 1024,
+    "terminal-title-chars": 48,
+    "terminal-write-bytes": 65536,
+    "terminals-open": 4,
     "text-chars": 200,
+    "timer-max-ms": 3600000,
+    "timers-waiting": 8,
     "view-depth": 8
   },
   "manifest": {
     "contribution": {
+      "edge": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "edges"
+      },
       "icon": {
         "required": false,
         "type": "choice",
@@ -306,6 +607,15 @@
         "min": 0,
         "required": false,
         "type": "integer"
+      },
+      "shown": {
+        "required": false,
+        "type": "bool"
+      },
+      "tabs": {
+        "required": false,
+        "type": "choice",
+        "vocabulary": "tabs"
       },
       "title": {
         "required": true,
@@ -332,14 +642,22 @@
       }
     },
     "contribution.view.nodes": {
+      "detail": {
+        "required": false,
+        "type": "text"
+      },
       "each": {
         "required": false,
         "type": "text"
       },
+      "folded": {
+        "required": false,
+        "type": "bool"
+      },
       "icon": {
         "required": false,
         "type": "choice",
-        "vocabulary": "icons"
+        "vocabulary": "glyphs"
       },
       "key": {
         "required": false,
@@ -399,6 +717,10 @@
         "required": true,
         "type": "text"
       },
+      "network": {
+        "required": false,
+        "type": "table"
+      },
       "optional_capabilities": {
         "required": false,
         "type": "text-list"
@@ -419,6 +741,24 @@
       "settings": {
         "required": false,
         "type": "table"
+      }
+    },
+    "network": {
+      "credential_header": {
+        "required": false,
+        "type": "text"
+      },
+      "credential_prefix": {
+        "required": false,
+        "type": "text"
+      },
+      "credential_setting": {
+        "required": false,
+        "type": "text"
+      },
+      "origin_setting": {
+        "required": true,
+        "type": "text"
       }
     },
     "settings": {
@@ -546,7 +886,14 @@
     "toggle",
     "list",
     "divider",
-    "spacer"
+    "spacer",
+    "code",
+    "section",
+    "item",
+    "icon-button",
+    "caption",
+    "field",
+    "chart"
   ],
   "notice_tones": [
     "info",
@@ -566,7 +913,12 @@
     "choice",
     "multi-choice",
     "number",
-    "text"
+    "text",
+    "secret"
+  ],
+  "tabs": [
+    "own",
+    "all"
   ],
   "tones": [
     "default",

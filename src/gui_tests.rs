@@ -17,6 +17,11 @@ use nocterm_workspace::{SessionSpec, Workspace};
 mod agent_installation;
 mod chat_history;
 mod default_shell_geometry;
+mod hub_account;
+mod hub_live;
+mod hub_ports;
+use hub_ports::HubPorts;
+mod hub_windows;
 mod keymap;
 mod menu_layouts;
 mod menu_tabs;
@@ -53,6 +58,18 @@ impl Transport for MockTransport {
         let (session, driver) = nocterm_session::channel(None);
         self.drivers.lock().unwrap().push(Arc::new(driver));
         session
+    }
+    /// A hub window opens with its account's captured source. Like a real
+    /// producer, the mock enforces that source instead of discarding it.
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        match options.source().check() {
+            Ok(()) => self.open(request),
+            Err(error) => Session::failed(error.into()),
+        }
     }
 }
 
@@ -181,7 +198,7 @@ fn fixture_with_settings(
                 if with_local {
                     let local = transport.clone();
                     nocterm_terminal::LocalSessions::new(
-                        Arc::new(move |_| local.clone()),
+                        Arc::new(move |_, _| local.clone()),
                         "/bin/bash".into(),
                     )
                 } else {
@@ -218,7 +235,7 @@ fn fixture_with_settings(
             workspace,
             terminal,
             booted.keymap(),
-            booted.settings_deps().settings().clone(),
+            booted.settings_deps(),
         )
     });
     emit(cx, &transport, 0, Event::Connected);
@@ -290,6 +307,7 @@ fn boot_with_ports(
         themes,
         unsupported_sandbox(),
         crate::shell_setup::UserPluginMode::default(),
+        None,
         cx,
     )
 }
@@ -324,6 +342,10 @@ fn fixture_hosts(
             activation.clone(),
         )),
         workspace_sessions: activation,
+        hubs: None,
+        hub_agents: None,
+        hub_accounts: None,
+        agent_hosts: None,
     }
 }
 
@@ -336,8 +358,10 @@ fn boot_with_ports_and_probe(
     themes: Option<crate::bootstrap::Themes>,
     probe: Arc<dyn nocterm_ai::sandbox::SandboxProbe>,
     user_plugins: crate::shell_setup::UserPluginMode,
+    hubs: impl Into<HubPorts>,
     cx: &mut gpui_kit::App,
 ) -> crate::bootstrap::Booted {
+    let hubs = hubs.into();
     let (transport, local) = terminal;
     let local_host = local.is_available().then(|| {
         let exec = nocterm_session::testing::FakeExec::default();
@@ -353,6 +377,7 @@ fn boot_with_ports_and_probe(
     cx.set_global(FixtureDirectory {
         _directory: directory,
     });
+    let (connector, chats, live_hosts) = hubs.agents(&paths);
     let booted = crate::bootstrap::bootstrap(
         crate::bootstrap::Services {
             images: {
@@ -364,15 +389,27 @@ fn boot_with_ports_and_probe(
             persist: false,
             connections: crate::connection_setup::memory(),
             projects: crate::project_setup::PreparedProjectSetup::memory(),
-            hosts: fixture_hosts(transport, local, local_host),
+            hosts: crate::bootstrap::HostServices {
+                hubs: hubs.deps,
+                hub_accounts: hubs.accounts,
+                hub_agents: hubs
+                    .live
+                    .as_ref()
+                    .zip(live_hosts.clone())
+                    .map(|(links, hosts)| crate::startup::hub_agents_dependencies(links, hosts)),
+                agent_hosts: live_hosts.map(|hosts| hosts as _),
+                ..fixture_hosts(transport, local, local_host)
+            },
             terminal_auth_factory: None,
             files,
             themes,
             sandbox_probe: probe,
             agent: nocterm_agent::AgentServices {
+                command_jobs: Arc::new(nocterm_agent_tools::JobsFactory),
+                transfers: Arc::new(nocterm_transfers::testing::FakeTransfers::default()),
                 catalog: nocterm_agent_providers::catalog(),
                 metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
-                connector: Arc::new(nocterm_acp::AcpConnector::unmanaged()),
+                connector,
                 bridge: Arc::new(nocterm_acp::BridgeServer::new(
                     paths.clone(),
                     nocterm_acp::RelayCommand {
@@ -384,13 +421,9 @@ fn boot_with_ports_and_probe(
                     Arc::new(nocterm_agent_storage::FileAgentStateRepository::new(
                         paths.state_dir().join("agents.toml"),
                     )),
-                    Arc::new(nocterm_agent_storage::FileChatRepository::new(
-                        paths.state_dir().join("agent-chats"),
-                        Arc::new(nocterm_localfs::LocalFilesystem::new().unwrap()),
-                    )),
+                    chats,
                 )),
                 workdir_resolver: Arc::new(nocterm_acp::NativeWorkdirResolver::default()),
-                usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
                 workdir: paths.state_dir().join("agent-workspace"),
                 terminal_auth: None,
                 private_dirs: Vec::new(),
@@ -439,11 +472,45 @@ fn open_workspace(
     gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
         cx.new(|cx| {
             let mut workspace = Workspace::new(booted.workspace_deps(), window, cx);
-            crate::bootstrap::build_workspace(&mut workspace, booted, window, cx);
+            crate::bootstrap::build_workspace(
+                &mut workspace,
+                booted,
+                &booted.local_sources(),
+                window,
+                cx,
+            );
             workspace
         })
     })
     .unwrap()
+}
+
+/// Opens a window that shows `environment`, composed as the application composes it.
+fn open_environment(
+    booted: &crate::bootstrap::Booted,
+    environment: &nocterm_hubs_model::Environment,
+    cx: &mut gpui_kit::App,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    let sources = booted
+        .window_sources(environment, cx)
+        .expect("the window's sources");
+    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+        crate::windows::compose(booted, &sources, window, cx)
+    })
+    .unwrap()
+}
+
+/// Delivers `count` frames to the window: its next-frame callbacks run and it is drawn, as the
+/// platform does, which tests do not.
+fn deliver_frames(handle: AnyWindowHandle, count: usize, cx: &mut TestAppContext) {
+    for _ in 0..count {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
 }
 
 /// Whether the host offers the agent panel of `workspace`.
@@ -644,6 +711,7 @@ fn terminal_context_serialization_excludes_source_credential_launch_and_proxy_ma
                     local: info.local,
                     cwd: info.cwd.map(|p| p.to_string_lossy().into_owned()),
                     status: format!("{:?}", info.status),
+                    file_tools: false,
                     connection: info.target.map(|target| ConnectionDescriptor {
                         id: String::new(),
                         name: info.title.to_string(),

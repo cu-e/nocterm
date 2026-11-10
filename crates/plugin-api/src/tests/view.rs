@@ -3,8 +3,8 @@ use alloc::{string::ToString, vec::Vec};
 use proptest::prelude::*;
 
 use crate::{
-    LimitError, MAX_DEPTH, MAX_LIST_ITEMS, MAX_NODES, MIN_REFRESH_MS, Node, NodeKind, PluginIcon,
-    Refresh, Tone, View, ViewError,
+    LimitError, MAX_DEPTH, MAX_LIST_ITEMS, MAX_NODES, MIN_REFRESH_MS, Node, NodeKind, Refresh,
+    Tone, View, ViewError,
 };
 
 fn node(parent: Option<u16>, kind: NodeKind) -> Node {
@@ -32,7 +32,7 @@ fn view(nodes: Vec<Node>) -> View {
 fn a_small_tree_is_valid() {
     let tree = view(Vec::from([
         Node::new(NodeKind::Row),
-        node(Some(0), NodeKind::Icon(PluginIcon::Puzzle)),
+        node(Some(0), NodeKind::Icon(crate::Glyph::Puzzle)),
         node(Some(0), NodeKind::Text("12:00".into())),
         keyed("go", NodeKind::Button("Go".into())),
         keyed("on", NodeKind::Toggle(true)),
@@ -220,4 +220,144 @@ proptest! {
             }
         }
     }
+}
+
+#[test]
+fn a_code_block_keeps_its_lines_and_drops_what_would_not_show_as_text() {
+    let mut shown = view(Vec::from([Node::new(NodeKind::Code(
+        "server.properties:\n\tmotd=Hi\u{202e}\nport=25565\u{7}".into(),
+    ))]));
+    assert!(
+        shown.validate().is_err(),
+        "a guest's text is checked as it is"
+    );
+    shown.sanitize();
+    assert_eq!(shown.validate(), Ok(()));
+    assert_eq!(
+        shown.nodes[0].kind,
+        NodeKind::Code("server.properties:\n    motd=Hi\nport=25565".into())
+    );
+    let long = view(Vec::from([Node::new(NodeKind::Code(
+        "x".repeat(crate::MAX_CODE + 1),
+    ))]));
+    assert!(matches!(
+        long.validate(),
+        Err(ViewError::Limit {
+            source: LimitError::TooLong { field: "code", .. },
+            ..
+        })
+    ));
+    let mut cut = long.clone();
+    cut.sanitize();
+    assert_eq!(cut.validate(), Ok(()));
+}
+
+#[test]
+fn sections_and_items_hold_children_and_an_icon_button_needs_a_key() {
+    let section = NodeKind::Section {
+        title: "Servers".into(),
+        count: Some("2".into()),
+        folded: false,
+    };
+    let item = NodeKind::Item {
+        title: "Build".into(),
+        detail: Some("on".into()),
+        icon: Some(crate::Glyph::Server),
+        selected: true,
+    };
+    let button = NodeKind::IconButton {
+        icon: crate::Glyph::Stop,
+        label: "Stop".into(),
+    };
+    let ok = view(Vec::from([
+        keyed("servers", section.clone()),
+        Node {
+            parent: Some(0),
+            key: Some("open".into()),
+            ..Node::new(item.clone())
+        },
+        Node {
+            parent: Some(1),
+            key: Some("stop".into()),
+            ..Node::new(button.clone())
+        },
+        node(Some(0), NodeKind::Caption("one is off".into())),
+        node(
+            Some(0),
+            NodeKind::Field {
+                label: "CPU".into(),
+                value: "38%".into(),
+            },
+        ),
+    ]));
+    assert_eq!(ok.validate(), Ok(()));
+    let keyless = view(Vec::from([Node::new(item), node(Some(0), button)]));
+    assert_eq!(keyless.validate(), Err(ViewError::MissingKey { index: 1 }));
+    let leaf = view(Vec::from([
+        Node::new(NodeKind::Caption("a".into())),
+        node(Some(0), NodeKind::Spacer),
+    ]));
+    assert_eq!(leaf.validate(), Err(ViewError::NotAContainer { index: 1 }));
+}
+
+#[test]
+fn component_text_is_sanitized_and_bounded() {
+    let mut long = view(Vec::from([Node::new(NodeKind::Section {
+        title: "a\u{202e}b".repeat(40),
+        count: Some("123456789".into()),
+        folded: false,
+    })]));
+    long.sanitize();
+    let NodeKind::Section { title, count, .. } = &long.nodes[0].kind else {
+        unreachable!()
+    };
+    assert!(title.chars().count() <= crate::MAX_BUTTON);
+    assert!(!title.contains('\u{202e}'));
+    assert_eq!(
+        count.as_deref().map(|count| count.chars().count()),
+        Some(crate::MAX_BADGE)
+    );
+    assert_eq!(long.validate(), Ok(()));
+    let unsanitized = view(Vec::from([Node::new(NodeKind::Field {
+        label: "CPU".into(),
+        value: "\u{202e}".into(),
+    })]));
+    assert!(matches!(
+        unsanitized.validate(),
+        Err(ViewError::Limit {
+            index: 0,
+            source: LimitError::Unsanitized { .. }
+        })
+    ));
+}
+
+#[test]
+fn a_chart_has_one_or_two_series_of_at_most_its_span_of_values() {
+    use crate::{MAX_CHART_POINTS, MAX_CHART_SERIES};
+    let chart = |series: Vec<Vec<u32>>, span: Option<u16>| {
+        view(Vec::from([Node::new(NodeKind::Chart {
+            series,
+            max: Some(100),
+            span,
+        })]))
+        .validate()
+    };
+    let values = |count: usize| (0..count as u32).collect::<Vec<_>>();
+    assert_eq!(chart(Vec::from([values(3), values(3)]), Some(60)), Ok(()));
+    assert_eq!(chart(Vec::from([values(MAX_CHART_POINTS)]), None), Ok(()));
+    let refused = |result: Result<(), ViewError>| matches!(result, Err(ViewError::Limit { .. }));
+    assert!(refused(chart(Vec::new(), None)), "a chart needs a series");
+    assert!(refused(chart(
+        (0..=MAX_CHART_SERIES).map(|_| values(2)).collect(),
+        None
+    )));
+    assert!(refused(chart(
+        Vec::from([values(MAX_CHART_POINTS + 1)]),
+        None
+    )));
+    assert!(refused(chart(Vec::from([values(2)]), Some(0))));
+    assert!(refused(chart(
+        Vec::from([values(2)]),
+        Some(MAX_CHART_POINTS as u16 + 1)
+    )));
 }

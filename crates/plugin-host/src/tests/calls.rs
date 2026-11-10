@@ -91,6 +91,36 @@ fn the_snapshot_carries_resolved_settings_storage_and_the_contribution_context(
 }
 
 #[gpui::test]
+fn a_terminal_bar_call_names_its_terminal_and_other_calls_none(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    rig.installed(cx);
+    rig.render("face", cx).unwrap();
+    assert_eq!(latest(&rig).terminal, None);
+    let mut bar = rig.call("face");
+    bar.terminal = Some("srv".into());
+    rig.host
+        .update(cx, |host, cx| host.render(&bar, &rig.providers, cx))
+        .unwrap();
+    assert_eq!(latest(&rig).terminal.as_deref(), Some("srv"));
+    rig.host
+        .update(cx, |host, cx| {
+            host.handle(
+                &bar,
+                Input::Pointer,
+                super::rig::activated(),
+                &rig.providers,
+                cx,
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        latest(&rig).terminal.as_deref(),
+        Some("srv"),
+        "what the user does in the bar reaches the plugin with the terminal"
+    );
+}
+
+#[gpui::test]
 fn observations_are_sampled_at_one_hertz_and_four_hertz_when_focused(cx: &mut TestAppContext) {
     let rig = Rig::new(cx);
     rig.installed(cx);
@@ -129,6 +159,57 @@ fn a_new_window_has_its_own_samples(cx: &mut TestAppContext) {
         .update(cx, |host, cx| host.render(&other, &rig.providers, cx))
         .unwrap();
     assert_eq!(rig.clock.reads(), 2);
+}
+
+#[gpui::test]
+fn releasing_a_window_discards_its_samples_without_discarding_other_windows(
+    cx: &mut TestAppContext,
+) {
+    let rig = Rig::new(cx);
+    rig.installed(cx);
+    rig.render("face", cx).unwrap();
+    let mut other = rig.call("face");
+    other.window = super::rig::windows(cx)[1];
+    rig.host
+        .update(cx, |host, cx| host.render(&other, &rig.providers, cx))
+        .unwrap();
+    rig.host
+        .update(cx, |host, _| host.release_window(rig.window));
+    rig.host
+        .update(cx, |host, cx| host.render(&other, &rig.providers, cx))
+        .unwrap();
+    assert_eq!(rig.clock.reads(), 2);
+    rig.render("face", cx).unwrap();
+    assert_eq!(rig.clock.reads(), 3);
+}
+
+#[gpui::test]
+fn waiting_contributions_get_a_turn_before_a_busy_window_renders_again(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    rig.installed(cx);
+    for _ in 0..MAX_RENDERS_PER_SECOND {
+        rig.render("face", cx).unwrap();
+    }
+    let mut other = rig.call("face");
+    other.window = super::rig::windows(cx)[1];
+    assert!(matches!(
+        rig.host
+            .update(cx, |host, cx| host.render(&other, &rig.providers, cx)),
+        Err(CallError::Throttled { .. })
+    ));
+    assert!(matches!(
+        rig.render("face", cx),
+        Err(CallError::Throttled { .. })
+    ));
+    cx.executor().advance_clock(Duration::from_secs(1));
+    assert!(matches!(
+        rig.render("face", cx),
+        Err(CallError::Throttled { .. })
+    ));
+    rig.host
+        .update(cx, |host, cx| host.render(&other, &rig.providers, cx))
+        .unwrap();
+    rig.render("face", cx).unwrap();
 }
 
 #[gpui::test]

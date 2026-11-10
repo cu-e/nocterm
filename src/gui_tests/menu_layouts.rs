@@ -239,7 +239,7 @@ pub(super) fn open_local_window_in(
         let local = {
             let local = transport.clone();
             nocterm_terminal::LocalSessions::new(
-                Arc::new(move |_| local.clone()),
+                Arc::new(move |_, _| local.clone()),
                 "/bin/bash".into(),
             )
         };
@@ -252,13 +252,14 @@ pub(super) fn open_local_window_in(
             None,
             super::unsupported_sandbox(),
             mode,
+            None,
             cx,
         );
         let (handle, workspace) = super::open_workspace(&booted, cx);
         (
             handle,
             cx.global::<super::FixtureLocalHost>().0.clone(),
-            booted.settings_deps().settings().clone(),
+            booted.settings_deps(),
             workspace,
             booted,
         )

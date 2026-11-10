@@ -18,6 +18,7 @@ pub(crate) struct Subject<'a> {
     context: ContributionContext,
     in_focus: bool,
     providers: &'a PluginProviders,
+    terminal: Option<&'a str>,
 }
 
 impl<'a> Subject<'a> {
@@ -34,7 +35,13 @@ impl<'a> Subject<'a> {
             context,
             in_focus,
             providers,
+            terminal: None,
         }
+    }
+
+    /// The subject of a terminal bar's call, which the snapshot names.
+    pub(crate) fn for_terminal(self, terminal: Option<&'a str>) -> Self {
+        Self { terminal, ..self }
     }
 }
 
@@ -51,6 +58,7 @@ pub(crate) fn assemble(
     let manifest = ready.package().manifest();
     let hash = ready.package().hash();
     let mut snapshot = Snapshot::new(subject.context);
+    snapshot.terminal = subject.terminal.map(str::to_owned);
     let declared = manifest
         .required()
         .iter()
@@ -77,7 +85,11 @@ pub(crate) fn assemble(
         };
         snapshot.observations.insert(entry.id.to_owned(), result);
     }
-    snapshot.settings = ready.settings();
+    // A plugin names its secret settings for the host to send and never reads them.
+    snapshot.settings = manifest
+        .plugin()
+        .settings()
+        .without_secrets(&ready.settings());
     snapshot.storage = ready.data().storage.clone();
     snapshot.outcomes = outcomes;
     snapshot

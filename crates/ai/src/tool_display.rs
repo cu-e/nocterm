@@ -63,9 +63,9 @@ impl ToolDisplay {
             Ok(value) => ToolOutcome::Ok(value),
             Err(error) => ToolOutcome::Err(crate::redact::redact(error.message())),
         };
-        self.outcome = serde_json::to_vec(&outcome)
+        self.outcome = crate::history::json_size(&outcome)
             .ok()
-            .filter(|bytes| bytes.len() <= 256 * 1024)
+            .filter(|bytes| *bytes <= 256 * 1024)
             .map(|_| outcome);
     }
 
@@ -148,6 +148,16 @@ pub fn request(call: &TerminalCall) -> (&'static str, Value) {
         TerminalCall::ExecCommand(v) => json!(v),
         TerminalCall::ReadCommand(v) => json!(v),
         TerminalCall::CancelCommand(v) => json!(v),
+        TerminalCall::TransferFiles(v) => json!(v),
+        TerminalCall::ReadTransfer(v) => json!(v),
+        TerminalCall::CancelTransfer(v) => json!(v),
+        TerminalCall::ListFiles(v) => json!(v),
+        TerminalCall::ReadFile(v) => json!(v),
+        TerminalCall::WriteFile(v) => json!(v),
+        TerminalCall::EditFile(v) => json!(v),
+        TerminalCall::MakeDirectory(v) => json!(v),
+        TerminalCall::DeletePath(v) => json!(v),
+        TerminalCall::MovePath(v) => json!(v),
     };
     (call.name(), arguments)
 }

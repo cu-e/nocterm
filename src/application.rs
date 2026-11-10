@@ -104,7 +104,7 @@ fn open_directory(directory: PathBuf, cx: &mut App) {
     .detach();
 }
 
-fn report_error(message: String, cx: &mut App) {
+pub(crate) fn report_error(message: String, cx: &mut App) {
     tracing::error!(%message);
     if let Some(handle) = cx.active_window() {
         cx.defer(move |cx| {

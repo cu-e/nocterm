@@ -1,10 +1,13 @@
 //! The chat history: search, pinned chats first, and each chat's actions —
-//! rename, fork, pin and delete.
+//! rename, fork, pin and delete. A hub window lists its hub's chats here too, on their own
+//! side: a switch shows either the chats of agents on this computer or those of the hub's
+//! agents on the server. The chats other windows hold are listed among them, marked, with
+//! no actions: opening one moves it here or brings its window forward.
 
 use gpui_kit::{
     Anchor, App, Context, Entity, TestSupportExt as _,
     component::{
-        ActiveTheme as _, Sizable as _,
+        ActiveTheme as _, Selectable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         input::Input,
@@ -15,12 +18,13 @@ use gpui_kit::{
     px,
 };
 use nocterm_agent_directory::AgentsHandle;
-use nocterm_ai::agents::AgentProfile;
+use nocterm_ai::agents::{AgentProfile, AvailableAgents};
 use nocterm_ui::IconName;
 use std::time::Duration;
 
 use super::{
     AgentPanel,
+    history_column::HistorySide,
     widgets::{relative_prompt_time, single_line_label},
 };
 use crate::thread::AgentThread;
@@ -40,6 +44,7 @@ pub(super) fn order(chats: &[(bool, u64)]) -> Vec<usize> {
     order
 }
 
+/// What a history row shows.
 struct HistoryRow {
     id: EntityId,
     title: String,
@@ -50,6 +55,8 @@ struct HistoryRow {
     generating: bool,
     agent: Option<AgentProfile>,
     rename: Option<Input>,
+    /// Another window holds it.
+    elsewhere: bool,
 }
 struct HistoryRowRenderer;
 impl HistoryRowRenderer {
@@ -138,7 +145,12 @@ impl HistoryRowRenderer {
         let hover = cx.theme().muted.blend(cx.theme().foreground.opacity(0.04));
         let name = Self::name(&row.title, row.rename.take(), cx);
         let details = Self::details(&row, name, cx);
-        let actions = Self::actions(row.id, row.pinned, cx);
+        let elsewhere = row.elsewhere;
+        let actions = if elsewhere {
+            Self::elsewhere_mark(id, row.generating, cx)
+        } else {
+            Self::actions(id, row.pinned, cx)
+        };
         h_flex()
             .id(("history-thread", id.as_u64()))
             .test_support()
@@ -159,9 +171,39 @@ impl HistoryRowRenderer {
                 cx.new(|_| gpui_kit::component::tooltip::Tooltip::new(title.clone()))
                     .into()
             })
-            .on_click(cx.listener(move |panel, _, _, cx| panel.on_history_selected(id, cx)))
+            .on_click(cx.listener(move |panel, _, window, cx| {
+                if elsewhere {
+                    panel.open_from_other_window(id, window, cx);
+                } else {
+                    panel.on_history_selected(id, cx);
+                }
+            }))
             .child(details)
             .child(actions)
+            .into_any_element()
+    }
+    /// Where the actions of a chat another window holds would be: that window has them.
+    fn elsewhere_mark(id: EntityId, working: bool, cx: &App) -> gpui_kit::AnyElement {
+        let tip = if working {
+            "Working in another window: opens there"
+        } else {
+            "Open in another window: opens here"
+        };
+        div()
+            .id(("history-elsewhere", id.as_u64()))
+            .test_support()
+            .aria_label(tip)
+            .flex_shrink_0()
+            .px_1()
+            .child(
+                gpui_kit::component::Icon::new(IconName::ExternalLink)
+                    .xsmall()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .tooltip(move |_, cx| {
+                cx.new(|_| gpui_kit::component::tooltip::Tooltip::new(tip))
+                    .into()
+            })
             .into_any_element()
     }
     fn actions(id: EntityId, pinned: bool, cx: &mut Context<AgentPanel>) -> gpui_kit::AnyElement {
@@ -238,41 +280,114 @@ impl HistoryRowRenderer {
 
 pub(super) struct HistoryProjection;
 impl HistoryProjection {
-    /// The chats to list, in order, matching the search.
+    /// The chats to list, in order, matching the search, each with whether another window
+    /// holds it; in a hub window only those of the side shown.
     fn listed_threads(
         chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
+        hub_window: bool,
         cx: &App,
-    ) -> Vec<Entity<AgentThread>> {
+    ) -> Vec<(Entity<AgentThread>, bool)> {
+        let side = history.side();
         let query = history.query(cx);
-        let chats_owner = chats;
-        let chats: Vec<(bool, u64)> = chats
+        let threads: Vec<(Entity<AgentThread>, bool)> = chats
             .iter()
-            .map(|thread| {
-                (
-                    thread.read(cx).document().pinned(),
-                    thread.read(cx).document().updated(),
-                )
+            .map(|thread| (thread.clone(), false))
+            .chain(
+                history
+                    .others()
+                    .listed(cx)
+                    .into_iter()
+                    .map(|thread| (thread, true)),
+            )
+            .collect();
+        let keys: Vec<(bool, u64)> = threads
+            .iter()
+            .map(|(thread, _)| {
+                let document = thread.read(cx).document();
+                (document.pinned(), document.updated())
             })
             .collect();
-        let threads = chats_owner.iter().collect::<Vec<_>>();
-        order(&chats)
+        order(&keys)
             .into_iter()
-            .map(|index| threads[index])
-            .filter(|thread| {
+            .map(|index| threads[index].clone())
+            .filter(|(thread, _)| {
+                let thread = thread.read(cx);
+                !hub_window || HistorySide::of(thread.document().agent_id()) == side
+            })
+            .filter(|(thread, _)| {
                 let thread = thread.read(cx);
                 query.is_empty()
                     || thread.title().to_lowercase().contains(&query)
                     || thread.transcript().mentions(&query)
                     || history.matches(thread.document().chat_id())
             })
-            .cloned()
             .collect()
+    }
+    /// What the listed rows show, so a chat's change that none of them shows (a draft
+    /// keystroke, a streamed chunk) leaves the history as it is. A search matches
+    /// transcripts, so while one is typed there is no stamp.
+    pub(super) fn stamp(
+        chats: &crate::roster::ChatRoster,
+        history: &super::history_column::HistoryColumn,
+        cx: &App,
+    ) -> Option<u64> {
+        use std::hash::{Hash as _, Hasher as _};
+        if !history.query(cx).is_empty() {
+            return None;
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        history.side().hash(&mut hasher);
+        chats
+            .current()
+            .map(|current| current.entity_id())
+            .hash(&mut hasher);
+        let others = history.others().listed(cx);
+        for thread in chats.iter().chain(&others) {
+            let chat = thread.read(cx);
+            (
+                thread.entity_id(),
+                chat.title(),
+                chat.document().pinned(),
+                chat.document().updated(),
+                chat.model(),
+                chat.session_generating(),
+                chat.document().agent_id(),
+                chat.draft_text().is_some(),
+                chat.history_entries().is_empty(),
+                chat.archive_summary().map(|row| row.has_content),
+            )
+                .hash(&mut hasher);
+        }
+        Some(hasher.finish())
+    }
+    /// The switch between the chats of this computer and those of the hub's agents.
+    fn sides(side: HistorySide, cx: &mut Context<AgentPanel>) -> gpui_kit::AnyElement {
+        let button = |id: &'static str, label: &'static str, shown: HistorySide| {
+            Button::new(id)
+                .small()
+                .ghost()
+                .label(label)
+                .selected(side == shown)
+                .on_click(cx.listener(move |panel, _, _, cx| panel.show_history_side(shown, cx)))
+        };
+        h_flex()
+            .id("agent-history-sides")
+            .test_support()
+            .gap_1()
+            .pb_1()
+            .child(button("agent-history-local", "Local", HistorySide::Local))
+            .child(button(
+                "agent-history-server",
+                "Server",
+                HistorySide::Server,
+            ))
+            .into_any_element()
     }
     pub(super) fn render(
         chats: &crate::roster::ChatRoster,
-        history_owner: &super::history_column::HistoryColumn,
-        agents: &AgentsHandle,
+        column: &super::history_column::HistoryColumn,
+        (agents, hub_window): (&AgentsHandle, bool),
         now: u64,
         cx: &mut Context<AgentPanel>,
     ) -> gpui_kit::AnyElement {
@@ -284,7 +399,10 @@ impl HistoryProjection {
             .overflow_y_scroll()
             .p_2()
             .gap_1();
-        if chats.is_empty() {
+        if hub_window {
+            history = history.child(Self::sides(column.side(), cx));
+        }
+        if chats.is_empty() && column.others().listed(cx).is_empty() {
             return history
                 .child(
                     div()
@@ -299,14 +417,19 @@ impl HistoryProjection {
         }
         history = history.child(
             div().pb_1().child(
-                history_owner
+                column
                     .query_input()
                     .prefix(gpui_kit::component::Icon::new(IconName::Search).small())
                     .cleanable(true),
             ),
         );
-        let listed = Self::listed_threads(chats, history_owner, cx);
+        let listed = Self::listed_threads(chats, column, hub_window, cx);
         if listed.is_empty() {
+            let empty = match (column.query(cx).is_empty(), hub_window, column.side()) {
+                (false, ..) | (true, false, _) => "No chats match",
+                (true, true, HistorySide::Local) => "No chats with agents on this computer",
+                (true, true, HistorySide::Server) => "No chats with the server's agents",
+            };
             history = history.child(
                 div()
                     .id("agent-history-no-match")
@@ -314,29 +437,34 @@ impl HistoryProjection {
                     .px_1()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("No chats match"),
+                    .child(empty),
             );
         }
-        for thread in listed {
-            history = history.child(Self::render_history_row(
-                &thread,
-                chats,
-                history_owner,
-                agents,
-                now,
-                cx,
-            ));
+        // Resolved once: resolving builds the whole agent list from the catalog and settings.
+        let available = agents.available(cx);
+        // Pinned first, then the most recently changed.
+        let mut rows: Vec<((bool, u64), HistoryRow)> = Vec::with_capacity(listed.len());
+        for (thread, elsewhere) in listed {
+            let document = thread.read(cx).document();
+            let key = (document.pinned(), document.updated());
+            let mut row = Self::local_row(&thread, chats, column, (agents, &available), now, cx);
+            row.elsewhere = elsewhere;
+            rows.push((key, row));
+        }
+        rows.sort_by_key(|(key, _)| std::cmp::Reverse(*key));
+        for (_, row) in rows {
+            history = history.child(HistoryRowRenderer::render(row, cx));
         }
         history.into_any_element()
     }
-    fn render_history_row(
+    fn local_row(
         thread: &Entity<AgentThread>,
         chats: &crate::roster::ChatRoster,
         history: &super::history_column::HistoryColumn,
-        agents: &AgentsHandle,
+        (agents, available): (&AgentsHandle, &AvailableAgents),
         now: u64,
-        cx: &mut Context<AgentPanel>,
-    ) -> gpui_kit::AnyElement {
+        cx: &App,
+    ) -> HistoryRow {
         let id = thread.entity_id();
         let chat = thread.read(cx);
         let when = if chat.archive_summary().is_none_or(|row| !row.has_content)
@@ -349,7 +477,7 @@ impl HistoryProjection {
                 now.saturating_sub(chat.updated_at()),
             )))
         };
-        let row = HistoryRow {
+        HistoryRow {
             id,
             title: chat.title().to_string(),
             pinned: chat.document().pinned(),
@@ -359,10 +487,10 @@ impl HistoryProjection {
             when,
             model: chat.model().unwrap_or_default(),
             generating: chat.session_generating(),
-            agent: agents.profile(chat.document().agent_id(), cx),
+            agent: agents.profile_in(available, chat.document().agent_id()),
             rename: history.rename_input(id),
-        };
-        HistoryRowRenderer::render(row, cx)
+            elsewhere: false,
+        }
     }
 }
 

@@ -82,7 +82,8 @@ pub(crate) fn withdraw(
         return Ok(());
     }
     workspace.registrations.forget(id);
-    workspace.chrome.status_bar_mut().remove(id);
+    workspace.chrome.status_bar_mut().remove(id, cx);
+    workspace.chrome.toolbars_mut().remove(id);
     let (transition, panel) = workspace.panels.forget(id, window, cx);
     if let Some(transition) = transition {
         workspace.apply_panel_transition(transition, window, cx);

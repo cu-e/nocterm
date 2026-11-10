@@ -21,6 +21,7 @@ pub const TIME: SystemContribution = SystemContribution {
     },
     panel: None,
     preview: None,
+    edge: None,
     pinned: false,
 };
 

@@ -1,0 +1,155 @@
+//! The data of one fake hub server.
+
+use std::collections::BTreeMap;
+
+use crate::address::HubAddress;
+use crate::records::{Account, AccountId, HubInfo, OidcProvider};
+use crate::settings::HubRecord;
+use crate::testing::CLIENT_PROTOCOL;
+use crate::trust::{Fingerprint, TrustPolicy};
+
+/// A user who can sign in to a fake server.
+#[derive(Clone, Debug)]
+pub struct FakeUser {
+    pub username: String,
+    pub password: String,
+    pub account: Account,
+}
+
+/// The account keys a fake server keeps for one user: what opens them and the recovery key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FakeKeyset {
+    /// The password (or vault passphrase) that opens the keys.
+    pub secret: String,
+    pub recovery: String,
+}
+
+/// A server a [`crate::testing::FakeHub`] can reach. The fields are plain data a test edits.
+#[derive(Clone, Debug)]
+pub struct FakeServer {
+    pub address: HubAddress,
+    pub name: String,
+    pub certificate: Fingerprint,
+    /// A public authority vouches for the certificate.
+    pub publicly_trusted: bool,
+    /// The server answers; `false` makes every call unreachable.
+    pub online: bool,
+    /// The protocol version the server speaks.
+    pub protocol: u32,
+    pub bootstrapped: bool,
+    pub password_login: bool,
+    pub oidc_providers: Vec<OidcProvider>,
+    pub users: Vec<FakeUser>,
+    /// The server keeps account keys: a sign-in opens, creates or waits for the recovery of
+    /// the keys of its user. Off, every sign-in finds the keys open.
+    pub keyed: bool,
+    /// The keys of the users that made them, by user name.
+    pub keysets: BTreeMap<String, FakeKeyset>,
+}
+
+impl FakeServer {
+    /// A self-signed server named "Fake hub" whose certificate is `[seed; 32]`.
+    pub fn new(address: &str, seed: u8) -> Self {
+        Self {
+            address: HubAddress::parse(address).expect("a valid fake address"),
+            name: "Fake hub".into(),
+            certificate: Fingerprint::from_bytes([seed; 32]),
+            publicly_trusted: false,
+            online: true,
+            protocol: CLIENT_PROTOCOL,
+            bootstrapped: true,
+            password_login: true,
+            oidc_providers: Vec::new(),
+            users: Vec::new(),
+            keyed: false,
+            keysets: BTreeMap::new(),
+        }
+    }
+
+    /// Makes the server keep account keys; users without keys get them on their first sign-in.
+    #[must_use]
+    pub fn keyed(mut self) -> Self {
+        self.keyed = true;
+        self
+    }
+
+    /// Gives `username` account keys that `secret` opens and `recovery` recovers.
+    #[must_use]
+    pub fn with_keyset(mut self, username: &str, secret: &str, recovery: &str) -> Self {
+        self.keyed = true;
+        self.keysets.insert(
+            username.to_owned(),
+            FakeKeyset {
+                secret: secret.into(),
+                recovery: recovery.into(),
+            },
+        );
+        self
+    }
+
+    #[must_use]
+    pub fn named(mut self, name: &str) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    /// The settings record of this server as a sign-in leaves it: pinned to its certificate.
+    pub fn pinned_record(&self, label: &str) -> HubRecord {
+        HubRecord::new(
+            self.address.clone(),
+            TrustPolicy::Pinned(self.certificate),
+            label,
+        )
+    }
+
+    #[must_use]
+    pub fn publicly_trusted(mut self) -> Self {
+        self.publicly_trusted = true;
+        self
+    }
+
+    #[must_use]
+    pub fn with_provider(mut self, id: &str, display_name: &str) -> Self {
+        self.oidc_providers.push(OidcProvider {
+            id: id.into(),
+            display_name: display_name.into(),
+        });
+        self
+    }
+
+    /// A user of the hub.
+    #[must_use]
+    pub fn with_user(mut self, username: &str, password: &str) -> Self {
+        self.users.push(FakeUser {
+            username: username.into(),
+            password: password.into(),
+            account: Account {
+                id: AccountId::new(format!("account-{username}")),
+                username: username.into(),
+                display_name: username.to_uppercase(),
+                admin: false,
+            },
+        });
+        self
+    }
+
+    /// Makes the existing user `username` an administrator of the hub; a user that does not
+    /// exist is left alone.
+    #[must_use]
+    pub fn with_admin(mut self, username: &str) -> Self {
+        if let Some(user) = self.users.iter_mut().find(|user| user.username == username) {
+            user.account.admin = true;
+        }
+        self
+    }
+
+    pub(super) fn info(&self, signed_in: bool) -> HubInfo {
+        HubInfo {
+            name: self.name.clone(),
+            password_login: self.password_login,
+            oidc_providers: self.oidc_providers.clone(),
+            bootstrapped: self.bootstrapped,
+            signed_in,
+        }
+    }
+}

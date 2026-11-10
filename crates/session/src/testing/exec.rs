@@ -61,15 +61,33 @@ struct OpenScript {
     gate: Option<Gate>,
 }
 
+#[derive(Default)]
+struct TerminalScript {
+    pending: VecDeque<crate::Session>,
+    requests: VecDeque<crate::TerminalRequest>,
+}
+
 /// Prefix-matched repeatable answers and single-use streams. Records requests
 /// before suspension; streaming uses the actual port's bounded output channel.
 #[derive(Clone, Default)]
 pub struct FakeExec {
     state: Arc<Mutex<ExecScript>>,
     opens: Arc<Mutex<OpenScript>>,
+    terminals: Arc<Mutex<TerminalScript>>,
 }
 
 impl FakeExec {
+    /// Queue a real source-bound program channel for a terminal consumer test.
+    pub fn queue_terminal(&self, source: crate::ConnectionSource) -> crate::SessionDriver {
+        let (session, driver) = crate::channel_with_source(None, source);
+        lock(&self.terminals)
+            .pending
+            .push_back(session.with_exec(Arc::new(self.clone())));
+        driver
+    }
+    pub fn terminal_requests(&self) -> Vec<crate::TerminalRequest> {
+        lock(&self.terminals).requests.iter().cloned().collect()
+    }
     pub fn new(answers: Vec<(&str, Result<(&str, u32, &str), ExecError>)>) -> Self {
         let exec = Self::default();
         for (prefix, answer) in answers {
@@ -148,6 +166,19 @@ impl ProgramOpener for FakeExec {
 }
 
 impl HostExec for FakeExec {
+    fn terminal(&self, request: crate::TerminalRequest) -> crate::Session {
+        let mut script = lock(&self.terminals);
+        if script.requests.len() == 4096 {
+            script.requests.pop_front();
+        }
+        script.requests.push_back(request);
+        script.pending.pop_front().unwrap_or_else(|| {
+            crate::Session::failed(crate::SessionError::Other(
+                "running programs on a terminal is not supported here".into(),
+            ))
+        })
+    }
+
     fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
         let (gate, response) = {
             let mut script = lock(&self.state);

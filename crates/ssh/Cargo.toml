@@ -12,11 +12,14 @@ layer = "adapter"
 [dependencies]
 nocterm-core.workspace = true
 nocterm-session.workspace = true
+nocterm-ssh-keys.workspace = true
 
 futures.workspace = true
+getrandom.workspace = true
 russh.workspace = true
 russh-sftp.workspace = true
 tokio.workspace = true
+tokio-socks = "0.5.3"
 tracing.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
@@ -28,6 +31,8 @@ thiserror.workspace = true
 rustix = { version = "1.1", features = ["fs"] }
 
 [dev-dependencies]
+nocterm-ssh-keys = {workspace=true,features=["test-support"]}
+nocterm-session = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

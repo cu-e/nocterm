@@ -8,6 +8,7 @@ use std::{any::type_name, collections::BTreeSet, fs, path::Path};
 use anyhow::bail;
 use nocterm_ai::AiSettings;
 use nocterm_explorer::ExplorerSettings;
+use nocterm_hubs_model::HubsSettings;
 use nocterm_monitor::MonitorSettings;
 use nocterm_plugin_enablement::PluginEnablement;
 use nocterm_project_providers::WorkspacesSettings;
@@ -47,6 +48,7 @@ fn sections() -> anyhow::Result<Vec<Section>> {
         section::<AppearanceSettings>()?,
         section::<ClockSettings>()?,
         section::<ExplorerSettings>()?,
+        section::<HubsSettings>()?,
         section::<LayoutSettings>()?,
         section::<LocalShellSettings>()?,
         section::<LoggingOptions>()?,

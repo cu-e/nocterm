@@ -36,6 +36,7 @@ const fn widget(id: &'static str, order: u16) -> SystemContribution {
         },
         panel: None,
         preview: None,
+        edge: None,
         pinned: false,
     }
 }
@@ -87,7 +88,7 @@ static PLAIN: SystemPlugin = SystemPlugin {
 };
 const CORE: &[SystemContribution] = &[widget("shell.notice", 5)];
 
-fn catalog() -> Arc<PluginCatalog> {
+pub(crate) fn catalog() -> Arc<PluginCatalog> {
     let groups = [GroupSpec {
         id: GroupId::new("navigation"),
         title: "Sidebar",
@@ -98,7 +99,7 @@ fn catalog() -> Arc<PluginCatalog> {
 
 /// A `PluginToggles` that remembers the switches and can refuse the next one.
 #[derive(Clone)]
-struct FakeToggles {
+pub(crate) struct FakeToggles {
     disabled: Rc<RefCell<BTreeSet<PluginId>>>,
     calls: Rc<RefCell<Vec<(PluginId, bool)>>>,
     refuse: Rc<Cell<bool>>,
@@ -106,7 +107,7 @@ struct FakeToggles {
 }
 
 impl FakeToggles {
-    fn new(cx: &mut App) -> Self {
+    pub(crate) fn new(cx: &mut App) -> Self {
         Self {
             disabled: Rc::default(),
             calls: Rc::default(),

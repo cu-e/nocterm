@@ -210,6 +210,7 @@ fn defaults_must_be_valid_for_their_kind() {
         default: Cow::Borrowed(""),
         max_len: 8,
         placeholder: Some(Cow::Borrowed("a\u{200B}b")),
+        secret: false,
     };
     assert!(matches!(
         invalid(schema_of(vec![field("f", placeholder)])),

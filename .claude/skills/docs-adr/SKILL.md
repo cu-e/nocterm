@@ -47,6 +47,8 @@ Status: accepted
 
 Add a row to `docs/adr/README.md` (`| [NNNN](NNNN-slug.md) | <sentence> |`).
 Accepted records are never edited; a later record supersedes them and says so.
+For supersession, link both directions in the mutable index and name which
+parts changed, so readers can find the current rule without reading all history.
 No session status, dates of work, or "implemented by" notes.
 
 ## 3. Cards and notes
@@ -58,16 +60,18 @@ No session status, dates of work, or "implemented by" notes.
   or leaves the layer or a port between layers changes.
 - `cargo xtask docs` regenerates `docs/reference/*` and
   `docs/architecture/dependencies.md`; run it after changing settings, tokens,
-  actions, keymap or internal Cargo dependencies.
+  actions, keymap or internal Cargo dependencies, once the combined inputs
+  settle. Prose-only changes do not require Cargo generators or architecture
+  scans; use the documentation scope in `gate`.
 
 ## 4. Stale references
 
 For each removed or renamed symbol, module or crate:
 
 ```sh
-grep -rn "<old name>" docs/ AGENTS.md CONTRIBUTING.md .claude/skills .claude/agents
+rg -n "<old name>" docs/ AGENTS.md CONTRIBUTING.md .claude/skills .claude/agents
 ```
 
 Update current documents; leave accepted ADRs as historical text.
 
-End with the Result block listing documents written or changed.
+Report documents written or changed in the shared plan or handoff.

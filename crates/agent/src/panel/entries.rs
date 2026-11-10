@@ -16,7 +16,7 @@ use super::{
     AgentPanel,
     image_pipeline::PreviewState,
     message_actions::{MESSAGE_GROUP, escape_markdown, message_text},
-    widgets::{chat_markdown, disclosure_header, safe_markdown},
+    widgets::{chat_markdown, chat_markdown_in, disclosure_header, safe_markdown},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +38,7 @@ pub(super) struct RowPresentation {
     generating: bool,
     time: Option<u64>,
     redact: bool,
+    can_fork: bool,
 }
 pub(super) struct EntryRenderer;
 impl EntryRenderer {
@@ -60,7 +61,7 @@ impl EntryRenderer {
         cx: &Context<AgentPanel>,
     ) -> (
         gpui_kit::AnyElement,
-        Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
+        Vec<super::image_pipeline::PreviewSource>,
     ) {
         let row = v_flex()
             .id(("agent-entry", frame.index))
@@ -82,7 +83,7 @@ impl EntryRenderer {
                 cx,
             ),
             Entry::Agent(text) => Self::agent(row, &frame, text, messages, cx),
-            Entry::Thought(text) => Self::thought(row, &frame, text, cx),
+            Entry::Thought(text) => Self::thought(row, &frame, text, messages, cx),
             Entry::Tool(call) => Self::tool(row, &frame, call, cx),
             Entry::Content(Content::Image(image)) => {
                 let key = Self::pending_image(image, messages, &mut pending);
@@ -95,11 +96,12 @@ impl EntryRenderer {
     fn pending_image(
         image: &nocterm_ai::model::content::Image,
         messages: &super::message_list::MessageList,
-        pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
+        pending: &mut Vec<super::image_pipeline::PreviewSource>,
     ) -> super::image_pipeline::ImageKey {
-        let key = (image.data.as_ptr() as usize, image.data.len(), true);
+        let source = super::image_pipeline::PreviewSource::Encoded(image.data.clone());
+        let key = source.key();
         if !messages.has_preview(&key) {
-            pending.push((key, image.data.as_bytes().to_vec()));
+            pending.push(source);
         }
         key
     }
@@ -108,7 +110,7 @@ impl EntryRenderer {
         frame: &RowPresentation,
         parts: &[Content],
         messages: &super::message_list::MessageList,
-        pending: &mut Vec<(super::image_pipeline::ImageKey, Vec<u8>)>,
+        pending: &mut Vec<super::image_pipeline::PreviewSource>,
         text: String,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
@@ -125,6 +127,8 @@ impl EntryRenderer {
             .bg(cx.theme().muted);
         let mut images = h_flex().flex_wrap().gap_2();
         let mut has_images = false;
+        let mut files = h_flex().flex_wrap().gap_1();
+        let mut has_files = false;
         for (part_index, part) in parts.iter().enumerate() {
             match part {
                 Content::Text(content) => {
@@ -141,15 +145,22 @@ impl EntryRenderer {
                     has_images = true;
                     images = images.child(Self::image(messages.preview_state(&key)));
                 }
+                Content::ResourceReference(link) => {
+                    has_files = true;
+                    files = files.child(Self::file(&link.name, cx));
+                }
                 _ => {}
             }
         }
         if has_images {
             bubble = bubble.child(images);
         }
+        if has_files {
+            bubble = bubble.child(files);
+        }
         row.child(bubble).child(
             super::message_actions::MessageRowActions::new(
-                frame.chat,
+                frame.can_fork.then_some(frame.chat),
                 frame.index,
                 text,
                 frame.time,
@@ -158,6 +169,23 @@ impl EntryRenderer {
             .render(cx),
         )
     }
+    /// A file the message carried: its name beside a paperclip.
+    fn file(name: &str, cx: &Context<AgentPanel>) -> gpui_kit::Div {
+        h_flex()
+            .gap_1()
+            .px_1p5()
+            .py_0p5()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_xs()
+            .child(
+                gpui_kit::component::Icon::new(nocterm_ui::IconName::Paperclip)
+                    .size_3()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .child(name.to_owned())
+    }
     fn agent(
         mut row: gpui_kit::Stateful<gpui_kit::Div>,
         frame: &RowPresentation,
@@ -165,15 +193,20 @@ impl EntryRenderer {
         messages: &super::message_list::MessageList,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
-        let revealed = messages.revealed_text(frame.index, text);
-        row = row.group(MESSAGE_GROUP).child(
-            chat_markdown(("agent-message", frame.index), safe_markdown(&revealed))
-                .stream_fade(frame.generating || messages.revealing()),
-        );
+        let markdown = match messages.markdown(frame.index) {
+            Some(state) => chat_markdown_in(state),
+            None => chat_markdown(
+                ("agent-message", frame.index),
+                safe_markdown(&messages.revealed_text(frame.index, text)),
+            ),
+        };
+        row = row
+            .group(MESSAGE_GROUP)
+            .child(markdown.stream_fade(frame.generating || messages.revealing()));
         if !frame.live {
             row = row.child(
                 super::message_actions::MessageRowActions::new(
-                    frame.chat,
+                    frame.can_fork.then_some(frame.chat),
                     frame.index,
                     text.to_owned(),
                     frame.time,
@@ -188,6 +221,7 @@ impl EntryRenderer {
         mut row: gpui_kit::Stateful<gpui_kit::Div>,
         frame: &RowPresentation,
         text: &str,
+        messages: &super::message_list::MessageList,
         cx: &Context<AgentPanel>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
         let index = frame.index;
@@ -229,10 +263,13 @@ impl EntryRenderer {
                     .max_w_full()
                     .overflow_x_scroll()
                     .child(
-                        chat_markdown(("thought-text", index), safe_markdown(text))
-                            .text_color(cx.theme().muted_foreground)
-                            .w_full()
-                            .max_w_full(),
+                        match messages.markdown(index) {
+                            Some(state) => chat_markdown_in(state),
+                            None => chat_markdown(("thought-text", index), safe_markdown(text)),
+                        }
+                        .text_color(cx.theme().muted_foreground)
+                        .w_full()
+                        .max_w_full(),
                     ),
             );
         }
@@ -302,6 +339,11 @@ impl RowPresentation {
             generating,
             time,
             redact,
+            can_fork: false,
         }
+    }
+    pub(super) fn with_fork_available(mut self, available: bool) -> Self {
+        self.can_fork = available;
+        self
     }
 }

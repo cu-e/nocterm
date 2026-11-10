@@ -20,6 +20,12 @@ A package lists the capabilities it needs in `capabilities` (required) and `opti
 | `panels.set-badge` | effect | 0.1 | Show a number on its own panel or widget. | Attention requests. |  |
 | `storage.set` | effect | 0.1 | Keep a small amount of its own data. | Data of other plugins. |  |
 | `storage.remove` | effect | 0.1 | Remove its own stored data. | Data of other plugins. |  |
+| `net.request` | effect | 0.1 | Send requests to the web address you enter in its settings, with the key you give it. | Other addresses, cookies, redirects and reading the key. |  |
+| `timers.set` | effect | 0.1 | Wake itself up after a delay to refresh what it shows. | Delays shorter than a second. |  |
+| `terminals.open` | effect | 0.1 | Open terminal tabs that show what it writes and pass on what you type. | Your other terminals and running anything on this computer. |  |
+| `terminals.write` | effect | 0.1 | Write text to the terminal tabs it opened. | Other terminals, and control sequences other than colours. |  |
+| `terminals.files` | effect | 0.1 | Show the files of the servers it opens as terminal tabs in your file browser, and let AI chats you attach those tabs to read and change them. | Files on this computer, and the files of your other terminals. |  |
+| `terminals.bar` | effect | 0.1 | Take its toolbar off one of the terminal tabs it opened, or put it back. | Other tabs, and anything outside the tabs it opened. |  |
 
 ## Manifest keys
 
@@ -27,17 +33,22 @@ A declarative package is one TOML file; a code package carries the same TOML in 
 
 | Table | Key | Type | Required |
 | --- | --- | --- | --- |
+| `contribution` | `edge` | choice (edges) | no |
 | `contribution` | `icon` | choice (icons) | no |
 | `contribution` | `kind` | choice (kinds) | yes |
 | `contribution` | `local` | text | yes |
 | `contribution` | `order` | integer (0 to 65535) | no |
+| `contribution` | `shown` | bool | no |
+| `contribution` | `tabs` | choice (tabs) | no |
 | `contribution` | `title` | text | yes |
 | `contribution` | `view` | table | no |
 | `contribution` | `zone` | choice (zones) | no |
 | `contribution.view` | `nodes` | table-list | yes |
 | `contribution.view` | `refresh` | any | no |
+| `contribution.view.nodes` | `detail` | text | no |
 | `contribution.view.nodes` | `each` | text | no |
-| `contribution.view.nodes` | `icon` | choice (icons) | no |
+| `contribution.view.nodes` | `folded` | bool | no |
+| `contribution.view.nodes` | `icon` | choice (glyphs) | no |
 | `contribution.view.nodes` | `key` | text | no |
 | `contribution.view.nodes` | `kind` | choice (node kinds) | yes |
 | `contribution.view.nodes` | `parent` | integer (0 to 65535) | no |
@@ -51,11 +62,16 @@ A declarative package is one TOML file; a code package carries the same TOML in 
 | `manifest` | `description` | text | no |
 | `manifest` | `id` | text | yes |
 | `manifest` | `name` | text | yes |
+| `manifest` | `network` | table | no |
 | `manifest` | `optional_capabilities` | text-list | no |
 | `manifest` | `publisher` | text | yes |
 | `manifest` | `reasons` | text-map | no |
 | `manifest` | `runtime` | choice (runtimes) | no |
 | `manifest` | `settings` | table | no |
+| `network` | `credential_header` | text | no |
+| `network` | `credential_prefix` | text | no |
+| `network` | `credential_setting` | text | no |
+| `network` | `origin_setting` | text | yes |
 | `settings` | `group` | table-list | no |
 | `settings` | `version` | integer (0 to 65535) | no |
 | `settings.group` | `contribution` | text | no |
@@ -86,6 +102,10 @@ Only a runtime that runs code returns effects; a declarative package cannot. The
 
 | Effect | Field | Type | Required |
 | --- | --- | --- | --- |
+| `net.request` | `body` | text | no |
+| `net.request` | `bytes` | bool | no |
+| `net.request` | `method` | choice (http methods) | yes |
+| `net.request` | `path` | text | yes |
 | `notifications.post` | `notice_key` | text | no |
 | `notifications.post` | `text` | text | yes |
 | `notifications.post` | `tone` | choice (notice tones) | yes |
@@ -96,22 +116,38 @@ Only a runtime that runs code returns effects; a declarative package cannot. The
 | `storage.remove` | `key` | text | yes |
 | `storage.set` | `key` | text | yes |
 | `storage.set` | `value` | text | yes |
+| `terminals.bar` | `edge` | choice (edges) | no |
+| `terminals.bar` | `terminal` | text | yes |
+| `terminals.files` | `answer` | any | yes |
+| `terminals.files` | `request` | integer (0 to 4294967295) | yes |
+| `terminals.files` | `terminal` | text | yes |
+| `terminals.open` | `files` | bool | no |
+| `terminals.open` | `local` | text | yes |
+| `terminals.open` | `terminal` | text | yes |
+| `terminals.open` | `title` | text | yes |
+| `terminals.write` | `terminal` | text | yes |
+| `terminals.write` | `text` | text | yes |
+| `timers.set` | `after_ms` | integer (0 to 4294967295) | yes |
 
 ## Vocabulary
 
 | Name | Values |
 | --- | --- |
-| Contribution kinds | `widget`, `panel` |
+| Contribution kinds | `widget`, `panel`, `toolbar` |
 | Zones | `left`, `center`, `right` |
+| Toolbar edges | `top`, `bottom`, `left`, `right` |
+| Toolbar tabs | `own`, `all` |
 | Icons | `box`, `gem`, `hexagon`, `plug`, `puzzle`, `shapes` |
-| View node kinds | `row`, `column`, `text`, `icon`, `meter`, `badge`, `button`, `toggle`, `list`, `divider`, `spacer` |
+| Glyphs (icons inside a view) | `box`, `gem`, `hexagon`, `plug`, `puzzle`, `shapes`, `activity`, `arrow-down`, `arrow-left`, `arrow-up`, `bell`, `cable`, `calendar`, `check`, `chevron-down`, `chevron-left`, `chevron-right`, `circle-alert`, `circle-check`, `circle-x`, `clock`, `container`, `copy`, `cpu`, `ellipsis`, `external-link`, `eye`, `file`, `file-text`, `folder`, `folder-open`, `gauge`, `globe`, `hard-drive`, `inbox`, `info`, `key`, `loader`, `lock`, `memory`, `network`, `pause`, `pencil`, `play`, `plus`, `minus`, `refresh`, `rotate`, `search`, `send`, `server`, `server-off`, `settings`, `square`, `stop`, `star`, `terminal`, `thermometer`, `trash`, `triangle-alert`, `upload`, `user`, `wrench`, `x`, `zap` |
+| View node kinds | `row`, `column`, `text`, `icon`, `meter`, `badge`, `button`, `toggle`, `list`, `divider`, `spacer`, `code`, `section`, `item`, `icon-button`, `caption`, `field`, `chart` |
 | Tones | `default`, `muted`, `success`, `caution` |
 | Notice tones | `info`, `caution` |
 | Refresh forms | `next-second`, `next-minute`, `after-ms` |
 | Template filters | `round(n)`, `percent`, `hh-mm`, `threshold(low, high)` |
-| Events | `activated`, `toggled`, `visibility-changed`, `settings-changed` |
+| Events | `activated`, `toggled`, `visibility-changed`, `settings-changed`, `response`, `timer`, `terminal-line`, `terminal-closed`, `file-request` |
 | Host errors | `not-granted`, `denied`, `rate-limited`, `unavailable` |
-| Settings field kinds | `toggle`, `choice`, `multi-choice`, `number`, `text` |
+| Request methods | `get`, `post`, `put`, `delete` |
+| Settings field kinds | `toggle`, `choice`, `multi-choice`, `number`, `text`, `secret` |
 | Workspace kinds | `local`, `remote`, `container`, `folder` |
 | Runtimes | `declarative`, `wasm` |
 
@@ -122,13 +158,24 @@ Only a runtime that runs code returns effects; a declarative package cannot. The
 | `badge-chars` | 8 |
 | `button-chars` | 48 |
 | `capabilities-per-package` | 16 |
+| `chart-points` | 120 |
+| `chart-series` | 2 |
+| `code-chars` | 16384 |
 | `contributions-per-package` | 8 |
 | `description-chars` | 160 |
 | `effect-key-chars` | 32 |
 | `effects-per-call` | 8 |
+| `file-bytes` | 163840 |
+| `file-entries` | 1000 |
+| `file-name-bytes` | 255 |
+| `file-path-bytes` | 1024 |
+| `file-reason-chars` | 200 |
+| `file-requests-waiting` | 8 |
+| `file-timeout-ms` | 30000 |
 | `list-items` | 100 |
 | `live-notices` | 3 |
 | `min-refresh-ms` | 250 |
+| `min-timer-ms` | 1000 |
 | `name-chars` | 48 |
 | `node-key-chars` | 32 |
 | `nodes-per-view` | 256 |
@@ -136,6 +183,12 @@ Only a runtime that runs code returns effects; a declarative package cannot. The
 | `package-bytes` | 262144 |
 | `placeholders-per-view` | 64 |
 | `reason-chars` | 160 |
+| `request-body-bytes` | 229376 |
+| `request-path-bytes` | 2048 |
+| `request-timeout-ms` | 15000 |
+| `requests-in-flight` | 4 |
+| `response-body-bytes` | 262144 |
+| `response-bytes-mode-bytes` | 163840 |
 | `round-decimals` | 2 |
 | `setting-fields` | 32 |
 | `setting-groups` | 8 |
@@ -148,7 +201,14 @@ Only a runtime that runs code returns effects; a declarative package cannot. The
 | `storage-total-bytes` | 65536 |
 | `storage-value-bytes` | 4096 |
 | `template-chars` | 512 |
+| `terminal-key-chars` | 32 |
+| `terminal-line-chars` | 1024 |
+| `terminal-title-chars` | 48 |
+| `terminal-write-bytes` | 65536 |
+| `terminals-open` | 4 |
 | `text-chars` | 200 |
+| `timer-max-ms` | 3600000 |
+| `timers-waiting` | 8 |
 | `view-depth` | 8 |
 
 ## Code package ABI

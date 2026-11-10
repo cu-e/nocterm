@@ -26,11 +26,47 @@ fields and undo history without locking the service. Lock is explicit or
 automatic. Refresh reloads credential labels saved by other
 features since the page was opened.
 
-Remember is an explicit authentication choice. Only successful SSH authentication
-stores a password or private-key passphrase, bound to its target or key path.
+A password can be typed in the connection editor: for *Automatic* and *Password* the
+**Password** field keeps it in the vault of the window when the connection is saved, bound to
+its address, and the connection names that record. A new password goes into the record the
+connection names, so every server it signs in to takes it; *Forget* unlinks it, so the
+connection asks again.
+
+A password is bound to the addresses it lists (`user@host:port`) and answers no other, so
+one password can sign in to several servers. The **Credentials** tab of the Vault page lists
+what the vault keeps by name: **Add a password** saves one under a name for no server yet;
+the pencil renames any record; under a password, each server it signs in to has a cross that
+detaches it; the bin deletes the record. In the connection editor, **Saved passwords** lists
+the vault's passwords: choosing one signs the connection in with it and adds its address to
+the password when the connection is saved. A password of one address is stored as before
+(`"target"`), so older versions still read it; one shared by several or saved for none is
+stored as `"targets"`, which only this version reads
+([ADR 0151](adr/0151-a-saved-password-signs-in-to-the-servers-it-lists.md)).
+
+Remember is an explicit authentication choice in the window of this computer, and on by
+default in the window of a hub account (*Keep in the account's vault after sign in*). Only
+successful SSH authentication stores a password or private-key passphrase, bound to its target
+or key path.
 Interactive/MFA answers have no vault record type. A saved credential is used for
 the initial matching request; rejected credentials return to manual entry instead
 of being silently retried. Unlocking can supply the still-pending initial request.
+
+An SSH key can also be a vault record: the binding is `private_key` with the canonical
+public half and the secret is the OpenSSH private key without a passphrase, protected by
+the vault envelope. A profile refers to it with `method = "vault_key"`, the credential id
+and the public key; signing in compares that public half with the record and never reads a
+file. Remember does not create or overwrite key records. The Credentials tab shows the
+fingerprint, never the key.
+
+## The vault of a hub account
+
+When a [hub server is chosen as the account](HUBS.md), the vault in use is that account's: the
+records are sealed on this device and stored on the server, and `vault.bin` is not read or
+changed until the account is stopped. It keeps the passwords and keys of the account's
+servers for every computer of the account; the hub's web panel saves the servers it connects
+there too ([ADR 0150](adr/0150-an-accounts-servers-keep-their-secrets-in-its-vault.md)). Unlocking uses the account's password (or its vault
+passphrase); creating the vault, changing its password and device unlock are not available for it.
+See [ADR 0103](adr/0103-account-data-is-sealed-on-the-device.md).
 
 ## Format and persistence
 

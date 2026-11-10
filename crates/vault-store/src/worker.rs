@@ -298,6 +298,14 @@ impl VaultService {
     ) -> VaultFuture<CredentialId> {
         self.request(move |vault| vault.put(id, label, binding, secret))
     }
+    pub fn update(
+        &self,
+        id: CredentialId,
+        label: String,
+        binding: CredentialBinding,
+    ) -> VaultFuture<()> {
+        self.request(move |vault| vault.update(id, label, binding))
+    }
     pub fn delete(&self, id: CredentialId) -> VaultFuture<()> {
         self.request(move |vault| vault.delete(id))
     }

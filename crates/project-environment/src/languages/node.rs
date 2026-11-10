@@ -15,7 +15,7 @@ test "$(printf '%s\n' "$archive" | wc -l)" -eq 1 && test -n "$archive"
 case "$version" in *.*) test "$archive" = "node-v$version-linux-$arch.tar.xz";; *) case "$archive" in "node-v$version."*) :;; *) exit 78;; esac;; esac
 fetch "$url/$archive" "$work/$archive"
 (cd "$work"; awk -v file="$archive" '$2 == file {print}' SHASUMS256.txt | sha256sum -c -)
-staged_target=$(mktemp -d "$base/node/releases/install.XXXXXX")
+staged_target=$(allocate_release "$base/node/releases")
 tar -xJf "$work/$archive" -C "$staged_target" --strip-components=1
 actual=$("$staged_target/bin/node" --version)
 case "$version" in *.*) test "$actual" = "v$version";; *) case "$actual" in "v$version."*) :;; *) exit 78;; esac;; esac

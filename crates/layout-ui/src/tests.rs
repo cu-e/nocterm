@@ -4,7 +4,9 @@
 use std::{borrow::Cow, rc::Rc, sync::Arc};
 
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, TestAppContext, WindowOptions, test::TestWindowExt as _,
+    AnyWindowHandle, AppContext as _, Bounds, InputEvent as _, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, TestAppContext,
+    WindowOptions, test::TestWindowExt as _,
 };
 use nocterm_plugin_enablement::PluginEnablement;
 use nocterm_plugin_model::{
@@ -19,6 +21,7 @@ use nocterm_window_layout::LayoutSettings;
 
 use crate::section::LayoutEditorSection;
 
+mod aim;
 mod dnd;
 mod editing;
 mod geometry;
@@ -46,6 +49,7 @@ const fn widget(
         },
         panel: None,
         preview: None,
+        edge: None,
         pinned: false,
     }
 }
@@ -249,6 +253,68 @@ impl Fixture {
         cx.run_until_parked();
     }
 
+    /// Drags the element `from` to the point `across` of the way over the element `to`, from
+    /// its left edge, and lets the writes it caused settle.
+    pub(super) fn drag_across(&self, from: &str, to: &str, across: f32, cx: &mut TestAppContext) {
+        let target = self.bounds(to, cx);
+        let at = gpui_kit::point(
+            target.left() + target.size.width * across,
+            target.center().y,
+        );
+        let from = from.to_owned();
+        self.frame(cx, |window, cx| {
+            let start = window.find(from).bounds().center();
+            window.drag(start, at, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    /// Presses the pointer on the middle of the element `from` and moves it, held, to `to`: a
+    /// drag in progress, drawn after every move as a real one is.
+    pub(super) fn hold(&self, from: &str, to: Point<Pixels>, cx: &mut TestAppContext) {
+        let from = from.to_owned();
+        self.frame(cx, |window, cx| {
+            let start = window.find(from).bounds().center();
+            pointer(window, moved(start, None), cx);
+            pointer(window, pressed(start), cx);
+            for step in 1..=8 {
+                let at = start + (to - start) * (step as f32 / 8.);
+                pointer(window, moved(at, Some(MouseButton::Left)), cx);
+            }
+        });
+    }
+
+    /// Releases the held pointer at `at` and draws nothing itself: the frame that follows is
+    /// the one the release asked for, if any.
+    pub(super) fn release(&self, at: Point<Pixels>, cx: &mut TestAppContext) {
+        cx.update_window(self.window, |_, window, cx| {
+            window.dispatch_event(released(at), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    /// Where the last frame drawn shows the element `id`, without drawing another one.
+    pub(super) fn shown(&self, id: &str, cx: &mut TestAppContext) -> Option<Bounds<Pixels>> {
+        cx.update_window(self.window, |_, window, _| {
+            window
+                .try_find(id.to_owned())
+                .map(|element| element.bounds())
+        })
+        .unwrap()
+    }
+
+    /// The bounds of the element `id` in the frame drawn now.
+    pub(super) fn bounds(&self, id: &str, cx: &mut TestAppContext) -> Bounds<Pixels> {
+        let mut found = None;
+        self.frame(cx, |window, _| {
+            found = window
+                .try_find(id.to_owned())
+                .map(|element| element.bounds());
+        });
+        found.unwrap_or_else(|| panic!("{id} is not in the frame"))
+    }
+
     /// Clicks the element `id` in the frame drawn now and lets the writes it caused settle.
     pub(super) fn click(&self, id: &str, cx: &mut TestAppContext) {
         let id = id.to_owned();
@@ -340,6 +406,18 @@ impl Fixture {
         selected
     }
 
+    /// Whether the preview marks the panel `id` as opening with the layout; `None` for a chip
+    /// that is no panel.
+    pub(super) fn opens(&self, id: &str, cx: &mut TestAppContext) -> Option<bool> {
+        let mut opens = None;
+        self.frame(cx, |window, _| {
+            opens = window
+                .try_find(preview_id(id))
+                .and_then(|element| element.checked());
+        });
+        opens
+    }
+
     /// Opens the menu of the element `id` and chooses the entry `label` on its first level,
     /// then lets the writes it caused settle.
     pub(super) fn choose(&self, id: &str, label: &str, cx: &mut TestAppContext) {
@@ -359,6 +437,42 @@ impl Fixture {
         });
         cx.run_until_parked();
     }
+}
+
+/// Dispatches one pointer event and draws the frame it leads to, as the platform would.
+fn pointer(window: &mut gpui_kit::Window, event: PlatformInput, cx: &mut gpui_kit::App) {
+    window.dispatch_event(event, cx);
+    window.render_frame(cx);
+}
+
+fn moved(position: Point<Pixels>, pressed_button: Option<MouseButton>) -> PlatformInput {
+    MouseMoveEvent {
+        position,
+        pressed_button,
+        modifiers: Modifiers::default(),
+    }
+    .to_platform_input()
+}
+
+fn pressed(position: Point<Pixels>) -> PlatformInput {
+    MouseDownEvent {
+        button: MouseButton::Left,
+        position,
+        modifiers: Modifiers::default(),
+        click_count: 1,
+        first_mouse: false,
+    }
+    .to_platform_input()
+}
+
+fn released(position: Point<Pixels>) -> PlatformInput {
+    MouseUpEvent {
+        button: MouseButton::Left,
+        position,
+        modifiers: Modifiers::default(),
+        click_count: 1,
+    }
+    .to_platform_input()
 }
 
 /// The element of the bar preview that draws `id`, or the group `g` for `group:g`.

@@ -45,7 +45,10 @@ impl TabSurface {
             state: SurfaceState::default(),
             selection: SurfaceSelection::new(source),
             content: SurfaceContent::new(tabs::Tabs::new(bindings::prepare_topology(
-                source, window, cx,
+                source,
+                owner.top_toolbars(),
+                window,
+                cx,
             ))),
             focus_handle: cx.focus_handle(),
             window: owner,

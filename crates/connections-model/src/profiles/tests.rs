@@ -669,3 +669,61 @@ fn a_routed_session_without_a_saved_connection_has_nowhere_to_remember_a_credent
         Some(CredentialScope::direct(target, Auth::Auto))
     );
 }
+
+#[test]
+fn regrouping_listed_members_leaves_the_rest_of_the_folder_in_place() {
+    let (a, b) = (
+        profile("a", "a.example", Some("Work")),
+        profile("b", "b.example", Some("Work")),
+    );
+    let mut profiles = Profiles::default();
+    profiles.upsert(a.clone());
+    profiles.upsert(b.clone());
+    ProfileMutation::Regroup {
+        members: vec![a.id],
+        from: "Work".into(),
+        to: Some(" Team ".into()),
+    }
+    .apply(&mut profiles)
+    .unwrap();
+    assert_eq!(profiles.get(a.id).unwrap().group.as_deref(), Some("Team"));
+    assert_eq!(profiles.get(b.id).unwrap().group.as_deref(), Some("Work"));
+    assert!(matches!(
+        ProfileMutation::Regroup {
+            members: vec![a.id],
+            from: "Team".into(),
+            to: Some("  ".into()),
+        }
+        .apply(&mut profiles),
+        Err(ProfileError::EmptyGroup)
+    ));
+}
+
+#[test]
+fn deleting_listed_members_keeps_the_rest_and_refuses_one_that_left() {
+    let (a, b) = (
+        profile("a", "a.example", Some("Work")),
+        profile("b", "b.example", Some("Work")),
+    );
+    let mut profiles = Profiles::default();
+    profiles.upsert(a.clone());
+    profiles.upsert(b.clone());
+    let delete = |members: Vec<ProfileId>| ProfileMutation::DeleteMembers {
+        group: "Work".into(),
+        members,
+    };
+    ProfileMutation::Move {
+        id: b.id,
+        group: None,
+        before: None,
+    }
+    .apply(&mut profiles)
+    .unwrap();
+    assert!(matches!(
+        delete(vec![a.id, b.id]).apply(&mut profiles),
+        Err(ProfileError::GroupChanged(_))
+    ));
+    assert!(profiles.get(a.id).is_some());
+    delete(vec![a.id]).apply(&mut profiles).unwrap();
+    assert!(profiles.get(a.id).is_none() && profiles.get(b.id).is_some());
+}

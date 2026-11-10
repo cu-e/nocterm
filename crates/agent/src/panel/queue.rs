@@ -1,11 +1,9 @@
-//! The queue peeks from behind the composer and unfolds above it.
+//! The queue peeks from behind the composer and opens at its intrinsic height.
 use super::{AgentPanel, images::ImageAttachError};
 use crate::thread::AgentThread;
 use base64::Engine as _;
 use gpui_kit::{
-    AnyElement, Context, Entity, EntityId, SharedString, TestSupportExt as _, Window,
-    base::motion::{Transition, transition},
-    canvas,
+    AnyElement, Context, Entity, EntityId, SharedString, TestSupportExt as _,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -16,7 +14,6 @@ use gpui_kit::{
     px, rems,
 };
 use nocterm_ui::IconName;
-use std::time::Duration;
 
 pub(super) fn decode_saved_image(data: &str) -> Result<Vec<u8>, ImageAttachError> {
     if data.len() > nocterm_ai::images::MAX_IMAGE_BYTES.div_ceil(3) * 4 {
@@ -25,41 +22,8 @@ pub(super) fn decode_saved_image(data: &str) -> Result<Vec<u8>, ImageAttachError
     Ok(base64::engine::general_purpose::STANDARD.decode(data)?)
 }
 
-/// One immutable frame of the queue, without authoritative queued messages.
-pub(super) struct QueueFrame {
-    chat: EntityId,
-    open: bool,
-    measured: gpui_kit::Pixels,
-    editing: bool,
-}
 pub(super) struct QueueRenderer;
 impl QueueRenderer {
-    pub(super) fn height(
-        frame: &QueueFrame,
-        window: &mut Window,
-        cx: &mut Context<AgentPanel>,
-    ) -> gpui_kit::Pixels {
-        transition(
-            (
-                SharedString::from(format!("agent-queue-{}", frame.chat)),
-                "height",
-            ),
-            if frame.open {
-                frame.measured.min(px(240.))
-            } else {
-                px(0.)
-            },
-            Transition::new(Duration::from_millis(220)).ease(|t| {
-                if t >= 1. {
-                    1.
-                } else {
-                    1. - 2_f32.powf(-10. * t)
-                }
-            }),
-            window,
-            cx,
-        )
-    }
     pub(super) fn hood(
         header: AnyElement,
         cx: &gpui_kit::App,
@@ -76,10 +40,15 @@ impl QueueRenderer {
             .min_w_0()
             .child(header)
     }
-    fn rows(frame: &QueueFrame, rows: Vec<AnyElement>, cx: &mut Context<AgentPanel>) -> AnyElement {
-        let owner = cx.weak_entity();
-        let chat = frame.chat;
-        v_flex()
+    pub(super) fn render(
+        editing: bool,
+        header: AnyElement,
+        rows: Vec<AnyElement>,
+        cx: &mut Context<AgentPanel>,
+    ) -> AnyElement {
+        // Normal layout resolves the current content, width and font in this frame.
+        // A previous-frame height followed by a transition delays even a warm open.
+        let rows = v_flex()
             .id("agent-queue-rows")
             .test_support()
             .relative()
@@ -88,44 +57,12 @@ impl QueueRenderer {
             .min_w_0()
             .gap_2()
             .p_2()
-            .children(rows)
-            .child(
-                canvas(
-                    move |bounds, _, cx| {
-                        let owner = owner.clone();
-                        cx.defer(move |cx| {
-                            let _ = owner.update(cx, |panel, cx| {
-                                panel.on_queue_height_observed(chat, bounds.size.height, cx)
-                            });
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
-            .into_any_element()
-    }
-    pub(super) fn render(
-        frame: &QueueFrame,
-        header: AnyElement,
-        rows: Vec<AnyElement>,
-        height: gpui_kit::Pixels,
-        cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
-        let target = frame.measured.min(px(240.));
-        let rows = Self::rows(frame, rows, cx);
+            .children(rows);
         let hood = Self::hood(header, cx).child(
             div()
                 .id("agent-queue-reveal")
                 .test_support()
-                .h(height)
                 .overflow_hidden()
-                .opacity(if target > px(0.) {
-                    (height / target).clamp(0., 1.)
-                } else {
-                    0.
-                })
                 .child(
                     div()
                         .id("agent-queue-scroll")
@@ -135,7 +72,7 @@ impl QueueRenderer {
                         .child(rows),
                 ),
         );
-        hood.when(frame.editing, |hood| {
+        hood.when(editing, |hood| {
             hood.child(
                 h_flex()
                     .px_2()
@@ -314,7 +251,6 @@ impl QueueRenderer {
         previews: Vec<Vec<AnyElement>>,
         thread: &Entity<AgentThread>,
         labels: &super::attachments::AttachmentLabels,
-        height: gpui_kit::Pixels,
         cx: &mut Context<AgentPanel>,
     ) -> Option<AnyElement> {
         let origin = thread.entity_id();
@@ -323,14 +259,8 @@ impl QueueRenderer {
         }
         let count = thread.read(cx).queued_prompt_ids().count();
         let first = thread.read(cx).composer().queue()[0].saved().id;
-        let frame = QueueFrame {
-            chat: thread.entity_id(),
-            open: composer.queue_open(),
-            measured: composer.queue_height(thread.entity_id()),
-            editing: composer.editing_chat() == Some(thread.entity_id()),
-        };
         let header = Self::queue_header(composer, origin, count, first, cx);
-        if !frame.open && height <= px(0.) {
+        if !composer.queue_open() {
             return Some(
                 QueueRenderer::hood(header, cx)
                     .test_support()
@@ -342,23 +272,11 @@ impl QueueRenderer {
             .zip(previews)
             .map(|(prompt, images)| Self::queue_row(composer, origin, prompt, images, labels, cx))
             .collect();
-        Some(Self::render(&frame, header, rows, height, cx))
-    }
-}
-
-impl QueueRenderer {
-    pub(super) fn visible_height(
-        composer: &super::composer_view::ComposerView,
-        thread: &Entity<AgentThread>,
-        window: &mut Window,
-        cx: &mut Context<AgentPanel>,
-    ) -> gpui_kit::Pixels {
-        let frame = QueueFrame {
-            chat: thread.entity_id(),
-            open: composer.queue_open(),
-            measured: composer.queue_height(thread.entity_id()),
-            editing: composer.editing_chat() == Some(thread.entity_id()),
-        };
-        Self::height(&frame, window, cx)
+        Some(Self::render(
+            composer.editing_chat() == Some(origin),
+            header,
+            rows,
+            cx,
+        ))
     }
 }

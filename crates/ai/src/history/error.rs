@@ -13,6 +13,10 @@ pub enum HistoryCodecError {
     MissingScope,
     #[error("Version-one chats cannot claim project ownership")]
     LegacyScope,
+    #[error("A version-three local chat requires an explicit environment")]
+    MissingEnvironment,
+    #[error("Legacy chats belong only to this computer")]
+    LegacyEnvironment,
     #[error("The saved chat requires its authoritative catalog prefix")]
     MissingCatalog,
     #[error("The saved catalog prefix is malformed or noncanonical")]

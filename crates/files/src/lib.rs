@@ -1,5 +1,5 @@
 //! Explorer navigation, file dialogs and transfer presentation.
-//! Browser generations, scan results and completion cursors remain private transition owners.
+//! Browser generations, shared row selections, scan results and completion cursors remain private transition owners.
 //!
 //! Owns: independent pane views, acknowledged browser navigation, selection and pinned dialogs.
 //! Shared path editors and navigation controls belong to nocterm-ui.
@@ -22,11 +22,13 @@ mod local_pane;
 mod open;
 mod operations;
 pub mod plugin;
+mod projection;
 use nocterm_ui::directory as path_input;
 mod registration;
 mod remote;
 mod remote_pane;
 mod row;
+mod selection;
 mod settings;
 mod settings_page;
 mod statistics;
@@ -60,7 +62,8 @@ use nocterm_workspace::{
 };
 use operations::FileTarget;
 use remote::{Browser, listing};
-use std::{collections::BTreeSet, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use selection::RowSelection;
+use std::{path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 #[cfg(feature = "user-plugins")]
 pub use host_capabilities::TransferCounts;
@@ -259,6 +262,13 @@ impl FilesPanel {
                 this.local.update(cx, |_, cx| cx.notify());
             }
         });
+        let transfer_events = cx.observe(installed.projection(), |this, _, cx| {
+            this.transfers_changed(cx)
+        });
+        let weak = cx.entity().downgrade();
+        cx.defer(move |cx| {
+            let _ = weak.update(cx, |this, cx| this.transfers_changed(cx));
+        });
         let tick = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -281,7 +291,12 @@ impl FilesPanel {
             collisions: CollisionPolicy::Skip,
             window: window.window_handle(),
             _observers: PanelObservers {
-                _subscriptions: vec![local_events, remote_events, workspace_events],
+                _subscriptions: vec![
+                    local_events,
+                    remote_events,
+                    workspace_events,
+                    transfer_events,
+                ],
                 _tick: tick,
             },
             installed,
@@ -381,7 +396,7 @@ impl FilesPanel {
         });
     }
     fn synchronize(&mut self, finished: &[nocterm_transfers::Progress], cx: &mut Context<Self>) {
-        let jobs = self.installed.transfers().snapshot();
+        let jobs = self.installed.projection().read(cx).entries().to_vec();
         self.local.update(cx, |local, cx| {
             local.transfers(
                 jobs.iter()
@@ -400,9 +415,14 @@ impl FilesPanel {
             remote.transfers(jobs, finished, ready, self.collisions, cx)
         });
     }
+    fn transfers_changed(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.installed.projection().read(cx).entries().to_vec();
+        let (changed, finished) = self.activity.update(snapshot);
+        if changed {
+            self.synchronize(&finished, cx);
+        }
+    }
     fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (_, finished) = self.activity.update(self.installed.transfers().snapshot());
-        self.synchronize(&finished, cx);
         self.local
             .update(cx, |local, cx| local.poll_statistics(window, cx));
         self.remote

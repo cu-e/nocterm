@@ -1,5 +1,5 @@
 use crate::testing::{FakeCredentialError, FakeCredentialStore, Gate};
-use crate::{CredentialStore, Secret, SecretRequest, Target};
+use crate::{CredentialId, CredentialStore, Secret, SecretRequest, Target};
 use futures::{FutureExt as _, executor::block_on};
 fn password(host: &str, retry: bool) -> SecretRequest {
     SecretRequest::Password {
@@ -89,5 +89,40 @@ fn suspended_store_operation_checks_availability_after_release_and_failure_is_on
     assert_eq!(
         block_on(store.get(id, &password("host", true))).unwrap(),
         Secret::new("s")
+    );
+}
+
+fn private_key(credential: CredentialId, public_key: &str) -> SecretRequest {
+    SecretRequest::PrivateKey {
+        credential,
+        public_key: public_key.into(),
+    }
+}
+
+#[test]
+fn a_vault_key_is_never_storable_from_a_prompt_and_binds_to_its_public_half() {
+    let store = FakeCredentialStore::default();
+    let unknown = CredentialId::from_bytes([9; 16]);
+    assert!(!private_key(unknown, "ssh-ed25519 AAAA").is_storable());
+    assert_eq!(
+        store.insert(
+            "key".into(),
+            &private_key(unknown, "ssh-ed25519 AAAA"),
+            Secret::new("pem")
+        ),
+        Err(FakeCredentialError::NotStorable)
+    );
+    let id = store
+        .insert_private_key("key".into(), "ssh-ed25519 AAAA", Secret::new("pem"))
+        .unwrap();
+    assert_eq!(
+        store
+            .lookup(id, &private_key(id, "ssh-ed25519 AAAA"))
+            .unwrap(),
+        Secret::new("pem")
+    );
+    assert_eq!(
+        store.lookup(id, &private_key(id, "ssh-ed25519 BBBB")),
+        Err(FakeCredentialError::BindingMismatch)
     );
 }

@@ -1,32 +1,104 @@
-//! Explicit TCP routes. The SSH handshake and host-key policy stay unchanged.
-use nocterm_session::{ProxyConfig, Target};
-use std::{io, net::IpAddr};
+//! Explicit routes for the first connection: a plain TCP connection, an HTTP
+//! CONNECT or SOCKS5 proxy, or a stream handed over by a hub relay. The SSH
+//! handshake and host-key policy stay unchanged: whatever the route, the host key
+//! checked is the destination's, never the proxy's or the hub's.
+use nocterm_session::{ProxyConfig, RelayDialer, RelayError, SessionError, Target};
+use std::{io, net::IpAddr, sync::Arc};
 use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
+    io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _},
     net::TcpStream,
 };
 
+#[cfg(test)]
+mod hub_tests;
+mod relay;
+
 const MAX_HEADER: usize = 16 * 1024;
 
-pub(crate) async fn connect(target: &Target, route: &ProxyConfig) -> io::Result<TcpStream> {
-    let (host, port) = match route {
-        ProxyConfig::Direct => (target.host.as_str(), target.port),
-        ProxyConfig::HttpConnect { host, port } | ProxyConfig::Socks5 { host, port, .. } => {
-            validate_host(host)?;
-            if *port == 0 {
-                return Err(invalid("proxy port must be nonzero"));
-            }
-            (host.as_str(), *port)
+/// A byte stream an SSH handshake can run over: a socket, a relayed stream or a
+/// forwarded channel.
+pub(crate) trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
+
+/// Why the first connection could not be made.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ConnectError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    /// The route names a hub, but this transport was built without a relay.
+    #[error("this transport has no hub relay")]
+    NoRelay,
+    #[error("hub {hub}: {source}")]
+    Relay {
+        hub: String,
+        #[source]
+        source: RelayError,
+    },
+}
+
+impl ConnectError {
+    /// The session error for a first connection to `host` that failed this way.
+    pub(crate) fn into_session(self, host: &str) -> SessionError {
+        match self {
+            Self::Relay { hub, source } => SessionError::Relay { hub, source },
+            other => SessionError::Unreachable {
+                host: host.to_owned(),
+                reason: other.to_string(),
+            },
         }
-    };
-    validate_host(&target.host)?;
-    let mut stream = TcpStream::connect((host, port)).await?;
-    stream.set_nodelay(true)?;
-    match route {
-        ProxyConfig::Direct => {}
-        ProxyConfig::HttpConnect { .. } => http(&mut stream, target).await?,
-        ProxyConfig::Socks5 { remote_dns, .. } => socks(&mut stream, target, *remote_dns).await?,
     }
+}
+
+/// Connects to `target` along `route`. A hub route needs `relay`.
+pub(crate) async fn connect(
+    target: &Target,
+    route: &ProxyConfig,
+    relay: Option<&Arc<dyn RelayDialer>>,
+) -> Result<Box<dyn Stream>, ConnectError> {
+    validate_host(&target.host)?;
+    Ok(match route {
+        ProxyConfig::Direct => Box::new(socket(&target.host, target.port).await?),
+        ProxyConfig::HttpConnect { host, port } => {
+            let mut stream = proxy_socket(host, *port).await?;
+            http(&mut stream, target).await?;
+            Box::new(stream)
+        }
+        ProxyConfig::Socks5 {
+            host,
+            port,
+            remote_dns,
+        } => {
+            let mut stream = proxy_socket(host, *port).await?;
+            socks(&mut stream, target, *remote_dns).await?;
+            Box::new(stream)
+        }
+        ProxyConfig::Hub { address } => {
+            let relay = relay.ok_or(ConnectError::NoRelay)?;
+            let stream =
+                relay
+                    .dial(address, target)
+                    .await
+                    .map_err(|source| ConnectError::Relay {
+                        hub: address.clone(),
+                        source,
+                    })?;
+            Box::new(relay::bridge(stream))
+        }
+    })
+}
+
+async fn proxy_socket(host: &str, port: u16) -> io::Result<TcpStream> {
+    validate_host(host)?;
+    if port == 0 {
+        return Err(invalid("proxy port must be nonzero"));
+    }
+    socket(host, port).await
+}
+
+async fn socket(host: &str, port: u16) -> io::Result<TcpStream> {
+    let stream = TcpStream::connect((host, port)).await?;
+    // Keystrokes are tiny packets; batching them only adds latency.
+    stream.set_nodelay(true)?;
     Ok(stream)
 }
 fn invalid(message: &str) -> io::Error {
@@ -102,62 +174,22 @@ async fn http(stream: &mut TcpStream, target: &Target) -> io::Result<()> {
     Ok(())
 }
 async fn socks(stream: &mut TcpStream, target: &Target, remote_dns: bool) -> io::Result<()> {
-    stream.write_all(&[5, 1, 0]).await?;
-    let mut greeting = [0; 2];
-    stream.read_exact(&mut greeting).await?;
-    if greeting != [5, 0] {
-        return Err(failure(
-            "SOCKS5 proxy did not accept authentication-free access",
-        ));
-    }
-    let mut request = vec![5, 1, 0];
+    use tokio_socks::{TargetAddr, tcp::Socks5Stream};
+    // Resolve here only for local DNS; the library receives an explicit address policy.
     let address = match target.host.parse::<IpAddr>() {
-        Ok(ip) => Some(ip),
-        Err(_) if !remote_dns => Some(
+        Ok(ip) => TargetAddr::Ip((ip, target.port).into()),
+        Err(_) if !remote_dns => TargetAddr::Ip(
             tokio::net::lookup_host((target.host.as_str(), target.port))
                 .await?
                 .next()
-                .ok_or_else(|| failure("target DNS returned no addresses"))?
-                .ip(),
+                .ok_or_else(|| failure("target DNS returned no addresses"))?,
         ),
-        Err(_) => None,
+        Err(_) => TargetAddr::Domain(target.host.as_str().into(), target.port),
     };
-    match address {
-        Some(IpAddr::V4(ip)) => {
-            request.push(1);
-            request.extend_from_slice(&ip.octets());
-        }
-        Some(IpAddr::V6(ip)) => {
-            request.push(4);
-            request.extend_from_slice(&ip.octets());
-        }
-        None => {
-            request.extend_from_slice(&[3, target.host.len() as u8]);
-            request.extend_from_slice(target.host.as_bytes());
-        }
-    }
-    request.extend_from_slice(&target.port.to_be_bytes());
-    stream.write_all(&request).await?;
-    let mut reply = [0; 4];
-    stream.read_exact(&mut reply).await?;
-    if reply[0] != 5 || reply[2] != 0 {
-        return Err(failure("invalid SOCKS5 CONNECT reply"));
-    }
-    if reply[1] != 0 {
-        return Err(failure(&format!(
-            "SOCKS5 proxy rejected CONNECT (status {})",
-            reply[1]
-        )));
-    }
-    let count = match reply[3] {
-        1 => 4,
-        4 => 16,
-        3 => stream.read_u8().await? as usize,
-        _ => return Err(failure("invalid SOCKS5 address type")),
-    };
-    let mut address = vec![0; count + 2];
-    stream.read_exact(&mut address).await?;
-    Ok(())
+    Socks5Stream::connect_with_socket(stream, address)
+        .await
+        .map(|_| ())
+        .map_err(io::Error::other)
 }
 
 #[cfg(test)]
@@ -195,6 +227,7 @@ mod tests {
                 host: "127.0.0.1".into(),
                 port,
             },
+            None,
         )
         .await
         .unwrap();
@@ -225,7 +258,8 @@ mod tests {
                     &ProxyConfig::HttpConnect {
                         host: "127.0.0.1".into(),
                         port
-                    }
+                    },
+                    None
                 )
                 .await
                 .is_err()
@@ -244,7 +278,8 @@ mod tests {
                         host: "127.0.0.1".into(),
                         port,
                         remote_dns: true
-                    }
+                    },
+                    None
                 )
             )
             .await
@@ -280,6 +315,7 @@ mod tests {
                 port,
                 remote_dns: true,
             },
+            None,
         )
         .await
         .unwrap();
@@ -288,6 +324,87 @@ mod tests {
         assert_eq!(b, b"SSH");
         job.await.unwrap();
     }
+    #[tokio::test]
+    async fn socks_local_dns_uses_ip_and_preserves_fragmented_reply_banner() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let job = tokio::spawn(async move {
+            let (mut stream, _) = server.accept().await.unwrap();
+            let mut greeting = [0; 3];
+            stream.read_exact(&mut greeting).await.unwrap();
+            assert_eq!(greeting, [5, 1, 0]);
+            stream.write_all(&[5, 0]).await.unwrap();
+            let mut header = [0; 4];
+            stream.read_exact(&mut header).await.unwrap();
+            assert_eq!(&header[..3], &[5, 1, 0]);
+            let size = match header[3] {
+                1 => 6,
+                4 => 18,
+                _ => panic!("local DNS must send an IP"),
+            };
+            let mut address = vec![0; size];
+            stream.read_exact(&mut address).await.unwrap();
+            for bytes in [&[5, 0, 0][..], &[1, 127, 0], &[0, 1, 0, 22], b"SSH"] {
+                stream.write_all(bytes).await.unwrap();
+                tokio::task::yield_now().await;
+            }
+        });
+        let mut socket = connect(
+            &target("localhost"),
+            &ProxyConfig::Socks5 {
+                host: "127.0.0.1".into(),
+                port,
+                remote_dns: false,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let mut banner = Vec::new();
+        socket.read_to_end(&mut banner).await.unwrap();
+        assert_eq!(banner, b"SSH");
+        job.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn socks_refuses_authentication_and_malformed_or_rejected_replies() {
+        for (greeting, reply) in [
+            ([5, 2], vec![]),
+            ([4, 0], vec![]),
+            ([5, 0], vec![5, 5, 0, 1]),
+            ([5, 0], vec![5, 0, 1, 1]),
+            ([5, 0], vec![5, 0, 0, 9]),
+        ] {
+            let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = server.local_addr().unwrap().port();
+            let job = tokio::spawn(async move {
+                let (mut stream, _) = server.accept().await.unwrap();
+                let mut hello = [0; 3];
+                stream.read_exact(&mut hello).await.unwrap();
+                stream.write_all(&greeting).await.unwrap();
+                if !reply.is_empty() {
+                    let mut request = [0; 10];
+                    stream.read_exact(&mut request).await.unwrap();
+                    stream.write_all(&reply).await.unwrap();
+                }
+            });
+            assert!(
+                connect(
+                    &target("127.0.0.1"),
+                    &ProxyConfig::Socks5 {
+                        host: "127.0.0.1".into(),
+                        port,
+                        remote_dns: true,
+                    },
+                    None
+                )
+                .await
+                .is_err()
+            );
+            job.await.unwrap();
+        }
+    }
+
     #[test]
     fn host_validation_prevents_http_header_injection() {
         for h in ["host\r\nX:evil", "user@host", "host/path", "host:22", ""] {

@@ -120,6 +120,28 @@ impl RenderOnce for StatusBarRow {
             workspace,
         } = self;
         let inputs = inputs.overflow().clone().collapse(inputs, frame);
+        let visible: std::collections::HashSet<_> = inputs
+            .entries()
+            .chain(
+                inputs
+                    .hidden()
+                    .iter()
+                    .filter(|_| inputs.overflow().is_open()),
+            )
+            .filter_map(|entry| match entry {
+                BarEntry::Widget(id, _) | BarEntry::UserWidget(id, _) => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        let observed = workspace.clone();
+        cx.defer(move |cx| {
+            let _ = observed.update(cx, |workspace, cx| {
+                workspace
+                    .chrome
+                    .status_bar_mut()
+                    .publish_visibility(&visible, cx);
+            });
+        });
         Self::new(inputs, on_click, workspace).paint(frame, cx)
     }
 }
@@ -296,9 +318,12 @@ impl StatusBarRow {
                     })
                     .into_any_element()
             }
-            BarEntry::Widget(_, view) | BarEntry::UserWidget(_, view) => {
-                view.clone().into_any_element()
-            }
+            // Cached to its content: a redraw of the bar for another entry reuses the widget
+            // at the size it last took.
+            BarEntry::Widget(_, view) | BarEntry::UserWidget(_, view) => view
+                .clone()
+                .cached_to_content(gpui_kit::StyleRefinement::default())
+                .into_any_element(),
             BarEntry::Separator => div()
                 .w(px(1.))
                 .h_4()

@@ -60,6 +60,7 @@ pub(crate) fn text(default: &'static str, max_len: u16) -> FieldKind {
         default: Cow::Borrowed(default),
         max_len,
         placeholder: None,
+        secret: false,
     }
 }
 

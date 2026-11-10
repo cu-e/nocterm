@@ -1,8 +1,9 @@
 //! The window shell's layout presets as plain data and pure rules.
 //!
 //! A preset arranges the contributions of the plugin catalog: the three zones of the status
-//! bar, the panel groups and their members, the tray of contributions that are registered but
-//! not placed, and the panels that open with the layout. [`resolve`] checks a preset against a
+//! bar, the panel groups and their members, the toolbars along the edges of the tab area, the
+//! tray of contributions that are registered but not placed, and the panels that open with the
+//! layout. [`resolve`] checks a preset against a
 //! [`PluginSet`](nocterm_plugin_model::PluginSet) (the system catalog and the installed user
 //! plugins) and returns the arrangement the shell draws; the plugins it is told are disabled keep their entries in the preset and drop out of
 //! the arrangement. The built-in [`BuiltIn::Default`] is the empty preset, resolved from the
@@ -16,7 +17,7 @@
 //! preset called "Custom" and selects it, the entry operations move, group, separate, remove
 //! and restore what the bar holds, and the undo of an edit restores the earlier list of presets.
 //!
-//! Owns: bar zones, groups and separators, the tray, default-open panels, the built-in
+//! Owns: bar zones, groups and separators, toolbar edges, the tray, default-open panels, the built-in
 //! Default and Swapped sides, resolution against the catalog, the `[layouts]` section and its
 //! sanitizing, selection, the switch-or-edit transition, name validation and the edit operations
 //! with their pinned and tray rules.
@@ -48,7 +49,7 @@ mod wire;
 pub use builtin::BuiltIn;
 pub use edit::{EditError, EditOp, EditOutcome, EditTarget, Limit, Slot, Subject, edit};
 pub use name::{MAX_NAME_CHARS, NameError, validate_name};
-pub use preset::{Bar, BarItem, GroupEntry, LayoutPreset, PresetId};
+pub use preset::{Bar, BarItem, GroupEntry, LayoutPreset, PresetId, Toolbars};
 pub use resolve::resolve;
 pub use resolved::{ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember, solo_group_id};
 pub use settings::{LayoutSettings, MAX_GROUP_MEMBERS, MAX_PRESETS, MAX_ZONE_ITEMS, select};
@@ -70,5 +71,7 @@ mod edit_tests;
 mod edit_entry_tests;
 #[cfg(test)]
 mod edit_grouping_tests;
+#[cfg(test)]
+mod toolbar_tests;
 #[cfg(test)]
 mod user_plugin_tests;

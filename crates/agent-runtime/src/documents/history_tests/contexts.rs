@@ -5,6 +5,16 @@ use nocterm_ai::{
     storage::AgentStorageError,
 };
 
+pub(super) fn decoded_allowance(
+    admission: &crate::history_admission::HistoryAdmissionHandle,
+    bytes: usize,
+    cx: &mut App,
+) -> nocterm_core::allocation::AllocationLease {
+    let slot = admission.reserve_payload_reclaiming(None, cx).unwrap();
+    let proof = admission.reserve_unowned_bytes(bytes, cx).unwrap();
+    nocterm_core::allocation::AllocationLease::new(bytes, 1, (slot, proof))
+}
+
 pub(super) fn project_chat() -> SavedChat {
     let mut chat = snapshot().metadata.clone();
     chat.version = 2;
@@ -52,6 +62,7 @@ fn general_registration_and_direct_start_refuse_project_documents_without_native
             args: Vec::new(),
             env: Default::default(),
             inherit_env: Vec::new(),
+            hub: None,
         };
         assert!(matches!(
             runtime.connect(client.clone(), chat.header.id.clone(), launch, cx),
@@ -83,12 +94,13 @@ fn general_hydration_and_catalog_preserve_other_contexts_in_storage(cx: &mut Tes
     runtime.update(cx, |runtime, cx| runtime.reload_history(cx));
     cx.run_until_parked();
     let rows = runtime.update(cx, |runtime, _| {
-        runtime.catalog_snapshot(ContextId::General).unwrap()
+        runtime.catalog_snapshot(ContextId::General.into()).unwrap()
     });
     assert_eq!(rows.rows().len(), 1);
     assert_eq!(rows.rows()[0].id, general.header.id);
     let reader = cx.update(|cx| runtime.read(cx).history_reader());
-    let (loaded, permit) = futures::executor::block_on(reader.load(project.header.id.clone()));
+    let (loaded, permit) =
+        futures::executor::block_on(reader.prepare_load(project.header.id.clone()));
     assert!(matches!(loaded, Err(AgentStorageError::NotFound(_))));
     drop(permit);
     assert_eq!(
@@ -134,7 +146,6 @@ pub(super) fn scoped_fixture_with_history(
                 connector.clone(),
                 storage,
                 directory.path(),
-                Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
                 resolver.clone(),
                 cx,
             ),
@@ -196,16 +207,41 @@ async fn readers_keep_their_original_context_after_another_scoped_handle_is_crea
     repository.seed_chat(&second).unwrap();
     let reader = cx.update(|cx| project.history_reader(cx));
     let _selected_elsewhere = project.for_scope(ContextId::General);
-    let (loaded, permit) = reader.load(second.header.id.clone()).await;
-    let loaded = loaded.unwrap();
-    assert_eq!(loaded.header.scope, second.header.scope);
-    assert_eq!(loaded.header.title, second.header.title);
+    let (prepared, permit) = reader.prepare_load(second.header.id.clone()).await;
+    let prepared = prepared.unwrap();
+    let allocation = cx.update(|cx| {
+        decoded_allowance(
+            &general.history_admission(cx),
+            prepared.resident_bytes(),
+            cx,
+        )
+    });
+    let loaded = prepared.decode(allocation).await.unwrap();
+    assert_eq!(loaded.value().header.scope, second.header.scope);
+    assert_eq!(loaded.value().header.title, second.header.title);
     drop(permit);
     let (loaded, permit) = cx
         .update(|cx| general.history_reader(cx))
-        .load(first.header.id)
+        .prepare_load(first.header.id)
         .await;
-    assert_eq!(loaded.unwrap().header.title, first.header.title);
+    let prepared = loaded.unwrap();
+    let allocation = cx.update(|cx| {
+        decoded_allowance(
+            &general.history_admission(cx),
+            prepared.resident_bytes(),
+            cx,
+        )
+    });
+    assert_eq!(
+        prepared
+            .decode(allocation)
+            .await
+            .unwrap()
+            .value()
+            .header
+            .title,
+        first.header.title
+    );
     drop(permit);
 }
 #[gpui::test]
@@ -285,6 +321,7 @@ fn a_scoped_document_uses_the_ordinary_local_connector_without_changing_its_memb
             args: Vec::new(),
             env: Default::default(),
             inherit_env: Vec::new(),
+            hub: None,
         };
         let registration = project
             .register_bridge(&(client.clone() as Client), cx)
@@ -319,105 +356,7 @@ fn project_scope(index: u8) -> ContextId {
     )
     .unwrap()
 }
-#[gpui::test]
-fn retained_catalog_generations_consume_the_installation_limit_until_dropped(
-    cx: &mut TestAppContext,
-) {
-    let (general, _directory, repository, _, _) = scoped_fixture(cx);
-    cx.run_until_parked();
-    let mut retained = Vec::new();
-    for _ in 0..32 {
-        retained.push(cx.update(|cx| general.catalog_snapshot(cx).unwrap()));
-        if retained.len() < 32 {
-            cx.update(|cx| general.try_reload_history(cx).unwrap());
-            cx.run_until_parked();
-        }
-    }
-    let generation = retained.last().unwrap().generation();
-    let attempts = repository.operations().len();
-    cx.update(|cx| {
-        assert!(matches!(
-            general.try_reload_history(cx),
-            Err(crate::CatalogLoadError::Capacity)
-        ));
-        assert_eq!(
-            general.catalog_snapshot(cx).unwrap().generation(),
-            generation
-        );
-        assert!(matches!(
-            general.for_scope(project_scope(1)).try_reload_history(cx),
-            Err(crate::CatalogLoadError::Capacity)
-        ));
-    });
-    cx.run_until_parked();
-    assert_eq!(repository.operations().len(), attempts);
-    drop(retained.remove(0));
-    cx.update(|cx| general.try_reload_history(cx).unwrap());
-    cx.run_until_parked();
-    assert!(cx.update(|cx| general.catalog_snapshot(cx).unwrap().generation()) > generation);
-}
-#[gpui::test]
-fn pending_catalog_requests_share_the_same_installation_capacity(cx: &mut TestAppContext) {
-    let (general, _directory, repository, _, _) = scoped_fixture(cx);
-    // General's initial catalog is already reserved, even before its work runs.
-    cx.update(|cx| {
-        for index in 1..32 {
-            general
-                .for_scope(project_scope(index))
-                .try_reload_history(cx)
-                .unwrap();
-        }
-        assert!(matches!(
-            general.for_scope(project_scope(32)).try_reload_history(cx),
-            Err(crate::CatalogLoadError::Capacity)
-        ));
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        repository
-            .operations()
-            .iter()
-            .filter(|operation| **operation == StorageOperation::Catalog)
-            .count(),
-        32
-    );
-    // Completed unretained LRU entries can make room without multiplying cache size.
-    cx.update(|cx| {
-        general
-            .for_scope(project_scope(32))
-            .try_reload_history(cx)
-            .unwrap()
-    });
-    cx.run_until_parked();
-    assert!(
-        cx.update(|cx| general.for_scope(project_scope(32)).catalog_snapshot(cx))
-            .is_some()
-    );
-}
-#[gpui::test]
-fn an_old_catalog_load_cannot_replace_a_newer_scope_generation(cx: &mut TestAppContext) {
-    let (general, _directory, repository, _, _) = scoped_fixture(cx);
-    cx.run_until_parked();
-    let project = general.for_scope(project_chat().header.scope);
-    let release = repository.block_next(StorageOperation::Catalog);
-    cx.update(|cx| project.reload_history(cx));
-    cx.run_until_parked();
-    let mut chat = project_chat();
-    chat.header.title = Some("Current generation".into());
-    repository.seed_chat(&chat).unwrap();
-    cx.update(|cx| project.reload_history(cx));
-    cx.run_until_parked();
-    let latest = cx.update(|cx| project.catalog_snapshot(cx).unwrap());
-    chat.header.title = Some("Late stale generation".into());
-    repository.seed_chat(&chat).unwrap();
-    let _ = release.send(Ok(()));
-    cx.run_until_parked();
-    cx.update(|cx| {
-        let actual = project.catalog_snapshot(cx).unwrap();
-        assert_eq!(actual.generation(), latest.generation());
-        assert_eq!(actual.rows()[0].title(), "Current generation");
-    });
-}
+mod catalog_capacity;
 #[gpui::test]
 fn closed_clients_and_mismatched_chat_arguments_cannot_reach_native_ports(cx: &mut TestAppContext) {
     let (general, _directory, _, connector, resolver) = scoped_fixture(cx);
@@ -430,6 +369,7 @@ fn closed_clients_and_mismatched_chat_arguments_cannot_reach_native_ports(cx: &m
         args: Vec::new(),
         env: Default::default(),
         inherit_env: Vec::new(),
+        hub: None,
     };
     cx.update(|cx| {
         assert!(matches!(
@@ -529,7 +469,7 @@ fn retained_catalog_rows_hold_the_original_accounted_payload_without_cloning_sum
     let generation = row.generation();
     drop(first);
     let mut retained = Vec::new();
-    for index in 1..32 {
+    for index in 1..crate::history_admission::MAX_NORMAL_HISTORY_PAYLOADS as u8 {
         let context = general.for_scope(project_scope(index));
         cx.update(|cx| context.try_reload_history(cx).unwrap());
         cx.run_until_parked();
@@ -566,32 +506,39 @@ fn prepared_payload_handoff_requires_its_original_claim_and_leaves_other_records
     let window = cx.new(|_| ());
     cx.update(|cx| {
         assert_eq!(general.catalog_snapshot(cx).unwrap().rows().len(), 2);
+        let payload = general.history_admission(cx).reserve_payload().unwrap();
         let claim = ownership::owned_claim(
             general
                 .claim_document(first.header.id.clone(), window.entity_id(), cx)
                 .unwrap(),
         );
         assert!(matches!(
-            other_runtime.take_prepared_chat(&claim, cx),
+            other_runtime.take_prepared_chat(&claim, payload.clone(), cx),
             Err(crate::ChatOpenError::StaleClaim(_))
         ));
         assert!(matches!(
             general
                 .for_scope(project_scope(1))
-                .take_prepared_chat(&claim, cx),
+                .take_prepared_chat(&claim, payload.clone(), cx),
             Err(crate::ChatOpenError::Storage(
                 AgentStorageError::ScopeMismatch { .. }
             ))
         ));
         assert_eq!(
             general
-                .take_prepared_chat(&claim, cx)
+                .take_prepared_chat(&claim, payload.clone(), cx)
                 .unwrap()
                 .unwrap()
+                .value()
                 .draft,
             first.draft
         );
-        assert!(general.take_prepared_chat(&claim, cx).unwrap().is_none());
+        assert!(
+            general
+                .take_prepared_chat(&claim, payload.clone(), cx)
+                .unwrap()
+                .is_none()
+        );
         let other = ownership::owned_claim(
             general
                 .claim_document(second.header.id.clone(), window.entity_id(), cx)
@@ -599,9 +546,14 @@ fn prepared_payload_handoff_requires_its_original_claim_and_leaves_other_records
         );
         assert_eq!(
             general
-                .take_prepared_chat(&other, cx)
+                .take_prepared_chat(
+                    &other,
+                    general.history_admission(cx).reserve_payload().unwrap(),
+                    cx
+                )
                 .unwrap()
                 .unwrap()
+                .value()
                 .header
                 .id,
             second.header.id

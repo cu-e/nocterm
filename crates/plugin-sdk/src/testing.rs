@@ -40,8 +40,7 @@ use std::{
 };
 
 use nocterm_plugin_abi::{
-    AbiError, Answer, Call, MAX_LOG_LINE_CHARS, MAX_LOG_LINES, WireSnapshot, decode_reply,
-    encode_call,
+    AbiError, Answer, Call, MAX_LOG_LINE_CHARS, MAX_LOG_LINES, decode_reply, encode_call,
 };
 use nocterm_plugin_api::{
     API_VERSION, ContributionContext, Effect, EffectOutcome, EffectRequest, Effects, EffectsError,
@@ -170,16 +169,29 @@ impl Host {
 
     /// Renders the contribution `local`; the host's validation applies to the view.
     pub fn render<P: Plugin>(&mut self, plugin: &mut P, local: &str) -> Result<View, TestError> {
-        let local = self.contribution(local)?;
-        let snapshot = self.snapshot(&local);
-        let call = Call::Render {
-            local,
-            snapshot: WireSnapshot::from(&snapshot),
-        };
-        match self.call(plugin, &call)? {
-            Answer::View(view) => view.into_validated().map_err(TestError::View),
-            Answer::Effects(_) => Err(TestError::Answer),
-        }
+        self.draw(plugin, local, None, Zone::Center)
+    }
+
+    /// Renders the bar of the terminal `terminal`, which the toolbar `local` draws in that tab,
+    /// across the top or the bottom.
+    pub fn render_bar<P: Plugin>(
+        &mut self,
+        plugin: &mut P,
+        local: &str,
+        terminal: &str,
+    ) -> Result<View, TestError> {
+        self.draw(plugin, local, Some(terminal), Zone::Center)
+    }
+
+    /// As [`Host::render_bar`] for a bar the user moved to a side, which runs as a column:
+    /// `cx.is_column()` is true.
+    pub fn render_bar_in_column<P: Plugin>(
+        &mut self,
+        plugin: &mut P,
+        local: &str,
+        terminal: &str,
+    ) -> Result<View, TestError> {
+        self.draw(plugin, local, Some(terminal), Zone::Left)
     }
 
     /// Sends `event` to the contribution `local` and applies the effects it answers with.
@@ -189,14 +201,47 @@ impl Host {
         local: &str,
         event: Event,
     ) -> Result<Effects, TestError> {
+        self.report(plugin, local, None, event)
+    }
+
+    /// Sends `event` from the bar of the terminal `terminal` to the contribution `local`, which
+    /// draws it, and applies the effects it answers with.
+    pub fn bar_event<P: Plugin>(
+        &mut self,
+        plugin: &mut P,
+        local: &str,
+        terminal: &str,
+        event: Event,
+    ) -> Result<Effects, TestError> {
+        self.report(plugin, local, Some(terminal), event)
+    }
+
+    fn draw<P: Plugin>(
+        &mut self,
+        plugin: &mut P,
+        local: &str,
+        terminal: Option<&str>,
+        along: Zone,
+    ) -> Result<View, TestError> {
         let local = self.contribution(local)?;
-        let snapshot = self.snapshot(&local);
-        let call = Call::Event {
-            local,
-            event,
-            snapshot: WireSnapshot::from(&snapshot),
-        };
-        let Answer::Effects(effects) = self.call(plugin, &call)? else {
+        let snapshot = self.snapshot(&local, terminal, along);
+        match self.call(plugin, &Call::render(local, &snapshot))? {
+            Answer::View(view) => view.into_validated().map_err(TestError::View),
+            Answer::Effects(_) => Err(TestError::Answer),
+        }
+    }
+
+    fn report<P: Plugin>(
+        &mut self,
+        plugin: &mut P,
+        local: &str,
+        terminal: Option<&str>,
+        event: Event,
+    ) -> Result<Effects, TestError> {
+        let local = self.contribution(local)?;
+        let snapshot = self.snapshot(&local, terminal, Zone::Center);
+        let Answer::Effects(effects) = self.call(plugin, &Call::event(local, event, &snapshot))?
+        else {
             return Err(TestError::Answer);
         };
         effects.check().map_err(TestError::Effects)?;
@@ -228,8 +273,18 @@ impl Host {
         Ok(reply.answer)
     }
 
-    fn snapshot(&mut self, local: &LocalId) -> Snapshot {
-        let mut snapshot = Snapshot::new(self.context(local));
+    /// The snapshot of a call to `local`; a bar's call is drawn as a toolbar along `along` and
+    /// names its terminal.
+    fn snapshot(&mut self, local: &LocalId, terminal: Option<&str>, along: Zone) -> Snapshot {
+        let context = match terminal {
+            Some(_) => ContributionContext {
+                kind: Kind::Toolbar,
+                zone: along,
+            },
+            None => self.context(local),
+        };
+        let mut snapshot = Snapshot::new(context);
+        snapshot.terminal = terminal.map(String::from);
         for id in self.declared() {
             let Some(entry) = capability(id) else {
                 continue;
@@ -247,7 +302,12 @@ impl Host {
             };
             snapshot.observations.insert(String::from(id), result);
         }
-        snapshot.settings = self.settings.clone();
+        // As the host does, a plugin never reads its secret settings.
+        snapshot.settings = self
+            .manifest
+            .plugin()
+            .settings()
+            .without_secrets(&self.settings);
         snapshot.storage = self.storage.clone();
         snapshot.outcomes = core::mem::take(&mut self.outcomes);
         snapshot
@@ -261,6 +321,7 @@ impl Host {
         ContributionContext {
             kind: match found.map(|c| c.kind()) {
                 Some(ContributionKind::Panel) => Kind::Panel,
+                Some(ContributionKind::Toolbar) => Kind::Toolbar,
                 _ => Kind::Widget,
             },
             zone: match found.map(|c| c.placement().zone) {

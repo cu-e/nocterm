@@ -52,6 +52,7 @@ pub(super) fn map(error: FsError, path: &Path) -> LocalFsError {
         FsError::NotFound { .. } => LocalFsError::NotFound(path.to_owned()),
         FsError::AlreadyExists { .. } => LocalFsError::AlreadyExists(path.to_owned()),
         FsError::Unsupported(_) => LocalFsError::InvalidPath(path.to_owned()),
+        FsError::Source(_) => LocalFsError::Unsupported("captured connection source"),
         FsError::Other(_) => LocalFsError::Unsupported("unclassified fake remote error"),
     }
 }

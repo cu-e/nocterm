@@ -1,8 +1,8 @@
 //! What one item of the bar offers in its menu: move it, group it, separate it, hide it or add
-//! it to the bar. The list is plain data, so the preview and the tray build the same menu and a
-//! test reads it without opening one.
+//! it to the bar. The list is plain data, built when a menu opens, so the preview and the tray
+//! build the same menu and a test reads it without opening one.
 
-use std::{cell::Cell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use gpui_kit::{
     App, Context, SharedString, Window,
@@ -76,34 +76,44 @@ impl Ask {
     }
 }
 
-/// The menu of one subject, drawn from the layout as it is now.
-pub(crate) struct ItemMenu {
-    entries: Vec<Entry>,
+/// What a menu is opened on.
+#[derive(Clone, Debug)]
+pub(crate) enum MenuOf {
+    Item(Subject),
+    /// The separator at `index` of a list.
+    Separator(Slot, usize),
+}
+
+/// The menus of the items of the layout as it was drawn, each built when it opens.
+#[derive(Clone)]
+pub(crate) struct Menus {
+    snapshot: Rc<Snapshot>,
+    catalog: Arc<PluginSet>,
     commands: Commands,
 }
 
-impl ItemMenu {
-    pub(crate) fn new(
-        subject: &Subject,
-        snapshot: &Snapshot,
-        catalog: &PluginSet,
-        commands: Commands,
-    ) -> Rc<Self> {
-        Self::of(entries(subject, snapshot, catalog), commands)
+impl Menus {
+    pub(crate) fn new(snapshot: Rc<Snapshot>, catalog: Arc<PluginSet>, commands: Commands) -> Self {
+        Self {
+            snapshot,
+            catalog,
+            commands,
+        }
     }
 
-    pub(crate) fn of(entries: Vec<Entry>, commands: Commands) -> Rc<Self> {
-        Rc::new(Self { entries, commands })
-    }
-
-    /// Fills a popup with the entries; a click sends the operation to the section.
+    /// Fills a popup with the entries of `of`; a click sends the operation to the section.
     pub(crate) fn popup(
         &self,
+        of: &MenuOf,
         menu: PopupMenu,
         window: &mut Window,
         cx: &mut Context<PopupMenu>,
     ) -> PopupMenu {
-        fill(menu, &self.entries, &self.commands, window, cx)
+        let entries = match of {
+            MenuOf::Item(subject) => entries(subject, &self.snapshot, &self.catalog),
+            MenuOf::Separator(place, index) => separator(place.clone(), *index, &self.snapshot),
+        };
+        fill(menu, &entries, &self.commands, window, cx)
     }
 }
 
@@ -111,15 +121,15 @@ impl ItemMenu {
 /// every right click within it; a panel or separator of the group claims that click on the way
 /// down, and its own menu opens instead.
 #[derive(Clone, Default)]
-pub(crate) struct Claim(Rc<Cell<Option<Rc<ItemMenu>>>>);
+pub(crate) struct Claim(Rc<RefCell<Option<MenuOf>>>);
 
 impl Claim {
-    pub(crate) fn claim(&self, menu: Rc<ItemMenu>) {
-        self.0.set(Some(menu));
+    pub(crate) fn claim(&self, of: MenuOf) {
+        self.0.replace(Some(of));
     }
 
-    /// The menu a member claimed for this click, or the group's `own`.
-    pub(crate) fn take_or(&self, own: &Rc<ItemMenu>) -> Rc<ItemMenu> {
+    /// What a member claimed for this click, or the group's `own`.
+    pub(crate) fn take_or(&self, own: &MenuOf) -> MenuOf {
         self.0.take().unwrap_or_else(|| own.clone())
     }
 }

@@ -36,6 +36,30 @@ Each layer's notes describe the behaviour and boundaries of its crates; the
 [dependency map](architecture/dependencies.md) lists every crate with its layer,
 internal dependencies and purpose.
 
+## Hubs
+
+A self-hosted Nocterm server keeps what an account owns (saved servers, vault passwords), can
+carry an SSH route and runs the account's agents. These crates carry it:
+`nocterm-hubs-model` (domain: addresses, trust rules, the `[hubs]` settings, the ports),
+`nocterm-hub-io` (adapter: the only crate that speaks the hub protocol, which lives in a
+[separate contract repository](adr/0096-hub-contract-outside-the-workspace.md); it keeps device
+credentials in private files), `nocterm-hubs` (service: known hubs, their status, sign-in),
+`nocterm-hubs-ui` (feature: the sign-in dialog, the Servers settings page and the sign-in
+commands), `nocterm-hub-agents-model` (domain: agents, providers, agent servers and their
+ports) and `nocterm-hub-agents` (service: the agents and agent servers of each tracked hub, and
+Agent access of a saved server). A hub agent's chat is an ordinary agent chat: `nocterm-hub-io`
+implements `nocterm_ai::AgentConnector` over the hub's chat service, so the agent panel and the
+transcript are the same as for a local agent, and a hub `ChatRepository` lists the hub's chats
+beside the local history of a hub window
+([ADR 0148](adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)). A hub can also
+be the first step of an SSH route: the transport asks the `RelayDialer` port that
+`nocterm-hub-io` implements for a stream
+([ADR 0100](adr/0100-the-hub-is-a-route-step.md)). A window shows one environment, this
+computer or the account of one hub: the application builds one in-memory mirror of the
+account's connections, its vault and the terminal credentials per hub and composes each window
+from its own sources ([ADR 0104](adr/0104-a-window-shows-one-environment.md)). User guide:
+[hubs](HUBS.md).
+
 ## Plugins
 
 The window shell hosts contributions: panels and status bar widgets. The shell's own

@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use nocterm_plugin_abi::{Answer, Call, WireSnapshot, encode_call};
+use nocterm_plugin_abi::{Answer, Call, encode_call};
 use nocterm_plugin_api::{
     Effects, Event, LocalId, Manifest, PluginInstance, ProtocolError, RuntimeError, Snapshot, View,
 };
@@ -89,10 +89,7 @@ impl WasmInstance {
 
 impl PluginInstance for WasmInstance {
     fn render(&self, local: &LocalId, snapshot: &Snapshot) -> Result<View, RuntimeError> {
-        let call = Call::Render {
-            local: local.clone(),
-            snapshot: WireSnapshot::from(snapshot),
-        };
+        let call = Call::render(local.clone(), snapshot);
         self.run(local, &call, |answer| match answer {
             Answer::View(view) => Some(view),
             Answer::Effects(_) => None,
@@ -105,11 +102,7 @@ impl PluginInstance for WasmInstance {
         event: Event,
         snapshot: &Snapshot,
     ) -> Result<Effects, RuntimeError> {
-        let call = Call::Event {
-            local: local.clone(),
-            event,
-            snapshot: WireSnapshot::from(snapshot),
-        };
+        let call = Call::event(local.clone(), event, snapshot);
         self.run(local, &call, |answer| match answer {
             Answer::Effects(effects) => Some(effects),
             Answer::View(_) => None,

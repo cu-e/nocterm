@@ -6,7 +6,10 @@ use std::{
     sync::Arc,
 };
 
-use nocterm_session::{Auth, Prompt, Secret, SecretRequest, SessionDriver, SessionError};
+use nocterm_session::{
+    Auth, CredentialId, Prompt, Secret, SecretRequest, SessionDriver, SessionError,
+};
+use nocterm_ssh_keys::{KeyMaterial, PublicKeyText};
 use russh::{
     MethodKind, MethodSet,
     client::{AuthResult, Handle, KeyboardInteractiveAuthResponse},
@@ -79,6 +82,10 @@ impl<'a> Authenticator<'a> {
         let signed_in = match self.login.auth() {
             Auth::Auto => self.try_agent(config).await? || self.try_default_keys(config).await?,
             Auth::Key { path } => self.try_key_file(path, true).await?,
+            Auth::VaultKey {
+                credential,
+                public_key,
+            } => self.try_vault_key(*credential, public_key).await?,
             Auth::Password => false,
         };
         if signed_in || self.try_typed_secrets().await? {
@@ -269,6 +276,73 @@ impl<'a> Authenticator<'a> {
         self.succeeded(result)
     }
 
+    /// Offers the key the profile keeps in the vault. The terminal answers
+    /// from the vault only; the answer is accepted only when it is the key
+    /// the profile names, so a swapped record is never signed with.
+    async fn try_vault_key(
+        &mut self,
+        credential: CredentialId,
+        public_key: &str,
+    ) -> Result<bool, SessionError> {
+        if !self.may_offer_key() {
+            return Ok(false);
+        }
+        let Ok(named) = PublicKey::from_openssh(public_key) else {
+            tracing::warn!("the profile names a vault key that is not a public key");
+            return Ok(false);
+        };
+        if self.offered.contains(named.key_data()) {
+            return Ok(false);
+        }
+        let Some(secret) = self
+            .ask(SecretRequest::PrivateKey {
+                credential,
+                public_key: public_key.to_owned(),
+            })
+            .await
+        else {
+            return Ok(false);
+        };
+        let Some(key) = vault_private_key(&secret, public_key) else {
+            return Ok(false);
+        };
+        let best = self.handle.best_supported_rsa_hash().await.ok().flatten();
+        let hash = match key.algorithm() {
+            Algorithm::Rsa { .. } => match rsa_signing_hash(best) {
+                Some(hash) => Some(hash),
+                None => {
+                    tracing::warn!(
+                        "the host accepts only SHA-1 RSA signatures; the vault key is skipped"
+                    );
+                    return Ok(false);
+                }
+            },
+            _ => None,
+        };
+        self.offer_vault_key(named.key_data().clone(), key, hash)
+            .await
+    }
+
+    /// Offers `key` the profile keeps in the vault.
+    async fn offer_vault_key(
+        &mut self,
+        named: KeyData,
+        key: PrivateKey,
+        hash: Option<HashAlg>,
+    ) -> Result<bool, SessionError> {
+        self.offered.push(named);
+        let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
+        let result = self.handle.authenticate_publickey(self.user(), key).await;
+        self.rejected_key |= matches!(
+            &result,
+            Ok(AuthResult::Failure {
+                partial_success: false,
+                ..
+            })
+        );
+        self.succeeded(result)
+    }
+
     /// Decodes a private key, asking for its passphrase if it has one.
     /// `None` means the key cannot be used.
     async fn unlock(&self, path: &Path, text: Arc<Zeroizing<Vec<u8>>>) -> Option<PrivateKey> {
@@ -403,7 +477,11 @@ fn key_required_message(
     if !public_key_only {
         return None;
     }
-    if matches!(auth, Auth::Password) {
+    if matches!(auth, Auth::VaultKey { .. }) && !rejected_key {
+        Some(
+            "requires an SSH key, but the vault key could not be offered. Unlock the vault and check that the key is still in it.",
+        )
+    } else if matches!(auth, Auth::Password) {
         Some(
             "does not allow password sign-in. Set Authentication to Key file and select a Private key.",
         )
@@ -416,6 +494,38 @@ fn key_required_message(
             "requires an SSH key and does not allow password sign-in. Set Authentication to Key file and select a Private key, or load an authorized key into your SSH agent.",
         )
     }
+}
+
+/// The signing hash for an RSA vault key from what the host announced.
+/// `best` is `best_supported_rsa_hash`: `Some(None)` is a host that signs
+/// only with SHA-1, which is refused; no announcement at all means an old
+/// host, tried with SHA-512 rather than SHA-1.
+fn rsa_signing_hash(best: Option<Option<HashAlg>>) -> Option<HashAlg> {
+    match best {
+        Some(hash) => hash,
+        None => Some(HashAlg::Sha512),
+    }
+}
+
+/// Reads the vault's answer as a private key, but only when its public half
+/// is the one the profile names. Nothing of the key is logged.
+fn vault_private_key(secret: &Secret, named: &str) -> Option<PrivateKey> {
+    let material = match KeyMaterial::import(secret, None) {
+        Ok(material) => material,
+        Err(error) => {
+            tracing::warn!(%error, "the vault entry is not a usable private key");
+            return None;
+        }
+    };
+    let canonical = PublicKeyText::parse(named).ok();
+    if canonical.as_ref() != Some(&material.public_key()) {
+        tracing::warn!(
+            fingerprint = material.fingerprint(),
+            "the vault entry is not the key the profile names"
+        );
+        return None;
+    }
+    PrivateKey::from_openssh(material.to_secret().expose()).ok()
 }
 
 /// Decoding runs a deliberately slow key derivation for encrypted keys, so
@@ -487,6 +597,43 @@ mod material_tests {
             key_required_message(true, &Auth::Password, false)
                 .unwrap()
                 .contains("Authentication to Key file")
+        );
+    }
+    #[test]
+    fn an_rsa_vault_key_never_signs_with_sha1() {
+        assert_eq!(
+            rsa_signing_hash(Some(Some(HashAlg::Sha256))),
+            Some(HashAlg::Sha256)
+        );
+        assert_eq!(
+            rsa_signing_hash(Some(Some(HashAlg::Sha512))),
+            Some(HashAlg::Sha512)
+        );
+        assert_eq!(rsa_signing_hash(Some(None)), None);
+        assert_eq!(rsa_signing_hash(None), Some(HashAlg::Sha512));
+    }
+    #[test]
+    fn a_swapped_vault_record_is_not_signed_with() {
+        let first = KeyMaterial::ed25519_from_seed(&[1; 32], "").unwrap();
+        let second = KeyMaterial::ed25519_from_seed(&[2; 32], "").unwrap();
+        let named = first.public_key();
+        assert!(vault_private_key(&first.to_secret(), named.as_str()).is_some());
+        assert!(vault_private_key(&second.to_secret(), named.as_str()).is_none());
+        assert!(vault_private_key(&Secret::new("not a key"), named.as_str()).is_none());
+        assert!(vault_private_key(&first.to_secret(), "garbage").is_none());
+    }
+    #[test]
+    fn a_vault_key_that_cannot_be_offered_gets_its_own_explanation() {
+        let auth = Auth::VaultKey {
+            credential: CredentialId::from_bytes([7; 16]),
+            public_key: String::new(),
+        };
+        let unoffered = key_required_message(true, &auth, false).unwrap();
+        assert!(unoffered.contains("vault key"), "{unoffered}");
+        assert!(
+            key_required_message(true, &auth, true)
+                .unwrap()
+                .contains("authorized_keys")
         );
     }
     #[tokio::test]

@@ -358,13 +358,15 @@ fn the_default_build_has_no_user_section(cx: &mut TestAppContext) {
 
 #[cfg(feature = "user-plugins")]
 #[gpui_kit::test]
-fn the_user_feature_adds_a_user_section_below_the_system_plugins(cx: &mut TestAppContext) {
+fn the_user_feature_adds_external_plugins_to_the_page_of_the_system_plugins(
+    cx: &mut TestAppContext,
+) {
     let (handle, _, _) = window_over("", cx);
     dispatch(handle, OpenPlugins { plugin: None }, cx);
     render(handle, cx);
     cx.update_window(handle, |_, window, _| {
         assert!(window.try_find("plugin-row:monitor").is_some());
-        assert!(window.try_find("user-plugins").is_some());
+        assert!(window.try_find("user-plugins-head").is_some());
     })
     .unwrap();
 }

@@ -79,7 +79,7 @@ impl StreamReveal {
         });
         changed
     }
-    pub(super) fn text(&self, index: usize, text: &str) -> String {
+    pub(super) fn slice<'a>(&self, index: usize, text: &'a str) -> &'a str {
         let mut end = self
             .bytes
             .get(&index)
@@ -89,7 +89,10 @@ impl StreamReveal {
         while !text.is_char_boundary(end) {
             end -= 1;
         }
-        text[..end].to_owned()
+        &text[..end]
+    }
+    pub(super) fn text(&self, index: usize, text: &str) -> String {
+        self.slice(index, text).to_owned()
     }
     pub(super) fn pending(&self) -> bool {
         !self.backlog.is_empty()

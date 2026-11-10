@@ -1,9 +1,11 @@
-//! What the editor shows of one layout, derived from the settings on each draw.
+//! What the editor shows of one layout, derived from the settings, and kept until they change.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, rc::Rc, sync::Arc};
 
 use nocterm_plugin_enablement::PluginEnablement;
-use nocterm_plugin_model::{ContributionId, GroupId, GroupSpec, PluginId, PluginSet, Zone};
+use nocterm_plugin_model::{
+    ContributionId, ContributionKind, GroupId, GroupSpec, PluginId, PluginSet, Zone,
+};
 use nocterm_window_layout::{
     BuiltIn, LayoutSettings, PresetId, ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember,
     Slot, Subject, select,
@@ -74,8 +76,10 @@ impl Snapshot {
                 .unwrap_or_default(),
         };
         let layout = settings.resolve(&shown, catalog, &BTreeSet::new());
+        // Toolbars are shown and hidden from the status bar's menu, not arranged here.
         let tray = catalog
             .entries()
+            .filter(|contribution| contribution.kind() != ContributionKind::Toolbar)
             .filter(|contribution| !layout.is_placed(contribution.id()))
             .map(|contribution| contribution.id().clone())
             .collect();
@@ -308,6 +312,49 @@ impl Snapshot {
                     .iter()
                     .any(|item| matches!(item, ResolvedItem::Group(placed) if placed.id() == group))
             })
+    }
+}
+
+/// The snapshot of the layout shown, built again only when what it is drawn from changed: the
+/// settings, by their revision, the set of plugins, or the layout picked. An editor never
+/// changes its `legacy_swapped`. It holds the one snapshot drawn last.
+#[derive(Default)]
+pub(crate) struct Snapshots {
+    last: Option<(Drawn, Rc<Snapshot>)>,
+}
+
+/// What a snapshot was built from.
+struct Drawn {
+    revision: u64,
+    catalog: Arc<PluginSet>,
+    shown: Option<PresetId>,
+}
+
+impl Snapshots {
+    /// The snapshot for these inputs: the last one when they are the same, else what `build`
+    /// makes of them.
+    pub(crate) fn get(
+        &mut self,
+        revision: u64,
+        catalog: &Arc<PluginSet>,
+        shown: Option<&PresetId>,
+        build: impl FnOnce() -> Snapshot,
+    ) -> Rc<Snapshot> {
+        if let Some((drawn, snapshot)) = &self.last
+            && drawn.revision == revision
+            && Arc::ptr_eq(&drawn.catalog, catalog)
+            && drawn.shown.as_ref() == shown
+        {
+            return snapshot.clone();
+        }
+        let snapshot = Rc::new(build());
+        let drawn = Drawn {
+            revision,
+            catalog: catalog.clone(),
+            shown: shown.cloned(),
+        };
+        self.last = Some((drawn, snapshot.clone()));
+        snapshot
     }
 }
 

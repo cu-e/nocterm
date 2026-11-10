@@ -9,9 +9,14 @@ use std::{
 };
 
 #[derive(Default)]
-pub(super) struct Scripted {
+pub(crate) struct Scripted {
     drivers: Mutex<Vec<Arc<SessionDriver>>>,
     requests: Mutex<Vec<ConnectRequest>>,
+}
+impl Scripted {
+    pub(crate) fn request_count(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
 }
 struct Files;
 impl nocterm_session::RemoteFs for Files {
@@ -24,7 +29,18 @@ impl nocterm_session::RemoteFs for Files {
 }
 impl Transport for Scripted {
     fn open(&self, request: ConnectRequest) -> Session {
-        let (session, driver) = nocterm_session::channel(Some(Arc::new(Files)));
+        self.open_with(request, Default::default())
+    }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        if let Err(error) = options.source().check() {
+            return Session::failed(error.into());
+        }
+        let (session, driver) =
+            nocterm_session::channel_with_source(Some(Arc::new(Files)), options.source().clone());
         self.requests.lock().unwrap().push(request);
         self.drivers.lock().unwrap().push(Arc::new(driver));
         session
@@ -36,7 +52,7 @@ pub(super) fn fixture(
 ) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
     fixture_with_credentials(cx, None)
 }
-pub(super) fn fixture_with_credentials(
+pub(crate) fn fixture_with_credentials(
     cx: &mut TestAppContext,
     credentials: Option<crate::CredentialProvider>,
 ) -> (AnyWindowHandle, Entity<TerminalView>, Arc<Scripted>) {
@@ -83,7 +99,9 @@ pub(super) fn fixture_with_credentials(
         window.render_frame(cx);
     })
     .unwrap();
-    emit(cx, &transport, 0, Event::Connected);
+    if transport.request_count() > 0 {
+        emit(cx, &transport, 0, Event::Connected);
+    }
     (handle, view, transport)
 }
 pub(super) fn emit(cx: &mut TestAppContext, transport: &Scripted, index: usize, event: Event) {

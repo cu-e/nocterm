@@ -1,8 +1,14 @@
 //! The agent chat panel: views over the chats of `nocterm-agent-chat`.
 //! Installed retains the actual runtime, available agents, image, layout, settings, metadata
-//! and auth collaborators.
+//! and auth collaborators. New hub-window actions capture fresh account sources;
+//! existing chats keep their original source and are withdrawn when it becomes stale.
 //! MessageList, ComposerView, HistoryColumn, PanelLayout and MenuView own controls,
-//! disposable presentation transitions and their subscription/task lifetimes.
+//! disposable presentation transitions and their subscription/task lifetimes. Transcript rows
+//! borrow the open AgentThread's transcript into the EntryRenderer. A hub window's chats are
+//! ordinary chats of its history (ADR 0148): its new-chat menu offers the hub's agents beside
+//! the local ones, and a change of the hub's chats reads the history again. The history also
+//! lists, through weak handles, the chats other windows hold (ADR 0152); opening one moves it
+//! here while it rests, otherwise its window shows it.
 //! SignInCards owns secret controls and prompt tokens. PanelNotices owns errors, approval
 //! identity and cancellable redraw work; PanelBindings retains installation subscriptions.
 //! Stateless renderers take immutable projections; finite presentation operations return
@@ -11,11 +17,13 @@
 //! Owns: panel views and presentation state, the panel's ChatRoster, WorkspaceSeat (the
 //! ChatWorkspace over an original surface and exact ChatKey) and WorkspaceSignIn (the SignInTerminal over the
 //! host's TerminalAuthOpener).
+//! Image previews retain immutable source identity with a 64 MiB source/PNG/RGBA budget and at most 32 cached entries.
+//! Preparation and preview decoding share four physical work permits across windows, retained through actual background work.
 //! Does not own: chats, sessions and tools (nocterm-agent-chat), ACP transport, connection
 //! admission, filesystem storage or image decoding.
 //! Ports used: AgentConnector, ToolBridge, WorkdirResolver, ConnectionDirectory, ChatConnectionOpen,
 //! ImageInspector and ImageThumbnailer through ImageDeps, and ChatMetadataSource.
-//! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel,
+//! Ports provided: the required `agent` system plugin (`plugin::PLUGIN`) with its side panel
 //! and the TerminalAuthOpener composition callback.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
 //! Globals: none.
@@ -27,6 +35,8 @@
 
 mod agent_icon;
 mod chat_host;
+mod hub_access;
+pub use hub_access::HubAgentsAccess;
 mod image_deps;
 mod installation;
 pub use installation::Installed;
@@ -64,9 +74,9 @@ pub struct AgentServices {
     pub metadata: Arc<dyn nocterm_ai::metadata::ChatMetadataSource>,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
+    pub command_jobs: Arc<dyn nocterm_session::command_jobs::CommandJobsFactory>,
+    pub transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     pub storage: runtime::AgentStorage,
-    /// The host's account usage capability, without native paths in the view.
-    pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
     pub terminal_auth: Option<TerminalAuthOpener>,
@@ -86,10 +96,11 @@ pub fn init(
     layout: nocterm_ui::LayoutHandle,
     ready: &nocterm_ui::UiReady,
     shutdown: &nocterm_store::ShutdownCoordinator,
+    hubs: Option<HubAgentsAccess>,
     cx: &mut App,
 ) -> (Installed, Result<(), nocterm_store::StoreError>) {
     panel::commands::init(cx);
-    installation::install(services, images, layout, ready, shutdown, cx)
+    installation::install(services, images, layout, ready, shutdown, hubs, cx)
 }
 
 gpui_kit::actions!(
@@ -101,7 +112,8 @@ gpui_kit::actions!(
         ShowHistory,
         StopGeneration,
         ToggleModelPicker,
-        AttachImage
+        /// Attach files to the next message; images among them are sent as images.
+        AttachFiles
     ]
 );
 

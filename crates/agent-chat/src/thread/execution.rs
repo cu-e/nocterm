@@ -2,28 +2,40 @@
 use super::AgentThread;
 use nocterm_ai::{BridgeCall, ToolFailure};
 use std::time::{Duration, Instant};
-pub(in crate::thread) mod jobs;
 
+/// What a wait reports on; both name only work this chat started.
+pub(super) enum WaitSubject {
+    Command { terminal: String, id: String },
+    Transfer { id: String },
+}
+impl WaitSubject {
+    pub(super) fn command(terminal: &str, id: &str) -> Self {
+        Self::Command {
+            terminal: terminal.into(),
+            id: id.into(),
+        }
+    }
+    pub(super) fn transfer(id: &str) -> Self {
+        Self::Transfer { id: id.into() }
+    }
+}
 /// Read waits retain the original ticket and never take a replacement executor.
-pub(super) struct CommandWaitOperation {
-    terminal: String,
-    id: String,
+pub(super) struct ToolWaitOperation {
+    subject: WaitSubject,
     ticket: nocterm_ai::session::Ticket,
     yield_time: Duration,
     until: Instant,
     _guard: super::session_driver::OperationGuard,
 }
-impl CommandWaitOperation {
+impl ToolWaitOperation {
     pub(super) fn new(
-        terminal: String,
-        id: String,
+        subject: WaitSubject,
         yield_ms: u64,
         ticket: nocterm_ai::session::Ticket,
         guard: super::session_driver::OperationGuard,
     ) -> Self {
         Self {
-            terminal,
-            id,
+            subject,
             ticket,
             yield_time: Duration::from_millis(yield_ms),
             until: Instant::now(),
@@ -33,23 +45,25 @@ impl CommandWaitOperation {
     pub(super) fn ticket(&self) -> nocterm_ai::session::Ticket {
         self.ticket
     }
-    pub(super) fn id(&self) -> &str {
-        &self.id
-    }
-    pub(super) fn terminal(&self) -> &str {
-        &self.terminal
-    }
+    /// The current report, or `None` while the work runs and the wait has time left.
     pub(super) fn frame(
         &self,
-        state: super::tool_runtime::CommandSnapshot,
+        tools: &mut super::tool_runtime::ToolRuntime,
         redact: bool,
     ) -> Result<Option<serde_json::Value>, ToolFailure> {
-        if state.active() && Instant::now() < self.until {
-            return Ok(None);
+        use super::tool_runtime::presentation::{command_payload, transfer_payload};
+        let waiting = Instant::now() < self.until;
+        match &self.subject {
+            WaitSubject::Command { terminal, id } => {
+                let state = tools.command_snapshot(id, terminal)?;
+                Ok((!(state.active() && waiting)).then(|| command_payload(id, state, redact)))
+            }
+            WaitSubject::Transfer { id } => {
+                let progress = tools.transfer_progress(id)?;
+                let running = !progress.state.finished();
+                Ok((!(running && waiting)).then(|| transfer_payload(&progress, redact)))
+            }
         }
-        Ok(Some(super::tool_runtime::presentation::command_payload(
-            &self.id, state, redact,
-        )))
     }
     pub(super) async fn run(
         mut self,
@@ -59,7 +73,7 @@ impl CommandWaitOperation {
     ) {
         self.until = Instant::now() + self.yield_time;
         loop {
-            match thread.update(cx, |thread, cx| thread.poll_command_wait(&self, cx)) {
+            match thread.update(cx, |thread, cx| thread.poll_tool_wait(&self, cx)) {
                 Ok(Ok(None)) => {
                     cx.background_executor()
                         .timer(Duration::from_millis(25))

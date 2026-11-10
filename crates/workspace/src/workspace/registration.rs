@@ -18,7 +18,7 @@ use nocterm_plugin_model::{
 
 use super::{
     Workspace,
-    chrome::{WidgetFactory, ZoneHook},
+    chrome::{VisibilityHook, WidgetFactory, ZoneHook},
     panel_groups::{ExpandableHandle, HostedPanel, Presentation},
 };
 use crate::Panel;
@@ -187,6 +187,7 @@ pub struct WidgetRegistration {
     id: ContributionId,
     create: WidgetFactory,
     zone: Option<ZoneHook>,
+    visibility: Option<VisibilityHook>,
 }
 
 impl WidgetRegistration {
@@ -209,6 +210,7 @@ impl WidgetRegistration {
             id: id.clone(),
             create: Rc::new(move |workspace, window, cx| factory(workspace, window, cx).into()),
             zone: None,
+            visibility: None,
         }
     }
 
@@ -226,11 +228,84 @@ impl WidgetRegistration {
         registration
     }
 
+    /// Observe actual placement in the bar or its open overflow. Delivery is deferred,
+    /// and equal visibility produces no callback. Other widgets need no hook.
+    pub fn with_visibility<V: Render>(
+        mut self,
+        changed: impl Fn(&mut V, bool, &mut Context<V>) + 'static,
+    ) -> Self {
+        self.visibility = Some(Rc::new(move |view, visible, cx| {
+            if let Ok(view) = view.clone().downcast::<V>() {
+                view.update(cx, |view, cx| changed(view, visible, cx));
+            }
+        }));
+        self
+    }
+
     pub(super) fn id(&self) -> &ContributionId {
         &self.id
     }
-    pub(super) fn into_parts(self) -> (WidgetFactory, Option<ZoneHook>) {
-        (self.create, self.zone)
+    pub(super) fn into_parts(self) -> (WidgetFactory, Option<ZoneHook>, Option<VisibilityHook>) {
+        (self.create, self.zone, self.visibility)
+    }
+}
+
+/// A toolbar to register for a contribution.
+pub struct ToolbarRegistration {
+    id: ContributionId,
+    /// `None` for a toolbar its plugin's tabs draw.
+    create: Option<WidgetFactory>,
+}
+
+impl ToolbarRegistration {
+    /// The workspace calls `factory` when the window's arrangement shows the toolbar along an
+    /// edge, and borrows itself to it: the factory may read the workspace, such as
+    /// [`Workspace::toolbar_edge`] to draw a row or a column, but cannot update it. A toolbar the
+    /// arrangement hides is not created, and its view is dropped when it is hidden or turns from
+    /// a row into a column or back.
+    ///
+    /// The view fills a strip [`TOOLBAR_HEIGHT`](Self::HEIGHT) high along the top or the bottom
+    /// edge, or [`TOOLBAR_WIDTH`](Self::WIDTH) wide along a side.
+    pub fn new<V: Render>(
+        contribution: &SystemContribution,
+        factory: impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<V> + 'static,
+    ) -> Self {
+        Self::user(&contribution.id, factory)
+    }
+
+    /// As [`ToolbarRegistration::new`], for a toolbar of an installed user plugin.
+    pub fn user<V: Render>(
+        id: &ContributionId,
+        factory: impl Fn(&Workspace, &mut Window, &mut Context<Workspace>) -> Entity<V> + 'static,
+    ) -> Self {
+        Self {
+            id: id.clone(),
+            create: Some(Rc::new(move |workspace, window, cx| {
+                factory(workspace, window, cx).into()
+            })),
+        }
+    }
+
+    /// A user plugin's toolbar that runs inside the plugin's own tabs. The window draws nothing
+    /// for it: it lists it in the status bar menu and keeps its edge, which
+    /// [`Workspace::toolbar_edge`] tells the tabs that draw it.
+    pub fn own_tabs(id: &ContributionId) -> Self {
+        Self {
+            id: id.clone(),
+            create: None,
+        }
+    }
+
+    /// The height of a toolbar along the top or the bottom edge, in pixels.
+    pub const HEIGHT: f32 = super::chrome::TOOLBAR_HEIGHT;
+    /// The width of a toolbar along the left or the right edge, in pixels.
+    pub const WIDTH: f32 = super::chrome::TOOLBAR_WIDTH;
+
+    pub(super) fn id(&self) -> &ContributionId {
+        &self.id
+    }
+    pub(super) fn into_factory(self) -> Option<WidgetFactory> {
+        self.create
     }
 }
 
@@ -318,6 +393,17 @@ impl Registrations {
         }
         self.registered.insert(id.clone());
         Ok(traits)
+    }
+
+    /// Checks a toolbar registration and records it.
+    pub(super) fn admit_toolbar(
+        &mut self,
+        set: &PluginSet,
+        id: &ContributionId,
+    ) -> Result<(), RegistrationError> {
+        self.check(set, id, ContributionKind::Toolbar)?;
+        self.registered.insert(id.clone());
+        Ok(())
     }
 
     /// Checks a widget registration and records it.

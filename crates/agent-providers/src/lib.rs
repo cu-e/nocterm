@@ -3,7 +3,7 @@
 //! Owns: one module per built-in agent returning its `AgentProfile` (pinned
 //! launch, home state, plan-limit reporting, brand mark) and `catalog()`.
 //! Does not own: dialect and resolution rules (`nocterm-ai`), launching
-//! (`nocterm-acp`), native usage reads (`nocterm-agent-usage`) or rendering.
+//! (`nocterm-acp`), provider credentials or rendering.
 //! Ports used: none. Ports provided: none; the application injects `catalog()`.
 //! Settings section: none. Globals: none.
 //! Invariants: ids are unique and valid; launches are pinned; every profile

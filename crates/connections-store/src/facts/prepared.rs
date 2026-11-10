@@ -55,6 +55,7 @@ impl FactsPrepared {
             probes: admission::ProbeLedger::new(),
             locations,
             flags: flags::RawFlags::new(),
+            flag_retry: None,
             jobs: jobs::ObservationJobs::new(executor),
             policy,
         });

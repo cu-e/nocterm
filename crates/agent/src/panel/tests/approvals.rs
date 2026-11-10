@@ -151,7 +151,7 @@ fn live_group_membership_and_revoked_registration_reject_stale_terminal_ids(
 fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let responses = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -257,7 +257,7 @@ fn queued_long_terminal_approvals_fit_short_narrow_panel_and_actions_respond(
 fn permission_approval_choices_are_clickable_and_cancel_removes_last_request(
     cx: &mut TestAppContext,
 ) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let responses = cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();

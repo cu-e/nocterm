@@ -94,5 +94,146 @@
       "terminal_id": "t1",
       "command_id": "cmd1"
     }
+  },
+  {
+    "name": "transfer_files",
+    "label": "Transfer files",
+    "arguments": {
+      "source_terminal_id": "t1",
+      "sources": [
+        "/srv/a",
+        "/srv/dir b"
+      ],
+      "destination_terminal_id": "t2",
+      "destination": "/home/alice/in"
+    },
+    "normalized": {
+      "source_terminal_id": "t1",
+      "sources": [
+        "/srv/a",
+        "/srv/dir b"
+      ],
+      "destination_terminal_id": "t2",
+      "destination": "/home/alice/in",
+      "overwrite": false,
+      "yield_ms": null
+    }
+  },
+  {
+    "name": "read_transfer",
+    "label": "Read transfer",
+    "arguments": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819"
+    },
+    "normalized": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819",
+      "yield_ms": null
+    }
+  },
+  {
+    "name": "cancel_transfer",
+    "label": "Cancel transfer",
+    "arguments": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819"
+    },
+    "normalized": {
+      "transfer_id": "0a0b0c0d-0e0f-1011-1213-141516171819"
+    }
+  },
+  {
+    "name": "list_files",
+    "label": "List files",
+    "arguments": {
+      "terminal_id": "t3",
+      "path": "/plugins"
+    },
+    "normalized": {
+      "terminal_id": "t3",
+      "path": "/plugins"
+    }
+  },
+  {
+    "name": "read_file",
+    "label": "Read file",
+    "arguments": {
+      "terminal_id": "t3",
+      "path": "/server.properties"
+    },
+    "normalized": {
+      "terminal_id": "t3",
+      "path": "/server.properties",
+      "start_line": null,
+      "max_lines": null
+    }
+  },
+  {
+    "name": "write_file",
+    "label": "Write file",
+    "arguments": {
+      "terminal_id": "t3",
+      "path": "/ops.json",
+      "content": "[]\n"
+    },
+    "normalized": {
+      "terminal_id": "t3",
+      "path": "/ops.json",
+      "content": "[]\n",
+      "overwrite": false
+    }
+  },
+  {
+    "name": "edit_file",
+    "label": "Edit file",
+    "arguments": {
+      "terminal_id": "t3",
+      "path": "/server.properties",
+      "old_text": "max-players=20",
+      "new_text": "max-players=40"
+    },
+    "normalized": {
+      "terminal_id": "t3",
+      "path": "/server.properties",
+      "old_text": "max-players=20",
+      "new_text": "max-players=40",
+      "replace_all": false
+    }
+  },
+  {
+    "name": "make_directory",
+    "label": "Create folder",
+    "arguments": {
+      "terminal_id": "t3",
+      "path": "/plugins/Essentials"
+    },
+    "normalized": {
+      "terminal_id": "t3",
+      "path": "/plugins/Essentials"
+    }
+  },
+  {
+    "name": "delete_path",
+    "label": "Delete",
+    "arguments": {
+      "terminal_id": "t3",
+      "path": "/logs/old.log"
+    },
+    "normalized": {
+      "terminal_id": "t3",
+      "path": "/logs/old.log"
+    }
+  },
+  {
+    "name": "move_path",
+    "label": "Move",
+    "arguments": {
+      "terminal_id": "t3",
+      "from": "/world_old",
+      "to": "/backups/world_old"
+    },
+    "normalized": {
+      "terminal_id": "t3",
+      "from": "/world_old",
+      "to": "/backups/world_old"
+    }
   }
 ]

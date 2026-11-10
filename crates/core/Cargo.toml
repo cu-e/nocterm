@@ -13,6 +13,7 @@ layer = "foundation"
 directories.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+sha2.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
 tempfile.workspace = true

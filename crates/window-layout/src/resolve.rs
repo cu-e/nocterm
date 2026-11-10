@@ -3,13 +3,13 @@
 use std::collections::{BTreeSet, HashSet};
 
 use nocterm_plugin_model::{
-    AutoPlace, ContributionId, ContributionKind, ContributionRef, GroupId, GroupSpec, PluginId,
-    PluginSet, Side, WidthClass, Zone,
+    AutoPlace, ContributionId, ContributionKind, ContributionRef, Edge, GroupId, GroupSpec,
+    PluginId, PluginSet, Side, WidthClass, Zone,
 };
 
 use crate::{
     BarItem, GroupEntry, LayoutPreset, ResolvedGroup, ResolvedItem, ResolvedLayout, ResolvedMember,
-    solo_group_id,
+    Toolbars, resolved::edge_index, solo_group_id,
 };
 
 pub(crate) const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
@@ -25,6 +25,8 @@ pub(crate) const ZONES: [Zone; 3] = [Zone::Left, Zone::Center, Zone::Right];
 /// - Contributions that appear neither in the bar nor in the tray are placed where their hints
 ///   say, if they ask to be shown, in `(zone, order)` order. Panels join their hinted group, or
 ///   else the group of their width class, and a group joins the zone of its first panel.
+/// - A toolbar is shown along the edge that names it, or else, when the tray does not hold it
+///   and it asks to be shown, along the edge its hints name; toolbars never enter the bar.
 /// - A pinned widget that is still unplaced goes to the end of the right zone. Pinning has no
 ///   effect on a panel: a panel the bar leaves out stays in the tray and opens in its hinted
 ///   group.
@@ -43,6 +45,7 @@ pub fn resolve(
     for zone in ZONES {
         arrangement.place_bar(zone, preset.bar.zone(zone));
     }
+    arrangement.place_toolbars(&preset.toolbars);
     arrangement.place_by_hints(&preset.tray);
     arrangement.place_pinned();
     arrangement.ensure_primary_group();
@@ -54,6 +57,7 @@ struct Arrangement<'a> {
     catalog: &'a PluginSet,
     disabled: &'a BTreeSet<PluginId>,
     zones: [Vec<ResolvedItem>; 3],
+    toolbars: [Vec<ContributionId>; 4],
     placed: HashSet<ContributionId>,
     /// The disabled contributions the bar names, in bar order.
     skipped: Vec<ContributionId>,
@@ -65,6 +69,7 @@ impl<'a> Arrangement<'a> {
             catalog,
             disabled,
             zones: Default::default(),
+            toolbars: Default::default(),
             placed: HashSet::new(),
             skipped: Vec::new(),
         }
@@ -134,6 +139,16 @@ impl<'a> Arrangement<'a> {
         }
     }
 
+    fn place_toolbars(&mut self, toolbars: &Toolbars) {
+        for edge in Edge::ALL {
+            for id in toolbars.edge(edge) {
+                if self.claim(id, ContributionKind::Toolbar) {
+                    self.toolbars[edge_index(edge)].push(id.clone());
+                }
+            }
+        }
+    }
+
     fn place_members(&mut self, entries: &[GroupEntry]) -> Vec<ResolvedMember> {
         entries
             .iter()
@@ -186,6 +201,11 @@ impl<'a> Arrangement<'a> {
     fn place_by_hint(&mut self, contribution: ContributionRef<'_>) {
         let zone = contribution.placement().zone;
         self.placed.insert(contribution.id().clone());
+        if contribution.kind() == ContributionKind::Toolbar {
+            let edge = contribution.edge().unwrap_or(Edge::Top);
+            self.toolbars[edge_index(edge)].push(contribution.id().clone());
+            return;
+        }
         if contribution.kind() == ContributionKind::Widget {
             self.items(zone)
                 .push(ResolvedItem::Widget(contribution.id().clone()));
@@ -263,6 +283,7 @@ impl<'a> Arrangement<'a> {
             open: Vec::new(),
             tray: Vec::new(),
             disabled: self.skipped,
+            toolbars: self.toolbars,
         };
         layout.tray = catalog
             .entries()

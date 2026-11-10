@@ -2,7 +2,8 @@
 //! their postcard encoding. Shared by the wasm runtime adapter and the guest SDK.
 //!
 //! Owns: ABI_VERSION, export names, Call/Reply/Wire* and their conversions from plugin-api
-//!       values, size bounds, canonical samples for the golden file.
+//!       values (`Call::render`/`event`/`into_parts` carry a terminal bar's terminal in its own
+//!       call variants), size bounds, canonical samples for the golden file.
 //! Does not own: running modules (nocterm-plugin-wasm), package files (nocterm-plugin-packages),
 //!       manifests and views (nocterm-plugin-api).
 //! Ports: none. Settings: none. Globals: none.

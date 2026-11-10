@@ -111,7 +111,10 @@ fn vocabulary(text: &mut String, surface: &Value) {
     for (title, key) in [
         ("Contribution kinds", "kinds"),
         ("Zones", "zones"),
+        ("Toolbar edges", "edges"),
+        ("Toolbar tabs", "tabs"),
         ("Icons", "icons"),
+        ("Glyphs (icons inside a view)", "glyphs"),
         ("View node kinds", "node_kinds"),
         ("Tones", "tones"),
         ("Notice tones", "notice_tones"),
@@ -119,6 +122,7 @@ fn vocabulary(text: &mut String, surface: &Value) {
         ("Template filters", "filters"),
         ("Events", "events"),
         ("Host errors", "host_errors"),
+        ("Request methods", "http_methods"),
         ("Settings field kinds", "settings_kinds"),
         ("Workspace kinds", "workspace_kinds"),
         ("Runtimes", "runtimes"),

@@ -7,6 +7,8 @@
 
 mod consent;
 mod consent_view;
+mod folder;
+mod part_view;
 mod port;
 mod removal;
 mod section;
@@ -14,11 +16,14 @@ mod section_view;
 mod session;
 mod switch_view;
 
+pub use folder::{FolderError, MAX_LISTED, PluginsFolder};
+pub use part_view::UserPartView;
 pub use port::{
     AuditLine, Candidate, CapabilityLine, FieldLine, InstallRequest, Replaced, RowState,
     UserPluginError, UserPluginRow, UserPlugins,
 };
-pub use section::UserPluginsSection;
+pub use section::{UserPluginsSection, UserSelected};
+pub use section_view::UserPart;
 pub use session::{HeldBy, UserPluginsSwitch, UserSession};
 
 #[cfg(test)]

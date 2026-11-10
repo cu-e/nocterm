@@ -8,6 +8,8 @@
 //! and, on Linux, the `run_agent_host` entry point with its `AgentHostError`.
 //! Settings section: none. Globals: none.
 //! Invariants: SDK types never leave this crate; relay registrations authenticate callers; revocation closes owned sockets.
+//! The bridge lists and admits only the tools a registration's chat offers, and tells its
+//! connected agents when the offer changes without blocking the chat.
 //! Native taskkill diagnostics retain the original I/O error through shared typed causes;
 //! the public process shutdown port retains its existing string diagnostic.
 mod bridge;

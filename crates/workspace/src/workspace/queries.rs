@@ -212,6 +212,11 @@ impl Workspace {
     pub fn panel_is_enabled(&self, id: &ContributionId) -> bool {
         self.registrations.is_registered(id) && self.shell.is_enabled(id)
     }
+    /// The edge of the tab area a registered toolbar runs along in this window, or `None` while
+    /// the arrangement hides it, its plugin is disabled or it is not registered.
+    pub fn toolbar_edge(&self, id: &ContributionId) -> Option<nocterm_plugin_model::Edge> {
+        self.chrome.toolbars().edge(id)
+    }
     /// Whether the registered panel of a contribution shows. `false` for an unknown id.
     pub fn panel_is_open(&self, id: &ContributionId) -> bool {
         self.panels.panel_is_open(id)

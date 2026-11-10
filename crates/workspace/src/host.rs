@@ -89,6 +89,11 @@ impl Host {
         self.key == other.key
             && self.connected == other.connected
             && Arc::ptr_eq(&self.exec, &other.exec)
+            && match (&self.session, &other.session) {
+                (Some(a), Some(b)) => a.source().same_as(b.source()),
+                (None, None) => true,
+                _ => false,
+            }
     }
 }
 

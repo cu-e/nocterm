@@ -1,11 +1,11 @@
 //! Pure transfer admission and progress rules, independent of any executor.
 use nocterm_session::{Target, testing::InMemoryFs};
 use nocterm_transfers::*;
-use std::{error::Error as _, io, path::PathBuf, sync::Arc};
+use std::{error::Error as _, io, sync::Arc};
 
 fn request() -> Request {
     Request::Upload(UploadRequest {
-        sources: vec![PathBuf::from("selected.txt")],
+        sources: vec![std::env::temp_dir().join("selected.txt")],
         host: nocterm_session::HostAddress::direct(Target::new("u", "h", 22)),
         destination: "/dest".into(),
         fs: Arc::new(InMemoryFs::default()),

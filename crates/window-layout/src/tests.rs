@@ -23,7 +23,7 @@ pub(crate) const fn contribution(
             width: WidthClass::Navigation,
             chrome: PanelChrome::Titled,
         }),
-        ContributionKind::Widget => None,
+        ContributionKind::Widget | ContributionKind::Toolbar => None,
     };
     SystemContribution {
         id: ContributionId::new(id),
@@ -38,6 +38,10 @@ pub(crate) const fn contribution(
         },
         panel,
         preview: None,
+        edge: match kind {
+            ContributionKind::Toolbar => Some(nocterm_plugin_model::Edge::Top),
+            ContributionKind::Panel | ContributionKind::Widget => None,
+        },
         pinned: false,
     }
 }

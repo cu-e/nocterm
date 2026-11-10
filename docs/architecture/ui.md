@@ -42,6 +42,10 @@ notifications, including selection recomputation in vi mode.
 `SettingsTextField` owns native input, a 600 ms debounce, checked admission and
 the latest original receipt. Feature-provided typed bindings read and validate
 actual settings candidates; UI keeps no feature validators or document cache.
+`SettingsTextField::section` builds those typed bindings, preserving the caller's
+validation cause and publishing only a successful section candidate. Stateless
+`form` controls and checked-field rows share their presentation; pages keep their
+labels, callbacks, validation policy, field membership and teardown.
 Each distinct flush immediately enters the existing bounded settings queue,
 including while an older write is pending. Same waiting literal is deduplicated
 only at an unchanged published semantic revision; a later publication admits a
@@ -267,7 +271,10 @@ concrete capability, prompt, ownership and queue refusals. `open_on_host` return
 session. Consumers format these causes at notices or agent transcript boundaries.
 
 The Item supplies an immutable `TerminalCapabilities` record with a required state
-port and independent optional operations. `ExpectedSession` binds calls to the
+port and independent optional operations, among them `TerminalFiles`, which returns
+the filesystem of a terminal's exact current connection (`Local`, or `Remote` with its
+host and `RemoteFs`) or refuses a stale, disconnected, prompting or filesystem-less
+terminal. `ExpectedSession` binds calls to the
 workspace Item and connection epoch. `UserPromptToken` also binds the exact secret
 prompt. Unsupported operations refuse explicitly; replacement sessions cannot
 inherit queued approvals, grants or prompt answers. Reconnect returns its accepted

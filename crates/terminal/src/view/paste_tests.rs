@@ -180,28 +180,6 @@ fn explicitly_unsupported_shells_do_not_receive_posix_quoted_paths() {
     }
 }
 
-#[derive(Default)]
-struct ProgramHost {
-    drivers: std::sync::Mutex<Vec<std::sync::Arc<nocterm_session::SessionDriver>>>,
-    requests: std::sync::Mutex<Vec<nocterm_session::TerminalRequest>>,
-}
-impl nocterm_session::HostExec for ProgramHost {
-    fn exec(
-        &self,
-        _: nocterm_session::ExecRequest,
-    ) -> nocterm_session::ExecFuture<nocterm_session::ExecOutput> {
-        Box::pin(async { Err(nocterm_session::ExecError::Unsupported) })
-    }
-    fn terminal(&self, request: nocterm_session::TerminalRequest) -> nocterm_session::Session {
-        let (session, driver) = nocterm_session::channel(None);
-        self.requests.lock().unwrap().push(request);
-        self.drivers
-            .lock()
-            .unwrap()
-            .push(std::sync::Arc::new(driver));
-        session
-    }
-}
 fn program_event(
     driver: &std::sync::Arc<nocterm_session::SessionDriver>,
     event: Event,
@@ -240,7 +218,8 @@ fn program_fixture_via(
 ) {
     use nocterm_workspace::{Host, HostKey, ProgramSpec, SessionContext};
     let (handle, source, _) = fixture(cx);
-    let host = std::sync::Arc::new(ProgramHost::default());
+    let host = std::sync::Arc::new(nocterm_session::testing::FakeExec::default());
+    let driver = std::sync::Arc::new(host.queue_terminal(Default::default()));
     let target = nocterm_session::Target::new("user", "host", 22);
     let program =
         nocterm_session::ExecRequest::new(engine).args(["exec", "-it", "container", "sh"]);
@@ -277,11 +256,11 @@ fn program_fixture_via(
         .unwrap();
     cx.run_until_parked();
     assert_eq!(
-        host.requests.lock().unwrap()[0].program,
+        host.terminal_requests()[0].program,
         program,
         "Preserve actual wrapper launch"
     );
-    let driver = host.drivers.lock().unwrap()[0].clone();
+
     program_event(&driver, Event::Connected, cx);
     drain(&driver);
     cx.update_window(handle, |_, window, cx| {

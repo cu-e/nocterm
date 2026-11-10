@@ -20,6 +20,8 @@ pub enum TerminalCapability {
     Snippets,
     #[error("This terminal cannot reconnect.")]
     Reconnect,
+    #[error("This terminal does not support file transfer.")]
+    Files,
 }
 
 /// A terminal operation refused before submission, or rejected by its queue.

@@ -9,7 +9,7 @@ use gpui_kit::{
         ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
-        input::{Input, InputState},
+        input::{Input, InputEvent, InputState},
         v_flex,
     },
     div,
@@ -44,7 +44,12 @@ impl ProjectsPanel {
             installed.observe(cx, move |cx| {
                 let _ = weak.update(cx, |_, cx| cx.notify());
             }),
-            cx.observe(&search, |_, _, cx| cx.notify()),
+            // Only an edit refilters; the cursor blink and moves change no match.
+            cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
         ];
         if let Some(owner) = workspace.upgrade() {
             subscriptions.push(cx.subscribe(&owner, move |_, _, event, cx| {

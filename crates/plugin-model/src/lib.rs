@@ -1,7 +1,7 @@
 //! What a plugin is and what the window shell can host.
 //!
-//! A plugin is a named unit that owns contributions: panels in the side groups and widgets in
-//! the status bar. This crate holds the plain data every owner declares (a `static` plugin,
+//! A plugin is a named unit that owns contributions: panels in the side groups, widgets in
+//! the status bar and toolbars along an edge of the tab area. This crate holds the plain data every owner declares (a `static` plugin,
 //! and core contributions as a `const`), the placement hints the shell reads, and the checked
 //! [`PluginCatalog`] of core contributions (shell functions that are not plugins and are never
 //! disabled) and system plugins, and the declarative settings schema a plugin exposes.
@@ -16,7 +16,8 @@
 //! Ports used/provided: none. Settings section: none. Globals: none.
 //! Invariants: ids are unique and namespaced by their plugin; exactly one group is primary;
 //! group hints name declared groups and only panels have one; panel traits exist exactly for
-//! panels; order values are unique within a zone; settings schemas stay within their limits and
+//! panels and an edge exactly for toolbars; order values are unique within a zone, and among
+//! toolbars within an edge; settings schemas stay within their limits and
 //! name a settings section; system plugins never use the reserved `user-` prefix; a user
 //! contribution is only built by its clamp, so it has no built-in privilege.
 //! `no_std` with `alloc`, so file, network, process and environment access is unreachable.
@@ -40,8 +41,8 @@ mod view;
 
 pub use catalog::{Owner, PluginCatalog};
 pub use contribution::{
-    AutoPlace, ContributionKind, GroupSpec, Icon, PanelChrome, PanelTraits, Placement, Side,
-    SystemContribution, WidthClass, Zone,
+    AutoPlace, ContributionKind, Edge, GroupSpec, Icon, PanelChrome, PanelTraits, Placement, Side,
+    SystemContribution, ToolbarTabs, WidthClass, Zone,
 };
 pub use error::{CatalogError, IdError};
 pub use id::{ContributionId, GroupId, PluginId, USER_PREFIX};

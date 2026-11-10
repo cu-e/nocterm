@@ -10,7 +10,8 @@
 //! Owns: bounded no-follow reads (through `nocterm_core::fs`), UTF-8 and TOML parsing into the
 //! api DTOs, the manifest section of a module, the check that the declared runtime matches the
 //! kind of file, the API version gate, SHA-256 of the parsed bytes, private atomic publication
-//! under one package directory (one file per plugin, whichever kind), re-hashing at load,
+//! under one package directory (immutable `<id>.<sha256>.<kind>` versions, at most eight
+//! pending versions per plugin; previous consent survives until confirmed retention), re-hashing at load,
 //! removal, reading the packages of a directory for an author's check, and `SessionStore`,
 //! which keeps published packages in memory for a developer session.
 //! Does not own: manifest rules, grants, consent, enablement, the data of a plugin or running a

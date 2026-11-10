@@ -1,18 +1,21 @@
 //! Transcript presentation binds reveal, navigation and previews to one visible chat.
 use super::{
     AgentPanel,
-    image_pipeline::{ImageKey, ImagePipeline, PreviewState, PreviewTicket},
+    image_pipeline::{
+        CompletedPreview, ImageKey, ImagePipeline, PreviewSource, PreviewState, PreviewTicket,
+    },
+    message_markdown::MessageMarkdown,
     navigation::MessageNavigation,
     stream::StreamReveal,
 };
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, EntityId, Image, Task,
-    component::message_scroller::{MessageScroller, MessageScrollerState},
+    App, AppContext as _, Context, Entity, EntityId, Task, WeakEntity,
+    component::{
+        message_scroller::{MessageScroller, MessageScrollerState},
+        text::TextViewState,
+    },
 };
-use nocterm_ai::{
-    images::{ImageInspector, ImageThumbnailer},
-    thread::Entry,
-};
+use nocterm_ai::{images::ImageInspector, thread::Entry};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 #[derive(Clone)]
@@ -39,6 +42,8 @@ pub(super) struct MessageList {
     navigation: MessageNavigation,
     expanded: HashSet<usize>,
     binding: Option<ActiveListBinding>,
+    thread: Option<WeakEntity<crate::thread::AgentThread>>,
+    markdown: MessageMarkdown,
 }
 impl MessageList {
     pub(super) fn new(images: crate::ImageDeps, cx: &mut Context<AgentPanel>) -> Self {
@@ -51,6 +56,8 @@ impl MessageList {
             navigation: MessageNavigation::default(),
             expanded: HashSet::new(),
             binding: None,
+            thread: None,
+            markdown: MessageMarkdown::default(),
         }
     }
     pub(super) fn bind_chat(&mut self, chat: EntityId, cx: &mut Context<AgentPanel>) {
@@ -70,6 +77,27 @@ impl MessageList {
     pub(super) fn binding(&self) -> Option<ActiveListBinding> {
         self.binding.clone()
     }
+    pub(super) fn bind_thread(
+        &mut self,
+        thread: &Entity<crate::thread::AgentThread>,
+        cx: &mut Context<AgentPanel>,
+    ) {
+        let chat = thread.entity_id();
+        if self.bound_to(chat) && self.thread.is_some() {
+            return;
+        }
+        self.bind_chat(chat, cx);
+        self.thread = Some(thread.downgrade());
+    }
+    pub(super) fn bound_to(&self, chat: EntityId) -> bool {
+        self.binding
+            .as_ref()
+            .is_some_and(|binding| binding.chat == chat)
+    }
+    /// The chat the list shows, while it is open.
+    pub(super) fn thread(&self) -> Option<Entity<crate::thread::AgentThread>> {
+        self.thread.as_ref()?.upgrade()
+    }
     fn current(&self, binding: &ActiveListBinding) -> bool {
         self.binding
             .as_ref()
@@ -84,6 +112,8 @@ impl MessageList {
         self.expanded.clear();
         self.pipeline.clear();
         self.binding = None;
+        self.thread = None;
+        self.markdown.clear();
     }
     pub(super) fn observe_rows(
         &mut self,
@@ -93,10 +123,12 @@ impl MessageList {
         live: bool,
         reduced: bool,
     ) -> MessageRows {
+        self.markdown.invalidate(dirty);
         let previous = self.row_count;
         self.row_count = entries.len();
         self.navigation.observe(chat, entries, dirty);
         let mut changed = dirty.to_vec();
+        changed.extend(entries.len()..self.row_count.min(previous));
         changed.extend(self.reveal.observe(entries, dirty, live, reduced));
         MessageRows {
             previous,
@@ -112,6 +144,7 @@ impl MessageList {
             } else {
                 self.scroller
                     .update(cx, |list, cx| list.reset(rows.count, cx));
+                self.markdown.retain(rows.count);
             }
         }
         self.remeasure_rows(rows.changed, cx);
@@ -189,8 +222,27 @@ impl MessageList {
     pub(super) fn revealed_text(&self, row: usize, text: &str) -> String {
         self.reveal.text(row, text)
     }
+    pub(super) fn revealed_slice<'a>(&self, row: usize, text: &'a str) -> &'a str {
+        self.reveal.slice(row, text)
+    }
+    pub(super) fn markdown_current(&self, row: usize, source_len: usize) -> bool {
+        self.markdown.current(row, source_len)
+    }
     pub(super) fn revealing(&self) -> bool {
         self.reveal.pending()
+    }
+    /// Keeps the row's parsed Markdown current with what its entry draws now.
+    pub(super) fn prepare_markdown(
+        &mut self,
+        row: usize,
+        text: String,
+        source_len: usize,
+        cx: &mut Context<AgentPanel>,
+    ) {
+        self.markdown.prepare(row, text, source_len, cx);
+    }
+    pub(super) fn markdown(&self, row: usize) -> Option<&Entity<TextViewState>> {
+        self.markdown.state(row)
     }
     pub(super) fn preview_state(&self, key: &ImageKey) -> Option<&PreviewState> {
         self.pipeline.state(key)
@@ -198,8 +250,8 @@ impl MessageList {
     pub(super) fn has_preview(&self, key: &ImageKey) -> bool {
         self.pipeline.contains_key(key)
     }
-    pub(super) fn request_preview(&mut self, key: ImageKey) -> Option<PreviewTicket> {
-        self.pipeline.request(key)
+    pub(super) fn request_preview(&mut self, source: PreviewSource) -> Option<PreviewTicket> {
+        self.pipeline.request(source)
     }
     pub(super) fn install_preview_task(&mut self, ticket: PreviewTicket, task: Task<()>) {
         self.pipeline.install_task(ticket, task);
@@ -209,7 +261,7 @@ impl MessageList {
         binding: &ActiveListBinding,
         ticket: PreviewTicket,
         row: Option<usize>,
-        image: Option<Arc<Image>>,
+        image: Option<CompletedPreview>,
         cx: &mut Context<AgentPanel>,
     ) -> bool {
         if !self.current(binding) || !self.pipeline.complete(ticket, image) {
@@ -223,8 +275,11 @@ impl MessageList {
     pub(super) fn inspector(&self) -> Arc<dyn ImageInspector> {
         self.pipeline.inspector()
     }
-    pub(super) fn thumbnailer(&self) -> Arc<dyn ImageThumbnailer> {
-        self.pipeline.thumbnailer()
+    pub(super) fn image_deps(&self) -> crate::ImageDeps {
+        self.pipeline.image_deps()
+    }
+    pub(super) fn admit_image_work(&self) -> Option<crate::image_deps::ImageWorkPermit> {
+        self.pipeline.admit_work()
     }
     pub(super) fn scroller(&self, cx: &mut Context<AgentPanel>) -> MessageScroller {
         MessageScroller::new(

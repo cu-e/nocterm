@@ -202,3 +202,29 @@ fn a_document_without_jump_hosts_keeps_its_bytes_after_a_save() {
         first
     );
 }
+
+#[test]
+fn a_parallel_profile_edit_is_preserved_and_the_stale_writer_reports_its_cause() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = repository(directory.path());
+    let second = repository(directory.path());
+    let mut a = first.load().profiles;
+    let mut b = second.load().profiles;
+    let mut changed = profile();
+    changed.name = "Saved by first".into();
+    a.upsert(changed.clone());
+    first.save_profiles(&a).unwrap();
+    b.upsert(profile());
+    let error = second.save_profiles(&b).unwrap_err();
+    assert!(matches!(
+        error
+            .source()
+            .unwrap()
+            .downcast_ref::<persist::PersistError>(),
+        Some(persist::PersistError::Conflict { .. })
+    ));
+    assert_eq!(
+        first.load().profiles.get(changed.id).unwrap().name,
+        changed.name
+    );
+}

@@ -71,6 +71,39 @@ jump route, checks the original live surface before creating a normal terminal,
 and registers that terminal as background membership on that surface. The
 connection directory and general session factory keep their existing contracts.
 
+## Hubs
+
+The hubs installation is retained in `Booted` (`Option`, absent when the hub adapter could not
+start) and passed to each window. `startup` starts `HubLinks` with the state directory's
+`hubs` folder for private credential files and puts the three ports in `HostServices`; a
+failure to start is logged and leaves hubs off, so local use is unaffected. Bootstrap installs
+the service after the interface and the feature after it; `build_workspace` registers the
+sign-in commands of the feature in every window, and without hubs no window has them.
+GUI tests use the same `bootstrap` with `FakeHub` or without hubs.
+
+A window shows one environment ([ADR 0104](../adr/0104-a-window-shows-one-environment.md)).
+`src/hub_sources.rs` builds one `HubSource` per hub on first use and shares it between that
+hub's windows: an in-memory connection mirror replicated by `ProfileReplication` (the only
+writer to the hub), a `VaultService` over the account's vault and the terminal installation
+carrying that vault's credentials. With the hub agents service, each hub installation tells the
+directory of live hosts (`src/agent_hosts.rs`) about the sessions of its saved servers, so
+Agent access (`src/hub_server_access.rs`) can write their `authorized_keys`.
+`hub_sources/follow.rs` attaches the replication while the
+hub is reachable and, when the device signs out, is revoked or the hub is removed, empties the
+mirror and locks the vault. `Booted::window_sources(environment)` returns the `WindowSources`
+(connections, terminal, vault, settings pages) that `build_workspace` registers; the local set
+has no replication. `src/windows.rs` composes a window and focuses its workspace so the scoped
+`UnlockVault` handler of a hub vault is reached. `HubAccounts` is the port to the encrypted
+account data that tests replace. Startup warms configured native account Slots before the
+GPUI application starts; interactive key-status and lock queries only inspect loaded Slots.
+A newly authenticated hub establishes its native Slot before publishing its settings.
+Removed hubs are evicted from `HubSources`; existing
+workspaces retain their source until release, with replication retired permanently. Readding
+the same address creates a fresh installation. Volatile replica documents register no disk
+shutdown participant. Native removal drops strong Slot residency; a still-retained generic
+account factory keeps a weak registry identity so a failed settings removal can sign in
+again. Previously captured account capabilities stay stale across that transition.
+
 ## Menus
 
 The composition root supplies Session/Edit/Search/Window/Help descriptors to
@@ -112,7 +145,7 @@ the dependency graph and references update from code. The same command writes
 hand-written plugin documents name only existing capabilities.
 
 Explorer's collaborators are composed before GPUI initialization: the native local
-filesystem supplies session capabilities and the transfer runtime receives the same LocalFs port. Explorer retains the TransferService contract explicitly.
+filesystem supplies session capabilities and the transfer runtime receives the same LocalFs port. Explorer retains the TransferService contract explicitly, and the agent installation receives the same runtime as `TransferRequests`, so agent transfers share Explorer's queue and shutdown drain.
 Bootstrap installs `nocterm_files::Deps` and returns `Installed` in `Booted`; every
 window receives those handles through `build_workspace`, including GUI fixtures
 that supply session's in-memory filesystem. Neither queue access nor completion
@@ -161,6 +194,10 @@ installation. `Booted` shares it with every workspace window. Authentication tab
 retain explicit isolated transports and once-only completion; no transport or
 credential compatibility global participates. See [ADR 0042](../adr/0042-terminal-installed-dependencies.md).
 
+The vault opens before the connections feature so `src/vault_keys.rs` can inject the
+`VaultSshKeys` implementation over its `VaultAccess`; windows without a vault keep
+`NoVaultSshKeys`. Vault credentials and its pages install after the connections entity exists.
+
 Bootstrap retains the optional connection `Installed` handle in Booted and passes
 it to every new workspace. Vault association captures its exact connection entity
 rather than discovering a global. An installation failure skips connection view
@@ -203,9 +240,8 @@ Directory authority comes only from captured paths and settings. The existing na
 create/open background lifecycle and notices remain unchanged. See
 [ADR0051](../adr/0051-retained-keymap-installation.md).
 
-Bootstrap supplies the exact UI settings owner to settings-ui Installed.
-Booted retains that installation in its existing
-settings slot and supplies it to ordinary Settings, guest-page deep links and the
+Bootstrap supplies the actual `SettingsHandle` directly to settings page contexts.
+Booted retains that same owner in its existing settings slot and supplies it to ordinary Settings, guest-page deep links and the
 startup vault page. Opening another window does not install another document or
 rediscover a compatibility settings global for these builtin consumers.
 Explorer installation retains its prepared native ports together with the actual
@@ -217,8 +253,10 @@ startup Vault-only guest catalog remains independent. No additional settings
 document or compatibility lookup is created.
 
 Bootstrap also retains a Monitor installation over that settings owner and the
-supplied optional local HostExec. Per-workspace monitor models and lazy settings
-pages receive it; constructing the installation or a page factory starts no sampling.
+supplied optional local HostExec and one viewless collection registry. Per-workspace monitor
+models and lazy settings pages receive it; constructing the installation or a page factory
+starts no sampling. Equal captured executors share native collection while histories stay
+surface-specific.
 The ordinary page vector and deep links preserve their existing order and IDs.
 Vault installation retains the actual settings owner used to initialize its native
 auto-lock duration. Its published-policy observer and all page factories use that
@@ -239,3 +277,11 @@ across windows; UUID acquisition occurs only for an actual new editor draft.
 
 Booted retains its original theme and optional vault installations privately;
 composition reads named borrowed projections when registering windows and settings.
+
+
+User-plugin installation startup acquires records, packages, data and actual runtime instances
+on the background executor before initializing the pristine records owner. A retained manager
+serializes bounded management work across windows and awaits records/data receipts. Native data
+acquisition uses one consumed preload and retains only completion metadata. Each physical window
+owns one visibility-driven deadline scheduler; teardown releases host cadence state. See
+[ADR0141](../adr/0141-versioned-plugin-publication.md).

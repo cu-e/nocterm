@@ -79,10 +79,17 @@ fn local_workspace_activation_passes_the_activated_launch_into_native_factory() 
     base.queue(None, None);
     let recorded = Arc::new(std::sync::Mutex::new(Vec::new()));
     let launches = recorded.clone();
-    let native = Arc::new(move |launch: ShellLaunch| {
-        launches.lock().unwrap().push(launch);
-        Arc::new(base.clone()) as Arc<dyn Transport>
-    });
+    let native = Arc::new(
+        move |launch: ShellLaunch,
+              preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>| {
+            assert!(
+                preparation.is_some(),
+                "native startup receives deferred preparation"
+            );
+            launches.lock().unwrap().push(launch);
+            Arc::new(base.clone()) as Arc<dyn Transport>
+        },
+    );
     let session = NativeWorkspaceSessions
         .wrap_local(native)
         .open(connection(ShellLaunch {
@@ -109,4 +116,26 @@ fn default_workspace_shell_is_resolved_on_its_original_host() {
     assert_eq!(requests[0].launch.args[3], "");
     assert!(requests[0].launch.args[1].contains("${SHELL:-/bin/sh}"));
     assert!(!requests[0].launch.args[1].contains("/etc/profile"));
+}
+
+#[test]
+fn workspace_activation_forwards_original_connection_source_to_the_native_transport() {
+    use nocterm_session::{ConnectionOpenOptions, testing::ScriptedConnectionSource};
+    let revoker = ScriptedConnectionSource::default();
+    let source = revoker.source();
+    let base = ScriptedTransport::default();
+    let driver = base.queue_with_source(None, None, source.clone());
+    let transport = NativeWorkspaceSessions.wrap(Arc::new(base.clone()));
+    let session = transport.open_with(
+        connection(Default::default()),
+        ConnectionOpenOptions::new(source),
+    );
+    assert_eq!(base.requests().len(), 1);
+    assert!(session.input("original account"));
+    assert!(matches!(
+        block_on(driver.next_command()),
+        Some(nocterm_session::Command::Input(_))
+    ));
+    revoker.revoke();
+    assert!(!session.input("replacement account"));
 }

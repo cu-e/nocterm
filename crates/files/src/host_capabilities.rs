@@ -5,7 +5,7 @@
 //! poll, and starts, retries or cancels nothing.
 use std::sync::Arc;
 
-use gpui_kit::App;
+use gpui_kit::{App, Entity};
 use nocterm_plugin_api::{
     HostError,
     capability::transfers::{Counts, CountsNow},
@@ -18,24 +18,35 @@ use crate::Installed;
 
 /// The counts of the transfer queue shared by every window.
 pub struct TransferCounts {
-    service: Arc<dyn TransferService>,
+    source: CountsSource,
+}
+enum CountsSource {
+    Projection(Entity<crate::projection::TransferProjection>),
+    Direct(Arc<dyn TransferService>),
 }
 
 impl TransferCounts {
     pub fn new(installed: &Installed) -> Self {
-        Self::over(installed.transfers().clone())
+        Self {
+            source: CountsSource::Projection(installed.projection().clone()),
+        }
     }
 
     /// The counts of `service`, for a composition that holds the service without [`Installed`].
     pub fn over(service: Arc<dyn TransferService>) -> Self {
-        Self { service }
+        Self {
+            source: CountsSource::Direct(service),
+        }
     }
 }
 
 impl Observe<CountsNow> for TransferCounts {
     /// Transfers not yet finished, and transfers in which a file failed.
-    fn sample(&self, _: &PluginId, _: &App) -> Result<Counts, HostError> {
-        let snapshot = self.service.snapshot();
+    fn sample(&self, _: &PluginId, cx: &App) -> Result<Counts, HostError> {
+        let snapshot: Arc<[nocterm_transfers::Progress]> = match &self.source {
+            CountsSource::Projection(projection) => projection.read(cx).entries().clone(),
+            CountsSource::Direct(service) => service.snapshot().into(),
+        };
         let count = |matching: &dyn Fn(&nocterm_transfers::Progress) -> bool| {
             u16::try_from(snapshot.iter().filter(|job| matching(job)).count()).unwrap_or(u16::MAX)
         };

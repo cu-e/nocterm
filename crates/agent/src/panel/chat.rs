@@ -9,6 +9,32 @@ use gpui_kit::AnyElement;
 use nocterm_ai::usage::{Breakdown, RateLimit};
 
 impl AgentPanel {
+    /// The open chat's footer: approvals, status, queue, commands and the composer.
+    pub(super) fn render_footer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(thread) = self.current() else {
+            return div().into_any_element();
+        };
+        let frame = super::composer_frame::ComposerFrame::read(&thread, cx);
+        let approvals = self.render_approvals(&thread, window, cx);
+        let status = self.chat_status(&thread, cx);
+        let labels = attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx);
+        let queue = self.render_queue(&thread, &labels, cx);
+        let commands = self.render_commands(window, cx);
+        let composer = self.render_composer(&frame, &thread, &labels, cx);
+        v_flex()
+            .w_full()
+            .min_w_0()
+            .children(approvals)
+            .children(status)
+            .children(queue)
+            .children(commands)
+            .child(composer)
+            .into_any_element()
+    }
     pub(super) fn sync_approval_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let attention = self
             .chats
@@ -21,8 +47,12 @@ impl AgentPanel {
                 || self.host.workspace().upgrade().is_none_or(|workspace| {
                     !workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id)
                 }));
-        // The workspace pulls the attention from `Panel::attention` when the panel notifies.
-        cx.notify();
+        // The workspace pulls the attention from `Panel::attention` when the panel notifies,
+        // so notify only when it changed: this runs on every chunk a chat streams.
+        let asks = Panel::attention(self, cx).is_some();
+        if self.notices.attention_changed(asks) {
+            cx.notify();
+        }
         let requests = needs_notice.then(|| {
             self.chats
                 .iter()
@@ -77,78 +107,50 @@ impl AgentPanel {
             cx.notify();
         }
     }
-    /// The cards of every pending request of `thread`; none when nothing waits.
+    /// The cards of every pending request of the chat: its sign-in, permission and tool
+    /// approval requests; none when nothing waits.
     pub(super) fn render_approvals(
         &mut self,
         thread: &Entity<AgentThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let permissions = thread.read(cx).permission_cards();
-        let tools = thread.read(cx).tool_cards();
-        let pending = permissions.len() + tools.len() + thread.read(cx).sign_in_waits().len();
-        let asking: Vec<EntityId> = self
-            .chats
-            .iter()
-            .flat_map(|thread| {
-                thread
-                    .read(cx)
-                    .sign_in_waits()
-                    .iter()
-                    .map(|wait| wait.item())
-            })
-            .collect();
-        self.sign_ins.reconcile(&asking);
-        if pending == 0 {
-            return None;
+        let mut list = Vec::new();
+        {
+            let asking: Vec<EntityId> = self
+                .chats
+                .iter()
+                .flat_map(|thread| {
+                    thread
+                        .read(cx)
+                        .sign_in_waits()
+                        .iter()
+                        .map(|wait| wait.item())
+                })
+                .collect();
+            self.sign_ins.reconcile(&asking);
+            for index in 0..thread.read(cx).sign_in_waits().len() {
+                let wait = thread.read(cx).sign_in_waits()[index].clone();
+                let (input, submission) = self.sign_ins.input_for(thread, &wait, window, cx);
+                list.push(approvals::ApprovalCardsRenderer::sign_in_card(
+                    wait, input, submission, index, cx,
+                ));
+            }
+            for (index, permission) in thread.read(cx).permission_cards().into_iter().enumerate() {
+                list.push(approvals::ApprovalCardsRenderer::permission_card(
+                    thread, permission, index, cx,
+                ));
+            }
         }
-        let mut list = v_flex()
-            .id("agent-approval-list")
-            .test_support()
-            .w_full()
-            .min_w_0()
-            .min_h_0()
-            .max_h(window.viewport_size().height * 0.35)
-            .overflow_y_scroll()
-            .gap_2();
-        for index in 0..thread.read(cx).sign_in_waits().len() {
-            let wait = thread.read(cx).sign_in_waits()[index].clone();
-            let (input, submission) = self.sign_ins.input_for(thread, &wait, window, cx);
-            list = list.child(approvals::ApprovalCardsRenderer::sign_in_card(
-                wait, input, submission, index, cx,
-            ));
+        let tokens = thread.read(cx).tool_approval_tokens();
+        for (index, token) in tokens.into_iter().enumerate() {
+            if let Some(card) =
+                approvals::ApprovalCardsRenderer::tool_card(thread, token, index, cx)
+            {
+                list.push(card);
+            }
         }
-        for (index, permission) in permissions.into_iter().enumerate() {
-            list = list.child(approvals::ApprovalCardsRenderer::permission_card(
-                thread, permission, index, cx,
-            ));
-        }
-        for (index, tool) in tools.into_iter().enumerate() {
-            let call = tool.call();
-            let target = thread.update(cx, |thread, cx| thread.describe_target(call, cx));
-            let reusable = thread.update(cx, |thread, cx| !thread.unsafe_live_input(call, cx));
-            list = list.child(approvals::ApprovalCardsRenderer::tool_card(
-                thread, tool, target, reusable, index, cx,
-            ));
-        }
-        Some(
-            v_flex()
-                .id("agent-approvals")
-                .test_support()
-                .w_full()
-                .min_w_0()
-                .flex_shrink_0()
-                .px_3()
-                .gap_1()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().warning)
-                        .child(format!("Waiting for you · {pending}")),
-                )
-                .child(list)
-                .into_any_element(),
-        )
+        approvals::ApprovalCardsRenderer::list(list, window, cx)
     }
     pub(super) fn submit_sign_in(
         &mut self,
@@ -169,16 +171,17 @@ impl AgentPanel {
         binding: message_list::ActiveListBinding,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.current() else {
+        let Some(thread) = self.messages.thread() else {
             return;
         };
         let reduced = cx.reduce_motion();
         let changed =
             self.messages
-                .advance_reveal(&binding, thread.read(cx).history_entries(), reduced);
+                .advance_reveal(&binding, &thread.read(cx).transcript().entries, reduced);
         if let Some(changed) = changed {
             self.messages.apply_reveal(changed, cx);
-            cx.notify();
+            // The reveal animates the transcript's rows only.
+            self.layout.parts().notify(parts::PartKind::Transcript, cx);
         }
     }
     pub(super) fn on_preview_completed(
@@ -186,7 +189,7 @@ impl AgentPanel {
         binding: message_list::ActiveListBinding,
         ticket: image_pipeline::PreviewTicket,
         row: Option<usize>,
-        image: Option<std::sync::Arc<gpui_kit::Image>>,
+        image: Option<image_pipeline::CompletedPreview>,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -229,92 +232,113 @@ impl AgentPanel {
             )
         })
     }
-    pub(super) fn render_chat(
-        &mut self,
-        thread: Entity<AgentThread>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let mut body = v_flex().size_full().min_w_0().min_h_0();
-        let plan = thread.read(cx).transcript().plan.clone();
-        let usage = thread.read(cx).transcript().usage.clone();
-        let dirty = thread
+    /// The transcript of the open chat, for its cached view; the rows changed since its last
+    /// drawing redraw.
+    pub(super) fn render_transcript_part(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(thread) = self.current() else {
+            return div().into_any_element();
+        };
+        let dirty: Vec<usize> = thread
             .update(cx, |thread, _| thread.take_changed_rows())
             .into_iter()
-            .collect::<Vec<_>>();
-        self.messages.bind_chat(thread.entity_id(), cx);
-        let rows = self.messages.observe_rows(
-            thread.entity_id(),
-            thread.read(cx).history_entries(),
-            &dirty,
-            thread.read(cx).session_generating(),
-            cx.reduce_motion(),
-        );
-        self.messages.apply_rows(rows, cx);
+            .collect();
+        let stamp = parts::transcript_stamp(thread.read(cx));
+        self.layout.parts_mut().drew_transcript(Some(stamp));
+        self.observe_rows(&thread, &dirty, cx);
         let scroller = self.messages.scroller(cx);
         let navigation = navigation::NavigationRenderer::render(&self.messages, cx);
         let overlay = self
             .menus
             .is_open(&MenuKind::Usage)
             .then(|| self.render_usage(cx));
-        body = body.child(TranscriptView::area(scroller, navigation, overlay, cx));
-        if let Some(plan) = &plan {
-            body = body.child(TranscriptView::plan(plan, cx));
-        }
-        if let Some(approvals) = self.render_approvals(&thread, window, cx) {
-            body = body.child(approvals);
-        }
-        let labels = attachments::AttachmentLabels::new(thread.read(cx).workspace_seat(), cx);
-        let composer = self.render_composer(&thread, usage.as_ref(), &labels, cx);
-        let status = self.chat_status(&thread, cx);
-        body = body
-            .children(status)
-            .children(self.render_queue(&thread, &labels, window, cx))
-            .children(self.render_commands(window, cx))
-            .child(composer);
-        body.into_any_element()
+        let plan = thread
+            .read(cx)
+            .transcript()
+            .plan
+            .as_ref()
+            .map(|plan| TranscriptView::plan(plan, cx));
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .min_w_0()
+            .child(TranscriptView::area(scroller, navigation, overlay, cx))
+            .children(plan)
+            .into_any_element()
     }
     pub(super) fn render_entry(
         &mut self,
         index: usize,
         cx: &mut Context<Self>,
     ) -> gpui_kit::AnyElement {
-        let Some(thread) = self.current() else {
+        let Some(thread) = self.messages.thread() else {
             return div().into_any_element();
         };
+        let identity = thread.entity_id();
+        let markdown = thread
+            .read(cx)
+            .transcript()
+            .entries
+            .get(index)
+            .and_then(|entry| {
+                super::message_markdown::MessageMarkdown::text(entry, index, &self.messages)
+            });
+        if let Some((text, source_len)) = markdown {
+            self.messages.prepare_markdown(index, text, source_len, cx);
+        }
         let state = thread.read(cx);
-        let Some(entry) = state.history_entries().get(index) else {
+        let transcript = state.transcript();
+        let Some(entry) = transcript.entries.get(index) else {
             return div().into_any_element();
         };
+        let generating = state.session_generating();
         let frame = RowPresentation::new(
-            thread.entity_id(),
+            identity,
             self.messages.binding(),
             index,
             self.messages.expanded(index),
             entry_is_live(
-                state.history_entries(),
+                &transcript.entries,
                 index,
-                state.session_generating() && state.session_accepts_updates(),
+                generating && state.session_accepts_updates(),
             ),
-            state.session_generating(),
-            state.transcript().time(index),
+            generating,
+            transcript.time(index),
             self.settings
                 .setting::<nocterm_ai::AiSettings>(cx)
                 .approval
                 .redact_secrets,
-        );
+        )
+        .with_fork_available(true);
         let (row, pending) = EntryRenderer::render(frame, entry, &self.messages, cx);
-        for (key, data) in pending {
+        for source in pending {
             preview_operation::PreviewOperation::cached(
                 &mut self.messages,
-                key,
-                || data,
-                true,
+                source,
                 Some(index),
                 cx,
             );
         }
         row
+    }
+    /// The visible list follows the open chat. Each observer supplies its own dirty rows, so
+    /// one window never consumes another's change tracking.
+    pub(super) fn observe_rows(
+        &mut self,
+        thread: &Entity<AgentThread>,
+        dirty: &[usize],
+        cx: &mut Context<Self>,
+    ) {
+        self.messages.bind_thread(thread, cx);
+        let reduced = cx.reduce_motion();
+        let state = thread.read(cx);
+        let rows = self.messages.observe_rows(
+            thread.entity_id(),
+            &state.transcript().entries,
+            dirty,
+            state.session_generating(),
+            reduced,
+        );
+        self.messages.apply_rows(rows, cx);
     }
     pub(super) fn jump_to_message(&mut self, first: bool, cx: &mut Context<Self>) {
         self.messages.navigate(first, cx);
@@ -341,19 +365,12 @@ impl AgentPanel {
         if open {
             self.close_usage(window, cx);
         } else {
-            self.refresh_usage(cx);
             self.menus.open(MenuKind::Usage);
             // Read-only information must not interrupt composing.
             if !self.composer.focus(cx).is_focused(window) {
                 window.focus(self.menus.usage_focus(), cx);
             }
             cx.notify();
-        }
-    }
-    pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
-        if let Some(thread) = self.current() {
-            let agent = thread.read(cx).document().agent_id().to_owned();
-            self.host.runtime().refresh_limits(&agent, cx);
         }
     }
     pub(super) fn usage_report(&self, cx: &App) -> Option<Report> {
@@ -404,36 +421,5 @@ impl AgentPanel {
         if !self.menus.usage_contains_focus(window, cx) {
             self.dismiss_usage(cx);
         }
-    }
-}
-
-impl AgentPanel {
-    pub(super) fn render_queue(
-        &mut self,
-        thread: &Entity<AgentThread>,
-        labels: &attachments::AttachmentLabels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if thread.read(cx).composer().queue().is_empty() {
-            return None;
-        }
-        let height = queue::QueueRenderer::visible_height(&self.composer, thread, window, cx);
-        let prompts = if self.composer.queue_open() || height > gpui_kit::px(0.) {
-            thread.read(cx).composer().queue().to_vec()
-        } else {
-            Vec::new()
-        };
-        let previews =
-            preview_operation::PreviewOperation::queued_previews(&mut self.messages, &prompts, cx);
-        queue::QueueRenderer::render_queue(
-            &self.composer,
-            prompts,
-            previews,
-            thread,
-            labels,
-            height,
-            cx,
-        )
     }
 }

@@ -96,6 +96,10 @@ impl HostedPanel {
     pub(in crate::workspace) fn badge(&self, _: &App) -> Option<SharedString> {
         self.presentation.2.clone()
     }
+    /// Who supplied the panel, read from the panel each time the header is drawn.
+    pub(in crate::workspace) fn provenance(&self, cx: &App) -> Option<crate::Provenance> {
+        self.handle().provenance(cx)
+    }
     pub(in crate::workspace) fn view(&self) -> AnyView {
         self.handle().view()
     }

@@ -111,7 +111,7 @@ fn logs_and_shells_are_programs_for_a_terminal() {
     block_on(Engine::Docker.events(&host)).unwrap();
     assert_eq!(
         host.ran(),
-        ["docker events --filter type=container --filter type=image"]
+        ["docker events --filter type=container --filter type=image --format '{{json .}}'"]
     );
 }
 
@@ -229,4 +229,24 @@ fn malformed_podman_array_keeps_the_native_location_and_eof_cause() {
     assert_eq!(source.line(), 2);
     assert!(source.column() > 0);
     assert!(source.is_eof());
+}
+
+#[test]
+fn containers_and_images_are_listed_on_their_own() {
+    let host = FakeExec::new(vec![
+        ("docker ps --all", Ok((CONTAINER, 0, ""))),
+        ("docker images --all", Ok((IMAGE, 0, ""))),
+        ("podman events", Ok(("", 0, ""))),
+    ]);
+    let containers = block_on(Engine::Docker.containers(&host)).unwrap();
+    assert_eq!(containers[0].name, "box");
+    assert_eq!(host.ran(), ["docker ps --all --format json"]);
+    let images = block_on(Engine::Docker.images(&host)).unwrap();
+    assert_eq!(images[0].name(), "alpine:3");
+    assert_eq!(host.ran().len(), 2);
+    block_on(Engine::Podman.events(&host)).unwrap();
+    assert_eq!(
+        host.ran()[2],
+        "podman events --filter type=container --filter type=image --format json"
+    );
 }

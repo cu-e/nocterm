@@ -4,18 +4,19 @@ use std::{rc::Rc, sync::Arc};
 
 use gpui_kit::{App, Entity, Subscription, Task};
 use nocterm_core::SharedCause;
-use nocterm_plugin_host::PluginHost;
+use nocterm_plugin_host::{PluginData, PluginHost};
 use nocterm_plugin_model::{FieldEdit, PluginId, SettingValues, SettingsSchema, apply};
 use nocterm_ui::{PluginSettingsError, PluginSettingsSource, SchemaRef, UserPluginSettings};
 
 /// Finds the settings of the plugins the host runs.
 pub(super) struct HostSettings {
     host: Entity<PluginHost>,
+    data: Rc<dyn PluginData>,
 }
 
 impl HostSettings {
-    pub(super) fn new(host: Entity<PluginHost>) -> Self {
-        Self { host }
+    pub(super) fn new(host: Entity<PluginHost>, data: Rc<dyn PluginData>) -> Self {
+        Self { host, data }
     }
 }
 
@@ -32,6 +33,7 @@ impl UserPluginSettings for HostSettings {
         let schema = Arc::new(schema.clone());
         let values = HostValues {
             host: self.host.clone(),
+            data: self.data.clone(),
             plugin: plugin.clone(),
             schema: schema.clone(),
         };
@@ -42,6 +44,7 @@ impl UserPluginSettings for HostSettings {
 /// One plugin's values, stored by the host.
 struct HostValues {
     host: Entity<PluginHost>,
+    data: Rc<dyn PluginData>,
     plugin: PluginId,
     schema: Arc<SettingsSchema>,
 }
@@ -69,7 +72,15 @@ impl PluginSettingsSource for HostValues {
         let stored = self
             .host
             .update(cx, |host, cx| host.replace_values(&self.plugin, &next, cx));
-        Task::ready(stored.map_err(|error| PluginSettingsError::Write(SharedCause::new(error))))
+        if let Err(error) = stored {
+            return Task::ready(Err(PluginSettingsError::Write(SharedCause::new(error))));
+        }
+        let flush = self.data.flush(&self.plugin, cx);
+        cx.spawn(async move |_| {
+            flush
+                .await
+                .map_err(|error| PluginSettingsError::Write(SharedCause::new(error)))
+        })
     }
 
     fn observe(&self, cx: &mut App, mut on_change: Box<dyn FnMut(&mut App)>) -> Subscription {

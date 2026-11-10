@@ -2,7 +2,8 @@
 //! which authority, independent of the window shell that hosts them.
 //!
 //! Owns: the terminal contracts of ADR 0032 (state, text, input, live
-//! commands, execution, sign-in prompts, reconnect, user paste), the
+//! commands, execution, sign-in prompts, reconnect, user paste, the filesystem of
+//! a terminal's connection), the
 //! `TerminalCapabilities` bundle a provider advertises, `ExpectedSession` and
 //! `UserPromptToken` authority, `LiveCommandLease`, connection facts,
 //! `SessionContext`, `ConnectionSummary` and the typed `TerminalError` and
@@ -24,7 +25,9 @@
 //! its `ExpectedSession` and is refused once that connection changed; terminal-free
 //! creation is local only and grants no session authority; a
 //! sign-in answer is bound to its prompt; no authentication or launch data
-//! reaches consumers.
+//! reaches consumers. TerminalInfo and connection-fact projections include captured
+//! descriptive account provenance. Consumers compare it to their original source;
+//! providers independently recheck the retained lease before effects.
 //! Folder source capture is a human creation seam. ExplorerSource supplies
 //! ordinary session filesystems and an initial directory for navigation.
 mod connections;
@@ -47,11 +50,14 @@ pub use project_parent::{
     ProjectCreationSource, ProjectParentCapture, ProjectParentDescriptor, ProjectParentError,
 };
 pub use session::SessionContext;
+mod session_source;
+pub use session_source::SessionSource;
 pub use terminal::{
     ConnectionFactSession, ExpectedSession, FactSessionSnapshot, LiveCommandLease, LiveCommands,
     RemoteReconnect, SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalEntry,
-    TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
-    TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
+    TerminalExecution, TerminalFiles, TerminalFilesystem, TerminalInfo, TerminalInput,
+    TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken,
+    UserTerminalPaste,
 };
 
 pub use project_terminal::{

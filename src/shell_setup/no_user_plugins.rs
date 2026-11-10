@@ -75,6 +75,7 @@ impl WindowUser {
 
     pub(crate) fn attach(
         self,
+        _terminal: &nocterm_terminal::Installed,
         _workspace: &mut Workspace,
         _window: &mut Window,
         _cx: &mut Context<Workspace>,

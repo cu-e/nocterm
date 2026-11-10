@@ -369,3 +369,202 @@ fn a_reply_with_more_log_lines_than_the_host_accepts_is_refused_whole() {
         .expect("the bound itself is accepted");
     assert_eq!(kept.len(), nocterm_plugin_abi::MAX_LOG_LINES);
 }
+
+const PANEL: &str = r#"
+api = "0.1"
+runtime = "wasm"
+publisher = "example"
+id = "panel"
+name = "Panel"
+capabilities = ["net.request", "timers.set", "terminals.open", "terminals.write"]
+
+[[contribution]]
+local = "bar"
+kind = "toolbar"
+title = "Bar"
+
+[[settings.group]]
+title = "Connection"
+
+[[settings.group.field]]
+key = "url"
+label = "Address"
+kind = "text"
+max_len = 100
+
+[[settings.group.field]]
+key = "token"
+label = "Key"
+kind = "secret"
+max_len = 100
+
+[network]
+origin_setting = "url"
+credential_setting = "token"
+"#;
+
+/// Answers clicks with requests, a timer and terminal writes, and records what it could see.
+#[derive(Default)]
+struct Console {
+    seen_token: Option<SettingValue>,
+    seen_url: Option<SettingValue>,
+    seen_toolbar: bool,
+}
+
+impl Plugin for Console {
+    fn render(&mut self, cx: &mut Cx<'_>) -> View {
+        self.seen_token = cx.setting("token").cloned();
+        self.seen_url = cx.setting("url").cloned();
+        self.seen_toolbar = cx.snapshot().context.kind == nocterm_plugin_api::Kind::Toolbar;
+        let mut view = ViewBuilder::new();
+        view.code(None, "ready\nset");
+        view.build()
+    }
+
+    fn on_event(&mut self, _cx: &mut Cx<'_>, event: &Event) -> Effects {
+        match event {
+            Event::Activated { .. } => effect::effects([
+                effect::request_to("servers", crate::api::Method::Get, "/api/items", None),
+                effect::timer("poll", 2000),
+                effect::open_terminal(local("bar"), "srv", "Build"),
+            ]),
+            Event::TerminalLine { terminal, line } => effect::effects([effect::write_terminal(
+                terminal.clone(),
+                std::format!("> {line}\n"),
+            )]),
+            _ => Effects::default(),
+        }
+    }
+}
+
+#[test]
+fn a_plugin_never_reads_its_secret_setting_and_a_toolbar_knows_it_is_one() {
+    let mut host = Host::new(PANEL).expect("a valid manifest");
+    host.set("token", SettingValue::Text(String::from("a-secret")))
+        .set(
+            "url",
+            SettingValue::Text(String::from("https://service.example")),
+        );
+    let mut console = Console::default();
+    let view = host.render(&mut console, "bar").expect("renders");
+    assert_eq!(console.seen_token, None, "the credential is the host's");
+    assert_eq!(
+        console.seen_url,
+        Some(SettingValue::Text(String::from("https://service.example")))
+    );
+    assert!(console.seen_toolbar);
+    assert_eq!(
+        view.nodes[0].kind,
+        NodeKind::Code(String::from("ready\nset"))
+    );
+}
+
+#[test]
+fn requests_timers_and_terminals_are_effects_of_their_capabilities() {
+    let mut host = Host::new(PANEL).expect("a valid manifest");
+    let mut console = Console::default();
+    let effects = host
+        .event(&mut console, "bar", Event::Activated { key: "go".into() })
+        .expect("answered");
+    let ids: Vec<&str> = effects.0.iter().map(|r| r.effect.capability()).collect();
+    assert_eq!(ids, ["net.request", "timers.set", "terminals.open"]);
+    let echoed = host
+        .event(
+            &mut console,
+            "bar",
+            Event::TerminalLine {
+                terminal: "srv".into(),
+                line: "say hi".into(),
+            },
+        )
+        .expect("answered");
+    assert_eq!(echoed.0[0].effect.capability(), "terminals.write");
+}
+
+const BARS: &str = r#"
+api = "0.1"
+runtime = "wasm"
+publisher = "example"
+id = "bars"
+name = "Bars"
+capabilities = ["terminals.open", "terminals.bar"]
+
+[[contribution]]
+local = "servers"
+kind = "panel"
+title = "Servers"
+"#;
+
+/// Opens a tab with a bar on top and draws that bar for the terminal it is asked about.
+#[derive(Default)]
+struct Servers {
+    restarted: Option<String>,
+}
+
+impl Plugin for Servers {
+    fn render(&mut self, cx: &mut Cx<'_>) -> View {
+        let mut view = ViewBuilder::new();
+        match cx.terminal() {
+            Some(terminal) if cx.is_column() => {
+                view.text(None, std::format!("column of {terminal}"))
+            }
+            Some(terminal) => view.text(None, std::format!("bar of {terminal}")),
+            None => view.text(None, "list"),
+        };
+        view.build()
+    }
+
+    fn on_event(&mut self, cx: &mut Cx<'_>, event: &Event) -> Effects {
+        match (event, cx.terminal()) {
+            (Event::Activated { key }, Some(terminal)) if key == "restart" => {
+                self.restarted = Some(String::from(terminal));
+                Effects::default()
+            }
+            (Event::Activated { .. }, None) => effect::effects([
+                effect::open_terminal(local("servers"), "srv", "Lobby"),
+                effect::show_terminal_bar("srv"),
+            ]),
+            _ => Effects::default(),
+        }
+    }
+}
+
+#[test]
+fn a_terminal_bar_is_drawn_and_used_for_the_terminal_it_names() {
+    let mut host = Host::new(BARS).expect("a valid manifest");
+    let mut servers = Servers::default();
+    let opened = host
+        .event(
+            &mut servers,
+            "servers",
+            Event::Activated { key: "open".into() },
+        )
+        .expect("answered");
+    let ids: Vec<&str> = opened.0.iter().map(|r| r.effect.capability()).collect();
+    assert_eq!(ids, ["terminals.open", "terminals.bar"]);
+    let text = |view: View| match &view.nodes[0].kind {
+        NodeKind::Text(text) => text.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(text(host.render(&mut servers, "servers").unwrap()), "list");
+    let bar = host.render_bar(&mut servers, "servers", "srv").unwrap();
+    assert_eq!(text(bar), "bar of srv");
+    let column = host
+        .render_bar_in_column(&mut servers, "servers", "srv")
+        .unwrap();
+    assert_eq!(
+        text(column),
+        "column of srv",
+        "a side bar knows it is a column"
+    );
+    host.bar_event(
+        &mut servers,
+        "servers",
+        "srv",
+        Event::Activated {
+            key: "restart".into(),
+        },
+    )
+    .expect("answered");
+    assert_eq!(servers.restarted.as_deref(), Some("srv"));
+}

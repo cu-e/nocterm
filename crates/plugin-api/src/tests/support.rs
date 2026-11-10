@@ -91,6 +91,7 @@ pub(super) fn text_schema(key: &str) -> SettingsSchema {
             default: Cow::Borrowed(""),
             max_len: 40,
             placeholder: None,
+            secret: false,
         },
         renamed_from: None,
     };

@@ -36,5 +36,13 @@ pub trait VaultAccess: Send + Sync + 'static {
         binding: CredentialBinding,
         secret: Secret,
     ) -> VaultFuture<CredentialId>;
+    /// Renames the record `id` and binds it as `binding` while its secret stays: a password
+    /// may answer other addresses; any other record keeps its binding.
+    fn update(
+        &self,
+        id: CredentialId,
+        label: String,
+        binding: CredentialBinding,
+    ) -> VaultFuture<()>;
     fn delete(&self, id: CredentialId) -> VaultFuture<()>;
 }

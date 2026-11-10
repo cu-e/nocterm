@@ -5,15 +5,16 @@ use std::rc::Rc;
 
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, PathPromptOptions, Render, SharedString,
-    Subscription, Window,
+    Subscription, Task, Window,
 };
 use nocterm_plugin_model::PluginId;
 use nocterm_ui::{FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsForm};
 
 use super::{
     consent::{Consent, INERT},
+    folder::{FolderState, PluginsFolder},
     port::{Candidate, UserPluginError, UserPluginRow, UserPlugins, describe},
-    removal::{Removal, RemovalKind},
+    removal::RemovalKind,
     section_view,
     session::{HeldBy, UserPluginsSwitch, UserSession},
 };
@@ -23,6 +24,7 @@ pub struct UserPluginsSection {
     session: UserSession,
     switch: Rc<dyn UserPluginsSwitch>,
     directory: PluginSettingsDirectory,
+    folder: FolderState,
     selected: Option<PluginId>,
     /// The fingerprint of the package the selection was made on, to notice a replacement.
     selected_fingerprint: Option<String>,
@@ -30,12 +32,13 @@ pub struct UserPluginsSection {
     consent: Option<Consent>,
     /// Why the last action was refused.
     notice: Option<SharedString>,
-    /// A destructive click waiting for its answer.
-    pending_removal: Option<Removal>,
-    /// Where focus goes when the consent or a removal question opens: refusing is the default
-    /// answer.
+    /// Which folded lists of the detail the user opened.
+    unfolded: Unfolded,
+    /// Where focus goes when the consent opens: refusing is the default answer.
     deny_focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    operation: Option<Task<()>>,
+    generation: u64,
 }
 
 impl UserPluginsSection {
@@ -43,6 +46,7 @@ impl UserPluginsSection {
         session: UserSession,
         switch: Rc<dyn UserPluginsSwitch>,
         directory: PluginSettingsDirectory,
+        folder: std::sync::Arc<dyn PluginsFolder>,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak = cx.weak_entity();
@@ -62,19 +66,67 @@ impl UserPluginsSection {
                 let _ = weak.update(cx, |_, cx| cx.notify());
             }),
         ));
-        Self {
+        let section = Self {
             session,
             switch,
             directory,
+            folder: FolderState::new(folder),
             selected: None,
             selected_fingerprint: None,
             form: None,
             consent: None,
             notice: None,
-            pending_removal: None,
+            unfolded: Unfolded::default(),
             deny_focus: cx.focus_handle(),
             _subscriptions: subscriptions,
+            operation: None,
+            generation: 0,
+        };
+        section.refresh_folder(cx);
+        section
+    }
+
+    pub(super) fn folder(&self) -> &FolderState {
+        &self.folder
+    }
+
+    /// Lists the plugins folder again, when this run can install from it.
+    pub(super) fn refresh_folder(&self, cx: &mut Context<Self>) {
+        if !self.session.is_loaded() {
+            return;
         }
+        let folder = self.folder.port();
+        let listed = cx
+            .background_executor()
+            .spawn(async move { folder.packages() });
+        cx.spawn(async move |section, cx| {
+            let listed = listed.await;
+            let _ = section.update(cx, |section, cx| {
+                section.folder.listed(listed);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Creates the plugins folder if needed and opens it in the file manager.
+    pub(super) fn open_folder(&mut self, cx: &mut Context<Self>) {
+        let folder = self.folder.port();
+        let prepared = cx
+            .background_executor()
+            .spawn(async move { folder.prepare() });
+        cx.spawn(async move |section, cx| {
+            let prepared = prepared.await;
+            let _ = section.update(cx, |section, cx| {
+                match prepared {
+                    Ok(path) => cx.open_with_system(&path),
+                    Err(error) => section.folder.failed(&error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        self.refresh_folder(cx);
     }
 
     /// Why this run did not load the plugins, or `None` when it did.
@@ -145,12 +197,33 @@ impl UserPluginsSection {
         self.consent.as_mut()
     }
 
+    pub(super) fn manager_error(&self, cx: &App) -> Option<SharedString> {
+        self.session
+            .loaded()?
+            .error(cx)
+            .map(|error| describe(&error).into())
+    }
+
     pub(super) fn notice(&self) -> Option<&SharedString> {
         self.notice.as_ref()
     }
 
-    pub(super) fn pending_removal(&self) -> Option<&Removal> {
-        self.pending_removal.as_ref()
+    /// Whether one of the detail's lists shows all of its lines.
+    pub(super) fn is_unfolded(&self, list: FoldedList) -> bool {
+        match list {
+            FoldedList::Granted => self.unfolded.granted,
+            FoldedList::Audit => self.unfolded.audit,
+        }
+    }
+
+    /// Opens or folds one of the detail's lists.
+    pub(super) fn toggle_fold(&mut self, list: FoldedList, cx: &mut Context<Self>) {
+        let open = match list {
+            FoldedList::Granted => &mut self.unfolded.granted,
+            FoldedList::Audit => &mut self.unfolded.audit,
+        };
+        *open = !*open;
+        cx.notify();
     }
 
     pub(super) fn deny_focus(&self) -> &FocusHandle {
@@ -186,14 +259,32 @@ impl UserPluginsSection {
     /// Reads the package at `location` and, when it is acceptable, opens the consent. Nothing is
     /// stored until the user accepts.
     pub fn begin_install(&mut self, location: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.operation.is_some() {
+            return;
+        }
         self.notice = None;
         let Some(manager) = self.session.loaded() else {
             return;
         };
-        match manager.inspect(location, cx) {
-            Ok(candidate) => self.open_consent(candidate, window, cx),
-            Err(error) => self.notice = Some(describe(&error).into()),
-        }
+        let result = manager.inspect(location, cx);
+        self.generation = self.generation.wrapping_add(1);
+        let generation = self.generation;
+        self.notice = Some("Reading plugin…".into());
+        self.operation = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = result.await;
+            let _ = this.update_in(cx, |section, window, cx| {
+                if section.generation != generation {
+                    return;
+                }
+                section.operation = None;
+                section.notice = None;
+                match result {
+                    Ok(candidate) => section.open_consent(candidate, window, cx),
+                    Err(error) => section.notice = Some(describe(&error).into()),
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
@@ -207,13 +298,15 @@ impl UserPluginsSection {
                 cx.notify();
             });
         });
-        self.pending_removal = None;
         self.consent = Some(Consent::new(candidate, timer));
         window.focus(&self.deny_focus, cx);
     }
 
     /// Installs what the consent shows, if its buttons are live.
     pub(super) fn accept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.operation.is_some() {
+            return;
+        }
         let Some(consent) = self.consent.as_ref().filter(|consent| consent.can_accept()) else {
             return;
         };
@@ -221,32 +314,48 @@ impl UserPluginsSection {
         let Some(manager) = self.session.loaded().cloned() else {
             return;
         };
-        match manager.install(request, cx) {
-            Ok(()) => {
-                self.consent = None;
-                self.notice = None;
-                self.select(&id, window, cx);
-            }
-            Err(error) => {
-                self.consent = None;
-                self.notice = Some(describe(&error).into());
-            }
-        }
+        let result = manager.install(request, cx);
+        self.consent = None;
+        self.notice = Some("Installing plugin…".into());
+        self.generation = self.generation.wrapping_add(1);
+        let generation = self.generation;
+        self.operation = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = result.await;
+            let _ = this.update_in(cx, |section, window, cx| {
+                if section.generation != generation {
+                    return;
+                }
+                section.operation = None;
+                match result {
+                    Ok(()) => {
+                        section.notice = None;
+                        section.select(&id, window, cx);
+                    }
+                    Err(error) => section.notice = Some(describe(&error).into()),
+                }
+                section.refresh_folder(cx);
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
     pub(super) fn deny(&mut self, cx: &mut Context<Self>) {
         self.consent = None;
+        self.generation = self.generation.wrapping_add(1);
+        self.operation = None;
         cx.notify();
     }
 
-    /// Shows `plugin` in the detail, first sending what was typed into the previous form.
+    /// Shows `plugin` in the detail, first sending what was typed into the previous form. The
+    /// page hears of it ([`UserSelected`]) and lets go of its own selection.
     pub fn select(&mut self, plugin: &PluginId, window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(UserSelected);
         if self.selected.as_ref() == Some(plugin) && self.form.is_some() {
             return;
         }
         self.flush(cx);
-        self.pending_removal = None;
+        self.unfolded = Unfolded::default();
         let name = self
             .rows(cx)
             .into_iter()
@@ -279,6 +388,22 @@ impl UserPluginsSection {
             .map(|row| row.fingerprint)
     }
 
+    /// Lets go of the selection, after sending what was typed into its form.
+    pub fn deselect(&mut self, cx: &mut Context<Self>) {
+        if self.selected.is_none() {
+            return;
+        }
+        self.flush(cx);
+        self.selected = None;
+        self.selected_fingerprint = None;
+        self.form = None;
+        cx.notify();
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selected.is_some()
+    }
+
     /// Sends what was typed into the form.
     pub fn flush(&self, cx: &mut Context<Self>) {
         if let Some(form) = &self.form {
@@ -286,47 +411,56 @@ impl UserPluginsSection {
         }
     }
 
-    pub(super) fn set_enabled(&mut self, plugin: &PluginId, enabled: bool, cx: &mut Context<Self>) {
-        self.act(cx, |manager, cx| manager.set_enabled(plugin, enabled, cx));
-    }
-
-    pub(super) fn set_placeable(
-        &mut self,
-        plugin: &PluginId,
-        placeable: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.act(cx, |manager, cx| {
-            manager.set_placeable(plugin, placeable, cx)
+    /// The one switch of a plugin. On enables it and allows it in windows, each only if it is
+    /// not already, one after the other; off disables it and keeps its place in the layout.
+    pub(super) fn set_on(&mut self, row: &UserPluginRow, on: bool, cx: &mut Context<Self>) {
+        let Some(manager) = self.session.loaded().cloned() else {
+            return;
+        };
+        let (plugin, enabled, placeable) = (row.id.clone(), row.enabled, row.placeable);
+        self.act(cx, move |first, cx| {
+            if !on {
+                return first.set_enabled(&plugin, false, cx);
+            }
+            let enabling = (!enabled).then(|| first.set_enabled(&plugin, true, cx));
+            cx.spawn(async move |cx| {
+                if let Some(enabling) = enabling {
+                    enabling.await?;
+                }
+                if !placeable {
+                    cx.update(|cx| manager.set_placeable(&plugin, true, cx))
+                        .await?;
+                }
+                Ok(())
+            })
         });
     }
 
-    /// Asks before a removal: nothing is removed until [`Self::confirm_removal`].
+    /// Asks in a dialog what to remove of `plugin`; nothing is removed until the user confirms
+    /// there ([`Self::remove`]).
     pub(super) fn ask_removal(
         &mut self,
         plugin: &PluginId,
-        kind: RemovalKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.notice = None;
-        self.pending_removal = Some(Removal::new(plugin.clone(), kind));
-        window.focus(&self.deny_focus, cx);
-        cx.notify();
-    }
-
-    /// Withdraws the question; nothing is removed.
-    pub(super) fn cancel_removal(&mut self, cx: &mut Context<Self>) {
-        if self.pending_removal.take().is_some() {
-            cx.notify();
-        }
-    }
-
-    /// Removes what the question named.
-    pub(super) fn confirm_removal(&mut self, cx: &mut Context<Self>) {
-        let Some((id, kind)) = self.pending_removal.take().map(Removal::into_parts) else {
+        let Some(name) = self
+            .rows(cx)
+            .into_iter()
+            .find(|row| &row.id == plugin)
+            .map(|row| row.name)
+        else {
             return;
         };
+        self.notice = None;
+        cx.notify();
+        super::removal::ask(cx.weak_entity(), plugin.clone(), name, window, cx);
+    }
+
+    /// Removes what the user confirmed in the removal dialog. A plugin that went meanwhile is
+    /// left to the port, which says why it refused.
+    pub(super) fn remove(&mut self, id: &PluginId, kind: RemovalKind, cx: &mut Context<Self>) {
+        let id = id.clone();
         self.act(cx, |manager, cx| match kind {
             RemovalKind::Keep => manager.remove(&id, false, cx),
             RemovalKind::WithData => manager.remove(&id, true, cx),
@@ -338,13 +472,24 @@ impl UserPluginsSection {
     fn act(
         &mut self,
         cx: &mut Context<Self>,
-        action: impl FnOnce(&dyn UserPlugins, &mut App) -> Result<(), UserPluginError>,
+        action: impl FnOnce(&dyn UserPlugins, &mut App) -> Task<Result<(), UserPluginError>>,
     ) {
+        if self.operation.is_some() {
+            return;
+        }
         let Some(manager) = self.session.loaded().cloned() else {
             return;
         };
         let outcome = action(manager.as_ref(), cx);
-        self.notice = outcome.err().map(|error| describe(&error).into());
+        self.notice = Some("Saving plugin changes…".into());
+        self.operation = Some(cx.spawn(async move |section, cx| {
+            let outcome = outcome.await;
+            let _ = section.update(cx, |section, cx| {
+                section.operation = None;
+                section.notice = outcome.err().map(|error| describe(&error).into());
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
@@ -356,13 +501,6 @@ impl UserPluginsSection {
             .selected
             .as_ref()
             .is_some_and(|selected| self.fingerprint_of(selected, cx) != self.selected_fingerprint);
-        if self
-            .pending_removal
-            .as_ref()
-            .is_some_and(|pending| !self.holds(pending.target(), cx))
-        {
-            self.pending_removal = None;
-        }
         if stale {
             self.selected = None;
             self.selected_fingerprint = None;
@@ -371,6 +509,27 @@ impl UserPluginsSection {
         cx.notify();
     }
 }
+
+/// The lists of the detail that fold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FoldedList {
+    /// What the plugin is allowed to do.
+    Granted,
+    /// The audit log.
+    Audit,
+}
+
+/// Which folded lists of the detail are open; they fold again when another plugin is selected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Unfolded {
+    granted: bool,
+    audit: bool,
+}
+
+/// The user selected an installed plugin in the section.
+pub struct UserSelected;
+
+impl gpui_kit::EventEmitter<UserSelected> for UserPluginsSection {}
 
 impl Render for UserPluginsSection {
     fn render(

@@ -83,7 +83,7 @@ pub(crate) fn take_disconnect(observed: &Arc<Mutex<Observed>>) -> Option<String>
 
 /// The protocol callbacks of one connection.
 pub(crate) struct Client {
-    host_keys: HostKeys,
+    host_keys: Option<HostKeys>,
     host: String,
     port: u16,
     observed: Arc<Mutex<Observed>>,
@@ -106,7 +106,10 @@ impl client::Handler for Client {
             return Ok(false);
         };
 
-        let verdict = self.host_keys.check(&self.host, self.port, key);
+        let Some(host_keys) = &self.host_keys else {
+            return Ok(false);
+        };
+        let verdict = host_keys.check(&self.host, self.port, key);
         let acceptable = !matches!(verdict, Verdict::Revoked { .. });
         lock(&self.observed).host_key = Some((key.clone(), verdict));
         Ok(acceptable)
@@ -166,7 +169,7 @@ where
         ..client::Config::default()
     };
     let client = Client {
-        host_keys: host_keys.clone(),
+        host_keys: Some(host_keys.clone()),
         host: host.clone(),
         port: *port,
         observed: observed.clone(),

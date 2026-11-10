@@ -19,6 +19,7 @@ const fn widget(id: &'static str, order: u16) -> SystemContribution {
         },
         panel: None,
         preview: None,
+        edge: None,
         pinned: false,
     }
 }

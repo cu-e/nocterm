@@ -3,12 +3,9 @@
 //!
 //! ACP reports the context window (`usage_update`) and, at the end of a turn,
 //! the session's token totals. Plan limits are not part of ACP: an agent's
-//! `UsageProfile` says whether it attaches them to `usage_update` metadata and
-//! which injected account source reads the full report.
+//! `UsageProfile` says whether it attaches them to `usage_update` metadata.
+//! Nocterm uses only the reports received from the agent.
 use crate::model::content::Content;
-
-mod source;
-pub use source::{AccountUsageSource, UsageAgent, UsageReadError, UsageSources};
 
 use crate::{model::usage::ContextUsage, thread::Entry};
 
@@ -84,14 +81,6 @@ impl Limits {
                 self.0.push(limit);
                 self.0.sort_by(|a, b| a.window.cmp(&b.window));
             }
-        }
-    }
-
-    /// Replaces every limit: the source reports all of them at once.
-    pub fn replace(&mut self, limits: Vec<RateLimit>) {
-        self.0.clear();
-        for limit in limits {
-            self.merge(limit);
         }
     }
 }
@@ -215,50 +204,6 @@ mod tests {
 
         assert!(record(&ContextUsage::new(1, 2)).is_none());
         assert!(record(&update(serde_json::json!({"other": 1}))).is_none());
-    }
-
-    #[test]
-    fn usage_sources_read_each_agent_from_the_source_for_its_account() {
-        use crate::agents::AccountUsage;
-        use futures::future::BoxFuture;
-        use std::sync::Arc;
-        struct Fixed(Result<Option<Vec<RateLimit>>, UsageReadError>);
-        impl AccountUsageSource for Fixed {
-            fn read(
-                &self,
-                _: UsageAgent,
-            ) -> BoxFuture<'static, Result<Option<Vec<RateLimit>>, UsageReadError>> {
-                let result = self.0.clone();
-                Box::pin(async move { result })
-            }
-        }
-        let report = vec![RateLimit {
-            window: Window::FiveHour,
-            used: Some(0.1),
-            resets_at: None,
-            reached: false,
-        }];
-        let failure =
-            || UsageReadError::fetch("https://example.test", std::io::Error::other("down"));
-        let sources = UsageSources::default()
-            .with(AccountUsage::OAuthAccount, Arc::new(Fixed(Err(failure()))))
-            .with(
-                AccountUsage::OAuthAccount,
-                Arc::new(Fixed(Ok(Some(report.clone())))),
-            )
-            .with(AccountUsage::SessionLog, Arc::new(Fixed(Err(failure()))));
-        let read = |account| {
-            futures::executor::block_on(sources.read(UsageAgent {
-                id: "agent".into(),
-                account,
-            }))
-        };
-        assert_eq!(read(AccountUsage::OAuthAccount).unwrap(), Some(report));
-        assert!(matches!(
-            read(AccountUsage::SessionLog),
-            Err(UsageReadError::Fetch { .. })
-        ));
-        assert_eq!(read(AccountUsage::None).unwrap(), None);
     }
 
     #[test]

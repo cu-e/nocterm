@@ -238,8 +238,8 @@ fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
         thread.rename(None, cx);
         thread.set_pinned(false, cx);
         thread.set_draft(String::new(), cx);
-        assert!(thread.shared_snapshot(cx).is_some());
-        assert!(thread.flush_snapshot(cx).is_none());
+        assert!(thread.shared_snapshot(cx).unwrap().is_some());
+        assert!(thread.flush_snapshot(cx).unwrap().is_none());
         thread.release_resources(cx);
     });
     cx.run_until_parked();
@@ -320,8 +320,8 @@ fn captures_before_the_draft_timer_keep_one_revision_and_one_immutable_intent(
         thread.set_draft("before 300 ms".into(), cx)
     });
     let client = crate::thread::client(&thread);
-    let first = cx.update(|cx| client.capture(cx).unwrap());
-    let second = cx.update(|cx| client.capture(cx).unwrap());
+    let first = cx.update(|cx| client.capture(cx).unwrap().unwrap());
+    let second = cx.update(|cx| client.capture(cx).unwrap().unwrap());
     assert_eq!(first.1, second.1);
     assert!(Arc::ptr_eq(&first.0, &second.0));
     shutdown_runtime(&f.installation.installed, cx);
@@ -347,8 +347,8 @@ fn shared_snapshots_reuse_queued_payload_and_cache_exact_size(cx: &mut TestAppCo
             .accept_composer_images(vec![prompt_image()], cx)
             .unwrap();
         thread.send("queued\n\"\\界".into(), cx);
-        let first = thread.shared_snapshot(cx).unwrap();
-        let second = thread.shared_snapshot(cx).unwrap();
+        let first = thread.shared_snapshot(cx).unwrap().unwrap();
+        let second = thread.shared_snapshot(cx).unwrap().unwrap();
         assert!(Arc::ptr_eq(&first.queue[0], &second.queue[0]));
         assert!(Arc::ptr_eq(
             &first.queue[0],

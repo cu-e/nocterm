@@ -9,9 +9,13 @@ use crate::{
     HostError, LimitError, LocalId,
     capability::{
         Capability,
+        files::{FileOp, FileReply, ServeFiles},
+        net::{NetRequest, Request},
         notifications::{Post, PostNotice},
         panels::{SetBadge, SetOpen, SetPanelBadge, SetPanelOpen},
         storage::{Remove, Set, StoreRemove, StoreSet},
+        terminals::{Bar, Open, OpenTerminal, ShowTerminalBar, Write, WriteTerminal},
+        timers::{SetTimer, Timer},
     },
     error::key_syntax,
 };
@@ -39,6 +43,34 @@ pub enum Event {
         visible: bool,
     },
     SettingsChanged,
+    /// The answer to the `net.request` effect with this key. `status` is the HTTP status, or 0
+    /// when no answer came (the body then says why, in the host's words). A body longer than
+    /// the response limit is cut there; bytes that are not UTF-8 are replaced.
+    Response {
+        key: String,
+        status: u16,
+        body: String,
+    },
+    /// The `timers.set` effect with this key ran out.
+    Timer {
+        key: String,
+    },
+    /// A line was entered in one of the plugin's terminals, by the user or an AI chat.
+    TerminalLine {
+        terminal: String,
+        line: String,
+    },
+    /// The user closed one of the plugin's terminals.
+    TerminalClosed {
+        terminal: String,
+    },
+    /// The file browser or an AI chat asks the files of one of the plugin's terminals, opened
+    /// with `files`; the plugin answers with a `terminals.files` effect under `request`.
+    FileRequest {
+        terminal: String,
+        request: u32,
+        op: FileOp,
+    },
 }
 
 /// One thing a plugin asks for. Each variant is one effect capability.
@@ -54,6 +86,18 @@ pub enum Effect {
     StorageSet(Set),
     #[serde(rename = "storage.remove")]
     StorageRemove(Remove),
+    #[serde(rename = "net.request")]
+    NetRequest(Request),
+    #[serde(rename = "timers.set")]
+    TimersSet(SetTimer),
+    #[serde(rename = "terminals.open")]
+    TerminalsOpen(Open),
+    #[serde(rename = "terminals.write")]
+    TerminalsWrite(Write),
+    #[serde(rename = "terminals.files")]
+    TerminalsFiles(FileReply),
+    #[serde(rename = "terminals.bar")]
+    TerminalsBar(Bar),
 }
 
 impl Effect {
@@ -65,7 +109,18 @@ impl Effect {
             Self::PanelsSetBadge(_) => SetPanelBadge::ID,
             Self::StorageSet(_) => StoreSet::ID,
             Self::StorageRemove(_) => StoreRemove::ID,
+            Self::NetRequest(_) => NetRequest::ID,
+            Self::TimersSet(_) => Timer::ID,
+            Self::TerminalsOpen(_) => OpenTerminal::ID,
+            Self::TerminalsWrite(_) => WriteTerminal::ID,
+            Self::TerminalsFiles(_) => ServeFiles::ID,
+            Self::TerminalsBar(_) => ShowTerminalBar::ID,
         }
+    }
+
+    /// Whether the outcome comes back as an event under the request's key, which it then needs.
+    pub fn needs_key(&self) -> bool {
+        matches!(self, Self::NetRequest(_) | Self::TimersSet(_))
     }
 
     /// The own contribution the effect names, if it names one.
@@ -73,6 +128,7 @@ impl Effect {
         match self {
             Self::PanelsSetOpen(request) => Some(&request.local),
             Self::PanelsSetBadge(request) => Some(&request.local),
+            Self::TerminalsOpen(request) => Some(&request.local),
             _ => None,
         }
     }
@@ -82,6 +138,12 @@ impl Effect {
             Self::NotificationsPost(request) => request.check(),
             Self::StorageSet(request) => request.check(),
             Self::StorageRemove(request) => request.check(),
+            Self::NetRequest(request) => request.check(),
+            Self::TimersSet(request) => request.check(),
+            Self::TerminalsOpen(request) => request.check(),
+            Self::TerminalsWrite(request) => request.check(),
+            Self::TerminalsFiles(request) => request.check(),
+            Self::TerminalsBar(request) => request.check(),
             Self::PanelsSetOpen(_) | Self::PanelsSetBadge(_) => Ok(()),
         }
     }
@@ -108,6 +170,8 @@ pub enum EffectsError {
     TooMany,
     #[error("key `{key}` is used by two effects")]
     DuplicateKey { key: String },
+    #[error("effect {index} answers with an event and needs a key")]
+    MissingKey { index: usize },
     #[error("effect {index}: {source}")]
     Limit {
         index: usize,
@@ -130,6 +194,9 @@ impl Effects {
                 if !keys.insert(key.as_str()) {
                     return Err(EffectsError::DuplicateKey { key: key.clone() });
                 }
+            }
+            if request.key.is_none() && request.effect.needs_key() {
+                return Err(EffectsError::MissingKey { index });
             }
             request.effect.check().map_err(limit)?;
         }

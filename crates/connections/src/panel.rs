@@ -8,7 +8,7 @@ use gpui_kit::{
     MouseButton, SharedString, Subscription, WeakEntity, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
+        ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         dialog::DialogFooter,
         h_flex,
@@ -26,10 +26,15 @@ use crate::{
     os::{self, Os},
     session_intents::open_profile,
 };
+use account_state::AccountState;
 
+pub(crate) mod account_state;
+mod folder;
 mod group_actions;
 mod row;
+mod sections;
 use group_actions::{GroupAction, run_group_action};
+use sections::ConnectionList;
 
 /// A server's icon: `os` in `color` (its brand colour when none), or the
 /// generic server icon in `color` (`fallback` when none).
@@ -96,6 +101,7 @@ pub struct ConnectionsPanel {
     /// Folders the user folded away.
     collapsed: HashSet<String>,
     renaming: Option<GroupRename>,
+    listing: ConnectionList,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -107,11 +113,12 @@ impl ConnectionsPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe_in(
                 installed.connections(),
                 window,
                 |this, connections, window, cx| {
+                    this.listing.invalidate();
                     // The group may have been deleted or ungrouped while being renamed.
                     if let Some(rename) = &this.renaming
                         && !connections.read(cx).profiles(cx).has_group(&rename.group)
@@ -128,12 +135,30 @@ impl ConnectionsPanel {
             // Detected systems and countries, and flags as they load.
             cx.observe(installed.facts(), |_, _, cx| cx.notify()),
             cx.subscribe_in(&filter, window, |this, _, event, window, cx| match event {
-                InputEvent::Change => cx.notify(),
+                InputEvent::Change => {
+                    this.listing.invalidate();
+                    cx.notify();
+                }
                 // Enter opens the only match.
                 InputEvent::PressEnter { .. } => this.open_single_match(window, cx),
                 _ => {}
             }),
         ];
+        // Whether the list may be changed follows the account, not only the profiles.
+        if let Some(replication) = installed.replication() {
+            subscriptions.push(cx.observe(replication, |this, _, cx| {
+                this.listing.invalidate();
+                cx.notify();
+            }));
+        }
+        // The rows show what the hub's agents found on each server.
+        if let Some(access) = installed.inputs().agent_access() {
+            let panel = cx.weak_entity();
+            let changed = move |cx: &mut App| {
+                let _ = panel.update(cx, |_, cx| cx.notify());
+            };
+            subscriptions.push(access.observe(Box::new(changed), cx));
+        }
         Self {
             installed,
             workspace,
@@ -141,8 +166,14 @@ impl ConnectionsPanel {
             filter,
             collapsed: HashSet::new(),
             renaming: None,
+            listing: ConnectionList::default(),
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Whether the list may be changed now: see [`account_state`].
+    fn editable(&self, cx: &App) -> bool {
+        AccountState::of(&self.installed, cx).editable()
     }
 
     fn filter_text(&self, cx: &App) -> String {
@@ -163,6 +194,22 @@ impl ConnectionsPanel {
         open_profile(&self.installed, &self.workspace, &profile, window, cx);
     }
 
+    /// Opens every connection of `group`, each in its tab.
+    fn open_group(&mut self, group: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let members: Vec<_> = self
+            .installed
+            .connections()
+            .read(cx)
+            .profiles(cx)
+            .iter()
+            .filter(|profile| profile.group.as_deref() == Some(group))
+            .cloned()
+            .collect();
+        for profile in &members {
+            open_profile(&self.installed, &self.workspace, profile, window, cx);
+        }
+    }
+
     fn open_single_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let filter = self.filter_text(cx);
         let matches: Vec<ProfileId> = self
@@ -180,6 +227,9 @@ impl ConnectionsPanel {
     }
 
     fn edit(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
         let profile = self
             .installed
             .connections()
@@ -199,6 +249,9 @@ impl ConnectionsPanel {
     }
 
     fn confirm_delete(&mut self, id: ProfileId, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
         let Some(name) = self
             .installed
             .connections()
@@ -240,17 +293,22 @@ impl ConnectionsPanel {
         });
     }
 
-    fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
-        // The delete only applies while the group still holds these connections.
-        let members: Vec<ProfileId> = self
-            .installed
-            .connections()
-            .read(cx)
-            .profiles(cx)
-            .in_group(Some(&group), "")
+    /// The connections in folder `group`.
+    fn folder_members(&self, group: &str, cx: &App) -> Vec<ProfileId> {
+        let profiles = self.installed.connections().read(cx).profiles(cx);
+        profiles
+            .in_group(Some(group), "")
             .iter()
             .map(|profile| profile.id)
-            .collect();
+            .collect()
+    }
+
+    fn confirm_delete_group(&mut self, group: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
+        // The delete only applies while the group still holds these connections.
+        let members = self.folder_members(&group, cx);
         let count = members.len();
         let panel = cx.weak_entity();
         let connections = self.installed.connections().clone();
@@ -309,6 +367,9 @@ impl ConnectionsPanel {
     }
 
     fn start_rename(&mut self, group: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable(cx) {
+            return;
+        }
         if self.renaming.as_ref().is_some_and(|r| r.group == group) {
             return;
         }
@@ -325,6 +386,7 @@ impl ConnectionsPanel {
                 this.finish_rename(true, false, window, cx)
             }),
         ];
+        self.listing.invalidate();
         self.renaming = Some(GroupRename {
             group: group.to_owned(),
             input,
@@ -345,6 +407,7 @@ impl ConnectionsPanel {
         let Some(GroupRename { group, input, .. }) = self.renaming.take() else {
             return;
         };
+        self.listing.invalidate();
         if restore_focus {
             window.focus(&self.focus_handle, cx);
         }
@@ -364,8 +427,9 @@ impl ConnectionsPanel {
         } else {
             self.collapsed.remove(&to);
         }
+        let members = self.folder_members(&group, cx);
         let renamed = self.installed.connections().update(cx, |connections, cx| {
-            connections.rename_group(group.clone(), to.clone(), cx)
+            connections.rename_group_of(members, group.clone(), to.clone(), cx)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = renamed.await;
@@ -401,6 +465,7 @@ impl ConnectionsPanel {
         if self.renaming.as_ref().is_some_and(|r| r.group == group) {
             return;
         }
+        self.listing.invalidate();
         if !self.collapsed.remove(group) {
             self.collapsed.insert(group.to_owned());
         }
@@ -416,6 +481,9 @@ impl ConnectionsPanel {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
+        if !self.editable(cx) {
+            return;
+        }
         let moved = self.installed.connections().update(cx, |connections, cx| {
             connections.place_profile(dragged.0, group, before, cx)
         });
@@ -435,216 +503,43 @@ impl ConnectionsPanel {
         .detach();
     }
 
-    #[expect(clippy::too_many_lines, reason = "predates the limit")]
-    fn render_group_header(
-        &self,
-        group: &str,
-        collapsed: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        let name = group.to_owned();
-        let drop_group = name.clone();
-        let renaming = self.renaming.as_ref().filter(|r| r.group == group);
-        let label = match renaming {
-            Some(rename) => {
-                let group = name.clone();
-                div()
-                    .id(SharedString::from(format!("group-rename-{group}")))
-                    .test_support()
-                    .flex_1()
-                    .min_w_0()
-                    .child(Input::new(&rename.input).small())
-                    .on_click(|_: &ClickEvent, _, cx| cx.stop_propagation())
-                    .on_key_down(
-                        cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                            if event.keystroke.key == "escape" {
-                                cx.stop_propagation();
-                                this.finish_rename(false, true, window, cx);
-                            }
-                        }),
-                    )
-                    .into_any_element()
-            }
-            None => {
-                let group = name.clone();
-                div()
-                    .id(SharedString::from(format!("group-name-{name}")))
-                    .test_support()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(name.clone())
-                    // Keep the header from also treating the second click as a toggle.
-                    .on_mouse_down(MouseButton::Left, |event, _, cx| {
-                        if event.click_count == 2 {
-                            cx.stop_propagation();
-                        }
-                    })
-                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                        if event.click_count() == 2 {
-                            // Undo the first click's toggle, then edit.
-                            cx.stop_propagation();
-                            this.toggle_group(&group, cx);
-                            this.start_rename(&group, window, cx);
-                        }
-                    }))
-                    .into_any_element()
-            }
-        };
-        let toggle_group = name.clone();
-        let delete_group = name.clone();
-        h_flex()
-            .id(SharedString::from(format!("group-{group}")))
-            .test_support()
-            .group(GROUP_HEADER)
-            .gap_1()
-            .mx_1()
-            .px_1()
-            .py_1()
-            .rounded(theme.radius)
-            .cursor_pointer()
-            .text_xs()
-            .font_semibold()
-            .text_color(theme.muted_foreground)
-            .hover(|row| row.bg(theme.sidebar_accent))
-            .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, Some(drop_group.clone()), None, window, cx)
-                }),
-            )
-            .child(
-                Icon::new(if collapsed {
-                    IconName::ChevronRight
-                } else {
-                    IconName::ChevronDown
-                })
-                .xsmall(),
-            )
-            .child(
-                Icon::new(if collapsed {
-                    IconName::FolderClosed
-                } else {
-                    IconName::FolderOpen
-                })
-                .small(),
-            )
-            .child(label)
-            .when(renaming.is_none(), |header| {
-                header.child(
-                    h_flex()
-                        .invisible()
-                        .group_hover(GROUP_HEADER, |buttons| buttons.visible())
-                        .child(
-                            Button::new(SharedString::from(format!("group-toggle-{group}")))
-                                .ghost()
-                                .xsmall()
-                                .icon(if collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .tooltip(if collapsed { "Expand" } else { "Collapse" })
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_group(&toggle_group, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!("group-delete-{group}")))
-                                .ghost()
-                                .xsmall()
-                                .icon(IconName::Trash)
-                                .tooltip("Delete group")
-                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    this.confirm_delete_group(delete_group.clone(), window, cx);
-                                })),
-                        ),
-                )
-            })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_group(&name, cx)))
-    }
-
-    fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let filter = self.filter_text(cx);
-        let filtering = !filter.trim().is_empty();
-        let connections = self.installed.connections().read(cx);
-        let profiles = connections.profiles(cx);
-
-        let (top, groups) = profiles.grouped(&filter);
-        let top: Vec<_> = top.into_iter().cloned().collect();
-        let groups: Vec<_> = groups
-            .into_iter()
-            .map(|(name, members)| (name, members.into_iter().cloned().collect::<Vec<_>>()))
-            .collect();
-        let empty = profiles.is_empty() && groups.is_empty();
-        let nothing_matches = top.is_empty() && groups.is_empty();
-
-        let mut list = v_flex().gap_px().py_1().child(
-            h_flex()
-                .id("connections-ungrouped")
-                .test_support()
-                .mx_1()
-                .px_2()
-                .py_1()
-                .rounded(cx.theme().radius)
-                .gap_1()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(Icon::new(IconName::Server).small())
-                .child("Ungrouped")
-                .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
-                .on_drop(cx.listener(|this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, None, None, window, cx)
-                })),
-        );
-        for profile in &top {
-            list = list.child(self.render_row(profile, cx));
+        let editable = self.editable(cx);
+        let profiles = self.installed.connections().read(cx).profiles(cx);
+        let rename = self.renaming.as_ref().map(|rename| {
+            (
+                rename.group.as_str(),
+                rename.input.read(cx).focus_handle(cx),
+            )
+        });
+        self.listing
+            .prepare(profiles, editable, &filter, &self.collapsed, rename);
+        if self.listing.empty() {
+            return self.render_empty(cx).into_any_element();
         }
-        list = list.child(self.render_append_zone(None, cx));
-        for (group, members) in &groups {
-            // A filter shows every match, folded or not.
-            let collapsed = !filtering && self.collapsed.contains(group);
-            list = list.child(self.render_group_header(group, collapsed, cx));
-            if !collapsed {
-                let drop_group = group.clone();
-                let mut folder = v_flex()
-                    .id(SharedString::from(format!("group-members-{group}")))
-                    .test_support()
-                    .pl_3()
-                    .gap_px()
-                    .drag_over::<DraggedProfile>(|style, _, _, cx| style.bg(cx.theme().accent))
-                    .on_drop(
-                        cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                            this.move_profile(dragged, Some(drop_group.clone()), None, window, cx)
-                        }),
-                    );
-                for profile in members {
-                    folder = folder.child(self.render_row(profile, cx));
-                }
-                list = list.child(folder.child(self.render_append_zone(Some(group), cx)));
-            }
-        }
-
-        if empty {
-            self.render_empty(cx).into_any_element()
-        } else if nothing_matches {
-            div()
+        if self.listing.nothing_matches() {
+            return div()
                 .p_3()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
                 .child("No connection matches.")
-                .into_any_element()
-        } else {
-            div()
-                .id("connections-list")
-                .size_full()
-                .overflow_y_scroll()
-                .child(list)
-                .into_any_element()
+                .into_any_element();
         }
+        let rows = self.listing.rows();
+        div()
+            .id("connections-list")
+            .test_support()
+            .size_full()
+            .py_1()
+            .child(
+                gpui_kit::list(
+                    self.listing.scroll(),
+                    cx.processor(move |this, index: usize, _, cx| rows[index].render(this, cx)),
+                )
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     fn render_empty(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -658,6 +553,7 @@ impl ConnectionsPanel {
             .child(
                 Button::new("empty-new-connection")
                     .small()
+                    .disabled(!self.editable(cx))
                     .icon(IconName::ServerPlus)
                     .label("New Connection")
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -704,6 +600,9 @@ impl Render for ConnectionsPanel {
                     .persistence_error(cx)
                     .map(|error| error.to_string())
             });
+        let account = AccountState::of(&self.installed, cx);
+        let editable = account.editable();
+        let notice = account.notice();
         let theme = cx.theme();
         let danger = theme.danger;
 
@@ -716,17 +615,22 @@ impl Render for ConnectionsPanel {
                     .px_2()
                     .pb_1()
                     .child(
-                        div().flex_1().child(
-                            Input::new(&self.filter)
-                                .small()
-                                .cleanable(true)
-                                .prefix(Icon::new(IconName::Search).small()),
-                        ),
+                        div()
+                            .id("connections-filter")
+                            .test_support()
+                            .flex_1()
+                            .child(
+                                Input::new(&self.filter)
+                                    .small()
+                                    .cleanable(true)
+                                    .prefix(Icon::new(IconName::Search).small()),
+                            ),
                     )
                     .child(
                         Button::new("new-connection")
                             .ghost()
                             .small()
+                            .disabled(!editable)
                             .icon(IconName::ServerPlus)
                             .tooltip("New Connection")
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -740,6 +644,9 @@ impl Render for ConnectionsPanel {
                             })),
                     ),
             )
+            .when_some(notice, |panel, notice| {
+                panel.child(account_state::strip(&notice, cx))
+            })
             .when_some(load_error, |panel, error| {
                 panel.child(
                     div()

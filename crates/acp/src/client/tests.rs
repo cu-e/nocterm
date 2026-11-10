@@ -51,6 +51,7 @@ for line in sys.stdin:
                     args: vec!["-c".into(), script.into()],
                     env: Default::default(),
                     inherit_env: Vec::new(),
+                    hub: None,
                 },
                 working_directory: directory.path().to_owned(),
             })
@@ -157,6 +158,7 @@ for line in sys.stdin:
                         args: vec!["-c".into(), script],
                         env: Default::default(),
                         inherit_env: Vec::new(),
+                        hub: None,
                     },
                     working_directory: directory.path().to_owned(),
                 })
@@ -306,6 +308,7 @@ fn oversized_subprocess_line_fails_initialization_and_stops_processes() {
             ],
             env: Default::default(),
             inherit_env: Vec::new(),
+            hub: None,
         };
         let result = AcpConnector::unmanaged().connect(ConnectRequest {
             terminal_auth: false,
@@ -576,6 +579,7 @@ for line in sys.stdin:
                 args: vec!["-u".into(), "-c".into(), script],
                 env: Default::default(),
                 inherit_env: vec!["PATH".into()],
+                hub: None,
             };
             let connection = AcpConnector::unmanaged()
                 .connect(ConnectRequest {

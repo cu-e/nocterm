@@ -191,6 +191,17 @@ fn check_settings(plugin: &SystemPlugin) -> Result<(), CatalogError> {
             plugin: plugin.id.clone(),
             source,
         })?;
+    let secret = plugin
+        .settings
+        .groups
+        .iter()
+        .flat_map(|group| group.fields.iter())
+        .any(|field| field.kind.is_secret());
+    if secret {
+        return Err(CatalogError::SecretSetting {
+            plugin: plugin.id.clone(),
+        });
+    }
     if plugin.settings_section.is_none() && !plugin.settings.is_empty() {
         return Err(CatalogError::SettingsSection {
             plugin: plugin.id.clone(),
@@ -202,6 +213,7 @@ fn check_settings(plugin: &SystemPlugin) -> Result<(), CatalogError> {
 fn check_entries(entries: &[Entry], groups: &[GroupSpec]) -> Result<(), CatalogError> {
     let mut ids = BTreeSet::new();
     let mut orders = BTreeSet::new();
+    let mut edge_orders = BTreeSet::new();
     for Entry { contribution, .. } in entries {
         contribution.id.check()?;
         if !ids.insert(&contribution.id) {
@@ -227,8 +239,21 @@ fn check_entries(entries: &[Entry], groups: &[GroupSpec]) -> Result<(), CatalogE
                 id: contribution.id.clone(),
             });
         }
+        let is_toolbar = contribution.kind == ContributionKind::Toolbar;
+        if is_toolbar != contribution.edge.is_some() {
+            return Err(CatalogError::ToolbarEdge {
+                id: contribution.id.clone(),
+            });
+        }
         let placement = &contribution.placement;
-        if !orders.insert((placement.zone, placement.order)) {
+        if let Some(edge) = contribution.edge {
+            if !edge_orders.insert((edge, placement.order)) {
+                return Err(CatalogError::DuplicateEdgeOrder {
+                    edge,
+                    order: placement.order,
+                });
+            }
+        } else if !orders.insert((placement.zone, placement.order)) {
             return Err(CatalogError::DuplicateOrder {
                 zone: placement.zone,
                 order: placement.order,

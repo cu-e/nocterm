@@ -3,8 +3,8 @@
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use nocterm_plugin_api::{
-    ContributionContext, EffectOutcome, HostError, Kind, LocalId, NodeKind, Observed, PluginIcon,
-    Snapshot, Zone,
+    ContributionContext, EffectOutcome, Event, HostError, Kind, LocalId, NodeKind, Observed,
+    PluginIcon, Snapshot, Zone,
     capability::{
         clock::ClockNow,
         monitor::Usage,
@@ -76,6 +76,7 @@ fn snapshot() -> Snapshot {
             key: Some("a".into()),
             result: Err(HostError::Denied),
         }],
+        terminal: None,
     }
 }
 
@@ -125,7 +126,7 @@ fn the_samples_pin_every_icon_workspace_kind_and_zone() {
     let all = samples();
     assert_eq!(
         all.len(),
-        13 + Zone::ALL.len(),
+        13 + Zone::ALL.len() + 21,
         "append a sample, never drop one"
     );
     let bytes = |name: &str| {
@@ -146,7 +147,7 @@ fn the_samples_pin_every_icon_workspace_kind_and_zone() {
             _ => None,
         })
         .collect();
-    assert_eq!(icons, PluginIcon::ALL);
+    assert_eq!(icons, PluginIcon::ALL.map(nocterm_plugin_api::Glyph::from));
 
     let Call::Render { snapshot, .. } = decode_call(bytes("call-render-workspace-kinds")).unwrap()
     else {
@@ -165,9 +166,13 @@ fn the_samples_pin_every_icon_workspace_kind_and_zone() {
     let zones: Vec<_> = all
         .iter()
         .filter(|sample| sample.name.starts_with("call-render-zone-"))
-        .map(|sample| match decode_call(&sample.bytes).unwrap() {
-            Call::Render { snapshot, .. } => snapshot.context.zone,
-            Call::Event { snapshot, .. } => snapshot.context.zone,
+        .map(|sample| {
+            decode_call(&sample.bytes)
+                .unwrap()
+                .into_parts()
+                .2
+                .context
+                .zone
         })
         .collect();
     assert_eq!(zones, Zone::ALL);
@@ -301,4 +306,27 @@ fn a_pointer_and_a_length_pack_into_one_value_and_back() {
         assert_eq!(unpack(pack(ptr, len)), (ptr, len));
     }
     assert_eq!(ABI_VERSION, 1);
+}
+
+#[test]
+fn a_bar_call_names_its_terminal_and_any_other_call_none() {
+    let local = LocalId::parse("panel").unwrap();
+    let mut snapshot = Snapshot::new(ContributionContext {
+        kind: Kind::Toolbar,
+        zone: Zone::Center,
+    });
+    let plain = Call::render(local.clone(), &snapshot);
+    assert!(matches!(plain, Call::Render { .. }));
+    assert_eq!(plain.into_parts().2.terminal, None);
+    snapshot.terminal = Some("srv".into());
+    let drawn =
+        decode_call(&encode_call(&Call::render(local.clone(), &snapshot)).unwrap()).unwrap();
+    assert!(matches!(drawn, Call::RenderTerminalBar { .. }));
+    let (_, event, back) = drawn.into_parts();
+    assert_eq!((event, back.terminal.as_deref()), (None, Some("srv")));
+    let used = Event::Activated {
+        key: "restart".into(),
+    };
+    let (_, event, back) = Call::event(local, used.clone(), &snapshot).into_parts();
+    assert_eq!((event, back), (Some(used), snapshot));
 }

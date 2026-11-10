@@ -1,8 +1,9 @@
 # User plugins
 
 Preview. A user plugin is a single file the user installs: a TOML manifest, or a WebAssembly
-module that carries the manifest. Both are drawn by the host inside the status bar and the
-panels, and neither can reach more than the capabilities the user agreed to.
+module that carries the manifest. Both are drawn by the host inside the status bar, the panels
+and the toolbars around the tabs, and neither can reach more than the capabilities the user
+agreed to.
 
 User plugins are compiled in with the cargo feature `nocterm/user-plugins`; release builds are
 made without it. A build with the feature loads no plugin until the user allows it, and

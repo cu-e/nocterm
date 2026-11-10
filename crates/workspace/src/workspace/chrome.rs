@@ -20,7 +20,7 @@ use gpui_kit::{
     prelude::*,
     px, svg,
 };
-use nocterm_plugin_model::{PanelChrome, Side, WidthClass};
+use nocterm_plugin_model::{Edge, PanelChrome, Side, WidthClass};
 use nocterm_ui::IconName;
 
 use super::{
@@ -37,10 +37,14 @@ mod empty_state;
 mod menus;
 mod status_bar;
 mod toggle_look;
+mod toolbars;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use status_bar::ToggleLooks;
-pub(super) use status_bar::{WidgetFactory, ZoneHook};
+pub(super) use status_bar::{VisibilityHook, WidgetFactory, ZoneHook};
+pub(super) use toolbars::{
+    TOOLBAR_HEIGHT, TOOLBAR_WIDTH, ToolbarChoice, TopToolbars, sync as sync_toolbars,
+};
 
 struct NewTabControl {
     entry: Option<NewTabMenu>,
@@ -75,26 +79,39 @@ impl<'a> Regions<'a> {
 
 pub(super) struct Chrome {
     status: status_bar::StatusBar,
+    toolbars: toolbars::Toolbars,
     menus: menus::WindowMenus,
     new_tab: NewTabControl,
+    environment: Option<AnyView>,
 }
 
 impl Chrome {
-    pub(super) fn new(menu_focus: gpui_kit::FocusHandle) -> Self {
+    pub(super) fn new(menu_focus: gpui_kit::FocusHandle, top: Rc<TopToolbars>) -> Self {
         Self {
             status: status_bar::StatusBar::new(),
+            toolbars: toolbars::Toolbars::new(top),
             menus: menus::WindowMenus::new(menu_focus),
             new_tab: NewTabControl {
                 entry: None,
                 open: false,
             },
+            environment: None,
         }
+    }
+    pub(super) fn install_environment(&mut self, view: AnyView) {
+        self.environment = Some(view);
     }
     pub(super) fn status_bar(&self) -> &status_bar::StatusBar {
         &self.status
     }
     pub(super) fn status_bar_mut(&mut self) -> &mut status_bar::StatusBar {
         &mut self.status
+    }
+    pub(super) fn toolbars(&self) -> &toolbars::Toolbars {
+        &self.toolbars
+    }
+    pub(super) fn toolbars_mut(&mut self) -> &mut toolbars::Toolbars {
+        &mut self.toolbars
     }
     pub(super) fn install_new_tab(&mut self, view: AnyView, focus: gpui_kit::FocusHandle) {
         self.new_tab.install(view, focus);
@@ -160,6 +177,22 @@ fn tile(cards: Option<FloatingCards>, content: impl IntoElement) -> AnyElement {
         Some(cards) => cards.card(content).into_any_element(),
         None => content.into_any_element(),
     }
+}
+
+/// A toolbar strip as a card of the strip's own size: a card fills what holds it, so without a
+/// slot of that size a strip along a side or the bottom would cover the tabs.
+fn toolbar_tile(cards: Option<FloatingCards>, bar: AnyElement, horizontal: bool) -> AnyElement {
+    let Some(cards) = cards else {
+        return bar;
+    };
+    let inset = cards.margin() * 2.;
+    let slot = div().flex_none();
+    let slot = if horizontal {
+        slot.w_full().h(px(TOOLBAR_HEIGHT) + inset)
+    } else {
+        slot.h_full().w(px(TOOLBAR_WIDTH) + inset)
+    };
+    slot.child(cards.card(bar)).into_any_element()
 }
 
 impl Chrome {
@@ -258,26 +291,77 @@ impl Chrome {
             })
     }
 
-    /// The open tabs, or an invitation to open one.
+    /// The open tabs, or an invitation to open one, with the toolbars along their edges.
     fn render_content(
         &self,
         regions: &Regions<'_>,
         cards: Option<FloatingCards>,
         cx: &mut Context<Workspace>,
     ) -> AnyElement {
-        if regions.tabs.visible() {
+        let anchor = regions
+            .tabs
+            .visible()
+            .then(|| regions.tabs.only_group())
+            .flatten();
+        if self.toolbars.top().set_anchor(anchor) && !self.toolbars.top().is_empty() {
+            // The dock caches its tab groups: the one that gains or loses the row draws again.
+            let surface = regions.tabs.view().entity_id();
+            App::notify(cx, surface);
+        }
+        let content = if regions.tabs.visible() {
             // The dock frames each of its tab groups itself.
-            return div()
+            div()
                 .id("workspace-content")
                 .test_support()
                 .size_full()
-                .child(regions.tabs.view())
-                .into_any_element();
+                // Cached: sidebar and chrome redraws reuse the tabs unless they changed.
+                .child(cached(regions.tabs.view()))
+                .into_any_element()
+        } else {
+            tile(
+                cards,
+                self.render_empty_state(regions.directory.clone(), regions.selection, cx),
+            )
+        };
+        self.frame_with_toolbars(content, regions, anchor.is_none(), cards, cx)
+    }
+
+    /// `content` with the toolbars of the bottom and side edges around it, and those of the top
+    /// edge above it when no tab group draws them under its tab bar.
+    fn frame_with_toolbars(
+        &self,
+        content: AnyElement,
+        regions: &Regions<'_>,
+        top_above: bool,
+        cards: Option<FloatingCards>,
+        cx: &mut Context<Workspace>,
+    ) -> AnyElement {
+        let layout = regions.shell.current();
+        let top = top_above.then(|| self.toolbars.top().row(cx)).flatten();
+        let left = self.toolbars.render_edge(layout, Edge::Left, cx);
+        let right = self.toolbars.render_edge(layout, Edge::Right, cx);
+        let bottom = self.toolbars.render_edge(layout, Edge::Bottom, cx);
+        if top.is_none() && left.is_none() && right.is_none() && bottom.is_none() {
+            return content;
         }
-        tile(
-            cards,
-            self.render_empty_state(regions.directory.clone(), regions.selection, cx),
-        )
+        v_flex()
+            .id("workspace-tab-area")
+            .test_support()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .children(top.map(|bar| toolbar_tile(cards, bar, true)))
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .children(left.map(|bar| toolbar_tile(cards, bar, false)))
+                    .child(div().flex_1().min_w_0().h_full().child(content))
+                    .children(right.map(|bar| toolbar_tile(cards, bar, false))),
+            )
+            .children(bottom.map(|bar| toolbar_tile(cards, bar, true)))
+            .into_any_element()
     }
 
     pub(super) fn render_title_bar(
@@ -330,6 +414,16 @@ impl Chrome {
                                 .child(menu.clone()),
                         )
                     })
+                    .when_some(self.environment.as_ref(), |bar, environment| {
+                        bar.child(
+                            div()
+                                .id("workspace-environment")
+                                .test_support()
+                                .flex_none()
+                                .h_full()
+                                .child(environment.clone()),
+                        )
+                    })
                     .child(div().flex_1())
                     .child(self.new_tab.render(selection, cx)),
             )
@@ -366,16 +460,26 @@ impl Chrome {
                     .border_color(theme.sidebar_border)
             })
             .when_some(panel, |sidebar, panel| {
+                let provenance = panel.provenance(cx).map(|provenance| {
+                    provenance_chip(provenance, theme.border, theme.muted_foreground)
+                });
                 sidebar
                     .child(
-                        div()
+                        h_flex()
+                            .gap_1p5()
                             .px_3()
                             .pt_2()
                             .pb_1()
                             .text_xs()
                             .font_semibold()
                             .text_color(theme.muted_foreground)
-                            .child(panel.title(cx).to_uppercase()),
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(panel.title(cx).to_uppercase()),
+                            )
+                            .children(provenance),
                     )
                     .child(div().flex_1().min_h_0().child(cached(panel.view())))
             })
@@ -394,6 +498,10 @@ impl Chrome {
             regions.shell.set(),
             regions.shell.choices(),
             cx.weak_entity(),
+        )
+        .with_toolbars(
+            self.toolbars
+                .choices(regions.shell.set(), regions.shell.current()),
         );
         status_bar::footer(inputs, menu, cx)
     }
@@ -452,4 +560,28 @@ impl NewTabControl {
             }
         }
     }
+}
+
+/// The chip that says who supplied a panel the application did not, written by the shell beside
+/// the panel's title, where the panel cannot draw.
+fn provenance_chip(
+    provenance: crate::Provenance,
+    border: gpui_kit::Hsla,
+    text: gpui_kit::Hsla,
+) -> impl IntoElement {
+    let detail = provenance.detail;
+    div()
+        .id("panel-provenance")
+        .debug_selector(|| "panel-provenance".to_string())
+        .flex_none()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(border)
+        .text_color(text)
+        .font_weight(gpui_kit::FontWeight::MEDIUM)
+        .child(provenance.chip)
+        .tooltip(move |window, cx| {
+            gpui_kit::component::tooltip::Tooltip::new(detail.clone()).build(window, cx)
+        })
 }

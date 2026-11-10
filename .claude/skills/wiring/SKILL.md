@@ -33,11 +33,10 @@ installations), 0001/0056/0057 (settings sections and pages).
 
 ## 2. Order in `bootstrap`
 
-Insert the new step after everything it depends on and before everything that
-uses it. The existing order is: settings → UI and shutdown coordinator → themes
-→ layout → terminal dependencies → connections → terminal and vault → snippets
-→ agent → files → keymap → monitor → settings pages → `Booted`. GUI tests use
-the same `bootstrap` with fakes in `Services`; add the fake there too.
+Read the current `bootstrap` in `src/bootstrap.rs`. Insert a step after its
+dependencies and before its consumers; do not maintain a second ordered list
+here. GUI tests use the same bootstrap with fakes in `Services`; update the
+affected supplied capability there too.
 
 ## 3. Persistence: pick, do not write
 
@@ -68,6 +67,6 @@ Writing `std::fs::write` in a feature or service is a review blocker.
 - [ ] the installation is retained, not recreated per window
 - [ ] persistence uses a row of the table above and is registered for shutdown
 - [ ] bootstrap order respects dependencies; GUI test services updated
-- [ ] references regenerated (`cargo xtask docs`)
+- [ ] references regenerated when generator inputs changed (`gate`)
 
-End with the Result block.
+Report the relevant changes, evidence and remaining work concisely.

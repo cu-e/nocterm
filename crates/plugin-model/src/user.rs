@@ -9,8 +9,8 @@ use alloc::vec::Vec;
 use thiserror::Error;
 
 use crate::{
-    AutoPlace, ContributionId, ContributionKind, Icon, IdError, PanelChrome, PanelTraits,
-    Placement, PluginId, SchemaError, SettingsSchema, WidthClass, Zone, sanitize_text,
+    AutoPlace, ContributionId, ContributionKind, Edge, Icon, IdError, PanelChrome, PanelTraits,
+    Placement, PluginId, SchemaError, SettingsSchema, ToolbarTabs, WidthClass, Zone, sanitize_text,
 };
 
 /// Longest name or title, in characters.
@@ -47,11 +47,13 @@ pub enum UserPluginError {
     Schema(#[from] SchemaError),
 }
 
-/// A panel or widget of a user plugin, as the shell may place it.
+/// A panel, widget or toolbar of a user plugin, as the shell may place it.
 ///
-/// Fields are private: the clamp is the only constructor. A user contribution always waits in
-/// the tray until the user places it, has no hint into a built-in panel group, is not pinned,
-/// draws no header of its own, cannot be expanded and is never required.
+/// Fields are private: the clamp is the only constructor. A user panel or widget always waits in
+/// the tray until the user places it; a toolbar may ask to be shown along its edge from the start
+/// ([`UserContribution::shown_at_first`]), which the user's own choice then replaces. None has a
+/// hint into a built-in panel group, is pinned, draws a header of its own, can be expanded or is
+/// required.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserContribution {
     id: ContributionId,
@@ -60,6 +62,12 @@ pub struct UserContribution {
     icon: Icon,
     zone: Zone,
     order: u16,
+    /// The edge a toolbar suggests; `None` for panels and widgets.
+    edge: Option<Edge>,
+    /// Whether a toolbar shows itself along its edge until the user hides or moves it.
+    shown_at_first: bool,
+    /// Which tabs a toolbar runs along; `None` for panels and widgets.
+    tabs: Option<ToolbarTabs>,
 }
 
 impl UserContribution {
@@ -93,7 +101,50 @@ impl UserContribution {
             },
             zone,
             order,
+            edge: (kind == ContributionKind::Toolbar).then_some(Edge::Top),
+            shown_at_first: false,
+            tabs: (kind == ContributionKind::Toolbar).then_some(ToolbarTabs::Own),
         })
+    }
+
+    /// Which tabs a toolbar runs along: by default only the tabs its plugin opened. A panel or
+    /// widget ignores it.
+    #[must_use]
+    pub fn on_tabs(mut self, tabs: ToolbarTabs) -> Self {
+        if self.kind == ContributionKind::Toolbar {
+            self.tabs = Some(tabs);
+        }
+        self
+    }
+
+    /// Which tabs a toolbar runs along; `None` for panels and widgets.
+    pub fn tabs(&self) -> Option<ToolbarTabs> {
+        self.tabs
+    }
+
+    /// Whether a toolbar is shown along its edge before the user chose anything for it. It
+    /// applies only once the user approved placing the package, and only until the user hides
+    /// or moves the toolbar: that choice is kept in the layout and wins. A panel or widget
+    /// ignores it and waits in the tray.
+    #[must_use]
+    pub fn shown_at_first(mut self, shown: bool) -> Self {
+        self.shown_at_first = shown && self.kind == ContributionKind::Toolbar;
+        self
+    }
+
+    /// The edge a toolbar suggests. It only places the toolbar when the user shows it; a panel
+    /// or widget ignores it.
+    #[must_use]
+    pub fn along(mut self, edge: Edge) -> Self {
+        if self.kind == ContributionKind::Toolbar {
+            self.edge = Some(edge);
+        }
+        self
+    }
+
+    /// The edge a toolbar suggests; `None` for panels and widgets.
+    pub fn edge(&self) -> Option<Edge> {
+        self.edge
     }
 
     pub fn id(&self) -> &ContributionId {
@@ -113,14 +164,18 @@ impl UserContribution {
         self.icon
     }
 
-    /// Where the user's arrangement may place it: always the tray by default, never in a
-    /// built-in group.
+    /// Where the user's arrangement may place it: the tray by default, unless a toolbar asks to
+    /// be shown at first; never in a built-in group.
     pub fn placement(&self) -> Placement {
         Placement {
             zone: self.zone,
             order: self.order,
             group: None,
-            auto: AutoPlace::Tray,
+            auto: if self.shown_at_first {
+                AutoPlace::Show
+            } else {
+                AutoPlace::Tray
+            },
         }
     }
 

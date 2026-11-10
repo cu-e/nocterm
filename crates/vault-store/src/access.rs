@@ -67,6 +67,14 @@ impl VaultAccess for VaultService {
     ) -> VaultFuture<CredentialId> {
         VaultService::put(self, id, label, binding, secret)
     }
+    fn update(
+        &self,
+        id: CredentialId,
+        label: String,
+        binding: CredentialBinding,
+    ) -> VaultFuture<()> {
+        VaultService::update(self, id, label, binding)
+    }
     fn delete(&self, id: CredentialId) -> VaultFuture<()> {
         VaultService::delete(self, id)
     }

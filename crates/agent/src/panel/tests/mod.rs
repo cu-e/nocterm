@@ -60,6 +60,8 @@ mod terminal_fixture;
 use terminal_fixture::{Access, FakeTerminal, SignIn};
 
 struct HostEnvironment {
+    jobs: Arc<nocterm_session::testing::ScriptedCommandJobsFactory>,
+    transfers: Arc<nocterm_transfers::testing::FakeTransfers>,
     directory: tempfile::TempDir,
     metadata: Arc<nocterm_ai::testing::ScriptedChatMetadata>,
 }
@@ -115,23 +117,21 @@ struct Fixture {
     repository: Arc<nocterm_ai::testing::InMemoryAgentRepository>,
 }
 fn fixture(cx: &mut TestAppContext) -> Fixture {
-    fixture_with_width(cx, 26., usage_source(), workspace_resolver(), image_deps())
+    fixture_with_width(cx, 26., workspace_resolver(), image_deps())
 }
 fn workspace_resolver() -> Arc<nocterm_ai::testing::ScriptedWorkdirResolver> {
     Arc::new(nocterm_ai::testing::ScriptedWorkdirResolver::accept_requests())
-}
-fn usage_source() -> Arc<nocterm_ai::testing::ScriptedUsageSource> {
-    Arc::new(nocterm_ai::testing::ScriptedUsageSource::default())
 }
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
 fn fixture_with_width(
     cx: &mut TestAppContext,
     width: f32,
-    usage_source: Arc<nocterm_ai::testing::ScriptedUsageSource>,
     workdir_resolver: Arc<nocterm_ai::testing::ScriptedWorkdirResolver>,
     images: crate::ImageDeps,
 ) -> Fixture {
     let directory = HostEnvironment {
+        jobs: Arc::new(nocterm_session::testing::ScriptedCommandJobsFactory::default()),
+        transfers: Arc::default(),
         directory: tempfile::tempdir().unwrap(),
         metadata: Arc::new(nocterm_ai::testing::ScriptedChatMetadata::default()),
     };
@@ -144,6 +144,7 @@ fn fixture_with_width(
         let bridge = Arc::new(Bridge {
             next: AtomicU64::new(1),
             revoked: Default::default(),
+            offers: Default::default(),
             stops: AtomicUsize::new(0),
             calls,
             rejections,
@@ -186,6 +187,8 @@ fn fixture_with_width(
             let layout = nocterm_ui::LayoutMemory::init(None, &shutdown, cx);
             let (installed, registration) = crate::init(
                 AgentServices {
+                    command_jobs: directory.jobs.clone(),
+                    transfers: directory.transfers.clone(),
                     catalog: nocterm_agent_providers::catalog(),
                     metadata: directory.metadata.clone(),
                     terminal_auth: None,
@@ -198,7 +201,6 @@ fn fixture_with_width(
                         repository.clone(),
                         Ok(Default::default()),
                     ),
-                    usage_source,
                     workdir_resolver,
                     workdir: directory.path().join("work"),
                 },
@@ -206,6 +208,7 @@ fn fixture_with_width(
                 layout.clone(),
                 &ui,
                 &shutdown,
+                None,
                 cx,
             );
             registration.unwrap();
@@ -242,6 +245,8 @@ fn fixture_with_width(
 }
 fn fixture_services(f: &Fixture) -> AgentServices {
     AgentServices {
+        command_jobs: f._directory.jobs.clone(),
+        transfers: f._directory.transfers.clone(),
         catalog: nocterm_agent_providers::catalog(),
         metadata: f._directory.metadata.clone(),
         connector: f.connector.clone(),
@@ -251,7 +256,6 @@ fn fixture_services(f: &Fixture) -> AgentServices {
             f.repository.clone(),
             Ok(f.repository.state()),
         ),
-        usage_source: Arc::new(nocterm_ai::testing::ScriptedUsageSource::default()),
         workdir_resolver: workspace_resolver(),
         workdir: f._directory.path().join("work"),
         terminal_auth: None,
@@ -296,6 +300,37 @@ fn open_host(
     (handle, workspace, panel.unwrap(), terminal.unwrap())
 }
 /// Dependencies whose plugin catalog lists the agent, over `layout`.
+/// Another window of the fixture's installation, its chats panel open.
+fn open_window_panel(
+    f: &Fixture,
+    cx: &mut TestAppContext,
+) -> (AnyWindowHandle, Entity<AgentPanel>) {
+    let mut panel = None;
+    let (handle, _) = cx.update(|cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(deps(f.installation.layout.clone()), window, cx);
+                let owner = cx.entity().downgrade();
+                let source = workspace.general_surface_source(cx);
+                let view = cx.new(|cx| {
+                    AgentPanel::new(
+                        f._directory
+                            .host(owner, f.installation.installed.clone(), source),
+                        window,
+                        cx,
+                    )
+                });
+                host_panel(&mut workspace, &view, window, cx);
+                workspace.set_panel_available(&crate::plugin::CHATS.id, true, window, cx);
+                workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
+                panel = Some(view);
+                workspace
+            })
+        })
+        .unwrap()
+    });
+    (handle, panel.unwrap())
+}
 fn deps(layout: nocterm_ui::LayoutHandle) -> nocterm_workspace::Deps {
     nocterm_workspace::test_support::deps_over(layout, &[], &[&crate::plugin::PLUGIN])
 }
@@ -331,6 +366,7 @@ fn install_fixture(
             f.installation.layout.clone(),
             &f.installation.ready,
             &f.installation.shutdown,
+            None,
             cx,
         );
         registration.unwrap();
@@ -388,7 +424,9 @@ fn lazy_start(f: &Fixture, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 mod panel_actions;
-use panel_actions::{new_chat, open_queue, replace_composer_value, replace_textbox, show_history};
+use panel_actions::{
+    new_chat, open_queue, replace_composer_value, replace_textbox, show_history, show_history_in,
+};
 fn complete_active(f: &Fixture, cx: &mut TestAppContext) {
     f.commands
         .pending
@@ -453,6 +491,7 @@ impl nocterm_workspace::ConnectionDirectory for Directory {
 mod approvals;
 mod authentication;
 mod bridge_outcomes;
+mod chat_servers;
 mod composer;
 mod context_rosters;
 mod durable_config;
@@ -462,6 +501,7 @@ mod invalidation;
 mod labels;
 mod lifecycle;
 mod navigation;
+mod other_windows;
 mod persistence;
 mod provider_fixtures;
 mod provider_permissions;
@@ -486,6 +526,7 @@ mod flow;
 
 mod queue_edit;
 mod queue_layout;
+mod queue_timing;
 
 mod commands;
 

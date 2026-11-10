@@ -6,15 +6,18 @@ use super::support::host;
 use crate::{
     ChoiceOptionDto, ContributionDto, EFFECT_REQUESTS, EVENTS, Effect, Event, FILTERS, FieldDto,
     FieldKindName, GroupDto, HOST_ERRORS, HostError, Key, KeyType, Kind, LIMITS, LocalId,
-    MANIFEST_KEYS, Manifest, ManifestDto, NodeKind, PluginIcon, REFRESHES, RUNTIMES, Refresh,
-    Runtime, SETTINGS_KINDS, SettingsDto, Tone, Zone,
+    MANIFEST_KEYS, Manifest, ManifestDto, NetworkDto, NodeKind, PluginIcon, REFRESHES, RUNTIMES,
+    Refresh, Runtime, SETTINGS_KINDS, SettingsDto, Tone, Zone,
     capability::{
         Fields,
         clock::ClockNow,
         monitor::Usage,
+        net::{Method, Request},
         notifications::{NoticeTone, Post},
         panels::{SetBadge, SetOpen},
         storage::{Remove, Set},
+        terminals::{Open, Write},
+        timers::SetTimer,
         transfers::Counts,
         workspace::{WorkspaceKind, WorkspaceState},
     },
@@ -59,7 +62,32 @@ fn the_listed_manifest_keys_are_exactly_what_the_dtos_accept() {
         listed("settings.group.field.options"),
         keys(&ChoiceOptionDto::default())
     );
-    assert_eq!(MANIFEST_KEYS.len(), 8);
+    assert_eq!(listed("network"), keys(&NetworkDto::default()));
+    assert_eq!(MANIFEST_KEYS.len(), 9);
+}
+
+/// A code package that reaches the web address of its `url` setting: the instance of the
+/// `[network]` table.
+fn network_base() -> serde_json::Value {
+    serde_json::json!({
+        "api": "0.1",
+        "runtime": "wasm",
+        "publisher": "a",
+        "id": "b",
+        "name": "N",
+        "capabilities": ["net.request"],
+        "contribution": [{ "local": "face", "kind": "widget", "title": "T" }],
+        "settings": {
+            "group": [{
+                "title": "G",
+                "field": [
+                    { "key": "url", "label": "U", "kind": "text", "max_len": 100 },
+                    { "key": "token", "label": "K", "kind": "secret", "max_len": 100 }
+                ]
+            }]
+        },
+        "network": { "origin_setting": "url", "credential_setting": "token" }
+    })
 }
 
 /// A manifest with one instance of every table and none of the optional keys but the ones the
@@ -103,6 +131,7 @@ fn instance<'a>(doc: &'a mut serde_json::Value, table: &str) -> &'a mut serde_js
         "settings.group" => &["settings", "group", "0"],
         "settings.group.field" => &["settings", "group", "0", "field", "0"],
         "settings.group.field.options" => &["settings", "group", "0", "field", "0", "options", "0"],
+        "network" => &["network"],
         other => panic!("{other} has no instance"),
     };
     path.iter()
@@ -125,7 +154,11 @@ fn accepted(doc: &serde_json::Value) -> bool {
 }
 
 fn with(table: &str, key: &str, value: Option<serde_json::Value>) -> serde_json::Value {
-    let mut doc = base();
+    let mut doc = if table == "network" {
+        network_base()
+    } else {
+        base()
+    };
     let at = instance(&mut doc, table).as_object_mut().unwrap();
     match value {
         Some(value) => at.insert(key.into(), value),
@@ -141,9 +174,13 @@ fn vocabulary(name: &str) -> Vec<&'static str> {
         "kinds" => Kind::ALL.map(Kind::name).to_vec(),
         "zones" => Zone::ALL.map(Zone::name).to_vec(),
         "icons" => PluginIcon::ALL.map(PluginIcon::name).to_vec(),
+        "glyphs" => crate::Glyph::ALL.map(crate::Glyph::name).to_vec(),
         "node_kinds" => NodeKind::NAMES.to_vec(),
         "tones" => Tone::ALL.map(Tone::name).to_vec(),
         "settings_kinds" => SETTINGS_KINDS.to_vec(),
+        "edges" => crate::Edge::ALL.map(crate::Edge::name).to_vec(),
+        "tabs" => crate::Tabs::ALL.map(crate::Tabs::name).to_vec(),
+        "http_methods" => Method::ALL.map(Method::name).to_vec(),
         other => panic!("{other} is not a vocabulary of the surface"),
     }
 }
@@ -152,6 +189,8 @@ fn vocabulary(name: &str) -> Vec<&'static str> {
 fn a_package_without_a_required_key_is_refused_and_one_without_an_optional_key_still_reads() {
     let dto = serde_json::from_value::<ManifestDto>(base()).unwrap();
     Manifest::validate(&dto, &host()).expect("the base package is valid");
+    let dto = serde_json::from_value::<ManifestDto>(network_base()).unwrap();
+    Manifest::validate(&dto, &host()).expect("the network package is valid");
     for (name, keys) in MANIFEST_KEYS {
         for key in *keys {
             let without = with(name, key.name, None);
@@ -311,10 +350,16 @@ where
                 assert!((min..=max).contains(&number), "{id}.{}", key.name);
             }
             KeyType::Choice(vocabulary) => {
-                assert_eq!(vocabulary, "notice_tones", "{id}.{}", key.name);
-                let tone = value.as_str().unwrap();
-                assert!(NoticeTone::ALL.iter().any(|t| t.name() == tone));
+                let word = value.as_str().unwrap();
+                let known = match vocabulary {
+                    "notice_tones" => NoticeTone::ALL.iter().any(|t| t.name() == word),
+                    "http_methods" => Method::ALL.iter().any(|m| m.name() == word),
+                    "edges" => crate::Edge::ALL.iter().any(|e| e.name() == word),
+                    other => panic!("{id}.{}: {other} is no request vocabulary", key.name),
+                };
+                assert!(known, "{id}.{}", key.name);
             }
+            KeyType::Any => {}
             other => panic!("{id}.{}: {other:?} is no request field", key.name),
         }
     }
@@ -353,7 +398,48 @@ fn the_listed_effect_requests_are_what_the_effects_take_and_carry() {
         },
     );
     assert_request_is_what_the_type_takes("storage.remove", &Remove { key: String::new() });
-    assert_eq!(EFFECT_REQUESTS.len(), 5, "a new effect needs a case here");
+    assert_request_is_what_the_type_takes(
+        "net.request",
+        &Request {
+            method: Method::Post,
+            path: String::from("/"),
+            body: Some(String::new()),
+            bytes: false,
+        },
+    );
+    assert_request_is_what_the_type_takes("timers.set", &SetTimer { after_ms: 1000 });
+    assert_request_is_what_the_type_takes(
+        "terminals.open",
+        &Open {
+            local: LocalId::parse("a").unwrap(),
+            terminal: String::from("t"),
+            title: String::new(),
+            files: false,
+        },
+    );
+    assert_request_is_what_the_type_takes(
+        "terminals.write",
+        &Write {
+            terminal: String::from("t"),
+            text: String::new(),
+        },
+    );
+    assert_request_is_what_the_type_takes(
+        "terminals.files",
+        &crate::capability::files::FileReply {
+            terminal: String::from("t"),
+            request: 7,
+            answer: crate::capability::files::FileAnswer::Done,
+        },
+    );
+    assert_request_is_what_the_type_takes(
+        "terminals.bar",
+        &crate::capability::terminals::Bar {
+            terminal: String::from("t"),
+            edge: Some(crate::Edge::Top),
+        },
+    );
+    assert_eq!(EFFECT_REQUESTS.len(), 11, "a new effect needs a case here");
 }
 
 fn kind_name(kind: FieldKindName) -> &'static str {
@@ -363,6 +449,7 @@ fn kind_name(kind: FieldKindName) -> &'static str {
         FieldKindName::MultiChoice => "multi-choice",
         FieldKindName::Number => "number",
         FieldKindName::Text => "text",
+        FieldKindName::Secret => "secret",
     }
 }
 
@@ -385,6 +472,26 @@ fn listed_names_are_the_names_the_types_use() {
         },
         Event::VisibilityChanged { visible: true },
         Event::SettingsChanged,
+        Event::Response {
+            key: String::new(),
+            status: 200,
+            body: String::new(),
+        },
+        Event::Timer { key: String::new() },
+        Event::TerminalLine {
+            terminal: String::new(),
+            line: String::new(),
+        },
+        Event::TerminalClosed {
+            terminal: String::new(),
+        },
+        Event::FileRequest {
+            terminal: String::new(),
+            request: 0,
+            op: crate::capability::files::FileOp::List {
+                path: String::from("/"),
+            },
+        },
     ];
     let named: Vec<String> = events
         .iter()

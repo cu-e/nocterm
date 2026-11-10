@@ -90,7 +90,7 @@ impl ShellRenderer {
         .on_action(cx.listener(|this, _: &crate::ToggleModelPicker, _, cx| {
             this.toggle_model_picker(cx);
         }))
-        .on_action(cx.listener(|this, _: &crate::AttachImage, _, cx| this.pick_images(cx)))
+        .on_action(cx.listener(|this, _: &crate::AttachFiles, _, cx| this.pick_files(cx)))
     }
 
     pub(super) fn header(

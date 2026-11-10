@@ -65,6 +65,8 @@ pub enum SchemaError {
     Default { key: String },
     #[error("a group names `{id}`, which is not a contribution of the plugin")]
     UnknownContribution { id: ContributionId },
+    #[error("`{key}` is a secret and cannot have a default")]
+    SecretDefault { key: String },
 }
 
 impl SettingsSchema {
@@ -173,7 +175,11 @@ fn check_field(field: &FieldSpec) -> Result<(), SchemaError> {
             default,
             max_len,
             placeholder,
+            secret,
         } => {
+            if *secret && !default.is_empty() {
+                return Err(SchemaError::SecretDefault { key: key() });
+            }
             if !(1..=MAX_TEXT_LEN).contains(max_len) {
                 return Err(SchemaError::Range { key: key() });
             }

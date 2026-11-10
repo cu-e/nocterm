@@ -38,7 +38,10 @@ pub fn transition(
     let lost = !next.exists(&was);
     let changed = match (prev.preset(&now), next.preset(&now)) {
         (Some(before), Some(after)) => {
-            before.bar != after.bar || before.tray != after.tray || before.open != after.open
+            before.bar != after.bar
+                || before.tray != after.tray
+                || before.open != after.open
+                || before.toolbars != after.toolbars
         }
         _ => false,
     };

@@ -24,9 +24,9 @@ pub(super) fn switch_row(
             section.set_allowed(*allowed, cx);
         }));
     Some(form::row(
-        "Allow user plugins",
-        "Loads the plugins you installed when Nocterm starts. Off by default; a change applies at \
-         the next start.",
+        "Allow external plugins",
+        "Loads the plugins you installed from files when Nocterm starts. Off by default; a change \
+         applies at the next start.",
         allowed,
         cx,
     ))
@@ -41,17 +41,17 @@ pub(super) fn explanation(
     if let Some(held) = section.held() {
         let text = match held {
             HeldBy::SafeMode => {
-                "Safe mode: no user plugin is loaded in this run, whatever the switch says. \
+                "Safe mode: no external plugin is loaded in this run, whatever the switch says. \
                  Start Nocterm without --safe-mode to load them."
                     .to_owned()
             }
             HeldBy::NotAllowed => {
-                "User plugins are off. Nothing you installed is loaded, and nothing can be \
+                "External plugins are off. Nothing you installed is loaded, and nothing can be \
                  installed, until you allow them and restart Nocterm."
                     .to_owned()
             }
             HeldBy::Unreadable { reason } => format!(
-                "The [plugins] table of settings.toml does not read ({reason}), so no user \
+                "The [plugins] table of settings.toml does not read ({reason}), so no external \
                  plugin is loaded in this run. Fix the file and restart Nocterm."
             ),
         };
@@ -59,9 +59,9 @@ pub(super) fn explanation(
     }
     if section.dev_location(cx).is_none() && section.allowed(cx) != section.loaded() {
         let text = if section.allowed(cx) {
-            "Restart Nocterm to load user plugins."
+            "Restart Nocterm to load external plugins."
         } else {
-            "Restart Nocterm to stop loading user plugins."
+            "Restart Nocterm to stop loading external plugins."
         };
         lines.push(line("user-plugins-restart", text, cx));
     }

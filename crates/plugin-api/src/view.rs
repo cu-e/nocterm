@@ -1,14 +1,22 @@
 //! What a plugin draws: a bounded arena of nodes.
 //!
 //! A view is plain data. The host sanitizes every string, validates the arena, and draws it
-//! inside a frame it controls. There is no input, image, link, URL or drag node.
+//! inside a frame it controls. There is no input, image, link, URL or drag node; a code block
+//! shows lines of text and nothing it holds is ever run or followed.
+//!
+//! Besides the layout primitives (row, column, list, text, …) a view is built from the
+//! components the application's own panels are made of: a [`NodeKind::Section`] with its
+//! heading, an [`NodeKind::Item`] row with an icon, a title and a detail line, a small
+//! [`NodeKind::IconButton`], a [`NodeKind::Caption`], a [`NodeKind::Field`] and a
+//! [`NodeKind::Chart`] of recent values. The host draws them exactly as it draws its own, so a
+//! plugin looks like part of the application without styling anything.
 
 use alloc::{collections::BTreeSet, string::String, vec, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{LimitError, PluginIcon, error::key_syntax, sanitize_display};
+use crate::{Glyph, LimitError, error::key_syntax, sanitize::sanitize_code, sanitize_display};
 
 /// Most nodes in one view.
 pub const MAX_NODES: usize = 256;
@@ -24,8 +32,14 @@ pub const MAX_BUTTON: usize = 48;
 pub const MAX_LIST_ITEMS: usize = 100;
 /// Longest node key.
 pub const MAX_NODE_KEY: usize = 32;
+/// Longest code block, in characters, line breaks included.
+pub const MAX_CODE: usize = 16 * 1024;
 /// Shortest refresh delay a view may ask for.
 pub const MIN_REFRESH_MS: u32 = 250;
+/// Most values in one series of a chart, and the most a chart's width holds.
+pub const MAX_CHART_POINTS: usize = 120;
+/// Most series one chart draws over each other.
+pub const MAX_CHART_SERIES: usize = 2;
 
 /// How a node is coloured. The application takes every tone from its theme.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,7 +84,7 @@ pub enum NodeKind {
     Row,
     Column,
     Text(String),
-    Icon(PluginIcon),
+    Icon(Glyph),
     /// A bar from 0 to 100.
     Meter(u8),
     Badge(String),
@@ -82,6 +96,51 @@ pub enum NodeKind {
     List,
     Divider,
     Spacer,
+    /// Lines of text in a monospace block the host scrolls, such as a file's contents.
+    Code(String),
+    /// A titled group of children, headed as the application heads its own: the title in small
+    /// capitals with an optional count at the end. With a key the user can fold it; the host
+    /// keeps whether it is folded, and `folded` is how it starts.
+    Section {
+        title: String,
+        count: Option<String>,
+        folded: bool,
+    },
+    /// A row of a list, drawn as the application draws its own: an optional icon in the node's
+    /// tone, a title and an optional muted detail line, then its children (icon buttons,
+    /// badges) at the end. With a key the whole row reports `activated`; `selected` marks the
+    /// current one.
+    Item {
+        title: String,
+        detail: Option<String>,
+        icon: Option<Glyph>,
+        selected: bool,
+    },
+    /// A small borderless button that shows an icon and names its action in a tooltip. Needs a
+    /// key, which the `activated` event carries.
+    IconButton {
+        icon: Glyph,
+        label: String,
+    },
+    /// A line of small muted text: a hint, an empty list, a state.
+    Caption(String),
+    /// A label and its value on one line, such as one fact of the selected thing; the tone
+    /// colours the value.
+    Field {
+        label: String,
+        value: String,
+    },
+    /// Recent values as a small area chart, drawn as the application draws its own graphs:
+    /// each series a line over a light fill, from 0 at the bottom to `max` at the top (the
+    /// largest value when `None`), the newest value at the right end. The width holds `span`
+    /// values (all of them when `None`), so a short history grows in from the right. One or two
+    /// series of at most 120 values; the first takes the node's tone, the second the
+    /// application's second chart colour.
+    Chart {
+        series: Vec<Vec<u32>>,
+        max: Option<u32>,
+        span: Option<u16>,
+    },
 }
 
 impl NodeKind {
@@ -99,21 +158,50 @@ impl NodeKind {
             Self::List => "list",
             Self::Divider => "divider",
             Self::Spacer => "spacer",
+            Self::Code(_) => "code",
+            Self::Section { .. } => "section",
+            Self::Item { .. } => "item",
+            Self::IconButton { .. } => "icon-button",
+            Self::Caption(_) => "caption",
+            Self::Field { .. } => "field",
+            Self::Chart { .. } => "chart",
         }
     }
 
     /// The names of all kinds, for the API surface.
-    pub const NAMES: [&'static str; 11] = [
-        "row", "column", "text", "icon", "meter", "badge", "button", "toggle", "list", "divider",
+    pub const NAMES: [&'static str; 18] = [
+        "row",
+        "column",
+        "text",
+        "icon",
+        "meter",
+        "badge",
+        "button",
+        "toggle",
+        "list",
+        "divider",
         "spacer",
+        "code",
+        "section",
+        "item",
+        "icon-button",
+        "caption",
+        "field",
+        "chart",
     ];
 
     fn holds_children(&self) -> bool {
-        matches!(self, Self::Row | Self::Column | Self::List)
+        matches!(
+            self,
+            Self::Row | Self::Column | Self::List | Self::Section { .. } | Self::Item { .. }
+        )
     }
 
     fn needs_key(&self) -> bool {
-        matches!(self, Self::Button(_) | Self::Toggle(_))
+        matches!(
+            self,
+            Self::Button(_) | Self::Toggle(_) | Self::IconButton { .. }
+        )
     }
 }
 
@@ -187,6 +275,25 @@ impl View {
                 NodeKind::Text(text) => *text = sanitize_display(text, MAX_TEXT),
                 NodeKind::Badge(text) => *text = sanitize_display(text, MAX_BADGE),
                 NodeKind::Button(text) => *text = sanitize_display(text, MAX_BUTTON),
+                NodeKind::Code(text) => *text = sanitize_code(text, MAX_CODE),
+                NodeKind::Caption(text) => *text = sanitize_display(text, MAX_TEXT),
+                NodeKind::Section { title, count, .. } => {
+                    *title = sanitize_display(title, MAX_BUTTON);
+                    if let Some(count) = count {
+                        *count = sanitize_display(count, MAX_BADGE);
+                    }
+                }
+                NodeKind::Item { title, detail, .. } => {
+                    *title = sanitize_display(title, MAX_TEXT);
+                    if let Some(detail) = detail {
+                        *detail = sanitize_display(detail, MAX_TEXT);
+                    }
+                }
+                NodeKind::IconButton { label, .. } => *label = sanitize_display(label, MAX_BUTTON),
+                NodeKind::Field { label, value } => {
+                    *label = sanitize_display(label, MAX_BUTTON);
+                    *value = sanitize_display(value, MAX_TEXT);
+                }
                 _ => {}
             }
         }
@@ -256,10 +363,69 @@ fn check_content(index: usize, kind: &NodeKind) -> Result<(), ViewError> {
         NodeKind::Text(text) => bounded(text, MAX_TEXT, "text"),
         NodeKind::Badge(text) => bounded(text, MAX_BADGE, "badge"),
         NodeKind::Button(text) => bounded(text, MAX_BUTTON, "button"),
+        NodeKind::Code(text) => {
+            if text.chars().count() > MAX_CODE {
+                return Err(limit(LimitError::TooLong {
+                    field: "code",
+                    max: MAX_CODE,
+                }));
+            }
+            if sanitize_code(text, MAX_CODE) != *text {
+                return Err(limit(LimitError::Unsanitized { field: "code" }));
+            }
+            Ok(())
+        }
         NodeKind::Meter(value) if *value > 100 => Err(limit(LimitError::Range {
             field: "meter",
             max: 100,
         })),
+        NodeKind::Caption(text) => bounded(text, MAX_TEXT, "caption"),
+        NodeKind::Section { title, count, .. } => {
+            bounded(title, MAX_BUTTON, "section title")?;
+            count
+                .as_deref()
+                .map_or(Ok(()), |count| bounded(count, MAX_BADGE, "section count"))
+        }
+        NodeKind::Item { title, detail, .. } => {
+            bounded(title, MAX_TEXT, "item title")?;
+            detail
+                .as_deref()
+                .map_or(Ok(()), |detail| bounded(detail, MAX_TEXT, "item detail"))
+        }
+        NodeKind::IconButton { label, .. } => bounded(label, MAX_BUTTON, "icon button label"),
+        NodeKind::Field { label, value } => {
+            bounded(label, MAX_BUTTON, "field label")?;
+            bounded(value, MAX_TEXT, "field value")
+        }
+        NodeKind::Chart { series, span, .. } => check_chart(series, *span).map_err(limit),
+        _ => Ok(()),
+    }
+}
+
+/// One or two series of at most [`MAX_CHART_POINTS`] values, and a span within the same.
+fn check_chart(series: &[Vec<u32>], span: Option<u16>) -> Result<(), LimitError> {
+    if series.is_empty() {
+        return Err(LimitError::Empty {
+            field: "chart series",
+        });
+    }
+    if series.len() > MAX_CHART_SERIES {
+        return Err(LimitError::TooMany {
+            field: "chart series",
+            max: MAX_CHART_SERIES,
+        });
+    }
+    if series.iter().any(|values| values.len() > MAX_CHART_POINTS) {
+        return Err(LimitError::TooMany {
+            field: "chart values",
+            max: MAX_CHART_POINTS,
+        });
+    }
+    match span {
+        Some(span) if span == 0 || usize::from(span) > MAX_CHART_POINTS => Err(LimitError::Range {
+            field: "chart span",
+            max: MAX_CHART_POINTS as u32,
+        }),
         _ => Ok(()),
     }
 }

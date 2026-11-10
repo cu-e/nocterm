@@ -23,6 +23,7 @@ pub const NOTIFICATIONS: SystemContribution = SystemContribution {
     },
     panel: None,
     preview: None,
+    edge: None,
     pinned: true,
 };
 
@@ -40,6 +41,7 @@ pub const LOCAL_TERMINAL: SystemContribution = SystemContribution {
     },
     panel: None,
     preview: None,
+    edge: None,
     pinned: false,
 };
 

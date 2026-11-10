@@ -27,7 +27,9 @@ fn country_requests_use_only_ip_and_decode_checked_optional_codes() {
 fn status_error_retains_native_cause_without_endpoint() {
     use std::error::Error as _;
     let (endpoint, worker) = serve(503, vec![]);
-    let result = get(&endpoint, MAX_GEOIP_BYTES).unwrap_err();
+    let result = HttpClient::default()
+        .get(&endpoint, MAX_GEOIP_BYTES)
+        .unwrap_err();
     worker.join().unwrap();
     assert!(matches!(
         result,

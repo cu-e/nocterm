@@ -1,201 +1,137 @@
 # Agent guide
 
-Instructions for AI agents working in this repository. Humans: see [CONTRIBUTING.md](CONTRIBUTING.md).
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) for Git, PR and vendor rules.
 
 ## Hard rules
 
-- Follow [CONTRIBUTING.md](CONTRIBUTING.md): Conventional Commits, `<type>/<slug>` branches, never commit to `master` or `dev` directly. Record the target (`master` release / `dev` integration) and branch from it.
-- Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or create tags — releases are automated ([docs/RELEASING.md](docs/RELEASING.md)).
-- Never bypass hooks (`--no-verify`) or weaken a check to make it pass.
-- Run every Cargo command with `CARGO_BUILD_JOBS=2` and serialize top-level Cargo
-  commands, including those from other agents, to stay within available memory:
-  prefix them with `.claude/hooks/cargo-serial.sh`, which does both.
-- Commit, push and open PRs only when the user asks.
-- Report verification honestly: what was run, what passed, what wasn't checked.
-- Keep Rust files at or under 800 lines ([CONTRIBUTING.md](CONTRIBUTING.md#code-size)): split a
-  growing file into child modules by responsibility instead of adding to it. Never add an
-  entry to `xtask/oversized-files.toml`.
+- Record the target (`master` release / `dev` integration); branch from it using
+  `<type>/<slug>`. Never commit directly to `master` or `dev`.
+- Commit, push and open PRs only when the user asks; use Conventional Commits.
+- Never edit `CHANGELOG.md`, `version.txt`, `.release-please-manifest.json` or
+  create tags: releases are automated. Never bypass hooks or weaken checks.
+- Rust files stay at or under 800 lines, tests included. This is a ceiling, not
+  a target; never add an entry to `xtask/oversized-files.toml`.
+- Report actual verification and its limits. A structural check does not prove
+  correct ownership, rendering or performance.
 
 ## Read first
 
-Before designing or changing code, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-the layer note of each touched crate, the [ADR index](docs/adr/README.md) and relevant
-accepted decisions, and the crate's `//!` documentation in `lib.rs`.
-Accepted ADRs are immutable; supersede a decision with a new ADR.
+Read [the layer table](docs/ARCHITECTURE.md#layers), the affected crate's `//!`
+card and relevant sections of its layer note. Use the [ADR index](docs/adr/README.md)
+to find current decisions for the changed contracts, including superseding records.
+Expand reading when dependencies or ownership remain unclear; an incidental crate
+mention does not require reading every historical ADR. Accepted ADRs are immutable.
 
 ## Where code goes
 
-Name the crate and layer in the plan, in this order:
+Name the crate/layer and responsibility before non-trivial changes:
 
-1. Rules and data formats without I/O belong in domain crates.
-2. Real filesystem, network and process I/O behind contracts belongs in adapters.
-3. GPUI entities with background work and no views belong in service crates.
-4. Views and presentation state belong in feature crates.
-5. Features communicate through narrow workspace ports named for the consumer's
-   need; do not expand a broad trait for another feature pair.
+1. Pure rules and formats: domain; reusable low-level primitives: foundation.
+2. Real filesystem, network and process I/O behind contracts: adapters.
+3. GPUI entities with background work and no views: services.
+4. Views and presentation: features; shared components: ui. Composition: app.
+5. Features meet through narrow consumer-named ports, never feature dependencies.
 
-If the right crate does not exist, propose it instead of using the nearest crate.
-Existing mixed responsibilities are migration debt, not a pattern for new code.
-Use `Composer` and `SessionState` ([ADR 0009](docs/adr/0009-thread-composer.md),
-[ADR 0010](docs/adr/0010-session-lifecycle.md)), `containers` / `containers-ui`, and
-`src/bootstrap.rs` as examples of ownership and composition.
-
-## Reuse before writing
-
-- Ordered persistence: `nocterm_store::{Persisted, ShutdownCoordinator}`
-  ([ADR 0013](docs/adr/0013-persistence-shutdown-service.md)); the common service
-  uses `nocterm_core::persist::{WriteQueue, WriteGate, ShutdownDeadline}`
-  ([ADR 0004](docs/adr/0004-write-queue.md)).
-- Atomic files: `nocterm_core::fs::{write_private_atomic, create_private,
-AtomicPublication}` for private data; `nocterm_core::persist::{save, save_text,
-save_preserving}` for configuration. Check their symlink and format semantics
-  before reuse ([ADR 0015](docs/adr/0015-private-file-publication.md)).
-- Shutdown, link-safe filesystem traversal and test fakes: inspect existing
-  implementations before adding one; propose shared extraction for missing reuse.
-
-Layout, settings, snippets, connection state, Runtime chat/favorites and output
-recording use the shared persistence service; keyed documents and append streams
-share its driver. Native filesystem capabilities are
-`nocterm-session::local_fs::{LocalFs, LocalMutations}`, implemented by the injected
-`nocterm-localfs` adapter. Session `test-support` supplies shared in-memory port
-fakes for dev-dependencies. `ProgramOpener` requests external local programs; the
-injected `nocterm-local::LocalProgramOpener` owns their bounded native launch/wait
-lifecycle. `nocterm-local::fs` is not an API.
+Reject a candidate that violates its layer or ownership card. Reuse a fitting
+crate; propose a new one if none fits. Existing mixed responsibilities are debt.
+For unclear placement or extraction use [placement](.claude/skills/placement/SKILL.md)
+and [responsibility-map](.claude/skills/responsibility-map/SKILL.md).
 
 ## Design rules
 
-These rules block review. `cargo xtask architecture` checks layers, file size,
-complexity attributes and the exact debt inventory: field counts, public state,
-impl spread, globals and panicking reads, domain I/O, quit handlers and string
-errors. See [architecture guardrails](docs/architecture/guardrails.md) and
-[ADR 0012](docs/adr/0012-architecture-debt-ratchets.md). Entries in
-`xtask/baseline.toml` may only decrease; update them when debt shrinks.
+1. Keep state within one responsibility. Before adding an owner, name its state,
+   invariant, transitions and lifetime, including cancellation/late results.
+   Do not add fields above 15 or spread a parent's impl into more files.
+2. Stateful types gain no `pub`/`pub(crate)` fields. DTOs/settings may expose
+   plain data; transitions preserve invariants and one authoritative state.
+3. No new `impl Global`, reads of another crate's global, or `on_app_quit`.
+   Inject collaborators explicitly; compose their lifecycle in bootstrap.
+4. Fallible cross-crate APIs use typed errors (`thiserror`), preserving causes;
+   convert to text only for display/logging.
+5. No I/O in domain code or protocol-specific types (including ACP) in its APIs;
+   no domain rules in views. Existing violations do not authorize growth.
+6. No new `#[expect]`/`#[allow]` for `clippy::too_many_lines` or
+   `clippy::cognitive_complexity`. `xtask/baseline.toml` may only shrink;
+   lower entries when debt shrinks. See [guardrails](docs/architecture/guardrails.md).
+7. Keep files focused and easy to read. Separate independent responsibilities
+   when they emerge, even below warning thresholds. Extract state with its
+   transitions, or cohesive pure functions; never split just by line count,
+   invent empty owners, or fill a file to its limit. Shared types remain with
+   their owner. Keep vendor and application changes in separate commits.
 
-1. Add state only within a type's single responsibility. Do not add a field when
-   the resulting count exceeds 15 or create a type over that limit; extract an owner with
-   private fields and transition methods. Do not spread its impl across more files.
-2. Stateful types gain no `pub` or `pub(crate)` fields. DTOs and settings may expose
-   plain data; methods preserve stateful invariants.
-3. No new `impl Global`, reads of another crate's global, or `on_app_quit` handlers.
-   Pass collaborators through explicit dependencies and constructors; compose
-   them in bootstrap. Existing globals do not authorize new service lookup.
-4. Fallible APIs crossing crate boundaries use typed errors (`thiserror`);
-   convert them to `String` at display only.
-5. Add no I/O to domain code or protocol-specific types (including ACP) to its APIs, and no
-   domain rules to views. Existing violations do not authorize growth.
-6. Never add `#[expect]` or `#[allow]` for `clippy::too_many_lines` or
-   `clippy::cognitive_complexity`, and never raise a baseline to pass a check.
-7. Extract responsibilities into modules that own types, not extra methods of a
-   parent type. Keep vendor changes separate from application code changes.
+Warnings (640 lines, 12 fields, four impl files) invite inspection, not automatic
+extraction. Compare plausible alternatives for consequential decisions: correctness,
+reuse, runtime/memory cost and maintenance. Choose the simplest adequate solution;
+avoid speculative frameworks and an exhaustive search for a theoretical optimum.
+
+## Reuse before writing
+
+Search for an existing capability and check its semantics before adding one:
+
+- Persistence: `nocterm_store::{Persisted, ShutdownCoordinator}` and its keyed/append
+  owners; lower-level ordering: `nocterm_core::persist::{WriteQueue, WriteGate, ShutdownDeadline}`.
+- Private files: `nocterm_core::fs::{write_private_atomic, create_private, AtomicPublication}`;
+  configuration: `nocterm_core::persist::{save, save_text, save_preserving}`.
+  Check [symlink/publication semantics](docs/adr/0015-private-file-publication.md).
+- Native files: `nocterm-session::local_fs::{LocalFs, LocalMutations}` via
+  `nocterm-localfs`; programs: `ProgramOpener` via `nocterm-local::LocalProgramOpener`.
+  `nocterm-local::fs` is not an API. Reuse shutdown, traversal and shared port fakes.
+
+Use [port-design](.claude/skills/port-design/SKILL.md) for contracts and
+[wiring](.claude/skills/wiring/SKILL.md) for retained installation/persistence.
+
+## Performance
+
+For changed hot paths, assess frequency × work per event and retained memory.
+Keep blocking I/O and expensive computation off render/input callbacks. Remove
+redundant work, repeated parsing/scans and unchanged-state notifications; use bounded,
+coalesced background work with cancellation. Check the affected visible behavior.
+Cache worthwhile repeated work with an explicit owner, complete key, invalidation,
+memory bound and teardown; never use a cache as authorization or a second source
+of truth. Follow [performance](.claude/skills/performance/SKILL.md) for rendering,
+cache and cost evidence. Measure representative before/after cases for optimization
+claims; describe unmeasured expectations honestly. Routine edits need no benchmark suite.
 
 ## Tests
 
-- Test behavior through actions, events, rendering and public methods; do not
-  read or write private view/model fields to reproduce a regression.
-- Name tests and files after behavior, and extend its existing test file. Do not
-  create files named after review rounds (`audit`, `verification`, `round2`, etc.).
-- Reuse existing port fakes and extend their capabilities. If they cannot be
-  shared yet, propose a shared home instead of duplicating another fake.
+Test through public behavior, actions, events and rendering, not private view/model
+fields. Extend behavior-named tests; reuse/extend shared port fakes. Refactors keep
+assertions and observable behavior; mechanical import/fixture moves are allowed.
+Use [behavior-tests](.claude/skills/behavior-tests/SKILL.md) for coverage and examples.
 
 ## Documents
 
-- `docs/` describes the current system. Plans, progress, session logs and audit
-  trails belong in ignored `.claude/plans/` or the PR description.
-- Never record session authorization or implementation status in `docs/`.
-- When removing or renaming a symbol, search `docs/` and update current references;
-  accepted ADRs retain historical context.
-- Cross-cutting decisions get an ADR. Architecture notes describe layers, ports
-  and invariants; product instructions belong in user documentation.
-- For new crates, start `lib.rs` with a short `//!` card: purpose, `Owns:`,
-  `Does not own:`, ports used/provided, settings section, globals and invariants.
-  Describe actual boundaries; existing crates gain cards when their boundaries change.
+Keep `docs/` about the current system; plans, progress and audit trails go in ignored
+`.claude/plans/`. Do not record session authorization/status in `docs/`.
+Update current references when symbols move; accepted ADRs keep historical context.
+Cross-cutting decisions get an ADR. New crates start with a short `//!` ownership
+card; update existing cards when boundaries change. Details: [docs-adr](.claude/skills/docs-adr/SKILL.md).
 
-## Pipeline
+## Workflow
 
-Non-trivial work goes through four stages. Each stage is a subagent in `.claude/agents/`; the main session orchestrates (run it with `/feature <task>`).
+Use one agent and one compact ignored plan for ordinary non-trivial work: goal,
+branch/base, affected owners/layers, approach, risks and checks. Trivial edits need
+no plan. Load only procedures relevant to the task; output filenames are optional.
+Delegate independent work when complexity/risk warrants it; supply scope and evidence.
+A request to implement a plan authorizes routine decisions within it. Ask only for
+material unresolved choices or changes of scope/authority. Review committed,
+staged, unstaged and relevant untracked task changes using [design-review](.claude/skills/design-review/SKILL.md).
+Fix actionable findings; escalate concrete blockers or repeated lack of progress.
+No blocking findings may remain at completion. Preserve unrelated work.
 
-| #   | Stage  | Agent         | Writes code | Output                                            |
-| --- | ------ | ------------- | ----------- | ------------------------------------------------- |
-| 1   | Design | `architect`   | plan only   | plan: files, steps, risks, test strategy          |
-| 2   | Build  | `implementer` | yes         | code + tests on a feature branch                  |
-| 3   | Verify | `tester`      | tests only  | test run results, added coverage, reproduced bugs |
-| 4   | Review | `reviewer`    | plan only   | findings ranked by severity, verdict              |
+## Verification policy
 
-Gates:
-
-- **Design → Build**: the user approves the plan.
-- **Verify → Review**: build, lint and tests are green.
-- **Review → Done**: no blocking findings. Blocking findings go back to `implementer`; after two failed rounds, stop and escalate to the user.
-
-Trivial changes (typos, one-line fixes, docs) skip the pipeline.
-
-`/feature` routes a task to a workflow skill (`crate-new`, `crate-extend`,
-`refactor`, `crate-split`, `debt-paydown`) built from procedure skills that each
-agent preloads. Stages share decisions through `.claude/plans/<slug>/`
-([plan contract](.claude/skills/feature/plan-bus.md)). Committed hooks in
-`.claude/settings.json` enforce the hard rules and stage roles
-([ADR 0059](docs/adr/0059-architecture-procedure-skills.md)); CI stays authoritative.
-Pass the target branch and verification scope to every stage. Review includes
-uncommitted changes as well as commits so it can finish before commit authorization.
+Use [gate](.claude/skills/gate/SKILL.md) to select checks by changed inputs and
+consumers. Check coherent edits, not each moved method; a test already compiles
+its target. Reuse results while relevant source/configuration stays unchanged.
+For parallel work, use one verification executor and do not edit checked inputs
+while checks run. Keep stable Cargo targets; investigate before clearing caches.
+Cargo uses local settings; the coordination helper is optional (CONTRIBUTING.md).
 
 ## Definition of done
 
-Code changes require `cargo fmt --all --check`,
-`cargo build --workspace --all-targets`,
-`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
-`cargo xtask architecture` and `cargo xtask docs --check` to pass. Run additional
-checks below when relevant (for example mandatory SSH/SFTP tests for SSH changes). Changes to
-user plugins (`nocterm-plugin-*`, `plugins-ui`, `src/shell_setup/user_plugin*`) also run
-`cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings` and
-`cargo test --workspace --features nocterm/user-plugins`: the default build compiles the feature out.
-Changes to the plugin SDK or the example (`nocterm-plugin-sdk`, `examples/plugins/`) also build and
-test the example and run the gated guest test (see Commands).
-For documentation-only changes, check links, stale references and generated-doc
-freshness; architecture checks still apply. Build, lint and runtime tests may be
-omitted because executable inputs did not change.
-
-Report each command and its result. Report omitted or unavailable checks with the
-reason. No blocking review findings may remain; commit, push and PR creation
-still require the user's request.
-
-## Scopes
-
-A commit scope is the crate directory name under `crates/` (`agent-runtime`,
-`connections-model`, …). Special scopes: `app` (root `src/`), `xtask`, `deps`.
-
-## Commands
-
-```sh
-# Agents prefix each cargo command with .claude/hooks/cargo-serial.sh.
-export CARGO_BUILD_JOBS=2
-cargo run
-cargo fmt --all --check
-cargo build --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo clippy --workspace --all-targets --features nocterm/user-plugins -- -D warnings
-cargo test --workspace --features nocterm/user-plugins
-cargo test --locked --manifest-path examples/plugins/focus-timer/Cargo.toml
-cargo build --locked --release --target wasm32-unknown-unknown --manifest-path examples/plugins/focus-timer/Cargo.toml
-NOCTERM_GUEST_WASM=$PWD/examples/plugins/focus-timer/target/wasm32-unknown-unknown/release/focus_timer.wasm NOCTERM_REQUIRE_WASM_GUEST=1 cargo test -p nocterm --features nocterm/user-plugins user_plugin
-NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
-cargo xtask docs
-cargo xtask docs --check
-cargo xtask architecture
-cargo xtask survey <package> [--json] [--type <Type>]
-.claude/hooks/cargo-serial.sh cargo <command>
-python3 scripts/test-claude-hooks.py
-python3 scripts/check-claude-config.py
-python3 scripts/check-plugin-api-compat.py
-cargo machete --skip-target-dir
-cargo doc --workspace --no-deps -j1
-python3 scripts/generate-license-notices.py --check-inputs
-```
-
-Linux system dependencies and setup are in [README.md](README.md). GUI checks
-require an X11 or Wayland session and Vulkan driver. Regenerate references after
-changing schemas, tokens, actions, keymap or internal Cargo dependencies.
-Regenerate `THIRD_PARTY_NOTICES.txt` (`python3 scripts/generate-license-notices.py`,
-needs `cargo-about` 0.9.2) after changing dependencies, vendored manifests or license
-files, or bundled assets; CI and the pre-push hook reject stale notices
-([docs/PACKAGING.md](docs/PACKAGING.md)).
+After review fixes, finish the [completion matrix and applicable fixtures](.claude/skills/gate/SKILL.md#definition-of-done).
+Broad shared changes, uncertain workspace impact or an explicit full-verification
+request require the full suite there. Required CI and limits remain unchanged.
+Report actual commands/results, scope and omitted checks with reasons; a scoped
+pass is not a workspace pass. Commit, push and PR still require the user's request.

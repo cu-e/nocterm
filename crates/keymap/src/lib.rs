@@ -2,8 +2,9 @@
 //!
 //! Owns: keymap format, default/user merge, override persistence and GPUI installation.
 //! Does not own: action handlers, component bindings or the Keymap settings view.
-//! Ports used/provided: explicit `KeymapHandle`. Settings section: none. Globals: none.
-//! Native loading and synchronous desired-file publication remain existing UI-layer debt.
+//! Ports used: shared Persisted snapshot execution and ShutdownCoordinator. Provided: explicit
+//! KeymapHandle with desired binding admission and publication receipt. Settings: none. Globals: none.
+//! Native loading remains startup acquisition; accepted writes use the shared bounded snapshot worker.
 //! Invariants: installation replaces only this crate's marked bindings; explicit
 //! unbindings remove defaults without modifying unrelated toolkit bindings;
 //! desired edits remain installed when typed persistence errors are reported.
@@ -21,76 +22,90 @@ mod error;
 mod file;
 mod names;
 
-use std::{path::PathBuf, rc::Rc};
-
 use gpui_kit::{
     App, AppContext as _, DummyKeyboardMapper, Entity, KeyBinding, KeyBindingContextPredicate,
-    KeyBindingMetaIndex, NoAction, Subscription,
+    KeyBindingMetaIndex, NoAction, Subscription, Task,
 };
+use nocterm_core::{SharedError, persist::PersistError};
+use nocterm_store::{Persisted, Publication, ShutdownCoordinator, SnapshotWriter, StoreError};
+use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 pub use error::KeymapError;
 pub use file::{Binding, KeymapFile, Section, Source, UNBOUND, merge, normalize};
 pub use names::{OFFERED_NAMESPACES, humanize, offered};
-
-/// Marks the bindings this crate installs, so a reload replaces only them.
 const DEFAULT_META: KeyBindingMetaIndex = KeyBindingMetaIndex(0x6e6f_6301);
 const USER_META: KeyBindingMetaIndex = KeyBindingMetaIndex(0x6e6f_6302);
 
-/// The defaults, the user's changes and the file they are kept in.
+enum Failure {
+    Load(SharedError<PersistError>),
+    Write(StoreError),
+}
 struct Keymap {
     defaults: KeymapFile,
-    user: KeymapFile,
-    file: Option<PathBuf>,
-    /// Why the user's file could not be read or written, if it could not.
-    error: Option<nocterm_core::SharedError<nocterm_core::persist::PersistError>>,
+    user: Entity<Persisted<KeymapFile>>,
+    failure: Option<Failure>,
+    revision: u64,
+    generation: u64,
+    publication: Option<Task<Result<(), KeymapError>>>,
 }
 
-/// Explicit shared binding owner retained by the composition root and its pages.
+/// Original binding owner; its Persisted document is the only authoritative user keymap.
 #[derive(Clone)]
 pub struct KeymapHandle {
     state: Entity<Keymap>,
 }
 
 impl KeymapHandle {
-    /// Reads the defaults from `defaults` and the user's changes from
-    /// `file`, then binds the merge. A malformed user file is reported in
-    /// [`KeymapHandle::error`] and ignored, rather than costing every binding.
     pub fn install(defaults: &str, file: Option<PathBuf>, cx: &mut App) -> Self {
         let defaults = toml::from_str(defaults).unwrap_or_else(|error| {
             tracing::error!(%error, "the default keymap is malformed");
             KeymapFile::default()
         });
-        let (user, error) = match file.as_deref().map(nocterm_core::persist::load) {
+        let (initial, failure) = match file.as_deref().map(nocterm_core::persist::load) {
             None | Some(Ok(None)) => (KeymapFile::default(), None),
             Some(Ok(Some(user))) => (user, None),
-            Some(Err(error)) => {
-                tracing::error!(%error, "the user keymap is malformed");
-                (
-                    KeymapFile::default(),
-                    Some(nocterm_core::SharedError::from_error(error)),
-                )
-            }
+            Some(Err(error)) => (
+                KeymapFile::default(),
+                Some(Failure::Load(SharedError::from_error(error))),
+            ),
         };
+        let user = cx.new(|_| Persisted::new(initial, writer(file), Publication::Optimistic, 8));
         let state = cx.new(|_| Keymap {
             defaults,
             user,
-            file,
-            error,
+            failure,
+            revision: 0,
+            generation: 0,
+            publication: None,
         });
         let handle = Self { state };
         handle.replace_bindings(cx);
         handle
     }
-
-    /// Last native load/publication failure, retained without reconstructing its cause.
-    pub fn error<'a>(
+    /// Registers the existing snapshot owner, including accepted writes, with application quit.
+    pub fn register_shutdown(
         &self,
-        cx: &'a App,
-    ) -> Option<&'a nocterm_core::SharedError<nocterm_core::persist::PersistError>> {
-        self.state.read(cx).error.as_ref()
+        shutdown: &ShutdownCoordinator,
+        cx: &App,
+    ) -> Result<(), StoreError> {
+        shutdown.register(&self.state.read(cx).user)
     }
-
-    /// Observe completed installation/error transitions; callers retain the subscription.
+    /// Last original native load/write cause, preserving its concrete allocation.
+    pub fn error<'a>(&self, cx: &'a App) -> Option<&'a SharedError<PersistError>> {
+        match self.state.read(cx).failure.as_ref()? {
+            Failure::Load(error) => Some(error),
+            Failure::Write(error) => native_error(error),
+        }
+    }
+    pub fn publication_error<'a>(&self, cx: &'a App) -> Option<&'a StoreError> {
+        match self.state.read(cx).failure.as_ref()? {
+            Failure::Write(error) => Some(error),
+            _ => None,
+        }
+    }
+    pub fn revision(&self, cx: &App) -> u64 {
+        self.state.read(cx).revision
+    }
     pub fn observe(
         &self,
         cx: &mut App,
@@ -98,15 +113,31 @@ impl KeymapHandle {
     ) -> Subscription {
         cx.observe(&self.state, move |_, cx| on_change(cx))
     }
-
     pub fn bindings(&self, cx: &App) -> Vec<Binding> {
-        self.state.read(cx).bindings()
+        let state = self.state.read(cx);
+        merge(&state.defaults, state.user.read(cx).visible())
     }
     pub fn defaults(&self, cx: &App) -> Vec<Binding> {
-        self.state.read(cx).defaults()
+        merge(&self.state.read(cx).defaults, &KeymapFile::default())
+    }
+    pub fn customized_actions(&self, cx: &App) -> std::collections::BTreeSet<String> {
+        let state = self.state.read(cx);
+        state
+            .user
+            .read(cx)
+            .visible()
+            .here()
+            .filter_map(|(context, keys, action)| {
+                if action == UNBOUND {
+                    state.defaults.action_for(context, keys).map(str::to_owned)
+                } else {
+                    Some(action.clone())
+                }
+            })
+            .collect()
     }
     pub fn is_customized(&self, action: &str, cx: &App) -> bool {
-        self.state.read(cx).is_customized(action)
+        self.customized_actions(cx).contains(action)
     }
     pub fn conflicts(
         &self,
@@ -115,11 +146,20 @@ impl KeymapHandle {
         keys: &str,
         cx: &App,
     ) -> Vec<String> {
-        self.state.read(cx).conflicts(action, context, keys)
+        let Ok(keys) = normalize(keys) else {
+            return Vec::new();
+        };
+        self.bindings(cx)
+            .into_iter()
+            .filter(|binding| {
+                binding.context == *context
+                    && binding.keystrokes == keys
+                    && binding.action != action
+            })
+            .map(|binding| binding.action)
+            .collect()
     }
-
-    /// Binds `keystrokes` to `action` in `context`. With `replacing`, the
-    /// binding being edited goes away.
+    /// Installs the desired edit immediately; the returned result reports admission.
     pub fn bind(
         &self,
         action: &str,
@@ -128,61 +168,85 @@ impl KeymapHandle {
         keystrokes: &str,
         cx: &mut App,
     ) -> Result<(), KeymapError> {
-        let keystrokes = normalize(keystrokes)?;
-        self.change(cx, |keymap| {
+        let keys = normalize(keystrokes)?;
+        self.change(cx, |user, defaults| {
             if let Some(old) = replacing {
-                keymap.unbind_entry(action, &context, old);
+                unbind_entry(user, defaults, action, &context, old);
             }
-            keymap.user.set(&context, &keystrokes, action);
+            user.set(&context, &keys, action);
         })
     }
-
-    /// Removes the binding of `keystrokes` to `action` in `context`.
     pub fn unbind(
         &self,
         action: &str,
         context: Option<String>,
-        keystrokes: &str,
+        keys: &str,
         cx: &mut App,
     ) -> Result<(), KeymapError> {
-        self.change(cx, |keymap| {
-            keymap.unbind_entry(action, &context, keystrokes)
+        self.change(cx, |user, defaults| {
+            unbind_entry(user, defaults, action, &context, keys)
         })
     }
-
-    /// Returns `action` to its default bindings.
     pub fn reset(&self, action: &str, cx: &mut App) -> Result<(), KeymapError> {
-        self.change(cx, |keymap| {
-            let defaults = keymap.defaults.clone();
-            keymap.user.retain(|context, keys, bound| {
+        self.change(cx, |user, defaults| {
+            user.retain(|context, keys, bound| {
                 bound != action
                     && !(bound == UNBOUND && defaults.action_for(context, keys) == Some(action))
-            });
+            })
         })
     }
-
-    /// Publish the desired edit even when its synchronous native save fails.
-    fn change(&self, cx: &mut App, edit: impl FnOnce(&mut Keymap)) -> Result<(), KeymapError> {
-        let result = self.state.update(cx, |keymap, _| {
-            edit(keymap);
-            let result = match &keymap.file {
-                Some(file) => nocterm_core::persist::save(file, &keymap.user)
-                    .map_err(nocterm_core::SharedError::from_error),
-                None => Ok(()),
-            };
-            keymap.error = result.as_ref().err().cloned();
-            result.map_err(KeymapError::Persistence)
-        });
-        self.replace_bindings(cx);
-        self.state.update(cx, |_, cx| cx.notify());
-        result
+    /// The latest accepted publication; dropping this waiter leaves the store's work accepted.
+    pub fn flush(&self, cx: &mut App) -> Task<Result<(), KeymapError>> {
+        self.state
+            .update(cx, |state, _| state.publication.take())
+            .unwrap_or_else(|| Task::ready(Ok(())))
     }
-
+    fn change(
+        &self,
+        cx: &mut App,
+        edit: impl FnOnce(&mut KeymapFile, &KeymapFile),
+    ) -> Result<(), KeymapError> {
+        let state = self.state.read(cx);
+        let user = state.user.clone();
+        let mut next = user.read(cx).visible().clone();
+        edit(&mut next, &state.defaults);
+        let changed = next != *user.read(cx).visible();
+        let receipt = user.update(cx, |user, cx| {
+            user.update(move |current| *current = next, cx)
+        })?;
+        self.state.update(cx, |state, cx| {
+            state.revision = state.revision.wrapping_add(u64::from(changed));
+            state.generation = state.generation.wrapping_add(1);
+            let generation = state.generation;
+            state.publication = Some(cx.spawn(async move |state, cx| {
+                let result = receipt.wait().await;
+                let _ = state.update(cx, |state, cx| {
+                    if state.generation == generation {
+                        let next = result.as_ref().err().cloned().map(Failure::Write);
+                        let changed = state.failure.is_some() || next.is_some();
+                        state.failure = next;
+                        if changed {
+                            cx.notify();
+                        }
+                    }
+                });
+                result.map(drop).map_err(publication_error)
+            }));
+            cx.notify();
+        });
+        if changed {
+            self.replace_bindings(cx);
+        }
+        Ok(())
+    }
     fn replace_bindings(&self, cx: &mut App) {
         let ours = {
-            let keymap = self.state.read(cx);
+            let state = self.state.read(cx);
             let mut ours = Vec::new();
-            for (file, meta) in [(&keymap.defaults, DEFAULT_META), (&keymap.user, USER_META)] {
+            for (file, meta) in [
+                (&state.defaults, DEFAULT_META),
+                (state.user.read(cx).visible(), USER_META),
+            ] {
                 ours.extend(
                     bindings_of(file, cx)
                         .into_iter()
@@ -191,7 +255,7 @@ impl KeymapHandle {
             }
             ours
         };
-        let others: Vec<KeyBinding> = cx
+        let others: Vec<_> = cx
             .key_bindings()
             .borrow()
             .bindings()
@@ -202,53 +266,44 @@ impl KeymapHandle {
         cx.bind_keys(others.into_iter().chain(ours));
     }
 }
-
-impl Keymap {
-    /// Every binding in effect on this platform.
-    fn bindings(&self) -> Vec<Binding> {
-        merge(&self.defaults, &self.user)
+fn unbind_entry(
+    user: &mut KeymapFile,
+    defaults: &KeymapFile,
+    action: &str,
+    context: &Option<String>,
+    keys: &str,
+) {
+    if defaults.action_for(context, keys) == Some(action) {
+        user.set(context, keys, UNBOUND);
+    } else {
+        user.remove(context, keys);
     }
-
-    /// The default bindings of this platform.
-    fn defaults(&self) -> Vec<Binding> {
-        merge(&self.defaults, &KeymapFile::default())
+}
+fn writer(file: Option<PathBuf>) -> SnapshotWriter<KeymapFile> {
+    Arc::new(move |user| {
+        let file = file.clone();
+        Box::pin(async move {
+            if let Some(file) = file {
+                nocterm_core::persist::save(&file, &user)
+                    .map_err(SharedError::from_error)
+                    .map_err(StoreError::backend)?;
+            }
+            Ok(())
+        })
+    })
+}
+fn native_error(error: &StoreError) -> Option<&SharedError<PersistError>> {
+    if let StoreError::Backend(cause) = error {
+        cause.downcast_ref()
+    } else {
+        None
     }
-
-    /// Whether the user changed how `action` is bound.
-    fn is_customized(&self, action: &str) -> bool {
-        let mut customized = false;
-        let mut user = self.user.clone();
-        user.retain(|context, keys, bound| {
-            customized |= bound == action
-                || (bound == UNBOUND && self.defaults.action_for(context, keys) == Some(action));
-            true
-        });
-        customized
-    }
-
-    /// The actions other than `action` that `keystrokes` runs in `context`.
-    fn conflicts(&self, action: &str, context: &Option<String>, keystrokes: &str) -> Vec<String> {
-        let Ok(keystrokes) = normalize(keystrokes) else {
-            return Vec::new();
-        };
-        self.bindings()
-            .into_iter()
-            .filter(|binding| {
-                binding.context == *context
-                    && binding.keystrokes == keystrokes
-                    && binding.action != action
-            })
-            .map(|binding| binding.action)
-            .collect()
-    }
-
-    fn unbind_entry(&mut self, action: &str, context: &Option<String>, keystrokes: &str) {
-        if self.defaults.action_for(context, keystrokes) == Some(action) {
-            self.user.set(context, keystrokes, UNBOUND);
-        } else {
-            self.user.remove(context, keystrokes);
-        }
-    }
+}
+fn publication_error(error: StoreError) -> KeymapError {
+    native_error(&error)
+        .cloned()
+        .map(KeymapError::Persistence)
+        .unwrap_or(KeymapError::Store(error))
 }
 
 /// `file`'s bindings for this platform as GPUI bindings. Entries that do

@@ -56,6 +56,10 @@ fn partition_filters_and_orders_context_before_other_snippets() {
         snippets: vec![unbound.clone(), bound.clone()],
     };
     let (current, other) = library.partition(Some("current"), None, "ПРИВЕТ");
+    assert_eq!(
+        library.partition_indices(Some("current"), None, "ПРИВЕТ"),
+        (vec![1], vec![0])
+    );
     assert_eq!(current, [&bound]);
     assert_eq!(other, [&unbound]);
     assert!(library.partition(None, None, "absent").1.is_empty());

@@ -8,10 +8,10 @@
 
 use anyhow::Context as _;
 use nocterm_plugin_api::{
-    API_VERSION, CAPABILITIES, CapabilityEntry, EFFECT_REQUESTS, EVENTS, EffectTarget, FILTERS,
-    Family, HOST_ERRORS, Key, KeyType, Kind, LIMITS, MANIFEST_KEYS, NodeKind, PluginIcon,
-    REFRESHES, RUNTIMES, SETTINGS_KINDS, Tone, Zone,
-    capability::{fields_of, notifications::NoticeTone, workspace::WorkspaceKind},
+    API_VERSION, CAPABILITIES, CapabilityEntry, EFFECT_REQUESTS, EVENTS, Edge, EffectTarget,
+    FILTERS, Family, Glyph, HOST_ERRORS, Key, KeyType, Kind, LIMITS, MANIFEST_KEYS, NodeKind,
+    PluginIcon, REFRESHES, RUNTIMES, SETTINGS_KINDS, Tabs, Tone, Zone,
+    capability::{fields_of, net::Method, notifications::NoticeTone, workspace::WorkspaceKind},
 };
 use serde_json::{Map, Value, json};
 
@@ -30,15 +30,19 @@ pub(crate) fn surface() -> Value {
     let surface = json!({
         "api_version": API_VERSION.to_string(),
         "capabilities": CAPABILITIES.iter().map(capability).collect::<Vec<_>>(),
+        "edges": Edge::ALL.map(Edge::name),
         "effect_requests": manifest(EFFECT_REQUESTS),
         "events": EVENTS,
         "filters": FILTERS,
         "host_errors": HOST_ERRORS,
+        "http_methods": Method::ALL.map(Method::name),
         "icons": PluginIcon::ALL.map(PluginIcon::name),
+        "glyphs": Glyph::ALL.map(Glyph::name).to_vec(),
         "kinds": Kind::ALL.map(Kind::name),
         "limits": LIMITS.iter().map(|(name, value)| ((*name).to_owned(), json!(value))).collect::<Map<_, _>>(),
         "manifest": manifest(MANIFEST_KEYS),
         "node_kinds": NodeKind::NAMES,
+        "tabs": Tabs::ALL.map(Tabs::name),
         "notice_tones": NoticeTone::ALL.map(NoticeTone::name),
         "refreshes": REFRESHES,
         "runtimes": RUNTIMES,
@@ -88,6 +92,9 @@ fn capability(entry: &CapabilityEntry) -> Value {
         EffectTarget::OwnContribution => "own-contribution",
         EffectTarget::OwnData => "own-data",
         EffectTarget::HostPresentation => "host-presentation",
+        EffectTarget::UserOrigin => "user-origin",
+        EffectTarget::OwnTerminal => "own-terminal",
+        EffectTarget::OwnTimer => "own-timer",
     });
     let fields = fields_of(entry.id).map(|fields| {
         fields

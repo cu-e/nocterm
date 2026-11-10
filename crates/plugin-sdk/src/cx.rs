@@ -34,6 +34,19 @@ impl<'a> Cx<'a> {
         self.local
     }
 
+    /// The plugin's terminal whose bar this call draws, or whose bar the user used; `None` for
+    /// every other call. A tab shows the plugin's toolbar for its own tabs.
+    pub fn terminal(&self) -> Option<&str> {
+        self.snapshot.terminal.as_deref()
+    }
+
+    /// Whether this call draws a toolbar that runs along a side, as a column, rather than across
+    /// the top or the bottom. A toolbar can read it to stack short figures instead of long ones.
+    pub fn is_column(&self) -> bool {
+        self.snapshot.context.kind == crate::api::Kind::Toolbar
+            && self.snapshot.context.zone != crate::api::Zone::Center
+    }
+
     /// The whole snapshot, for what the typed reads do not cover.
     pub fn snapshot(&self) -> &Snapshot {
         self.snapshot

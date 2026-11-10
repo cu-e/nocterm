@@ -1,10 +1,11 @@
 //! User plugin contributions in a resolved layout: placed only once the user approved the
-//! package, kept in the preset, and never placed by a hint.
+//! package, kept in the preset, and never placed by a hint, except a toolbar that asks to be
+//! shown at first until the user chooses otherwise.
 
 use std::collections::BTreeSet;
 
 use nocterm_plugin_model::{
-    ContributionKind, GroupId, Icon, PluginId, PluginSet, SettingsSchema, UserAvailability,
+    ContributionKind, Edge, GroupId, Icon, PluginId, PluginSet, SettingsSchema, UserAvailability,
     UserContribution, UserEntry, UserPlugin, Zone,
 };
 
@@ -261,4 +262,75 @@ fn ids_in_bar(document: &LayoutSettings) -> Vec<nocterm_plugin_model::Contributi
             BarItem::Separator => Vec::new(),
         })
         .collect()
+}
+
+/// A plugin with one toolbar that asks to be shown along the bottom edge at first.
+fn with_shown_toolbar(placeable: bool) -> PluginSet {
+    let plugin = PluginId::user("acme", "deck").unwrap();
+    let toolbar = UserContribution::clamp(
+        nocterm_plugin_model::ContributionId::in_plugin(&plugin, "strip").unwrap(),
+        ContributionKind::Toolbar,
+        "Strip",
+        Icon::Puzzle,
+        Zone::Left,
+        1,
+    )
+    .unwrap()
+    .along(Edge::Bottom)
+    .shown_at_first(true);
+    set(vec![UserEntry {
+        plugin: UserPlugin::new(plugin, "Deck", "", vec![toolbar], SettingsSchema::NONE).unwrap(),
+        enabled: true,
+        placeable,
+    }])
+}
+
+fn toolbar_edge(document: &LayoutSettings, catalog: &PluginSet) -> Option<Edge> {
+    let active = document.active.clone().unwrap_or(BuiltIn::Default.id());
+    document
+        .resolve(&active, catalog, &NONE)
+        .toolbar_edge(&id_of("deck", "strip"))
+}
+
+#[test]
+fn a_user_toolbar_shown_at_first_keeps_the_place_the_user_gives_it() {
+    let mut document = LayoutSettings::default();
+    assert_eq!(
+        toolbar_edge(&document, &with_shown_toolbar(false)),
+        None,
+        "nothing shows before the user turns the plugin on"
+    );
+    let catalog = with_shown_toolbar(true);
+    assert_eq!(toolbar_edge(&document, &catalog), Some(Edge::Bottom));
+
+    let strip = id_of("deck", "strip");
+    let apply = |document: &mut LayoutSettings, op| {
+        edit(document, false, &catalog, EditTarget::Selected, op).expect("the toolbar is known");
+    };
+    apply(&mut document, EditOp::RemoveToTray { id: strip.clone() });
+    assert_eq!(
+        toolbar_edge(&document, &catalog),
+        None,
+        "hidden stays hidden"
+    );
+
+    apply(
+        &mut document,
+        EditOp::ShowToolbar {
+            id: strip.clone(),
+            edge: Edge::Left,
+        },
+    );
+    apply(
+        &mut document,
+        EditOp::Move {
+            subject: Subject::Contribution(id("tools.clock")),
+            by: 1,
+        },
+    );
+    assert_eq!(
+        toolbar_edge(&document, &catalog),
+        Some(Edge::Left),
+        "the edge the user chose outlives other edits"
+    );
 }

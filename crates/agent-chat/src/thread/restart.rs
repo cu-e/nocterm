@@ -5,6 +5,7 @@ pub struct RestartData {
     config: super::config::RestartConfig,
     composer: Composer,
     restore: Option<Restore>,
+    _allocation: nocterm_core::allocation::AllocationLease,
 }
 impl RestartData {
     pub(super) fn new(
@@ -12,12 +13,14 @@ impl RestartData {
         config: super::config::RestartConfig,
         composer: Composer,
         restore: Option<Restore>,
+        allocation: nocterm_core::allocation::AllocationLease,
     ) -> Self {
         Self {
             document,
             config,
             composer,
             restore,
+            _allocation: allocation,
         }
     }
     pub(super) fn into_parts(

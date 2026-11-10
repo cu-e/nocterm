@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use super::*;
-fn request(launch: ShellLaunch) -> ConnectRequest {
+pub(super) fn request(launch: ShellLaunch) -> ConnectRequest {
     ConnectRequest {
         launch,
         target: nocterm_session::Target::new("user", "localhost", 22),
@@ -15,7 +15,7 @@ fn request(launch: ShellLaunch) -> ConnectRequest {
         jumps: Vec::new(),
     }
 }
-fn events(session: &Session) -> std::sync::mpsc::Receiver<Event> {
+pub(super) fn events(session: &Session) -> std::sync::mpsc::Receiver<Event> {
     let session = session.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
@@ -30,10 +30,14 @@ fn events(session: &Session) -> std::sync::mpsc::Receiver<Event> {
     });
     rx
 }
-fn next(rx: &std::sync::mpsc::Receiver<Event>) -> Event {
+pub(super) fn next(rx: &std::sync::mpsc::Receiver<Event>) -> Event {
     rx.recv_timeout(std::time::Duration::from_secs(10))
         .expect("PTY event timed out")
 }
+
+#[cfg(target_os = "linux")]
+mod leader_exit;
+
 #[test]
 fn invalid_launch_reports_typed_failure_before_starting_a_pty() {
     let launch = ShellLaunch {
@@ -382,7 +386,7 @@ fn close_interrupts_full_input_and_kills_shell_process_group() {
     );
     // The direct child is reaped by this adapter. A killed grandchild is
     // adopted/reaped by init; Linux containers can leave an init-owned
-    // zombie briefly, but no descendant may remain executing.
+    // zombie or a dead (X) task briefly, but no descendant may remain executing.
     let descendant_alive =
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(descendant), None).is_ok();
     #[cfg(target_os = "linux")]
@@ -390,9 +394,9 @@ fn close_interrupts_full_input_and_kills_shell_process_group() {
         let stat = std::fs::read_to_string(format!("/proc/{descendant}/stat")).unwrap_or_default();
         assert!(
             stat.is_empty()
-                || stat
-                    .rsplit_once(") ")
-                    .is_some_and(|(_, fields)| fields.starts_with('Z')),
+                || stat.rsplit_once(") ").is_some_and(|(_, fields)| {
+                    matches!(fields.split_ascii_whitespace().next(), Some("Z" | "X"))
+                }),
             "descendant still running: {stat}"
         );
     }
@@ -704,4 +708,45 @@ fn dropping_the_last_session_owner_reaps_shell_without_event_consumer() {
         }
         thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+fn a_revoked_source_never_starts_a_new_local_pty_or_exec() {
+    use nocterm_session::{
+        ConnectionOpenOptions, ConnectionSourceError, testing::ScriptedConnectionSource,
+    };
+    let source = ScriptedConnectionSource::default();
+    source.revoke();
+    let launch = ShellLaunch {
+        program: Some("/bin/sh".into()),
+        ..Default::default()
+    };
+    let session = LocalTransport(launch.clone())
+        .open_with(request(launch), ConnectionOpenOptions::new(source.source()));
+    assert!(matches!(
+        block_on(session.next_event()),
+        Some(Event::Closed(CloseReason::Failed(SessionError::Source(
+            ConnectionSourceError::Revoked
+        ))))
+    ));
+}
+#[test]
+fn a_retained_local_executor_cannot_start_after_its_account_is_revoked() {
+    use nocterm_session::{
+        ConnectionOpenOptions, ExecError, ExecRequest, testing::ScriptedConnectionSource,
+    };
+    let source = ScriptedConnectionSource::default();
+    let launch = ShellLaunch {
+        program: Some("/bin/sh".into()),
+        integration: false,
+        ..Default::default()
+    };
+    let session = LocalTransport(launch.clone())
+        .open_with(request(launch), ConnectionOpenOptions::new(source.source()));
+    let executor = session.exec().unwrap();
+    let pending = executor.exec(ExecRequest::new("/bin/echo").arg("never"));
+    source.revoke();
+    assert!(matches!(block_on(pending), Err(ExecError::Source(_))));
+    assert!(session.exec().is_none());
+    session.close();
 }

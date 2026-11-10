@@ -6,7 +6,7 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 
 | Action | Description | Bindings |
 | --- | --- | --- |
-| `agent::AttachImage` |  |  |
+| `agent::AttachFiles` | Attach files to the next message; images among them are sent as images. |  |
 | `agent::NewThread` |  |  |
 | `agent::NewThreadWithLastAgent` | Start a new chat with the agent the last chat was started with. | `ctrl-n` (linux, windows; AgentPanel); `cmd-n` (macos; AgentPanel) |
 | `agent::ShowHistory` |  |  |
@@ -18,6 +18,11 @@ Derived from `actions!` declarations, `#[derive(Action)]` types and `assets/keym
 | `files::OpenExplorerSettings` | Open the Explorer's settings: folder sizes and the programs that open files. |  |
 | `files::ShowTransfers` | Open transfers and their progress, errors and cancellation controls. |  |
 | `files::ToggleExplorer` | Show the Explorer in the sidebar, or hide the sidebar if it shows it. | `ctrl-shift-e` (linux, windows; Workspace); `cmd-shift-e` (macos; Workspace) |
+| `hubs::ManageServers` | Open the Servers page of the settings, where known servers are renamed, coloured, signed out of or removed. |  |
+| `hubs::OpenEnvironmentMenu` | Open the environment menu in the title bar. |  |
+| `hubs::OpenServerInNewWindow` | Choose a known server and open it in a new window. |  |
+| `hubs::SignInToServer` | Sign in to a server that is not in the list yet. |  |
+| `hubs::SignOutOfServer` | Choose a signed-in server and sign this device out of it. |  |
 | `monitor::OpenMonitorSettings` | Open the host monitor's settings. |  |
 | `projects::NewProject` | Create a workspace on the current server or this computer. |  |
 | `projects::ToggleProjects` | Show saved workspaces for the current connection. |  |

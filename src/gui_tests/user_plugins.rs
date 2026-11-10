@@ -342,24 +342,29 @@ fn a_widget_the_narrow_bar_leaves_out_shows_its_new_view_only_once_it_is_drawn_a
         marker_left(&window, cx).is_none(),
         "a narrow bar leaves the clock out"
     );
-    // The widget was drawn since its last refresh, so its next stale step may still ask once.
-    // A change that leaves the view as it is uses that step up.
+    // Both unchanged and changed values stay quiet while actual bar visibility is false.
     relabel(&window, &id, "Time", cx);
     wait(&window, 2, cx);
     relabel(&window, &id, "Tokyo Office", cx);
     wait(&window, 8, cx);
+    assert!(
+        marker_left(&window, cx).is_none(),
+        "hidden value changes do not bring the widget onto the narrow bar"
+    );
 
+    // Actual visibility resumes the driver as soon as bar composition settles. There is no
+    // contract for a stale visible frame between its width measurement and that callback.
     resize(&window, 1400., cx);
-    let first = marker_left(&window, cx).expect("the wide bar draws the clock again");
-    assert_eq!(first, old, "nothing asked the plugin while it was out");
-
-    cx.executor()
-        .advance_clock(std::time::Duration::from_millis(500));
-    cx.run_until_parked();
     let later = marker_left(&window, cx).expect("the clock stays");
     assert!(
         later < old,
-        "the next poll shows the new label: {later} against {old}"
+        "restored visibility shows the new label: {later} against {old}"
+    );
+    relabel(&window, &id, "Time", cx);
+    assert_eq!(
+        marker_left(&window, cx).expect("the clock stays visible"),
+        old,
+        "restoring the label restores its exact original rendering"
     );
 }
 
@@ -412,14 +417,19 @@ fn removing_a_plugin_withdraws_its_contributions(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn an_opened_user_panel_shows_the_plugin_frame_and_is_named_in_the_menu(cx: &mut TestAppContext) {
+fn an_opened_user_panel_shows_its_provenance_beside_the_title_and_is_named_in_the_menu(
+    cx: &mut TestAppContext,
+) {
     let window = window(cx);
     install(&window, "notes", true, cx);
 
     assert!(open_panel(&window, cx));
 
-    assert!(present(&window, "plugin-marker", cx));
-    assert!(present(&window, "plugin-label", cx));
+    assert!(present(&window, "plugin-panel", cx));
+    assert!(
+        present(&window, "panel-provenance", cx),
+        "the shell writes the provenance beside the title"
+    );
     let labels: Vec<String> = cx.update(|cx| {
         let workspace = window.workspace.read(cx);
         workspace
@@ -627,4 +637,33 @@ fn the_bar_editor_is_told_the_hosts_facts_of_an_installed_plugin(cx: &mut TestAp
         cx.update(|cx| facts.facts(&PluginId::owned("user-example-nobody"), cx))
             .is_none()
     );
+}
+
+#[gpui_kit::test]
+fn a_window_shown_again_refreshes_its_user_panel_after_the_workspace_update(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::WindowVisibility;
+    let window = window(cx);
+    install(&window, "notes", true, cx);
+    assert!(open_panel(&window, cx));
+
+    // The screen goes dark, then the window comes back and is activated. The activation
+    // observer runs inside an update of the workspace, and the refresh it causes reads the
+    // workspace, so it must wait for that update to end.
+    for (visibility, active) in [
+        (WindowVisibility::Hidden, false),
+        (WindowVisibility::Visible, true),
+    ] {
+        cx.simulate_window_visibility_change(window.handle, visibility);
+        if active {
+            cx.update_window(window.handle, |_, w, _| w.activate_window())
+                .unwrap();
+        } else {
+            VisualTestContext::from_window(window.handle, cx).deactivate_window();
+        }
+        cx.run_until_parked();
+    }
+
+    assert!(present(&window, "plugin-panel", cx));
 }

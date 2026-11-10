@@ -28,6 +28,23 @@ pub struct PluginRecord {
     pub granted_optional: Vec<String>,
 }
 
+impl PluginRecord {
+    /// The record of a package the user accepted with the optional capabilities `accepted`.
+    pub(crate) fn of(
+        package: &nocterm_plugin_api::Package,
+        accepted: &[&str],
+        enabled: bool,
+    ) -> Self {
+        Self {
+            id: package.manifest().plugin().id().clone(),
+            hash: package.hash().to_string(),
+            enabled,
+            placeable: false,
+            granted_optional: accepted.iter().map(|id| (*id).to_owned()).collect(),
+        }
+    }
+}
+
 /// What happened to a plugin.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

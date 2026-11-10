@@ -7,6 +7,7 @@ mod lifecycle;
 mod local;
 pub(super) mod project_skin;
 mod selection;
+pub(super) mod shell_skin;
 pub(super) mod topology;
 
 pub(super) struct TabEntry {

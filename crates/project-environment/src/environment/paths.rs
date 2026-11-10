@@ -25,6 +25,9 @@ pub(super) fn installation_error(
 ) -> EnvironmentError {
     match error {
         ProjectSetupError::CommandFailed {
+            status: Some(80), ..
+        } => EnvironmentError::RetainedReleasesFull,
+        ProjectSetupError::CommandFailed {
             status: Some(79), ..
         } => EnvironmentError::ReadOnlyHome,
         ProjectSetupError::CommandFailed {

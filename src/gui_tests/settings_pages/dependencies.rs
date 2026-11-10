@@ -4,18 +4,18 @@ use nocterm_store::{SettingsConfig, SettingsHandle};
 
 fn independent_settings(cx: &mut App) -> SettingsHandle {
     let fixture = init_with_settings(SettingsConfig::in_memory(SettingsDocument::default()), cx);
-    let settings = fixture.installed.settings().clone();
-    page(fixture.installed, fixture.pages, cx);
+    let settings = fixture.settings.clone();
+    page(fixture.settings, fixture.pages, cx);
     settings
 }
 
 fn page(
-    installed: Installed,
+    settings: SettingsHandle,
     pages: SettingsCatalog,
     cx: &mut App,
 ) -> (gpui_kit::AnyWindowHandle, Entity<SettingsView>) {
     gpui_kit::open_window(test_window_options(), cx, |window, cx| {
-        cx.new(|cx| SettingsView::with_pages(pages, installed, window, cx))
+        cx.new(|cx| SettingsView::with_pages(pages, settings, window, cx))
     })
     .unwrap()
 }
@@ -24,14 +24,14 @@ fn page(
 fn shared_pages_keep_original_settings_after_another_owner_and_window_close(
     cx: &mut TestAppContext,
 ) {
-    let (installed, themes, other, first, first_view, second, second_view) = cx.update(|cx| {
+    let (settings, themes, other, first, first_view, second, second_view) = cx.update(|cx| {
         let fixture = init(cx);
         let themes = fixture.pages.clone();
-        let installed = fixture.installed.clone();
+        let settings = fixture.settings.clone();
         let other = independent_settings(cx);
-        let (first, a) = page(installed.clone(), themes.clone(), cx);
-        let (second, b) = page(installed.clone(), themes.clone(), cx);
-        (installed, themes, other, first, a, second, b)
+        let (first, a) = page(settings.clone(), themes.clone(), cx);
+        let (second, b) = page(settings.clone(), themes.clone(), cx);
+        (settings, themes, other, first, a, second, b)
     });
     cx.update_window(first, |_, window, cx| {
         select_field_page("terminal.font_size", window, cx);
@@ -40,12 +40,7 @@ fn shared_pages_keep_original_settings_after_another_owner_and_window_close(
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(
-            installed
-                .settings()
-                .setting::<TerminalSettings>(cx)
-                .copy_on_select
-        );
+        assert!(settings.setting::<TerminalSettings>(cx).copy_on_select);
         assert!(!other.setting::<TerminalSettings>(cx).copy_on_select);
     });
     let weak = first_view.downgrade();
@@ -56,7 +51,7 @@ fn shared_pages_keep_original_settings_after_another_owner_and_window_close(
     assert!(weak.upgrade().is_none());
     type_and_leave(cx, second, &second_view, "terminal.font_size", "19");
     cx.run_until_parked();
-    let (third, _third_view) = cx.update(|cx| page(installed.clone(), themes, cx));
+    let (third, _third_view) = cx.update(|cx| page(settings.clone(), themes, cx));
     cx.update_window(third, |_, window, cx| {
         select_field_page("terminal.font_size", window, cx);
         assert_eq!(window.find("terminal.font_size").value(), Some("19"));
@@ -64,10 +59,7 @@ fn shared_pages_keep_original_settings_after_another_owner_and_window_close(
     .unwrap();
     cx.update(|cx| {
         assert_eq!(
-            installed
-                .settings()
-                .setting::<TerminalSettings>(cx)
-                .font_size,
+            settings.setting::<TerminalSettings>(cx).font_size,
             Some(19.)
         );
         assert_eq!(other.setting::<TerminalSettings>(cx).font_size, None);
@@ -76,12 +68,12 @@ fn shared_pages_keep_original_settings_after_another_owner_and_window_close(
 
 #[gpui_kit::test]
 fn native_ai_policy_and_text_edits_keep_the_supplied_handle(cx: &mut TestAppContext) {
-    let (installed, other, handle, view) = cx.update(|cx| {
+    let (settings, other, handle, view) = cx.update(|cx| {
         let fixture = init(cx);
-        let installed = fixture.installed.clone();
-        let (handle, view) = page(installed.clone(), fixture.pages.clone(), cx);
+        let settings = fixture.settings.clone();
+        let (handle, view) = page(settings.clone(), fixture.pages.clone(), cx);
         let other = independent_settings(cx);
-        (installed, other, handle, view)
+        (settings, other, handle, view)
     });
     cx.update_window(handle, |_, window, _| {
         window.resize(gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(5000.)));
@@ -98,7 +90,7 @@ fn native_ai_policy_and_text_edits_keep_the_supplied_handle(cx: &mut TestAppCont
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        let actual = installed.settings().setting::<AiSettings>(cx);
+        let actual = settings.setting::<AiSettings>(cx);
         assert_eq!(
             actual.working_directory.as_deref(),
             Some("/original/policy")
@@ -114,19 +106,19 @@ fn native_ai_policy_and_text_edits_keep_the_supplied_handle(cx: &mut TestAppCont
 fn deferred_appearance_command_keeps_original_settings_without_global_redirect(
     cx: &mut TestAppContext,
 ) {
-    let (installed, other, handle, workspace) = cx.update(|cx| {
+    let (settings, other, handle, workspace) = cx.update(|cx| {
         let fixture = init(cx);
-        let installed = fixture.installed.clone();
+        let settings = fixture.settings.clone();
         let themes = fixture.pages.clone();
         let layout = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
-        let supplied = installed.clone();
+        let supplied = settings.clone();
         let (handle, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             cx.new(|cx| {
                 let mut workspace = Workspace::new(layout, window, cx);
                 crate::settings_pages::register_appearance_commands(
                     &mut workspace,
                     fixture.themes.clone(),
-                    supplied.settings().clone(),
+                    supplied.clone(),
                 );
                 register(&mut workspace, themes, supplied);
                 workspace
@@ -134,7 +126,7 @@ fn deferred_appearance_command_keeps_original_settings_without_global_redirect(
         })
         .unwrap();
         let other = independent_settings(cx);
-        (installed, other, handle, workspace)
+        (settings, other, handle, workspace)
     });
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
@@ -151,10 +143,7 @@ fn deferred_appearance_command_keeps_original_settings_without_global_redirect(
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(
-            installed
-                .settings()
-                .setting::<nocterm_ui::AppearanceSettings>(cx)
-                .mode,
+            settings.setting::<nocterm_ui::AppearanceSettings>(cx).mode,
             nocterm_ui::AppearanceMode::Dark
         );
         assert_eq!(
@@ -177,7 +166,7 @@ fn gated_page(cx: &mut TestAppContext) -> GatedPage {
     let (window, workspace, settings) = cx.update(|cx| {
         let fixture =
             init_with_settings(SettingsConfig::with_writer(Default::default(), writer), cx);
-        let settings = fixture.installed.settings().clone();
+        let settings = fixture.settings.clone();
         let layout = nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx));
         let (window, workspace) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             let workspace = cx.new(|cx| {
@@ -185,7 +174,7 @@ fn gated_page(cx: &mut TestAppContext) -> GatedPage {
                 register(
                     &mut workspace,
                     fixture.pages.clone(),
-                    fixture.installed.clone(),
+                    fixture.settings.clone(),
                 );
                 workspace
             });

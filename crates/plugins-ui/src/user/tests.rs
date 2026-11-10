@@ -22,8 +22,11 @@ use nocterm_ui::{
 use super::{port::describe, *};
 use crate::EnablementError;
 
+mod lists;
+mod page;
 mod removal;
 mod switch;
+mod switch_one;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Call {
@@ -67,53 +70,53 @@ impl UserPlugins for Rc<FakeUserPlugins> {
     fn dev_location(&self, _: &App) -> Option<String> {
         self.dev.borrow().clone()
     }
-    fn inspect(&self, _: &str, _: &App) -> Result<Candidate, UserPluginError> {
-        self.candidate.borrow().clone()
+    fn inspect(&self, _: &str, _: &mut App) -> Task<Result<Candidate, UserPluginError>> {
+        Task::ready(self.candidate.borrow().clone())
     }
-    fn install(&self, request: InstallRequest, _: &mut App) -> Result<(), UserPluginError> {
+    fn install(&self, request: InstallRequest, _: &mut App) -> Task<Result<(), UserPluginError>> {
         self.calls.borrow_mut().push(Call::Install(request));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn set_enabled(
         &self,
         plugin: &PluginId,
         enabled: bool,
         _: &mut App,
-    ) -> Result<(), UserPluginError> {
+    ) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::Enabled(plugin.clone(), enabled));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn set_placeable(
         &self,
         plugin: &PluginId,
         placeable: bool,
         _: &mut App,
-    ) -> Result<(), UserPluginError> {
+    ) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::Placeable(plugin.clone(), placeable));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn remove(
         &self,
         plugin: &PluginId,
         with_data: bool,
         _: &mut App,
-    ) -> Result<(), UserPluginError> {
+    ) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::Remove(plugin.clone(), with_data));
-        Err(UserPluginError::Manage(SharedCause::new(
+        Task::ready(Err(UserPluginError::Manage(SharedCause::new(
             std::io::Error::other("disk full"),
-        )))
+        ))))
     }
-    fn remove_data(&self, plugin: &PluginId, _: &mut App) -> Result<(), UserPluginError> {
+    fn remove_data(&self, plugin: &PluginId, _: &mut App) -> Task<Result<(), UserPluginError>> {
         self.calls
             .borrow_mut()
             .push(Call::RemoveData(plugin.clone()));
-        Ok(())
+        Task::ready(Ok(()))
     }
     fn observe(&self, cx: &mut App, mut on_change: Box<dyn FnMut(&mut App)>) -> Subscription {
         cx.observe(&self.changed, move |_, cx| on_change(cx))
@@ -232,6 +235,31 @@ struct Fixture {
     section: Entity<UserPluginsSection>,
     plugins: Rc<FakeUserPlugins>,
     switch: Rc<FakeSwitch>,
+    folder: Arc<FakeFolder>,
+}
+
+/// A plugins folder that holds `files` and counts how often it was opened.
+#[derive(Default)]
+struct FakeFolder {
+    files: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    prepared: std::sync::atomic::AtomicUsize,
+}
+
+/// The folder of a test cannot be made: opening it in a file manager is the platform's.
+#[derive(Debug, thiserror::Error)]
+#[error("read-only file system")]
+struct ReadOnly;
+
+impl PluginsFolder for FakeFolder {
+    fn prepare(&self) -> Result<std::path::PathBuf, FolderError> {
+        self.prepared
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(FolderError::new(SharedCause::new(ReadOnly)))
+    }
+
+    fn packages(&self) -> Result<Vec<std::path::PathBuf>, FolderError> {
+        Ok(self.files.lock().unwrap().clone())
+    }
 }
 
 fn open(
@@ -280,8 +308,15 @@ fn open_session(
             None => UserSession::Loaded(Rc::new(plugins.clone())),
         };
         let stored: Rc<dyn UserPluginsSwitch> = Rc::new(switch.clone());
+        let folder = Arc::new(FakeFolder::default());
+        folder
+            .files
+            .lock()
+            .unwrap()
+            .push("/home/u/.config/nocterm/plugins/weather.wasm".into());
+        let port: Arc<dyn PluginsFolder> = folder.clone();
         let (window, section) = gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-            cx.new(|cx| UserPluginsSection::new(session, stored, directory, cx))
+            cx.new(|cx| UserPluginsSection::new(session, stored, directory, port, cx))
         })
         .unwrap();
         Fixture {
@@ -289,6 +324,7 @@ fn open_session(
             section,
             plugins,
             switch,
+            folder,
         }
     })
 }
@@ -298,11 +334,14 @@ fn frame(
     cx: &mut TestAppContext,
     check: impl FnOnce(&mut gpui_kit::Window, &mut App),
 ) {
+    // Ready port tasks still cross an executor boundary before their UI result arrives.
+    cx.run_until_parked();
     cx.update_window(fixture.window, |_, window, cx| {
         window.render_frame(cx);
         check(window, cx);
     })
     .unwrap();
+    cx.run_until_parked();
 }
 
 fn begin(fixture: &Fixture, cx: &mut TestAppContext) {
@@ -312,6 +351,7 @@ fn begin(fixture: &Fixture, cx: &mut TestAppContext) {
         });
     })
     .unwrap();
+    cx.run_until_parked();
 }
 
 #[gpui_kit::test]
@@ -603,12 +643,11 @@ fn the_list_shows_state_and_the_detail_acts_through_the_port(cx: &mut TestAppCon
         assert_eq!(window.find("user-plugin-detail").label(), Some("Clock"));
         window.click("user-plugin-enabled", cx);
     });
-    frame(&fixture, cx, |window, cx| {
-        window.click("user-plugin-placeable", cx)
-    });
+    cx.run_until_parked();
     assert_eq!(
         fixture.plugins.calls(),
-        vec![Call::Enabled(id(), true), Call::Placeable(id(), true)]
+        vec![Call::Enabled(id(), true), Call::Placeable(id(), true)],
+        "one switch turns the plugin on and allows it in windows"
     );
 }
 
@@ -632,21 +671,6 @@ fn the_detail_shows_the_unverified_publisher_and_the_form_in_the_plugin_frame(
         assert_eq!(
             window.find("plugin-settings-frame:user-acme-clock").label(),
             Some("Plugin \u{b7} Clock")
-        );
-    });
-}
-
-#[gpui_kit::test]
-fn the_audit_log_lists_the_newest_first(cx: &mut TestAppContext) {
-    let fixture = open(vec![row()], Ok(candidate()), cx);
-    frame(&fixture, cx, |window, _| {
-        assert_eq!(
-            window.find("user-audit:0").label(),
-            Some("user-acme-clock disabled")
-        );
-        assert_eq!(
-            window.find("user-audit:1").label(),
-            Some("user-acme-clock installed")
         );
     });
 }

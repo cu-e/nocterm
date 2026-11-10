@@ -23,6 +23,7 @@ static CLOCK: SystemPlugin = SystemPlugin {
         },
         panel: None,
         preview: Some("12:00"),
+        edge: None,
         pinned: false,
     }],
     settings_section: None,

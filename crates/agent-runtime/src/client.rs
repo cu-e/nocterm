@@ -160,18 +160,34 @@ impl HistoryUsage {
 /// A chat as the runtime sees it. Calls on a closed chat do nothing.
 pub trait SessionClient {
     fn id(&self) -> EntityId;
+    /// The chat itself, so that another window can list a chat this one holds.
+    fn chat(&self) -> Option<gpui::AnyWeakEntity> {
+        None
+    }
     /// Whether the chat is still open.
     fn alive(&self) -> bool;
     fn emit(&self, event: SessionEvent, cx: &mut App);
     fn state(&self, cx: &App) -> Option<ClientState>;
     /// Resident history only; callers must exclude a currently borrowed requester.
     fn history_usage(&self, cx: &App) -> Option<HistoryUsage>;
+    fn history_payload(&self, _cx: &App) -> Option<u64> {
+        None
+    }
     /// Evict only through the chat's durability, lease and dirty-input gates.
     fn evict_history(&self, cx: &mut App) -> bool;
     /// The chat's unsaved changes, without changing it.
-    fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>>;
+    fn snapshot(
+        &self,
+        cx: &mut App,
+    ) -> Result<Option<Arc<nocterm_ai::history::SharedChat>>, nocterm_ai::storage::AgentStorageError>;
     /// The chat's unsaved changes and the revision they become.
-    fn capture(&self, cx: &mut App) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)>;
+    fn capture(
+        &self,
+        cx: &mut App,
+    ) -> Result<
+        Option<(Arc<nocterm_ai::history::SharedChat>, u64)>,
+        nocterm_ai::storage::AgentStorageError,
+    >;
 }
 
 pub type Client = Rc<dyn SessionClient>;

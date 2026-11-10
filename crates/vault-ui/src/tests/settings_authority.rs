@@ -206,9 +206,7 @@ fn late_credential_listing_cannot_repopulate_a_closed_page_generation(cx: &mut T
     block_on(service.put(
         None,
         "account".into(),
-        CredentialBinding::Password {
-            target: Target::new("test", "host", 22),
-        },
+        CredentialBinding::password([Target::new("test", "host", 22)]),
         Secret::new("secret"),
     ))
     .unwrap();
@@ -241,9 +239,7 @@ fn accepted_delete_keeps_its_original_service_after_origin_window_closes(cx: &mu
     block_on(service.put(
         None,
         "account".into(),
-        CredentialBinding::Password {
-            target: Target::new("test", "host", 22),
-        },
+        CredentialBinding::password([Target::new("test", "host", 22)]),
         Secret::new("secret"),
     ))
     .unwrap();
@@ -271,9 +267,7 @@ fn accepted_delete_keeps_its_original_service_after_origin_window_closes(cx: &mu
     let other_id = block_on(other.put(
         None,
         "other account".into(),
-        CredentialBinding::Password {
-            target: Target::new("other", "host", 22),
-        },
+        CredentialBinding::password([Target::new("other", "host", 22)]),
         Secret::new("other secret"),
     ))
     .unwrap();

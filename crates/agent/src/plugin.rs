@@ -21,6 +21,7 @@ pub const CHATS: SystemContribution = SystemContribution {
         chrome: PanelChrome::OwnHeader,
     }),
     preview: None,
+    edge: None,
     pinned: false,
 };
 

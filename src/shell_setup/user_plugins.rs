@@ -10,7 +10,7 @@
 //! nothing that is installed) are the only constructions of the host.
 //!
 //! Plugin documents live under `<state dir>/plugins`: the records file, one data file per
-//! plugin and one package file per plugin. A developer session (`nocterm plugin dev <file>`)
+//! plugin and immutable hash-addressed package versions. A developer session (`nocterm plugin dev <file>`)
 //! composes memory-only ports instead and touches none of it; `startup` also keeps the session's
 //! settings in memory (`UserPluginMode::saves_settings`).
 use std::{path::PathBuf, rc::Rc, sync::Arc};
@@ -37,12 +37,15 @@ use super::{
 mod check;
 mod data;
 mod facts;
+mod folder;
 mod manager;
 mod ports;
 mod providers;
 mod records;
+mod restore;
 mod runtime;
 mod settings;
+mod terminals;
 
 pub(crate) use check::check_directory;
 pub(crate) use data::PluginDataFiles;
@@ -103,6 +106,8 @@ fn held_set(catalog: &Arc<PluginCatalog>) -> PluginSet {
 #[derive(Clone)]
 pub(crate) struct UserShell {
     state: ShellState,
+    /// Where the user keeps plugin files to install.
+    folder: Arc<folder::PluginsDirectory>,
 }
 
 #[derive(Clone)]
@@ -115,6 +120,8 @@ enum ShellState {
 #[derive(Clone)]
 struct Loaded {
     host: Entity<PluginHost>,
+    manager: Rc<manager::HostPlugins>,
+    data: Rc<dyn nocterm_plugin_host::PluginData>,
     source: PluginSetHandle,
     clock: Arc<dyn WallClock>,
     /// The file a developer session loads; `None` for an installation.
@@ -136,31 +143,62 @@ impl UserShell {
         cx: &mut App,
     ) -> Self {
         settings.register::<PluginEnablement>(cx);
-        let (ports, dev) = match start_of(mode, settings, cx) {
+        // Not `plugins`: on macOS the configuration and state directories are one, and
+        // `<state>/plugins` holds the host's records, data and package versions.
+        let folder = Arc::new(folder::PluginsDirectory::new(
+            paths.config_dir().join(folder::FOLDER_NAME),
+        ));
+        let (ports, dev, native) = match start_of(mode, settings, cx) {
             Start::Held(by) => {
                 return Self {
                     state: ShellState::Held(by),
+                    folder,
                 };
             }
-            Start::Dev(file) => (ports::session(catalog), Some(file)),
+            Start::Dev(file) => (ports::session(catalog), Some(file), None),
             Start::Installed => {
                 let root = paths.state_dir().join("plugins");
-                (ports::installed(&root, catalog, shutdown, cx), None)
+                let (ports, records, data) = ports::installed(&root, catalog, shutdown, cx);
+                (ports, None, Some((root, records, data)))
             }
         };
+        let packages = ports.packages.clone();
+        let runtime = ports.runtime.clone();
+        let data = ports.data.clone();
         let host = cx.new(|_| PluginHost::new(ports));
-        host.update(cx, |host, cx| host.restore(cx));
+        let native_data = native.as_ref().map(|(_, _, data)| (**data).clone());
+        let ready = match native {
+            Some((root, records, _)) => restore::start(
+                root,
+                host.clone(),
+                records,
+                packages.clone(),
+                runtime.clone(),
+                cx,
+            ),
+            None => restore::Ready::session(),
+        };
+        let manager = Rc::new(manager::HostPlugins::new(
+            host.clone(),
+            dev.clone(),
+            packages,
+            runtime,
+            data.clone(),
+            native_data,
+            ready.clone(),
+        ));
         let base = match dev {
             Some(_) => {
                 PluginSet::system(catalog.clone()).with_availability(UserAvailability::Developer)
             }
             None => PluginSet::system(catalog.clone()),
         };
-        let source = PluginSetHandle::new(published(&base, &host, cx), cx);
+        let source = PluginSetHandle::new(published(&base, &ready, &host, cx), cx);
         let follower = source.clone();
         cx.observe(&host, move |host, cx| {
-            let next = published(&base, &host, cx);
-            if follower.current(cx).users() != next.users() {
+            let next = published(&base, &ready, &host, cx);
+            let current = follower.current(cx);
+            if current.users() != next.users() || current.availability() != next.availability() {
                 follower.replace(next, cx);
             }
         })
@@ -168,10 +206,13 @@ impl UserShell {
         Self {
             state: ShellState::Loaded(Loaded {
                 host,
+                manager,
+                data,
                 source,
                 clock,
                 dev,
             }),
+            folder,
         }
     }
 
@@ -180,6 +221,14 @@ impl UserShell {
     pub(crate) fn host(&self) -> Option<&Entity<PluginHost>> {
         match &self.state {
             ShellState::Loaded(loaded) => Some(&loaded.host),
+            ShellState::Held(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn management(&self) -> Option<Rc<manager::HostPlugins>> {
+        match &self.state {
+            ShellState::Loaded(loaded) => Some(loaded.manager.clone()),
             ShellState::Held(_) => None,
         }
     }
@@ -205,9 +254,10 @@ impl UserShell {
     /// `system` and the settings of the installed user plugins.
     pub(crate) fn directory(&self, system: PluginSettingsDirectory) -> PluginSettingsDirectory {
         match &self.state {
-            ShellState::Loaded(loaded) => {
-                system.with_user(Rc::new(settings::HostSettings::new(loaded.host.clone())))
-            }
+            ShellState::Loaded(loaded) => system.with_user(Rc::new(settings::HostSettings::new(
+                loaded.host.clone(),
+                loaded.data.clone(),
+            ))),
             ShellState::Held(_) => system,
         }
     }
@@ -228,10 +278,7 @@ impl UserShell {
         directory: PluginSettingsDirectory,
     ) -> SettingsPageSpec {
         let session = match &self.state {
-            ShellState::Loaded(loaded) => UserSession::Loaded(Rc::new(manager::HostPlugins::new(
-                loaded.host.clone(),
-                loaded.dev.clone(),
-            ))),
+            ShellState::Loaded(loaded) => UserSession::Loaded(loaded.manager.clone()),
             ShellState::Held(by) => UserSession::Held(by.clone()),
         };
         nocterm_plugins_ui::settings_page_with_user_plugins(
@@ -240,6 +287,7 @@ impl UserShell {
             directory,
             session,
             toggles,
+            self.folder.clone(),
         )
     }
 
@@ -258,7 +306,19 @@ impl UserShell {
 }
 
 /// The set the host publishes now. A set the shell refuses leaves only the system plugins.
-fn published(base: &PluginSet, host: &Entity<PluginHost>, cx: &App) -> PluginSet {
+fn published(
+    base: &PluginSet,
+    ready: &restore::Ready,
+    host: &Entity<PluginHost>,
+    cx: &App,
+) -> PluginSet {
+    // Loading/failure cannot prove that a saved user id is absent. Preserve its placement
+    // until the complete installed catalog is known, including the empty-catalog case.
+    let base = if base.availability() == UserAvailability::Installed && !ready.is_ready() {
+        base.clone().with_availability(UserAvailability::Held)
+    } else {
+        base.clone()
+    };
     let host = host.read(cx);
     base.with_users(host.entries(), host.revision())
         .unwrap_or_else(|error| {
@@ -323,6 +383,7 @@ impl WindowUser {
     /// window. A held run attaches nothing.
     pub(crate) fn attach(
         self,
+        terminal: &nocterm_terminal::Installed,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -340,6 +401,21 @@ impl WindowUser {
         }
         let this = cx.entity();
         let badges = Badges::default();
+        let terminal = terminal.clone();
+        let driver = super::user_plugin_panel::RefreshDriver::new(
+            shell.host.clone(),
+            window.window_handle().window_id(),
+            cx,
+        );
+        let terminals = terminals::PluginTerminals::new(
+            window.window_handle(),
+            this.downgrade(),
+            Rc::new(move |workspace, session, window, cx| {
+                nocterm_terminal::open_attached(&terminal, workspace, session, window, cx)
+            }),
+            shell.host.downgrade(),
+            super::user_plugin_panel::TerminalBars::new(driver.downgrade(), shell.dev.is_some()),
+        );
         let providers = window_providers(
             &this,
             window.window_handle(),
@@ -347,17 +423,22 @@ impl WindowUser {
             counts,
             shell.clock.clone(),
             &badges,
+            &terminals,
             cx,
         );
+        terminals.bind(providers.clone());
+        terminals.follow_toolbars(cx);
+        cx.on_release(move |_, _| terminals.release()).detach();
         let sync = WindowSync::new(
             shell.host,
+            driver.clone(),
             shell.source,
             providers,
             badges,
             shell.dev.is_some(),
             window.window_handle().window_id(),
         );
-        super::user_plugin_panel::attach(sync, workspace, window, cx);
+        super::user_plugin_panel::attach(sync, driver, workspace, window, cx);
     }
 }
 

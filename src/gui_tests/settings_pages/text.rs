@@ -17,12 +17,12 @@ fn physical_field(
             ),
             cx,
         );
-        let settings = fixture.installed.settings().clone();
+        let settings = fixture.settings.clone();
         let (window, _) = gpui_kit::open_window(test_window_options(), cx, |window, cx| {
             cx.new(|cx| {
                 SettingsView::with_pages(
                     fixture.pages.clone(),
-                    fixture.installed.clone(),
+                    fixture.settings.clone(),
                     window,
                     cx,
                 )

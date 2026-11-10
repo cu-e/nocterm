@@ -40,6 +40,9 @@ fn options() -> Vec<ConfigOption> {
         .category(ConfigCategory::Mode),
         ConfigOption::boolean("web", "Web search", false)
             .category(ConfigCategory::Other("_tools".into())),
+        ConfigOption::boolean("server:1", "Build box", true)
+            .description("root@build.example")
+            .category(ConfigCategory::Server),
     ]
 }
 
@@ -73,6 +76,8 @@ fn a_choice_shows_at_once_only_when_the_option_offers_it() {
             value("opus"),
             value("low"),
             value("ask"),
+            ConfigValue::Flag(true),
+            // The attached server keeps the value the agent reported.
             ConfigValue::Flag(true)
         ]
     );

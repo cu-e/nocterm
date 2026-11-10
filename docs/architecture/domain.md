@@ -4,9 +4,9 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Domain crates hold the rules and contracts of one subject and depend only
 on other domain crates and the foundation, never on GPUI: `nocterm-session`, `nocterm-terminal-model`, `nocterm-explorer`,
-`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-monitor`,
+`nocterm-vt`, `nocterm-themes`, `nocterm-ai`, `nocterm-hub-agents-model`, `nocterm-monitor`,
 `nocterm-containers`, `nocterm-snippets`, `nocterm-transfers` and
-`nocterm-vault`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
+`nocterm-vault`, `nocterm-ssh-keys`, `nocterm-plugin-model`, `nocterm-window-layout`, `nocterm-project-model`, `nocterm-project-providers` and `nocterm-connections-model`. Adapters implement their contracts ([adapter layer](adapter.md));
 features present them ([feature layer](feature.md)).
 
 ## Workspace folders
@@ -74,12 +74,30 @@ legacy detected-fact strings retain their serialized representation.
 
 ## Sessions and terminal emulation
 
+`ConnectionOpenOptions` carries a captured `ConnectionSource` separately from
+route facts. A synchronous guard checks the original owner; a resumed operation
+rechecks it before each poll and after completion. A transport that cannot retain
+it rejects constrained opens. `SessionDriver::close` wakes independent native
+waiters on cancellation or producer termination. `ConnectionFailure` preserves
+native typed causes and an actionable kind without protocol types in this domain.
+
 `nocterm-session` defines transport-independent targets, authentication,
 commands, events, prompts and the `RemoteFs` contract. Launch and session-override
 validation returns typed field/constraint errors without filesystem access or
 value expansion; native transports reject invalid launches before starting I/O.
 `TextEncodingError` carries the configured `Charset` without retaining input text.
-Text conversion stays in the terminal feature, outside the session domain.
+`ExecOutput::collect_bounded` reports typed output overflow separately from an
+unknown command exit; the existing `collect` retains its bounded-prefix behavior.
+`fs::read_bounded` collects a small document from an already admitted
+`RemoteDownload`, validating requested chunk sizes and total bytes. Callers retain
+the stream and their own close-error policy. Neither helper opens a transport or
+adds native I/O to the domain.
+
+Incremental text conversion belongs to `nocterm-vt`; the session domain only
+names the charset and typed conversion refusal.
+`Event::Restore` is the screen a host holds when a session is attached again: the owner
+paints it on a fresh emulator and never treats it as output of the program
+([ADR 0095](../adr/0095-attached-sessions-restore-and-detach.md)).
 Local filesystem diagnostics retain native I/O and recursive partial-removal causes
 through foundation `SharedError`; clones share each original allocation. Domain
 constructors preserve semantic NotFound/PermissionDenied/AlreadyExists conversion
@@ -93,13 +111,30 @@ hop a prompt belongs to, and `ConnectStage` names the hop being reached. `HostAd
 matches sessions, transfer jobs and program hosts by it, not by target alone, and
 `nocterm-connections-model::credential_scope` limits a remembered credential to the
 connection (and its recents) it was typed for when that connection has jump hosts.
+`nocterm-connections-model::replica` defines the `ProfileReplica` port (a feed of changes
+and versioned writes of one sealed object per profile), its values, the persisted agreed
+state and the pure rules that reconcile local, remote and agreed profiles
+([ADR 0101](../adr/0101-profiles-synchronize-through-a-replica-beside-the-local-document.md)).
 `nocterm-connections-model::jump_route` stores a profile's
 ordered jump entries (saved connections or literal addresses) and resolves them
 purely at open time, with typed errors for deleted connections, cycles and routes over
 the limit ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
+A route can start at a hub instead of a socket: `ProxyConfig::Hub` names the hub by an
+opaque address (and optionally one of its nodes) and `validate` bounds both, without
+dialling. `RelayDialer` is the port the application implements to turn that address
+into a `RelayStream`: two bounded frame channels (`RELAY_FRAMES` frames of at most
+`RELAY_FRAME_BYTES`) so a side that stops reading stalls the other instead of growing
+a buffer, and dropping an end closes both directions. `RelayError` types why a stream
+was not opened (not signed in, refused, node unavailable, unreachable, closed). No hub
+type appears in the session domain
+([ADR 0100](../adr/0100-the-hub-is-a-route-step.md)).
 `nocterm-vt` turns a byte stream into a terminal grid using
-alacritty_terminal and encodes keyboard, mouse and paste input. These domain
-crates do not know the workspace or GPUI.
+alacritty_terminal and encodes keyboard, mouse and paste input. It also owns
+`TextCodec`, the incremental charset decoder/encoder, and `ShellIntegration`,
+the bounded OSC directory and prompt observer. Shell observations grant no session
+or input authority; the caller still validates its captured session and admits
+input before recording it with the observer. These domain crates do not know
+the workspace or GPUI.
 
 Recording diagnostics preserve native I/O through immutable foundation `SharedError`.
 Domain constructors retain operation category, path and physical append offset;
@@ -108,7 +143,7 @@ Native adapters and the shared scripted port retain the same physical-prefix and
 seal ordering, including failure outcomes that do not claim durability.
 
 The optional session `test-support` feature provides `InMemoryFs`, `FakeExec`,
-`ScriptedTransport` and `FakeCredentialStore` to consumers through dev-dependencies.
+`ScriptedTransport`, `ScriptedRelay` and `FakeCredentialStore` to consumers through dev-dependencies.
 They perform no real I/O or background scheduling. Tests drive the real session and
 execution channel ends and release pending filesystem/credential operations through
 `Gate`, so cancellation and back-pressure remain part of the port behavior. The
@@ -192,12 +227,24 @@ validated request preserves literal arguments and native cwd; success acknowledg
 spawn. The adapter owns children, not the domain or the view. The same dev-only
 `FakeExec` implements this port with bounded scripted answers and deterministic gates.
 
+`command_jobs::{CommandJobs, CommandJobsFactory}` supplies chat-owned command
+registries and immutable outcome snapshots without exposing an adapter or scheduler.
+Creating a registry or admitting a command starts no program; the host polls the
+returned runner. The dev-only
+`ScriptedCommandJobsFactory` records accepted requests and publishes explicitly
+scripted outcomes without calling `HostExec` or reading transport output. Actual
+execution and retention behavior belong to the adapter's conformance tests.
+
 ## Containers
 
 `nocterm-containers` (domain) speaks the Docker and
 Podman command lines over `HostExec` — detection (exit 127 or
 `ExecError::NotFound` means not installed), listings parsed from either JSON
 dialect, the event stream and actions — and knows nothing of GPUI.
+`EventReader` turns the event stream into `Changes`: which of the two listings an event
+made stale. Commands run inside a container (health checks), attached terminals and
+copies change neither, an unchanged health status changes nothing, and an unreadable line
+changes both ([ADR 0131](../adr/0131-one-container-watch-per-host-connection.md)).
 `ListingError` distinguishes native JSON failures (with line and column), non-object
 entries and missing container/image identifiers. `ContainersError` preserves those
 parse sources and startup `ExecError` sources separately from process exit status
@@ -218,18 +265,46 @@ use core shared cause ownership through domain constructors, so standard source
 traversal retains their original concrete classification. Snapshot clones retain
 the same diagnostic identity; adapter code gains no core dependency for construction.
 
+A request is an upload, a download or a relay between two remote hosts
+(`Request::Relay`, `TransferDirection::Relay`). `Request::between` pairs two
+`TransferEndpoint`s (`Local` or a remote host with its `RemoteFs`) into the right kind,
+refuses two local endpoints and a destination equal to or inside a source on one host,
+and validates the result against the default discovery limits. Consumers that only
+start, follow and cancel transfers use the narrow `TransferRequests` port, which
+the transfer runtime implements beside `TransferService`; `TransferId` parses from its display form.
+`OwnedTransfers<B>` is the pure per-owner book over that port: at most four active and
+sixteen retained transfers (`OwnedLimits`), no access to ids the owner did not submit,
+final snapshots kept after the shared runtime trims its history, and cancellation of
+active transfers whose binding the owner no longer keeps. It reports `OwnedTransferError`
+(`TooManyActive`, `NotOwned`, `Expired`, or the underlying `TransferError`)
+([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
+
+## SSH keys
+
+`nocterm-ssh-keys` owns the rules of an SSH key without I/O or entropy: import of OpenSSH
+private keys with the accepted algorithms, the canonical public text, the fingerprint and
+the `VaultSshKeys` port the connection editor uses to list, create and import vault keys.
+Its `ssh-key` version is the one `russh` resolves. See
+[ADR 0102](../adr/0102-ssh-keys-are-kept-in-the-vault.md).
+
 ## Vault
 
 `nocterm-vault` owns the versioned authenticated envelope, bounded codecs,
-credential binding rules and pure prepared/accepted state transitions. Entropy is
+credential binding rules, the pure `CredentialBinding::for_request` mapping shared by
+native adapters and presentation, and pure prepared/accepted state transitions. Entropy is
 supplied as values by adapters. A prepared write leaves state unchanged; acceptance
 is infallible after publication. `VaultAccess` and `DeviceUnlockProvider` declare
 UI/service and native authentication contracts without workers or filesystem I/O.
 `nocterm-vault-store` implements storage and lifecycle in the adapter layer;
 `nocterm-vault-ui` receives an explicit `Arc<dyn VaultAccess>`. Profiles store opaque
 IDs constructed from supplied bytes in `nocterm-session`. Authentication uses only
-matching password/key-passphrase bindings; Remember commits after Connected and
-excludes MFA. See [security/lifecycle notes](../VAULT.md) and
+matching password/key-passphrase bindings (`CredentialBinding::answers`): a password answers
+the addresses it lists, so a password saved under a name may sign in to several servers, and
+`VaultAccess::update` renames a record or changes those addresses while its secret stays
+(`CredentialBinding::may_become`; a key or passphrase keeps its binding)
+([ADR 0151](../adr/0151-a-saved-password-signs-in-to-the-servers-it-lists.md)). Remember commits after Connected and
+excludes MFA. A stored SSH key is the binding `PrivateKey { public_key }`, referenced from
+a profile by `Auth::VaultKey`; `SecretRequest::PrivateKey` is never storable. See [security/lifecycle notes](../VAULT.md) and
 [ADR 0016](../adr/0016-vault-storage-boundary.md).
 
 Transfer progress distinguishes completed files from acknowledged destination directory
@@ -238,6 +313,13 @@ adapter create/open acknowledgement, not a new-file or new-directory count. Its 
 survives later failure or cancellation without advancing file or byte counters.
 
 ## Agent profiles
+
+`nocterm-ai::tools::output` owns the shared terminal, command and live-observation
+report DTOs. Desktop and headless tools normalize their terminal snapshots into
+that format; command reports share explicit redaction policy and retain the actual
+exit, byte count and truncation. The panel decodes the same DTOs while retaining
+its labels, unknown-field display and historical provider-envelope fallbacks.
+These reports are observations, never execution or cancellation capabilities.
 
 `nocterm-ai::agents` describes how a known agent deviates from plain ACP as an
 `AgentProfile`: its pinned launch, the home directories it writes, how it reports
@@ -254,7 +336,8 @@ agent and `catalog()`, which the application injects.
 
 `nocterm-ai` owns pure transcript codecs, structural/collection validation,
 catalog summary rules and the `ChatRepository`/`AgentStateRepository` contracts.
-Version one remains byte-stable and belongs to General. Version two requires an
+Versions one and two belong only to ThisComputer. Version one remains byte-stable
+and belongs to General. Version two requires an
 explicit `ContextId` and a canonical envelope whose authoritative catalog header
 fits within a 16 KiB prefix. Its bounded display metadata and content/title
 projection precede the payload; full hydration validates their agreement.
@@ -272,13 +355,13 @@ ChatMetadataSource contract; the transcript reducer accepts supplied timestamps
 ([ADR0040](../adr/0040-native-chat-metadata.md)). New storage contracts use the existing typed records.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
-Account plan usage is read through AI's `AccountUsageSource` contract. `UsageAgent`
-carries the agent id and its profile's `AccountUsage` kind, never its launch or
-environment, and `UsageSources` routes it to the source registered for that kind.
-Rate-limit records in usage-update metadata are parsed by `rate_limit_record` under
-the key the profile's `UsageMeta` names. Typed `UsageReadError` retains native causes
-as values. Domain `Limits` and transcript estimates remain pure; account requests,
-log discovery and their grammars belong to the agent-usage adapter.
+Account plan limits come only from agent usage events. `rate_limit_record` parses
+usage-update metadata under the key the profile's `UsageMeta` names. Domain
+`Limits` merges each reported window independently; missing or malformed records
+leave prior reports intact. Context, token totals and transcript estimates remain
+independent of account limits. There is no native account-source port or provider
+credential/log discovery in the application
+([ADR 0105](../adr/0105-provider-usage-through-acp-only.md)).
 
 AI workspace preparation is a pure `WorkdirResolver` contract with typed
 `WorkdirError` values. `SandboxPolicy` validates supplied lexical/canonical path
@@ -412,7 +495,9 @@ plugin built on it, in a workspace of its own
 `nocterm-window-layout` owns the shell's layout as plain data and pure rules: the three
 zones of the status bar, panel groups with their members and separators (the catalog's,
 groups the user made and named, and panels that stand alone as groups of one), the tray of
-registered contributions that are not placed, and the panels that open with a layout.
+registered contributions that are not placed, the toolbars along each edge of the tab area
+([ADR 0153](../adr/0153-toolbars-and-user-plugin-requests-timers-and-terminals.md)), and the
+panels that open with a layout.
 `resolve` arranges the catalog's contributions as a preset asks and places the rest by
 their hints; ids the catalog does not know are kept in the preset but never placed, a
 contribution is placed once, separators never lead, trail or double, exactly one group
@@ -433,3 +518,51 @@ never has what `resolve` would reshape. A `[layouts]` table that does not read i
 [ADR 0084](../adr/0084-layout-presets-are-app-wide-settings.md),
 [ADR 0087](../adr/0087-status-bar-and-panels-editor.md) and
 [ADR 0094](../adr/0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md).
+
+## Hubs
+
+`nocterm-hubs-model` owns what the client needs to know about a hub without I/O: `HubAddress` (default port 7443, `https://` dropped, `http://`
+refused), `Fingerprint` and `TrustPolicy`, the pure trust decision `decide` for a probed
+certificate (pinned, public authority, first use that needs a confirmation, or a mismatch that
+can only be removed), the `[hubs]` settings section (addresses, pinned fingerprints,
+labels and an optional `HubColor` from a closed set of six theme-relative names; a colour this
+version does not know leaves the server unmarked and never drops the record; the lock policy
+of the account keys, `key_lock_minutes`; never secrets) and the ports `HubTrust`, `HubSignIn`,
+`AccountDevices` and `AccountKeyLock`. Port methods
+return runtime-agnostic futures and fail with the typed, cloneable `HubError`, which keeps the
+original cause. The `test-support` feature supplies `FakeHub`, one in-memory hub behind the
+access ports. `nocterm-hub-io` implements the ports ([adapter layer](adapter.md), [ADR
+0096](../adr/0096-hub-contract-outside-the-workspace.md)).
+
+`source_identity` separately owns captured `HubIdentity`, `AccountIdentity` and
+`AccountScope`, shared with the local chat history of `nocterm-ai` without a dependency
+cycle. The supplied hub authority and account-key fingerprints participate in equality;
+namespace text is bounded and literal. These descriptive constructors authenticate
+nothing, perform no SDK/crypto work and define no wire serialization. They do not
+replace the existing certificate fingerprint and address trust rules.
+
+A window has no environment of its own ([ADR 0099](../adr/0099-windows-have-no-environments.md)), so the crate holds no record of open windows.
+
+
+## Hub agents
+
+`nocterm-hub-agents-model` owns what the client knows about the agents of a hub account
+without I/O: `HubAgent` (name, provider and model, instructions, `ApprovalMode`, default
+servers), `Provider` and its drafts with their validation, the account's `AgentKey` (with
+`is_line_of`, which finds the key's line in an `authorized_keys` file whatever its options),
+`HubServer` with its `ServerStatus`, `NewServer` and `ServerRemoval`, and the typed
+`HubAgentsError`. Its ports are `HubAgentDirectory` (agents and providers), `HubServers` (the
+agent key and the agent servers) and `HubChanges` (hints that the chats, agents or agent servers changed on any device);
+`nocterm-hub-io` implements them. The `test-support` `FakeHubAgents` is one in-memory account
+behind all three. A hub agent's chat uses the neutral agent ports of `nocterm-ai`, not a model
+of its own ([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)).
+
+`nocterm-ai::local_environment` separates device/account ownership from project or
+General membership. `ChatScope` combines those coordinates and `ChatKey` adds the
+chat ID. `hubs-model::source_identity` supplies authenticated-source consumer ports;
+its identity constructors validate shape, while native adapters authenticate and
+invalidate the retained owners. See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
+
+### Displayed account confirmations
+
+`nocterm-hubs-model` owns `RecoveryKeyOffer` and `RecoveryKeyReissue`, opaque consumer capabilities supplied by adapters. Display DTOs remain descriptive. The offers preserve their original recipient and exact recovery action through deferred UI callbacks; typed stale errors cross the port. The domain performs no native source lookup or I/O. See [ADR 0114](../adr/0114-native-captured-account-operations.md).

@@ -46,10 +46,10 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         yield_ms: Some(0),
     };
     let payload = bridge(&f, TerminalCall::ExecCommand(request.clone()), cx);
-    let actual = program.request.lock().unwrap();
-    let actual = actual
-        .as_ref()
-        .expect("exact attached executor received request");
+    let requests = f._directory.jobs.requests();
+    let actual = requests.first().expect("command port received request");
+    let executor: Arc<dyn HostExec> = program.clone();
+    assert!(Arc::ptr_eq(&f._directory.jobs.executor(0), &executor));
     assert_eq!(actual.program, "bash");
     assert_eq!(actual.args, args);
     assert_eq!(actual.stdin.as_deref(), Some(&b"input\r\n"[..]));
@@ -72,15 +72,9 @@ fn screenshot_identity_and_real_mcp_result_survive_late_input_and_history(cx: &m
         );
     });
     let stdout = "line\r\n\t```literal```\n界\n";
-    let sink = program.sink.lock().unwrap().take().unwrap();
-    assert!(futures::executor::block_on(
-        sink.send(stdout.as_bytes().to_vec())
-    ));
-    sink.finish(ExecExit {
-        status: Some(7),
-        stderr: "warning\n".into(),
-    });
-    drop(sink);
+    f._directory
+        .jobs
+        .finish(0, stdout.as_bytes(), 7, "warning\n");
     cx.run_until_parked();
     let result = bridge(
         &f,

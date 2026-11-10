@@ -24,10 +24,12 @@ use crate::{
 
 mod contribution;
 mod declare;
+mod network;
 mod settings;
 
 pub use contribution::{ContributionDto, ContributionError};
 pub use declare::{DeclareError, MAX_DECLARED, OptionalCapability};
+pub use network::{Credential, Network, NetworkDto, NetworkError, NetworkTableError};
 pub use settings::{
     ChoiceOptionDto, DefaultDto, FieldDto, FieldKindName, GroupDto, SettingsDto, SettingsError,
 };
@@ -97,6 +99,9 @@ pub struct ManifestDto {
     pub contributions: Vec<ContributionDto>,
     #[serde(default)]
     pub settings: Option<SettingsDto>,
+    /// Where `net.request` goes and what it carries: the keys of [`NetworkDto`].
+    #[serde(default)]
+    pub network: Option<BTreeMap<String, String>>,
 }
 
 /// What the host knows that a manifest is checked against.
@@ -152,6 +157,8 @@ pub enum ManifestError {
     },
     #[error("settings")]
     Settings(#[from] SettingsError),
+    #[error("network")]
+    Network(#[from] NetworkError),
     #[error("the plugin is invalid")]
     Plugin(#[from] UserPluginError),
 }
@@ -167,6 +174,7 @@ pub struct Manifest {
     optional: Vec<OptionalCapability>,
     reasons: BTreeMap<String, String>,
     views: BTreeMap<String, ViewTemplate>,
+    network: Option<Network>,
 }
 
 impl Manifest {
@@ -191,6 +199,14 @@ impl Manifest {
             Runtime::Wasm => {}
         }
         let schema = settings::schema(&id, dto.settings.as_ref())?;
+        let requests = network::declares_requests(
+            declaration
+                .required
+                .iter()
+                .map(|entry| entry.id)
+                .chain(declaration.optional.iter().map(OptionalCapability::id)),
+        );
+        let network = network::network(dto.network.as_ref(), requests, &schema)?;
         let built = contribution::build(
             &id,
             dto.runtime,
@@ -210,7 +226,14 @@ impl Manifest {
             optional: declaration.optional,
             reasons: declaration.reasons,
             views: built.views,
+            network,
         })
+    }
+
+    /// Where the package's requests go and the credential they carry, when it declares
+    /// `net.request`.
+    pub fn network(&self) -> Option<&Network> {
+        self.network.as_ref()
     }
 
     pub fn api(&self) -> ApiVersion {

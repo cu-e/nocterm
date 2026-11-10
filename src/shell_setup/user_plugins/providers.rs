@@ -14,11 +14,13 @@ use nocterm_plugin_ports::{Observe, PluginProviders};
 use nocterm_ui::notice::PluginNotices;
 use nocterm_workspace::{ShellCapabilities, Workspace};
 
+use super::terminals::{PluginTerminals, TerminalsHandle};
 use crate::shell_setup::user_plugin_panel::Badges;
 
 /// Capabilities the host answers itself, so a window has no provider for them.
 #[cfg(test)]
-pub(super) const HOST_HANDLED: &[&str] = &["storage.set", "storage.remove"];
+pub(super) const HOST_HANDLED: &[&str] =
+    &["storage.set", "storage.remove", "net.request", "timers.set"];
 
 /// Capabilities this build declares unavailable in every window. None: a capability without a
 /// provider or a line here fails the coverage test, so a new one cannot be forgotten.
@@ -34,6 +36,7 @@ pub(crate) fn window_providers(
     counts: TransferCounts,
     clock: Arc<dyn WallClock>,
     badges: &Badges,
+    terminals: &Rc<PluginTerminals>,
     cx: &mut App,
 ) -> PluginProviders {
     let notices = Rc::new(PluginNotices::new(window));
@@ -48,6 +51,10 @@ pub(crate) fn window_providers(
         .with_counts(Rc::new(counts))
         .with_own_notices(notices.clone())
         .with_post(notices)
+        .with_open_terminal(Rc::new(TerminalsHandle::new(terminals)))
+        .with_write_terminal(Rc::new(TerminalsHandle::new(terminals)))
+        .with_serve_files(Rc::new(TerminalsHandle::new(terminals)))
+        .with_terminal_bar(Rc::new(TerminalsHandle::new(terminals)))
 }
 
 /// `clock.now`: the wall clock the application gave the shell, to the minute. Reading it starts

@@ -2,36 +2,21 @@
 
 use alloc::vec::Vec;
 
-use nocterm_plugin_abi::{AbiError, Answer, Call, Reply, decode_call, encode_reply};
-use nocterm_plugin_api::Snapshot;
+use nocterm_plugin_abi::{AbiError, Answer, Reply, decode_call, encode_reply};
 
 use crate::{Cx, Plugin};
 
 /// Decodes a call, runs the plugin and encodes the reply.
 pub fn dispatch<P: Plugin>(plugin: &mut P, input: &[u8]) -> Result<Vec<u8>, AbiError> {
-    let reply = match decode_call(input)? {
-        Call::Render { local, snapshot } => {
-            let snapshot = Snapshot::from(snapshot);
-            let mut cx = Cx::new(&local, &snapshot);
-            let view = plugin.render(&mut cx);
-            Reply {
-                answer: Answer::View(view),
-                log: cx.into_log(),
-            }
-        }
-        Call::Event {
-            local,
-            event,
-            snapshot,
-        } => {
-            let snapshot = Snapshot::from(snapshot);
-            let mut cx = Cx::new(&local, &snapshot);
-            let effects = plugin.on_event(&mut cx, &event);
-            Reply {
-                answer: Answer::Effects(effects),
-                log: cx.into_log(),
-            }
-        }
+    let (local, event, snapshot) = decode_call(input)?.into_parts();
+    let mut cx = Cx::new(&local, &snapshot);
+    let answer = match event {
+        None => Answer::View(plugin.render(&mut cx)),
+        Some(event) => Answer::Effects(plugin.on_event(&mut cx, &event)),
+    };
+    let reply = Reply {
+        answer,
+        log: cx.into_log(),
     };
     encode_reply(&reply)
 }

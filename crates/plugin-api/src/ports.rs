@@ -121,6 +121,10 @@ pub enum PackageError {
     Unwritable(#[source] Cause),
     #[error("`{0}` is not the id of a user plugin, so it names no package file")]
     NotUserId(PluginId),
+    #[error(
+        "the plugin has {max} retained package versions; finish or retry its pending publication first"
+    )]
+    PendingVersions { max: usize },
 }
 
 /// Reads, stores and removes packages. Implemented by an adapter.
@@ -129,8 +133,8 @@ pub trait PluginPackages: Send + Sync {
     /// parses the manifest. It reads only; nothing is stored.
     fn read(&self, location: &str) -> Result<Package, PackageError>;
 
-    /// Stores the exact bytes of a read package privately and atomically. A package with the
-    /// same plugin id is a duplicate unless `replace` says it is an update.
+    /// Stores the exact bytes privately under their hash without removing earlier consented
+    /// versions. A duplicate id is refused unless `replace` permits an update or staged retry.
     fn publish(&self, package: &Package, replace: bool) -> Result<(), PackageError>;
 
     /// Loads an installed package and checks that its bytes still hash to `expected`.
@@ -138,6 +142,12 @@ pub trait PluginPackages: Send + Sync {
 
     /// Removes an installed package. Removing one that is not installed succeeds.
     fn remove(&self, plugin: &PluginId) -> Result<(), PackageError>;
+
+    /// Removes superseded package versions after the matching records document is durable.
+    /// The caller serializes package management until this operation finishes.
+    fn retain(&self, _plugin: &PluginId, _expected: &ContentHash) -> Result<(), PackageError> {
+        Ok(())
+    }
 }
 
 /// Why a code module cannot be run at all.
@@ -211,6 +221,13 @@ pub trait PluginInstance: Send + Sync {
         event: Event,
         snapshot: &Snapshot,
     ) -> Result<Effects, RuntimeError>;
+}
+
+/// Sends a plugin's requests. An adapter implements it over an HTTP client: no cookies, no
+/// redirects followed, a bounded body, a timeout, and the address checked again against the
+/// origin. The host calls it on a background thread.
+pub trait PluginNet: Send + Sync {
+    fn send(&self, call: &crate::capability::net::NetCall) -> crate::capability::net::NetAnswer;
 }
 
 /// Turns a package into an instance: the declarative interpreter or a code runtime.

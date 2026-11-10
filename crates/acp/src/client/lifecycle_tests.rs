@@ -32,6 +32,7 @@ for line in sys.stdin:
                 args: vec!["-c".into(), script.into(), mode.into()],
                 env: Default::default(),
                 inherit_env: Vec::new(),
+                hub: None,
             },
             working_directory: directory.into(),
             terminal_auth: false,

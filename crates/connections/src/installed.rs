@@ -5,10 +5,10 @@ use nocterm_connections_model::{
     observation::CountryCode,
     profiles::{Profile, ProfileId},
 };
-use nocterm_connections_store::{FactsEvent, FactsPrepared, FactsService};
+use nocterm_connections_store::{FactsEvent, FactsPrepared, FactsService, ProfileReplication};
 use nocterm_store::{SettingsHandle, ShutdownCoordinator, StoreError};
 use nocterm_ui::UiReady;
-use std::{rc::Rc, sync::Arc};
+use std::{cell::OnceCell, rc::Rc, sync::Arc};
 #[derive(Clone)]
 pub struct Installed(Rc<Installation>);
 struct Installation {
@@ -18,6 +18,8 @@ struct Installation {
     settings: SettingsHandle,
     presentation: Rc<crate::facts_presentation::FactsPresentation>,
     sources: Rc<crate::probe_sources::ProbeSources>,
+    /// Created after this installation, once the application knows the account.
+    replication: OnceCell<Entity<ProfileReplication>>,
     _subscriptions: Vec<Subscription>,
 }
 impl Installed {
@@ -84,6 +86,7 @@ impl Installed {
             settings,
             presentation: Rc::new(Default::default()),
             sources,
+            replication: OnceCell::new(),
             _subscriptions: subscriptions,
         })))
     }
@@ -92,6 +95,20 @@ impl Installed {
     }
     pub fn facts(&self) -> &Entity<FactsService> {
         &self.0.facts
+    }
+    /// Tells the views which replication keeps the saved connections in step with an
+    /// account, so they show whether the list may be changed. Only the first call has an
+    /// effect.
+    pub fn bind_replication(&self, replication: Entity<ProfileReplication>) {
+        let _ = self.0.replication.set(replication);
+    }
+    /// Tells `observer` about every session of a saved connection as it comes up. Only the
+    /// first call has an effect.
+    pub fn bind_host_observer(&self, observer: Rc<dyn crate::HostObserver>) {
+        self.0.sources.bind_observer(observer);
+    }
+    pub(crate) fn replication(&self) -> Option<&Entity<ProfileReplication>> {
+        self.0.replication.get()
     }
     pub fn settings(&self) -> &SettingsHandle {
         &self.0.settings
@@ -160,6 +177,25 @@ pub fn install(
         inputs,
         ready.settings().clone(),
         shutdown,
+        cx,
+    )
+}
+/// Installs connections that live only in memory, for a window whose list something else
+/// keeps (the mirror of an account). It registers no settings, no key bindings and nothing
+/// for shutdown: the owner of the list saves it, and `install` already did the rest for the
+/// application.
+pub fn install_volatile(
+    prepared: PreparedConnections,
+    ready: &UiReady,
+    cx: &mut App,
+) -> Result<Installed, StoreError> {
+    let (connections, inputs, facts) = prepared.into_owners();
+    Installed::from_owners(
+        connections,
+        facts,
+        inputs,
+        ready.settings().clone(),
+        &ShutdownCoordinator::default(),
         cx,
     )
 }

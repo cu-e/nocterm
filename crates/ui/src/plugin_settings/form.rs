@@ -81,11 +81,17 @@ impl PluginSettingsForm {
         let values = source.values(cx);
         let mut inputs = BTreeMap::new();
         for field in fields_in(&schema, &scope) {
-            if let FieldKind::Text { placeholder, .. } = &field.kind {
+            if let FieldKind::Text {
+                placeholder,
+                secret,
+                ..
+            } = &field.kind
+            {
                 let key = field.key.to_string();
                 let text = text_of(&values, field);
                 let placeholder = placeholder.as_deref().map(str::to_string);
-                inputs.insert(key.clone(), text_input(key, text, placeholder, window, cx));
+                let input = text_input(key.clone(), text, placeholder, *secret, window, cx);
+                inputs.insert(key, input);
             }
         }
         let weak = cx.weak_entity();
@@ -350,15 +356,20 @@ fn text_of(values: &SettingValues, field: &FieldSpec) -> String {
     }
 }
 
+/// A secret field is masked: what is typed shows as dots, and the value never leaves the form
+/// but to the plugin's own data.
 fn text_input(
     key: String,
     text: String,
     placeholder: Option<String>,
+    secret: bool,
     window: &mut Window,
     cx: &mut Context<PluginSettingsForm>,
 ) -> TextInput {
     let state = cx.new(|cx| {
-        let state = InputState::new(window, cx).default_value(text);
+        let state = InputState::new(window, cx)
+            .masked(secret)
+            .default_value(text);
         match placeholder {
             Some(placeholder) => state.placeholder(placeholder),
             None => state,

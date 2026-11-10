@@ -4,14 +4,17 @@
 use alloc::{string::String, vec, vec::Vec};
 
 use nocterm_plugin_api::{
-    ContributionContext, Effect, EffectOutcome, EffectRequest, Effects, Event, HostError, Kind,
-    LocalId, Node, NodeKind, PluginIcon, Refresh, Tone, View, Zone,
+    ContributionContext, Effect, EffectOutcome, EffectRequest, Effects, Event, Glyph, HostError,
+    Kind, LocalId, Node, NodeKind, PluginIcon, Refresh, Tone, View, Zone,
     capability::{
         clock::ClockNow,
         monitor::Usage,
+        net::{Method, Request},
         notifications::{NoticeTone, OwnNotice, OwnNotices, Post},
         panels::{SetBadge, SetOpen},
         storage::{Remove, Set},
+        terminals::{Open, Write},
+        timers::SetTimer,
         transfers::Counts,
         workspace::{WorkspaceKind, WorkspaceState},
     },
@@ -27,6 +30,10 @@ pub struct Sample {
     pub name: &'static str,
     pub bytes: Vec<u8>,
 }
+
+mod bars;
+mod charts;
+mod files;
 
 fn local(name: &str) -> LocalId {
     LocalId::parse(name).expect("a sample local name is valid")
@@ -149,12 +156,7 @@ fn full_view(refresh: Refresh) -> View {
         nodes: vec![
             node(None, None, NodeKind::Column, Tone::Default),
             node(Some(0), None, NodeKind::Row, Tone::Muted),
-            node(
-                Some(1),
-                None,
-                NodeKind::Icon(PluginIcon::Puzzle),
-                Tone::Success,
-            ),
+            node(Some(1), None, NodeKind::Icon(Glyph::Puzzle), Tone::Success),
             node(
                 Some(1),
                 None,
@@ -227,13 +229,95 @@ fn full_effects() -> Effects {
     ])
 }
 
+/// The glyphs and the components of a view.
+fn component_samples() -> [Sample; 2] {
+    [
+        sample(
+            "reply-view-glyphs",
+            encode_reply(&reply(Answer::View(glyphs_view()), &[])),
+        ),
+        sample(
+            "reply-view-components",
+            encode_reply(&reply(Answer::View(components_view()), &[])),
+        ),
+    ]
+}
+
+/// A view with one icon node for every glyph, so a reordered glyph changes a sample.
+fn glyphs_view() -> View {
+    let mut nodes = vec![node(None, None, NodeKind::Row, Tone::Default)];
+    nodes.extend(
+        Glyph::ALL
+            .into_iter()
+            .map(|glyph| node(Some(0), None, NodeKind::Icon(glyph), Tone::Default)),
+    );
+    View {
+        nodes,
+        refresh: None,
+    }
+}
+
+/// A section of one item with an icon button, a caption and a field.
+fn components_view() -> View {
+    View {
+        nodes: vec![
+            node(
+                None,
+                Some("servers"),
+                NodeKind::Section {
+                    title: String::from("Servers"),
+                    count: Some(String::from("2")),
+                    folded: false,
+                },
+                Tone::Default,
+            ),
+            node(
+                Some(0),
+                Some("open"),
+                NodeKind::Item {
+                    title: String::from("Build"),
+                    detail: Some(String::from("on \u{b7} node 1")),
+                    icon: Some(Glyph::Server),
+                    selected: true,
+                },
+                Tone::Success,
+            ),
+            node(
+                Some(1),
+                Some("stop"),
+                NodeKind::IconButton {
+                    icon: Glyph::Stop,
+                    label: String::from("Stop"),
+                },
+                Tone::Default,
+            ),
+            node(
+                Some(0),
+                None,
+                NodeKind::Caption(String::from("one is off")),
+                Tone::Muted,
+            ),
+            node(
+                Some(0),
+                None,
+                NodeKind::Field {
+                    label: String::from("CPU"),
+                    value: String::from("38%"),
+                },
+                Tone::Caution,
+            ),
+        ],
+        refresh: None,
+    }
+}
+
 /// A view with one icon node for every icon, so a reordered icon changes a sample.
 fn icons_view() -> View {
     let mut nodes = vec![node(None, None, NodeKind::Row, Tone::Default)];
     nodes.extend(
         PluginIcon::ALL
             .into_iter()
-            .map(|icon| node(Some(0), None, NodeKind::Icon(icon), Tone::Default)),
+            .map(|icon| node(Some(0), None, NodeKind::Icon(icon.into()), Tone::Default)),
     );
     View {
         nodes,
@@ -387,5 +471,128 @@ pub fn samples() -> Vec<Sample> {
             }),
         )
     }));
+    samples.extend(session_samples());
     samples
+}
+
+/// The samples of the requests, timers, terminals, code blocks and toolbars, appended after
+/// the first set so its bytes stay as they were.
+fn session_samples() -> Vec<Sample> {
+    let events = [
+        (
+            "call-event-response",
+            Event::Response {
+                key: String::from("servers"),
+                status: 200,
+                body: String::from("{\"servers\":{}}"),
+            },
+        ),
+        (
+            "call-event-timer",
+            Event::Timer {
+                key: String::from("poll"),
+            },
+        ),
+        (
+            "call-event-terminal-line",
+            Event::TerminalLine {
+                terminal: String::from("srv"),
+                line: String::from("say hi"),
+            },
+        ),
+        (
+            "call-event-terminal-closed",
+            Event::TerminalClosed {
+                terminal: String::from("srv"),
+            },
+        ),
+    ];
+    let mut samples: Vec<Sample> = events
+        .into_iter()
+        .map(|(name, event)| {
+            sample(
+                name,
+                encode_call(&Call::Event {
+                    local: local("panel"),
+                    event,
+                    snapshot: empty_snapshot(),
+                }),
+            )
+        })
+        .collect();
+    samples.push(sample(
+        "reply-effects-sessions",
+        encode_reply(&reply(Answer::Effects(session_effects()), &[])),
+    ));
+    samples.push(sample(
+        "reply-view-code",
+        encode_reply(&reply(
+            Answer::View(View {
+                nodes: vec![node(
+                    None,
+                    None,
+                    NodeKind::Code(String::from("a\n    b")),
+                    Tone::Muted,
+                )],
+                refresh: None,
+            }),
+            &[],
+        )),
+    ));
+    samples.extend(component_samples());
+    samples.extend(files::samples());
+    samples.push(sample(
+        "call-render-toolbar",
+        encode_call(&Call::Render {
+            local: local("bar"),
+            snapshot: WireSnapshot {
+                context: ContributionContext {
+                    kind: Kind::Toolbar,
+                    zone: Zone::Center,
+                },
+                ..empty_snapshot()
+            },
+        }),
+    ));
+    samples.extend(bars::samples());
+    samples.extend(charts::samples());
+    samples
+}
+
+/// A request of every method, a timer and both terminal effects.
+fn session_effects() -> Effects {
+    let mut effects: Vec<EffectRequest> = Method::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(index, method)| EffectRequest {
+            key: Some(alloc::format!("r{index}")),
+            effect: Effect::NetRequest(Request {
+                method,
+                path: String::from("/api/items"),
+                body: (method == Method::Post).then(|| String::from("{\"action\":\"start\"}")),
+                bytes: false,
+            }),
+        })
+        .collect();
+    effects.push(EffectRequest {
+        key: Some(String::from("poll")),
+        effect: Effect::TimersSet(SetTimer { after_ms: 2000 }),
+    });
+    effects.push(EffectRequest {
+        key: None,
+        effect: Effect::TerminalsOpen(Open {
+            local: local("panel"),
+            terminal: String::from("srv"),
+            title: String::from("Build"),
+            files: false,
+        }),
+    });
+    effects.push(EffectRequest {
+        key: None,
+        effect: Effect::TerminalsWrite(Write {
+            terminal: String::from("srv"),
+            text: String::from("\u{1b}[32mready\u{1b}[0m\n"),
+        }),
+    });
+    Effects(effects)
 }

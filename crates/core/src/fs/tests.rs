@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn namespace_commit_is_visible_before_parent_sync_and_receipt_drop_never_rolls_it_back() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("snapshot");
+    fs::write(&path, b"old").unwrap();
+    let committed = AtomicPublication::stage_private(&path, b"new")
+        .unwrap()
+        .commit()
+        .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"new");
+    drop(committed);
+    assert_eq!(fs::read(&path).unwrap(), b"new");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    AtomicPublication::stage_private(&path, b"synced")
+        .unwrap()
+        .commit()
+        .unwrap()
+        .sync_parent();
+    assert_eq!(fs::read(path).unwrap(), b"synced");
+}
+
+#[test]
 fn binary_snapshot_round_trips_and_creates_parents() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("nested/bytes");
@@ -32,6 +53,155 @@ fn failed_publication_preserves_destination_and_cleans_staging() {
     assert!(staged.publish().is_err());
     assert_eq!(fs::read(path.join("existing")).unwrap(), b"preserve");
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn new_publication_has_one_winner_and_never_overwrites_an_existing_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identity");
+    let first = AtomicPublication::stage_private(&path, b"first identity").unwrap();
+    let second = AtomicPublication::stage_private(&path, b"second identity").unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let ready = barrier.clone();
+    let one = std::thread::spawn(move || {
+        ready.wait();
+        first.publish_new()
+    });
+    let two = std::thread::spawn(move || {
+        barrier.wait();
+        second.publish_new()
+    });
+    let outcomes = [one.join().unwrap(), two.join().unwrap()];
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .filter(|error| error.kind() == io::ErrorKind::AlreadyExists)
+            .count(),
+        1
+    );
+    let bytes = fs::read(&path).unwrap();
+    assert!(bytes == b"first identity" || bytes == b"second identity");
+    assert!(
+        AtomicPublication::stage_private(&path, b"replacement")
+            .unwrap()
+            .publish_new()
+            .is_err()
+    );
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_publication_preserves_live_and_dangling_links_without_reading_their_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("target");
+    let path = directory.path().join("identity");
+    fs::write(&target, b"preserve").unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    for exists in [true, false] {
+        if !exists {
+            fs::remove_file(&target).unwrap();
+        }
+        let result = AtomicPublication::stage_private(&path, b"new identity")
+            .unwrap()
+            .publish_new();
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_link(&path).unwrap(), target);
+        if exists {
+            assert_eq!(fs::read(&target).unwrap(), b"preserve");
+        } else {
+            assert!(!target.exists());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn private_open_checks_actual_permissions_and_links_and_retains_original_file() {
+    use std::{io::Read as _, os::unix::fs::PermissionsExt as _};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identity");
+    let published = AtomicPublication::stage_private(&path, b"original")
+        .unwrap()
+        .publish_new()
+        .unwrap();
+    require_private_regular(&published).unwrap();
+    for mode in [0o600, 0o400] {
+        fs::set_permissions(&path, Permissions::from_mode(mode)).unwrap();
+        let mut original = open_private_regular(&path).unwrap();
+        let mut bytes = Vec::new();
+        original.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"original");
+    }
+    for mode in [0o640, 0o604, 0o700, 0o4600] {
+        fs::set_permissions(&path, Permissions::from_mode(mode)).unwrap();
+        assert!(matches!(
+            open_private_regular(&path),
+            Err(PrivateFileError::Policy)
+        ));
+    }
+    fs::set_permissions(&path, Permissions::from_mode(0o600)).unwrap();
+    let link = directory.path().join("backup-link");
+    fs::hard_link(&path, &link).unwrap();
+    assert!(matches!(
+        require_private_regular(&published),
+        Err(PrivateFileError::Policy)
+    ));
+    assert!(matches!(
+        open_private_regular(&path),
+        Err(PrivateFileError::Policy)
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    fs::remove_file(&link).unwrap();
+    let mut original = open_private_regular(&path).unwrap();
+    let replacement = directory.path().join("replacement");
+    fs::write(&replacement, b"replacement").unwrap();
+    fs::rename(&replacement, &path).unwrap();
+    let mut bytes = Vec::new();
+    original.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, b"original");
+    assert_eq!(fs::read(path).unwrap(), b"replacement");
+}
+
+#[cfg(unix)]
+#[test]
+fn private_open_refuses_final_links_directories_and_fifo_without_reading() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("identity");
+    drop(
+        AtomicPublication::stage_private(&target, b"identity")
+            .unwrap()
+            .publish_new()
+            .unwrap(),
+    );
+    let link = directory.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert!(matches!(
+        open_private_regular(&link),
+        Err(PrivateFileError::Open(BoundedReadError::NotRegular { .. }))
+    ));
+    assert!(matches!(
+        open_private_regular(directory.path()),
+        Err(PrivateFileError::Open(BoundedReadError::NotRegular { .. }))
+    ));
+    let fifo = directory.path().join("pipe");
+    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::from_bits_truncate(0o600)).unwrap();
+    assert!(matches!(
+        open_private_regular(&fifo),
+        Err(PrivateFileError::Open(BoundedReadError::NotRegular { .. }))
+    ));
+}
+
+#[cfg(not(unix))]
+#[test]
+fn private_open_refuses_unsupported_platform_before_opening() {
+    assert!(matches!(
+        open_private_regular(Path::new("not-opened")),
+        Err(PrivateFileError::Unsupported)
+    ));
 }
 
 #[test]

@@ -2,12 +2,32 @@
 
 use std::collections::BTreeMap;
 
-use gpui::App;
+use gpui::{App, Task};
 use nocterm_plugin_api::capability::storage::{MAX_TOTAL, Remove, Set};
 use nocterm_plugin_model::{PluginId, SettingValue, SettingValues};
 use serde::{Deserialize, Serialize};
 
 use crate::{DataBoundsError, DocumentError, PluginDataError};
+
+/// A plugin's data as the port has it, or defaults beside the reason it does not read.
+pub(crate) fn load_state(
+    data: &dyn PluginData,
+    plugin: &PluginId,
+    cx: &App,
+) -> crate::registry::DataState {
+    use crate::registry::DataState;
+    let broken = |error: PluginDataError| DataState::Broken {
+        error,
+        defaults: PluginDataDoc::default(),
+    };
+    match data.load(plugin, cx) {
+        Ok(doc) => match doc.check() {
+            Ok(()) => DataState::Loaded(doc),
+            Err(error) => broken(PluginDataError::Bounds(error)),
+        },
+        Err(error) => broken(error),
+    }
+}
 
 /// Most serialized bytes of a plugin's setting values.
 pub const MAX_VALUES_BYTES: usize = 4 * 1024;
@@ -150,4 +170,10 @@ pub trait PluginData {
         change: PluginDataChange,
         cx: &mut App,
     ) -> Result<(), PluginDataError>;
+
+    /// Resolves after previously accepted changes of this plugin are durable. Memory-only
+    /// ports are already settled; native ports override this with their keyed writer receipt.
+    fn flush(&self, _plugin: &PluginId, _cx: &mut App) -> Task<Result<(), PluginDataError>> {
+        Task::ready(Ok(()))
+    }
 }

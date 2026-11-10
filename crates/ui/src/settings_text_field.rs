@@ -43,6 +43,33 @@ enum ReceiptState {
 pub struct SettingsTextField(Entity<TextField>);
 
 impl SettingsTextField {
+    /// Bind one typed section while keeping its validator and error with the caller.
+    pub fn section<
+        S: nocterm_settings::SettingsSection,
+        E: std::error::Error + Send + Sync + 'static,
+    >(
+        settings: SettingsHandle,
+        id: impl Into<SharedString>,
+        read: impl Fn(&S) -> String + 'static,
+        write: impl Fn(&mut S, &str) -> Result<(), E> + 'static,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        Self::new(
+            settings,
+            id,
+            move |document| read(document.get::<S>()),
+            move |document, text| {
+                let mut section = document.get::<S>().clone();
+                write(&mut section, text).map_err(StoreError::edit)?;
+                document.set(section);
+                Ok(())
+            },
+            window,
+            cx,
+        )
+    }
+
     pub fn new(
         settings: SettingsHandle,
         id: impl Into<SharedString>,

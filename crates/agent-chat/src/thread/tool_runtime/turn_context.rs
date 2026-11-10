@@ -149,6 +149,7 @@ impl TurnContext {
                     connection,
                     cwd: info.cwd.map(|path| path.to_string_lossy().into_owned()),
                     status: format!("{:?}", info.status),
+                    file_tools: super::file_dispatch::takes_file_tools(&entry, info.expected, cx),
                 };
                 Some((id, entry, descriptor))
             })
@@ -231,23 +232,34 @@ impl TurnContext {
                 })
                 .unwrap_or_else(|| "Unavailable server".into());
         }
-        self.resolved(input, defaults, cx)
-            .into_iter()
-            .find(|(id, _, _)| Some(id.as_str()) == call.terminal_id())
-            .map(|(_, entry, descriptor)| {
-                format!(
-                    "{}{}",
-                    entry.title,
-                    descriptor
-                        .connection
-                        .as_ref()
-                        .map(|connection| format!(
-                            " · {}@{}:{}",
-                            connection.user, connection.host, connection.port
-                        ))
-                        .unwrap_or_default()
-                )
-            })
-            .unwrap_or_else(|| "Unavailable terminal".into())
+        let resolved = self.resolved(input, defaults, cx);
+        let describe = |wanted: Option<&str>| {
+            resolved
+                .iter()
+                .find(|(id, _, _)| Some(id.as_str()) == wanted)
+                .map(|(_, entry, descriptor)| {
+                    format!(
+                        "{}{}",
+                        entry.title,
+                        descriptor
+                            .connection
+                            .as_ref()
+                            .map(|connection| format!(
+                                " · {}@{}:{}",
+                                connection.user, connection.host, connection.port
+                            ))
+                            .unwrap_or_default()
+                    )
+                })
+                .unwrap_or_else(|| "Unavailable terminal".into())
+        };
+        match call.source_terminal_id() {
+            Some(source) => format!(
+                "{} → {}",
+                describe(Some(source)),
+                describe(call.terminal_id())
+            ),
+            None => describe(call.terminal_id()),
+        }
     }
 }

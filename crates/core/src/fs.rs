@@ -4,8 +4,10 @@
 //! directories must be trusted: this is not a pinned-directory traversal API.
 
 mod bounded;
+mod private;
 
 pub use bounded::{BoundedReadError, read_regular_bounded};
+pub use private::{PrivateFileError, open_private_regular, require_private_regular};
 
 use std::{
     fs::{self, File, OpenOptions, Permissions},
@@ -79,6 +81,19 @@ pub struct AtomicPublication {
     destination: PathBuf,
 }
 
+/// A completed namespace replacement whose parent directory still needs best-effort sync.
+/// Dropping this receipt cannot remove or roll back the published file.
+#[must_use = "finish parent sync outside the owner's publication lock"]
+pub struct CommittedPublication {
+    destination: PathBuf,
+}
+
+impl CommittedPublication {
+    pub fn sync_parent(self) {
+        sync_parent_best_effort(&self.destination);
+    }
+}
+
 impl AtomicPublication {
     /// Stages a mode-0600 snapshot in an existing parent directory.
     pub fn stage_private(path: &Path, bytes: &[u8]) -> Result<Self, FileError> {
@@ -139,15 +154,46 @@ impl AtomicPublication {
     /// in-memory state. Best-effort directory sync cannot turn a commit into an
     /// apparent failed write. Ancestors are not pinned against concurrent changes.
     pub fn publish(self) -> Result<(), FileError> {
+        self.commit()?.sync_parent();
+        Ok(())
+    }
+
+    /// Commits only the namespace replacement. The caller can publish matching
+    /// memory under its authority lock, then sync the parent after releasing it.
+    pub fn commit(self) -> Result<CommittedPublication, FileError> {
         self.temporary
             .persist(&self.destination)
             .map_err(|error| FileError::at(&self.destination, error.error))?;
-        #[cfg(unix)]
-        if let Ok(directory) = File::open(parent_directory(&self.destination)) {
-            let _ = directory.sync_all();
-        }
-        Ok(())
+        Ok(CommittedPublication {
+            destination: self.destination,
+        })
     }
+
+    /// Publishes only if the final path does not exist, including a dangling link.
+    /// Returns the actual published descriptor; no destination is overwritten.
+    ///
+    /// Success commits the namespace operation. The tempfile fallback can leave
+    /// a second staging hard link, and parent sync is best effort. A private-key
+    /// owner must validate this descriptor and confirm held-parent durability
+    /// before announcing readiness. A postcommit refusal must retain the identity,
+    /// rather than deleting or silently regenerating the destination.
+    pub fn publish_new(self) -> Result<File, FileError> {
+        let file = self
+            .temporary
+            .persist_noclobber(&self.destination)
+            .map_err(|error| FileError::at(&self.destination, error.error))?;
+        sync_parent_best_effort(&self.destination);
+        Ok(file)
+    }
+}
+
+fn sync_parent_best_effort(path: &Path) {
+    #[cfg(unix)]
+    if let Ok(directory) = File::open(parent_directory(path)) {
+        let _ = directory.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 fn parent_directory(path: &Path) -> &Path {

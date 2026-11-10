@@ -5,7 +5,7 @@ use nocterm_plugin_model::{
     ContributionId, ContributionKind, ContributionRef, GroupId, PluginSet, Side, Zone,
 };
 
-use super::{EditError, EditOp, Limit, Slot, Subject, settle::settle};
+use super::{EditError, EditOp, Limit, Slot, Subject, settle::settle, toolbars};
 use crate::{
     BarItem, GroupEntry, LayoutPreset, LayoutSettings, MAX_GROUP_MEMBERS, MAX_NAME_CHARS,
     MAX_ZONE_ITEMS, NameError, PresetId,
@@ -74,6 +74,10 @@ impl<'a> Editing<'a> {
             EditOp::NewGroup { panel } => self.new_group(&panel),
             EditOp::Ungroup { group } => self.ungroup(&group),
             EditOp::RenameGroup { group, name } => self.rename_group(&group, &name),
+            EditOp::ShowToolbar { id, edge } => {
+                let spec = self.contribution(&id)?;
+                toolbars::show(self.preset, spec, edge)
+            }
             // Handled before the entry operations are reached.
             EditOp::Rename { .. }
             | EditOp::Duplicate
@@ -174,6 +178,9 @@ impl<'a> Editing<'a> {
                     side: None,
                 },
             },
+            ContributionKind::Toolbar => {
+                return Err(EditError::WrongKind(Subject::Contribution(id.clone())));
+            }
         })
     }
 
@@ -408,6 +415,7 @@ impl<'a> Editing<'a> {
         if let Some(spot) = self.find(&Subject::Contribution(id.clone())) {
             self.take(spot);
         }
+        self.preset.toolbars.remove(id);
         if !self.preset.tray.contains(id) {
             self.preset.tray.push(id.clone());
         }
@@ -430,6 +438,7 @@ impl<'a> Editing<'a> {
                     .clone();
                 self.put_in_group(id, &group)
             }
+            ContributionKind::Toolbar => toolbars::restore(self.preset, spec),
         }
     }
 
@@ -453,6 +462,7 @@ impl<'a> Editing<'a> {
                 }
                 self.put_in_zone(&Subject::Group(group), zone)
             }
+            ContributionKind::Toolbar => Err(EditError::WrongKind(subject)),
         }
     }
 

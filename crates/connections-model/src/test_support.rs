@@ -11,6 +11,8 @@ mod gates;
 mod repository;
 pub use gates::{BlockingGate, BlockingRelease};
 pub use repository::{InMemoryConnectionRepository, RepositoryCall, RepositoryGate};
+mod replica;
+pub use replica::{MemoryReplica, ReplicaCall};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObservationCall {
     Resolve(String),

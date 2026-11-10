@@ -12,6 +12,8 @@ layer = "domain"
 # The crate is `no_std` with `alloc`, so these do not take the workspace entries (which keep
 # the default `std` features); the isolation check lists the direct dependencies.
 [dependencies]
+# Pin Unicode 16: upgrading the table changes the sanitizer contract.
+unicode-general-category = "=1.0.0"
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
 thiserror = { version = "2", default-features = false }
 

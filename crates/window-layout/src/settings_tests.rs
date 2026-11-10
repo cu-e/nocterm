@@ -100,6 +100,7 @@ fn focus() -> LayoutPreset {
         },
         tray: vec![id("files.transfers")],
         open: vec![id("files.explorer"), id("workspace.local-terminal")],
+        toolbars: crate::Toolbars::default(),
     }
 }
 

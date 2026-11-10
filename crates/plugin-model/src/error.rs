@@ -3,7 +3,7 @@
 use alloc::{string::String, string::ToString};
 use thiserror::Error;
 
-use crate::{ContributionId, GroupId, PluginId, SchemaError, Zone};
+use crate::{ContributionId, Edge, GroupId, PluginId, SchemaError, Zone};
 
 /// An id that does not follow the id syntax.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -62,6 +62,8 @@ pub enum CatalogError {
     WidgetGroup { id: ContributionId, group: String },
     #[error("contribution `{id}` must have panel traits exactly when it is a panel")]
     PanelTraits { id: ContributionId },
+    #[error("contribution `{id}` must name an edge exactly when it is a toolbar")]
+    ToolbarEdge { id: ContributionId },
     #[error("exactly one group must be primary, but {count} are")]
     PrimaryGroups { count: usize },
     #[error("the settings schema of plugin `{plugin}` is invalid")]
@@ -72,6 +74,10 @@ pub enum CatalogError {
     },
     #[error("plugin `{plugin}` declares settings fields but names no settings section")]
     SettingsSection { plugin: PluginId },
+    #[error("plugin `{plugin}` declares a secret setting, which only a user plugin may")]
+    SecretSetting { plugin: PluginId },
     #[error("two contributions of the {zone:?} zone share the order {order}")]
     DuplicateOrder { zone: Zone, order: u16 },
+    #[error("two toolbars of the {edge:?} edge share the order {order}")]
+    DuplicateEdgeOrder { edge: Edge, order: u16 },
 }

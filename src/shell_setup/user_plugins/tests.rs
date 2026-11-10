@@ -34,6 +34,8 @@ fn load(
     id: &PluginId,
     cx: &mut TestAppContext,
 ) -> Result<PluginDataDoc, PluginDataError> {
+    let acquired = cx.update(|cx| files.acquire(id.clone(), cx));
+    cx.foreground_executor().block_test(acquired);
     cx.update(|cx| files.load(id, cx))
 }
 
@@ -407,6 +409,16 @@ mod window {
                 TransferCounts::over(Arc::new(FakeTransfers::default())),
                 Arc::new(Midnight),
                 &Badges::default(),
+                &super::super::terminals::PluginTerminals::new(
+                    handle,
+                    workspace.downgrade(),
+                    std::rc::Rc::new(|_, _, _, _| Ok(())),
+                    gpui_kit::WeakEntity::new_invalid(),
+                    crate::shell_setup::user_plugin_panel::TerminalBars::new(
+                        gpui_kit::WeakEntity::new_invalid(),
+                        false,
+                    ),
+                ),
                 cx,
             )
         })

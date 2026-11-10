@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use futures::FutureExt as _;
 use gpui_kit::{
@@ -6,7 +6,11 @@ use gpui_kit::{
     TestAppContext, Window, WindowOptions, div, prelude::*,
 };
 use nocterm_containers::{Action, ContainersError, Engine};
-use nocterm_session::{ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink, HostExec, Target};
+use nocterm_containers_service::{
+    ContainerHosts,
+    test_support::{EXITED, FakeDockerHost, RUNNING, docker_event},
+};
+use nocterm_session::{HostExec, Target};
 use nocterm_settings::SettingsDocument;
 use nocterm_store::SettingsConfig;
 use nocterm_ui::DesignTokens;
@@ -17,76 +21,11 @@ use crate::{
     model::{ContainersModel, Status},
 };
 
-const RUNNING: &str =
-    r#"{"ID":"a1","Image":"nginx","Names":"web","State":"running","Status":"Up 2 hours"}"#;
-const EXITED: &str =
-    r#"{"ID":"a1","Image":"nginx","Names":"web","State":"exited","Status":"Exited (0)"}"#;
+/// A host with a scripted Docker; see [`FakeDockerHost`].
+pub(crate) type FakeHost = FakeDockerHost;
 
-/// A host whose `docker` lists `containers`, keeps `docker events` running
-/// until the test prints to it, and does every other command it is asked.
-pub(crate) struct FakeHost {
-    docker: bool,
-    containers: Mutex<&'static str>,
-    ran: Mutex<Vec<String>>,
-    events: Mutex<Vec<ExecSink>>,
-}
-
-impl FakeHost {
-    pub(crate) fn new(docker: bool) -> Arc<Self> {
-        Arc::new(Self {
-            docker,
-            containers: Mutex::new(RUNNING),
-            ran: Mutex::default(),
-            events: Mutex::default(),
-        })
-    }
-
-    pub(crate) fn ran(&self) -> Vec<String> {
-        self.ran.lock().unwrap().clone()
-    }
-
-    /// Reports a change from the latest event stream.
-    fn announce(&self) {
-        let events = self.events.lock().unwrap();
-        let sink = events.last().expect("events are followed");
-        assert_eq!(
-            sink.send(b"container die\n".to_vec()).now_or_never(),
-            Some(true)
-        );
-    }
-
-    /// Whether the event stream started `index`th is still being read.
-    fn following(&self, index: usize) -> bool {
-        !self.events.lock().unwrap()[index].is_closed()
-    }
-}
-
-impl HostExec for FakeHost {
-    fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
-        let line = request.command_line();
-        self.ran.lock().unwrap().push(line.clone());
-        let (sink, output) = ExecOutput::channel();
-        if self.docker && line.starts_with("docker events") {
-            self.events.lock().unwrap().push(sink);
-            return Box::pin(async { Ok(output) });
-        }
-        let (stdout, status) = match () {
-            _ if !self.docker => ("", 127),
-            _ if line.starts_with("docker ps") => (*self.containers.lock().unwrap(), 0),
-            _ if line.starts_with("docker images") => ("", 0),
-            _ if line.starts_with("docker") => ("", 0),
-            _ => ("", 127),
-        };
-        assert_eq!(
-            sink.send(stdout.as_bytes().to_vec()).now_or_never(),
-            Some(true)
-        );
-        sink.finish(ExecExit {
-            status: Some(status),
-            stderr: String::new(),
-        });
-        Box::pin(async { Ok(output) })
-    }
+fn announce_exit(host: &FakeHost) {
+    host.announce(&docker_event("container", "die", "a1"));
 }
 
 struct SessionItem {
@@ -142,7 +81,8 @@ pub(crate) fn fixture(cx: &mut TestAppContext, local: Option<Arc<dyn HostExec>>)
                 })
             })
             .unwrap();
-        let model = cx.new(|cx| ContainersModel::new(&workspace, None, local, cx));
+        let model =
+            cx.new(|cx| ContainersModel::new(&workspace, None, local, ContainerHosts::new(), cx));
         let panel = cx.new(|cx| ContainersPanel::new(model.clone(), workspace.downgrade(), cx));
         Fixture {
             window,
@@ -160,11 +100,11 @@ fn assert_status(
     fixture: &Fixture,
     expected: impl FnOnce(&Status) -> bool,
 ) {
-    fixture.model.read_with(cx, |model, _| {
+    fixture.model.read_with(cx, |model, cx| {
         assert!(
-            expected(model.status()),
+            expected(&model.status(cx)),
             "unexpected status: {:?}",
-            model.status()
+            model.status(cx)
         );
     });
 }
@@ -205,8 +145,8 @@ fn containers_are_listed_again_when_the_engine_reports_a_change(cx: &mut TestApp
             .any(|line| line.starts_with("docker events"))
     );
 
-    *local.containers.lock().unwrap() = EXITED;
-    local.announce();
+    local.set_containers(EXITED);
+    announce_exit(&local);
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(1));
     cx.run_until_parked();
@@ -225,12 +165,22 @@ fn actions_and_programs_run_on_the_followed_host(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(matches!(done.now_or_never(), Some(Ok(()))));
     assert!(local.ran().contains(&"docker stop a1".to_owned()));
-    assert!(!local.following(0), "a refresh follows the engine anew");
+    // With the events the action caused, once they settle.
+    cx.executor()
+        .advance_clock(nocterm_containers_service::SETTLE);
+    cx.run_until_parked();
+    assert_eq!(
+        local.count("docker ps"),
+        2,
+        "the containers are listed again"
+    );
+    assert_eq!(local.count("docker images"), 1, "the images are not");
+    assert!(local.following(0), "over the same event stream");
 
     let spec = fixture
         .model
-        .read_with(cx, |model, _| {
-            model.program("Logs: web".into(), |engine| engine.logs("a1"))
+        .read_with(cx, |model, cx| {
+            model.program("Logs: web".into(), |engine| engine.logs("a1"), cx)
         })
         .unwrap();
     assert_eq!(spec.host.key, HostKey::Local);
@@ -270,8 +220,11 @@ fn the_panel_follows_the_active_session_without_connections_of_its_own(cx: &mut 
     assert!(
         fixture
             .model
-            .read_with(cx, |model, _| model
-                .program("Logs".into(), |e| e.logs("a1")))
+            .read_with(cx, |model, cx| model.program(
+                "Logs".into(),
+                |e| e.logs("a1"),
+                cx
+            ))
             .is_none(),
         "no engine is known for it"
     );
@@ -294,9 +247,9 @@ fn nothing_is_listed_without_a_host(cx: &mut TestAppContext) {
 fn destructive_intents_cannot_move_to_another_host_or_reconnect(cx: &mut TestAppContext) {
     let local = FakeHost::new(true);
     let fixture = fixture(cx, Some(local.clone()));
-    let intent = fixture.model.read_with(cx, |model, _| {
+    let intent = fixture.model.read_with(cx, |model, cx| {
         model
-            .intent(Action::RemoveImage, vec!["same-image".into()])
+            .intent(Action::RemoveImage, vec!["same-image".into()], cx)
             .unwrap()
     });
     let another = FakeHost::new(true);
@@ -312,9 +265,9 @@ fn destructive_intents_cannot_move_to_another_host_or_reconnect(cx: &mut TestApp
     assert!(!local.ran().iter().any(|line| line.contains("same-image")));
     assert!(!another.ran().iter().any(|line| line.contains("same-image")));
 
-    let intent = fixture.model.read_with(cx, |model, _| {
+    let intent = fixture.model.read_with(cx, |model, cx| {
         model
-            .intent(Action::RemoveImage, vec!["same-image".into()])
+            .intent(Action::RemoveImage, vec!["same-image".into()], cx)
             .unwrap()
     });
     // Same target, a new connection/executor.
@@ -341,15 +294,18 @@ fn disconnecting_invalidates_captured_intent_and_rejects_new_actions(cx: &mut Te
     let host = FakeHost::new(true);
     let fixture = fixture(cx, None);
     open_session(cx, &fixture, remote(&host, true));
-    let intent = fixture.model.read_with(cx, |model, _| {
-        model.intent(Action::Remove, vec!["a1".into()]).unwrap()
+    let intent = fixture.model.read_with(cx, |model, cx| {
+        model.intent(Action::Remove, vec!["a1".into()], cx).unwrap()
     });
     open_session(cx, &fixture, remote(&host, false));
     assert!(
         fixture
             .model
-            .read_with(cx, |model, _| model
-                .intent(Action::Remove, vec!["a1".into()]))
+            .read_with(cx, |model, cx| model.intent(
+                Action::Remove,
+                vec!["a1".into()],
+                cx
+            ))
             .is_none()
     );
     let done = fixture
@@ -367,7 +323,7 @@ fn disconnecting_invalidates_captured_intent_and_rejects_new_actions(cx: &mut Te
 #[gpui_kit::test]
 fn malformed_successful_listing_remains_a_retryable_failure(cx: &mut TestAppContext) {
     let local = FakeHost::new(true);
-    *local.containers.lock().unwrap() = "not JSON";
+    local.set_containers("not JSON");
     let fixture = fixture(cx, Some(local.clone()));
     assert_status(cx, &fixture, |status| {
         let Status::Failed(ContainersError::Parse(error)) = status else {
@@ -379,7 +335,7 @@ fn malformed_successful_listing_remains_a_retryable_failure(cx: &mut TestAppCont
         )
     });
     let attempts = local.ran().len();
-    *local.containers.lock().unwrap() = RUNNING;
+    local.set_containers(RUNNING);
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(10));
     cx.run_until_parked();
@@ -389,38 +345,45 @@ fn malformed_successful_listing_remains_a_retryable_failure(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
-fn registered_container_panels_keep_their_supplied_host_across_other_windows(
-    cx: &mut TestAppContext,
-) {
+fn windows_on_the_same_host_share_one_watch(cx: &mut TestAppContext) {
     let first = FakeHost::new(true);
     let second = FakeHost::new(true);
-    for host in [first.clone(), second.clone(), first.clone()] {
+    let shared = crate::install(Some(first.clone()));
+    let other = crate::install(Some(second.clone()));
+    for installed in [&shared, &other, &shared] {
         let fixture = fixture(cx, None);
         cx.update_window(fixture.window, |_, window, cx| {
             fixture.workspace.update(cx, |workspace, cx| {
-                crate::register(Some(host.clone()), workspace, window, cx).unwrap();
+                crate::register(installed, workspace, window, cx).unwrap();
             });
         })
         .unwrap();
         cx.run_until_parked();
     }
-    assert_eq!(
-        first
-            .ran()
-            .iter()
-            .filter(|command| command.starts_with("docker events"))
-            .count(),
-        2
-    );
-    assert_eq!(
-        second
-            .ran()
-            .iter()
-            .filter(|command| command.starts_with("docker events"))
-            .count(),
-        1
-    );
+    assert_eq!(first.count("docker events"), 1, "two windows, one watch");
+    assert_eq!(first.count("docker ps"), 1);
+    assert_eq!(second.count("docker events"), 1);
     assert!(first.following(0));
-    assert!(first.following(1));
     assert!(second.following(0));
+}
+
+#[gpui_kit::test]
+fn health_checks_do_not_list_the_host_again(cx: &mut TestAppContext) {
+    let local = FakeHost::new(true);
+    let fixture = fixture(cx, Some(local.clone()));
+    for _ in 0..10 {
+        for action in [
+            "exec_create: pg_isready",
+            "exec_start: pg_isready",
+            "exec_die",
+        ] {
+            local.announce(&docker_event("container", action, "pg"));
+        }
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(3));
+        cx.run_until_parked();
+    }
+    assert_eq!(local.count("docker ps"), 1);
+    assert_eq!(local.count("docker images"), 1);
+    assert_eq!(badge(cx, &fixture).as_deref(), Some("1"));
 }

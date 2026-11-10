@@ -25,32 +25,99 @@ pub(crate) fn page(page: &PluginsPage, cx: &mut Context<PluginsPage>) -> impl In
     let selected = page
         .selected()
         .and_then(|id| page.catalog().plugin(id))
-        .map(|plugin| detail(page, plugin, cx));
+        .map(|plugin| detail(page, plugin, cx))
+        .or_else(|| external_detail(page, cx));
     v_flex()
         .id("plugins-page")
         .test_support()
         .track_focus(&page_focus(page, cx))
         .w_full()
-        .child(system_plugins(page, rows, selected, cx))
-        .children(user_section(page))
+        .gap_6()
+        .child(plugins(rows, external_rows(page, cx), selected, cx))
+        .children(external_head(page, cx))
+}
+
+/// The external plugins' head: the switch, install and the plugins folder, the consent.
+#[cfg(feature = "user")]
+fn external_head(page: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
+    page.user()
+        .map(|user| gpui_kit::AnyView::from(user.head().clone()).into_any_element())
+}
+
+/// A build without user plugins says so where the external plugins' head would be, so the user
+/// knows why there is nothing to install.
+#[cfg(not(feature = "user"))]
+fn external_head(_: &PluginsPage, cx: &mut Context<PluginsPage>) -> Option<AnyElement> {
+    Some(
+        v_flex()
+            .id("user-plugins-unavailable")
+            .test_support()
+            .w_full()
+            .gap_2()
+            .child(form::page_header(
+                "External plugins",
+                Some(
+                    "This build of Nocterm was made without user plugins, so plugin files \
+                     cannot be installed. A build with the `user-plugins` feature can install \
+                     them from a file or from its plugins folder."
+                        .into(),
+                ),
+                cx,
+            ))
+            .into_any_element(),
+    )
 }
 
 #[cfg(feature = "user")]
-fn user_section(page: &PluginsPage) -> Option<gpui_kit::AnyView> {
-    page.user().map(|user| user.clone().into())
+fn external_rows(page: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
+    page.user()
+        .map(|user| gpui_kit::AnyView::from(user.rows().clone()).into_any_element())
 }
 
 #[cfg(not(feature = "user"))]
-fn user_section(_: &PluginsPage) -> Option<gpui_kit::AnyView> {
+fn external_rows(_: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
     None
 }
 
-fn system_plugins(
-    _page: &PluginsPage,
+/// The selected external plugin, when no built-in one is selected.
+#[cfg(feature = "user")]
+fn external_detail(page: &PluginsPage, cx: &mut Context<PluginsPage>) -> Option<AnyElement> {
+    page.user()
+        .filter(|user| user.section().read(cx).has_selection())
+        .map(|user| gpui_kit::AnyView::from(user.detail().clone()).into_any_element())
+}
+
+#[cfg(not(feature = "user"))]
+fn external_detail(_: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
+    None
+}
+
+/// The heading of a group of the list, as the application heads its sections.
+fn group(title: &'static str, cx: &Context<PluginsPage>) -> AnyElement {
+    div()
+        .px_3()
+        .pt_2()
+        .pb_1()
+        .text_xs()
+        .font_semibold()
+        .text_color(cx.theme().muted_foreground)
+        .child(title.to_uppercase())
+        .into_any_element()
+}
+
+fn plugins(
     rows: Vec<AnyElement>,
+    external: Option<AnyElement>,
     selected: Option<AnyElement>,
     cx: &mut Context<PluginsPage>,
 ) -> impl IntoElement {
+    let external = external.map(|external| {
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(group("External", cx))
+            .child(external)
+    });
     h_flex()
         .id("system-plugins")
         .w_full()
@@ -63,7 +130,9 @@ fn system_plugins(
                 .w(rems(18.))
                 .flex_shrink_0()
                 .gap_1()
-                .children(rows),
+                .when(external.is_some(), |list| list.child(group("Built-in", cx)))
+                .children(rows)
+                .children(external),
         )
         .child(
             v_flex()
@@ -210,6 +279,7 @@ fn contribution_row(contribution: &SystemContribution, cx: &Context<PluginsPage>
     let kind = match contribution.kind {
         ContributionKind::Panel => "Side panel",
         ContributionKind::Widget => "Status bar widget",
+        ContributionKind::Toolbar => "Toolbar",
     };
     h_flex()
         .id(SharedString::from(format!(

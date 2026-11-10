@@ -1,7 +1,8 @@
 //! The guest SDK for Rust code plugins: the Plugin trait, a view builder, typed reads of
 //! observations and settings, effect constructors, the export! macro and testing::Host.
 //!
-//! Owns: guest-side dispatch of ABI calls and the test host that drives it.
+//! Owns: guest-side dispatch of ABI calls, the effect constructors (including requests, timers
+//! and terminals) and the test host that drives it.
 //! Does not own: the ABI types (nocterm-plugin-abi), contract types (nocterm-plugin-api),
 //!       running modules (nocterm-plugin-wasm).
 //! Ports: none. Settings: none. Globals: none in this crate; export! expands one single-threaded
@@ -49,7 +50,7 @@ pub mod testing;
 
 pub use cx::Cx;
 pub use observe::{Observable, ObserveError};
-pub use view::{NodeId, ViewBuilder};
+pub use view::{Chart, Item, NodeId, Section, ViewBuilder};
 
 #[doc(hidden)]
 pub use dispatch::__private;
@@ -57,17 +58,21 @@ pub use dispatch::__private;
 /// The contract types an author names, so a plugin depends on this crate alone.
 pub mod api {
     pub use nocterm_plugin_api::{
-        API_VERSION, ContributionContext, EffectOutcome, EffectRequest, Effects, Event, HostError,
-        LimitError, LocalId, MAX_BADGE, MAX_BUTTON, MAX_DEPTH, MAX_EFFECT_KEY, MAX_EFFECTS,
+        API_VERSION, ContributionContext, Edge, Effect, EffectOutcome, EffectRequest, Effects,
+        Event, Glyph, HostError, Kind, LimitError, LocalId, MAX_BADGE, MAX_BUTTON,
+        MAX_CHART_POINTS, MAX_CHART_SERIES, MAX_CODE, MAX_DEPTH, MAX_EFFECT_KEY, MAX_EFFECTS,
         MAX_LIST_ITEMS, MAX_NODE_KEY, MAX_NODES, MAX_TEXT, MIN_REFRESH_MS, Node, NodeKind,
-        Observed, PluginIcon, Refresh, Snapshot, Tone, View,
+        Observed, PluginIcon, Refresh, Snapshot, Tone, View, Zone, base64,
         capability::{
             clock::ClockNow,
+            files::{FileAnswer, FileEntry, FileFailure, FileOp, MAX_FILE_BYTES, MAX_FILE_ENTRIES},
             monitor::Usage,
+            net::Method,
             notifications::{NoticeTone, OwnNotice, OwnNotices},
             transfers::Counts,
             workspace::{WorkspaceKind, WorkspaceState},
         },
+        sanitize_display,
     };
     pub use nocterm_plugin_model::SettingValue;
 }

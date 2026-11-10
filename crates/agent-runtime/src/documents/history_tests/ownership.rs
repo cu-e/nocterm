@@ -8,7 +8,7 @@ pub(super) fn register(
     client: Client,
     cx: &mut Context<Runtime>,
 ) -> Result<(), crate::ChatOpenError> {
-    ChatStore::require_client_scope(ContextId::General, &client, cx)?;
+    ChatStore::require_client_scope(ContextId::General.into(), &client, cx)?;
     let key = client
         .state(cx)
         .ok_or(crate::ChatOpenError::Closed)?

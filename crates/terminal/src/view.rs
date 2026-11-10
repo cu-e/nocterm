@@ -48,7 +48,7 @@ mod pointer;
 mod render;
 #[cfg(test)]
 #[path = "view_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 /// A terminal tab.
 pub struct TerminalView {
@@ -63,6 +63,8 @@ pub struct TerminalView {
     notice_messages: [Option<String>; 3],
     _subscriptions: Vec<Subscription>,
     capabilities: nocterm_workspace::TerminalCapabilities,
+    /// What the opener of an attached session draws along an edge of the tab.
+    bar: Option<Entity<crate::TerminalBar>>,
 }
 
 struct SecretField {
@@ -107,6 +109,19 @@ impl TerminalView {
         let terminal = cx.new(|cx| {
             Terminal::new_local_command(deps, launch, title.into(), transport, completion, cx)
         });
+        Self::with_terminal(terminal, window, cx)
+    }
+
+    pub(crate) fn new_attached(
+        deps: crate::Installed,
+        title: String,
+        target: nocterm_session::Target,
+        transport: std::sync::Arc<dyn nocterm_session::Transport>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let terminal =
+            cx.new(|cx| Terminal::new_attached(deps, title.into(), target, transport, cx));
         Self::with_terminal(terminal, window, cx)
     }
 
@@ -159,6 +174,10 @@ impl TerminalView {
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
                 this.focus_changed(false, cx);
             }),
+            cx.observe_window_activation(window, |this, window, cx| {
+                this.cursor.set_active(window.is_window_active());
+                this.sync_cursor_clock(cx);
+            }),
         ];
 
         Self {
@@ -166,13 +185,29 @@ impl TerminalView {
             input: Default::default(),
             focus_handle,
             cache: Default::default(),
-            cursor: cursor::CursorClock::new(cx),
+            cursor: cursor::CursorClock::new(window.is_window_active(), cx),
             pointer: Default::default(),
             secret: None,
             find: None,
             notice_messages: Default::default(),
             _subscriptions: subscriptions,
             capabilities,
+            bar: None,
+        }
+    }
+
+    /// Draws `bar` around the screen, and again whenever it changes.
+    pub(crate) fn attach_bar(&mut self, bar: Entity<crate::TerminalBar>, cx: &mut Context<Self>) {
+        self._subscriptions
+            .push(cx.observe(&bar, |_, _, cx| cx.notify()));
+        self.bar = Some(bar);
+    }
+
+    /// `screen` with the opener's bar around it.
+    fn with_bar(&self, screen: gpui_kit::AnyElement, cx: &gpui_kit::App) -> gpui_kit::AnyElement {
+        match &self.bar {
+            Some(bar) => crate::bar::around(screen, bar.read(cx), cx),
+            None => screen,
         }
     }
 
@@ -341,6 +376,7 @@ impl TerminalView {
                 .update(cx, |terminal, cx| terminal.retrieve_credential(cx));
         }
         self.wake_cursor(cx);
+        self.sync_cursor_clock(cx);
     }
 
     pub(crate) fn cursor_visible(&self) -> bool {
@@ -365,6 +401,15 @@ impl TerminalView {
         if self.cursor.wake(cx.background_executor().now()) {
             cx.notify();
         }
+    }
+    pub(crate) fn sync_cursor_clock(&mut self, cx: &mut Context<Self>) {
+        let blinking = self
+            .cache
+            .frame()
+            .cursor
+            .is_some_and(|cursor| cursor.blinking);
+        let running = self.input.focused() && blinking && self.terminal.read(cx).is_connected();
+        self.cursor.set_running(running, cx);
     }
 
     fn pointer_host(&self) -> pointer::PointerHost {
@@ -558,6 +603,10 @@ impl TerminalView {
     fn sync_secret_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.terminal.read(cx);
         let question = match terminal.prompt() {
+            Some(Prompt::Secret {
+                request: SecretRequest::PrivateKey { .. },
+                ..
+            }) => None,
             Some(Prompt::Secret { request, .. }) => Some((
                 terminal.prompt_epoch(),
                 matches!(request, SecretRequest::Interactive { echo: true, .. }),
@@ -589,9 +638,12 @@ impl TerminalView {
             if owns_focus {
                 input.update(cx, |input, cx| input.focus(window, cx));
             }
+            // An account keeps what its servers sign in with; this computer's vault only
+            // when asked.
+            let remember = self.terminal.read(cx).remembers_for_account();
             self.secret = Some(SecretField {
                 prompt_epoch,
-                remember: false,
+                remember,
                 input,
                 _subscription: subscription,
             });

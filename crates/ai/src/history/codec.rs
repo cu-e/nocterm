@@ -24,6 +24,7 @@ pub fn decode(bytes: &[u8], id: &str) -> Result<SavedChat, HistoryCodecError> {
 pub fn prepare(chat: SavedChat) -> Result<SavedChat, HistoryCodecError> {
     validate_id(&chat.header.id)?;
     super::header::resolve_scope(chat.version, Some(chat.header.scope))?;
+    super::header::validate_environment(chat.version, &chat.header.environment)?;
     if chat.archived_draft {
         return Err(HistoryCodecError::ArchivedPatch);
     }
@@ -35,6 +36,36 @@ pub fn prepare(chat: SavedChat) -> Result<SavedChat, HistoryCodecError> {
     let bytes = serde_json::to_vec(&chat)?;
     decode(&bytes, &chat.header.id)
 }
+/// Validate and prepare the same owned decoded body. This avoids serializing
+/// and decoding a second full transcript merely to create its cached budgets.
+pub fn prepare_owned(mut chat: SavedChat) -> Result<SavedChat, HistoryCodecError> {
+    validate_id(&chat.header.id)?;
+    super::header::resolve_scope(chat.version, Some(chat.header.scope))?;
+    super::header::validate_environment(chat.version, &chat.header.environment)?;
+    if chat.archived_draft {
+        return Err(HistoryCodecError::ArchivedPatch);
+    }
+    chat.validate_collections()?;
+    if chat.entries.len() > super::MAX_SAVED_ENTRIES || chat.times.len() > super::MAX_SAVED_ENTRIES
+    {
+        return Err(HistoryCodecError::CollectionLimit);
+    }
+    let resident = {
+        let value = wire::Wire::complete(&chat);
+        // Preserve decode's public refusal ordering: encoded limit before the
+        // structural limit, using the existing allocation-free counters.
+        check_size(super::size::encoded_len(&value).map_err(HistoryCodecError::from)?)?;
+        let resident = super::size::structural_size(&value).map_err(HistoryCodecError::from)?;
+        super::check_memory(resident)?;
+        resident
+    };
+    super::CatalogHeader::from_chat(&chat, false).validate(&chat.header.id)?;
+    let mut prepared = PreparedBudget::new(&chat)?;
+    prepared.resident_bytes = resident;
+    chat.prepared = Some(prepared);
+    Ok(chat)
+}
+
 pub fn encode(chat: &SavedChat) -> Result<Vec<u8>, HistoryCodecError> {
     if chat.archived_draft {
         return Err(HistoryCodecError::ArchivedPatch);
@@ -70,6 +101,7 @@ fn encode_value(
 ) -> Result<Vec<u8>, HistoryCodecError> {
     validate_id(&chat.header.id)?;
     super::header::resolve_scope(chat.version, Some(chat.header.scope))?;
+    super::header::validate_environment(chat.version, &chat.header.environment)?;
     let bytes = serde_json::to_vec(value)?;
     check_size(bytes.len())?;
     preflight::check(&bytes)?;

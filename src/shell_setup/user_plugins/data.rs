@@ -1,8 +1,11 @@
 //! A plugin's values and storage, one private file `<root>/<plugin-id>.json` each, written
 //! through the keyed persistence service so a change is coalesced and flushed at shutdown.
-use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
+use futures::channel::oneshot;
+use std::{
+    cell::RefCell, collections::HashMap, num::NonZeroUsize, path::PathBuf, rc::Rc, sync::Arc,
+};
 
-use gpui_kit::{App, AppContext as _, Entity};
+use gpui_kit::{App, AppContext as _, Entity, Task};
 use nocterm_core::fs::{BoundedReadError, read_regular_bounded, write_private_atomic};
 use nocterm_plugin_api::Cause;
 use nocterm_plugin_host::{
@@ -21,9 +24,14 @@ const PENDING_PLUGINS: usize = 16;
 type Writer = Entity<KeyedPersisted<PluginId, PluginDataChange, ()>>;
 
 /// The files of all plugins' data under one directory.
+#[derive(Clone)]
 pub(crate) struct PluginDataFiles {
     root: PathBuf,
     writer: Writer,
+    // One staged acquisition is consumed by the host's new-install load. Runtime values
+    // stay solely in the host; persistence retains only its accepted generation stamps.
+    preloaded: Rc<RefCell<Option<(PluginId, Result<PluginDataDoc, PluginDataError>)>>>,
+    generations: Rc<RefCell<HashMap<PluginId, nocterm_store::Revision>>>,
 }
 
 impl PluginDataFiles {
@@ -38,7 +46,48 @@ impl PluginDataFiles {
                 NonZeroUsize::new(PENDING_PLUGINS).expect("nonzero constant"),
             )
         });
-        Self { root, writer }
+        Self {
+            root,
+            writer,
+            preloaded: Rc::default(),
+            generations: Rc::default(),
+        }
+    }
+
+    fn seed(&self, plugin: PluginId, result: Result<PluginDataDoc, PluginDataError>) {
+        *self.preloaded.borrow_mut() = Some((plugin, result));
+    }
+    pub(super) fn forget(&self, plugin: &PluginId, cx: &mut App) {
+        let mut preloaded = self.preloaded.borrow_mut();
+        if preloaded.as_ref().is_some_and(|(id, _)| id == plugin) {
+            preloaded.take();
+        }
+        self.generations.borrow_mut().remove(plugin);
+        self.writer.update(cx, |writer, _| {
+            writer.forget_clean(plugin);
+        });
+    }
+    pub(super) fn retry(&self, plugin: &PluginId, cx: &mut App) -> Result<(), PluginDataError> {
+        self.writer
+            .update(cx, |writer, cx| {
+                if writer.error(plugin).is_some() {
+                    writer.retry(plugin, cx)
+                } else {
+                    Ok(())
+                }
+            })
+            .map_err(|error| PluginDataError::NotSaved(Cause::new(error)))
+    }
+    pub(super) fn acquire(&self, plugin: PluginId, cx: &mut App) -> Task<()> {
+        let root = self.root.clone();
+        let requested = plugin.clone();
+        let loaded = cx
+            .background_executor()
+            .spawn(async move { read(&root, &requested) });
+        let this = self.clone();
+        cx.spawn(async move |_| {
+            this.seed(plugin, loaded.await);
+        })
     }
 
     /// Flushes the pending changes when the application closes.
@@ -92,18 +141,16 @@ fn publish(
 
 impl PluginData for PluginDataFiles {
     fn load(&self, plugin: &PluginId, _: &App) -> Result<PluginDataDoc, PluginDataError> {
-        let file = file_of(&self.root, plugin)
-            .ok_or_else(|| PluginDataError::NotAPluginId(plugin.clone()))?;
-        match read_regular_bounded(&file, MAX_FILE_BYTES) {
-            Ok(bytes) => PluginDataDoc::decode(&bytes).map_err(|error| match error {
-                DocumentError::Bounds(bounds) => PluginDataError::Bounds(bounds),
-                syntax => PluginDataError::Broken(Cause::new(syntax)),
-            }),
-            Err(error) if is_missing(&error) => Ok(PluginDataDoc::default()),
-            Err(
-                error @ (BoundedReadError::NotRegular { .. } | BoundedReadError::TooLarge { .. }),
-            ) => Err(PluginDataError::Broken(Cause::new(error))),
-            Err(error) => Err(PluginDataError::Unreadable(Cause::new(error))),
+        if file_of(&self.root, plugin).is_none() {
+            return Err(PluginDataError::NotAPluginId(plugin.clone()));
+        }
+        let mut preloaded = self.preloaded.borrow_mut();
+        match preloaded.take() {
+            Some((id, result)) if id == *plugin => result,
+            other => {
+                *preloaded = other;
+                Ok(PluginDataDoc::default())
+            }
         }
     }
 
@@ -116,11 +163,75 @@ impl PluginData for PluginDataFiles {
         if file_of(&self.root, &plugin).is_none() {
             return Err(PluginDataError::NotAPluginId(plugin));
         }
-        self.writer
+        let generation = self
+            .writer
             .update(cx, |writer, cx| {
                 writer.update_latest(plugin.clone(), change, (), cx)
             })
-            .map(|_| ())
-            .map_err(|error| PluginDataError::NotSaved(Cause::new(error)))
+            .map_err(|error| PluginDataError::NotSaved(Cause::new(error)))?;
+        self.generations.borrow_mut().insert(plugin, generation);
+        Ok(())
+    }
+    fn flush(&self, plugin: &PluginId, cx: &mut App) -> Task<Result<(), PluginDataError>> {
+        let generation = self.generations.borrow().get(plugin).copied();
+        let Some(generation) = generation else {
+            return Task::ready(Ok(()));
+        };
+        if let Some(result) = settled(self.writer.read(cx), plugin, generation) {
+            return Task::ready(result);
+        }
+        let plugin = plugin.clone();
+        let (sender, receiver) = oneshot::channel();
+        let mut sender = Some(sender);
+        let subscription = cx.observe(&self.writer, move |writer, cx| {
+            if let Some(result) = settled(writer.read(cx), &plugin, generation)
+                && let Some(sender) = sender.take()
+            {
+                let _ = sender.send(result);
+            }
+        });
+        cx.spawn(async move |_| {
+            let _subscription = subscription;
+            receiver.await.unwrap_or_else(|_| {
+                Err(PluginDataError::NotSaved(Cause::new(
+                    StoreError::CompletionDropped,
+                )))
+            })
+        })
+    }
+}
+
+fn settled(
+    writer: &KeyedPersisted<PluginId, PluginDataChange, ()>,
+    plugin: &PluginId,
+    generation: nocterm_store::Revision,
+) -> Option<Result<(), PluginDataError>> {
+    if writer
+        .last_success(plugin)
+        .is_some_and(|stamp| stamp.generation() >= generation)
+    {
+        Some(Ok(()))
+    } else {
+        writer
+            .error(plugin)
+            .map(|error| Err(PluginDataError::NotSaved(Cause::new(error.clone()))))
+    }
+}
+pub(super) fn read(
+    root: &std::path::Path,
+    plugin: &PluginId,
+) -> Result<PluginDataDoc, PluginDataError> {
+    let file =
+        file_of(root, plugin).ok_or_else(|| PluginDataError::NotAPluginId(plugin.clone()))?;
+    match read_regular_bounded(&file, MAX_FILE_BYTES) {
+        Ok(bytes) => PluginDataDoc::decode(&bytes).map_err(|error| match error {
+            DocumentError::Bounds(bounds) => PluginDataError::Bounds(bounds),
+            syntax => PluginDataError::Broken(Cause::new(syntax)),
+        }),
+        Err(error) if is_missing(&error) => Ok(PluginDataDoc::default()),
+        Err(error @ (BoundedReadError::NotRegular { .. } | BoundedReadError::TooLarge { .. })) => {
+            Err(PluginDataError::Broken(Cause::new(error)))
+        }
+        Err(error) => Err(PluginDataError::Unreadable(Cause::new(error))),
     }
 }

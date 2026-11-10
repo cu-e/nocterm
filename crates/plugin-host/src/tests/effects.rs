@@ -47,6 +47,53 @@ fn effects_are_applied_after_the_current_update_not_inside_it(cx: &mut TestAppCo
     assert_eq!(rig.post.requests().len(), 1);
 }
 
+/// A provider that reads the host while it applies, as opening a panel or a terminal tab does
+/// when the view it creates reads the host.
+struct ReadsTheHost {
+    host: gpui::WeakEntity<crate::PluginHost>,
+    read: std::cell::Cell<Option<u64>>,
+}
+
+impl nocterm_plugin_ports::Apply<nocterm_plugin_api::capability::panels::SetPanelOpen>
+    for ReadsTheHost
+{
+    fn apply(
+        &self,
+        _: &nocterm_plugin_model::PluginId,
+        _: SetOpen,
+        cx: &mut gpui::App,
+    ) -> Result<(), HostError> {
+        let host = self.host.upgrade().ok_or(HostError::Unavailable)?;
+        self.read.set(Some(host.read(cx).revision()));
+        Ok(())
+    }
+}
+
+#[gpui::test]
+fn a_provider_applies_once_the_host_is_no_longer_held_so_it_may_read_it(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    rig.installed(cx);
+    let reads = std::rc::Rc::new(ReadsTheHost {
+        host: rig.host.downgrade(),
+        read: std::cell::Cell::new(None),
+    });
+    let providers = rig.providers.clone().with_open(reads.clone());
+    rig.script
+        .answer_event(Ok(effects(vec![(Some("o"), open_effect("face", true))])));
+    let call = rig.call("face");
+    rig.host.update(cx, |host, cx| {
+        host.handle(&call, Input::Pointer, activated(), &providers, cx)
+            .unwrap();
+    });
+    cx.run_until_parked();
+
+    assert!(
+        reads.read.get().is_some(),
+        "the provider ran and read the host"
+    );
+    assert_eq!(rig.outcomes(cx), [(Some("o".to_owned()), Ok(()))]);
+}
+
 #[gpui::test]
 fn outcomes_come_back_once_in_the_next_snapshot_of_an_event(cx: &mut TestAppContext) {
     let rig = Rig::new(cx);
@@ -377,4 +424,36 @@ fn a_call_that_returns_too_many_or_repeated_or_oversized_effects_applies_none_of
 
     assert!(rig.open.requests().is_empty());
     assert!(rig.post.requests().is_empty());
+}
+
+fn open_with_files(files: bool) -> Effect {
+    Effect::TerminalsOpen(nocterm_plugin_api::capability::terminals::Open {
+        local: LocalId::parse("face").unwrap(),
+        terminal: "srv".into(),
+        title: "Build".into(),
+        files,
+    })
+}
+
+#[gpui::test]
+fn a_tab_that_serves_files_needs_the_files_grant_as_well(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    rig.install(package_with("clock", 1, &["terminals.open"]), &[], cx)
+        .unwrap();
+    rig.script.answer_event(Ok(effects(vec![
+        (Some("plain"), open_with_files(false)),
+        (Some("files"), open_with_files(true)),
+    ])));
+    rig.press("face", cx).unwrap();
+
+    let outcomes = rig.outcomes(cx);
+    assert_eq!(
+        outcomes[1],
+        (Some("files".to_owned()), Err(HostError::NotGranted))
+    );
+    assert_ne!(
+        outcomes[0].1,
+        Err(HostError::NotGranted),
+        "a tab without files needs only terminals.open"
+    );
 }

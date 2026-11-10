@@ -37,6 +37,7 @@ struct CredentialState {
     records: HashMap<CredentialId, Record>,
     next: u128,
     failure: Option<FakeCredentialError>,
+    reads: usize,
 }
 
 /// Saved secrets with binding validation and event-driven availability. Retry
@@ -56,6 +57,7 @@ impl Default for FakeCredentialStore {
                 records: HashMap::new(),
                 next: 1,
                 failure: None,
+                reads: 0,
             })),
         }
     }
@@ -112,12 +114,44 @@ impl FakeCredentialStore {
         Ok(id)
     }
 
+    /// Keeps `secret` as the vault key recorded for `public_key`. The request kind
+    /// is not storable from a prompt, so a test seeds the key here instead.
+    pub fn insert_private_key(
+        &self,
+        label: String,
+        public_key: &str,
+        secret: Secret,
+    ) -> Result<CredentialId, FakeCredentialError> {
+        let mut state = lock(&self.state);
+        check(&mut state)?;
+        let id = format!("{:032x}", state.next)
+            .parse()
+            .map_err(|_| FakeCredentialError::Exhausted)?;
+        state.next = state
+            .next
+            .checked_add(1)
+            .ok_or(FakeCredentialError::Exhausted)?;
+        state.records.insert(
+            id,
+            Record {
+                request: SecretRequest::PrivateKey {
+                    credential: id,
+                    public_key: public_key.to_owned(),
+                },
+                secret,
+                label,
+            },
+        );
+        Ok(id)
+    }
+
     pub fn lookup(
         &self,
         id: CredentialId,
         request: &SecretRequest,
     ) -> Result<Secret, FakeCredentialError> {
         let mut state = lock(&self.state);
+        state.reads += 1;
         check(&mut state)?;
         let record = state
             .records
@@ -129,6 +163,10 @@ impl FakeCredentialStore {
         Ok(record.secret.clone())
     }
 
+    /// Number of native-style lookup attempts, after any scripted suspension.
+    pub fn reads(&self) -> usize {
+        lock(&self.state).reads
+    }
     pub fn labels(&self) -> Vec<String> {
         let mut labels: Vec<_> = lock(&self.state)
             .records
@@ -159,6 +197,14 @@ fn same_binding(saved: &SecretRequest, asked: &SecretRequest) -> bool {
         (
             SecretRequest::KeyPassphrase { path: saved, .. },
             SecretRequest::KeyPassphrase { path: asked, .. },
+        ) => saved == asked,
+        (
+            SecretRequest::PrivateKey {
+                public_key: saved, ..
+            },
+            SecretRequest::PrivateKey {
+                public_key: asked, ..
+            },
         ) => saved == asked,
         _ => false,
     }

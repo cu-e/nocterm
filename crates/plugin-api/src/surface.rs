@@ -10,12 +10,19 @@ use nocterm_plugin_model::{
 };
 
 use crate::{
-    MAX_BADGE, MAX_BUTTON, MAX_CONTRIBUTIONS, MAX_DECLARED, MAX_DEPTH, MAX_DESCRIPTION,
-    MAX_EFFECT_KEY, MAX_EFFECTS, MAX_LIST_ITEMS, MAX_NAME, MAX_NODE_KEY, MAX_NODES,
-    MAX_PACKAGE_BYTES, MAX_REASON, MAX_TEXT, MIN_REFRESH_MS,
+    MAX_BADGE, MAX_BUTTON, MAX_CHART_POINTS, MAX_CHART_SERIES, MAX_CODE, MAX_CONTRIBUTIONS,
+    MAX_DECLARED, MAX_DEPTH, MAX_DESCRIPTION, MAX_EFFECT_KEY, MAX_EFFECTS, MAX_LIST_ITEMS,
+    MAX_NAME, MAX_NODE_KEY, MAX_NODES, MAX_PACKAGE_BYTES, MAX_REASON, MAX_TEXT, MIN_REFRESH_MS,
     capability::{
+        files::{
+            FILE_TIMEOUT_MS, MAX_FILE_BYTES, MAX_FILE_ENTRIES, MAX_FILE_NAME, MAX_FILE_PATH,
+            MAX_FILE_REASON, MAX_FILE_REQUESTS,
+        },
+        net::{MAX_BODY, MAX_BYTES_RESPONSE, MAX_IN_FLIGHT, MAX_PATH, MAX_RESPONSE, TIMEOUT_MS},
         notifications::{MAX_LIVE_NOTICES, MAX_NOTICE_TEXT},
         storage::{MAX_KEY as MAX_STORAGE_KEY, MAX_TOTAL, MAX_VALUE},
+        terminals::{MAX_LINE, MAX_TERMINAL_KEY, MAX_TERMINAL_TITLE, MAX_TERMINALS, MAX_WRITE},
+        timers::{MAX_TIMER_MS, MAX_TIMERS, MIN_TIMER_MS},
     },
     template::{MAX_PLACEHOLDERS, MAX_ROUND, MAX_TEMPLATE_LEN},
 };
@@ -121,6 +128,7 @@ pub const MANIFEST_KEYS: &[(&str, &[Key])] = &[
             optional("reasons", TextMap),
             optional("contribution", TableList),
             optional("settings", Table),
+            optional("network", Table),
         ],
     ),
     (
@@ -132,6 +140,9 @@ pub const MANIFEST_KEYS: &[(&str, &[Key])] = &[
             optional("icon", Choice("icons")),
             optional("zone", Choice("zones")),
             optional("order", U16),
+            optional("edge", Choice("edges")),
+            optional("shown", Bool),
+            optional("tabs", Choice("tabs")),
             optional("view", Table),
         ],
     ),
@@ -148,7 +159,9 @@ pub const MANIFEST_KEYS: &[(&str, &[Key])] = &[
             optional("tone", Choice("tones")),
             optional("tone_when", Text),
             optional("text", Text),
-            optional("icon", Choice("icons")),
+            optional("detail", Text),
+            optional("folded", Bool),
+            optional("icon", Choice("glyphs")),
             optional("value", Text),
             optional("each", Text),
         ],
@@ -193,6 +206,15 @@ pub const MANIFEST_KEYS: &[(&str, &[Key])] = &[
             optional("help", Text),
         ],
     ),
+    (
+        "network",
+        &[
+            required("origin_setting", Text),
+            optional("credential_setting", Text),
+            optional("credential_header", Text),
+            optional("credential_prefix", Text),
+        ],
+    ),
 ];
 
 /// The request fields of each effect capability, with the type each holds and whether a guest
@@ -220,10 +242,64 @@ pub const EFFECT_REQUESTS: &[(&str, &[Key])] = &[
         &[required("key", Text), required("value", Text)],
     ),
     ("storage.remove", &[required("key", Text)]),
+    (
+        "net.request",
+        &[
+            required("method", Choice("http_methods")),
+            required("path", Text),
+            optional("body", Text),
+            optional("bytes", Bool),
+        ],
+    ),
+    (
+        "timers.set",
+        &[required("after_ms", integer(0, u32::MAX as i64))],
+    ),
+    (
+        "terminals.open",
+        &[
+            required("local", Text),
+            required("terminal", Text),
+            required("title", Text),
+            optional("files", Bool),
+        ],
+    ),
+    (
+        "terminals.write",
+        &[required("terminal", Text), required("text", Text)],
+    ),
+    (
+        "terminals.files",
+        &[
+            required("terminal", Text),
+            required(
+                "request",
+                KeyType::Integer {
+                    min: 0,
+                    max: u32::MAX as i64,
+                },
+            ),
+            required("answer", Any),
+        ],
+    ),
+    (
+        "terminals.bar",
+        &[
+            required("terminal", Text),
+            optional("edge", Choice("edges")),
+        ],
+    ),
 ];
 
 /// The kinds of setting a package may declare.
-pub const SETTINGS_KINDS: [&str; 5] = ["toggle", "choice", "multi-choice", "number", "text"];
+pub const SETTINGS_KINDS: [&str; 6] = [
+    "toggle",
+    "choice",
+    "multi-choice",
+    "number",
+    "text",
+    "secret",
+];
 
 /// The runtimes a package may name.
 pub const RUNTIMES: [&str; 2] = ["declarative", "wasm"];
@@ -232,11 +308,16 @@ pub const RUNTIMES: [&str; 2] = ["declarative", "wasm"];
 pub const FILTERS: [&str; 4] = ["round(n)", "percent", "hh-mm", "threshold(low, high)"];
 
 /// The events a plugin receives.
-pub const EVENTS: [&str; 4] = [
+pub const EVENTS: [&str; 9] = [
     "activated",
     "toggled",
     "visibility-changed",
     "settings-changed",
+    "response",
+    "timer",
+    "terminal-line",
+    "terminal-closed",
+    "file-request",
 ];
 
 /// The errors the host reports to a plugin.
@@ -250,13 +331,24 @@ pub const LIMITS: &[(&str, u64)] = &[
     ("badge-chars", MAX_BADGE as u64),
     ("button-chars", MAX_BUTTON as u64),
     ("capabilities-per-package", MAX_DECLARED as u64),
+    ("chart-points", MAX_CHART_POINTS as u64),
+    ("chart-series", MAX_CHART_SERIES as u64),
+    ("code-chars", MAX_CODE as u64),
     ("contributions-per-package", MAX_CONTRIBUTIONS as u64),
     ("description-chars", MAX_DESCRIPTION as u64),
     ("effect-key-chars", MAX_EFFECT_KEY as u64),
     ("effects-per-call", MAX_EFFECTS as u64),
+    ("file-bytes", MAX_FILE_BYTES as u64),
+    ("file-entries", MAX_FILE_ENTRIES as u64),
+    ("file-name-bytes", MAX_FILE_NAME as u64),
+    ("file-path-bytes", MAX_FILE_PATH as u64),
+    ("file-reason-chars", MAX_FILE_REASON as u64),
+    ("file-requests-waiting", MAX_FILE_REQUESTS as u64),
+    ("file-timeout-ms", FILE_TIMEOUT_MS as u64),
     ("list-items", MAX_LIST_ITEMS as u64),
     ("live-notices", MAX_LIVE_NOTICES as u64),
     ("min-refresh-ms", MIN_REFRESH_MS as u64),
+    ("min-timer-ms", MIN_TIMER_MS as u64),
     ("name-chars", MAX_NAME as u64),
     ("node-key-chars", MAX_NODE_KEY as u64),
     ("nodes-per-view", MAX_NODES as u64),
@@ -264,6 +356,12 @@ pub const LIMITS: &[(&str, u64)] = &[
     ("package-bytes", MAX_PACKAGE_BYTES),
     ("placeholders-per-view", MAX_PLACEHOLDERS as u64),
     ("reason-chars", MAX_REASON as u64),
+    ("request-body-bytes", MAX_BODY as u64),
+    ("request-path-bytes", MAX_PATH as u64),
+    ("request-timeout-ms", TIMEOUT_MS as u64),
+    ("requests-in-flight", MAX_IN_FLIGHT as u64),
+    ("response-body-bytes", MAX_RESPONSE as u64),
+    ("response-bytes-mode-bytes", MAX_BYTES_RESPONSE as u64),
     ("round-decimals", MAX_ROUND as u64),
     ("setting-fields", MAX_FIELDS as u64),
     ("setting-groups", MAX_GROUPS as u64),
@@ -276,6 +374,13 @@ pub const LIMITS: &[(&str, u64)] = &[
     ("storage-total-bytes", MAX_TOTAL as u64),
     ("storage-value-bytes", MAX_VALUE as u64),
     ("template-chars", MAX_TEMPLATE_LEN as u64),
+    ("terminal-key-chars", MAX_TERMINAL_KEY as u64),
+    ("terminal-line-chars", MAX_LINE as u64),
+    ("terminal-title-chars", MAX_TERMINAL_TITLE as u64),
+    ("terminal-write-bytes", MAX_WRITE as u64),
+    ("terminals-open", MAX_TERMINALS as u64),
     ("text-chars", MAX_TEXT as u64),
+    ("timer-max-ms", MAX_TIMER_MS as u64),
+    ("timers-waiting", MAX_TIMERS as u64),
     ("view-depth", MAX_DEPTH as u64),
 ];

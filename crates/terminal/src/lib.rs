@@ -15,12 +15,17 @@
 //! The crate never names a transport. The application installs one with
 //! [`install`], and the workspace reaches this crate through [`open_session`],
 //! installed as its session opener, and [`open_program`], its program opener.
-//! Text conversion remains here; directory synchronization preserves session
-//! charset errors through the workspace LocalTerminal contract.
+//! VT supplies the incremental text codec and bounded shell observer. Directory
+//! synchronization preserves session charset errors through the workspace
+//! LocalTerminal contract.
 
 //! Input refusals preserve typed charset and queue errors through workspace contracts.
 //! Weak Item and model handles validate original connection and prompt tokens before
 //! input; replacement connections never inherit approval or sign-in authority.
+//! Credential capture factories bind a native store once per terminal; reconnect retains
+//! that store and cannot recapture a replacement account. Native stores fence workers.
+//! The same capture supplies per-open connection options and its scoped relay, so
+//! background transport workers retain the original account through reconnect.
 
 //! Owns: private session lifecycle, admitted input and live leases, screen/search
 //! transitions, credential candidates, output recording and per-view paint/input owners.
@@ -41,12 +46,20 @@
 //! a jump host's prompt is answered only from that hop's own saved credential and never remembered.
 //! Every public General opener captures its original surface/window before native
 //! creation. Folder launches validate their original inner surface destination.
+//! `open_attached` opens a tab on a session reached through its own transport
+//! (`AttachedSession`), optionally with a `TerminalBar` its opener fills along one edge and the
+//! tab owns: it launches nothing, `Event::Restore` repaints a fresh emulator
+//! without recording the picture, a repeated `Connected` of the same session starts no second
+//! automatic recording, and closing the tab only detaches (the transport decides what lives on).
 //! Ordinary local opening returns the exact registered ItemId for human workspace
 //! recovery; the unchanged General factory maps it to its existing unit result.
 
 //! Settings pages: terminal, local-shell and SSH controls retain the original Installed settings.
 mod access;
-mod codec;
+mod bar;
+pub use bar::{BarEdge, TerminalBar};
+mod credential_capture;
+pub use credential_capture::CredentialCapture;
 mod credentials;
 mod file_drop;
 mod recording;
@@ -57,8 +70,9 @@ mod element;
 mod highlighting;
 pub use credentials::CredentialAssociationError;
 mod installed;
-pub use installed::{CredentialProvider, Deps, Installed, LocalCommand, LocalSessions};
-mod integration;
+pub use installed::{
+    AttachedSession, CredentialProvider, Deps, Installed, LocalCommand, LocalSessions,
+};
 mod session_settings;
 mod terminal;
 mod view;
@@ -153,6 +167,31 @@ pub fn open_local_command(
             window,
             cx,
         )
+    });
+    workspace.add_general_item_from(origin.selection(), view, window, cx)?;
+    Ok(())
+}
+
+/// Opens a tab on a session attached through its own transport.
+///
+/// The tab never launches anything locally. Closing it detaches; whether the
+/// session lives on is the transport's contract.
+pub fn open_attached(
+    installed: &Installed,
+    workspace: &mut Workspace,
+    session: AttachedSession,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Result<(), ContextSelectionError> {
+    let origin = workspace.general_terminal_target(window, cx)?;
+    let (title, target, transport, bar) = session.into_parts();
+    let view = cx.new(|cx| {
+        let mut view =
+            TerminalView::new_attached(installed.clone(), title, target, transport, window, cx);
+        if let Some(bar) = bar {
+            view.attach_bar(bar, cx);
+        }
+        view
     });
     workspace.add_general_item_from(origin.selection(), view, window, cx)?;
     Ok(())

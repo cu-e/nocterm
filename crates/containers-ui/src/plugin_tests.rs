@@ -9,7 +9,7 @@ fn registered(cx: &mut TestAppContext) -> crate::tests::Fixture {
     let fixture = fixture(cx, None);
     cx.update_window(fixture.window, |_, window, cx| {
         fixture.workspace.update(cx, |workspace, cx| {
-            crate::register(None, workspace, window, cx).unwrap();
+            crate::register(&crate::install(None), workspace, window, cx).unwrap();
         });
     })
     .unwrap();

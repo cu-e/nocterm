@@ -18,7 +18,7 @@ mod budget;
 mod catalog;
 mod codec;
 mod error;
-pub use codec::{decode, encode, encode_shared, prepare, structural_bytes};
+pub use codec::{decode, encode, encode_shared, prepare, prepare_owned, structural_bytes};
 pub use error::HistoryCodecError;
 mod decode;
 mod loading;
@@ -39,12 +39,14 @@ pub use nocterm_project_model::ContextId;
 pub use prefix::{MAX_HEADER_BYTES, decode_catalog_header};
 pub use version::TranscriptVersion;
 const VERSION: u32 = 2;
+const ENVIRONMENT_VERSION: u32 = 3;
 const LEGACY_VERSION: u32 = 1;
 /// Images larger than this are left out of saved chats.
 const MAX_SAVED_IMAGE_BYTES: usize = 512 * 1024;
 const OMITTED_IMAGE_TEXT: &str = "[Image not kept in history]";
 /// Only the most recent entries of a very long chat are kept.
-const MAX_SAVED_ENTRIES: usize = 2_000;
+/// Maximum persisted transcript rows, shared by pre-copy admission.
+pub const MAX_SAVED_ENTRIES: usize = 2_000;
 /// Larger files are not read back.
 pub const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 /// At most this many chats are restored, newest first.
@@ -143,6 +145,30 @@ impl SavedChat {
         }
     }
 
+    /// Explicit environment-scoped local documents use version three; no data is uploaded.
+    pub fn for_environment(
+        agent_id: String,
+        id: String,
+        updated: u64,
+        scope: crate::local_environment::ChatScope,
+    ) -> Self {
+        let mut chat = Self::for_scope(agent_id, id, updated, scope.context());
+        chat.version = ENVIRONMENT_VERSION;
+        chat.header.environment = scope.environment().clone();
+        chat
+    }
+    pub fn archive_draft_in_environment(
+        id: String,
+        agent_id: String,
+        text: String,
+        updated: u64,
+        scope: crate::local_environment::ChatScope,
+    ) -> Self {
+        let mut chat = Self::for_environment(agent_id, id, updated, scope);
+        chat.draft = (!text.is_empty()).then_some(text);
+        chat.archived_draft = true;
+        chat
+    }
     /// A draft edit made before the archived transcript has been hydrated.
     pub fn archive_draft(id: String, agent_id: String, text: String, updated: u64) -> Self {
         Self::archive_draft_in_scope(
@@ -176,6 +202,7 @@ impl SavedChat {
     pub fn validate_identity(&self) -> Result<(), HistoryCodecError> {
         codec::validate_id(&self.header.id)?;
         header::resolve_scope(self.version, Some(self.header.scope))?;
+        header::validate_environment(self.version, &self.header.environment)?;
         Ok(())
     }
     /// Reject a prompt before accepting it if it could not be read back.
@@ -264,6 +291,24 @@ impl std::ops::Deref for SharedChat {
         &self.metadata
     }
 }
+
+/// Exact compact JSON byte size, without allocating the encoded payload.
+/// This counts an already decoded value; it does not parse or authenticate input.
+pub fn json_size(value: &impl serde::Serialize) -> Result<usize, HistoryCodecError> {
+    size::encoded_len(value).map_err(HistoryCodecError::from)
+}
+
+/// Conservative retained ownership cost, without allocating an encoded buffer.
+/// Consumers must still bound native input before decoding or materializing it.
+pub fn retained_value_bytes(value: &impl serde::Serialize) -> Result<usize, HistoryCodecError> {
+    size::structural_size(value).map_err(HistoryCodecError::from)
+}
+
+/// Exact JSON string size, using the same allocation-free codec counter.
+pub fn text_size(text: &str) -> Result<usize, HistoryCodecError> {
+    size::encoded_len(&text).map_err(HistoryCodecError::from)
+}
+
 pub fn content_size(content: &Content) -> Result<usize, HistoryCodecError> {
     size::encoded_len(content).map_err(HistoryCodecError::from)
 }

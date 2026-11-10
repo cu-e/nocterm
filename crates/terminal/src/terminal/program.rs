@@ -26,6 +26,13 @@ impl Terminal {
             program,
             shell_syntax,
         } = spec;
+        let source = host
+            .session
+            .as_ref()
+            .map_or_else(nocterm_workspace::SessionSource::this_computer, |session| {
+                session.source().clone()
+            });
+        let deps = deps.with_program_source(source.clone());
         let session = host.session;
         let target = session.as_ref().map_or_else(
             || Target::new("local", "localhost", 22),
@@ -54,7 +61,12 @@ impl Terminal {
             integration: false,
             ..ShellLaunch::default()
         };
-        let transport: Arc<dyn Transport> = Arc::new(ProgramTransport::new(host.exec, fs, program));
+        let transport: Arc<dyn Transport> = Arc::new(ProgramTransport::new_with_source(
+            host.exec,
+            fs,
+            program,
+            source.connection().clone(),
+        ));
         let spec = SessionSpec {
             profile: None,
             options: Default::default(),
@@ -75,6 +87,11 @@ impl Terminal {
     /// A program tab shows the host it runs on, which stays reachable after
     /// the program ends unless the program lost its connection.
     pub fn session_context(&self) -> SessionContext {
-        self.lifecycle.context()
+        let mut context = self
+            .lifecycle
+            .context()
+            .with_source(self.deps.session_source());
+        context.connected &= self.deps.source_current();
+        context
     }
 }

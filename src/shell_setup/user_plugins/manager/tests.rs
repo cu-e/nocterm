@@ -32,12 +32,14 @@ fn clock_package(version_marker: &str) -> String {
 
 struct Rig {
     host: Entity<PluginHost>,
-    plugins: HostPlugins,
+    plugins: std::rc::Rc<HostPlugins>,
     directory: TempDir,
 }
 
 fn rig(cx: &mut TestAppContext) -> Rig {
-    let directory = TempDir::new().unwrap();
+    rig_in(TempDir::new().unwrap(), cx)
+}
+fn rig_in(directory: TempDir, cx: &mut TestAppContext) -> Rig {
     let catalog = Arc::new(plugin_catalog().expect("the application catalog"));
     let paths = nocterm_core::Paths::rooted_at(directory.path());
     let settings = super::super::gate::allowing(cx);
@@ -54,13 +56,34 @@ fn rig(cx: &mut TestAppContext) -> Rig {
     });
     let host = shell.host().expect("the shell loads user plugins").clone();
     Rig {
-        plugins: HostPlugins::new(host.clone(), None),
+        plugins: shell.management().unwrap(),
         host,
         directory,
     }
 }
 
+fn complete<T: 'static>(
+    cx: &mut TestAppContext,
+    action: impl FnOnce(&mut gpui_kit::App) -> gpui_kit::Task<Result<T, UserPluginError>>,
+) -> Result<T, UserPluginError> {
+    let task = cx.update(action);
+    cx.foreground_executor().block_test(task)
+}
 impl Rig {
+    fn install(
+        &self,
+        location: &str,
+        replaces: Option<String>,
+        cx: &mut TestAppContext,
+    ) -> Result<(), UserPluginError> {
+        let request = self.request(location, replaces, cx);
+        complete(cx, |cx| self.plugins.install(request, cx))
+    }
+    fn plugins_dir(&self) -> std::path::PathBuf {
+        nocterm_core::Paths::rooted_at(self.directory.path())
+            .state_dir()
+            .join("plugins")
+    }
     fn file(&self, name: &str, text: &str) -> String {
         let path = self.directory.path().join(name);
         fs::write(&path, text).unwrap();
@@ -72,11 +95,9 @@ impl Rig {
         &self,
         location: &str,
         replaces: Option<String>,
-        cx: &gpui_kit::App,
+        cx: &mut TestAppContext,
     ) -> InstallRequest {
-        let candidate = self
-            .plugins
-            .inspect(location, cx)
+        let candidate = complete(cx, |cx| self.plugins.inspect(location, cx))
             .expect("the package is acceptable");
         InstallRequest {
             location: location.to_owned(),
@@ -92,10 +113,10 @@ impl Rig {
 fn a_file_changed_after_the_consent_is_refused_and_nothing_is_installed(cx: &mut TestAppContext) {
     let rig = rig(cx);
     let location = rig.file("clock.toml", &clock_package("looked at"));
-    let request = cx.update(|cx| rig.request(&location, None, cx));
+    let request = rig.request(&location, None, cx);
     rig.file("clock.toml", &clock_package("swapped after consent"));
 
-    let outcome = cx.update(|cx| rig.plugins.install(request, cx));
+    let outcome = complete(cx, |cx| rig.plugins.install(request, cx));
 
     assert!(
         matches!(outcome, Err(UserPluginError::Changed)),
@@ -110,11 +131,11 @@ fn an_unchanged_file_installs_and_a_second_install_of_the_same_id_is_refused_as_
 ) {
     let rig = rig(cx);
     let location = rig.file("clock.toml", &clock_package("one"));
-    let first = cx.update(|cx| rig.request(&location, None, cx));
-    let second = cx.update(|cx| rig.request(&location, None, cx));
+    let first = rig.request(&location, None, cx);
+    let second = rig.request(&location, None, cx);
 
-    let installed = cx.update(|cx| rig.plugins.install(first, cx));
-    let raced = cx.update(|cx| rig.plugins.install(second, cx));
+    let installed = complete(cx, |cx| rig.plugins.install(first, cx));
+    let raced = complete(cx, |cx| rig.plugins.install(second, cx));
 
     assert!(installed.is_ok(), "{installed:?}");
     assert!(
@@ -128,11 +149,9 @@ fn an_unchanged_file_installs_and_a_second_install_of_the_same_id_is_refused_as_
 fn an_update_agreed_over_a_package_another_window_replaced_is_refused(cx: &mut TestAppContext) {
     let rig = rig(cx);
     let first = rig.file("clock.toml", &clock_package("one"));
-    cx.update(|cx| rig.plugins.install(rig.request(&first, None, cx), cx))
-        .unwrap();
+    rig.install(&first, None, cx).unwrap();
     let seen = cx.update(|cx| rig.plugins.rows(cx))[0].fingerprint.clone();
-    let installed_hash = cx
-        .update(|cx| rig.plugins.inspect(&first, cx))
+    let installed_hash = complete(cx, |cx| rig.plugins.inspect(&first, cx))
         .unwrap()
         .replaces
         .expect("the same id is installed")
@@ -140,13 +159,13 @@ fn an_update_agreed_over_a_package_another_window_replaced_is_refused(cx: &mut T
     assert!(installed_hash.starts_with(&seen));
     // Window A offers an update over package one.
     let update_a = rig.file("a.toml", &clock_package("two"));
-    let request_a = cx.update(|cx| rig.request(&update_a, Some(installed_hash.clone()), cx));
+    let request_a = rig.request(&update_a, Some(installed_hash.clone()), cx);
     // Window B replaces package one first.
     let update_b = rig.file("b.toml", &clock_package("three"));
-    let request_b = cx.update(|cx| rig.request(&update_b, Some(installed_hash), cx));
-    cx.update(|cx| rig.plugins.install(request_b, cx)).unwrap();
+    let request_b = rig.request(&update_b, Some(installed_hash), cx);
+    complete(cx, |cx| rig.plugins.install(request_b, cx)).unwrap();
 
-    let outcome = cx.update(|cx| rig.plugins.install(request_a, cx));
+    let outcome = complete(cx, |cx| rig.plugins.install(request_a, cx));
 
     assert!(
         matches!(outcome, Err(UserPluginError::InstalledChanged)),
@@ -158,18 +177,16 @@ fn an_update_agreed_over_a_package_another_window_replaced_is_refused(cx: &mut T
 fn an_update_over_the_package_the_user_saw_replaces_it(cx: &mut TestAppContext) {
     let rig = rig(cx);
     let first = rig.file("clock.toml", &clock_package("one"));
-    cx.update(|cx| rig.plugins.install(rig.request(&first, None, cx), cx))
-        .unwrap();
-    let installed_hash = cx
-        .update(|cx| rig.plugins.inspect(&first, cx))
+    rig.install(&first, None, cx).unwrap();
+    let installed_hash = complete(cx, |cx| rig.plugins.inspect(&first, cx))
         .unwrap()
         .replaces
         .unwrap()
         .hash;
     let update = rig.file("update.toml", &clock_package("two"));
-    let request = cx.update(|cx| rig.request(&update, Some(installed_hash), cx));
+    let request = rig.request(&update, Some(installed_hash), cx);
 
-    let outcome = cx.update(|cx| rig.plugins.install(request, cx));
+    let outcome = complete(cx, |cx| rig.plugins.install(request, cx));
 
     assert!(outcome.is_ok(), "{outcome:?}");
 }
@@ -179,7 +196,7 @@ fn a_refusal_of_the_host_keeps_its_cause_for_the_section(cx: &mut TestAppContext
     let rig = rig(cx);
     let id = nocterm_plugin_model::PluginId::owned("user-example-nobody");
 
-    let outcome = cx.update(|cx| rig.plugins.set_enabled(&id, true, cx));
+    let outcome = complete(cx, |cx| rig.plugins.set_enabled(&id, true, cx));
 
     let Err(error) = outcome else {
         panic!("an unknown plugin cannot be enabled");
@@ -202,7 +219,7 @@ impl Rig {
     /// Installs the clock example and says which plugin it is.
     fn installed(&self, cx: &mut TestAppContext) -> nocterm_plugin_model::PluginId {
         let location = self.file("clock.toml", &clock_package("installed"));
-        cx.update(|cx| self.plugins.install(self.request(&location, None, cx), cx))
+        self.install(&location, None, cx)
             .expect("the package installs");
         cx.update(|cx| self.plugins.rows(cx))[0].id.clone()
     }
@@ -259,11 +276,9 @@ fn enabling_and_disabling_change_the_row_and_leave_audit_lines(cx: &mut TestAppC
     let id = rig.installed(cx);
     let enabled = rig.row(cx).enabled;
 
-    cx.update(|cx| rig.plugins.set_enabled(&id, !enabled, cx))
-        .unwrap();
+    complete(cx, |cx| rig.plugins.set_enabled(&id, !enabled, cx)).unwrap();
     assert_eq!(rig.row(cx).enabled, !enabled);
-    cx.update(|cx| rig.plugins.set_enabled(&id, enabled, cx))
-        .unwrap();
+    complete(cx, |cx| rig.plugins.set_enabled(&id, enabled, cx)).unwrap();
     assert_eq!(rig.row(cx).enabled, enabled);
 
     let actions = rig.actions(cx);
@@ -277,11 +292,9 @@ fn placement_is_granted_and_revoked_through_the_port(cx: &mut TestAppContext) {
     let rig = rig(cx);
     let id = rig.installed(cx);
 
-    cx.update(|cx| rig.plugins.set_placeable(&id, true, cx))
-        .unwrap();
+    complete(cx, |cx| rig.plugins.set_placeable(&id, true, cx)).unwrap();
     assert!(rig.row(cx).placeable);
-    cx.update(|cx| rig.plugins.set_placeable(&id, false, cx))
-        .unwrap();
+    complete(cx, |cx| rig.plugins.set_placeable(&id, false, cx)).unwrap();
     assert!(!rig.row(cx).placeable);
 
     let actions = rig.actions(cx);
@@ -306,8 +319,7 @@ fn removing_a_plugin_keeps_its_data_for_a_later_install_unless_the_user_removes_
         rig.set_label(&id, "Kept", cx);
         assert_eq!(rig.label(&id, cx).as_ref(), Some(&kept));
 
-        cx.update(|cx| rig.plugins.remove(&id, with_data, cx))
-            .unwrap();
+        complete(cx, |cx| rig.plugins.remove(&id, with_data, cx)).unwrap();
         saved(cx);
         assert!(cx.update(|cx| rig.plugins.rows(cx)).is_empty());
 
@@ -319,8 +331,7 @@ fn removing_a_plugin_keeps_its_data_for_a_later_install_unless_the_user_removes_
             expected,
             "removing with the data: {with_data}"
         );
-        cx.update(|cx| rig.plugins.remove(&again, true, cx))
-            .unwrap();
+        complete(cx, |cx| rig.plugins.remove(&again, true, cx)).unwrap();
     }
 }
 
@@ -332,7 +343,7 @@ fn removing_only_the_data_resets_the_values_and_leaves_the_plugin_installed(
     let id = rig.installed(cx);
     rig.set_label(&id, "Kept", cx);
 
-    cx.update(|cx| rig.plugins.remove_data(&id, cx)).unwrap();
+    complete(cx, |cx| rig.plugins.remove_data(&id, cx)).unwrap();
 
     assert_eq!(cx.update(|cx| rig.plugins.rows(cx)).len(), 1);
     assert_ne!(
@@ -348,10 +359,10 @@ fn every_act_on_an_unknown_plugin_is_refused_with_its_cause(cx: &mut TestAppCont
     let rig = rig(cx);
     let id = nocterm_plugin_model::PluginId::owned("user-example-nobody");
     let refused = [
-        cx.update(|cx| rig.plugins.set_placeable(&id, true, cx)),
-        cx.update(|cx| rig.plugins.remove(&id, false, cx)),
-        cx.update(|cx| rig.plugins.remove(&id, true, cx)),
-        cx.update(|cx| rig.plugins.remove_data(&id, cx)),
+        complete(cx, |cx| rig.plugins.set_placeable(&id, true, cx)),
+        complete(cx, |cx| rig.plugins.remove(&id, false, cx)),
+        complete(cx, |cx| rig.plugins.remove(&id, true, cx)),
+        complete(cx, |cx| rig.plugins.remove_data(&id, cx)),
     ];
 
     for outcome in refused {
@@ -375,15 +386,145 @@ fn a_change_is_announced_to_the_observer_until_it_is_dropped(cx: &mut TestAppCon
             .observe(cx, Box::new(move |_| seen.set(seen.get() + 1)))
     });
 
-    cx.update(|cx| rig.plugins.set_placeable(&id, true, cx))
-        .unwrap();
+    complete(cx, |cx| rig.plugins.set_placeable(&id, true, cx)).unwrap();
     cx.run_until_parked();
     assert!(seen.get() > 0, "the section learns that the list changed");
 
     drop(subscription);
     let before = seen.get();
-    cx.update(|cx| rig.plugins.set_placeable(&id, false, cx))
-        .unwrap();
+    complete(cx, |cx| rig.plugins.set_placeable(&id, false, cx)).unwrap();
     cx.run_until_parked();
     assert_eq!(seen.get(), before);
+}
+
+#[gpui_kit::test]
+fn native_startup_restores_the_consented_package_and_saved_values_asynchronously(
+    cx: &mut TestAppContext,
+) {
+    let first = rig(cx);
+    let id = first.installed(cx);
+    first.set_label(&id, "Restarted", cx);
+    let restarted = rig_in(first.directory, cx);
+    assert!(
+        cx.update(|cx| restarted.plugins.rows(cx)).is_empty(),
+        "native acquisition has not run in the installation callback"
+    );
+    let location = restarted.file("check.toml", &clock_package("check"));
+    complete(cx, |cx| restarted.plugins.inspect(&location, cx)).unwrap();
+    assert_eq!(restarted.row(cx).id, id);
+    assert_eq!(
+        restarted.label(&id, cx),
+        Some(SettingValue::Text("Restarted".into()))
+    );
+}
+
+#[gpui_kit::test]
+fn a_failed_records_receipt_keeps_the_old_consented_package_for_recovery(cx: &mut TestAppContext) {
+    use nocterm_plugin_api::PluginPackages as _;
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+    let previous = cx.update(|cx| rig.host.read(cx).hash_of(&id)).unwrap();
+    let update = rig.file("update.toml", &clock_package("replacement"));
+    let request = rig.request(&update, Some(previous.clone()), cx);
+    let records = rig.plugins_dir().join("records.json");
+    let saved = records.with_extension("saved");
+    fs::rename(&records, &saved).unwrap();
+    fs::create_dir(&records).unwrap();
+    let result = complete(cx, |cx| rig.plugins.install(request, cx));
+    assert!(
+        matches!(result, Err(UserPluginError::Manage(_))),
+        "failed physical records save is reported: {result:?}"
+    );
+    let store =
+        nocterm_plugin_packages::PackageStore::new(rig.plugins_dir().join("packages"), Vec::new());
+    assert!(
+        store
+            .load(
+                &id,
+                &nocterm_plugin_api::ContentHash::parse(&previous).unwrap()
+            )
+            .is_ok()
+    );
+    fs::remove_dir(&records).unwrap();
+    fs::rename(saved, records).unwrap();
+    let restarted = rig_in(rig.directory, cx);
+    let location = restarted.file("check.toml", &clock_package("check"));
+    complete(cx, |cx| restarted.plugins.inspect(&location, cx)).unwrap();
+    assert_eq!(
+        cx.update(|cx| restarted.host.read(cx).hash_of(&id)),
+        Some(previous)
+    );
+}
+
+#[gpui_kit::test]
+fn failed_data_removal_keeps_the_plugin_manageable_until_retry_succeeds(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+    rig.set_label(&id, "Kept", cx);
+    let data = rig.plugins_dir().join("data").join(format!("{id}.json"));
+    let saved = data.with_extension("saved");
+    fs::rename(&data, &saved).unwrap();
+    fs::create_dir(&data).unwrap();
+    let result = complete(cx, |cx| rig.plugins.remove(&id, true, cx));
+    assert!(
+        matches!(result, Err(UserPluginError::Manage(_))),
+        "actual unlink failure is reported: {result:?}"
+    );
+    assert_eq!(rig.row(cx).id, id);
+    assert_eq!(rig.label(&id, cx), Some(SettingValue::Text("Kept".into())));
+    fs::remove_dir(&data).unwrap();
+    fs::rename(saved, data).unwrap();
+    complete(cx, |cx| rig.plugins.remove(&id, true, cx)).unwrap();
+    assert!(cx.update(|cx| rig.plugins.rows(cx)).is_empty());
+}
+
+#[gpui_kit::test]
+fn accepted_installation_finishes_after_the_callers_waiter_is_dropped(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let location = rig.file("clock.toml", &clock_package("accepted"));
+    let request = rig.request(&location, None, cx);
+    let task = cx.update(|cx| rig.plugins.install(request, cx));
+    drop(task);
+    saved(cx);
+    assert_eq!(cx.update(|cx| rig.plugins.rows(cx)).len(), 1);
+    assert!(rig.plugins_dir().join("records.json").is_file());
+}
+
+#[gpui_kit::test]
+fn a_failed_standalone_data_reset_preserves_the_saved_values_for_retry(cx: &mut TestAppContext) {
+    let rig = rig(cx);
+    let id = rig.installed(cx);
+    rig.set_label(&id, "Kept", cx);
+    let data = rig.plugins_dir().join("data").join(format!("{id}.json"));
+    let saved = data.with_extension("saved");
+    fs::rename(&data, &saved).unwrap();
+    fs::create_dir(&data).unwrap();
+    let result = complete(cx, |cx| rig.plugins.remove_data(&id, cx));
+    assert!(matches!(result, Err(UserPluginError::Manage(_))));
+    assert_eq!(rig.label(&id, cx), Some(SettingValue::Text("Kept".into())));
+    fs::remove_dir(&data).unwrap();
+    fs::rename(saved, data).unwrap();
+    complete(cx, |cx| rig.plugins.remove_data(&id, cx)).unwrap();
+    assert_ne!(rig.label(&id, cx), Some(SettingValue::Text("Kept".into())));
+    assert_eq!(rig.row(cx).id, id);
+}
+
+#[gpui_kit::test]
+fn an_unreadable_native_records_document_is_reported_without_overwriting_it(
+    cx: &mut TestAppContext,
+) {
+    let directory = TempDir::new().unwrap();
+    let root = nocterm_core::Paths::rooted_at(directory.path())
+        .state_dir()
+        .join("plugins");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("records.json"), b"broken records").unwrap();
+    let rig = rig_in(directory, cx);
+    saved(cx);
+    assert!(cx.update(|cx| rig.plugins.error(cx)).is_some());
+    assert!(cx.update(|cx| rig.plugins.rows(cx)).is_empty());
+    assert_eq!(
+        fs::read(root.join("records.json")).unwrap(),
+        b"broken records"
+    );
 }

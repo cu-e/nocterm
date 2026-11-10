@@ -36,7 +36,7 @@ async fn browsing_hydrating_and_disabling_ai_preserve_an_untouched_v1_file(
         let (window, workspace) = open_workspace(&booted, cx);
         (booted, window, workspace)
     });
-    let settings = booted.settings_deps().settings().clone();
+    let settings = booted.settings_deps();
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         window.activate_window();
