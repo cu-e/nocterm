@@ -89,7 +89,7 @@ pub enum RowState {
     /// Three traps or missed deadlines this session.
     Faulted,
     /// The stored package is not what the user accepted, or cannot run. The cause keeps its
-    /// own sources for [`describe`].
+    /// own sources for `describe`.
     Broken(SharedCause),
 }
 
@@ -117,7 +117,7 @@ pub struct AuditLine {
     pub action: String,
 }
 
-/// An action the application refused. [`describe`] words it, with its causes, for the user.
+/// An action the application refused. `describe` words it, with its causes, for the user.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum UserPluginError {
     /// The file is not the one the user looked at.
